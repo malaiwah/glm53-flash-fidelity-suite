@@ -855,6 +855,16 @@ def _persist_state(output_root: Path, state: Dict[str, Any]) -> None:
 # subcommand: contract                                                         #
 # --------------------------------------------------------------------------- #
 
+def _purge_sealed_codec_modules() -> None:
+    """Drop cached r7_encoder modules so each build_layer_preparation performs a
+    fresh SEALED import (exl3_mcg._codec refuses incumbents; per-layer codec
+    construction re-verifies the closure hashes every time — the same cleanup
+    pattern brandonmusic's own shapleymcg tests use between sealed imports)."""
+    import sys as _sys
+    for name in [n for n in _sys.modules if n == "r7_encoder" or n.startswith("r7_encoder.")]:
+        _sys.modules.pop(name, None)
+
+
 def cmd_contract(args: argparse.Namespace) -> int:
     _import_pipeline(Path(args.pipeline_root))
     output_root = Path(args.output_root).resolve()
@@ -1007,6 +1017,7 @@ def cmd_contract(args: argparse.Namespace) -> int:
             capture = direct.Glm53CaptureView(
                 capture_root, layer, verify_hashes=args.verify_capture_hashes
             )
+            _purge_sealed_codec_modules()
             build_layer_preparation(
                 layer=layer,
                 capture=capture,
@@ -1126,6 +1137,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
             layer,
             verify_hashes=args.verify_capture_hashes,
         )
+        _purge_sealed_codec_modules()
         build_layer_preparation(
             layer=layer,
             capture=capture,
@@ -1423,6 +1435,7 @@ def cmd_mtp(args: argparse.Namespace) -> int:
     if not manifest_path.is_file():
         selection = _read_json(output_root / "profile-selection.json", "profile selection")
         seed = _transform_seed(output_root / "transform-seed.json")
+        _purge_sealed_codec_modules()
         build_layer_preparation(
             layer=mtp.MTP_LAYER,
             capture=capture,

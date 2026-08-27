@@ -20,3 +20,4 @@
 0004-uniform-k6-state-receipt-field-fix.patch
 0005-add-glm53-k6-postmtp-receipts-module.patch
 0006-reader-ep-size-env.patch
+0008-v31-allowed-bits-k6-k8.patch

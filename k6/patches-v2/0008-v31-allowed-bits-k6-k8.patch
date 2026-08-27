@@ -1,0 +1,17 @@
+Widen the v31 normalization fit-sample bit admission from the GLM-5.2-era
+K3-K5 set to include K6 and K8.  `bits` is carried as metadata and
+consistency-checked only (audited: no per-K constants or branches in
+absolute_v31/streaming_v31; codebook_scale is a per-rate parameter supplied by
+the codec adapter).  Part of the malaiwah declared extension set, disclosed in
+receipts.
+--- a/src/quant_pipeline/normalization/absolute_v31.py
++++ b/src/quant_pipeline/normalization/absolute_v31.py
+@@ -37,7 +37,7 @@
+ SCHEMA = "r10-topology-absolute-normalization-v1"
+ PROJECTIONS = ("gate_proj", "up_proj", "down_proj")
+ GATE_UP = frozenset(("gate_proj", "up_proj"))
+-ALLOWED_BITS = frozenset((3, 4, 5))
++ALLOWED_BITS = frozenset((3, 4, 5, 6, 8))
+ DEFAULT_BLOCK = 128
+ _EPSILON = 1e-30
+ 
