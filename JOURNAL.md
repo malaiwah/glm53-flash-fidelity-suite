@@ -370,3 +370,18 @@ BF16. qualify_fp8 root-caused (comparator OOM: FP8 engine pads KV to the util
 target, GPU0 at 136 GiB); retry queued at util 0.80. Package+publish of the
 completed v1 running. Remaining: qualify-fp8 receipt, stacked-pin
 intervention, pinned v2 recaptures, activations publish, closeout.
+
+## 2026-08-27 08:20 — PR-thread hint + two-step extraction (operator's calls)
+Operator's suggestions, both right: (1) PR thread re-read — Zek-Takai reports
+DeepGEMM's JIT compiles GLM's mHC hyper-connection kernel and is sensitive to
+CUDA package mixes. If the mHC JIT is not gated by VLLM_USE_DEEP_GEMM, our
+DeepGEMM-off peel never touched it — **new prime candidate for the residual
+1/32**; first ablation for any follow-up session. (2) Two-step extraction:
+direct VM->Mac download (residential speed, meter running) replaced by
+VM -> private HF scratch (datacenter pipe, minutes) -> Mac pulls off-meter.
+Full deliverables + intervention logs uploading to
+malaiwah/glm53-session-scratch (private); VM pauses on completion.
+-> Next time (lesson 19): egress via the fastest pipe FIRST (HF/S3), pause the
+   meter, THEN sync to slow endpoints; and re-read active upstream threads
+   before closing an investigation — fresh eyes drop hints hourly on day-one
+   PRs.
