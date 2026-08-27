@@ -419,3 +419,47 @@ fp8 KV for 512K context — K6 fits with ~30x margin; K5 unnecessary; fp8 KV is
 the Blackwell-native path. Forge (spot, preempted once and resumed) staging
 Brandon's pipeline + pinned exllamav3 + SM120 ref; port workflow continues as
 the stock-ecosystem track.
+
+## 2026-08-27 ~13:40 — Same-panel verdict: FP8 0.0206 vs 4bpw 0.0246; comment posted
+The settling experiment landed: official FP8 replayed over Brandon's 25 sealed
+windows (51,175 positions, token ids sha-verified) scores KLD(teacher‖FP8) =
+0.020615 / top-1 95.63%, offset audit clean (0.956@0 vs 0.016@±1), per-window
+0.0096–0.0457. Verdict on HIS yardstick: FP8 edges the 4bpw (0.0246) — "beats
+FP8" not supported — but our FP8 row is biased UP by the 0.0127 cross-stack
+floor, so the true gap is larger; 4bpw within ~1.2x of FP8 at 176 GB vs 328 GB
+remains a strong showing, and the K6 thesis (well under FP8 at ~246 GiB) is
+intact. Cross-suite reversal explained: his panel is FP8-friendlier than our
+10.48M mix (0.0206 vs 0.0281) — same-suite comparison was the right call.
+Follow-up comment posted on his discussion #1 (2026-08-27T11:36Z) with the
+three-row table + receipts; baseline receipt crosscheck-brandonmusic.json
+added to public reports/ (commit 5daa6c52).
+Port design bundle persisted + pushed (port/ in this repo): 7-agent workflow
+delivered blueprint (exl3 v1.4.4 already has ~80%: dsv4 mHC verified
+numerically identical to vLLM's, glm_moe_dsa skeleton, GDN cache machinery;
+new: KimiDeltaAttention, kpool indexer mode, NoPE guards, mean ContractStreams,
+sigmoid GatedRMSNorm), syntax-checked draft arch, smoke-tested parity harness,
+adversarial review (1 blocker: fla version floor could silently accept a fla
+without the SAFE gate — **kwargs swallow safe_gate; pin + assert at import).
+Rehearsal vehicle found: inference-optimization/GLM-5.3-Flash-0.1B-A0.1B tiny
+fixture is architecturally COMPLETE (KDA+DSA+kpool, dense→sparse @3, mHC,
+NoPE, vision, full 154,880 vocab, exact model.language_model + hc_*_fn tensor
+naming) — stock-transformers-loadable, so it gives the port a true
+cross-implementation oracle at toy scale, something our synthetic mini-ckpt
+can't. Caveats: random weights (no quality signal), F32 dtype (won't exercise
+bf16-load patch), no MTP tensors, tiny dims miss real kernel shape paths; use
+T≥512 so kpool selection actually engages (kpool 4 × topk 64 = 256).
+MLX prior art (orcarouter/GLM-5.3-Flash-MLX, OrcaSAQ calibration-free mixed
+precision): their own numbers kill the Mac path — only 2bit-lite (102 GB) fits
+128 GB and it's 0.346 nats / 77% top-1. Operator call: Mac Metal/MLX DROPPED
+for this model; keep their allocation policy as convergent prior art for the
+AIBeast multi-precision EXL3 (down_proj +1, shared experts +2, never-FP8 set
+stays BF16 — their quantized set = exactly the 37,338 scale_inv tensors we
+extracted). Their 4-bit vs-FP8-reference KLD 0.0131 is NOT comparable to
+Brandon's 0.0246 vs-BF16-teacher (different reference, suite, stack).
+Upstream check: both zai repos' 1h-ago pushes were README-only (diffed trees);
+pins unaffected; chat-template notes irrelevant to teacher-forced replay.
+LESSON 20: capture contracts should embed upstream repo+revision, not just
+container paths — the pins lived only in the card/download receipts this time.
+LESSON 21: when two quants are compared across different suites/references and
+the ordering matters, run the same-panel experiment before repeating the
+claim — the cross-suite ordering REVERSED on the shared yardstick.
