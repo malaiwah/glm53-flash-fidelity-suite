@@ -1,0 +1,11 @@
+.venv/
+corpus_dl/
+tokenizer/
+cal_data/
+bundle.tar.gz
+bundle_stage/
+suite/tokens/
+calsuite/tokens/
+*.log
+__pycache__/
+deliverables/
