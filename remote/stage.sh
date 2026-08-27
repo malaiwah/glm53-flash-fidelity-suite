@@ -433,12 +433,12 @@ det_kpatch)
   # Kernel-patch confirmation: single-config autotune shim (no cache), two
   # fresh launches must capture byte-identical sentinels from launch one.
   test -d "$ROOT/models/bf16"
-  mkdir -p "$ROOT/detpin"
-  SITE=/usr/local/lib/python3.12/dist-packages/sitecustomize.py
+  sudo rm -rf "$ROOT/detpin"; mkdir -p "$ROOT/detpin" "$ROOT/bundle/tools/pin_shim"
+  cp "$ROOT/bundle/tools/pin_autotune_sitecustomize.py" "$ROOT/bundle/tools/pin_shim/sitecustomize.py"
   for run in runP1 runP2; do
     sudo docker run --rm -i --gpus all --ipc=host --shm-size=64g \
       -v "$ROOT:/glm53" \
-      -v "$ROOT/bundle/tools/pin_autotune_sitecustomize.py:$SITE:ro" \
+      -e PYTHONPATH=/glm53/bundle/tools/pin_shim \
       -e TRITON_PRINT_AUTOTUNING=1 \
       -e NVIDIA_TF32_OVERRIDE=0 -e VLLM_ENGINE_READY_TIMEOUT_S=3600 \
       -e VLLM_WORKER_MULTIPROC_METHOD=spawn -e VLLM_LOGGING_LEVEL=INFO \
