@@ -76,7 +76,10 @@ gen_check)
 import json
 r = json.load(open("/home/ubuntu/glm53/out/gen-check.json"))
 assert r["pass"], "gen_check receipt says degenerate output"
-snippet = r["results"][-1]["completion"][:350].replace("\n", " ")
+last = r["results"][-1]
+snippet = (last.get("answer_excerpt") or last["completion"])[:350].replace("\n", " ")
+if last.get("has_think_block"):
+    snippet = "[after {} chars of thinking] ".format(last.get("think_chars", 0)) + snippet
 print("GEN_CHECK_GREEN paris=", r["paris_mentioned"])
 open("/home/ubuntu/glm53/out/gen-snippet.txt", "w").write(snippet)
 GENSUM
