@@ -45,7 +45,9 @@ sudo docker inspect --format '{{.Id}} {{.RepoDigests}}' "$IMAGE_REF" | tee "$ROO
 
 echo "=== hf download venv (host) ==="
 sudo apt-get update -qq >/dev/null 2>&1 || true
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv python3.10-venv python3.12-venv python3-pip 2>&1 | tail -1 || true
+for pkg in python3-venv python3.10-venv python3.12-venv python3-pip; do
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$pkg" >/dev/null 2>&1 || true
+done
 if [ ! -x "$ROOT/hfenv/bin/hf" ]; then
   python3 -m venv "$ROOT/hfenv"
   "$ROOT/hfenv/bin/pip" -q install --upgrade pip
