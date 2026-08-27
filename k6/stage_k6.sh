@@ -96,6 +96,9 @@ export PYTHONPATH="$PIPE/src:$SHAPLEY:$SQGEXP"
 # is the minimal fix that covers every call site without touching the k6
 # command lines mid-campaign.
 export QP_PIPELINE_ROOT="$PIPE"
+# Fat-build attestation (disclosed deviation 2): the driver requires this env
+# to match the extension evidence at EVERY invocation, not just at build time.
+export TORCH_CUDA_ARCH_LIST="9.0;10.0"
 export NVIDIA_TF32_OVERRIDE=0
 
 mark_done() { echo "$(date -u +%FT%TZ)" > "$DONE/$STAGE.done"; }
