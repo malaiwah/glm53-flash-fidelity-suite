@@ -322,3 +322,21 @@ at cross_check with zero recompute lost. Cost of the lesson: ~25 idle minutes,
 -> Next time (lesson 16): NEVER overwrite a script a live shell may be
    executing — atomic rename only, from the first sync of the campaign. The
    rule existed in prep; carry it everywhere.
+
+## 2026-08-27 04:20 — v1 PUBLIC; cross-pipeline validation lands perfectly
+**https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1 is
+live** — first quality reference for the model, day one, with suite, BF16
+shard-0, shared head, and every receipt. Cross-check v2 (hash-verified pairing
+against brandonmusic's independent fp32 teacher): **mean KLD 1.27e-2, top-1
+0.9665, offset audit 0.966@0 vs 0.016@±1** (alignment perfect). The three
+noise numbers nest exactly as the autotune mechanism predicts:
+8.7e-4 (same-pipeline recapture) < 1.27e-2 (cross-pipeline) ~ 1.49e-2
+(live-vs-replay) — the runtime's launch variance explains everything; both
+pipelines exonerated. Also: second unpinned launch-pair measured 25/32
+identical (vs 20/32) — winner-lottery rate wobbles as predicted. Shim v1
+was shadowed by Ubuntu's own /usr/lib/python3.12/sitecustomize.py; PYTHONPATH
+delivery verified, pinned det_kpatch v2 running. Next: release HOLD -> v1 FP8
+leg -> replay -> repo update; then pinned v2 recaptures per operator mandate.
+-> Next time (lesson 17): sitecustomize is shadowed by distro copies — deliver
+   interpreter shims via PYTHONPATH dir, and assert the shim's banner in logs
+   as part of the experiment's validity check (we did; it caught the miss).
