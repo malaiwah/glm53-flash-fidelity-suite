@@ -361,7 +361,15 @@ tokens of the exllamav3 standard_cal_data corpus (pinned): per context, `layer_N
 and `layer_NNN.mlp_in` (bf16, post-norm linear inputs; mlp_in is the router + expert gate/up
 input) and `layer_NNN.router_logits` (fp32, natural top-8 routing ground truth).
 Per-expert Hessians E[xx^T], routing statistics and down-proj inputs are recomputable offline.
-Captured with vLLM TP8 eager; manifest carries sha256 per file. Preliminary v1 card.
+Captured with vLLM TP8 eager; manifest carries sha256 per file.
+
+Note: these activations are one draw from the engine-launch distribution — the
+runtime is not launch-deterministic (Triton autotune winner selection on the
+KDA kernels; see the fidelity suite's nondeterminism receipts and
+https://github.com/vllm-project/vllm/pull/53906#issuecomment-5433635837 ).
+For Hessian/routing statistics over 188K tokens this launch noise is far below
+calibration sampling noise. A pinned-env (TRITON_CACHE_AUTOTUNING) v2
+recapture is scripted in the companion repo for bit-reproducible needs.
 """
     (acts / "README.md").write_text(card2)
     api.upload_large_folder(repo_id=ds2, repo_type="dataset", folder_path=str(acts))
