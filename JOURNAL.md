@@ -574,3 +574,17 @@ LESSON 25: guards that fail fast are cheap; the expensive failure is the one
 that exits SILENTLY — audit every `cmd | tee` under set -euo pipefail.
 LESSON 26: chain launchers on `jl run status --json`, not log-footer greps —
 a footer grep zombie nearly double-launched a stage.
+
+## 2026-08-27 ~19:50 — Brandon v44 drop recalibrates the FP8 bar
+His new commit (0b2f8fea) publishes SM120 TP2 runtime + qualification: WITHIN
+his stack, FP8-as-served = 0.02463 mean KLD / top-1 93.8% (5 runs, 2,047
+positions each) vs his EXL3 4bpw 0.02455 — A WASH at 54% of the bytes; NVFP4
+= 0.0605 / 91.5% (2.5x worse, bitwise-deterministic). Also: 500k needle
+tests + decode/prefill benchmarks (dcp2+mtp3) for the SM120 serving stack —
+directly relevant to AIBeast. Note his v44 KLD set is a single window, not
+the 25-window panel (our cross-stack FP8 0.0206 was full-panel; different
+position sets). No closure files pushed; issue #1 unanswered; disclosed
+reconstruction remains the campaign path. K6 target: land well under
+0.0246-class FP8 on his panel. Campaign state: GSS prep parallelized to all
+4 GPUs (contract loop + 3 prepare workers on disjoint ranges) after operator
+spotted GPU0-only; prep ~10/42 at parallelization.
