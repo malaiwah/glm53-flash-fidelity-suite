@@ -340,3 +340,19 @@ leg -> replay -> repo update; then pinned v2 recaptures per operator mandate.
 -> Next time (lesson 17): sitecustomize is shadowed by distro copies — deliver
    interpreter shims via PYTHONPATH dir, and assert the shim's banner in logs
    as part of the experiment's validity check (we did; it caught the miss).
+
+## 2026-08-27 04:45 — Intervention test FALSIFIES single-cause autotune story
+det_kpatch v2 ran with the shim verifiably active in every process (11 banner
+prints: main + workers) — and launches STILL diverge: 20/32 byte-identical,
+same rate as unpinned pairs. The autotune winner lottery is at most a partial
+contributor. Promoted suspects: NVLS/symm_mem in-switch reduction internals
+per communicator init; cuBLAS heuristic selection. Next intervention (queued
+behind the v1 FP8 leg): stacked pins — shim + VLLM_ALLREDUCE_USE_SYMM_MEM=0 +
+NCCL algo/proto/channel pins + CUBLAS_WORKSPACE_CONFIG. The upstream follow-up
+will carry this correction; a falsified mechanism reported honestly is worth
+more than a defended one. HOLD released (evidence-based gates green): v1 FP8
+leg now running.
+-> Next time (lesson 18): circumstantial code-reading converges fast but only
+   an intervention test settles causation — budget for the intervention pair
+   from the start, and never publish "root cause" before it (our PR comment
+   said "likely root cause" — the hedge just earned its keep).
