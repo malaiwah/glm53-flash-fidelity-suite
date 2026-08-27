@@ -27,7 +27,7 @@ def main() -> int:
     ap.add_argument("--tensor-parallel", type=int, default=8)
     ap.add_argument("--engine-kwargs", default=None)
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.90)
-    ap.add_argument("--max-tokens", type=int, default=220)
+    ap.add_argument("--max-tokens", type=int, default=640)
     args = ap.parse_args()
 
     from vllm import LLM, SamplingParams
@@ -60,12 +60,23 @@ def main() -> int:
     results = []
     for prompt, out in zip(prompts, outs):
         text = out.outputs[0].text
+        think, sep, answer = text.partition("</think>")
+        has_think = bool(sep) or think.lstrip().startswith("<think>")
+        visible = answer.strip() if sep else text.strip()
         results.append({"prompt": prompt[:120], "completion": text,
+                        "answer_excerpt": visible[:500],
+                        "has_think_block": has_think,
+                        "think_chars": len(think) if sep else 0,
+                        "answer_chars": len(visible),
                         "tokens": len(out.outputs[0].token_ids),
                         "degenerate": degenerate(text)})
         print("=" * 70)
         print("PROMPT:", prompt[:120].replace("\n", " "))
-        print("COMPLETION:", text[:600])
+        if sep:
+            print("THINK (first 300):", think[:300].replace("\n", " "))
+            print("ANSWER:", visible[:500])
+        else:
+            print("COMPLETION:", text[:600])
 
     receipt = {
         "schema": "glm53flash-gen-check/1",
@@ -74,6 +85,8 @@ def main() -> int:
         "results": results,
         "pass": all(not r["degenerate"] for r in results),
         "paris_mentioned": "Paris" in results[0]["completion"],
+        "chat_answered_after_think": (results[-1]["answer_chars"] > 30
+                                      if chat_rendered is not None else None),
     }
     Path(args.out).write_text(json.dumps(receipt, indent=2))
     print("GEN_CHECK " + json.dumps({"pass": receipt["pass"],
