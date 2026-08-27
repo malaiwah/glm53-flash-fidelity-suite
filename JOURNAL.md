@@ -404,3 +404,18 @@ Also extracted per operator's last call: per-tensor stats sweep (38,770 BF16 +
 FP8 tensors: norms/absmax/row-col spreads) for future EXL3/MLX bit-allocation
 design, and the complete FP8 weight_scale_inv map (zai's quantization recipe,
 ~80 MB) — the key to explaining WHERE the 0.0281 lives.
+
+## 2026-08-27 ~12:30 — Community handshake + K6 program pivot
+Lab daily-summary intel: brandonmusic shipped the FIRST EXL3 of glm5_next
+(4bpw, KLD 0.0245 on his sealed windows, five bitwise-identical cold runs on
+his transformers TP2 stack — deterministic where vLLM is not) with the full
+pipeline PUBLIC; a working SM120 image exists (chriswritescode-dev) — the
+RTX-6000-Pro path is alive; the "DERISKED" NVFP4 was confirmed grift.
+Posted discussion #1 on his quant page: cross-stack validation numbers, all
+links, and the co-credited proposal (his 4bpw scored on our 10.48M suite +
+a K6 via his pipeline). K6-on-AIBeast math: K6 weights ~246 GiB on TP4's
+384 GiB leaves ~106 GiB; the 11-MLA/34-linear design needs only ~3.3 GiB of
+fp8 KV for 512K context — K6 fits with ~30x margin; K5 unnecessary; fp8 KV is
+the Blackwell-native path. Forge (spot, preempted once and resumed) staging
+Brandon's pipeline + pinned exllamav3 + SM120 ref; port workflow continues as
+the stock-ecosystem track.
