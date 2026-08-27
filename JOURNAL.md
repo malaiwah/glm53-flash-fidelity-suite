@@ -236,3 +236,19 @@ guards (capture/gen_check skip on existing receipts).
    architecture, not an assumption — design the sentinel stage as
    measure-then-gate from day one, and try deterministic-kernel env knobs
    (a v2 rerun with them would tighten the floor).
+
+## 2026-08-27 02:35 — Attribution correction + divergence investigation launched
+Correction to the 02:05 entry: the byte-identical control (Qwen3-0.6B) ran at
+TP=1 with no KDA, no DSA, no MoE — so "glm5_next-specific" was over-attributed.
+The confounded variables: architecture kernels AND tensor-parallel AND model
+scale. New ranked suspects for CROSS-LAUNCH divergence: (1) Triton @autotune on
+the KDA/FLA chunk kernels — autotuning benchmarks per process, so two engine
+loads can select different kernel configs -> different accumulation order;
+(2) NCCL algorithm/protocol selection per communicator init at TP=8;
+(3) cuBLAS/cuBLASLt heuristic algo selection per launch; (4) DSA indexer top-k
+tie-breaks as an AMPLIFIER of upstream bf16 noise rather than a root cause.
+Two agents dispatched: community-sightings sweep + source analysis of the
+PR-branch kernels, with a deterministic-rerun env recipe as the deliverable.
+-> Next time (lesson 14): controls must vary ONE thing — run the smoke model
+   at the same TP as the subject (a 0.6B at TP=8 is silly but free, and it
+   would have isolated TP from architecture tonight).
