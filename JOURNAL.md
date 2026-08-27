@@ -190,3 +190,18 @@ request: every entry now records status AND what to do better next time.
 10. **Start the captain's log at hour zero, not hour five.** Backfilling is
     lossy; the discipline is the point. (This ledger exists because the
     operator asked — next campaign it exists from entry one.)
+
+## 2026-08-27 01:44 — Utilization review (operator's question)
+Restore flowing at ~0.85 GB/s. Expected GPU utilization during capture legs:
+10-20% BY DESIGN — max_num_seqs=1 sequential eager capture is the v5 protocol;
+batching would multiply throughput but change bf16 numerics and break byte-
+reproducibility + v5 parity. The 8x H200 is rented for its 1.13 TB VRAM (85%
+utilized by BF16), not FLOPs. Optimized: prep off-meter, rank-0-only IPC,
+FP8 pre-staged, piggybacked activations/cross-check. Declined (risk > reward
+tonight): writer-thread overlap, dual-engine sharding, 4x downsize for FP8 leg.
+Protocol purity costs ~$100-150 vs a hypothetical optimized harness; the
+receipts are the product.
+-> Next time (lesson 11): build a BATCHED capture mode for candidate-scoring
+   campaigns — once the reference exists, scoring many quants is throughput-
+   bound and the protocol can relax (document the numerics delta once,
+   batch forever after).
