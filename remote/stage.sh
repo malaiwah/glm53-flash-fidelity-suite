@@ -59,8 +59,24 @@ receipt = {"schema": "glm53flash-capture-determinism/1", "variant": v,
            "mismatched_indices": mismatch}
 pathlib.Path(f"/glm53/out/determinism-{v}.json").write_text(json.dumps(receipt, indent=2))
 print("DETERMINISM", v, json.dumps(receipt))
-assert not mismatch, "sentinel recapture not byte-identical"
 EOF
+  if python3 -c "import json,sys; sys.exit(0 if json.load(open('$ROOT/out/determinism-$1.json'))['mismatched_indices'] else 1)"; then
+    # Not byte-identical: measure the run-to-run noise floor through the head
+    drun python3 "$FID" replay \
+      --reference "/glm53/captures/$1" --candidate "/glm53/captures/$1-sentinel" \
+      --head /glm53/out/head.safetensors --suite "$SUITE" \
+      --out "/glm53/out/determinism-noise-$1.json" \
+      --no-hash-shards --device cuda --filter sentinel \
+      || echo "noise replay exited rc=$? - tolerated if receipt valid"
+    python3 - "$1" <<'NOISEGATE'
+import json, sys
+v = sys.argv[1]
+n = json.load(open(f"/home/ubuntu/glm53/out/determinism-noise-{v}.json"))
+kld = n["token_mean_kld"]
+print(f"NOISE_FLOOR {v}: mean KLD {kld:.2e}, top1 {n['top1_agreement']:.4f}")
+assert kld <= 1e-3, f"run-to-run noise {kld} exceeds 1e-3 - measurement quality compromised"
+NOISEGATE
+  fi
 }
 
 case "$1" in

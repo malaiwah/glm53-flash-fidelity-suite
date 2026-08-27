@@ -43,9 +43,11 @@ if [ ! -d "$ROOT/models/bf16" ]; then
 fi
 cp -a "$FS/out/." "$ROOT/out/" 2>/dev/null || true   # heads + equality receipt from prep
 
-run_stage gen_check
+[ -f "$ROOT/out/gen-check.json" ] || run_stage gen_check
 
 # ---- BF16 leg with in-flight pace probe
+bf16_done() { python3 -c "import json;m=json.load(open('$ROOT/captures/bf16/capture-manifest.json'));exit(0 if m['complete'] else 1)" 2>/dev/null; }
+if bf16_done; then PACE_OK=1; CAP_PID=""; else
 bash "$S" capture_bf16 &
 CAP_PID=$!
 PACE_OK=""
@@ -72,8 +74,9 @@ if [ "$PACE_OK" = "0" ]; then
   CAP_PID=$!
 fi
 wait $CAP_PID || { ntfy "capture_bf16 failed; spent \$$(spent)" "GLM53 PIPELINE HALTED at capture_bf16" "rotating_light" "urgent"; exit 1; }
+fi
 
-run_stage sentinel_bf16
+[ -f "$ROOT/out/determinism-bf16.json" ] || run_stage sentinel_bf16
 run_stage qualify_bf16
 run_stage activations
 if [ -d "$FS/crosscheck/bm-teacher-logits" ]; then
