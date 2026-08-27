@@ -292,6 +292,27 @@ if he.is_file():
     h = json.loads(he.read_text())
     card_lines.append(f"- **Head equality**: FP8 repo lm_head/final-norm byte-identical to BF16: "
                       f"{h['head_equal']}/{h['final_norm_equal']} - one shared head scores both.")
+nd_lines = ["", "## Known issue: run-to-run nondeterminism (first report)", "",
+"glm5_next inference under the day-one vLLM image is NOT deterministic across",
+"engine launches (it IS stable within one launch): 12/32 sentinel contexts",
+"recaptured in a fresh engine load differ bytewise; measured noise floor",
+"8.7e-4 mean KLD / top-1 0.9946 through the shared head (see",
+"reports/determinism-bf16.json + determinism-noise-bf16.json). Live-vs-replay",
+"(a third launch, through the model) bounds at ~1.5e-2 (reports/qualify-*.json).",
+"Root cause traced to per-process Triton autotune winner selection on the",
+"vendored FLA/KDA chunk kernels (two kernels change fp32 reduction splits with",
+"config choice), amplified by DSA index_topk membership flips; all-reduce",
+"dispatch verified identical across launches. Lineage: fla-org",
+"flash-linear-attention#945, triton-lang/triton#9368; details + receipts:",
+"https://github.com/vllm-project/vllm/pull/53906#issuecomment-5433635837 and",
+"the JOURNAL in https://github.com/malaiwah/glm53-flash-fidelity-suite .",
+"Consequence for THIS dataset: the paired FP8-vs-BF16 comparison shares the",
+"replay path on both operands and carries only the 8.7e-4 capture floor;",
+"absolute as-served claims carry the ~1.5e-2 bound. Deterministic rerun",
+"recipe (v2): TRITON_CACHE_AUTOTUNING=1 with persistent TRITON_CACHE_DIR, or",
+"pin the vendored FLA autotune lists to one num_warps=2 config.",
+""]
+card_lines += nd_lines
 cc = root / "out/crosscheck-brandonmusic.json"
 if cc.is_file():
     c = json.loads(cc.read_text())
