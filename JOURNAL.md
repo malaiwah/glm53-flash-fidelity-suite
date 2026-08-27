@@ -306,3 +306,19 @@ lineage links, mitigations, offer to confirm). Dataset card generator now
 carries a "Known issue: run-to-run nondeterminism (first report)" section with
 the receipts, the paired-vs-absolute interpretation, and the v2 deterministic
 recipe — the finding ships with the data, reproducibly.
+
+## 2026-08-27 03:35 — Self-inflicted halt: torn read of a live script (data unharmed)
+Activations stage "failed" rc=2 — but the capture itself was PERFECT (92/92
+contexts, 147 GB, 478 s). Root cause: supervisor error — I scp'd stage.sh over
+the same inode while the pipeline's bash was executing it; bash reads scripts
+incrementally by byte offset and hit a torn old/new hybrid ("syntax error near
+card2"). Every edit had passed bash -n locally; the file was fine, the RUNNING
+READER wasn't. The prep phase's bundle.new atomic swap existed precisely for
+this and I bypassed it on the 8x all night without consequence — until now.
+Fixed: all script syncs now scp-to-.new + mv (new inode; running bash keeps
+its old fd). Pipeline launch 3 (r_d592c1bc) with full resume guards — resumes
+at cross_check with zero recompute lost. Cost of the lesson: ~25 idle minutes,
+~$13.
+-> Next time (lesson 16): NEVER overwrite a script a live shell may be
+   executing — atomic rename only, from the first sync of the campaign. The
+   rule existed in prep; carry it everywhere.
