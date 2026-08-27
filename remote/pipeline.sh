@@ -77,9 +77,10 @@ wait $CAP_PID || { ntfy "capture_bf16 failed; spent \$$(spent)" "GLM53 PIPELINE 
 fi
 
 [ -f "$ROOT/out/determinism-bf16.json" ] || run_stage sentinel_bf16
-run_stage qualify_bf16
-run_stage activations
-if [ -d "$FS/crosscheck/bm-teacher-logits" ]; then
+[ -f "$ROOT/out/qualify-bf16.json" ] || run_stage qualify_bf16
+acts_done() { python3 -c "import json;m=json.load(open('$ROOT/activations/bf16-cal/activation-manifest.json'));exit(0 if m['complete'] else 1)" 2>/dev/null; }
+acts_done || run_stage activations
+if [ -d "$FS/crosscheck/bm-teacher-logits" ] && [ ! -f "$ROOT/out/crosscheck-brandonmusic.json" ]; then
   [ -d "$ROOT/crosscheck" ] || cp -a "$FS/crosscheck" "$ROOT/crosscheck"
   run_stage cross_check
 fi
