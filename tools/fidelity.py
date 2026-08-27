@@ -1131,6 +1131,7 @@ def cmd_qualify(args) -> int:
     if want_shards:
         identity_keys.append("shard_sha256")
     for key in identity_keys:
+        if hidden_identity.get(key) != live_identity.get(key):
             raise SystemExit(
                 f"qualification model does not match hidden capture identity: {key}"
             )
