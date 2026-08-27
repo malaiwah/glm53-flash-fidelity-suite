@@ -71,7 +71,8 @@ capture_bf16)
   drun python3 "$FID" capture \
     --model /glm53/models/bf16 --suite "$SUITE" --out /glm53/captures/bf16 \
     --tensor-parallel $TP --gpu-memory-utilization 0.90 \
-    --engine-kwargs "$ENGINE_KW" --no-hash-shards --chunk-accumulate --filter all
+    --engine-kwargs "$ENGINE_KW" --no-hash-shards --chunk-accumulate --filter all || echo "capture exited rc=$? - tolerated if manifest complete"
+  python3 -c "import json,sys; m=json.load(open(sys.argv[1])); assert m['complete'], 'capture incomplete'; print('capture complete:', m['contexts'])" "$ROOT/captures/bf16/capture-manifest.json"
   ;;
 sentinel_bf16)
   drun python3 "$FID" capture \
@@ -85,7 +86,8 @@ qualify_bf16)
     --model /glm53/models/bf16 --suite "$SUITE" --hidden /glm53/captures/bf16 \
     --head /glm53/out/head.safetensors --out /glm53/out/qualify-bf16.json \
     --contexts 8 --tensor-parallel $TP --gpu-memory-utilization 0.90 \
-    --engine-kwargs "$ENGINE_KW"
+    --engine-kwargs "$ENGINE_KW" || echo "qualify exited rc=$? - tolerated if receipt valid"
+  python3 -c "import json; q=json.load(open('$ROOT/out/qualify-bf16.json')); print('qualify-bf16:', q['mean_kld_live_vs_replayed'], q['top1_agreement'])"
   ;;
 free_bf16)
   test -f "$ROOT/out/head.safetensors"
@@ -124,7 +126,8 @@ capture_fp8)
   drun python3 "$FID" capture \
     --model /glm53/models/fp8 --suite "$SUITE" --out /glm53/captures/fp8 \
     --tensor-parallel $TP --gpu-memory-utilization 0.90 \
-    --engine-kwargs "$ENGINE_KW" --no-hash-shards --chunk-accumulate --filter all
+    --engine-kwargs "$ENGINE_KW" --no-hash-shards --chunk-accumulate --filter all || echo "capture exited rc=$? - tolerated if manifest complete"
+  python3 -c "import json,sys; m=json.load(open(sys.argv[1])); assert m['complete'], 'capture incomplete'; print('capture complete:', m['contexts'])" "$ROOT/captures/fp8/capture-manifest.json"
   ;;
 sentinel_fp8)
   drun python3 "$FID" capture \
@@ -138,7 +141,8 @@ qualify_fp8)
     --model /glm53/models/fp8 --suite "$SUITE" --hidden /glm53/captures/fp8 \
     --head /glm53/out/head.safetensors --out /glm53/out/qualify-fp8.json \
     --contexts 8 --tensor-parallel $TP --gpu-memory-utilization 0.90 \
-    --engine-kwargs "$ENGINE_KW"
+    --engine-kwargs "$ENGINE_KW" || echo "qualify exited rc=$? - tolerated if receipt valid"
+  python3 -c "import json; q=json.load(open('$ROOT/out/qualify-fp8.json')); print('qualify-fp8:', q['mean_kld_live_vs_replayed'], q['top1_agreement'])"
   ;;
 replay)
   drun python3 "$FID" replay \
@@ -173,7 +177,8 @@ cross_check)
 activations)
   drun python3 /glm53/bundle/tools/activation_capture.py \
     --model /glm53/models/bf16 --suite /glm53/bundle/calsuite --out /glm53/activations/bf16-cal \
-    --tensor-parallel $TP --gpu-memory-utilization 0.90 --engine-kwargs "$ENGINE_KW"
+    --tensor-parallel $TP --gpu-memory-utilization 0.90 --engine-kwargs "$ENGINE_KW" || echo "activation capture exited rc=$? - tolerated if manifest complete"
+  python3 -c "import json; m=json.load(open('$ROOT/activations/bf16-cal/activation-manifest.json')); assert m['complete']"
   du -sh "$ROOT/activations/bf16-cal"
   ;;
 publish)

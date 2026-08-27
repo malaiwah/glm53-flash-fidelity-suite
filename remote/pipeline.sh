@@ -82,7 +82,10 @@ fi
 # FP8 weights were pre-downloaded to the FS by prep; copy while gates verify
 if [ ! -d "$ROOT/models/fp8" ]; then time cp -a "$FS/models/fp8" "$ROOT/models/fp8"; fi
 
-run_stage free_bf16          # numeric qualify + determinism gates enforced inside
+if ! bash "$S" free_bf16; then
+  hold "qualify-gate" "G3 numeric gates failed (qualify KLD / determinism) - supervisor review before BF16 delete"
+  bash "$S" free_bf16 || { ntfy "free_bf16 failed again after hold release" "GLM53 PIPELINE HALTED" "rotating_light" "urgent"; exit 1; }
+fi
 
 # ---- FP8 leg (budget-gated)
 if [ "$(python3 -c "print(1 if $(remaining) >= 70 else 0)")" = "1" ] && [ ! -e "$ROOT/DECISION.skip_fp8" ]; then
