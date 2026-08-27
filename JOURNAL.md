@@ -538,3 +538,17 @@ author's GitHub before writing patches; three of seven dissolved on fetch.
 LESSON 24: sealed "external closure" deps (content-hash-pinned local files)
 are the real long pole — hunt them across ALL the author's repos before
 designing reconstruction, and just ask the author early.
+
+## 2026-08-27 ~19:00 — Reconstruction ACTIVATED (operator), publication sweep
+Operator decisions: (1) keep Brandon's calibration+teacher for this program
+(comparability is the product; our activations dataset stays the base for
+future native-exl3/MLX paths; K6 also gets scored on OUR 10.48M suite as a
+second yardstick); (2) reconstruction ACCEPTED — RECONSTRUCTION-ACCEPTED.json
+authored on verbatim operator instruction, fallback staged to fs, issue #1
+updated transparently with the public code link; (3) "publish all our work"
+→ k6/ bundle pushed to the repo, front-page README written (repo had NONE —
+findability hole), HF card gained a related-work index. Prestage download
+(~505 GB calibration+teacher → fs) running on the L4.
+Public map now: GitHub repo (tools/remote/k6/port/JOURNAL+README), HF
+fidelity dataset + activations dataset, vLLM PR comments, HF discussion #1,
+GitHub issue #1. P0 rental launches when prestage lands.
