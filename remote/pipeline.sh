@@ -43,6 +43,8 @@ if [ ! -d "$ROOT/models/bf16" ]; then
 fi
 cp -a "$FS/out/." "$ROOT/out/" 2>/dev/null || true   # heads + equality receipt from prep
 
+run_stage gen_check
+
 # ---- BF16 leg with in-flight pace probe
 bash "$S" capture_bf16 &
 CAP_PID=$!

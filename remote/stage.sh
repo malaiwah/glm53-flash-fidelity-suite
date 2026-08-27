@@ -67,6 +67,22 @@ case "$1" in
 extract_head)
   drun python3 /glm53/bundle/remote/extract_head.py --model /glm53/models/bf16 --out /glm53/out
   ;;
+gen_check)
+  drun python3 /glm53/bundle/tools/gen_check.py \
+    --model /glm53/models/bf16 --out /glm53/out/gen-check.json \
+    --tensor-parallel $TP --gpu-memory-utilization 0.90 \
+    --engine-kwargs "$ENGINE_KW" || echo "gen_check exited rc=$? - tolerated if receipt valid"
+  python3 - <<'GENSUM'
+import json
+r = json.load(open("/home/ubuntu/glm53/out/gen-check.json"))
+assert r["pass"], "gen_check receipt says degenerate output"
+snippet = r["results"][-1]["completion"][:350].replace("\n", " ")
+print("GEN_CHECK_GREEN paris=", r["paris_mentioned"])
+open("/home/ubuntu/glm53/out/gen-snippet.txt", "w").write(snippet)
+GENSUM
+  curl -s -m 10 -H "Title: GLM53 speaks (gen_check green)" -H "Tags: speech_balloon" \
+       --data-binary @/home/ubuntu/glm53/out/gen-snippet.txt "$NTFY_URL" >/dev/null 2>&1 || true
+  ;;
 capture_bf16)
   drun python3 "$FID" capture \
     --model /glm53/models/bf16 --suite "$SUITE" --out /glm53/captures/bf16 \

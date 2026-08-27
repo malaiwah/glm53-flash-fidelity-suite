@@ -35,7 +35,8 @@ if [ "${DRIVER_MAJOR:-0}" -lt 580 ]; then
 fi
 if [ -f /home/jl_fs/glm53/image/vllm-glm53.tar ]; then
   echo "=== loading image from filesystem tarball ==="
-  sudo docker load -i /home/jl_fs/glm53/image/vllm-glm53.tar
+  LOADED=$(sudo docker load -i /home/jl_fs/glm53/image/vllm-glm53.tar | awk '/Loaded image/ {print $NF}' | tail -1)
+  IMAGE_REF="$LOADED"   # docker save strips repo digests; run by image ID
 else
   echo "=== pulling pinned image $IMAGE_REF ==="
   sudo docker pull "$IMAGE_REF"
