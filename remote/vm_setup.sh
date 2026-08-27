@@ -33,8 +33,13 @@ if [ "${DRIVER_MAJOR:-0}" -lt 580 ]; then
   echo "driver $DRIVER_MAJOR < 580: falling back to cu129 image variant"
   IMAGE_REF="vllm/vllm-openai:glm53-flash-x86_64-cu129"
 fi
-echo "=== pulling pinned image $IMAGE_REF ==="
-sudo docker pull "$IMAGE_REF"
+if [ -f /home/jl_fs/glm53/image/vllm-glm53.tar ]; then
+  echo "=== loading image from filesystem tarball ==="
+  sudo docker load -i /home/jl_fs/glm53/image/vllm-glm53.tar
+else
+  echo "=== pulling pinned image $IMAGE_REF ==="
+  sudo docker pull "$IMAGE_REF"
+fi
 sudo docker inspect --format '{{.Id}} {{.RepoDigests}}' "$IMAGE_REF" | tee "$ROOT/out/image-pin.txt"
 
 echo "=== hf download venv (host) ==="

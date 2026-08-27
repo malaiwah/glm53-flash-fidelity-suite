@@ -40,8 +40,11 @@ download_fp8)
   ;;
 download_smoke)
   "$HF" download Qwen/Qwen3-0.6B --local-dir "$FS/models/smoke" --max-workers 4
-  "$HF" download Qwen/Qwen3-0.6B --local-dir "$FS/models/smoke" --max-workers 4 >/dev/null  # settle
-  python3 -c "print('smoke model ready')"
+  python3 -c "
+import json, urllib.request, pathlib
+sha = json.load(urllib.request.urlopen('https://huggingface.co/api/models/Qwen/Qwen3-0.6B'))['sha']
+pathlib.Path('$FS/models/smoke/revision.txt').write_text(sha + '\n')
+print('smoke model ready, pinned', sha)"
   ;;
 image_save)
   sudo docker save -o /tmp/vllm-glm53.tar "$IMAGE_REF"
