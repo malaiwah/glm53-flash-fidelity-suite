@@ -142,7 +142,12 @@ setup)
   "$VENV/bin/pip" -q install setuptools wheel ninja packaging
   "$VENV/bin/pip" -q install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu130
   "$VENV/bin/pip" -q install "transformers==5.16.1" safetensors numpy huggingface_hub hf_transfer \
-    accelerate rich tokenizers pillow
+    accelerate rich tokenizers pillow \
+    "pydantic==2.5.3" "formatron==0.5.0" kbnf
+  # flash-attn: exllamav3 @ the pin hard-imports it; no torch2.11 wheel exists,
+  # the cu13torch2.10 wheel is ABI-compatible (proven on the L4, DECISIONS 5)
+  "$VENV/bin/python" -c "import flash_attn" 2>/dev/null || "$VENV/bin/pip" -q install \
+    "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
   # exllamav3 pinned checkout, tracked tree must stay clean (verify_exllamav3_source),
   # so build in-place; the extension binary is untracked and therefore allowed.
   if [ ! -d "$EXL3/.git" ]; then
