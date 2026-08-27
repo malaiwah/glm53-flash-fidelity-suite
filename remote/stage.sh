@@ -33,6 +33,7 @@ drun() {  # drun <entrypoint> [args...]
   sudo docker run --rm -i --gpus all --ipc=host --shm-size=64g \
     -v "$ROOT:/glm53" \
     -e NVIDIA_TF32_OVERRIDE=0 \
+    -e VLLM_ALLOW_INSECURE_SERIALIZATION=1 \
     -e VLLM_ENGINE_READY_TIMEOUT_S=3600 \
     -e VLLM_WORKER_MULTIPROC_METHOD=spawn \
     -e VLLM_LOGGING_LEVEL=INFO \

@@ -20,6 +20,7 @@ drun() {  # docker run against the FILESYSTEM mount
   sudo docker run --rm -i --gpus all --ipc=host --shm-size=16g \
     -v "$FS:/glm53" -v "$ROOT/bundle:/glm53/bundle:ro" \
     -e NVIDIA_TF32_OVERRIDE=0 -e HF_HUB_OFFLINE=1 \
+    -e VLLM_ALLOW_INSECURE_SERIALIZATION=1 \
     --entrypoint "$ep" "$IMAGE_REF" "$@"
 }
 HF="$ROOT/hfenv/bin/hf"
