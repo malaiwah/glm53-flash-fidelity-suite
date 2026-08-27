@@ -424,6 +424,51 @@ assert receipt["confirmed"], "pinned runs NOT byte-identical - fix not confirmed
 DETRECEIPT
   ntfy "Triton-cache pin CONFIRMED: fresh launches byte-identical on all sentinels (receipt: determinism-pinned-bf16.json)" "GLM53 determinism fix confirmed" "white_check_mark"
   ;;
+det_kpatch)
+  # Kernel-patch confirmation: single-config autotune shim (no cache), two
+  # fresh launches must capture byte-identical sentinels from launch one.
+  test -d "$ROOT/models/bf16"
+  mkdir -p "$ROOT/detpin"
+  SITE=/usr/local/lib/python3.12/dist-packages/sitecustomize.py
+  for run in runP1 runP2; do
+    sudo docker run --rm -i --gpus all --ipc=host --shm-size=64g \
+      -v "$ROOT:/glm53" \
+      -v "$ROOT/bundle/tools/pin_autotune_sitecustomize.py:$SITE:ro" \
+      -e TRITON_PRINT_AUTOTUNING=1 \
+      -e NVIDIA_TF32_OVERRIDE=0 -e VLLM_ENGINE_READY_TIMEOUT_S=3600 \
+      -e VLLM_WORKER_MULTIPROC_METHOD=spawn -e VLLM_LOGGING_LEVEL=INFO \
+      -e HF_HUB_OFFLINE=1 -e VLLM_ALLOW_INSECURE_SERIALIZATION=1 \
+      --entrypoint python3 "$IMAGE_REF" /glm53/bundle/tools/fidelity.py capture \
+      --model /glm53/models/bf16 --suite /glm53/bundle/suite --out "/glm53/detpin/$run" \
+      --tensor-parallel $TP --gpu-memory-utilization 0.90 \
+      --engine-kwargs "$ENGINE_KW" --no-hash-shards --chunk-accumulate --filter sentinel \
+      > "$ROOT/logs/detpin-$run.log" 2>&1 || echo "det_kpatch $run rc=$? - tolerated if manifest complete"
+    grep -c "pin_autotune" "$ROOT/logs/detpin-$run.log" || true
+    python3 -c "import json; assert json.load(open('$ROOT/detpin/$run/capture-manifest.json'))['complete'], '$run incomplete'"
+    echo "det_kpatch $run complete"
+  done
+  python3 - <<'KPRECEIPT'
+import json, pathlib
+root = pathlib.Path("/home/ubuntu/glm53")
+runs = {}
+for run in ("runP1", "runP2"):
+    man = json.loads((root / f"detpin/{run}/capture-manifest.json").read_text())
+    runs[run] = {r["index"]: r["sha256"] for r in man["captures"]}
+match = [i for i in runs["runP1"] if runs["runP1"][i] == runs["runP2"].get(i)]
+shim = sum("pin_autotune] Triton autotune pinned" in (root / f"logs/detpin-{r}.log").read_text(errors="ignore")
+           for r in ("runP1", "runP2"))
+receipt = {"schema": "glm53flash-determinism-kernelpin/1",
+           "pin": "sitecustomize single-config Triton autotune (prefer num_warps=2)",
+           "sentinels": len(runs["runP1"]),
+           "runP1_vs_runP2_byte_identical": len(match),
+           "shim_active_in_logs": shim,
+           "confirmed": len(match) == len(runs["runP1"]) and len(runs["runP1"]) > 0}
+(root / "out/determinism-kernelpin-bf16.json").write_text(json.dumps(receipt, indent=2))
+print("DET_KPATCH", json.dumps(receipt))
+assert receipt["confirmed"], "kernel-pinned runs NOT byte-identical"
+KPRECEIPT
+  ntfy "Kernel-pin (single-config autotune shim) CONFIRMED byte-identical across launches" "GLM53 kernel patch confirmed" "white_check_mark"
+  ;;
 env_receipt)
   drun python3 - <<'EOF'
 import json, subprocess, torch, vllm
