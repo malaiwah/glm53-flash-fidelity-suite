@@ -487,7 +487,7 @@ Rental: `jl create --gpu H200 --num-gpus 1 --spot --region IN2 --storage 100 --f
 
 Repos (exact names, decided):
 
-* Weights: **`malaiwah/GLM-5.3-Flash-EXL3-K6`** and **`malaiwah/GLM-5.3-Flash-EXL3-K6K8-mixed`**
+* Weights: **`malaiwah/GLM-5.3-Flash-TR3-6bpw`** and **`malaiwah/GLM-5.3-Flash-TR3-6bpwK8-mixed`**
   — each carrying `quantization/recipe.json` (from `recipes/`), `provenance/
   source-model-revision.json` (zai-org/GLM-5.3-Flash-BF16 @ a6c167b6, weight_dtype
   bfloat16, sealed), `receipts/checkpoint.json` publication gate (K6: his schema

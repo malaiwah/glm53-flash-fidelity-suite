@@ -59,6 +59,14 @@
    reproducibility record; (b) the K6 and K8 PAYLOAD STORES (~254+338 GB)
    as a public parts-bin dataset so anyone can do offline mixed-precision
    assembly (K6K8 "where it counts") without GPUs. Naming:
-   malaiwah/GLM-5.3-Flash-EXL3-K6 + -K8 (models),
-   malaiwah/GLM-5.3-Flash-EXL3-partsbin-v1 (dataset: payloads + prep +
+   malaiwah/GLM-5.3-Flash-TR3-6bpw + -K8 (models),
+   malaiwah/GLM-5.3-Flash-TR3-partsbin-v1 (dataset: payloads + prep +
    receipts). All cards cross-link the fidelity suite + Brandon's pipeline.
+9. NAMING (2026-08-28, operator relaying turboderp via rtx6kpro discord): do
+   NOT name the quants "EXL3" — they are not stock-exllamav3-loadable (no
+   glm5_next arch upstream). Family name = TR3 (the trellis/MCG codec, per
+   the GLM-5.2 TR3 lineage and Brandon's own recipe "EXL3/TR3 MCG"). Repos:
+   malaiwah/GLM-5.3-Flash-TR3-6bpw, -TR3-8bpw, -TR3-partsbin-v1. Cards
+   credit exllamav3 kernels + Brandon's pipeline/runtime and state the
+   codec-vs-runtime distinction plainly. GG/SIQ rejected: they name serving
+   stacks, not the artifact format.

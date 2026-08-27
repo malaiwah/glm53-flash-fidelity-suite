@@ -775,20 +775,20 @@ upload_weights)
   test -f "$ROOT/cards/K6-README.md" \
     || { echo "README card missing at $ROOT/cards/K6-README.md - author it before upload_weights (RUNBOOK P4)" >&2; exit 1; }
   "$PY" "$TOOLS/k6_publish.py" weights \
-    --checkpoint "$CKPT_K6" --repo malaiwah/GLM-5.3-Flash-EXL3-K6 \
+    --checkpoint "$CKPT_K6" --repo malaiwah/GLM-5.3-Flash-TR3-6bpw \
     --recipe "$ROOT/recipes/k6.json" --receipts "$RCPT" \
     --card "$ROOT/cards/K6-README.md"
   if [ -f "$CKPT_K8/materialization-receipt.json" ] && [ -f "$DONE/qualify_k8.done" ]; then
     test -f "$ROOT/cards/K8-README.md" \
       || { echo "README card missing at $ROOT/cards/K8-README.md - author it before the K8 upload" >&2; exit 1; }
     "$PY" "$TOOLS/k6_publish.py" weights \
-      --checkpoint "$CKPT_K8" --repo malaiwah/GLM-5.3-Flash-EXL3-K8 \
+      --checkpoint "$CKPT_K8" --repo malaiwah/GLM-5.3-Flash-TR3-8bpw \
       --recipe "$ROOT/recipes/k8.json" --receipts "$RCPT" \
       --card "$ROOT/cards/K8-README.md"
   fi
   if [ -f "$CKPT_K6K8/materialization-receipt.json" ] && [ -f "$DONE/qualify_k6k8.done" ]; then
     "$PY" "$TOOLS/k6_publish.py" weights \
-      --checkpoint "$CKPT_K6K8" --repo malaiwah/GLM-5.3-Flash-EXL3-K6K8-mixed \
+      --checkpoint "$CKPT_K6K8" --repo malaiwah/GLM-5.3-Flash-TR3-6bpwK8-mixed \
       --recipe "$ROOT/recipes/k6k8.json" --receipts "$RCPT" \
       --card "$ROOT/cards/K6K8-README.md"
   fi
