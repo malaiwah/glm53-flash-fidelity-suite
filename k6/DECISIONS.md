@@ -52,3 +52,13 @@
    admission-only (SUPPORTED_BITS+=8, recipe id/schemas, codec adapter rate,
    128-word trellis in readers/materializer schema strings). Mixed-rate
    serving relaxation stays future assembly-time work.
+8. ARCHIVE THE PREP + PARTS BIN ON HF (operator directive 2026-08-27 late):
+   P4 publishes, beyond the checkpoints: (a) per-layer preparation manifests,
+   GSS/normalization profiles, sealed contract/launch-plans/state chains,
+   K4 bridge doc, transform seed, shared-suh A/B receipt — the full
+   reproducibility record; (b) the K6 and K8 PAYLOAD STORES (~254+338 GB)
+   as a public parts-bin dataset so anyone can do offline mixed-precision
+   assembly (K6K8 "where it counts") without GPUs. Naming:
+   malaiwah/GLM-5.3-Flash-EXL3-K6 + -K8 (models),
+   malaiwah/GLM-5.3-Flash-EXL3-partsbin-v1 (dataset: payloads + prep +
+   receipts). All cards cross-link the fidelity suite + Brandon's pipeline.
