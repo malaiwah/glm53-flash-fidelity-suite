@@ -1,0 +1,55 @@
+{
+  "adapter_contract": {
+    "bits": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "closure_files": [
+      "__init__.py",
+      "r10_codec.py",
+      "trellis.py"
+    ],
+    "identity_schema": "quant-pipeline.exl3-mcg-numeric-identity.v1"
+  },
+  "cache_stats": {
+    "cache_clears": 2,
+    "factor_evictions": 5,
+    "factor_hits": 0,
+    "factor_misses": 17
+  },
+  "codebook_scale": 1.24371088,
+  "factor_cache_hit_for_shared_hessian": true,
+  "k8_is_128_word_trellis": true,
+  "lockstep_equals_serial_k6": true,
+  "lockstep_equals_serial_k8": true,
+  "nmse_by_bits": {
+    "3": 0.03587564080953598,
+    "4": 0.010373442433774471,
+    "5": 0.0034760064445436,
+    "6": 0.0016829746309667826,
+    "8": 0.0010833459673449397
+  },
+  "proxy_loss_by_bits": {
+    "3": 0.029130021884229026,
+    "4": 0.00839527111606397,
+    "5": 0.00280881152420826,
+    "6": 0.0013500342331740334,
+    "8": 0.0008636842223376716
+  },
+  "repeat_determinism": true,
+  "schema": "k6-program.r10-fallback-selftest.v1",
+  "staged_closure_sha256": {
+    "__init__.py": "fed78f2aac5938b9a5c3bbb0d8ae6febca7e5c0202d9c2a891213c2d1038e415",
+    "r10_codec.py": "c096b179eaa06c2a3373093a77ea00729d31f0191ad065ffbd297d09b0962b99",
+    "trellis.py": "2216a3709b2b361d50e78a730d82f0deb0f2fb3a35d9e98e40e1c1900fb391cd"
+  },
+  "trellis_words_per_tile": {
+    "3": 48,
+    "4": 64,
+    "5": 80,
+    "6": 96,
+    "8": 128
+  }
+}

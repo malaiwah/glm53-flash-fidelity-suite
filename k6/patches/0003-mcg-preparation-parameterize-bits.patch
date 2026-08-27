@@ -1,0 +1,134 @@
+--- a/runtime/src/quant_pipeline/campaign/glm53_mcg_preparation.py
++++ b/runtime/src/quant_pipeline/campaign/glm53_mcg_preparation.py
+@@ -54,7 +54,7 @@
+     return result
+ 
+ 
+-def _verify_selection(value: Mapping[str, Any]) -> tuple[str, str, str]:
++def _verify_selection(value: Mapping[str, Any], *, bits: int = BITS) -> tuple[str, str, str]:
+     body = copy.deepcopy(dict(value))
+     digest = body.pop("selection_sha256", None)
+     policy = value.get("policy")
+@@ -65,7 +65,7 @@
+         or digest != sha256_bytes(canonical_json(body))
+         or policy != "energy_balanced"
+         or family != "per128-grid"
+-        or value.get("bits") != 4
++        or value.get("bits") != bits
+         or value.get("global_allocator_invoked") is not False
+         or value.get("profile_source") != "public-run-qwen-fast-encode-defaults"
+         or value.get("profile_fixed_before_encoding") is not True
+@@ -193,6 +193,7 @@
+     statistics: Mapping[str, Any],
+     shared_gate_scales: Sequence[float],
+     shared_down_scales: Sequence[float],
++    bits: int = BITS,
+ ):
+     triplet = source.load_triplet(layer, expert, device=device)
+     diagonal = statistics["down_diagonal"][expert].tolist()
+@@ -218,7 +219,7 @@
+             MatrixInput(
+                 key=f"E{expert}.{projection}",
+                 projection=projection,
+-                bits=4,
++                bits=bits,
+                 weight_kn=weight.T.contiguous(),
+                 suh_sign=suh,
+                 svh_sign=svh,
+@@ -267,6 +268,7 @@
+     profile_selection: Mapping[str, Any],
+     device: str = "cuda:0",
+     chunk_rows: int = 1024,
++    bits: int = BITS,
+ ) -> dict[str, Any]:
+     """Build one immutable layer preparation from a sealed selected profile."""
+ 
+@@ -275,7 +277,7 @@
+ 
+     if layer != int(capture.layer) or _HASH.fullmatch(transform_seed_sha256) is None:
+         raise ValueError("layer/capture or transform seed differs")
+-    policy, family, selection_sha = _verify_selection(profile_selection)
++    policy, family, selection_sha = _verify_selection(profile_selection, bits=bits)
+     output = Path(output_root).resolve()
+     final_destination = output / f"layer-{layer:03d}"
+     manifest_path = final_destination / "preparation.json"
+@@ -312,6 +314,7 @@
+             source=source, layer=layer, expert=expert, device=device, policy=policy,
+             family=family, seed=transform_seed_sha256, statistics=statistics,
+             shared_gate_scales=shared_gate_scales, shared_down_scales=shared_down_scales,
++            bits=bits,
+         )
+         permutations[expert].copy_(torch.tensor(permutation, dtype=torch.int64))
+         specs.extend(FitSampleSpec.from_input(matrix.to("cpu") if False else matrix) for matrix in matrices)
+@@ -328,6 +331,7 @@
+             source=source, layer=layer, expert=expert, device=device, policy=policy,
+             family=family, seed=transform_seed_sha256, statistics=statistics,
+             shared_gate_scales=shared_gate_scales, shared_down_scales=shared_down_scales,
++            bits=bits,
+         )
+         for matrix in matrices:
+             fitter.add_fit_matrix(matrix)
+@@ -348,6 +352,7 @@
+             source=source, layer=layer, expert=expert, device=device, policy=policy,
+             family=family, seed=transform_seed_sha256, statistics=statistics,
+             shared_gate_scales=shared_gate_scales, shared_down_scales=shared_down_scales,
++            bits=bits,
+         )
+         for matrix in matrices:
+             prepared = fit.prepare_matrix(matrix)
+@@ -355,7 +360,7 @@
+             result = producer.search(
+                 PinnedGSSRequest(
+                     matrix_key=matrix.key,
+-                    bits=4,
++                    bits=bits,
+                     target=target,
+                     target_sha256=tensor_sha256(target),
+                     source_weight_identity_sha256=tensor_identity_sha256(matrix.weight_kn),
+@@ -382,7 +387,7 @@
+     save_file(
+         {"permutations": permutations, **vectors},
+         str(shard),
+-        metadata={"schema": PREPARATION_SCHEMA, "layer": str(layer), "bits": "4"},
++        metadata={"schema": PREPARATION_SCHEMA, "layer": str(layer), "bits": str(bits)},
+     )
+     decision_stats = destination / "profile-decision-statistics.safetensors"
+     save_file(
+@@ -400,7 +405,7 @@
+         "schema": PREPARATION_SCHEMA,
+         "complete": True,
+         "layer": layer,
+-        "bits": 4,
++        "bits": bits,
+         "codec_family": "exl3-mcg",
+         "policy": policy,
+         "scale_family": family,
+@@ -440,7 +445,9 @@
+     return result
+ 
+ 
+-def seal_campaign_preparation(manifests: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
++def seal_campaign_preparation(
++    manifests: Sequence[Mapping[str, Any]], *, bits: int = BITS
++) -> dict[str, Any]:
+     if not manifests:
+         raise ValueError("preparation campaign is empty")
+     layers = [int(row["layer"]) for row in manifests]
+@@ -454,7 +461,7 @@
+             or not isinstance(digest, str)
+             or digest != sha256_bytes(canonical_json(body))
+             or row.get("complete") is not True
+-            or row.get("bits") != 4
++            or row.get("bits") != bits
+             or row.get("codec_family") != "exl3-mcg"
+             or row.get("policy") != "energy_balanced"
+             or row.get("scale_family") != "per128-grid"
+@@ -481,7 +488,7 @@
+         "schema": PREPARATION_RECEIPT_SCHEMA,
+         "complete": True,
+         "layers": layers,
+-        "bits": 4,
++        "bits": bits,
+         "codec_family": "exl3-mcg",
+         "global_allocator_invoked": False,
+         "transform_seed_sha256": next(iter(transform_seeds)),

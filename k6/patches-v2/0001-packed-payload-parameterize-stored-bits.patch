@@ -1,0 +1,50 @@
+diff -ruN a/src/quant_pipeline/checkpoint/packed_payload.py b/src/quant_pipeline/checkpoint/packed_payload.py
+--- a/src/quant_pipeline/checkpoint/packed_payload.py	2026-08-27 08:53:02
++++ b/src/quant_pipeline/checkpoint/packed_payload.py	2026-08-27 09:05:51
+@@ -30,6 +30,11 @@
+ MCG_MARKER_SIGNED_INT32 = -877912083
+ _HASH = re.compile(r"[0-9a-f]{64}")
+ _PROJECTIONS = {"gate_proj", "up_proj", "down_proj"}
++# malaiwah K6 campaign: parameterized stored rate.  Upstream hardcoded 4 here
++# while the rest of the pipeline already supports SUPPORTED_BITS=(4, 6); that
++# hardcode seals every choice as bits=4 and the K6 reader/materializer then
++# reject it.  8 is admitted only for the declared K6K8 codec extension.
++_STORED_BITS = (4, 6, 8)
+ 
+ 
+ def _tensor(value: Any):
+@@ -76,6 +81,7 @@
+         expert: int,
+         projection: str,
+         choice_id: str,
++        bits: int = 4,
+         trellis: Any,
+         suh: Any,
+         svh: Any,
+@@ -90,6 +96,8 @@
+ 
+         if projection not in _PROJECTIONS:
+             raise ValueError("unknown routed expert projection")
++        if isinstance(bits, bool) or int(bits) not in _STORED_BITS:
++            raise ValueError("EXL3/MCG stored rate must be one of K4/K6/K8")
+         if _HASH.fullmatch(str(predecessor_state_hash)) is None:
+             raise ValueError("choice predecessor state must be SHA-256")
+         if _HASH.fullmatch(str(reader_abi_sha256)) is None:
+@@ -133,7 +141,7 @@
+             "expert": int(expert),
+             "projection": projection,
+             "choice_id": str(choice_id),
+-            "bits": 4,
++            "bits": int(bits),
+             "predecessor_state_hash": str(predecessor_state_hash),
+             "objects": refs,
+             "packed_hash_schema": PACKED_HASH_SCHEMA,
+@@ -188,7 +196,7 @@
+             row.get("schema") != PACKED_CHOICE_SCHEMA
+             or _HASH.fullmatch(str(expected)) is None
+             or sha256_bytes(canonical_json(unsigned)) != expected
+-            or row.get("bits") != 4
++            or row.get("bits") not in _STORED_BITS
+             or row.get("projection") not in _PROJECTIONS
+         ):
+             raise ValueError("EXL3/MCG packed-choice seal differs")

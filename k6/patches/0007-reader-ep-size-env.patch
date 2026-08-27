@@ -1,0 +1,27 @@
+--- a/runtime/src/quant_pipeline/evaluation/glm53_packed_k4_reader.py
++++ b/runtime/src/quant_pipeline/evaluation/glm53_packed_k4_reader.py
+@@ -52,7 +52,12 @@
+ 
+ BITS = 4
+ SUPPORTED_BITS = (4, 6)
+-EP_SIZE = 4
++# malaiwah K6 campaign, DISCLOSED DEVIATION: upstream pinned EP_SIZE=4 for
++# 4x B200-192GB (peak 184.8 GiB/rank); 141 GiB H200 needs EP8.  The reconstructed
++# expert install is exact under any divisor of 288, so the logits are unchanged.
++EP_SIZE = int(__import__("os").environ.get("QP_GLM53_EP_SIZE", "4"))
++if EP_SIZE not in (2, 4, 8) or NUM_EXPERTS % EP_SIZE:
++    raise ValueError("QP_GLM53_EP_SIZE must be one of 2/4/8")
+ EXPERTS_PER_RANK = NUM_EXPERTS // EP_SIZE
+ MTP_PACKED_LAYER_RECEIPT_SCHEMA = "quant-pipeline.glm53-direct-mcg-mtp-packed-layer-receipt.v1"
+ READER_BACKEND_SCHEMA = "quant-pipeline.glm53-packed-k4-offline-reader-backend.v1"
+@@ -78,7 +83,9 @@
+ 
+ def expert_range(rank: int, world_size: int = EP_SIZE) -> tuple[int, int]:
+     if world_size != EP_SIZE or isinstance(rank, bool) or rank not in range(world_size):
+-        raise ValueError("packed K4 student reader requires exactly four EP ranks")
++        raise ValueError(
++            f"packed student reader requires exactly {EP_SIZE} EP ranks (QP_GLM53_EP_SIZE)"
++        )
+     start = rank * EXPERTS_PER_RANK
+     return start, start + EXPERTS_PER_RANK
+ 

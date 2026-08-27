@@ -1,0 +1,62 @@
+diff -ruN a/src/quant_pipeline/campaign/glm53_uniform_k4.py b/src/quant_pipeline/campaign/glm53_uniform_k4.py
+--- a/src/quant_pipeline/campaign/glm53_uniform_k4.py	2026-08-27 08:53:02
++++ b/src/quant_pipeline/campaign/glm53_uniform_k4.py	2026-08-27 09:06:44
+@@ -189,26 +189,43 @@
+         raise ValueError("launch plan requires exactly four preflight GPUs")
+     workers: list[dict[str, Any]] = []
+     indices: set[int] = set()
++    classes: set[str] = set()
++    # malaiwah K6 campaign, DISCLOSED DEVIATION: upstream attests four
++    # B200/SM100 devices here.  This campaign runs four H200 (SM90) workers;
++    # both classes are admitted, the fleet must be homogeneous, and the real
++    # device name + compute capability of every worker are recorded verbatim
++    # in the sealed plan (scheduler.workers[*]) so no receipt misattests.
++    accepted = (("B200", "10.", "b200"), ("H200", "9.0", "h200"))
+     for slot, raw in enumerate(gpus):
+         if not isinstance(raw, Mapping):
+             raise ValueError("preflight GPU row is malformed")
+         index = raw.get("index")
+         name = raw.get("name")
+         capability = raw.get("compute_capability")
++        matched = None
++        for substring, prefix, worker_prefix in accepted:
++            if (
++                isinstance(name, str)
++                and substring in name
++                and isinstance(capability, str)
++                and capability.startswith(prefix)
++            ):
++                matched = worker_prefix
++                break
+         if (
+             isinstance(index, bool)
+             or not isinstance(index, int)
+             or index in indices
+-            or not isinstance(name, str)
+-            or "B200" not in name
+-            or not isinstance(capability, str)
+-            or not capability.startswith("10.")
++            or matched is None
+         ):
+-            raise ValueError("uniform K4 workers must be four distinct attested B200 devices")
++            raise ValueError(
++                "workers must be four distinct attested B200 or H200 devices"
++            )
+         indices.add(index)
++        classes.add(matched)
+         workers.append(
+             {
+-                "worker_id": f"b200-{slot}",
++                "worker_id": f"{matched}-{slot}",
+                 "physical_gpu": index,
+                 "cuda_visible_devices": str(index),
+                 "codec_device": "cuda:0",
+@@ -217,6 +234,8 @@
+                 "preflight_sha256": preflight_sha,
+             }
+         )
++    if len(classes) != 1:
++        raise ValueError("worker fleet must be one homogeneous device class")
+     return workers
+ 
+ 

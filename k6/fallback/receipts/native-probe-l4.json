@@ -1,0 +1,23 @@
+{
+  "k": 256,
+  "k6": {
+    "native_proxy_err": 0.0002770224496241268,
+    "native_trellis_sha256": "823d54ecd4450a1d3adadb1e1e07db66d9425779d7218b8025311296326abc6a",
+    "p1_repack_byte_identical": true,
+    "p2_decode_deterministic": true,
+    "p3_decode_vs_native_max_abs": 0.0035734176635742188,
+    "p3_decode_vs_native_max_rel": 0.0007692450890317559,
+    "words_per_tile": 96
+  },
+  "k8": {
+    "native_proxy_err": 2.1247410252868086e-05,
+    "native_trellis_sha256": "a68eb4a7938e07435298782b916b81f3af9263749a0e495063a4f91a9ab77107",
+    "p1_repack_byte_identical": true,
+    "p2_decode_deterministic": true,
+    "p3_decode_vs_native_max_abs": 0.0030336380004882812,
+    "p3_decode_vs_native_max_rel": 0.0006551742553710938,
+    "words_per_tile": 128
+  },
+  "n": 256,
+  "schema": "k6-program.r10-fallback-native-probe.v1"
+}

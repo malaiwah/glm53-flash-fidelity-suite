@@ -1,0 +1,14 @@
+diff -ruN a/src/quant_pipeline/campaign/glm53_uniform_k6.py b/src/quant_pipeline/campaign/glm53_uniform_k6.py
+--- a/src/quant_pipeline/campaign/glm53_uniform_k6.py	2026-08-27 08:53:02
++++ b/src/quant_pipeline/campaign/glm53_uniform_k6.py	2026-08-27 09:06:55
+@@ -120,7 +120,9 @@
+         "inventory_sha256": inventory_sha,
+         "preflight_sha256": preflight["preflight_sha256"],
+         "k4_launch_plan_sha256": k4_plan["launch_plan_sha256"],
+-        "k4_authorized_state_sha256": k4_authorized_state["state_sha256"],
++        # malaiwah fix: the K4 state receipt seals under "state_receipt_sha256"
++        # (glm53_uniform_k4.STATE_RECEIPT_SCHEMA); "state_sha256" KeyErrors.
++        "k4_authorized_state_sha256": k4_authorized_state["state_receipt_sha256"],
+         "k4_packed_kld_receipt_sha256": k4_authorized_state["evidence"][
+             "k4_packed_kld_receipt_sha256"
+         ],

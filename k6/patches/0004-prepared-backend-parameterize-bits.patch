@@ -1,0 +1,133 @@
+--- a/runtime/src/quant_pipeline/campaign/glm53_prepared_backend.py
++++ b/runtime/src/quant_pipeline/campaign/glm53_prepared_backend.py
+@@ -25,7 +25,9 @@
+     INTERMEDIATE_SIZE,
+     NUM_EXPERTS,
+     RECIPE_ID,
++    SUPPORTED_BITS,
+     EncodeRequest,
++    recipe_id_for_bits,
+ )
+ 
+ 
+@@ -114,8 +116,17 @@
+         if not self.device.startswith("cuda:") or self.chunk_rows <= 0:
+             raise ValueError("production backend requires one explicit CUDA device")
+         rate = self.contract.get("rate", {})
+-        if rate.get("allowed_bits") != [4] or rate.get("global_allocator") is not False:
+-            raise ValueError("public ShapleyMCG backend accepts only uniform K4 without allocator")
++        bits = rate.get("bits")
++        if (
++            isinstance(bits, bool)
++            or bits not in SUPPORTED_BITS
++            or rate.get("allowed_bits") != [bits]
++            or rate.get("global_allocator") is not False
++        ):
++            raise ValueError(
++                "public ShapleyMCG backend accepts only uniform K4/K6 without allocator"
++            )
++        self.bits = int(bits)
+ 
+         recipe = self.contract.get("recipe", {})
+         exllama = self.contract.get("exllama", {})
+@@ -147,13 +158,13 @@
+         recipe = self.contract.get("recipe", {})
+         result = {
+             "schema": BACKEND_SCHEMA,
+-            "recipe_id": RECIPE_ID,
++            "recipe_id": recipe_id_for_bits(self.bits),
+             "codec_family": "exl3-mcg",
+             "codec_class": "r7_encoder.r10_codec.R10TrellisCodec",
+             "public_codec_adapter": "Exl3MCGCodec",
+             "mcg_multiplier_hex": "0xCBAC1FED",
+             "mcg_marker_signed_int32": MCG_MARKER_SIGNED_INT32,
+-            "bits": 4,
++            "bits": self.bits,
+             "candidate_rate_grid": False,
+             "global_allocator": False,
+             "prepared_source_tree_sha256": recipe.get("tree_sha256"),
+@@ -187,7 +198,7 @@
+             manifest.get("schema") != PREPARATION_SCHEMA
+             or manifest.get("complete") is not True
+             or manifest.get("layer") != layer
+-            or manifest.get("bits") != 4
++            or manifest.get("bits") != self.bits
+             or manifest.get("codec_family") != "exl3-mcg"
+             or manifest.get("policy") != "energy_balanced"
+             or manifest.get("scale_family") != "per128-grid"
+@@ -286,7 +297,9 @@
+             cursor = stop
+         value = accumulator.finalize(self.adapter.sigma_reg, add_damping=False)
+         evidence = {
+-            "construction": "decoded-k4-candidate-conditioned-routed-p2-uncentered-second-moment-v1",
++            "construction": (
++                f"decoded-k{self.bits}-candidate-conditioned-routed-p2-uncentered-second-moment-v1"
++            ),
+             "rows": value.rows,
+             "documents": int(np.unique(routed.document_epochs).size),
+             "weight_sum": float(value.weight_sum),
+@@ -310,7 +323,7 @@
+     ) -> dict[str, Any]:
+         provenance = {
+             "source_payload_sha256": _raw_payload_sha256(request.source_weights[projection]),
+-            "public_shapleymcg_uniform_k4": True,
++            f"public_shapleymcg_uniform_k{self.bits}": True,
+             "global_allocator": False,
+         }
+         provenance.update(dict(extra or {}))
+@@ -320,7 +333,7 @@
+             ),
+             "weight_hf": weight,
+             "covariance": covariance,
+-            "bits": (4,),
++            "bits": (self.bits,),
+             "suh": suh,
+             "svh": svh,
+             "sigma_reg": self.adapter.sigma_reg,
+@@ -444,8 +457,10 @@
+         prepared_rows: list[dict[str, Any]] = []
+         gate_up_requests: list[Mapping[str, Any]] = []
+         for request in requests:
+-            if request.bits != 4 or request.expert not in range(NUM_EXPERTS):
+-                raise ValueError("public ShapleyMCG backend accepts fixed-K4 experts only")
++            if request.bits != self.bits or request.expert not in range(NUM_EXPERTS):
++                raise ValueError(
++                    f"public ShapleyMCG backend accepts fixed-K{self.bits} experts only"
++                )
+             preparation = self._load_preparation(request.layer)
+             tensors = preparation["tensors"]
+             expert = request.expert
+@@ -518,14 +533,16 @@
+             manifest = row["preparation"]["manifest"]
+             down = encoded[4]
+             evidence = {
+-                "recipe_id": RECIPE_ID,
+-                "bits": 4,
++                "recipe_id": recipe_id_for_bits(self.bits),
++                "bits": self.bits,
+                 "candidate_rate_grid": False,
+                 "global_allocator": False,
+                 "codec_family": "exl3-mcg",
+                 "mcg_multiplier_hex": "0xCBAC1FED",
+                 "gate_up_hessian": "routed_p2_uncentered_full_hessian",
+-                "down_hessian": "decoded_k4_candidate_conditioned_routed_p2_uncentered_full_hessian",
++                "down_hessian": (
++                    f"decoded_k{self.bits}_candidate_conditioned_routed_p2_uncentered_full_hessian"
++                ),
+                 "down_candidate_conditioned": True,
+                 "profile_source": "public-run-qwen-fast-encode-defaults",
+                 "profile_policy": "energy_balanced",
+@@ -551,11 +568,11 @@
+                     "streaming_absolute_v31_fit",
+                     "pinned_per_matrix_gss",
+                     "fp16_vector_boundary",
+-                    "grouped_gate_up_k4_encode",
++                    f"grouped_gate_up_k{self.bits}_encode",
+                     "exact_gate_up_decode",
+                     "candidate_conditioned_down_p2_hessian",
+                     "clear_gate_up_factor_cache",
+-                    "fresh_grouped_down_k4_encode",
++                    f"fresh_grouped_down_k{self.bits}_encode",
+                 ],
+                 "telemetry": {
+                     "elapsed_seconds": elapsed,

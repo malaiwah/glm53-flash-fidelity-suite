@@ -1,0 +1,22 @@
+# K6-program patch series v2 — rebased onto brandonmmusic-max/glm-5.3-flash-exl3-4bpw
+# base commit: ce1bf9706b6aa18435e2baccab63bdd72299257c  (paths: src/quant_pipeline/...)
+# Apply in order from the repo root with:  patch -p1 < patches-v2/NNNN-*.patch
+#
+# v1 -> v2 disposition map (v1 was authored against the HF mirror, runtime/src/... paths):
+#   v1-0001 packed-payload bits            -> v2-0001  STILL NEEDED (github tree still seals bits:4)
+#   v1-0002 direct/mtp worker slots + bits -> v2-0002  STILL NEEDED (b200-only slot sets unchanged)
+#   v1-0003 mcg_preparation bits           -> OBSOLETE (upstream bits-parameterized, SUPPORTED_BITS=(4,6))
+#   v1-0004 prepared_backend bits          -> OBSOLETE (upstream bits-parameterized, contract-driven recipe_id)
+#   v1-0005 add glm53_uniform_k6 module    -> SUPERSEDED-WITH-DELTA: upstream ships the module (richer:
+#             K4-KL-gated build_launch_plan, k6_specific_gss_required, evaluation contract).  Our deltas
+#             survive as v2-0003 (H200 admission in k4._b200_workers, which the k6 module calls) and
+#             v2-0004 (upstream KeyError fix: k4_authorized_state["state_sha256"] does not exist —
+#             the K4 state receipt seals under "state_receipt_sha256").
+#   v1-0006 add glm53_k6_postmtp module    -> v2-0005  STILL NEEDED (upstream publication/ has K4 only)
+#   v1-0007 reader EP_SIZE env             -> v2-0006  STILL NEEDED (reader still pins EP_SIZE=4)
+0001-packed-payload-parameterize-stored-bits.patch
+0002-direct-k4-worker-slots-and-choice-bits.patch
+0003-uniform-k4-h200-worker-admission.patch
+0004-uniform-k6-state-receipt-field-fix.patch
+0005-add-glm53-k6-postmtp-receipts-module.patch
+0006-reader-ep-size-env.patch

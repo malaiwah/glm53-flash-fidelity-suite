@@ -1,0 +1,48 @@
+{
+  "schema": "malaiwah.glm53-k6k8-quant-recipe.v1",
+  "upstream_recipe_schema": "quant-pipeline.glm53-uniform-quant-recipe.v1",
+  "upstream_pipeline": "brandonmusic quant-pipeline (GLM-5.3 EXL3/TR3-MCG campaign)",
+  "example_only": false,
+  "profile": "k6k8-tp4",
+  "codec": "EXL3/TR3 MCG",
+  "mcg_multiplier_hex": "0xCBAC1FED",
+  "tensor_policy": "per-projection-routed-experts",
+  "routed_expert_bits": {"gate_proj": 6, "up_proj": 6, "down_proj": 8},
+  "allowed_bits": [6, 8],
+  "uniform_within_projection": true,
+  "nonrouted_policy": "native",
+  "shared_experts_policy": "native",
+  "candidate_rate_grid_invoked": false,
+  "global_allocator_invoked": false,
+  "allocation": "deterministic_per_projection_policy_not_budget_search",
+  "recipe_id": "malaiwah-shapleymcg-r10-k6k8-candidate-conditioned-down-v1",
+  "proposed_contract_schema": "malaiwah.glm53-direct-mcg-k6k8-contract.v1",
+  "proposed_materialization_receipt_schema": "malaiwah.glm53-k6k8-materialization-receipt.v1",
+  "down_hessian": "decoded_k6_candidate_conditioned_routed_p2_uncentered_full_hessian",
+  "gate_up_payload_policy": {
+    "mode": "verified_reuse_from_uniform_k6_campaign",
+    "rationale": "the encoder is deterministic (five bitwise-identical runs upstream); gate/up at K6 under identical preparation and Hessians are bitwise the K6-campaign payloads, so they are copied from the sealed K6 payload store and re-verified (decode + packed_sha256) under the K6K8 contract instead of being re-encoded",
+    "reverify": ["choice seal", "packed_sha256", "checkpoint_payload_sha256", "exact reconstruction decode"]
+  },
+  "down_k8_codec": {
+    "status": "requires_declared_codec_extension",
+    "blockers": [
+      "codecs/exl3_mcg.py encode_candidates accepts bits in (3,4,5,6) only",
+      "runtime PackedMCGLinear accepts trellis words 64/96 only (needs 128)",
+      "r7_encoder r10 numeric core 8-bit path unverified - must pass the 0.1B fixture rehearsal and bit-verify decode against exllamav3 c5d9c657 before any paid encode"
+    ]
+  },
+  "source_model_id": "zai-org/GLM-5.3-Flash-BF16",
+  "source_revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+  "target_tensor_parallel": 4,
+  "size_accounting": {
+    "native_nonrouted_bytes": 19339524984,
+    "routed_matrices": 37152,
+    "per_matrix_payload_bytes": {"k6": 6303748, "k8": 8400900},
+    "total_bytes": 279507501048,
+    "total_gib": 260.31,
+    "per_rank_gib_tp4": 65.08,
+    "rejected_alternative_native_bf16_down_total_gib": 356.9,
+    "rejected_reason": "native-bf16 down_proj does not fit TP4 x 96GB (AIBeast)"
+  }
+}
