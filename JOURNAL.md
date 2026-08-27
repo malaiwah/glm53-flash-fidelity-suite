@@ -505,3 +505,36 @@ last night's winning pattern) + L4 prep box resumed (482867→484453, $0.44/hr)
 running env smoke: fs free space, transformers 5.16.1 + fixture forward,
 quant_pipeline imports, exllamav3 @ c5d9c657 build feasibility on a bare VM.
 Budget: $349.57; program estimate ~$100-150 all-in.
+
+## 2026-08-27 ~17:30 — G0: design GO_WITH_FIXES, closure hunt, engineering fan-out
+Design workflow verdict GO_WITH_FIXES (reviewer fixed 9 defects in place: venv
+torchrun, disk ledger, qualify-gated publish, setup guards, input asserts,
+byte-count assert, license inheritance). Cost: K6 leg $274 w/30% margin ≤ $349
+GO; K6K8 add-on $143 gated on ≥$140 after K6. Sizes receipt-exact: K6
+253,536,370,680 B (236.1 GiB), K6K8 279.5 GB (260.3 GiB) — both fit TP4.
+G0 fetches rewrote the plan again: his GITHUB repo (brandonmmusic-max/
+glm-5.3-flash-exl3-4bpw) is richer than the HF mirror — ships the 7 KLD/
+runtime driver scripts AND glm53_uniform_k6.py AND bits-parameterized
+preparation/backend (patches 0003/0004/0005 dissolve). shapleymcg repo public
+with rev 9d83e7d0 present, run_qwen_fast_encode.py sha MATCHES his seal;
+bmmlaw_r7_encoder package found in glm52-sqg-mcg-experiments. Still missing
+everywhere public: r7_encoder/r10_codec.py + encode_tr3_v31.py (the sealed
+numeric core) → filed github issue #1 on his code repo asking to publish
+(fallback: disclosed reconstruction around exllamav3's own trellis ops,
+designed in parallel, operator-gated). His campaign attests 4x B200 SM100;
+we run H200 SM90 as a disclosed deviation (fat 9.0;10.0 ext build satisfies
+the capability check honestly; worker-slot patch discloses the rest).
+Calibration: his published captures reusable (~475 GB download, 4 independent
+final-window contamination guards) — no self-capture (EP4 hard-pinned,
+184.8 GiB/rank > H200). L4 smokes 1-5 delivered the proven env recipe
+(torch 2.11.0+cu130 / fa 2.8.3 cu13torch2.10 wheel / formatron 0.5.0 +
+pydantic 2.5.3 / exllamav3 ext GREEN on SM89+CUDA13; fixture forward works
+stock on torch 2.11 — the scatter bug was torch-2.6-era). G0 engineering
+workflow launched (patch rebase onto GitHub base + 4 driver tools adapted
+from his scripts + fallback codec + adversarial re-review). Paid P0 waits on
+that verdict + closure resolution.
+LESSON 23: the HF mirror of a pipeline is not the pipeline — check the
+author's GitHub before writing patches; three of seven dissolved on fetch.
+LESSON 24: sealed "external closure" deps (content-hash-pinned local files)
+are the real long pole — hunt them across ALL the author's repos before
+designing reconstruction, and just ask the author early.
