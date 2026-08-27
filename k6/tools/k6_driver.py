@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GLM-5.3-Flash K6/K6K8 EXL3-MCG encode-campaign driver (malaiwah).
+"""GLM-5.3-Flash K6/K8/K6K8 EXL3-MCG encode-campaign driver (malaiwah).
 
 Interface pinned by stage_k6.sh.  Subcommands:
 
@@ -50,7 +50,7 @@ SHAPLEY_REVISION = "9d83e7d0baea86604d604502f0d5456c2906486b"
 RUN_QWEN_FAST_ENCODE_SHA = (
     "ceea8c64d63ffb60cdf95adee3ba7b488c54303d3a85502798b2c3fd0fcbb492"
 )
-PROFILE_BITS = {"k6": 6}
+PROFILE_BITS = {"k6": 6, "k8": 8}  # k8: malaiwah K8-uniform (DECISIONS.md 7)
 CLOSURE_HELP = (
     "the ShapleyMCG r7_encoder numeric closure (r7_encoder/r10_codec.py and its "
     "package) is missing from --shapley-root.  It was requested upstream "
@@ -257,6 +257,25 @@ def _bits_for_profile(profile: str, output_root: Path) -> int:
             code=7,
         )
     raise _fail(f"unknown profile: {profile}")
+
+
+def _require_k8_seed(profile: str, output_root: Path) -> None:
+    """K8 MUST reuse the K6 campaign transform seed (DECISIONS.md 7).
+
+    The stage copies out-k6/transform-seed.json into the K8 output root before
+    the contract step; a missing file here means a fresh seed would be minted,
+    which would break assembly-compatibility with the K6 payload store - fail
+    closed instead.
+    """
+
+    if profile == "k8" and not (output_root / "transform-seed.json").is_file():
+        raise _fail(
+            "profile k8 requires the K6 campaign transform seed at "
+            f"{output_root / 'transform-seed.json'} (copy out-k6/"
+            "transform-seed.json; NEVER mint a fresh seed for K8 - the K8 "
+            "payload store must be assembly-compatible with K6)",
+            code=9,
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -814,7 +833,7 @@ def _author_reader_abi_receipt(
             "schema": READER_ABI_SCHEMA,
             "qualified": True,
             "bits": bits,
-            "tp_sizes": [4] if bits == 6 else [2, 4],
+            "tp_sizes": [4] if bits in (6, 8) else [2, 4],
             "exact_reconstruction_checked": True,
             "reader_sha256": _reader_abi_sha256(),
             "contract_sha256": contract["contract_sha256"],
@@ -878,7 +897,11 @@ def cmd_contract(args: argparse.Namespace) -> int:
         verify_seal as verify_capture_seal,
     )
     from quant_pipeline.campaign import glm53_direct_k4 as direct
-    from quant_pipeline.campaign import glm53_uniform_k6 as uniform_k6
+
+    if bits == 8:
+        from quant_pipeline.campaign import glm53_uniform_k8 as uniform_plan
+    else:
+        from quant_pipeline.campaign import glm53_uniform_k6 as uniform_plan
     from quant_pipeline.campaign.glm53_mcg_preparation import (
         build_layer_preparation,
         seal_campaign_preparation,
@@ -911,7 +934,7 @@ def cmd_contract(args: argparse.Namespace) -> int:
             output_root / "inventory-crosscheck.json",
         )
 
-    # 2) preflight + K6 launch plan.  Upstream's shipped glm53_uniform_k6
+    # 2) preflight + K6/K8 launch plan.  Upstream's shipped glm53_uniform_k6
     #    builder is K4-KL-GATED: build_launch_plan(inventory, preflight, *,
     #    k4_plan, k4_authorized_state).  The K4 plan is a pure planning
     #    document (launch_authorized False) built from the same inventory +
@@ -956,9 +979,9 @@ def cmd_contract(args: argparse.Namespace) -> int:
     plan_path = output_root / "launch-plan.json"
     if plan_path.is_file():
         launch_plan = _read_json(plan_path, "launch plan")
-        uniform_k6.verify_launch_plan(launch_plan)
+        uniform_plan.verify_launch_plan(launch_plan)
     else:
-        launch_plan = uniform_k6.build_launch_plan(
+        launch_plan = uniform_plan.build_launch_plan(
             inventory,
             preflight,
             k4_plan=k4_plan,
@@ -967,10 +990,12 @@ def cmd_contract(args: argparse.Namespace) -> int:
         _atomic_json(plan_path, launch_plan)
     print(f"launch plan: {launch_plan['launch_plan_sha256']}")
 
-    # 3) profile selection + transform seed
+    # 3) profile selection + transform seed (K8 fail-fasts unless the K6 seed
+    #    was copied in - same seed is an operator requirement)
     selection = _build_profile_selection(
         bits, shapley_root, output_root / "profile-selection.json"
     )
+    _require_k8_seed(args.profile, output_root)
     seed = _transform_seed(output_root / "transform-seed.json")
 
     # 4) capture manifest (sealed) for the contract binding.  A verified copy
@@ -1123,6 +1148,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
     inventory = _read_json(output_root / "inventory.json", "inventory (run `contract` first)")
     selection = _read_json(output_root / "profile-selection.json", "profile selection")
+    _require_k8_seed(args.profile, output_root)
     seed = _transform_seed(output_root / "transform-seed.json")
     extension = _find_extension(Path(args.exllama_root).resolve(), args.extension)
     numeric_core = _numeric_core(shapley_root, args.numeric_core)
@@ -1318,6 +1344,7 @@ def cmd_seal_main(args: argparse.Namespace) -> int:
     bits = _bits_for_profile(args.profile, output_root)
 
     from quant_pipeline.campaign import glm53_direct_k4 as direct
+    from quant_pipeline.campaign.glm53_mtp_k4 import _main_receipt_schema
     from quant_pipeline.campaign.glm53_uniform_k4 import MAIN_ROUTED_LAYERS
 
     contract = _read_json(output_root / "contract.json", "direct contract")
@@ -1337,7 +1364,9 @@ def cmd_seal_main(args: argparse.Namespace) -> int:
         receipts.append(receipt["receipt_sha256"])
     main_receipt = _seal(
         {
-            "schema": f"quant-pipeline.glm53-exl3-mcg-main-k{bits}-receipt.v1",
+            # K4/K6: upstream parametric family; K8: malaiwah.* (one helper,
+            # minted here and verified by glm53_mtp_k4.build_contract)
+            "schema": _main_receipt_schema(bits),
             "contract_sha256": contract_sha,
             "bits": bits,
             "layers": list(MAIN_ROUTED_LAYERS),
@@ -1434,6 +1463,7 @@ def cmd_mtp(args: argparse.Namespace) -> int:
     manifest_path = output_root / "preparation" / "layer-045" / "preparation.json"
     if not manifest_path.is_file():
         selection = _read_json(output_root / "profile-selection.json", "profile selection")
+        _require_k8_seed(args.profile, output_root)
         seed = _transform_seed(output_root / "transform-seed.json")
         _purge_sealed_codec_modules()
         build_layer_preparation(
@@ -1723,13 +1753,19 @@ def cmd_rehearse(args: argparse.Namespace) -> int:
         )
 
     # 3) timing bench on full-size synthetic matrices (4096x2048 down-proj shape)
+    #    --bench-bits 8 re-prices the K8 campaign (trellis edge count grows with
+    #    the rate, so K8 seconds/matrix must be measured, not assumed == K6).
+    bench_bits = int(args.bench_bits)
     bench_times: List[float] = []
+    bench_exact = True
     for index in range(args.bench_full_size_matrices):
         weight = torch.randn(4096, 2048) * 0.02
-        exact, elapsed = _roundtrip(weight, 6, f"L1.E{index}.bench")
-        k6_exact = k6_exact and exact
+        exact, elapsed = _roundtrip(weight, bench_bits, f"L1.E{index}.bench")
+        bench_exact = bench_exact and exact
         bench_times.append(elapsed)
-        print(f"bench {index + 1}/{args.bench_full_size_matrices}: {elapsed:.2f}s", flush=True)
+        print(f"bench K{bench_bits} {index + 1}/{args.bench_full_size_matrices}: {elapsed:.2f}s", flush=True)
+    if bench_bits == 6:
+        k6_exact = k6_exact and bench_exact
     spm = sum(bench_times) / max(1, len(bench_times))
     est_hours = 37152 * spm / 4 / 3600
 
@@ -1744,7 +1780,9 @@ def cmd_rehearse(args: argparse.Namespace) -> int:
             "fixture_source": fixture_source,
             "fixture_matrix_count": len(fixture_matrices),
             "k8_probe": k8_probe,
-            "seconds_per_full_size_matrix_k6": spm,
+            "bench_bits": bench_bits,
+            "bench_roundtrip_exact": bool(bench_exact),
+            f"seconds_per_full_size_matrix_k{bench_bits}": spm,
             "bench_matrix_count": len(bench_times),
             "bench_seconds": bench_times,
             "projected_main_plus_mtp_encode_hours_4gpu": est_hours,
@@ -1754,7 +1792,7 @@ def cmd_rehearse(args: argparse.Namespace) -> int:
     )
     _atomic_json(out_path, receipt)
     print(json.dumps({k: receipt[k] for k in (
-        "k6_roundtrip_exact", "seconds_per_full_size_matrix_k6",
+        "k6_roundtrip_exact", f"seconds_per_full_size_matrix_k{bench_bits}",
         "projected_main_plus_mtp_encode_hours_4gpu")}, sort_keys=True))
     return 0
 
@@ -1929,13 +1967,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fixture", help="GLM-5.3-Flash-0.1B-A0.1B root")
     p.add_argument("--fixture-matrices", type=int, default=4)
     p.add_argument("--bench-full-size-matrices", type=int, default=24)
+    p.add_argument("--bench-bits", type=int, default=6, choices=(6, 8),
+                   help="rate for the full-size timing bench (8 re-prices the K8 campaign)")
     p.add_argument("--probe-k8", action="store_true", help="kept for interface parity; the probe always runs and records its outcome")
     p.add_argument("--output", required=True)
     p.set_defaults(func=cmd_rehearse)
 
     p = sub.add_parser("contract", help="inventory -> plan -> preparation -> contract -> work state")
     _common(p)
-    p.add_argument("--profile", required=True, choices=("k6", "k6k8"))
+    p.add_argument("--profile", required=True, choices=("k6", "k8", "k6k8"))
     p.add_argument("--bf16", required=True)
     p.add_argument("--calibration", required=True)
     p.add_argument("--output-root", required=True)
@@ -1952,7 +1992,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("prepare", help="(aux) build layer preparations for a subset")
     _common(p)
-    p.add_argument("--profile", required=True, choices=("k6", "k6k8"))
+    p.add_argument("--profile", required=True, choices=("k6", "k8", "k6k8"))
     p.add_argument("--bf16", required=True)
     p.add_argument("--calibration", required=True)
     p.add_argument("--output-root", required=True)
@@ -1962,7 +2002,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("encode-worker", help="claim/encode/seal loop for one GPU")
     _common(p)
-    p.add_argument("--profile", required=True, choices=("k6", "k6k8"))
+    p.add_argument("--profile", required=True, choices=("k6", "k8", "k6k8"))
     p.add_argument("--worker", required=True, help="h200-0..3 (or b200-0..3)")
     p.add_argument("--bf16", required=True)
     p.add_argument("--calibration", required=True)
@@ -1974,19 +2014,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("seal-main", help="author the sealed main receipt")
     p.add_argument("--pipeline-root", default=os.environ.get("QP_PIPELINE_ROOT", ""))
-    p.add_argument("--profile", required=True, choices=("k6", "k6k8"))
+    p.add_argument("--profile", required=True, choices=("k6", "k8", "k6k8"))
     p.add_argument("--output-root", required=True)
     p.set_defaults(func=cmd_seal_main)
 
     p = sub.add_parser("release-dead-claims", help="requeue dead worker claims")
     p.add_argument("--pipeline-root", default=os.environ.get("QP_PIPELINE_ROOT", ""))
-    p.add_argument("--profile", required=True, choices=("k6", "k6k8"))
+    p.add_argument("--profile", required=True, choices=("k6", "k8", "k6k8"))
     p.add_argument("--output-root", required=True)
     p.set_defaults(func=cmd_release_dead_claims)
 
     p = sub.add_parser("mtp", help="MTP45 contract -> encode -> telemetry -> adapter seal")
     _common(p)
-    p.add_argument("--profile", required=True, choices=("k6", "k6k8"))
+    p.add_argument("--profile", required=True, choices=("k6", "k8", "k6k8"))
     p.add_argument("--bf16", required=True)
     p.add_argument("--calibration", required=True)
     p.add_argument("--output-root", required=True)
@@ -1997,7 +2037,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("materialize", help="reader-ABI receipt -> plan -> shards -> receipt")
     p.add_argument("--pipeline-root", default=os.environ.get("QP_PIPELINE_ROOT", ""))
-    p.add_argument("--profile", required=True, choices=("k6", "k6k8"))
+    p.add_argument("--profile", required=True, choices=("k6", "k8", "k6k8"))
     p.add_argument("--output-root", required=True)
     p.add_argument("--bf16", required=True)
     p.add_argument("--checkpoint", required=True)

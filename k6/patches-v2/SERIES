@@ -20,4 +20,26 @@
 0004-uniform-k6-state-receipt-field-fix.patch
 0005-add-glm53-k6-postmtp-receipts-module.patch
 0006-reader-ep-size-env.patch
+# v2-0007 (2026-08-27 evening, DECISIONS.md item 7): K8-uniform admission -
+#   malaiwah DECLARED EXTENSION, admission-only (SUPPORTED_BITS += 8, malaiwah
+#   K8 recipe id + contract/materialization/launch-plan/MTP schemas, NEW
+#   glm53_uniform_k8 plan module, codec adapter rate 8, reader 128-word
+#   trellis, runtime K8/TP4 serving admission).  Touches the reader file whose
+#   bytes sealed K6 choices bind: apply to a campaign tree ONLY after
+#   convert_k6 completes (stage_k6.sh convert_k8 enforces the ordering).
+0007-k8-uniform-admission.patch
+# v2-0008 (2026-08-27, found in adversarial K8 review): widen normalization
+#   ALLOWED_BITS (3,4,5) -> (3,4,5,6,8).  streaming_v31.FitSampleSpec.from_input
+#   imports this constant and REFUSES bits=6/8 without it, so upstream's own K6
+#   GSS preparation path (build_layer_preparation) crashes at layer 3 - this
+#   patch is REQUIRED for convert_k6 AND convert_k8, not only K8.  It touches no
+#   reader/closure-hashed file, so it may land at ANY time (stage_k6.sh
+#   ensure_0008 applies + receipts it in setup and both convert stages).  The
+#   P1 fleet fs already carries this widening as a hot-edit (verified
+#   byte-identical to this patch's output on 484853); 0008 codifies it.
 0008-v31-allowed-bits-k6-k8.patch
+# v2-0009 (2026-08-27, adversarial K8 review): --bits 8 admission in
+#   scripts/qualify_glm53_custom_tp2_runtime.py (argparse choices + declared-
+#   bits check pinned (4,6); qualify_k8 passes --bits 8).  Needed only by
+#   qualify_k8; applies any time after 0007 (stage_k6.sh qualify_k8 top-ups it).
+0009-qualify-script-k8-admission.patch

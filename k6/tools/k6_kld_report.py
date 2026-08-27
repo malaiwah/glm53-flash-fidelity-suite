@@ -287,13 +287,21 @@ def _comparison_table(
         f"| brandonmusic K4 (EXL3/TR3-MCG) | 4.01 | 163.6 GiB | {k4_baseline:.6f} "
         "(five-run mean, stddev 0) | his sealed receipts |",
     ]
-    for profile, bpw, size in (("k6", "6.01", "236.1 GiB"), ("k6k8", "6.68", "260.3 GiB")):
+    for profile, bpw, size in (
+        ("k6", "6.01", "236.1 GiB"),
+        ("k8", "8.01", "308.7 GiB"),
+        ("k6k8", "6.68", "260.3 GiB"),
+    ):
         receipt_path = receipts_dir / f"{profile}-packed-kld.json"
         if receipt_path.is_file():
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
             mean = receipt.get("measured_mean_kld")
             gate = "GREEN" if receipt.get("quality_gate_passed") else "RED"
-            label = "malaiwah K6" if profile == "k6" else "malaiwah K6K8 (down@8)"
+            label = {
+                "k6": "malaiwah K6",
+                "k8": "malaiwah K8 (uniform)",
+                "k6k8": "malaiwah K6K8 (down@8)",
+            }[profile]
             rows.append(
                 f"| **{label}** | {bpw} | {size} | **{mean:.6f}** (gate < 0.06 {gate}) "
                 "| this campaign |"
@@ -303,7 +311,7 @@ def _comparison_table(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", required=True, choices=("k6", "k6k8"))
+    parser.add_argument("--profile", required=True, choices=("k6", "k8", "k6k8"))
     parser.add_argument("--teacher", type=Path, required=True)
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
     parser.add_argument("--fp8-baseline", type=float, default=0.020615)
@@ -324,8 +332,12 @@ def main() -> int:
     from quant_pipeline.core.artifacts import sha256_file
     from quant_pipeline.evaluation.glm53_logits import load_capture_receipt
 
-    bits = 6 if args.profile == "k6" else None
-    student_label = "uniform-k6" if args.profile == "k6" else "mixed-k6k8"
+    bits = {"k6": 6, "k8": 8}.get(args.profile)
+    student_label = {
+        "k6": "uniform-k6",
+        "k8": "uniform-k8",
+        "k6k8": "mixed-k6k8",
+    }[args.profile]
     runs = [path.resolve() for path in args.runs]
     campaign_root = runs[0].parent.parent
     checkpoint = (
@@ -451,14 +463,14 @@ def main() -> int:
                 )
             )
     else:
-        # K6K8: the sealed malaiwah.* receipt builders ship with the K6K8
-        # support module; until then this is a transparent summary (3 cold
-        # runs, disclosed) that satisfies the stage gate fields.
+        # K8/K6K8: the sealed receipt builders in glm53_k6_postmtp are
+        # K6-specific; these profiles get a transparent malaiwah summary (3
+        # cold runs, disclosed) that satisfies the stage gate fields.
         mean = means[0]
         summary = {
-            "schema": "malaiwah.glm53-k6k8-packed-kld-summary.v1",
-            "profile": "k6k8-tp4",
-            "student_label": "mixed-k6k8",
+            "schema": f"malaiwah.glm53-{args.profile}-packed-kld-summary.v1",
+            "profile": f"{args.profile}-tp4",
+            "student_label": student_label,
             "cold_run_count": len(reports),
             "cold_run_deviation": "3 cold runs, not 5 (budget; disclosed)",
             "run_means": means,

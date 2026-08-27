@@ -1,0 +1,41 @@
+{
+  "schema": "quant-pipeline.glm53-uniform-quant-recipe.v1",
+  "profile": "k8",
+  "codec": "EXL3/TR3 MCG",
+  "example_only": false,
+  "tensor_policy": "uniform-routed-experts",
+  "routed_expert_bits": 8,
+  "nonrouted_policy": "native",
+  "candidate_rate_grid_invoked": false,
+  "global_allocator_invoked": false,
+  "source_model_id": "zai-org/GLM-5.3-Flash-BF16",
+  "source_revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+  "target_tensor_parallel": 4,
+  "malaiwah_extension": {
+    "declared_extension": true,
+    "recipe_id": "malaiwah-shapleymcg-r10-uniform-k8-candidate-conditioned-down-v1",
+    "operator_directive": "DECISIONS.md item 7 (2026-08-27 evening)",
+    "same_transform_seed_as": "k6",
+    "same_calibration_as": "k6",
+    "same_profile_selection_policy_as": "k6",
+    "purpose": [
+      "shippable ~309 GiB near-BF16 flagship checkpoint (fits TP4)",
+      "complete per-choice K8 payload parts bin: with the sealed K6 payload store, future multi-precision K6K8 is OFFLINE ASSEMBLY of already-encoded per-choice payloads, never a re-encode"
+    ],
+    "contract_schema": "malaiwah.glm53-direct-mcg-k8-contract.v1",
+    "materialization_receipt_schema": "malaiwah.glm53-k8-materialization-receipt.v1",
+    "launch_plan_schema": "malaiwah.glm53-uniform-k8-four-gpu-launch-plan.v1",
+    "mtp_adapter_receipt_schema": "malaiwah.glm53-uniform-k8-mtp-adapter-receipt.v1",
+    "enabled_by": "patches-v2/0007-k8-uniform-admission.patch (admission-only; single-rate invariants intact)"
+  },
+  "size_accounting": {
+    "native_nonrouted_bytes": 19339524984,
+    "routed_matrices": 37152,
+    "per_matrix_payload_bytes": 8400900,
+    "payload_store_bytes": 312110236800,
+    "total_bytes": 331449761784,
+    "total_gib": 308.69,
+    "per_rank_gib_tp4": 77.17,
+    "routed_bits_per_weight": 8.01
+  }
+}

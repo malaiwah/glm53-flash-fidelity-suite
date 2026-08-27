@@ -1,0 +1,32 @@
+Admit --bits 8 in the TP-runtime qualification script (adversarial K8 review
+finding): scripts/qualify_glm53_custom_tp2_runtime.py pins argparse
+choices=(4, 6) and re-checks the checkpoint's declared bits against (4, 6),
+so `stage_k6.sh qualify_k8` (which passes --bits 8 against ckpt-k8) fails at
+argument parsing before any GPU work.  Admission-only, mirroring 0007's
+runtime admission (glm53_tp2_exl3 target_tp_size_for_bits already maps 8 ->
+TP4 and admits 128-word trellis post-0007).  Part of the malaiwah declared
+extension set, disclosed in receipts.  Needed only by qualify_k8 - it may
+land any time after 0007 (the script imports the patched runtime module).
+
+--- a/scripts/qualify_glm53_custom_tp2_runtime.py
++++ b/scripts/qualify_glm53_custom_tp2_runtime.py
+@@ -26,7 +26,7 @@
+ def _args() -> argparse.Namespace:
+     parser = argparse.ArgumentParser()
+     parser.add_argument("--model", type=Path, required=True)
+-    parser.add_argument("--bits", type=int, choices=(4, 6))
++    parser.add_argument("--bits", type=int, choices=(4, 6, 8))
+     parser.add_argument("--exllamav3-source", type=Path, required=True)
+     parser.add_argument("--reference-panel", type=Path, required=True)
+     parser.add_argument("--max-abs-tolerance", type=float, required=True)
+@@ -69,8 +69,8 @@
+     args = _args()
+     config = json.loads((args.model / "config.json").read_text(encoding="utf-8"))
+     declared_bits = config.get("quantization_config", {}).get("bits")
+-    if declared_bits not in (4, 6):
+-        raise ValueError("model config does not declare uniform routed K4 or K6")
++    if declared_bits not in (4, 6, 8):
++        raise ValueError("model config does not declare uniform routed K4, K6 or K8")
+     bits = declared_bits if args.bits is None else args.bits
+     if bits != declared_bits:
+         raise ValueError(f"requested K{bits} differs from checkpoint K{declared_bits}")

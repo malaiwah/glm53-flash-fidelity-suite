@@ -1,9 +1,13 @@
-# GLM-5.3-Flash EXL3/TR3-MCG K6 + K6K8 Program Runbook
+# GLM-5.3-Flash EXL3/TR3-MCG K6 + K8 + K6K8 Program Runbook
 
 Mission: produce the FIRST K6 (uniform routed 6-bit) and K6K8 (routed down_proj 8-bit,
 gate/up 6-bit, everything non-routed incl. shared experts native BF16) EXL3/TR3-MCG
 quants of GLM-5.3-Flash via brandonmusic's public pipeline, score both on his 25 sealed
 final windows against his fp32 teacher logits, publish weights + receipts + tools.
+ADDED 2026-08-27 evening (DECISIONS.md 7): a K8-UNIFORM campaign (P1b) on the same
+P1 fleet - same calibration/seed/parameters as K6 - as (a) a shippable ~309 GiB
+near-BF16 flagship and (b) the complete per-choice parts bin that makes future
+multi-precision K6K8 offline assembly instead of re-encode.
 
 All source claims below were re-verified against the mirrored pipeline at
 `scratchpad/brandon-pipeline/runtime/src/quant_pipeline` (ground truth), not taken
@@ -269,6 +273,131 @@ Wall-clock: **unknown until P0** (no encode timing exists anywhere in the mirror
 verified). Planning window 10–16 h; plan number 14 h. Cost ≈ 14 x $7.96 = **$111**
 (range $80–127).
 
+## Phase P1b — K8-uniform conversion (same fleet, right after P1; DECISIONS.md 7)
+
+Runs on the SAME 4x H200 rental as P1, immediately after `convert_k6` seals.
+Enablement is `patches-v2/0007-k8-uniform-admission.patch` — admission only
+(SUPPORTED_BITS += 8, malaiwah-namespaced K8 recipe id + contract /
+materialization / launch-plan / MTP schemas, new `glm53_uniform_k8` plan
+module, codec-adapter rate 8, reader 128-word trellis, runtime K8/TP4 serving
+admission).  Every single-rate invariant of the sealed uniform contracts is
+kept; every K8 identifier that names a sealed artifact is `malaiwah.*`.
+
+**0007 ordering rule (enforced by the stage + setup):** 0007 edits the READER
+file whose byte-hash every sealed K6 choice binds (`decoder.reader_abi_sha256`
++ the one-reader-ABI census in `load_complete_surface`).  It lands on the
+campaign tree ONLY after `convert_k6.done` (or before any K6 choice seals).
+Never mid-K6.
+
+**0008 is REQUIRED for both K6 and K8 (adversarial-review finding):**
+`normalization/absolute_v31.py` pins `ALLOWED_BITS = (3,4,5)` at the base
+commit and `streaming_v31.FitSampleSpec.from_input` imports it, so
+`build_layer_preparation` (the GSS step inside `contract`, and the MTP prep)
+refuses bits=6 AND bits=8 — K6's own preparation would crash at layer 3.
+`patches-v2/0008-v31-allowed-bits-k6-k8.patch` widens it to (3,4,5,6,8); the
+constant is metadata/consistency-only in both v31 modules (audited; no per-K
+constants or branches).  Unlike 0007 it touches no reader/closure-hashed file
+and may land at ANY time; `stage_k6.sh ensure_0008` applies + receipts it in
+setup, convert_k6 and convert_k8.  The P1 fleet fs already carries this
+widening as a hot-edit (verified byte-identical to 0008's output on 484853);
+its `receipts/patches-v2-applied.txt` line is back-filled by `ensure_0008`.
+
+Commands: `stage_k6.sh convert_k8` then `stage_k6.sh materialize_k8`, driving:
+
+0. patch 0007 top-up + import check; K8 re-probe (`receipts/rehearsal-k8.json`
+   — the P0 `rehearsal.json` recorded `k8_probe.admitted=false` pre-0007 BY
+   DESIGN) + K8 full-size timing bench (`--bench-bits 8`; K8 trellis edges are
+   4x K6's, so seconds/matrix is measured, never assumed) + the
+   non-tautological SM90 bit-verify of the reconstructed codec's K8 pack vs
+   exllamav3 NATIVE convert (`fallback/probe_native_convert.py`,
+   `receipts/k8-native-probe.txt`; VALIDATION.md V9 covered L4/SM89);
+1. SAME transform seed: `out-k6/transform-seed.json` is copied to
+   `out-k8/` (fail-fast if absent; the driver refuses to mint a fresh seed
+   for profile k8 — assembly compatibility is the whole point);
+2. SAME K4 gate bridge docs copied from `out-k6/` (the K8 launch plan is
+   K4-KL-gated exactly like K6's);
+3. K8-specific GSS preparations (bits=8, same calibration captures — re-
+   downloaded after `convert_k6` deleted them), contract under
+   `malaiwah.glm53-direct-mcg-k8-contract.v1`, 4-worker fleet encode into
+   `out-k8/payload-store` (per-expert resume, hessian prune), seal-main, MTP;
+4. `materialize_k8` (separate stage, ledger-gated): deletes
+   `calibration/main-ep4-full` again, then materializes `ckpt-k8`
+   (`malaiwah.glm53-k8-materialization-receipt.v1`, bits 8,
+   `output_logical_bytes == 331,449,761,784` = native 19,339,524,984 +
+   37,152 x 8,400,900; 308.7 GiB, 77.2 GiB/rank at TP4).
+
+Disk ledger P1b (decimal GB; OBSERVED baseline — the FP8 tree was never
+evicted, so P1 started at 513 free, not the ~840 the original ledger assumed):
+
+| moment | delta | free |
+|---|---|---|
+| convert_k6 start (observed on 484853: df 478 GiB = 513 GB) | — | ~513 |
+| after convert_k6 (payload −254, cal main deleted +464, ckpt-k6 −254) | −44 | ~469 |
+| **FP8 evicted FIRST** (first `convert_k8` run does this before anything else, receipted in `receipts/fp8-evicted.json`; re-downloadable) | +328 | ~797 |
+| cal main re-downloaded for K8 (control session, AFTER the eviction) | −464 | ~333 |
+| K8 encode peak (payload −312, hessian transient ≤60 worst-case) | | **−39 worst case** |
+| materialize_k8: cal main deleted again | +464 | |
+| ckpt-k8 lands | −331 | ~154 |
+
+ORDERING (adversarial-review reorder): the eviction MUST precede the
+calibration re-download — the old order re-downloaded 464 GB into ~469 GB
+free, a ~5 GB knife-edge.  The stage now runs the receipted FP8 eviction
+before its calibration checks (trigger: FP8 present and free < 800, i.e. the
+ledger cannot close), then exits asking for the re-download; re-run
+`convert_k8` once the captures are back.
+
+The encode peak is the pinch: the worst case goes ~39 GB negative IF the
+hessian transient hits its 4-layers-in-flight maximum at the same moment the
+payload store completes.  Mitigations, in order: the per-layer hessian prune
+keeps the steady-state transient far below 60; the teacher panel (32 GB,
+re-downloadable) and any dead scratch can be evicted on warning; encode is
+per-expert resumable — if the fs runs dry the workers die NON-destructively,
+space is freed, the stage re-runs.  The stage enforces the operator floor
+(`require_free_gb 100` before encode) and ntfy-warns when starting under 300
+(ledger plans ~333).  `materialize_k8` requires 340 free and tells the
+operator to upload+delete `ckpt-k6` (254 GB) first if short.  Keep
+`out-k6/payload-store` AND `out-k8/payload-store` — together they ARE the
+K6K8 assembly parts bin.
+
+Cost (operator estimate, re-priced by the stage-start bench): **~$26–40**
+(3.3–5 h wall on 4x H200 spot at $7.96/h, incl. GSS + MTP; K6's stage actual
+was ~2.2 h projected, and K8's Viterbi edge count is 4x — the stage hard-
+aborts if the bench projects > 24 h of encode).  Qualification adds
+`qualify_k8` (3 cold EP8 runs + TP4 runtime receipt, ~3 h 8x H200 ≈ $48) and
+publication ~309 GiB ≈ $7 — both AFTER K6 ships, budget-gated like K6K8.
+
+Abort criteria: any red verifier (fail-closed, never patch around mid-run);
+`rehearsal-k8.json` probe not exact; native-probe mismatch on SM90; disk
+< 100 GB free; bench projection > 24 h.
+
+**Offline-assembly future note (why P1b exists):** once `out-k6` and
+`out-k8` payload stores are both sealed (same seed, same calibration, same
+profile policy), a K6K8 "where it counts" checkpoint = pick per-projection
+choices from the two stores under a new malaiwah mixed contract + materialize
+— zero GPU encode.  DISCLOSED NUANCE: the K8-uniform down_proj payloads were
+candidate-conditioned on decoded **K8** gate/up (uniform invariant), while
+`recipes/k6k8.json`'s quality-optimal down@8 wants conditioning on decoded
+**K6** gate/up.  Assembled-from-parts K6K8 is exactly decodable and valid,
+but its down conditioning is K8-based; a fresh conditioned down encode (P2)
+remains the quality-optimal path.  Assembly-time work: mixed-rate contract
+builder + materializer relaxation of the uniform-rate census (the runtime
+already derives per-module K from trellis shape and, post-0007, admits 64/96/
+128 words).  Complete list of what the assembly tool consumes and must relax
+(verified against the patched tree): (a) inputs — `out-k6/payload-store` +
+`out-k8/payload-store` (per-choice payloads are self-contained:
+trellis+suh+svh+mcg, choice_id carries the `.K{bits}` suffix), both sealed
+contracts, the shared `transform-seed.json`, and either campaign's
+`preparation/` permutations (identical by construction: derived from the same
+captures + energy_balanced policy, bits-independent); (b) relaxations — a
+malaiwah mixed contract schema (uniform contracts pin `allowed_bits == [bits]`
+in `verify_contract`), the materializer's per-shard uniform-bits census, and
+the runtime's single `qcfg.bits ∈ (4,6,8)` declaration in
+`glm53_tp2_exl3.verify_checkpoint` (per-module loading is already
+trellis-shape-driven); (c) the packed reader's one-reader-ABI census is
+satisfied per-store, but a mixed surface mixes reader_abi values (K6 choices
+bind pre-0007 reader bytes, K8 choices post-0007) — the mixed surface loader
+must accept exactly that two-value set, receipted.
+
 ## Phase P2 — K6K8 conversion (paid run CONDITIONAL — after K6 publishes)
 
 Per operator directive, the K6K8 SUPPORT CODE is implemented unconditionally in
@@ -277,12 +406,16 @@ conversion: P0 `k8_probe.encode_decode_exact == true` AND remaining budget ≥ $
 AND K6 shipped. If a gate fails the paid run is deferred to the next budget cycle
 with the implementation already merged and rehearsed.
 
-Additional code (beyond `patches-v2/`, implemented in G0/P0): K8 enablement in
-the codec adapter (`codecs/exl3_mcg.py` bits tuple), reader `SUPPORTED_BITS += (8,)`
-+ per-projection expected bits, runtime trellis-words 128 + per-module rates, and
-the `malaiwah.*` K6K8 contract/receipt schemas per `recipes/k6k8.json`. These are
-OUR schema extensions — none of his sealed verifiers are weakened; his verbatim
-schemas are used only where their checks genuinely pass.
+Additional code: the K8 codec/reader/runtime enablement LANDED as
+`patches-v2/0007-k8-uniform-admission.patch` (P1b) — codec adapter bits tuple,
+reader `SUPPORTED_BITS += (8,)`, runtime trellis-words 128.  What P2 still
+needs beyond 0007 is only the MIXED-rate relaxation: the `malaiwah.*` K6K8
+contract/receipt schemas per `recipes/k6k8.json` and a per-projection-rate
+contract/materializer (the uniform modules deliberately refuse profile k6k8).
+These are OUR schema extensions — none of his sealed verifiers are weakened;
+his verbatim schemas are used only where their checks genuinely pass.  NOTE:
+with the P1b parts bin sealed, P2 can also be replaced by offline assembly
+(see the P1b note; down conditioning nuance disclosed there).
 
 Rental: same shape as P1 (4x H200 spot, IN2, fs 3394).
 
@@ -429,7 +562,10 @@ convert_k6k8` enforces this with a 400 GB free-space guard. Delete
 | P4 K6 publish (upload 254 GB + receipts) | 1x H200 spot cont. | 6 | 1.99 | $12 | 8–16 |
 | **K6 subtotal** | | | | **$211** | 158–249 |
 | **K6 with 30% overrun margin** | | | | **$274** | vs **$349 budget → GO** |
-| P2 K6K8 convert (down-only + reuse) | 4x H200 spot cont. | 7 | 7.96 | $56 | 40–80 |
+| P1b K8 convert (same fleet, DECISIONS.md 7) | 4x H200 spot cont. | 4 | 7.96 | $32 | 26–40 |
+| P3 K8 qualify (3 cold runs + TP4 runtime) | 8x H200 spot cont. | 3 | 15.92 | $48 | 32–64 |
+| P4 K8 publish (309 GiB) | 1x H200 spot cont. | 4 | 1.99 | $8 | 5–10 |
+| P2 K6K8 convert (down-only + reuse; OR offline assembly from the P1b parts bin ≈ $0 GPU) | 4x H200 spot cont. | 7 | 7.96 | $56 | 40–80 |
 | P3 K6K8 qualify (3 cold runs) | 8x H200 spot cont. | 3 | 15.92 | $48 | 32–64 |
 | P4 K6K8 publish (280 GB) | 1x H200 spot cont. | 3 | 1.99 | $6 | 4–8 |
 | **K6K8 add-on subtotal** | | | | **$110** | 76–152 |
@@ -463,7 +599,12 @@ costed follow-up (this document + `recipes/k6k8.json` are the design record).
 
 ## Key receipts index (what "done" means)
 
-* `receipts/rehearsal.json` — P0 gate (roundtrip, K8 probe, $/h projection)
+* `receipts/rehearsal.json` — P0 gate (roundtrip, K8 probe pre-0007, $/h projection)
+* `receipts/rehearsal-k8.json` + `receipts/k8-native-probe.txt` — P1b K8 gate
+  (post-0007 probe exact + SM90 native bit-verify + K8 $/h projection)
+* `receipts/fp8-evicted.json` — P1b ledger eviction note (if taken)
+* `ckpt-k8/materialization-receipt.json` — sealed K8 checkpoint (308.7 GiB exact)
+* `receipts/k8-packed-kld.json` + `k8-tp4-runtime-receipt.json` — K8 quality + serving
 * `ckpt-k6/materialization-receipt.json` — sealed K6 checkpoint (236.12 GiB exact)
 * `receipts/k6-packed-kld.json` + `k6-five-run-kld.json` — quality gate < 0.06
 * `receipts/k6-tp4-runtime-receipt.json` — TP4 serving qualification

@@ -43,3 +43,12 @@
    code edits. K8 needs codec adapter admission (L175) + 128-word trellis
    verification; runtime derives per-module K from trellis shape (L501) —
    serving structurally mixed-ready behind ~6 surgical validators.
+7. K8-UNIFORM CAMPAIGN (operator directive 2026-08-27 evening): encode a full
+   K8-uniform routed-expert set with the SAME calibration/transform-seed/
+   parameters as K6, on the same P1 rental. Purpose: (a) shippable ~315 GiB
+   near-BF16 flagship (fits TP4); (b) complete per-choice payload parts bin so
+   future multi-precision K6K8 ("where it counts") is OFFLINE ASSEMBLY, not
+   re-encode. Uniform K8 keeps single-rate invariants — enablement is
+   admission-only (SUPPORTED_BITS+=8, recipe id/schemas, codec adapter rate,
+   128-word trellis in readers/materializer schema strings). Mixed-rate
+   serving relaxation stays future assembly-time work.

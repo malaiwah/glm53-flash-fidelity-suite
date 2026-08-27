@@ -95,6 +95,8 @@ def _require_token() -> str:
 
 def _profile_from_recipe(recipe: Dict[str, Any]) -> str:
     profile = str(recipe.get("profile", ""))
+    if profile.startswith("k8"):
+        return "k8"
     if profile.startswith("k6k8"):
         return "k6k8"
     if profile.startswith("k6"):
@@ -111,11 +113,11 @@ def _default_card(
     packed_kld: Optional[Dict[str, Any]],
     license_id: str,
 ) -> str:
-    bits_desc = (
-        "uniform 6-bit routed experts (K6)"
-        if profile == "k6"
-        else "mixed routed experts: gate/up 6-bit, down 8-bit (K6K8)"
-    )
+    bits_desc = {
+        "k6": "uniform 6-bit routed experts (K6)",
+        "k8": "uniform 8-bit routed experts (K8, malaiwah declared extension)",
+        "k6k8": "mixed routed experts: gate/up 6-bit, down 8-bit (K6K8)",
+    }[profile]
     mean = packed_kld.get("measured_mean_kld") if packed_kld else None
     mean_row = f"{mean:.6f}" if isinstance(mean, (int, float)) else "see receipts/"
     lines = [

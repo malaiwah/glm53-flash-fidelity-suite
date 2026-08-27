@@ -153,7 +153,7 @@ def main() -> int:
                         help="official BF16 checkpoint (non-routed source)")
     parser.add_argument("--teacher", type=Path, required=True,
                         help="teacher final-window tree (panel receipt search root)")
-    parser.add_argument("--profile", required=True, choices=("k6", "k6k8"))
+    parser.add_argument("--profile", required=True, choices=("k6", "k8", "k6k8"))
     parser.add_argument("--cold-run", type=int, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--emit-reference-panel", type=Path,
@@ -171,7 +171,7 @@ def main() -> int:
     if args.profile == "k6k8":
         expected_bits = None  # bits come from the contract; k6k8 uses malaiwah schemas
     else:
-        expected_bits = 6
+        expected_bits = {"k6": 6, "k8": 8}[args.profile]
 
     from quant_pipeline.core.artifacts import (
         canonical_json,
@@ -184,6 +184,7 @@ def main() -> int:
         contract_bits,
         contract_schema_for_bits,
     )
+    from quant_pipeline.campaign.glm53_mtp_k4 import _mtp_adapter_schema
     from quant_pipeline.evaluation.glm53_logits import load_panel_windows
     from quant_pipeline.evaluation import glm53_packed_k4_reader as reader_module
     from quant_pipeline.evaluation.glm53_packed_k4_reader import (
@@ -233,7 +234,9 @@ def main() -> int:
         raise _fail("direct MCG contract targets another BF16 inventory")
     mtp_adapter = _sealed_json(
         mtp_receipt_path,
-        f"quant-pipeline.glm53-uniform-k{bits}-mtp-adapter-receipt.v1",
+        # K4/K6: upstream family; K8: malaiwah.* - one helper, shared with the
+        # sealer (glm53_mtp_k4) and the reader (load_complete_surface)
+        _mtp_adapter_schema(bits),
         "receipt_sha256",
     )
 

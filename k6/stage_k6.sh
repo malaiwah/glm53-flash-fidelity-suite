@@ -13,8 +13,9 @@
 # half-synced .new file exists.
 #
 # Stages:
-#   setup fixture_rehearsal shared_vector_ab convert_k6 convert_k6k8
-#   qualify_k6 qualify_k6k8 upload_weights publish_receipts
+#   setup fixture_rehearsal shared_vector_ab convert_k6 convert_k8
+#   materialize_k8 convert_k6k8 qualify_k6 qualify_k8 qualify_k6k8
+#   upload_weights publish_receipts
 set -euo pipefail
 
 ROOT=/home/jl_fs/glm53-k6
@@ -40,9 +41,12 @@ VENV=$ROOT/venv
 CAL=$ROOT/calibration                      # main-ep4-full/ mtp45-ep4-full/ panel-v1/
 TEACH=$ROOT/teacher-final                  # 25 sealed final-window fp32 logits
 OUT_K6=$ROOT/out-k6                        # payload-store/ experts/ layers/ mtp-*/ hessians/
+OUT_K8=$ROOT/out-k8                        # K8-uniform parts bin (DECISIONS.md 7)
 OUT_K6K8=$ROOT/out-k6k8
 CKPT_K6=$ROOT/ckpt-k6                      # materialized checkpoints
+CKPT_K8=$ROOT/ckpt-k8
 CKPT_K6K8=$ROOT/ckpt-k6k8
+FP8_DIR=/home/jl_fs/glm53/models/fp8       # 328 GB reference FP8 (re-downloadable; K8 ledger eviction target)
 RCPT=$ROOT/receipts
 DONE=$RCPT/done
 mkdir -p "$ROOT/logs" "$RCPT" "$DONE"
@@ -85,9 +89,36 @@ PY=$VENV/bin/python
 # (pip-installed into the venv), and subprocesses inherit the right python.
 export PATH="$VENV/bin:$PATH"
 export PYTHONPATH="$PIPE/src:$SHAPLEY:$SQGEXP"
+# BUG FIX (found during K8 enablement review): seal-main / release-dead-claims
+# / materialize are invoked in convert_k6 WITHOUT --pipeline-root, and the
+# driver hard-requires it (or QP_PIPELINE_ROOT) for exactly those subcommands -
+# convert_k6 would have failed right after its encode completed.  The env var
+# is the minimal fix that covers every call site without touching the k6
+# command lines mid-campaign.
+export QP_PIPELINE_ROOT="$PIPE"
 export NVIDIA_TF32_OVERRIDE=0
 
 mark_done() { echo "$(date -u +%FT%TZ)" > "$DONE/$STAGE.done"; }
+
+# v2-0008 top-up (adversarial K8 review finding): normalization ALLOWED_BITS is
+# (3,4,5) at the pin and streaming_v31.FitSampleSpec.from_input imports it, so
+# build_layer_preparation REFUSES bits=6 AND bits=8 - K6 GSS would crash at
+# "preparing layer 3" without this.  0008 touches no reader/closure-hashed file
+# and may land at ANY time (unlike 0007).  The P1 fleet fs already carries the
+# widening as a hot-edit (verified byte-identical to 0008's output); this guard
+# codifies it and back-fills the receipt line.
+ensure_0008() {
+  local target="$PIPE/src/quant_pipeline/normalization/absolute_v31.py"
+  local p="$ROOT/patches-v2/0008-v31-allowed-bits-k6-k8.patch"
+  [ -f "$target" ] || return 0
+  if grep -qF "ALLOWED_BITS = frozenset((3, 4, 5))" "$target"; then
+    test -f "$p" || { echo "patches-v2/0008-v31-allowed-bits-k6-k8.patch missing on fs - upload it (GSS preparation refuses bits 6/8 without it)" >&2; exit 1; }
+    ( cd "$PIPE" && patch -p1 -s < "$p" )
+  fi
+  if [ -f "$p" ] && ! grep -q "0008-v31-allowed-bits" "$RCPT/patches-v2-applied.txt" 2>/dev/null; then
+    ( cd "$ROOT/patches-v2" && sha256sum 0008-*.patch ) | tee -a "$RCPT/patches-v2-applied.txt"
+  fi
+}
 
 # Fail fast if the fs cannot absorb the stage's writes (RUNBOOK abort criterion:
 # never start a fleet encode that will run the fs out mid-layer).
@@ -105,7 +136,7 @@ require_free_gb() {  # require_free_gb <gb> <why>
 # Run one single-GPU encode worker (used by convert stages).  The driver
 # claims dynamic work units and skips experts whose sealed receipt exists,
 # so re-running after a preemption loses at most one in-flight expert batch.
-run_workers() {  # run_workers <profile: k6|k6k8> <output_root>
+run_workers() {  # run_workers <profile: k6|k8|k6k8> <output_root>
   local profile="$1" out="$2" pids=() i rcs=0
   for i in 0 1 2 3; do
     CUDA_VISIBLE_DEVICES=$i "$PY" "$TOOLS/k6_driver.py" encode-worker \
@@ -207,13 +238,25 @@ setup)
     git -C "$PIPE" checkout -q "$PIPE_PIN"
     git -C "$PIPE" diff --quiet && git -C "$PIPE" diff --cached --quiet
     test -d "$ROOT/patches-v2" || { echo "patches-v2 missing at $ROOT/patches-v2 - upload the series first" >&2; exit 1; }
-    ( cd "$PIPE" && for p in "$ROOT"/patches-v2/0*.patch; do patch -p1 -s < "$p"; done )
-    ( cd "$ROOT/patches-v2" && sha256sum 0*.patch SERIES ) | tee "$RCPT/patches-v2-applied.txt"
+    ( cd "$PIPE" && for p in "$ROOT"/patches-v2/000[1-6]-*.patch; do patch -p1 -s < "$p"; done )
+    ( cd "$ROOT/patches-v2" && sha256sum 000[1-6]-*.patch SERIES ) | tee "$RCPT/patches-v2-applied.txt"
   else
     # already patched: the base commit must still be the pin underneath
     [ "$(git -C "$PIPE" rev-parse HEAD)" = "$PIPE_PIN" ] || { echo "$PIPE HEAD is not $PIPE_PIN" >&2; exit 1; }
   fi
-  "$PY" -c "import sys; sys.path.insert(0, '$PIPE/src'); import quant_pipeline.campaign.glm53_uniform_k6, quant_pipeline.campaign.glm53_uniform_k4, quant_pipeline.publication.glm53_k6_postmtp, quant_pipeline.evaluation.glm53_packed_k4_reader; print('patched pipeline import OK')"
+  # v2-0007 K8-uniform admission top-up (DECISIONS.md 7).  0007 edits the
+  # READER file whose byte-hash every sealed K6 choice binds
+  # (decoder.reader_abi_sha256), so it may land ONLY when the K6 campaign is
+  # complete - or has not sealed a single choice yet.  Mid-K6 instances keep
+  # the exact 0001-0006 reader bytes.
+  if ! grep -q "K8_RECIPE_ID" "$PIPE/src/quant_pipeline/campaign/glm53_direct_k4.py" \
+     && [ -f "$ROOT/patches-v2/0007-k8-uniform-admission.patch" ] \
+     && { [ -f "$DONE/convert_k6.done" ] || [ ! -d "$OUT_K6/payload-store" ]; }; then
+    ( cd "$PIPE" && patch -p1 -s < "$ROOT/patches-v2/0007-k8-uniform-admission.patch" )
+    ( cd "$ROOT/patches-v2" && sha256sum 0007-*.patch ) | tee -a "$RCPT/patches-v2-applied.txt"
+  fi
+  ensure_0008
+  "$PY" -c "import sys; sys.path.insert(0, '$PIPE/src'); import quant_pipeline.campaign.glm53_uniform_k6, quant_pipeline.campaign.glm53_uniform_k4, quant_pipeline.publication.glm53_k6_postmtp, quant_pipeline.evaluation.glm53_packed_k4_reader; from quant_pipeline.normalization.absolute_v31 import ALLOWED_BITS; assert {6, 8} <= set(ALLOWED_BITS); print('patched pipeline import OK')"
   # ShapleyMCG @ pin (encoder closure) + sparse bmmlaw_r7_encoder @ pin.
   if [ ! -d "$SHAPLEY/.git" ]; then
     git clone "$SHAPLEY_REPO" "$SHAPLEY"
@@ -289,7 +332,7 @@ PYEOF
   # Fail fast on the rest of the control-session uploads the stages depend on.
   for need in "$TOOLS/k6_driver.py" "$TOOLS/k6_student_capture.py" \
               "$TOOLS/k6_kld_report.py" "$TOOLS/k6_publish.py" \
-              "$ROOT/recipes/k6.json" "$ROOT/recipes/k6k8.json"; do
+              "$ROOT/recipes/k6.json" "$ROOT/recipes/k8.json" "$ROOT/recipes/k6k8.json"; do
     test -f "$need" || { echo "missing on fs: $need - upload the k6-program tree first" >&2; exit 1; }
   done
   nvidia-smi --query-gpu=name,memory.total,compute_cap --format=csv | tee "$RCPT/nvidia-smi.txt"
@@ -351,6 +394,7 @@ PYEOF
 convert_k6)
   test -f "$DONE/setup.done" && test -f "$DONE/fixture_rehearsal.done"
   test -f "$DONE/shared_vector_ab.done"
+  ensure_0008   # GSS preparation refuses bits=6 without the ALLOWED_BITS widening
   # Inputs the control session downloads out-of-band (no automated fetch here):
   test -d "$CAL/main-ep4-full" || { echo "calibration/main-ep4-full missing at $CAL - download from brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits first" >&2; exit 1; }
   test -d "$CAL/mtp45-ep4-full" || { echo "calibration/mtp45-ep4-full missing at $CAL" >&2; exit 1; }
@@ -417,6 +461,160 @@ assert r["qualified_tp_sizes"] == [] and r["serving_reader_qualified"] is False
 # Receipt-exact K6 size: native 19,339,524,984 + 37,152 x 6,303,748 payload bytes.
 assert r["output_logical_bytes"] == 253_536_370_680, r["output_logical_bytes"]
 print("K6 materialization receipt GREEN:", r["output_logical_bytes"], "bytes")
+PYEOF
+  df -h /home/jl_fs
+  mark_done
+  ;;
+
+convert_k8)
+  # P1b - K8-UNIFORM parts-bin campaign (operator directive, DECISIONS.md 7):
+  # runs on the SAME 4x H200 fleet immediately after convert_k6.  Same
+  # calibration, same transform seed, same profile parameters - only the rate
+  # differs (routed experts at K8, 128-word trellis).  Purpose: (a) shippable
+  # ~309 GiB near-BF16 flagship; (b) with the sealed K6 payload store, future
+  # multi-precision K6K8 is OFFLINE ASSEMBLY of per-choice payloads, no
+  # re-encode.  NO materialize here - that is materialize_k8 (disk ledger).
+  test -f "$DONE/convert_k6.done"
+  # patch 0007 (K8 admission) top-up: safe ONLY now - it edits the reader file
+  # whose byte-hash the sealed K6 choices bind; convert_k6 is complete.
+  if ! grep -q "K8_RECIPE_ID" "$PIPE/src/quant_pipeline/campaign/glm53_direct_k4.py"; then
+    test -f "$ROOT/patches-v2/0007-k8-uniform-admission.patch" \
+      || { echo "patches-v2/0007-k8-uniform-admission.patch missing on fs - upload it first" >&2; exit 1; }
+    ( cd "$PIPE" && patch -p1 -s < "$ROOT/patches-v2/0007-k8-uniform-admission.patch" )
+    ( cd "$ROOT/patches-v2" && sha256sum 0007-*.patch ) | tee -a "$RCPT/patches-v2-applied.txt"
+  fi
+  ensure_0008   # GSS preparation refuses bits=8 without the ALLOWED_BITS widening
+  "$PY" -c "import sys; sys.path.insert(0, '$PIPE/src'); import quant_pipeline.campaign.glm53_uniform_k8; import quant_pipeline.campaign.glm53_direct_k4 as d; from quant_pipeline.normalization.absolute_v31 import ALLOWED_BITS; assert 8 in d.SUPPORTED_BITS and 8 in ALLOWED_BITS; print('K8 admission import OK')"
+  # K8 codec gate: receipts/rehearsal.json recorded k8_probe admitted=false
+  # (pre-0007 by design).  Re-probe now on the idle fleet + K8 timing bench
+  # (K8 trellis edges > K6: seconds/matrix must be measured, not assumed).
+  if [ ! -f "$RCPT/rehearsal-k8.json" ]; then
+    CUDA_VISIBLE_DEVICES=0 "$PY" "$TOOLS/k6_driver.py" rehearse \
+      --fixture "$ROOT/fixture/GLM-5.3-Flash-0.1B-A0.1B" \
+      --pipeline-root "$PIPE" --shapley-root "$SHAPLEY" --exllama-root "$EXL3" \
+      --bench-full-size-matrices 6 --bench-bits 8 \
+      --output "$RCPT/rehearsal-k8.json"
+  fi
+  # non-tautological bit-verify on THIS SM90 fleet: reconstructed-codec K8
+  # pack vs exllamav3 NATIVE convert (VALIDATION.md V9 covered L4/SM89 only).
+  if [ ! -f "$RCPT/k8-native-probe.txt" ]; then
+    ( cd "$ROOT/fallback" && PYTHONPATH="$PIPE/src:$SHAPLEY:$SQGEXP" CUDA_VISIBLE_DEVICES=0 \
+        "$PY" probe_native_convert.py ) | tee "$RCPT/k8-native-probe.txt"
+  fi
+  "$PY" - <<'PYEOF'
+import json
+r = json.load(open("/home/jl_fs/glm53-k6/receipts/rehearsal-k8.json"))
+probe = r["k8_probe"]
+assert probe.get("admitted") is True, f"K8 still refused post-0007: {probe}"
+assert probe.get("encode_decode_exact") is True, f"K8 roundtrip not exact: {probe}"
+assert r.get("bench_roundtrip_exact") is True, "K8 full-size bench roundtrip not exact"
+spm = r["seconds_per_full_size_matrix_k8"]
+est_h = 37152 * spm / 4 / 3600
+print(f"K8 per-matrix {spm:.2f}s -> est main+MTP encode wall {est_h:.1f} h on 4 GPUs")
+assert est_h < 24, f"projected K8 encode {est_h:.1f}h busts the budget - STOP and re-plan"
+PYEOF
+  # Disk ledger, EVICTION FIRST (adversarial-review reorder): the P1b ledger
+  # can NEVER close with the FP8 reference tree (328 GB, re-downloadable)
+  # resident - post-K6 free is ~469 GB and the calibration re-download alone
+  # needs 464 GB, a ~5 GB knife-edge.  Evict FP8 BEFORE the operator re-
+  # downloads the captures so the download lands into ~797 GB instead.
+  # Receipted - never silent.
+  free_now=$(df -BG --output=avail /home/jl_fs 2>/dev/null | tail -1 | tr -dc '0-9')
+  if [ -n "$free_now" ] && [ "$free_now" -lt 800 ] && [ -d "$FP8_DIR" ]; then
+    fp8_gb=$(du -s -BG "$FP8_DIR" 2>/dev/null | cut -f1 | tr -dc '0-9')
+    cat > "$RCPT/fp8-evicted.json" <<JSON
+{
+  "schema": "malaiwah.glm53-k8-fp8-eviction.v1",
+  "path": "$FP8_DIR",
+  "approx_gb": ${fp8_gb:-328},
+  "free_gb_before": $free_now,
+  "reason": "K8 ledger cannot close with FP8 resident: cal re-download (464 GB) + K8 payload store (312 GB) + hessian transient need the headroom; FP8 is re-downloadable",
+  "re_download": "zai-org/GLM-5.3-Flash (FP8, as served) - needed again only for fidelity-suite baseline reruns",
+  "evicted_utc": "$(date -u +%FT%TZ)"
+}
+JSON
+    rm -rf "$FP8_DIR"
+    ntfy "evicted FP8 tree (${fp8_gb:-328} GB) for K8 cal-redownload + payload headroom" "GLM53-K8: fp8 evicted" "wastebasket"
+  fi
+  # Inputs (calibration/main-ep4-full was deleted in convert_k6 step 4; the
+  # control session re-downloads it AFTER the FP8 eviction above).
+  test -d "$CAL/main-ep4-full" || { echo "calibration/main-ep4-full missing - re-download it now (FP8 eviction above freed the room) and re-run convert_k8" >&2; exit 1; }
+  test -d "$CAL/mtp45-ep4-full" || { echo "calibration/mtp45-ep4-full missing at $CAL" >&2; exit 1; }
+  test -f "$CAL/upstream-inventory.json" \
+    || { echo "upstream sealed inventory missing at $CAL/upstream-inventory.json (G0 item 2)" >&2; exit 1; }
+  # SAME TRANSFORM SEED (operator requirement - assembly compatibility with
+  # the K6 payload store).  The driver also fail-fasts (profile k8 never mints).
+  test -f "$OUT_K6/transform-seed.json" \
+    || { echo "out-k6/transform-seed.json missing - K8 must reuse the K6 campaign seed" >&2; exit 1; }
+  mkdir -p "$OUT_K8"
+  if [ -f "$OUT_K8/transform-seed.json" ]; then
+    cmp -s "$OUT_K6/transform-seed.json" "$OUT_K8/transform-seed.json" \
+      || { echo "out-k8/transform-seed.json DIFFERS from out-k6 - refusing to encode an incompatible parts bin" >&2; exit 1; }
+  else
+    cp "$OUT_K6/transform-seed.json" "$OUT_K8/transform-seed.json"
+  fi
+  # K4 gate bridge: the K8 launch plan is K4-KL-gated exactly like K6; reuse
+  # the SAME sealed planning + bridge docs the K6 campaign used.
+  for doc in k4-launch-plan.json k4-authorized-state.json; do
+    test -f "$OUT_K6/$doc" || { echo "out-k6/$doc missing - convert_k6 leaves it; cannot gate the K8 plan" >&2; exit 1; }
+    [ -f "$OUT_K8/$doc" ] || cp "$OUT_K6/$doc" "$OUT_K8/$doc"
+  done
+  # Disk ledger (RUNBOOK P1b): K8 payload store 312 GB + <=60 GB transient
+  # hessians land while BF16 + calibration + out-k6 + ckpt-k6 stay resident.
+  # (FP8 was evicted above, before the calibration re-download.)
+  require_free_gb 100 "K8 encode floor (operator minimum; RUNBOOK P1b targets >=333 GB at encode start)"
+  free_now=$(df -BG --output=avail /home/jl_fs 2>/dev/null | tail -1 | tr -dc '0-9')
+  [ -n "$free_now" ] && [ "$free_now" -lt 300 ] \
+    && ntfy "K8 encode starting with only ${free_now} GB free (<300; ledger plans ~333) - watch the ledger" "GLM53-K8 disk warning" "warning" "high"
+  # BF16 path binding: same upstream-inventory symlink dance as convert_k6.
+  UPSTREAM_BF16_PATH=$("$PY" -c "import json;print(json.load(open('$CAL/upstream-inventory.json'))['checkpoint'])")
+  if [ "$UPSTREAM_BF16_PATH" != "$BF16" ] && [ ! -e "$UPSTREAM_BF16_PATH" ]; then
+    mkdir -p "$(dirname "$UPSTREAM_BF16_PATH")"
+    ln -sfn "$BF16" "$UPSTREAM_BF16_PATH"
+  fi
+  # contract (K8-specific GSS preparations run inside) -> encode -> seal -> MTP
+  "$PY" "$TOOLS/k6_driver.py" contract --profile k8 \
+    --pipeline-root "$PIPE" --shapley-root "$SHAPLEY" --exllama-root "$EXL3" \
+    --bf16 "$UPSTREAM_BF16_PATH" --calibration "$CAL" --output-root "$OUT_K8" \
+    --recipe "$ROOT/recipes/k8.json" \
+    --inventory "$CAL/upstream-inventory.json"
+  for attempt in 1 2 3; do
+    run_workers k8 "$OUT_K8" || true
+    [ -f "$OUT_K8/main-receipt.json" ] && break
+    "$PY" "$TOOLS/k6_driver.py" seal-main --profile k8 --output-root "$OUT_K8" --pipeline-root "$PIPE" || true
+    [ -f "$OUT_K8/main-receipt.json" ] && break
+    echo "K8 main not sealed after attempt $attempt; requeueing dead claims"
+    "$PY" "$TOOLS/k6_driver.py" release-dead-claims --profile k8 --output-root "$OUT_K8" --pipeline-root "$PIPE" || true
+  done
+  test -f "$OUT_K8/main-receipt.json"
+  "$PY" "$TOOLS/k6_driver.py" mtp --profile k8 \
+    --pipeline-root "$PIPE" --bf16 "$UPSTREAM_BF16_PATH" --calibration "$CAL" --output-root "$OUT_K8"
+  test -f "$OUT_K8/mtp-adapter-receipt.json"
+  df -h /home/jl_fs
+  mark_done
+  ;;
+
+materialize_k8)
+  # Ledger-gated K8 checkpoint materialization (operator: materialize AFTER
+  # uploading/deleting what the ledger allows).  Deletes the re-downloadable
+  # calibration captures first (mirrors convert_k6 step 4), then requires
+  # room for ckpt-k8 (331 GB); if still short, upload+delete ckpt-k6 (254 GB)
+  # per the RUNBOOK P1b ledger and re-run this stage.
+  test -f "$DONE/convert_k8.done"
+  du -sh "$CAL" 2>/dev/null || true
+  rm -rf "$CAL/main-ep4-full"
+  require_free_gb 340 "K8 materialized checkpoint (331 GB) - if short: upload ckpt-k6, delete it, re-run"
+  "$PY" "$TOOLS/k6_driver.py" materialize --profile k8 \
+    --pipeline-root "$PIPE" --output-root "$OUT_K8" --bf16 "$BF16" --checkpoint "$CKPT_K8"
+  "$PY" - <<'PYEOF'
+import json
+r = json.load(open("/home/jl_fs/glm53-k6/ckpt-k8/materialization-receipt.json"))
+assert r["schema"] == "malaiwah.glm53-k8-materialization-receipt.v1", r["schema"]
+assert r["bits"] == 8 and r["complete"] and r["nonrouted_native_exact"] and r["main_and_mtp_complete"]
+assert r["qualified_tp_sizes"] == [] and r["serving_reader_qualified"] is False
+# Receipt-exact K8 size: native 19,339,524,984 + 37,152 x 8,400,900 payload bytes.
+assert r["output_logical_bytes"] == 331_449_761_784, r["output_logical_bytes"]
+print("K8 materialization receipt GREEN:", r["output_logical_bytes"], "bytes")
 PYEOF
   df -h /home/jl_fs
   mark_done
@@ -502,6 +700,45 @@ PYEOF
   mark_done
   ;;
 
+qualify_k8)
+  # K8 qualification: THREE cold EP8 student captures (budget; disclosed) +
+  # fp64 tokenwise KLD + TP4 packed-runtime qualification (K8 is a shippable
+  # flagship, so the runtime receipt is required like K6's).
+  test -f "$CKPT_K8/materialization-receipt.json"
+  # v2-0009 top-up: the upstream qualify script pins --bits choices=(4,6) and
+  # would refuse --bits 8 at argparse before any GPU work.
+  if grep -q 'choices=(4, 6))' "$PIPE/scripts/qualify_glm53_custom_tp2_runtime.py"; then
+    test -f "$ROOT/patches-v2/0009-qualify-script-k8-admission.patch" \
+      || { echo "patches-v2/0009-qualify-script-k8-admission.patch missing on fs - upload it first" >&2; exit 1; }
+    ( cd "$PIPE" && patch -p1 -s < "$ROOT/patches-v2/0009-qualify-script-k8-admission.patch" )
+    ( cd "$ROOT/patches-v2" && sha256sum 0009-*.patch ) | tee -a "$RCPT/patches-v2-applied.txt"
+  fi
+  test -d "$TEACH" || { echo "teacher final-window logits missing at $TEACH" >&2; exit 1; }
+  for run in 1 2 3; do
+    [ -f "$RCPT/k8-student-run$run/capture-receipt.json" ] && continue
+    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --nproc-per-node=8 "$TOOLS/k6_student_capture.py" \
+      --checkpoint "$CKPT_K8" --bf16 "$BF16" --teacher "$TEACH" \
+      --profile k8 --cold-run "$run" --out "$RCPT/k8-student-run$run" \
+      $( [ "$run" = 1 ] && echo --emit-reference-panel "$RCPT/k8-reference-panel.safetensors" )
+  done
+  "$PY" "$TOOLS/k6_kld_report.py" --profile k8 \
+    --teacher "$TEACH" --runs "$RCPT"/k8-student-run{1,2,3} \
+    --fp8-baseline 0.020615 --k4-baseline 0.024555 \
+    --out "$RCPT/k8-packed-kld.json" \
+    --comparison-out "$RCPT/comparison-table.md"
+  "$PY" -c "import json; r=json.load(open('$RCPT/k8-packed-kld.json')); assert r['measured_mean_kld'] < 0.06, r['measured_mean_kld']; print('K8 mean KLD:', r['measured_mean_kld'])"
+  ( cd "$PIPE" && PYTHONPATH=src "$VENV/bin/torchrun" --nproc-per-node=4 \
+      scripts/qualify_glm53_custom_tp2_runtime.py \
+      --model "$CKPT_K8" --bits 8 --exllamav3-source "$EXL3" \
+      --reference-panel "$RCPT/k8-reference-panel.safetensors" \
+      --max-abs-tolerance 0.5 --mean-abs-tolerance 0.005 \
+      --max-new-tokens 4 \
+      --observed-logits-output "$RCPT/k8-tp4-observed.safetensors" \
+      --output "$RCPT/k8-tp4-runtime-receipt.json" )
+  "$PY" -c "import json; r=json.load(open('$RCPT/k8-tp4-runtime-receipt.json')); assert r['qualified'], r; print('K8 TP4 runtime receipt GREEN')"
+  mark_done
+  ;;
+
 qualify_k6k8)
   test -f "$CKPT_K6K8/materialization-receipt.json"
   test -d "$TEACH" || { echo "teacher final-window logits missing at $TEACH" >&2; exit 1; }
@@ -538,6 +775,14 @@ upload_weights)
     --checkpoint "$CKPT_K6" --repo malaiwah/GLM-5.3-Flash-EXL3-K6 \
     --recipe "$ROOT/recipes/k6.json" --receipts "$RCPT" \
     --card "$ROOT/cards/K6-README.md"
+  if [ -f "$CKPT_K8/materialization-receipt.json" ] && [ -f "$DONE/qualify_k8.done" ]; then
+    test -f "$ROOT/cards/K8-README.md" \
+      || { echo "README card missing at $ROOT/cards/K8-README.md - author it before the K8 upload" >&2; exit 1; }
+    "$PY" "$TOOLS/k6_publish.py" weights \
+      --checkpoint "$CKPT_K8" --repo malaiwah/GLM-5.3-Flash-EXL3-K8 \
+      --recipe "$ROOT/recipes/k8.json" --receipts "$RCPT" \
+      --card "$ROOT/cards/K8-README.md"
+  fi
   if [ -f "$CKPT_K6K8/materialization-receipt.json" ] && [ -f "$DONE/qualify_k6k8.done" ]; then
     "$PY" "$TOOLS/k6_publish.py" weights \
       --checkpoint "$CKPT_K6K8" --repo malaiwah/GLM-5.3-Flash-EXL3-K6K8-mixed \

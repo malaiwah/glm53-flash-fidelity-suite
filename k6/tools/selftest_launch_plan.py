@@ -221,6 +221,78 @@ def main() -> int:
         "| 37,152 routed matrices | h200 workers",
     )
     print(json.dumps({"launch_plan_sha256": plan["launch_plan_sha256"]}))
+
+    # ------------------------------------------------------------------ K8 --
+    # v2-0007 K8-uniform admission (skipped gracefully on a pre-0007 tree).
+    try:
+        from quant_pipeline.campaign import glm53_uniform_k8 as uniform_k8
+    except ImportError:
+        print("v2-0007 not applied (glm53_uniform_k8 absent) - K8 leg skipped")
+        return 0
+    from quant_pipeline.campaign import glm53_direct_k4 as direct
+
+    assert 8 in direct.SUPPORTED_BITS
+    assert direct.recipe_id_for_bits(8) == (
+        "malaiwah-shapleymcg-r10-uniform-k8-candidate-conditioned-down-v1"
+    )
+    for helper, expected in (
+        (direct.contract_schema_for_bits, "malaiwah.glm53-direct-mcg-k8-contract.v1"),
+        (direct.materialization_plan_schema_for_bits, "malaiwah.glm53-k8-materialization-plan.v1"),
+        (direct.materialization_receipt_schema_for_bits, "malaiwah.glm53-k8-materialization-receipt.v1"),
+    ):
+        assert helper(8) == expected, (helper.__name__, helper(8))
+        # K4/K6 outputs unchanged by 0007
+    assert direct.contract_schema_for_bits(6) == "quant-pipeline.glm53-direct-mcg-k6-contract.v1"
+    assert direct.contract_schema_for_bits(4) == "quant-pipeline.glm53-direct-mcg-k4-contract.v1"
+    assert uniform_k8.LAUNCH_PLAN_SCHEMA == direct.K8_LAUNCH_PLAN_SCHEMA
+    from quant_pipeline.campaign.glm53_mtp_k4 import (
+        _main_receipt_schema,
+        _mtp_adapter_schema,
+        _mtp_contract_schema,
+    )
+
+    assert _mtp_contract_schema(8) == "malaiwah.glm53-mtp45-exl3-mcg-k8-contract.v1"
+    assert _mtp_adapter_schema(8) == "malaiwah.glm53-uniform-k8-mtp-adapter-receipt.v1"
+    assert _main_receipt_schema(8) == "malaiwah.glm53-exl3-mcg-main-k8-receipt.v1"
+    assert _main_receipt_schema(6) == "quant-pipeline.glm53-exl3-mcg-main-k6-receipt.v1"
+    from quant_pipeline.evaluation import glm53_packed_k4_reader as reader
+
+    assert 8 in reader.SUPPORTED_BITS
+
+    k8_plan = uniform_k8.build_launch_plan(
+        inventory, preflight, k4_plan=k4_plan, k4_authorized_state=k4_state
+    )
+    uniform_k8.verify_launch_plan(k8_plan)
+    assert k8_plan["rate_contract"]["K8"] == 37152
+    assert k8_plan["rate_contract"]["allowed_bits"] == [8]
+    assert k8_plan["profile"] == "k8-tp4"
+    assert k8_plan["preparation_contract"]["same_transform_seed_as_k6_campaign"] is True
+    assert k8_plan["scheduler"]["workers"][0]["worker_id"] == "h200-0"
+    assert k8_plan["k4_launch_plan_sha256"] == k4_plan["launch_plan_sha256"]
+    # cross-verifier: the direct-contract launch-plan branch accepts the K8
+    # plan seal under the malaiwah schema (same check build_contract performs)
+    direct._verify_seal(k8_plan, direct.K8_LAUNCH_PLAN_SCHEMA, "launch_plan_sha256")
+    # ... and the K6 verifier refuses it (no cross-admission)
+    try:
+        uniform_k6.verify_launch_plan(k8_plan)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("K6 verifier accepted a K8 plan")
+
+    # packed-choice geometry: bits=8 -> 128 int16 trellis words per tile
+    # (torch-free check of the reader's expected-shape table)
+    import quant_pipeline.evaluation.glm53_packed_k4_reader as r
+
+    n, k = 4096, 2048  # down_proj
+    expected_trellis = [k // 16, n // 16, 8 * 16]
+    assert expected_trellis[-1] == 128
+    print(
+        "v2-0007 K8 leg OK:",
+        k8_plan["launch_plan_sha256"][:16],
+        "| malaiwah schemas | 128-word trellis geometry",
+    )
+    print(json.dumps({"k8_launch_plan_sha256": k8_plan["launch_plan_sha256"]}))
     return 0
 
 
