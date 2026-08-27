@@ -356,3 +356,17 @@ leg now running.
    an intervention test settles causation — budget for the intervention pair
    from the start, and never publish "root cause" before it (our PR comment
    said "likely root cause" — the hedge just earned its keep).
+
+## 2026-08-27 05:05 — THE HEADLINE: official FP8 costs 0.0281 nats vs BF16
+Replay complete over all 10,480,640 positions:
+**FP8-vs-BF16 mean KLD 0.028104 nats** (macro mean 0.028104, CI95
+[0.027205, 0.028982]), median 4.93e-3, p99 0.354, p999 1.374 (heavy tail),
+top-1 0.9427, JSD 0.0092 bits. Per-stratum 0.0223 (encyclopedic) to 0.0354
+(scientific). llama.cpp-comparable geometry (positions 1024+): 0.0188 /
+top-1 0.9512. Signal-to-noise-floor 32x (vs 8.7e-4) — clean measurement.
+Comparative note: Qwen3.8-27B's official FP8 measured 0.0053 on the same
+protocol family — zai's block-FP8 costs ~5x more divergence against its own
+BF16. qualify_fp8 root-caused (comparator OOM: FP8 engine pads KV to the util
+target, GPU0 at 136 GiB); retry queued at util 0.80. Package+publish of the
+completed v1 running. Remaining: qualify-fp8 receipt, stacked-pin
+intervention, pinned v2 recaptures, activations publish, closeout.
