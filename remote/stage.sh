@@ -368,6 +368,54 @@ Captured with vLLM TP8 eager; manifest carries sha256 per file. Preliminary v1 c
     print("published", ds2)
 PUB
   ;;
+det_confirm)
+  # Deterministic-fix confirmation: pin Triton autotune winners via disk cache,
+  # then prove two fresh engine launches capture byte-identical sentinels.
+  # Runs ONLY while models/bf16 exists (e.g. during the free_bf16 hold).
+  test -d "$ROOT/models/bf16"
+  mkdir -p "$ROOT/triton-cache" "$ROOT/detpin"
+  for run in seed runB runC; do
+    sudo docker run --rm -i --gpus all --ipc=host --shm-size=64g \
+      -v "$ROOT:/glm53" \
+      -e TRITON_CACHE_AUTOTUNING=1 -e TRITON_CACHE_DIR=/glm53/triton-cache \
+      -e TRITON_PRINT_AUTOTUNING=1 \
+      -e NVIDIA_TF32_OVERRIDE=0 -e VLLM_ENGINE_READY_TIMEOUT_S=3600 \
+      -e VLLM_WORKER_MULTIPROC_METHOD=spawn -e VLLM_LOGGING_LEVEL=INFO \
+      -e HF_HUB_OFFLINE=1 -e VLLM_ALLOW_INSECURE_SERIALIZATION=1 \
+      --entrypoint python3 "$IMAGE_REF" /glm53/bundle/tools/fidelity.py capture \
+      --model /glm53/models/bf16 --suite /glm53/bundle/suite --out "/glm53/detpin/$run" \
+      --tensor-parallel $TP --gpu-memory-utilization 0.90 \
+      --engine-kwargs "$ENGINE_KW" --no-hash-shards --chunk-accumulate --filter sentinel \
+      > "$ROOT/logs/detpin-$run.log" 2>&1 || echo "detpin $run rc=$? - tolerated if manifest complete"
+    python3 -c "import json; assert json.load(open('$ROOT/detpin/$run/capture-manifest.json'))['complete'], '$run incomplete'"
+    echo "detpin $run complete"
+  done
+  python3 - <<'DETRECEIPT'
+import json, pathlib, re
+root = pathlib.Path("/home/ubuntu/glm53")
+runs = {}
+for run in ("seed", "runB", "runC"):
+    man = json.loads((root / f"detpin/{run}/capture-manifest.json").read_text())
+    runs[run] = {r["index"]: r["sha256"] for r in man["captures"]}
+bc_match = [i for i in runs["runB"] if runs["runB"][i] == runs["runC"].get(i)]
+ab_match = [i for i in runs["seed"] if runs["seed"][i] == runs["runB"].get(i)]
+winners = {}
+for run in ("seed", "runB", "runC"):
+    log = (root / f"logs/detpin-{run}.log").read_text(errors="ignore")
+    winners[run] = sorted(set(re.findall(r"Triton autotuning for function (\S+) finished.*?(\{[^}]*\}|BLOCK\S*|num_warps: \d+[^\n]*)", log)))[:40]
+receipt = {"schema": "glm53flash-determinism-pinned/1",
+           "pin": "TRITON_CACHE_AUTOTUNING=1 + persistent TRITON_CACHE_DIR",
+           "sentinels": len(runs["runB"]),
+           "runB_vs_runC_byte_identical": len(bc_match),
+           "seed_vs_runB_byte_identical": len(ab_match),
+           "confirmed": len(bc_match) == len(runs["runB"]) and len(runs["runB"]) > 0,
+           "autotune_lines_seen": {k: len(v) for k, v in winners.items()}}
+(root / "out/determinism-pinned-bf16.json").write_text(json.dumps(receipt, indent=2))
+print("DET_CONFIRM", json.dumps(receipt))
+assert receipt["confirmed"], "pinned runs NOT byte-identical - fix not confirmed"
+DETRECEIPT
+  ntfy "Triton-cache pin CONFIRMED: fresh launches byte-identical on all sentinels (receipt: determinism-pinned-bf16.json)" "GLM53 determinism fix confirmed" "white_check_mark"
+  ;;
 env_receipt)
   drun python3 - <<'EOF'
 import json, subprocess, torch, vllm
