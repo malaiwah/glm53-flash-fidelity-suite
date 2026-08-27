@@ -1,0 +1,18 @@
+Replace the sealed-import incumbents REFUSAL with purge-and-fresh-sealed-
+reimport.  The refusal guarded against foreign r7_encoder modules; purging
+achieves the same isolation strictly better, and the import that follows
+re-verifies every closure file hash on every construction.  Without this,
+any second codec-adapter construction in one process (candidate factories,
+post-preparation probes, MTP) dies.  malaiwah declared extension, disclosed.
+--- a/src/quant_pipeline/codecs/exl3_mcg.py
++++ b/src/quant_pipeline/codecs/exl3_mcg.py
+@@ -126,7 +126,8 @@
+         root = str(self.source_root)
+         incumbents = sorted(name for name in sys.modules if name == "r7_encoder" or name.startswith("r7_encoder."))
+         if incumbents:
+-            raise RuntimeError(f"refusing cached r7_encoder modules before sealed import: {incumbents}")
++            for name in incumbents:
++                sys.modules.pop(name, None)
+         if root in sys.path:
+             sys.path.remove(root)
+         sys.path.insert(0, root)

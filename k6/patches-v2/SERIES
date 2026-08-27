@@ -43,3 +43,4 @@
 #   bits check pinned (4,6); qualify_k8 passes --bits 8).  Needed only by
 #   qualify_k8; applies any time after 0007 (stage_k6.sh qualify_k8 top-ups it).
 0009-qualify-script-k8-admission.patch
+0010-codec-sealed-reimport.patch
