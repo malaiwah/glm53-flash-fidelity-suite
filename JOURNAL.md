@@ -205,3 +205,16 @@ receipts are the product.
    campaigns — once the reference exists, scoring many quants is throughput-
    bound and the protocol can relax (document the numerics delta once,
    batch forever after).
+
+## 2026-08-27 01:42 — GLM-5.3-Flash speaks; capture pace 10x better than planned
+gen_check GREEN: "The capital of France is" -> Paris + landmarks; correct
+iterative Fibonacci; coherent KL-divergence reasoning under Reasoning Effort:
+Max (the model's first sanctioned thoughts were about the metric measuring it).
+BF16 capture running at **~0.22 s/context (4.5 ctx/s)** vs the 0.5-2.5 s
+planning band — full leg ~19 min, both legs ~40 min. Revised completion
+estimate: ~04:30 UTC, total 8x cost ~$105-120 vs the $240-380 budgeted.
+Engine loads are now the dominant cost, not capture.
+-> Next time (lesson 12): benchmark one real capture context during the cheap
+   smoke (load the big model once on the prep box? impossible at 24 GB — so
+   accept the band, but tighten it with a published tok/s reference for the
+   engine+hardware before writing cost projections).
