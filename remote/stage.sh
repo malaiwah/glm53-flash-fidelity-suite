@@ -474,6 +474,52 @@ assert receipt["confirmed"], "kernel-pinned runs NOT byte-identical"
 KPRECEIPT
   ntfy "Kernel-pin (single-config autotune shim) CONFIRMED byte-identical across launches" "GLM53 kernel patch confirmed" "white_check_mark"
   ;;
+det_stack)
+  # Stacked determinism pins: autotune shim + collective/cuBLAS pins.
+  test -d "$ROOT/models/bf16"
+  sudo rm -rf "$ROOT/detpin"; mkdir -p "$ROOT/detpin" "$ROOT/bundle/tools/pin_shim"
+  cp "$ROOT/bundle/tools/pin_autotune_sitecustomize.py" "$ROOT/bundle/tools/pin_shim/sitecustomize.py"
+  for run in runS1 runS2; do
+    sudo docker run --rm -i --gpus all --ipc=host --shm-size=64g \
+      -v "$ROOT:/glm53" \
+      -e PYTHONPATH=/glm53/bundle/tools/pin_shim \
+      -e TRITON_PRINT_AUTOTUNING=1 \
+      -e VLLM_ALLREDUCE_USE_SYMM_MEM=0 \
+      -e NCCL_ALGO=Ring -e NCCL_PROTO=Simple -e NCCL_NVLS_ENABLE=0 -e NCCL_COLLNET_ENABLE=0 \
+      -e NCCL_MIN_NCHANNELS=1 -e NCCL_MAX_NCHANNELS=1 \
+      -e CUBLAS_WORKSPACE_CONFIG=:16:8 -e CUBLASLT_WORKSPACE_SIZE=1 \
+      -e NVIDIA_TF32_OVERRIDE=0 -e VLLM_ENGINE_READY_TIMEOUT_S=3600 \
+      -e VLLM_WORKER_MULTIPROC_METHOD=spawn -e VLLM_LOGGING_LEVEL=INFO \
+      -e HF_HUB_OFFLINE=1 -e VLLM_ALLOW_INSECURE_SERIALIZATION=1 \
+      --entrypoint python3 "$IMAGE_REF" /glm53/bundle/tools/fidelity.py capture \
+      --model /glm53/models/bf16 --suite /glm53/bundle/suite --out "/glm53/detpin/$run" \
+      --tensor-parallel $TP --gpu-memory-utilization 0.90 \
+      --engine-kwargs "$ENGINE_KW" --no-hash-shards --chunk-accumulate --filter sentinel \
+      > "$ROOT/logs/detpin-$run.log" 2>&1 || echo "det_stack $run rc=$? - tolerated if manifest complete"
+    python3 -c "import json; assert json.load(open('$ROOT/detpin/$run/capture-manifest.json'))['complete'], '$run incomplete'"
+    echo "det_stack $run complete"
+  done
+  python3 - <<'STACKRECEIPT'
+import json, pathlib
+root = pathlib.Path("/home/ubuntu/glm53")
+runs = {}
+for run in ("runS1", "runS2"):
+    man = json.loads((root / f"detpin/{run}/capture-manifest.json").read_text())
+    runs[run] = {r["index"]: r["sha256"] for r in man["captures"]}
+match = [i for i in runs["runS1"] if runs["runS1"][i] == runs["runS2"].get(i)]
+shim = sum("pin_autotune] Triton autotune pinned" in (root / f"logs/detpin-{r}.log").read_text(errors="ignore")
+           for r in ("runS1", "runS2"))
+receipt = {"schema": "glm53flash-determinism-stackpin/1",
+           "pins": ["single-config autotune shim", "VLLM_ALLREDUCE_USE_SYMM_MEM=0",
+                    "NCCL Ring/Simple/1ch/no-NVLS", "CUBLAS_WORKSPACE_CONFIG=:16:8"],
+           "sentinels": len(runs["runS1"]),
+           "runS1_vs_runS2_byte_identical": len(match),
+           "shim_active_in_logs": shim,
+           "confirmed": len(match) == len(runs["runS1"]) and len(runs["runS1"]) > 0}
+(root / "out/determinism-stackpin-bf16.json").write_text(json.dumps(receipt, indent=2))
+print("DET_STACK", json.dumps(receipt))
+STACKRECEIPT
+  ;;
 env_receipt)
   drun python3 - <<'EOF'
 import json, subprocess, torch, vllm
