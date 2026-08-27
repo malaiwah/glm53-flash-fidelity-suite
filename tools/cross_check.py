@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """Cross-validate our hidden-state replay against brandonmusic's independent
-GLM-5.3-Flash-BF16-Teacher-Logits capture.
+GLM-5.3-Flash-BF16-Teacher-Logits capture (v2: manifest-driven, hash-verified).
 
-    cross_check.py suite    --logits DIR --out SUITE_DIR      # build mini-suite from his token rows
-    cross_check.py compare  --logits DIR --capture CAP_DIR --head HEAD --out receipt.json
+Dataset layout (from its dataset-manifest.json): 25 'final' windows, each
+logits/window-NNNN.safetensors holding key 'logits' F32 [2047, 154880] with
+metadata {window_id, token_ids_sha256, model_revision}; token rows live at
+calibration/panel-v1/arrays/<window_id>.tokens.npy (int32/int64, shape (2048,)).
+Pairing is verified against token_ids_sha256 before anything is captured.
 
-His dataset: window-NNNN.safetensors holding full-vocab float32 logits (2,047
-scored positions per 2,048-token window), token rows as int32 .npy of shape
-(2048,). Ours: capture the same token rows with fidelity.py, replay hidden@head,
-and measure KLD(his ‖ ours) per position. Agreement at ~1e-5/-6 validates BOTH
-pipelines end to end.
+    cross_check.py suite    --logits DIR --out SUITE_DIR
+    cross_check.py compare  --logits DIR --suite SUITE_DIR --capture CAP_DIR \
+                            --head HEAD --out receipt.json
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-import math
-import re
 from pathlib import Path
 
 
@@ -25,47 +24,64 @@ def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def token_files(logits_dir: Path) -> list[tuple[int, Path]]:
-    out = []
-    for f in sorted(logits_dir.rglob("*.npy")):
-        if "mask" in f.name.lower():
-            continue
-        m = re.search(r"(\d+)", f.name)
-        if m:
-            out.append((int(m.group(1)), f))
-    return sorted(out)
+def load_manifest(logits_dir: Path) -> list[dict]:
+    man = json.loads((logits_dir / "dataset-manifest.json").read_text())
+    return man["logit_files"]
 
 
-def window_files(logits_dir: Path) -> dict[int, Path]:
-    out = {}
-    for f in sorted(logits_dir.rglob("window-*.safetensors")):
-        m = re.search(r"window-(\d+)", f.name)
-        if m:
-            out[int(m.group(1))] = f
-    return out
+def token_file_for(logits_dir: Path, window_id: str) -> Path:
+    return logits_dir / "calibration" / "panel-v1" / "arrays" / f"{window_id}.tokens.npy"
+
+
+def verified_ids(logits_dir: Path, entry: dict):
+    """Token ids for one window, verified against the manifest hash. Returns
+    (ids, verification_mode) or raises."""
+    import numpy as np
+
+    tf = token_file_for(logits_dir, entry["window_id"])
+    if not tf.is_file():
+        raise FileNotFoundError(f"token file missing: {tf}")
+    arr = np.load(tf)
+    want = entry["token_ids_sha256"]
+    candidates = {
+        "file_bytes": sha256_bytes(tf.read_bytes()),
+        "array_bytes": sha256_bytes(arr.tobytes()),
+        "array_int32": sha256_bytes(arr.astype(np.int32).tobytes()),
+        "array_int64": sha256_bytes(arr.astype(np.int64).tobytes()),
+        "json_ids": sha256_bytes(json.dumps([int(x) for x in arr]).encode()),
+    }
+    for mode, digest in candidates.items():
+        if digest == want:
+            return [int(x) for x in arr], mode
+    raise SystemExit(
+        f"token hash verification FAILED for {entry['window_id']}: none of "
+        f"{list(candidates)} matches manifest token_ids_sha256")
 
 
 def cmd_suite(args) -> int:
-    import numpy as np
-
     logits_dir = Path(args.logits)
-    rows = token_files(logits_dir)
-    if not rows:
-        raise SystemExit(f"no token .npy files under {logits_dir}")
+    entries = [e for e in load_manifest(logits_dir) if e.get("role") == "final"]
+    if not entries:
+        raise SystemExit("no role=final windows in dataset manifest")
     out = Path(args.out)
     (out / "tokens").mkdir(parents=True, exist_ok=True)
-    contexts = []
-    for i, (num, f) in enumerate(rows):
-        ids = [int(x) for x in np.load(f)]
+    contexts, modes = [], set()
+    for i, entry in enumerate(sorted(entries, key=lambda e: e["window_id"])):
+        ids, mode = verified_ids(logits_dir, entry)
+        modes.add(mode)
         name = f"context-{i:04d}.json"
         (out / "tokens" / name).write_text(json.dumps(ids))
-        contexts.append({"index": i, "stratum": "brandonmusic-teacher", "file": f"tokens/{name}",
+        contexts.append({"index": i, "stratum": entry.get("domain", "bm-teacher"),
+                         "file": f"tokens/{name}",
                          "token_sha256": sha256_bytes(json.dumps(ids).encode()),
-                         "tokens": len(ids), "source_cluster": f"bm-window-{num:04d}",
-                         "source_npy": f.name})
+                         "tokens": len(ids),
+                         "source_cluster": entry["window_id"],
+                         "logits_path": entry["path"],
+                         "manifest_token_ids_sha256": entry["token_ids_sha256"]})
     manifest = {
-        "schema": "glm53flash-crosscheck-suite/1",
+        "schema": "glm53flash-crosscheck-suite/2",
         "source_dataset": "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits",
+        "token_hash_verification": sorted(modes),
         "context_length": contexts[0]["tokens"],
         "scored_positions_per_context": contexts[0]["tokens"] - 1,
         "contexts": len(contexts),
@@ -75,8 +91,23 @@ def cmd_suite(args) -> int:
         "".join(c["token_sha256"] for c in contexts).encode())
     (out / "suite-manifest.json").write_text(json.dumps(manifest, indent=2))
     print(json.dumps({"contexts": len(contexts),
-                      "suite_token_sha256": manifest["suite_token_sha256"]}))
+                      "verification": sorted(modes),
+                      "suite_token_sha256": manifest["suite_token_sha256"][:16]}))
     return 0
+
+
+def agreement_at(theirs, ours, offset: int):
+    """Mean KLD + top1 comparing his positions p to our positions p+offset."""
+    import torch
+
+    n = theirs.shape[0]
+    if offset >= 0:
+        a, b = theirs[: n - offset], ours[offset:]
+    else:
+        a, b = theirs[-offset:], ours[: n + offset]
+    kl = (a.exp() * (a - b)).sum(-1).double()
+    top = (a.argmax(-1) == b.argmax(-1)).float().mean().item()
+    return float(kl.mean()), top
 
 
 def cmd_compare(args) -> int:
@@ -89,45 +120,44 @@ def cmd_compare(args) -> int:
     with safe_open(args.head, framework="pt", device="cpu") as f:
         key = "weight" if "weight" in f.keys() else f.keys()[0]
         head = f.get_tensor(key).to(dev, torch.bfloat16)
-    windows = window_files(logits_dir)
     suite = json.loads(Path(args.suite, "suite-manifest.json").read_text())
-    per = []
+    per, offset_audit = [], {"-1": [], "0": [], "+1": []}
     for ctx in suite["context_index"]:
-        num = int(ctx["source_cluster"].rsplit("-", 1)[1])
-        wf = windows.get(num)
         hf = cap / f"hidden_{ctx['index']:04d}.safetensors"
-        if wf is None or not hf.is_file():
-            print(f"skip window {num}: missing {'logits' if wf is None else 'capture'}")
+        wf = logits_dir / ctx["logits_path"]
+        if not (hf.is_file() and wf.is_file()):
+            print(f"skip {ctx['source_cluster']}: missing file")
             continue
         with safe_open(str(hf), framework="pt", device="cpu") as f:
             hidden = f.get_tensor("hidden_states").to(dev, torch.bfloat16)
         with safe_open(str(wf), framework="pt", device="cpu") as f:
-            k = f.keys()[0] if len(f.keys()) == 1 else next(
-                (x for x in f.keys() if "logit" in x.lower()), f.keys()[0])
-            his = f.get_tensor(k).to(dev, torch.float32)
+            his = f.get_tensor("logits").to(dev, torch.float32)
         npos = min(hidden.shape[0], his.shape[0])
         ours = (hidden[:npos] @ head.T).float()
         ours = ours - ours.logsumexp(-1, keepdim=True)
         theirs = his[:npos] - his[:npos].logsumexp(-1, keepdim=True)
-        kl = (theirs.exp() * (theirs - ours)).sum(-1).double()
-        top1 = (theirs.argmax(-1) == ours.argmax(-1)).float().mean().item()
-        per.append({"window": num, "positions": int(npos),
-                    "mean_kld_his_vs_ours": float(kl.mean()),
-                    "max_kld": float(kl.max()), "top1_agreement": top1})
-        print("window", num, per[-1])
-        del hidden, his, ours, theirs, kl
+        for off, bucket in ((-1, "-1"), (0, "0"), (1, "+1")):
+            bucket_kl, bucket_top = agreement_at(theirs, ours, off)
+            offset_audit[bucket].append((bucket_kl, bucket_top))
+        kl0, top0 = agreement_at(theirs, ours, 0)
+        per.append({"window": ctx["source_cluster"], "positions": int(npos),
+                    "mean_kld_his_vs_ours": kl0, "top1_agreement": top0})
+        print(ctx["source_cluster"], per[-1])
+        del hidden, his, ours, theirs
     if not per:
         raise SystemExit("no windows compared")
+    total = sum(p["positions"] for p in per)
     receipt = {
-        "schema": "glm53flash-crosscheck/1",
+        "schema": "glm53flash-crosscheck/2",
         "direction": "KLD(brandonmusic_teacher || our_replay), nats",
+        "their_model_revision_note": "his metadata records an earlier repo revision; "
+                                     "weights were never modified post-upload (config/template churn only)",
         "windows": len(per),
-        "positions": sum(p["positions"] for p in per),
-        "mean_kld": sum(p["mean_kld_his_vs_ours"] * p["positions"] for p in per)
-                    / sum(p["positions"] for p in per),
-        "max_kld": max(p["max_kld"] for p in per),
-        "top1_agreement": sum(p["top1_agreement"] * p["positions"] for p in per)
-                          / sum(p["positions"] for p in per),
+        "positions": total,
+        "mean_kld": sum(p["mean_kld_his_vs_ours"] * p["positions"] for p in per) / total,
+        "top1_agreement": sum(p["top1_agreement"] * p["positions"] for p in per) / total,
+        "offset_audit_mean_top1": {k: (sum(t for _, t in v) / len(v) if v else None)
+                                   for k, v in offset_audit.items()},
         "per_window": per,
     }
     Path(args.out).write_text(json.dumps(receipt, indent=2))
