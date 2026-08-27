@@ -237,7 +237,7 @@ for name in ("report-fp8-vs-bf16", "qualify-bf16", "qualify-fp8"):
     if f.is_file():
         rep[name] = json.loads(f.read_text())
 
-ds = "malaiwah/glm53-flash-fidelity-suite-v1"
+ds = "malaiwah/GLM-5.3-Flash-fidelity-suite-v1"
 api.create_repo(ds, repo_type="dataset", exist_ok=True)
 headline = ""
 if "report-fp8-vs-bf16" in rep:
@@ -353,7 +353,7 @@ print("published", ds)
 
 acts = root / "activations/bf16-cal"
 if (acts / "activation-manifest.json").is_file():
-    ds2 = "malaiwah/glm53-flash-calibration-activations-v1"
+    ds2 = "malaiwah/GLM-5.3-Flash-calibration-activations-v1"
     api.create_repo(ds2, repo_type="dataset", exist_ok=True)
     card2 = """---
 license: mit
