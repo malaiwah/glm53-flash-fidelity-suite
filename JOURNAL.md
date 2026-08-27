@@ -463,3 +463,22 @@ container paths — the pins lived only in the card/download receipts this time.
 LESSON 21: when two quants are compared across different suites/references and
 the ordering matters, run the same-panel experiment before repeating the
 claim — the cross-suite ordering REVERSED on the shared yardstick.
+
+## 2026-08-27 ~13:55 — CAMPAIGN CLOSED: H200 paused, freight verified, ~$352 spent
+482877 (8x H200) confirmed Paused after freight verification: private scratch
+holds captures-bf16-full + captures-fp8-full (5,121 files / 85.9 GB each),
+crosscheck-suite, jl-run-logs, deliverables, detpin — 16,466 files / 190 GB.
+Nothing of value lives only on the VM. fs 3394 (2 TB, IN2) remains the second
+copy (checkpoints + captures + activations) pending operator retention call.
+Cost: balance $201 → topped to ~$701 → $349.57 remaining ≈ $352 all-in for
+the campaign (~10 h of 8x H200 dominates). Zero instances running; paused
+storage (H200 1.2 TB, forge 1.2 TB, L4 100 GB, fs 2 TB) still bills.
+Open watches: forge 483634 stuck "Resuming" (destroy+recreate at K6 session
+if unchanged); Brandon discussion/dataset watch.
+Morning to-dos handed to operator: (1) ROTATE the HF write token pasted in
+chat — top priority; (2) fs 3394: keep until the K6 session (saves ~970 GB of
+re-downloads), destroy after; (3) qwen38 VM 481678 untouched by choice;
+(4) remove the glm53-session block from ~/.ssh/config once K6 work concludes.
+LESSON 22: instance "cost" in jl get is the live hourly rate, not cumulative
+spend — reconstruct campaign cost from balance snapshots; log the balance at
+every phase boundary so the accounting is one grep away.
