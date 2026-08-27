@@ -173,7 +173,7 @@ setup)
   # -local: re-runs after preemption, which is why setup always re-runs).  The
   # driver's _find_extension searches both locations.
   TORCH_CUDA_ARCH_LIST="9.0;10.0" "$PY" -c "import exllamav3; from exllamav3 import ext; print('exllamav3 ext import OK')"
-  { find "$EXL3" -name '*.so' 2>/dev/null; find "$HOME/.cache/torch_extensions" -name 'exllamav3_ext*.so' 2>/dev/null; } | tee "$RCPT/exllamav3-ext-path.txt"
+  { find "$EXL3" -name '*.so' 2>/dev/null || true; find "$HOME/.cache/torch_extensions" -name 'exllamav3_ext*.so' 2>/dev/null || true; } | tee "$RCPT/exllamav3-ext-path.txt"
   test -s "$RCPT/exllamav3-ext-path.txt" || { echo "no exllamav3 extension binary found after build+import" >&2; exit 1; }
   # Pipeline: his GitHub tree at the pinned commit + our patches-v2 series.
   # Idempotent: a fresh clone is patched once; an already-patched tree is
