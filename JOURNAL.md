@@ -552,3 +552,25 @@ findability hole), HF card gained a related-work index. Prestage download
 Public map now: GitHub repo (tools/remote/k6/port/JOURNAL+README), HF
 fidelity dataset + activations dataset, vLLM PR comments, HF discussion #1,
 GitHub issue #1. P0 rental launches when prestage lands.
+
+## 2026-08-27 ~21:30 — P0 GREEN: encode projected 2.2h (was 14h planned); P1 launched
+P0 rehearsal on 1x H200 (484789) took five setup attempts, each stopped by a
+designed guard: (1) template python 3.10, (2) container CUDA 12.6 can't emit
+sm_100, (3) missing pydantic/formatron/kbnf + flash-attn in the setup dep set,
+(4) pipefail silent-exit on a find over a nonexistent torch_extensions dir,
+(5) fixture not staged at $ROOT/fixture/<name>. All five fixes are now IN the
+stage script (incl. container self-bootstrap: deadsnakes py3.12 + CUDA 13.0),
+pushed public. Verdict: closure gate reconstruction OK (5 staged files),
+k6_roundtrip_exact=true, bench 0.84 s/full-size-matrix K6 → projected
+main+MTP encode 2.16 h on 4 GPUs — 6.5x under plan, 11x under the abort
+gate; P1 encode cost collapses ~$111 → ~$20. K8 probe red AT THE ADAPTER
+(codec-side K8 proven on L4; declared-extension patch = the P2 work item;
+K6K8 descoped until it lands, exactly per runbook). Operator supervision
+directive in force: 10-min watchdog caught the idle box within 30 min of the
+pydantic failure (~$1 idle cost). P0 box destroyed; P1 fleet 484853
+(4x H200 spot IN2, fs attached) created; chain running: self-bootstrap setup
+→ shared_vector_ab (down_suh A/B, operator directive) → convert_k6.
+LESSON 25: guards that fail fast are cheap; the expensive failure is the one
+that exits SILENTLY — audit every `cmd | tee` under set -euo pipefail.
+LESSON 26: chain launchers on `jl run status --json`, not log-footer greps —
+a footer grep zombie nearly double-launched a stage.
