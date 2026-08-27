@@ -274,3 +274,26 @@ PARTIALLY FIXABLE tonight (env pin Set 1, single-digit % cost), FULLY fixable
 with a one-config pin of the vendored fla autotune lists (num_warps=2).
 v2 deterministic sentinel probe queued post-session with
 TRITON_PRINT_AUTOTUNING=1 + NCCL_DEBUG=INFO to catch the mechanism red-handed.
+
+## 2026-08-27 02:55 — Root cause converges; qualify lands at 1.49e-2
+Source dossier (PR-branch code): KDA prefill is 100% Triton (FlashKDA ext not
+even called); ~9 autotuned kernels chain per prefill, two provably numerics-
+changing (chunk_gla_fwd_kernel_o: 36 configs, BK splits an fp32 reduction;
+scaled_dot_kkt: 24 configs). Winners chosen per-process by timing benchmark,
+8 TP ranks tune independently -> per-launch winner vector; frozen within a
+load. Free diagnostic run on tonight's four engine loads: all-reduce backend
+dispatch IDENTICAL every load -> backend-flip excluded; **Triton autotune is
+the root cause, DSA top-k reselection the amplifier**. Fix for v2: 
+TRITON_CACHE_AUTOTUNING=1 + persistent TRITON_CACHE_DIR (~0% steady-state) or
+single-config patch of the vendored fla kernels. NOT applied tonight: FP8 leg
+must run the same env as the BF16 leg (paired comparison integrity).
+QUALIFY-BF16: mean KLD(live||replayed) = 1.49e-2, top-1 0.957 — 17x the
+sentinel floor, because the live pass is a THIRD engine load measured through
+the model (autotune variance amplified by indexer top-k membership flips).
+Interpretation: replay-vs-served is bounded by ~1.5e-2 on this runtime; the
+paired FP8-vs-BF16 headline carries only the 8.7e-4 capture floor. free_bf16
+will HOLD as designed; release decision awaits the Brandon cross-check
+(independent fp32 teacher = external replay validation).
+-> Next time (lesson 15): on a new architecture, run the sentinel pass BEFORE
+   the main capture (cheap early warning) and log TRITON_PRINT_AUTOTUNING=1
+   from load one — tonight's forensics would have been one grep.
