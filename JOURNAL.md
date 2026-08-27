@@ -218,3 +218,21 @@ Engine loads are now the dominant cost, not capture.
    smoke (load the big model once on the prep box? impossible at 24 GB — so
    accept the band, but tighten it with a published tok/s reference for the
    engine+hardware before writing cost projections).
+
+## 2026-08-27 02:05–02:20 — Sentinel gate trips: glm5_next is not run-deterministic
+BF16 capture completed (5,120 ctx, ~19 min as projected). Sentinel recapture:
+**12/32 contexts NOT byte-identical across engine loads** — the first real
+scientific finding of the night. The Qwen smoke was byte-identical on the same
+stack, so this is glm5_next-specific (KDA/DSA kernels: atomics or top-k
+tie-breaks suspected). Measured the run-to-run noise floor through the shared
+head: **8.7e-4 mean KLD, top-1 0.9946, p999 0.072** over 65,504 positions
+(the 20 identical sentinels contribute exactly 0). Decision per pre-encoded
+rule (proceed if <=1e-3, documented): PROCEED — the FP8-vs-BF16 headline is a
+paired comparison read against a published noise floor, exactly what v5's
+sentinels are for when bitwise fails. Sentinel stage converted from byte-assert
+to measured-noise gate; receipts ship both. Pipeline relaunched with resume
+guards (capture/gen_check skip on existing receipts).
+-> Next time (lesson 13): treat byte-determinism as a HYPOTHESIS per
+   architecture, not an assumption — design the sentinel stage as
+   measure-then-gate from day one, and try deterministic-kernel env knobs
+   (a v2 rerun with them would tighten the floor).
