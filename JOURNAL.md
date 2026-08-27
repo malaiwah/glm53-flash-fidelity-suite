@@ -252,3 +252,25 @@ PR-branch kernels, with a deterministic-rerun env recipe as the deliverable.
 -> Next time (lesson 14): controls must vary ONE thing — run the smoke model
    at the same TP as the subject (a 0.6B at TP=8 is silly but free, and it
    would have isolated TP from architecture tonight).
+
+## 2026-08-27 02:50 — Divergence research: we are first; mechanism identified in lineage
+Community sweep: NO prior report of run-to-run divergence for GLM-5.3-Flash —
+our sentinel measurement is the first. But the kernel ancestry carries a
+smoking gun: **fla-org/flash-linear-attention#945** — the chunked-delta-rule
+forward kernel family (shared by KDA) returns bitwise-different outputs when
+Triton autotune selects num_warps=4 configs (racy; num_warps=2 is clean), and
+autotune picks configs PER PROCESS from timing benchmarks -> different config
+per engine load -> bitwise-different but internally-consistent numerics per
+load. That is EXACTLY our signature (stable within load, 12/32 divergent
+across loads). Reinforced by triton#9368 (autotune cache does not restore
+cross-restart bitwise determinism). Also learned: vLLM's VLLM_BATCH_INVARIANT
+hard-fails on KDA/GDN models (#42960) — deterministic mode is structurally
+unavailable for glm5_next — but v0.28's own override_envs_for_invariance()
+env set (NCCL algo/proto/channel pins, CUBLAS_WORKSPACE_CONFIG, custom-AR off)
+applies standalone. DSA stack has its own open nondeterminism issue (#53257,
+concurrency-driven, not our batch-1 case).
+Verdict on the operator's question: PLAUSIBLE (mechanism matches signature),
+PARTIALLY FIXABLE tonight (env pin Set 1, single-digit % cost), FULLY fixable
+with a one-config pin of the vendored fla autotune lists (num_warps=2).
+v2 deterministic sentinel probe queued post-session with
+TRITON_PRINT_AUTOTUNING=1 + NCCL_DEBUG=INFO to catch the mechanism red-handed.
