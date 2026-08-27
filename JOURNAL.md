@@ -482,3 +482,26 @@ re-downloads), destroy after; (3) qwen38 VM 481678 untouched by choice;
 LESSON 22: instance "cost" in jl get is the live hourly rate, not cumulative
 spend — reconstruct campaign cost from balance snapshots; log the balance at
 every phase boundary so the accounting is one grep away.
+
+## 2026-08-27 ~14:30 — K6 PROGRAM LAUNCHED (operator greenlight: full autonomy)
+Mission: first K6-uniform + K6K8-mixed EXL3/TR3-MCG quants of GLM-5.3-Flash
+via brandonmusic's pipeline; score on his 25 sealed windows (targets to beat:
+FP8 0.0206, his 4bpw 0.0246); publish weights+receipts+tools. K6K8 fit math:
+routed gate/up 203B @6bpw + down 101.5B @8bpw + ~34GB native ≈ 288 GB ≈
+268 GiB → 67 GiB/GPU on AIBeast TP4, ~29 GiB/GPU headroom, KV 512K ≈ 3.3 GiB
+— AMPLE. Recon rewrote the infra plan: (1) Brandon's ENTIRE pipeline ships in
+his 4bpw repo (runtime/src/quant_pipeline, 72 files — campaign runners,
+global_dp allocator, MCG codecs, materializer, qualify scripts); his k4 recipe
+is schema-versioned with routed_expert_bits parameterized, global allocator
+present-but-unused (exactly what K6K8 needs); TP target is a materialization
+parameter (his: TP2; ours: TP4). (2) GPU market: PRO6000 effectively ONE
+device (IN1, spot) — dropped; IN2 has 8x H200 ($1.99 spot) + 8x H100 VM
+($1.19 spot) AND fs 3394 is IN2 → conversion reads BF16 from fs, no 643GB
+re-download; Blackwell only needed for AIBeast serving, not convert/score.
+(3) Old forge 483634 already reclaimed by platform (stuck-Resuming limbo died
+on its own) — clean slate. In flight: 6-agent design workflow (4x source
+anatomy → runbook+stage-scripts synthesis → adversarial pre-spend review,
+last night's winning pattern) + L4 prep box resumed (482867→484453, $0.44/hr)
+running env smoke: fs free space, transformers 5.16.1 + fixture forward,
+quant_pipeline imports, exllamav3 @ c5d9c657 build feasibility on a bare VM.
+Budget: $349.57; program estimate ~$100-150 all-in.
