@@ -297,3 +297,12 @@ will HOLD as designed; release decision awaits the Brandon cross-check
 -> Next time (lesson 15): on a new architecture, run the sentinel pass BEFORE
    the main capture (cheap early warning) and log TRITON_PRINT_AUTOTUNING=1
    from load one — tonight's forensics would have been one grep.
+
+## 2026-08-27 03:10 — Evidence published upstream + card section wired
+Nondeterminism dossier posted on the vLLM PR:
+https://github.com/vllm-project/vllm/pull/53906#issuecomment-5433635837
+(365 words: signature, magnitude, exclusions, root cause with code specifics,
+lineage links, mitigations, offer to confirm). Dataset card generator now
+carries a "Known issue: run-to-run nondeterminism (first report)" section with
+the receipts, the paired-vs-absolute interpretation, and the v2 deterministic
+recipe — the finding ships with the data, reproducibly.
