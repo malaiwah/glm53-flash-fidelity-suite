@@ -42,7 +42,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 MODEL_REVISION_DEFAULT = "a6c167b62691b2bac901344b65cb651a70f53e43"
 UPSTREAM_INVENTORY_SHA_PREFIX = "f56e9d6250e2d108"  # cross-check target (RUNBOOK P1.1)
@@ -1253,6 +1253,254 @@ def _maybe_seal_layer(
     return True
 
 
+def _seal_encoded_experts(
+    *,
+    direct: Any,
+    store: Any,
+    batch: List[Any],
+    encoded: List[Any],
+    contract_sha: str,
+    work_unit: Mapping[str, Any],
+    capture: Any,
+    backend_identity: Mapping[str, Any],
+    source: Any,
+    bits: int,
+    output_root: Path,
+    completed_by_expert: Dict[int, str],
+) -> None:
+    """Seal path of glm53_direct_k4.encode_work_unit, hoisted verbatim.
+
+    --overlap-seal reschedules WHEN this runs (background thread while the GPU
+    encodes the next batch), never WHAT it does: every pipeline call below is
+    the same call, with the same inputs, in the same order, as the sealed
+    encode_work_unit seal loop.  Receipt order within an expert (PROJECTIONS
+    chaining from the work-unit sha) is preserved because this body is that
+    loop.
+    """
+
+    for (expert, path, _request), raw_result in zip(batch, encoded, strict=True):
+        result = dict(raw_result)
+        evidence = result.get("recipe_evidence")
+        payloads = result.get("projections")
+        if not isinstance(evidence, Mapping) or not isinstance(payloads, Mapping):
+            raise ValueError("prepared backend returned an incomplete expert triplet")
+        if bits == 4:
+            direct._validate_recipe_evidence(evidence)
+        else:
+            direct._validate_recipe_evidence(evidence, bits=bits)
+        choices: Dict[str, Any] = {}
+        predecessor = work_unit["work_unit_sha256"]
+        for projection in direct.PROJECTIONS:
+            payload = payloads.get(projection)
+            if not isinstance(payload, Mapping):
+                raise ValueError(f"prepared backend omitted {projection}")
+            choices[projection] = store.put_choice(
+                layer=capture.layer,
+                expert=expert,
+                projection=projection,
+                choice_id=f"L{capture.layer:03d}.E{expert:03d}.{projection}.K{bits}",
+                bits=bits,
+                trellis=payload["trellis"],
+                suh=payload["suh"],
+                svh=payload["svh"],
+                mcg=payload["mcg"],
+                reconstruction=payload["reconstruction"],
+                vector_topology=payload["vector_topology"],
+                reader_abi_sha256=backend_identity["reader_abi_sha256"],
+                provenance={
+                    "contract_sha256": contract_sha,
+                    "backend": backend_identity,
+                    "source_payload_sha256": source.rows[direct.tensor_name(capture.layer, expert, projection)]["source_payload_sha256"],
+                },
+                predecessor_state_hash=predecessor,
+            )
+            predecessor = choices[projection]["choice_sha256"]
+        body = {
+            "schema": direct.EXPERT_RECEIPT_SCHEMA,
+            "contract_sha256": contract_sha,
+            "work_unit_sha256": work_unit["work_unit_sha256"],
+            "layer": capture.layer,
+            "expert": expert,
+            "bits": bits,
+            "projections": list(direct.PROJECTIONS),
+            "candidate_rate_grid": False,
+            "global_allocator": False,
+            "down_candidate_conditioned": True,
+            "capture_binding": capture.binding(),
+            "backend": backend_identity,
+            "choices": choices,
+            "recipe_evidence": dict(evidence),
+        }
+        receipt = direct._seal(body, "receipt_sha256")
+        direct.write_json(path, receipt)
+        direct.verify_expert_receipt(
+            output_root,
+            path,
+            contract_sha256=contract_sha,
+            expected_bits=bits,
+        )
+        completed_by_expert[expert] = receipt["receipt_sha256"]
+
+
+def _encode_work_unit_overlap(
+    *,
+    direct: Any,
+    contract: Mapping[str, Any],
+    work_unit: Mapping[str, Any],
+    source: Any,
+    capture: Any,
+    backend: Any,
+    output_root: Path,
+    device: str,
+    max_inflight_experts: int,
+) -> Dict[str, Any]:
+    """encode_work_unit with the CPU seal of batch N overlapped with the GPU
+    encode of batch N+1 (opt-in via --overlap-seal).
+
+    Identical to glm53_direct_k4.encode_work_unit except scheduling: the
+    single encode_experts mega-call becomes per-batch calls (the backend
+    already slices that mega-call into the same <= max_inflight_experts
+    batches internally, so per-expert encode inputs are unchanged), and each
+    batch's seal loop runs on ONE background thread while the next batch
+    encodes.  Guarantees kept:
+      * per-expert receipt content and intra-expert choice chaining: the seal
+        body is the hoisted pipeline loop (_seal_encoded_experts), unchanged;
+      * ordering: seals run in batch submission order on a single thread, so
+        expert receipts land in the same ascending order as today;
+      * unit receipt (and therefore complete_work_unit / seal_layer) only
+        after ALL seals drained;
+      * seal failure: no further encode batch starts after the failure is
+        observed, the unit receipt is never written, the exception propagates
+        exactly like today;
+      * encode failure: pending seals drain (their receipts land, preserving
+        resume), then the encode exception propagates.
+    """
+
+    import concurrent.futures
+
+    contract_sha = direct.verify_contract(contract)
+    bits = int(contract.get("rate", {}).get("bits", work_unit.get("bits", -1)))
+    direct.recipe_id_for_bits(bits)
+    direct._verify_seal(work_unit, direct.WORK_UNIT_SCHEMA, "work_unit_sha256")
+    if (
+        work_unit.get("contract_sha256") != contract_sha
+        or work_unit.get("layer") != capture.layer
+        or work_unit.get("bits") != bits
+    ):
+        raise ValueError("work unit/capture/contract binding differs")
+    backend_identity = direct._verify_backend(contract, backend)
+    output_root = Path(output_root)
+    store = direct.PackedMCGPayloadStore(output_root / "payload-store")
+    completed_by_expert: Dict[int, str] = {}
+    pending: List[Any] = []
+    start, stop = int(work_unit["expert_start"]), int(work_unit["expert_stop"])
+    for expert in range(start, stop):
+        path = direct._expert_path(output_root, capture.layer, expert)
+        if path.exists():
+            receipt = direct.verify_expert_receipt(
+                output_root,
+                path,
+                contract_sha256=contract_sha,
+                expected_bits=bits,
+            )
+            completed_by_expert[expert] = receipt["receipt_sha256"]
+            continue
+        weights = source.load_triplet(capture.layer, expert, device=device)
+        request = direct.EncodeRequest(
+            contract_sha256=contract_sha,
+            layer=capture.layer,
+            expert=expert,
+            bits=bits,
+            tensor_names={p: direct.tensor_name(capture.layer, expert, p) for p in direct.PROJECTIONS},
+            source_weights=weights,
+            capture=capture,
+            preparation=contract["preparation"],
+        )
+        pending.append((expert, path, request))
+
+    batch_size = max(1, int(max_inflight_experts))
+    seal_futures: List[Any] = []
+
+    def _raise_finished_seal_failure() -> None:
+        for future in seal_futures:
+            if future.done():
+                future.result()  # re-raises the seal exception, failing the unit
+
+    def _drain_all_seals() -> None:
+        concurrent.futures.wait(seal_futures)
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="seal-overlap"
+    ) as sealer:
+        try:
+            for offset in range(0, len(pending), batch_size):
+                # a seal failure aborts BEFORE any further encode starts.
+                _raise_finished_seal_failure()
+                batch = pending[offset : offset + batch_size]
+                try:
+                    encoded = list(
+                        backend.encode_experts(
+                            [request for _expert, _path, request in batch],
+                            max_inflight_experts=max_inflight_experts,
+                        )
+                    )
+                    if len(encoded) != len(batch):
+                        raise ValueError("prepared backend batch result census differs")
+                except BaseException:
+                    # encode failure: drain pending seals (their receipts
+                    # land, keeping resume intact), then abort with the
+                    # encode error.
+                    _drain_all_seals()
+                    raise
+                # a seal failure observed here discards this batch's encode
+                # instead of sealing it (closest to the serial path, where a
+                # seal failure precedes any further work).
+                _raise_finished_seal_failure()
+                seal_futures.append(
+                    sealer.submit(
+                        _seal_encoded_experts,
+                        direct=direct,
+                        store=store,
+                        batch=batch,
+                        encoded=encoded,
+                        contract_sha=contract_sha,
+                        work_unit=work_unit,
+                        capture=capture,
+                        backend_identity=backend_identity,
+                        source=source,
+                        bits=bits,
+                        output_root=output_root,
+                        completed_by_expert=completed_by_expert,
+                    )
+                )
+            # drain EVERY seal before the unit receipt; first seal failure
+            # propagates and the unit receipt is never written.
+            _drain_all_seals()
+            for future in seal_futures:
+                future.result()
+        except BaseException:
+            _drain_all_seals()
+            raise
+
+    completed = [completed_by_expert[expert] for expert in range(start, stop)]
+    unit_receipt = direct._seal(
+        {
+            "schema": "quant-pipeline.glm53-direct-mcg-work-unit-receipt.v1",
+            "contract_sha256": contract_sha,
+            "work_unit_sha256": work_unit["work_unit_sha256"],
+            "layer": capture.layer,
+            "expert_start": start,
+            "expert_stop": stop,
+            "expert_receipt_sha256": completed,
+            "complete": len(completed) == stop - start,
+        },
+        "receipt_sha256",
+    )
+    path = output_root / "work-units" / f"{work_unit['work_unit_sha256']}.json"
+    direct.write_json(path, unit_receipt)
+    return unit_receipt
+
+
 def cmd_encode_worker(args: argparse.Namespace) -> int:
     _import_pipeline(Path(args.pipeline_root))
     output_root = Path(args.output_root).resolve()
@@ -1276,8 +1524,14 @@ def cmd_encode_worker(args: argparse.Namespace) -> int:
     capture_root = Path(args.calibration).resolve() / "main-ep4-full"
     _, lock_path = _state_paths(output_root)
     worker = args.worker
+    overlap_seal = bool(getattr(args, "overlap_seal", False))
+    max_units = getattr(args, "max_units", None)
+    units_done = 0
 
     while True:
+        if max_units is not None and units_done >= max_units:
+            print(f"{worker}: reached --max-units {max_units} - stopping")
+            return 0
         with _locked(lock_path):
             state = _load_state(output_root, contract)
             claim = state["active"].get(worker)
@@ -1303,19 +1557,33 @@ def cmd_encode_worker(args: argparse.Namespace) -> int:
                 capture_root, layer, verify_hashes=args.verify_capture_hashes
             )
             started = time.monotonic()
-            unit_receipt = direct.encode_work_unit(
-                contract=contract,
-                work_unit=unit,
-                source=source,
-                capture=capture,
-                backend=backend,
-                output_root=output_root,
-                device=args.device,
-                max_inflight_experts=args.max_inflight_experts,
-            )
+            if overlap_seal:
+                unit_receipt = _encode_work_unit_overlap(
+                    direct=direct,
+                    contract=contract,
+                    work_unit=unit,
+                    source=source,
+                    capture=capture,
+                    backend=backend,
+                    output_root=output_root,
+                    device=args.device,
+                    max_inflight_experts=args.max_inflight_experts,
+                )
+            else:
+                unit_receipt = direct.encode_work_unit(
+                    contract=contract,
+                    work_unit=unit,
+                    source=source,
+                    capture=capture,
+                    backend=backend,
+                    output_root=output_root,
+                    device=args.device,
+                    max_inflight_experts=args.max_inflight_experts,
+                )
+            mode = " (overlap-seal)" if overlap_seal else ""
             print(
                 f"{worker}: layer {layer} encoded in "
-                f"{time.monotonic() - started:.0f}s",
+                f"{time.monotonic() - started:.0f}s{mode}",
                 flush=True,
             )
         with _locked(lock_path):
@@ -1332,6 +1600,7 @@ def cmd_encode_worker(args: argparse.Namespace) -> int:
         _maybe_seal_layer(
             output_root, contract, layer, args.prune_hessians_after_layer_seal
         )
+        units_done += 1
 
 
 # --------------------------------------------------------------------------- #
@@ -2010,6 +2279,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prune-hessians-after-layer-seal", action="store_true")
     p.add_argument("--max-inflight-experts", type=int, default=28)
     p.add_argument("--verify-capture-hashes", action="store_true", default=False)
+    p.add_argument(
+        "--overlap-seal",
+        action="store_true",
+        default=False,
+        help="opt-in: seal batch N on one background thread while the GPU "
+        "encodes batch N+1 (identical pipeline seal calls, rescheduled; "
+        "default OFF preserves today's serial encode-then-seal behavior)",
+    )
+    p.add_argument(
+        "--max-units",
+        type=int,
+        default=None,
+        help="stop after completing N work units (default: run until no "
+        "pending work remains)",
+    )
     p.set_defaults(func=cmd_encode_worker)
 
     p = sub.add_parser("seal-main", help="author the sealed main receipt")
