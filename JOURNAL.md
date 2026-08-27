@@ -385,3 +385,22 @@ malaiwah/glm53-session-scratch (private); VM pauses on completion.
    meter, THEN sync to slow endpoints; and re-read active upstream threads
    before closing an investigation — fresh eyes drop hints hourly on day-one
    PRs.
+
+## 2026-08-27 ~10:30 — Final science: drift certified, KV question closed, endgame ledger
+Guarded+stacked pair: 28/32 — the OOB guard does not drive the residual either.
+Final intervention ledger (all by experiment): autotune pin = no effect;
+collective/cuBLAS pins = ~10x flip-rate reduction; DeepGEMM env = untestable
+(model calls DeepGEMM directly, ungated); OOB guard = no additional effect.
+Residual unidentified; surviving suspects: indexer/mHC DeepGEMM JIT.
+Drift/config-sensitivity: pinned+guarded captures vs day-one reference =
+1.32e-2 / top-1 0.964 — the FP8 headline (2.81e-2) stands 2.2x above the full
+config envelope and 32x above same-config noise. v1 certified.
+KV matrix (operator's last-minute ask): FP8 KV REFUSES INIT on Hopper for both
+weight variants — exact assert "pe_dim must be 64 for fp8_ds_mla"
+(cache_kernels.cu:866) — empirically confirming the recipe's Blackwell-only
+note; the NoPE arch breaks fp8 MLA cache writes off-B200. NVFP4 KV does not
+exist in vLLM. Receipts written for both refusals.
+Also extracted per operator's last call: per-tensor stats sweep (38,770 BF16 +
+FP8 tensors: norms/absmax/row-col spreads) for future EXL3/MLX bit-allocation
+design, and the complete FP8 weight_scale_inv map (zai's quantization recipe,
+~80 MB) — the key to explaining WHERE the 0.0281 lives.
