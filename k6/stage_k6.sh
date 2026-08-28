@@ -679,7 +679,7 @@ qualify_k6)
   test -d "$TEACH" || { echo "teacher final-window logits missing at $TEACH" >&2; exit 1; }
   for run in 1 2 3 4 5; do
     [ -f "$RCPT/k6-student-run$run/capture-receipt.json" ] && continue
-    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --nproc-per-node=8 "$TOOLS/k6_student_capture.py" \
+    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 "$TOOLS/k6_student_capture.py" \
       --checkpoint "$CKPT_K6" --bf16 "$BF16" --teacher "$TEACH" \
       --profile k6 --cold-run "$run" --out "$RCPT/k6-student-run$run" \
       $( [ "$run" = 1 ] && echo --emit-reference-panel "$RCPT/k6-reference-panel.safetensors" )
@@ -696,7 +696,7 @@ assert r["quality_gate_passed"] and r["measured_mean_kld"] < 0.06, r["measured_m
 print("K6 mean tokenwise KLD:", r["measured_mean_kld"], "(gate < 0.06 GREEN)")
 PYEOF
   # TP4 packed-runtime qualification (4 ranks; run from the 8-GPU box).
-  ( cd "$PIPE" && PYTHONPATH=src "$VENV/bin/torchrun" --nproc-per-node=4 \
+  ( cd "$PIPE" && PYTHONPATH=src "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=4 \
       scripts/qualify_glm53_custom_tp2_runtime.py \
       --model "$CKPT_K6" --bits 6 --exllamav3-source "$EXL3" \
       --reference-panel "$RCPT/k6-reference-panel.safetensors" \
@@ -724,7 +724,7 @@ qualify_k8)
   test -d "$TEACH" || { echo "teacher final-window logits missing at $TEACH" >&2; exit 1; }
   for run in 1 2 3; do
     [ -f "$RCPT/k8-student-run$run/capture-receipt.json" ] && continue
-    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --nproc-per-node=8 "$TOOLS/k6_student_capture.py" \
+    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 "$TOOLS/k6_student_capture.py" \
       --checkpoint "$CKPT_K8" --bf16 "$BF16" --teacher "$TEACH" \
       --profile k8 --cold-run "$run" --out "$RCPT/k8-student-run$run" \
       $( [ "$run" = 1 ] && echo --emit-reference-panel "$RCPT/k8-reference-panel.safetensors" )
@@ -735,7 +735,7 @@ qualify_k8)
     --out "$RCPT/k8-packed-kld.json" \
     --comparison-out "$RCPT/comparison-table.md"
   "$PY" -c "import json; r=json.load(open('$RCPT/k8-packed-kld.json')); assert r['measured_mean_kld'] < 0.06, r['measured_mean_kld']; print('K8 mean KLD:', r['measured_mean_kld'])"
-  ( cd "$PIPE" && PYTHONPATH=src "$VENV/bin/torchrun" --nproc-per-node=4 \
+  ( cd "$PIPE" && PYTHONPATH=src "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=4 \
       scripts/qualify_glm53_custom_tp2_runtime.py \
       --model "$CKPT_K8" --bits 8 --exllamav3-source "$EXL3" \
       --reference-panel "$RCPT/k8-reference-panel.safetensors" \
@@ -753,7 +753,7 @@ qualify_k6k8)
   # Descoped to THREE cold runs (budget); disclosed in the receipt tree.
   for run in 1 2 3; do
     [ -f "$RCPT/k6k8-student-run$run/capture-receipt.json" ] && continue
-    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --nproc-per-node=8 "$TOOLS/k6_student_capture.py" \
+    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 "$TOOLS/k6_student_capture.py" \
       --checkpoint "$CKPT_K6K8" --bf16 "$BF16" --teacher "$TEACH" \
       --profile k6k8 --cold-run "$run" --out "$RCPT/k6k8-student-run$run"
   done
