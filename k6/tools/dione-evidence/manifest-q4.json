@@ -1,0 +1,36 @@
+{
+  "assembled_manifest_sha256": "6887012fa7ffee2e5ac5d533c3081abd9df0a9b9163fc6ed1fa983b94584d38b",
+  "completed_at": "2026-08-27T12:25:50.660374+00:00",
+  "quality_state": "QUALITY_VALIDATED",
+  "records": [
+    {
+      "bytes": 2073,
+      "name": "runtime-report.json",
+      "sha256": "dbaab9682ab0f4365d447ac81c022bf9eb16b8163929dbc3e21bb9652ac83f52"
+    },
+    {
+      "bytes": 186,
+      "name": "runtime-status.json",
+      "sha256": "d1d7645b626dbebd2da11d1c32bce87ead28e07e15ecf8756fe49391b3c2348f"
+    },
+    {
+      "bytes": 3661,
+      "name": "quality-eval-manifest.json",
+      "sha256": "46255621cd2da8e05546edc3498cfbee518da092af2f44ae243f79da97c0f00b"
+    },
+    {
+      "bytes": 6903,
+      "name": "quality-report.json",
+      "sha256": "2da8da0a7f3ea314bf02b26643e3c96159a38849132ea32a699ce4de22f7ab01"
+    },
+    {
+      "bytes": 176,
+      "name": "quality-status.json",
+      "sha256": "e65c77d27ab8a1331d81cdcff836d1f29a42e49868e633b4bd38eb24f36d84f5"
+    }
+  ],
+  "runtime_state": "RUNTIME_PRIMITIVE_VALIDATED",
+  "schema": "glm53-selective-exl3-q4-validation-v1",
+  "serving_integration_claim": false,
+  "state": "VALIDATED"
+}

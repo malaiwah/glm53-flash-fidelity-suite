@@ -1,0 +1,16 @@
+model.language_model.layers.3.mlp.experts.0.up_proj.rank0.trellis	16807760	17856335
+model.language_model.layers.3.mlp.experts.0.up_proj.rank0.suh	530256	538447
+model.language_model.layers.3.mlp.experts.0.up_proj.rank0.svh	538448	539471
+model.language_model.layers.3.mlp.experts.0.up_proj.rank0.mcg	453104	453107
+model.language_model.layers.3.mlp.experts.0.up_proj.rank1.trellis	17856336	18904911
+model.language_model.layers.3.mlp.experts.0.up_proj.rank1.suh	539472	547663
+model.language_model.layers.3.mlp.experts.0.up_proj.rank1.svh	547664	548687
+model.language_model.layers.3.mlp.experts.0.up_proj.rank1.mcg	453108	453111
+model.language_model.layers.3.mlp.experts.0.up_proj.rank2.trellis	18904912	19953487
+model.language_model.layers.3.mlp.experts.0.up_proj.rank2.suh	548688	556879
+model.language_model.layers.3.mlp.experts.0.up_proj.rank2.svh	556880	557903
+model.language_model.layers.3.mlp.experts.0.up_proj.rank2.mcg	453112	453115
+model.language_model.layers.3.mlp.experts.0.up_proj.rank3.trellis	19953488	21002063
+model.language_model.layers.3.mlp.experts.0.up_proj.rank3.suh	557904	566095
+model.language_model.layers.3.mlp.experts.0.up_proj.rank3.svh	566096	567119
+model.language_model.layers.3.mlp.experts.0.up_proj.rank3.mcg	453116	453119

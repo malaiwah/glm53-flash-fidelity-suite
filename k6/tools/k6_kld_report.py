@@ -156,10 +156,22 @@ def _measure_run(
 
     report_path = run_dir / "kld-report.json"
     if report_path.is_file():
+        resumed = json.loads(report_path.read_text(encoding="utf-8"))
+        if resumed.get("student_label") != student_label:
+            raise _fail(
+                f"resumed {report_path} is labeled {resumed.get('student_label')!r}, "
+                f"not the profile's expected {student_label!r} - wrong --runs/--profile pair"
+            )
         return report_path
     student = load_capture_receipt(
         run_dir / "capture-receipt.json", expected_role="packed_student"
     )
+    declared_label = student.get("student_label")
+    if declared_label is not None and declared_label != student_label:
+        raise _fail(
+            f"capture receipt declares student_label {declared_label!r}, but "
+            f"--profile expects {student_label!r} - wrong --runs/--profile pair"
+        )
     if teacher["token_panel_receipt_sha256"] != student["token_panel_receipt_sha256"]:
         raise _fail("teacher and student captures use different sealed token panels")
     if teacher["vocab_size"] != student["vocab_size"]:
@@ -291,6 +303,8 @@ def _comparison_table(
         ("k6", "6.01", "236.1 GiB"),
         ("k8", "8.01", "308.7 GiB"),
         ("k6k8", "6.68", "260.3 GiB"),
+        ("dione-q4", "4.0 (TP4-sliced)", "174.5 GiB"),
+        ("dione-3.0bpw", "3.0 (TP4-sliced)", "~139 GiB"),
     ):
         receipt_path = receipts_dir / f"{profile}-packed-kld.json"
         if receipt_path.is_file():
@@ -301,6 +315,8 @@ def _comparison_table(
                 "k6": "malaiwah K6",
                 "k8": "malaiwah K8 (uniform)",
                 "k6k8": "malaiwah K6K8 (down@8)",
+                "dione-q4": "0xSero Dione Q4 (EXL3 K4, unsealed source)",
+                "dione-3.0bpw": "0xSero Dione 3.0bpw (EXL3 K3, unsealed source)",
             }[profile]
             rows.append(
                 f"| **{label}** | {bpw} | {size} | **{mean:.6f}** (gate < 0.06 {gate}) "
@@ -311,7 +327,8 @@ def _comparison_table(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", required=True, choices=("k6", "k8", "k6k8"))
+    parser.add_argument("--profile", required=True,
+                        choices=("k6", "k8", "k6k8", "dione-q4", "dione-3.0bpw"))
     parser.add_argument("--teacher", type=Path, required=True)
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
     parser.add_argument("--fp8-baseline", type=float, default=0.020615)
@@ -337,6 +354,11 @@ def main() -> int:
         "k6": "uniform-k6",
         "k8": "uniform-k8",
         "k6k8": "mixed-k6k8",
+        # third-party Dione (0xSero) selective-EXL3 TP4 snapshots, scored on
+        # the same sealed panel through --surface dione (unsealed source,
+        # disclosed in the capture receipt's seal_disclosure)
+        "dione-q4": "dione-exl3-k4-tp4",
+        "dione-3.0bpw": "dione-exl3-k3-tp4",
     }[args.profile]
     runs = [path.resolve() for path in args.runs]
     campaign_root = runs[0].parent.parent
@@ -472,7 +494,7 @@ def main() -> int:
             "profile": f"{args.profile}-tp4",
             "student_label": student_label,
             "cold_run_count": len(reports),
-            "cold_run_deviation": "3 cold runs, not 5 (budget; disclosed)",
+            "cold_run_deviation": f"{len(reports)} cold runs, not 5 (budget; disclosed)",
             "run_means": means,
             "distinct_tokenwise_kld_sha256": kld_shas,
             "bitwise_deterministic": len(kld_shas) == 1,
@@ -482,6 +504,31 @@ def main() -> int:
             "kld_report_sha256": [sha for _, sha in reports],
             "teacher_receipt_sha256": teacher["receipt_sha256"],
         }
+        if args.profile.startswith("dione"):
+            # the headline number's own receipt must carry the unsealed-source
+            # disclosure and the immutable provenance pins, not only the
+            # capture receipt underneath it
+            from quant_pipeline.evaluation.glm53_logits import (
+                CAPTURE_SCHEMA,
+                sealed_json,
+            )
+
+            student_receipt = sealed_json(
+                runs[0] / "capture-receipt.json", CAPTURE_SCHEMA, "receipt_sha256"
+            )
+            summary.update(
+                {
+                    "student_receipt_sha256": student_receipt["receipt_sha256"],
+                    "dione_repo": student_receipt.get("dione_repo"),
+                    "dione_revision": student_receipt.get("dione_revision"),
+                    "dione_shard_hash_verification": student_receipt.get(
+                        "dione_shard_hash_verification"
+                    ),
+                    "source_repo": student_receipt.get("source_repo"),
+                    "source_revision": student_receipt.get("source_revision"),
+                    "seal_disclosure": student_receipt.get("seal_disclosure"),
+                }
+            )
         _atomic_json(args.out.resolve(), summary)
         print(
             json.dumps(

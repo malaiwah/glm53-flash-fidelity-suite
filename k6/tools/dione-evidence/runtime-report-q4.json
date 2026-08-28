@@ -1,0 +1,67 @@
+{
+  "artifact_manifest_sha256": "6887012fa7ffee2e5ac5d533c3081abd9df0a9b9163fc6ed1fa983b94584d38b",
+  "completed_at": "2026-08-27T12:13:18.859234+00:00",
+  "elapsed_seconds": 7.582131900999229,
+  "schema": "glm53-selective-exl3-q4-runtime-primitive-v1",
+  "scope": "real EXL3 gate/up/down kernels on all four TP ranks plus CUDA graph capture and replay",
+  "serving_integration_claim": false,
+  "state": "RUNTIME_PRIMITIVE_VALIDATED",
+  "workers": [
+    {
+      "completed_at": "2026-08-27T12:13:17.179976+00:00",
+      "cuda_graph_captured": true,
+      "cuda_graph_replay_vs_eager_relative_l2": 0.0,
+      "cuda_graph_replayed": true,
+      "dtype": "float16",
+      "eager_vs_reconstructed_relative_l2": 0.0018518203869462013,
+      "expert": 0,
+      "gpu": 0,
+      "layer": 3,
+      "rows": 128,
+      "state": "COMPLETE",
+      "tp_rank": 0
+    },
+    {
+      "completed_at": "2026-08-27T12:13:17.290043+00:00",
+      "cuda_graph_captured": true,
+      "cuda_graph_replay_vs_eager_relative_l2": 0.0,
+      "cuda_graph_replayed": true,
+      "dtype": "float16",
+      "eager_vs_reconstructed_relative_l2": 0.0018196115270256996,
+      "expert": 1,
+      "gpu": 1,
+      "layer": 3,
+      "rows": 128,
+      "state": "COMPLETE",
+      "tp_rank": 1
+    },
+    {
+      "completed_at": "2026-08-27T12:13:17.302306+00:00",
+      "cuda_graph_captured": true,
+      "cuda_graph_replay_vs_eager_relative_l2": 0.0,
+      "cuda_graph_replayed": true,
+      "dtype": "float16",
+      "eager_vs_reconstructed_relative_l2": 0.001856770715676248,
+      "expert": 2,
+      "gpu": 2,
+      "layer": 3,
+      "rows": 128,
+      "state": "COMPLETE",
+      "tp_rank": 2
+    },
+    {
+      "completed_at": "2026-08-27T12:13:17.357563+00:00",
+      "cuda_graph_captured": true,
+      "cuda_graph_replay_vs_eager_relative_l2": 0.0,
+      "cuda_graph_replayed": true,
+      "dtype": "float16",
+      "eager_vs_reconstructed_relative_l2": 0.001907325116917491,
+      "expert": 3,
+      "gpu": 3,
+      "layer": 3,
+      "rows": 128,
+      "state": "COMPLETE",
+      "tp_rank": 3
+    }
+  ]
+}

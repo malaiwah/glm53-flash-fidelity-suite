@@ -1,0 +1,2 @@
+model.language_model.layers.3.mlp.experts.0.gate_proj.weight	219860504	236637719
+model.language_model.layers.3.mlp.experts.0.down_proj.weight	203083288	219860503
