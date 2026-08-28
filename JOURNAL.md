@@ -588,3 +588,22 @@ reconstruction remains the campaign path. K6 target: land well under
 0.0246-class FP8 on his panel. Campaign state: GSS prep parallelized to all
 4 GPUs (contract loop + 3 prepare workers on disjoint ranges) after operator
 spotted GPU0-only; prep ~10/42 at parallelization.
+
+## 2026-08-28 ~02:45 — K6 MATERIALIZED: byte-exact, world's first
+convert_k6 completed at 02:38:21Z after the encode (42/42 layers, all-worker),
+main receipt c65c162b, MTP adapter receipt 1159d61a, calibration deleted per
+ledger, checkpoint materialized: output_logical_bytes 253,536,370,680 —
+EXACTLY the pre-campaign derivation. Receipt: bits 6, complete,
+main_and_mtp_complete, nonrouted_native_exact all true, qualified_tp_sizes []
++ serving_reader_qualified false (topology-neutral form as demanded).
+THREE-LANE FAN-OUT: (1) convert_k8 launched on the 4x fleet (calibration
+re-download + eviction guards + --overlap-seal per DECISIONS; A/B completes
+from receipts vs the banked serial control unit); (2) 8x H200 VM 485017
+rented ON-DEMAND (container spot exhausted by our own fleet) for qualify_k6
+— 5 cold runs on the sealed panel, ~$65 premium accepted for the morning
+publication timestamp; (3) L4 freight box (484453→485016) uploading the
+254 GB checkpoint PRIVATE to malaiwah/GLM-5.3-Flash-TR3-6bpw
+(QP_PUBLISH_UNQUALIFIED staging; flips public only on green panel receipt).
+Overlap-smoke postscript: the disk-ledger calibration deletion preempted the
+A/B's overlap leg (control banked); flag enabled on verified correctness,
+gain measured from campaign receipts instead. TR3 naming live everywhere.
