@@ -10,3 +10,10 @@ calsuite/tokens/
 __pycache__/
 deliverables/
 k6/tools/dione-evidence/index-q4.json
+# Runner output directories. measure_cloud.py writes the HF token to
+# fidelity-runs/<job>/.hf_token for the seconds it takes to upload it; a crash
+# in that window would otherwise leave a live token inside the repo, where
+# `git add -A` stages it and `git status` (which collapses the untracked dir)
+# does not show it.
+fidelity-runs/
+fidelity-local/

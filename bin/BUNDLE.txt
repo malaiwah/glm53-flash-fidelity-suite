@@ -41,6 +41,9 @@ k6/tools/stream_score.py
 registry/tools/registry_lib.py
 registry/tools/_minischema.py
 registry/tools/registry_validate.py
+# registry_validate.py --submission imports registry_add at runtime;
+# without it the on-instance self-check dies AFTER the receipt is sealed.
+registry/tools/registry_add.py
 registry/schema/common.schema.json
 registry/schema/submission.schema.json
 registry/schema/measurement.schema.json
@@ -51,3 +54,17 @@ registry/schema/pipeline.schema.json
 registry/schema/model.schema.json
 registry/schema/index.schema.json
 registry/schema/invariants.json
+
+# The seeded rows (~400 KB). Needed on the instance for two reasons: the
+# validator resolves panel_ref / reference_ref against them, and the receipt
+# sealer ADOPTS an existing artifact's published quantization scope instead of
+# inventing one. Without these the sealed receipt would describe a
+# already-catalogued artifact differently from the registry, and the ingest
+# would refuse it -- after the run had already been paid for.
+registry/data/models.jsonl
+registry/data/artifacts.jsonl
+registry/data/panels.jsonl
+registry/data/references.jsonl
+registry/data/pipelines.jsonl
+registry/data/measurements.jsonl
+registry/index.json

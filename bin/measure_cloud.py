@@ -30,6 +30,7 @@ import atexit
 import hashlib
 import json
 import os
+import re
 import signal
 import sys
 import threading
@@ -50,6 +51,7 @@ from fidelity.hfmeta import (                          # noqa: E402
     HFError, RepoMeta, hf_token, load_panel_descriptor, repo_meta, sniff_surface,
 )
 from fidelity.jlapi import JL, JLError, JLNotInstalled, select_offer  # noqa: E402
+from fidelity.receipt import produced_by_block                      # noqa: E402
 
 VERSION = "0.1.0"
 LEASE_DIR = Path.home() / ".fidelity-cloud" / "leases"
@@ -130,18 +132,42 @@ class Teardown:
                 return
             self.done = True
         if self.machine_id is None and self.fs_id is None:
+            # Nothing to destroy, but a lease may already be on disk: it is
+            # written BEFORE `jl create` on purpose. Leaving it behind makes
+            # `reaper --list` report a phantom job forever.
+            self._drop_lease()
             return
-        self.con.say("")
-        self.con.step("teardown%s (do NOT interrupt)" % ((" -- " + reason) if reason else ""))
-        for step in (self._pull_receipts, self._collect_env, self._shred_secrets,
-                     self._destroy_instance, self._destroy_fs, self._drop_lease):
+        # Printing "do NOT interrupt" is not a defence.  A second ^C re-enters
+        # the signal handler, finds done=True, no-ops, and sys.exit()s straight
+        # through the destroy that has not happened yet -- which leaks the
+        # instance at the exact moment the user was trying to stop the bill.
+        # Take the choice away for the duration instead of asking for it.
+        prev = {}
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             try:
-                step()
-            except Exception as exc:                    # noqa: BLE001
-                # A failure inside teardown must never skip the destroy that
-                # comes after it.  That is the whole reason each step is
-                # individually wrapped instead of the block as a whole.
-                self.con.warn("teardown step %s: %s" % (step.__name__, redact(str(exc))))
+                prev[sig] = signal.signal(sig, signal.SIG_IGN)
+            except (ValueError, OSError):
+                pass
+        self.con.say("")
+        self.con.step("teardown%s (^C is ignored until this finishes)"
+                      % ((" -- " + reason) if reason else ""))
+        try:
+            for step in (self._pull_receipts, self._collect_env, self._shred_secrets,
+                         self._destroy_instance, self._destroy_fs, self._drop_lease):
+                try:
+                    step()
+                except Exception as exc:                # noqa: BLE001
+                    # A failure inside teardown must never skip the destroy that
+                    # comes after it.  That is the whole reason each step is
+                    # individually wrapped instead of the block as a whole.
+                    self.con.warn("teardown step %s: %s"
+                                  % (step.__name__, redact(str(exc))))
+        finally:
+            for sig, handler in prev.items():
+                try:
+                    signal.signal(sig, handler)
+                except (ValueError, OSError):
+                    pass
 
     # -- steps -------------------------------------------------------------
 
@@ -216,8 +242,24 @@ class Teardown:
                 "charges until you run: jl filesystem delete %s --yes"
                 % (self.fs_id, self.fs_id))
             return
-        self.jl.fs_delete(self.fs_id)
-        self.con.ok("filesystem deleted", str(self.fs_id))
+        fsid = self.fs_id
+        try:
+            self.jl.fs_delete(fsid)
+        except JLError as exc:
+            # A filesystem that outlives its instance keeps billing storage
+            # forever, and nothing else in the four layers looks for one. Treat
+            # it exactly like an undestroyed instance: set `leaked`, keep the
+            # lease so the reaper retries, and exit EXIT_LEAK.
+            self.leaked = True
+            self.con.say("")
+            self.con.say("!" * 78)
+            self.con.say("!!  COULD NOT DELETE FILESYSTEM %s  (%s)"
+                         % (fsid, redact(str(exc))))
+            self.con.say("!!  IT IS STILL BILLING STORAGE. Run this now:")
+            self.con.say("!!      jl filesystem remove %s --yes" % fsid)
+            self.con.say("!" * 78)
+            return
+        self.con.ok("filesystem deleted", str(fsid))
         self.fs_id = None
 
     def _drop_lease(self) -> None:
@@ -291,6 +333,43 @@ def reaper_install(con: Console) -> int:
     return EXIT_OK
 
 
+def deadline_name(job_id: str, deadline: float) -> str:
+    """`fidcloud-<job>-x<base36 epoch>` -- 25 chars, and that matters.
+
+    The same string names the instance AND the filesystem, and
+    `jl filesystem create --name` rejects anything over 30 characters.  The
+    original `fidcloud-<8hex>-exp<10-digit epoch>` is always 31, so every real
+    run died on its first mutating call.  Base36 buys four characters of
+    headroom without giving up the self-describing deadline that L3 needs.
+    """
+    return "fidcloud-%s-x%s" % (job_id, _b36(int(deadline)))
+
+
+def _b36(n: int) -> str:
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    while n:
+        n, r = divmod(n, 36)
+        out = digits[r] + out
+    return out or "0"
+
+
+def parse_deadline_name(name: str) -> Optional[int]:
+    """Deadline out of an instance name, in either encoding.
+
+    `-exp<decimal>` is still accepted so a sweep run from a newer checkout can
+    still reap an instance created by an older one.
+    """
+    for sep, base in (("-x", 36), ("-exp", 10)):
+        head, found, tail = name.rpartition(sep)
+        if found and tail:
+            try:
+                return int(tail, base)
+            except ValueError:
+                continue
+    return None
+
+
 def reaper_sweep(con: Console, *, dry: bool = False) -> int:
     """Destroy anything past its deadline, from leases AND from instance names.
 
@@ -319,10 +398,10 @@ def reaper_sweep(con: Console, *, dry: bool = False) -> int:
             name = inst.name or ""
             if not name.startswith("fidcloud-"):
                 continue
-            marker = name.rsplit("-exp", 1)
-            if len(marker) == 2 and marker[1].isdigit() and int(marker[1]) < now:
+            deadline = parse_deadline_name(name)
+            if deadline is not None and deadline < now:
                 targets.setdefault(inst.machine_id,
-                                   "name deadline %s passed" % marker[1])
+                                   "name deadline %d passed" % deadline)
     except JLError as exc:
         con.warn("could not list instances: %s" % redact(str(exc)))
 
@@ -363,6 +442,33 @@ class Refusal(RuntimeError):
     def __init__(self, reason: str, advice: List[str]) -> None:
         self.reason, self.advice = reason, advice
         super().__init__(reason)
+
+
+def _machine_id_of(created: Optional[Dict[str, Any]]) -> Optional[int]:
+    """Pull a machine id out of whatever shape `jl create` answered with.
+
+    A vendor that renames `machine_id` to `id` must not turn into a leaked
+    instance, so this accepts either and returns None rather than raising.
+    """
+    if not isinstance(created, dict):
+        return None
+    for key in ("machine_id", "id", "instance_id"):
+        value = created.get(key)
+        if isinstance(value, (int, str)) and str(value).isdigit():
+            return int(value)
+    return None
+
+
+def _find_by_name(jl: JL, name: str) -> Optional[int]:
+    """Last-resort id recovery: the instance name is unique to this job."""
+    try:
+        for inst in jl.list_instances():
+            if inst.name == name and inst.status.lower() not in (
+                    "destroyed", "terminated"):
+                return inst.machine_id
+    except JLError:
+        pass
+    return None
 
 
 def job_id_for(args: argparse.Namespace) -> str:
@@ -437,6 +543,22 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     except HFError as exc:
         if not args.dry_run:
             raise
+        # A 404/401/403 is a verdict about THIS repo, not a network problem.
+        # Continuing on the pinned census would print a complete, confident,
+        # entirely fictional plan for a repo that does not exist -- which is
+        # the exact failure a typo produces, and --dry-run's whole job is to
+        # catch it.  Only a transport error earns the offline fallback.
+        if re.search(r"HTTP (?:401|403|404)\b", str(exc)):
+            con.err(str(exc))
+            plan.setdefault("would_refuse", []).append(
+                "target %s could not be resolved on Hugging Face" % args.model)
+            con.say("           the repo id, the revision, or your HF_TOKEN is wrong;")
+            con.say("           nothing below this line describes YOUR model.")
+            raise Refusal(
+                "target %s could not be resolved on Hugging Face" % args.model,
+                ["check the repo id and --revision",
+                 "for a private or gated repo:  export HF_TOKEN=...",
+                 "Nothing was created. $0.00 spent."])
         con.warn("cannot reach Hugging Face (%s); dry run continues with the "
                  "pinned GLM-5.3-Flash census" % exc)
         target, offline = None, True
@@ -727,7 +849,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
 
     # -- teardown plan ------------------------------------------------------
     deadline = time.time() + max_runtime
-    name = "fidcloud-%s-exp%d" % (plan["job_id"], int(deadline))
+    name = deadline_name(plan["job_id"], deadline)
     plan["instance_name"] = name
     plan["deadline_epoch"] = deadline
     con.say("")
@@ -780,11 +902,33 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
         td.fs_id = fs.get("fs_id") or fs.get("id")
         con.step("filesystem created  fs %s (%d GB, %s)"
                  % (td.fs_id, plan_data["storage_gb"], region))
-        created = jl.create(
-            gpu_type=chosen["gpu_type"], num_gpus=chosen["gpus"],
-            spot=args.spot, region=region, fs_id=td.fs_id, storage=100,
-            name=plan_data["instance_name"], template="pytorch")
-        td.adopt(int(created.get("machine_id")))
+        created = None
+        try:
+            created = jl.create(
+                gpu_type=chosen["gpu_type"], num_gpus=chosen["gpus"],
+                spot=args.spot, region=region, fs_id=td.fs_id, storage=100,
+                name=plan_data["instance_name"], template="pytorch")
+        finally:
+            # The id must be adopted even when `create` raised or answered in a
+            # shape we did not expect.  An unadopted id is not a failed create:
+            # the box may well be up and billing, and teardown skips every
+            # machine step when machine_id is None.  So: take whatever key the
+            # response used, and if there is none, ASK THE ACCOUNT -- the name
+            # was decided before the call precisely so this lookup is possible.
+            mid = _machine_id_of(created)
+            if mid is None:
+                mid = _find_by_name(jl, plan_data["instance_name"])
+                if mid is not None:
+                    con.warn("`jl create` did not return a usable machine id; "
+                             "recovered %s by name from `jl list`" % mid)
+            if mid is not None:
+                td.adopt(int(mid))
+        if td.machine_id is None:
+            raise RuntimeError(
+                "`jl create` returned no machine id and no instance named %s "
+                "appeared in `jl list`. If a box was created anyway it is NOT "
+                "tracked by this controller -- check `jl list` yourself."
+                % plan_data["instance_name"])
         con.step("instance created  machine %s" % td.machine_id)
 
     heartbeat_stop = threading.Event()
@@ -812,15 +956,67 @@ def _start_heartbeat(jl: JL, td: Teardown, stop: threading.Event,
     threading.Thread(target=beat, daemon=True).start()
 
 
+def _job_document(args, plan_data) -> Dict[str, Any]:
+    """The on-instance contract: everything the stages need, and nothing secret.
+
+    Written to `$FS/job.json`, which `stage_measure.sh` reads for every stage.
+    It carries no token -- the HF token travels separately as a 0600 file.
+    """
+    panel = dict(plan_data["panel"])
+    return {
+        "recipe": "cloud",
+        "job_id": plan_data["job_id"],
+        "lane": args.lane,
+        "reduce_order": args.reduce_order,
+        "cold_runs": args.cold_runs,
+        "profile": "k6" if args.lane == "sealed-ep8" else "k4",
+        "target": plan_data["target"],
+        "panel": panel,
+        "reference": {
+            "reference_ref": panel.get("reference_ref"),
+            "teacher_receipt_sha256": panel.get("teacher_receipt_sha256"),
+            "teacher_backend_identity_sha256":
+                panel.get("teacher_backend_identity_sha256"),
+        },
+        "environment": {
+            "gpu": plan_data["chosen"]["gpu_type"],
+            "gpu_count": plan_data["chosen"]["gpus"],
+            "tensor_parallel": plan_data["requirement"]["ep_size"],
+            "host": "jarvislabs",
+        },
+        "keep_student_logits": bool(args.keep_student_logits),
+        "produced_by": produced_by_block(SUITE_ROOT, "bin/measure_cloud.py",
+                                         dependencies={
+                                             "lane": args.lane,
+                                             "reduce_order": args.reduce_order,
+                                         }),
+    }
+
+
 def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
     bundle = SUITE_ROOT / "bin" / "BUNDLE.txt"
     files = [ln.strip() for ln in bundle.read_text(encoding="utf-8").splitlines()
              if ln.strip() and not ln.startswith("#")]
     con.step("uploading bundle (%d files)" % len(files))
+    made: set = set()
     for rel in files:
         src = SUITE_ROOT / rel
-        if src.is_file():
-            jl.upload(td.machine_id, str(src), "%s/%s" % (td.fs_root, rel))
+        if not src.is_file():
+            con.warn("bundle entry not present locally, skipped: %s" % rel)
+            continue
+        remote_dir = "%s/%s" % (td.fs_root, os.path.dirname(rel))
+        if remote_dir not in made:
+            jl.exec(td.machine_id, "mkdir -p %s" % remote_dir, timeout=120)
+            made.add(remote_dir)
+        jl.upload(td.machine_id, str(src), "%s/%s" % (td.fs_root, rel))
+
+    # job.json is the contract every stage reads. Without it the stages have no
+    # repo id, no revision and no panel include globs, and `fetch_target` exits
+    # 2 on an empty repo_id -- after the instance is already billing.
+    job_path = outdir / "job.json"
+    write_json(str(job_path), _job_document(args, plan_data))
+    jl.upload(td.machine_id, str(job_path), "%s/job.json" % td.fs_root)
+    con.ok("job.json uploaded", "%d bytes" % job_path.stat().st_size)
 
     token = hf_token()
     if token:
@@ -837,6 +1033,7 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
             tmp.unlink(missing_ok=True)
         con.ok("HF token transported", "0600 file, never argv, shredded at teardown")
 
+    jl.exec(td.machine_id, "mkdir -p %s/logs %s/receipts/done" % (td.fs_root, td.fs_root))
     con.step("arming on-instance watchdog")
     jl.exec(td.machine_id,
             "nohup bash %s/bin/watchdog.sh %d %d %s >%s/logs/watchdog.log 2>&1 &"
@@ -844,9 +1041,118 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
                int(args.heartbeat_timeout), td.fs_root, td.fs_root))
 
     for stage in ("setup", "fetch_target", "fetch_panel", "measure", "seal"):
+        _run_stage(args, con, jl, td, plan_data, stage)
+
+
+def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
+    """Launch one stage and WAIT for it, surviving spot preemption.
+
+    Every stage is receipt-resumable (`$DONE/<stage>.done`, and per-run capture
+    receipts inside `measure`), so a preemption costs at most one stage --
+    usually one in-flight cold run. The rule that makes it work: after any
+    resume or recreate, ADOPT whatever machine id came back, unconditionally,
+    and rewrite the lease before doing anything else. `jl resume` renumbers.
+    """
+    deadline = plan_data["deadline_epoch"]
+    preemptions = 0
+    while True:
         con.step("stage %s" % stage)
-        jl.run_job(td.machine_id,
-                   "bash %s/bin/stage_measure.sh %s" % (td.fs_root, stage))
+        started = time.time()
+        run = jl.run_job(td.machine_id,
+                         "bash %s/bin/stage_measure.sh %s" % (td.fs_root, stage))
+        run_id = (run or {}).get("run_id") or (run or {}).get("id")
+        outcome = _await_stage(con, jl, td, run_id, stage, deadline)
+        if outcome == "done":
+            con.ok("stage %s" % stage, human_duration(time.time() - started))
+            return
+        if outcome == "failed":
+            raise RuntimeError(
+                "stage %s failed on the instance; the log was pulled to the "
+                "output directory and the instance will now be destroyed" % stage)
+        if outcome == "deadline":
+            raise RuntimeError(
+                "--max-runtime reached during stage %s; stopping and tearing "
+                "down. Partial receipts have been pulled." % stage)
+
+        # outcome == "preempted"
+        preemptions += 1
+        lost = time.time() - started
+        rate = plan_data["cost_estimate"]["rate_per_hour"]
+        plan_data.setdefault("preemption_log", []).append({
+            "stage": stage, "at": utcnow(), "old_machine_id": td.machine_id,
+            "minutes_lost": round(lost / 60, 1),
+            "usd_lost": round(rate * lost / 3600.0, 2),
+        })
+        if args.on_preempt == "fail" or preemptions > args.max_preemptions:
+            raise RuntimeError(
+                "preempted %d time(s) during stage %s (limit %d)"
+                % (preemptions, stage, args.max_preemptions))
+        con.warn("preemption %d during stage %s -- lost %s ($%.2f)"
+                 % (preemptions, stage, human_duration(lost), rate * lost / 3600.0))
+        _recover(args, con, jl, td, plan_data)
+        # setup is idempotent and containers lose apt state across a pause, so
+        # it must be re-run before the stage that was interrupted.
+        if stage != "setup":
+            con.step("re-running setup after recovery (idempotent)")
+            r = jl.run_job(td.machine_id,
+                           "bash %s/bin/stage_measure.sh setup" % td.fs_root)
+            _await_stage(con, jl, td, (r or {}).get("run_id"), "setup", deadline)
+
+
+def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
+    """Poll until the stage ends. Returns done | failed | preempted | deadline."""
+    quiet = 0
+    while True:
+        if time.time() > deadline:
+            return "deadline"
+        time.sleep(120)
+        inst = jl.get(td.machine_id) if td.machine_id else None
+        if inst is None or inst.status not in ("Running",):
+            # Not running is not automatically preemption -- confirm before
+            # acting, because a transient API blip should not trigger a rebuild.
+            quiet += 1
+            if quiet >= 2:
+                con.warn("instance %s status=%s -- treating as preemption"
+                         % (td.machine_id, inst.status if inst else "gone"))
+                return "preempted"
+            continue
+        quiet = 0
+        try:
+            logs = jl.run_logs(run_id, tail=40) if run_id else ""
+        except JLError:
+            continue
+        text = logs if isinstance(logs, str) else json.dumps(logs)
+        if "stage_measure/%s: done" % stage in text or "$DONE/%s.done" % stage in text:
+            return "done"
+        marker = jl.exec(td.machine_id,
+                         "test -f %s/receipts/done/%s.done && echo DONE || echo PENDING"
+                         % (td.fs_root, stage), timeout=120)
+        if "DONE" in str(marker):
+            return "done"
+        if "Traceback" in text or "REFUSED" in text or "stage_measure: error" in text:
+            return "failed"
+
+
+def _recover(args, con, jl, td, plan_data) -> None:
+    """Resume or recreate, then ADOPT the returned id before anything else."""
+    inst = jl.get(td.machine_id) if td.machine_id else None
+    new_id = None
+    if inst is not None and inst.status.lower() in ("paused", "pausing", "stopped"):
+        con.step("resuming %s" % td.machine_id)
+        res = jl.resume(td.machine_id, spot=args.spot)
+        new_id = (res or {}).get("machine_id")
+    if new_id is None and args.on_preempt in ("resume", "recreate"):
+        con.step("recreating instance for this job")
+        chosen = plan_data["chosen"]
+        res = jl.create(gpu_type=chosen["gpu_type"], num_gpus=chosen["gpus"],
+                        spot=args.spot, region=chosen["region"], fs_id=td.fs_id,
+                        storage=100, name=plan_data["instance_name"],
+                        template="pytorch")
+        new_id = (res or {}).get("machine_id")
+    if new_id is None:
+        raise RuntimeError("could not recover the instance after preemption")
+    td.adopt(int(new_id))
+    con.ok("adopted machine", str(td.machine_id))
 
 
 def _reconcile_cost(jl, td, plan_data, elapsed, outdir, con) -> Dict[str, Any]:
@@ -870,6 +1176,16 @@ def _reconcile_cost(jl, td, plan_data, elapsed, outdir, con) -> Dict[str, Any]:
         "wall_clock_seconds": elapsed,
         "reconciliation":
             (billed - computed) if (billed is not None) else None,
+        # A spot number that hides four restarts is not a truthful cost.
+        "preemptions": len(plan_data.get("preemption_log") or []),
+        "preemption_log": plan_data.get("preemption_log") or [],
+        "usd_lost_to_preemption": round(sum(
+            e.get("usd_lost", 0.0) for e in plan_data.get("preemption_log") or []), 2),
+        "storage": {
+            "filesystem_gb": plan_data.get("storage_gb"),
+            "rate_provenance":
+                plan_data["cost_estimate"]["storage_rate_provenance"],
+        },
     }
     write_json(str(outdir / "cost-receipt.json"), cost)
     return cost
@@ -1025,6 +1341,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     con.rule()
     try:
         cost = execute(args, con, jl, plan_data, td)
+    except (JLError, HFError, Refusal) as exc:
+        # A stranger should get the sentence that says what broke and whether
+        # anything is still billing, not a stack trace ending in our internals.
+        # td.run() in the finally has already destroyed whatever existed.
+        td.run("failed: %s" % type(exc).__name__)
+        con.say("")
+        con.err(redact(str(exc)))
+        con.say("        the run stopped here; teardown above says what, if "
+                "anything, is still billing")
+        return EXIT_LEAK if td.leaked else 1
     finally:
         td.run("normal exit")
 

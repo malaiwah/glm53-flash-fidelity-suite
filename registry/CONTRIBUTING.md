@@ -54,13 +54,18 @@ no network, stock Python 3.9. (This is the only step in the whole process that
 touches git, and you can skip it.)
 
 ```bash
-git clone https://github.com/malaiwah/quant-fidelity-registry && cd quant-fidelity-registry
+git clone https://huggingface.co/datasets/malaiwah/quant-fidelity-registry
+cd quant-fidelity-registry
 python tools/registry_validate.py --submission ~/submission.json
 ```
 
 It prints the row it would generate, its comparability key, and its class — or
 exactly what is wrong. Doing this first is the difference between a same-day
 merge and a round trip.
+
+The Hugging Face dataset repo above is the one that exists today and carries
+`schema/`, `tools/` and `data/`. The GitHub mirror named in §3 is **not live
+yet**; until it is, clone the HF repo for this step and submit by discussion.
 
 ### Fields that must be filled
 
@@ -135,6 +140,11 @@ Use this if you prefer review-in-diff, you are submitting several measurements
 at once, or you want CI to check the receipt before a human sees it.
 
 Mirror: <https://github.com/malaiwah/quant-fidelity-registry>
+
+> **NOT LIVE YET.** That URL currently 404s: the mirror and its CI workflow are
+> written but not published. Until it is up, use the discussion path in §2 —
+> it is the recommended path anyway. Everything below describes what the mirror
+> will do when it exists, not what you can do today.
 
 ```
 quant-fidelity-registry/

@@ -101,6 +101,25 @@ class GpuOffer:
     raw: Dict[str, Any]
 
 
+# Subcommands that actually accept --yes, verified against `jl <cmd> --help`
+# on jl 0.2.17.  Keyed by the leading argv words.
+_YES_OK = frozenset({
+    ("create",), ("destroy",), ("pause",), ("resume",),
+    ("filesystem", "create"), ("filesystem", "remove"),
+})
+
+
+def _takes_yes(argv: Sequence[str]) -> bool:
+    head = tuple(a for a in argv[:2] if not a.startswith("-"))
+    return head[:2] in _YES_OK or head[:1] in _YES_OK
+
+
+# `jl create` names the GPU model `--gpu`, not `--gpu-type`; the keyword the
+# controller passes is `gpu_type` because that is what `jl gpus --json` calls
+# the field.  Mapping is explicit so the mismatch cannot silently return.
+_CREATE_FLAG_ALIASES = {"gpu_type": "gpu"}
+
+
 class JL:
     """Thin, auditable wrapper.  `dry` short-circuits every mutating call."""
 
@@ -147,10 +166,21 @@ class JL:
         if mutating and self.dry:
             return {"dry_run": True, "argv": list(argv)}
         cmd = [self.binary] + list(argv)
-        if "--json" not in cmd:
-            cmd.append("--json")
-        if mutating and "--yes" not in cmd:
-            cmd.append("--yes")
+        # Everything after a bare `--` belongs to the REMOTE command, so jl's
+        # own flags have to go in front of it.  Appending `--json` blindly
+        # hands it to the remote shell instead of to jl.
+        cut = cmd.index("--") if "--" in cmd else len(cmd)
+        flags = []
+        if "--json" not in cmd[:cut]:
+            flags.append("--json")
+        # Not every mutating jl subcommand takes --yes.  `upload`, `download`
+        # and `exec` move data rather than money, so jl never prompts for them
+        # and rejects the flag outright ("No such option: --yes"), which would
+        # make every bundle upload fail AFTER the instance is already billing.
+        # Verified against jl 0.2.17 --help for each subcommand.
+        if mutating and "--yes" not in cmd[:cut] and _takes_yes(argv):
+            flags.append("--yes")
+        cmd = cmd[:cut] + flags + cmd[cut:]
         try:
             proc = run(cmd, timeout=timeout or self.timeout, check=False)
         except Exception as exc:                      # noqa: BLE001
@@ -238,7 +268,7 @@ class JL:
         for key, value in kw.items():
             if value is None or value is False:
                 continue
-            flag = "--" + key.replace("_", "-")
+            flag = "--" + _CREATE_FLAG_ALIASES.get(key, key).replace("_", "-")
             argv.append(flag) if value is True else argv.extend([flag, str(value)])
         return self._call(argv, mutating=True, timeout=900)
 
@@ -255,9 +285,31 @@ class JL:
         return self._call(argv, mutating=True, timeout=900)
 
     def exec(self, machine_id: int, command: str, *,
-             timeout: float = 600) -> Any:
-        return self._call(["exec", str(machine_id), command],
-                          mutating=True, timeout=timeout)
+             timeout: float = 600, check: bool = True) -> Any:
+        """Run a shell command on the instance and CHECK that it worked.
+
+        Two things here are load-bearing.
+
+        `jl exec <id> "<string>"` does not run a shell: jl execs the whole
+        string as one program name, so anything with a pipe, a redirect or an
+        argument comes back `sh: 1: ...: not found` with exit 127.  The remote
+        command has to be passed after a bare `--` as real argv, with the shell
+        named explicitly.
+
+        And `jl exec` reports remote failure INSIDE its JSON payload
+        (`exit_code`), not through its own process exit status.  Without this
+        check every remote command -- mkdir, chmod, the watchdog, the stage
+        runs, shredding the token -- fails silently and the controller reports
+        each one as ok.
+        """
+        res = self._call(["exec", str(machine_id), "--", "sh", "-lc", command],
+                         mutating=True, timeout=timeout)
+        if check and isinstance(res, dict) and res.get("exit_code") not in (0, None):
+            raise JLError(
+                "remote command exited %s: %s"
+                % (res.get("exit_code"),
+                   redact((str(res.get("stderr") or res.get("stdout") or ""))[:400])))
+        return res
 
     def upload(self, machine_id: int, local: str, remote: str) -> Any:
         return self._call(["upload", str(machine_id), local, remote],
@@ -285,7 +337,11 @@ class JL:
         return self._call(argv, mutating=True, timeout=600)
 
     def fs_delete(self, fs_id: int) -> Any:
-        return self._call(["filesystem", "delete", str(fs_id)],
+        # `jl filesystem` exposes list/create/edit/remove -- there is no
+        # `delete`.  Getting this wrong leaks a multi-hundred-GB filesystem
+        # that keeps billing after the instance is gone, and the failure is
+        # swallowed by Teardown's per-step guard, so it is silent.
+        return self._call(["filesystem", "remove", str(fs_id)],
                           mutating=True, timeout=600)
 
     def fs_list(self) -> Any:

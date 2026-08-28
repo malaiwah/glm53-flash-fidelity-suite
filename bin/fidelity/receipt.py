@@ -167,26 +167,55 @@ def build_submission(
 
 def produced_by_block(suite_root: Path, entrypoint: str,
                       dependencies: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    from .common import sha256_file
+    """Name the exact code that produced a number, or refuse to pretend.
+
+    `revision` and `entrypoint_sha256` are REQUIRED by the schema and must be
+    real hashes -- there is no "unknown" value for them, deliberately: a
+    receipt that cannot say which code produced it is not reproducible, and
+    accepting one would quietly hollow out the whole registry.
+
+    This is why the cloud controller computes this block on the CALLER's
+    machine, where the git checkout lives, and ships it in job.json. On the
+    instance there is no checkout and the controller's own entrypoint was never
+    uploaded, so computing it there is impossible -- and we say so at seal time
+    rather than emitting a receipt that gets rejected days later in review.
+    """
+    from .common import run, sha256_file
 
     path = suite_root / entrypoint
     revision = None
     try:
-        from .common import run
-        revision = run(["git", "-C", str(suite_root), "rev-parse", "--short", "HEAD"],
-                       check=False).stdout.strip() or None
+        proc = run(["git", "-C", str(suite_root), "rev-parse", "HEAD"], check=False)
+        revision = (proc.stdout or "").strip() or None
     except Exception:                                  # noqa: BLE001
         revision = None
+
+    missing = []
+    if not revision:
+        missing.append("revision (no git checkout at %s)" % suite_root)
+    if not path.is_file():
+        missing.append("entrypoint_sha256 (%s is not present)" % entrypoint)
+    if missing:
+        raise RuntimeError(
+            "cannot build produced_by: " + "; ".join(missing) + ".\n"
+            "  The schema requires both, because a number whose producing code "
+            "cannot be named is not reproducible.\n"
+            "  Fix: have the controller compute this block where the checkout "
+            "lives and pass it through job.json[\"produced_by\"]."
+        )
+
+    deps = {str(k): str(v) for k, v in (dependencies or {}).items()
+            if v is not None}
     return {
         "tool": "glm53-fidelity-suite/bin",
         "repository": "malaiwah/glm53-fidelity-suite",
         "revision": revision,
         "entrypoint": entrypoint,
-        "entrypoint_sha256": sha256_file(str(path)) if path.is_file() else None,
+        "entrypoint_sha256": sha256_file(str(path)),
         "runtime_reader_sha256": None,
         "container_image": None,
         "container_digest": None,
-        "dependencies": dependencies or {},
+        "dependencies": deps,
     }
 
 

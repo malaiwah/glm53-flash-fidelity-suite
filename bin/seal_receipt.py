@@ -175,7 +175,11 @@ def main() -> int:
             "subset_detail": m.get("subset_detail"),
             "position_filter": "all",
         },
-        produced_by=produced_by_block(
+        # Provenance about the RUNNER is known on the machine the runner lives
+        # on. The cloud controller computes it on the caller's laptop (where
+        # there is a git checkout) and ships it in job.json; the fallback below
+        # only fires for a local run or a hand-assembled job.
+        produced_by=job.get("produced_by") or produced_by_block(
             suite_root,
             "bin/measure_cloud.py" if job.get("recipe") == "cloud"
             else "bin/measure_local.py",

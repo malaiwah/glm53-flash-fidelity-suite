@@ -124,6 +124,7 @@ fetch_target)
   fi
   df -h "$FS" | tee -a "$LOGS/fetch_target.log"
   touch "$marker"
+  log "done"
   ;;
 
 fetch_panel)
@@ -145,6 +146,7 @@ PY
       --local-dir "$PANEL" $INCLUDES >>"$LOGS/fetch_panel.log" 2>&1
   du -sh "$PANEL" | tee -a "$LOGS/fetch_panel.log"
   touch "$marker"
+  log "done"
   ;;
 
 measure)
@@ -165,6 +167,7 @@ measure)
       2>&1 | tee -a "$LOGS/measure-run-$run.log"
   done
   touch "$marker"
+  log "done"
   ;;
 
 seal)
@@ -173,6 +176,7 @@ seal)
       --out "$RCPT/measurement-receipt.json" 2>&1 | tee -a "$LOGS/seal.log"
   ( cd "$RCPT" && sha256sum measurement-receipt.json > RECEIPT.sha256 ) || true
   touch "$marker"
+  log "done"
   ;;
 
 *)
