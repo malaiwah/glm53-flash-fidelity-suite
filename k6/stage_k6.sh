@@ -56,6 +56,15 @@ ntfy() {  # ntfy <body> <title> <tags> [priority]
        -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true
 }
 
+# workspace symlink farm: /workspace is MACHINE-LOCAL; the sealed artifact
+# rows and inventories declare his /workspace paths, and the identity check
+# refuses symlinked FILES — so link DIRECTORIES on every box, every stage.
+SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
+$SUDO mkdir -p /workspace/artifacts/dataset /workspace/artifacts/evaluation /workspace/models/zai-org 2>/dev/null || true
+$SUDO ln -sfn "$CAL" /workspace/artifacts/dataset/calibration 2>/dev/null || true
+$SUDO ln -sfn "$TEACH" /workspace/artifacts/evaluation/glm53-teacher-final-ep4 2>/dev/null || true
+$SUDO ln -sfn "$BF16" /workspace/models/zai-org/GLM-5.3-Flash-BF16 2>/dev/null || true
+
 echo "running:$STAGE $(date -u +%FT%TZ)" > "$ROOT/logs/stage.state"
 trap 'rc=$?; if [ $rc -eq 0 ]; then
         echo "done:$STAGE $(date -u +%FT%TZ)" > "$ROOT/logs/stage.state"
