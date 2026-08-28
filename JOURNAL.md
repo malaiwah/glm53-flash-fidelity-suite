@@ -644,3 +644,26 @@ completion. BUDGET DRAMA: balance hit $24 (the VM's overnight qualify burn);
 supervisor guard fought the operator's K8-must-finish directive — supervisor
 stopped, K8 encode racing the wire (~$16 needed, 16/42 layers at the check).
 Every number above is free-published; only K8's tail is money-gated.
+
+## 2026-08-28 ~13:00 — K8 MATERIALIZED + Q4 base measurement sealed
+K8: 331,449,761,784 bytes (308.7 GiB), bits 8, complete, main_and_mtp_complete,
+qualified_tp_sizes [] — the parts-bin sibling exists. Uploading private to
+malaiwah/GLM-5.3-Flash-TR3-8bpw from the L4 freight box; 4x fleet paused.
+Patch 0011 was needed: build_materialization_plan had a THIRD MTP-schema
+ternary 0007 missed, so K8 rejected its own valid receipt as "foreign".
+Q4 (0xSero/Dione) SEALED on our panel: 0.027262784814670614, 5 cold runs
+bitwise identical, 187.6 GB, receipt published to the fidelity suite and a
+base-measurement discussion opened on their model page. LADDER (same panel,
+teacher, reader): K6 0.013723 (254GB) < FP8 0.020615 (328GB) < 4bpw 0.024555
+(176GB) < Dione Q4 0.027263 (188GB) < NVFP4 0.060535. Headline finding:
+brandonmusic's ShapleyMCG pipeline beats Dione's calibration-free selective
+map by ~11% at the same nominal rate and 12 GB less — a clean
+pipeline-vs-pipeline result at fixed bit-width.
+LESSON 27: hash CONTENT not CONTAINERS. Two false "nondeterminism" alarms in
+one hour: capture receipts embed elapsed_seconds; safetensors embed
+__metadata__ (cold_run, backend identity). Tensor bytes proved Q4 bit-exact
+(max_abs_diff 0.0 over 2047x154,880 logits).
+LESSON 28: single-window extrapolation does NOT transfer across quantizers.
+Window-0000 ran 1.22-1.28x HARDER than the panel for FP8/K6 but EASIER for
+Q4 (0.0256 vs 0.0273 panel) — my ~0.020 preview extrapolation was wrong by
+36%. Previews are fine; label them, and never let one stand in for the panel.
