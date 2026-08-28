@@ -40,18 +40,40 @@ of H200 time discovering that `--reduce-order` was spelled `--reduce_order`.
 
 Today `sealed-ep8` is pinned and flag-verified against
 `k6/tools/k6_student_capture.py`. The `streaming`, `local-mps` and
-`local-cuda-budget` lanes all point at `k6/tools/stream_score.py`, which is
-**not in this checkout** — it was built and validated on the streaming box and
-has not been synced back. Each carries the contract it needs.
+`local-cuda-budget` lanes point at `k6/tools/stream_score.py`, which **is now
+in this checkout** (recovered 2026-08-28 from the validation box's shared
+filesystem, sha256 `b7411804…60acae`) and stays `pinned: false` on purpose.
 
-When that file lands:
+`bin/measure-local --probe-engines` reports why, and the guess-nothing rule
+earned its keep: the contract that was written for these lanes was wrong in
+every guessed spelling. The engine takes `--teacher` not `--panel`, `--source`
+not `--surface`, `--vram-budget-gb` not `--vram-budget`, `--slab-experts` not
+`--expert-chunk`; `--window-batch`, `--kld-device` and `--nonrouted-residency`
+do not exist at all.
 
-```bash
-bin/measure-local --probe-engines     # scrapes --help, reports found/missing flags
-```
+Fixing the spellings would not be enough, and this is the thing to fix first:
 
-then set `pinned: true` and fill `flag_map` for those three lanes. Nothing else
-changes.
+* `--profile` accepts only `k6|k8|k6k8`, and the controller sends `k4` for
+  these lanes.
+* **Every source path resolves to a packed root** and requires
+  `contract.json`, `inventory.json`, `mtp-adapter-receipt.json` and
+  `payload-store/{objects,choices}` — this campaign's own encode output — plus
+  a `--bf16` tree. `--source dione` raises *"not enabled in this build"*.
+
+So no lane can currently read a third-party `tr3-published` artifact, which is
+what a stranger's quant almost always is. Until a `tr3-published` reader
+exists, `--lane streaming` on someone else's repo is refused at plan time by
+the surface check (`engines.json` → `surfaces`), for $0.00, instead of after
+the rental.
+
+## Adding a new engine or surface
+
+1. Add the entrypoint and `required_flags` to `engines.json`.
+2. Declare `surfaces` — the artifact kinds it can actually open. This is what
+   stops a rental for bytes nothing can read; leaving it empty disables the
+   check.
+3. `bin/measure-local --probe-engines` until every required flag is found.
+4. Only then `pinned: true` with a filled `flag_map`.
 
 ## Selftests
 

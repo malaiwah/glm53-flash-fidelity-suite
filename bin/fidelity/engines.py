@@ -48,6 +48,8 @@ class Engine:
     notes: str
     unpinned_reason: str = ""
     contract: List[str] = field(default_factory=list)
+    surfaces: List[str] = field(default_factory=list)
+    surfaces_note: str = ""
     timing: Dict[str, Any] = field(default_factory=dict)
     env: Dict[str, str] = field(default_factory=dict)
 
@@ -115,6 +117,8 @@ def load_engines(path: Optional[Path] = None) -> Dict[str, Engine]:
             notes=spec.get("notes", ""),
             unpinned_reason=spec.get("unpinned_reason", ""),
             contract=list(spec.get("contract") or []),
+            surfaces=list(spec.get("surfaces") or []),
+            surfaces_note=spec.get("surfaces_note", ""),
             timing=dict(spec.get("timing") or {}),
             env=dict(spec.get("env") or {}),
         )

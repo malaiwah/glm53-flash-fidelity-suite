@@ -482,6 +482,10 @@ def job_id_for(args: argparse.Namespace) -> str:
 def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     """Everything that must be true BEFORE money is spent."""
     plan: Dict[str, Any] = {"job_id": job_id_for(args), "created": False}
+    engines = load_engines()
+    if args.lane not in engines:
+        raise Refusal("no engine configured for lane %r" % args.lane,
+                      ["known lanes: " + ", ".join(sorted(engines))])
 
     con.say("PREFLIGHT%s" % (" " * 54 + "(no spend yet)"))
 
@@ -599,6 +603,29 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                     "few hundred kilobytes, so it costs nothing to find out.",
                     "Nothing was created. $0.00 spent.",
                 ])
+        # Knowing WHICH surface this is, is not the same as having a lane that
+        # can read it.  Without this check the runner happily prices, rents and
+        # downloads 176 GB for an artifact whose bytes no engine in the suite
+        # can open -- the failure lands after the money, which is the one place
+        # it must never land.
+        lane_surfaces = engines[args.lane].surfaces
+        if lane_surfaces and surface.surface not in lane_surfaces:
+            refusal = Refusal(
+                "lane '%s' has no reader for a '%s' artifact"
+                % (args.lane, surface.surface),
+                ["%s reads: %s" % (args.lane, ", ".join(lane_surfaces)),
+                 engines[args.lane].surfaces_note or "",
+                 "",
+                 "This is the repo's own metadata, so it costs nothing to find "
+                 "out here and a full rental to find out on the instance.",
+                 "Nothing was created. $0.00 spent."])
+            if not args.dry_run:
+                raise refusal
+            con.warn("WOULD REFUSE (real run): %s" % refusal.reason)
+            for line in refusal.advice[:2]:
+                if line:
+                    con.say("           %s" % line)
+            plan.setdefault("would_refuse", []).append(refusal.reason)
         artifact_bytes = float(target.total_bytes)
         bits = float(surface.bits or 4.0)
     else:
@@ -726,11 +753,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
 
     # -- engine ------------------------------------------------------------
     con.say("")
-    engines = load_engines()
-    engine = engines.get(args.lane)
-    if engine is None:
-        raise Refusal("no engine configured for lane %r" % args.lane,
-                      ["known lanes: " + ", ".join(sorted(engines))])
+    engine = engines[args.lane]
     probe = engine.probe(SUITE_ROOT)
     plan["engine"] = {"lane": args.lane, "entrypoint": engine.entrypoint,
                       "pinned": engine.pinned, "probe": probe}

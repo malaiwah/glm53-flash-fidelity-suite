@@ -23,11 +23,17 @@ what they need — dollars, disk, memory, hours — with each figure's provenanc
 ```bash
 export JL_API_KEY=...      # never logged, never written to a receipt
 
+bin/measure-cloud reaper --install     # required for any run over 2h
+
 bin/measure-cloud \
-    --model brandonmusic/GLM-5.3-Flash-tr3-4bpw \
+    --model <hf-repo> \
     --panel brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
-    --lane  streaming --spot --max-runtime 8h
+    --lane  streaming --spot --max-runtime 12h
 ```
+
+`--max-runtime` must exceed the estimated work, which `--dry-run` prints —
+8h does not cover the 8.35h a 25-window / 2-cold-run panel needs, and the
+runner refuses rather than paying for a run its own watchdog would kill.
 
 Resolves the repo to an immutable commit, sizes and prices the instance, asks
 for confirmation, creates it, fetches weights and panel, measures, seals the

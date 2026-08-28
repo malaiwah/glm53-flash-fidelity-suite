@@ -37,7 +37,15 @@ t "fit estimator, 33 known-answer checks"  0 "$PY" bin/selftest_fit.py
 t "decode parity + timing (needs torch)"   0 "$PY" bin/selftest_decode_parity.py
 
 echo "== cloud planner (NETWORK, ACCOUNT; --dry-run creates nothing) =="
-t "sealed-ep8 plan passes all checks" 0 \
+# This target is 'tr3-published' and NO lane has a reader for it: both engines
+# resolve a packed_root out of the materialization receipt and require the
+# payload store to be present, which a third-party repo never publishes. The
+# check that was supposed to catch this (hfmeta.sniff_surface's packed_root
+# trap) is guarded by `if info.surface == "packed"`, and this repo carries
+# exl3-mcg-storage-abi.json, so it classifies as tr3-published and routes
+# around the trap. Asserting rc=0 here asserted that a rental which cannot
+# possibly succeed would be approved.
+t "sealed-ep8 refuses: no reader for tr3-published" 3 \
   "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
     --lane sealed-ep8 --spot --max-runtime 30h --i-accept-leak-risk \
     --dry-run --out "$TMP/c1"

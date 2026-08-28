@@ -83,20 +83,25 @@
         "materialization-receipt.json.  For a third-party artifact that path is",
         "on the producer's machine; see hfmeta.sniff_surface, which detects this",
         "before any money is spent."
-      ]
+      ],
+      "surfaces": [
+        "packed",
+        "dione"
+      ],
+      "surfaces_note": "k6_student_capture.py --surface {packed,dione}, verified against the file. 'packed' additionally needs the payload store to be PUBLISHED in the repo; sniff_surface traps the case where the receipt's packed_root points at the producer's machine. There is no 'tr3-published' reader."
     },
     "streaming": {
       "name": "stream_score (single-GPU streaming lane)",
       "entrypoint": "k6/tools/stream_score.py",
       "pinned": false,
-      "unpinned_reason": "k6/tools/stream_score.py is not present in this checkout. It was built and validated on the streaming-validation box and has not been synced back. Its flags are therefore UNKNOWN, and this file will not guess them.",
+      "unpinned_reason": "VERIFIED 2026-08-28 against the real file (sha256 b74118042e7f221d536f98a0de5a28f094422bc96cdd49cb54b5ac905260acae, recovered from /home/jl_fs/glm53-k6/tools/). The engine EXISTS, and the contract below was wrong: it takes --teacher, not --panel, and --source {checkpoint,payload-store,dione}, not --surface. Two deeper blocks, neither of which a flag_map can fix: (1) --profile choices are k6|k8|k6k8 and the controller sends 'k4' for this lane, which argparse rejects outright; (2) every source path resolves to a PACKED ROOT and hard-requires contract.json + inventory.json + mtp-adapter-receipt.json + payload-store/{objects,choices} plus a --bf16 tree, i.e. this campaign's own encode output. A third-party HF repo (surface 'tr3-published', payloads inline in the shards) has none of those, and --source dione is disabled in this build. So the streaming lane cannot score a stranger's quant until a tr3-published reader exists. Pinning the flags would only move the failure to after the rental.",
       "launcher": [],
       "required_flags": [
         "--checkpoint",
-        "--panel",
+        "--teacher",
         "--out",
         "--reduce-order",
-        "--surface"
+        "--source"
       ],
       "flag_map": {},
       "contract": [
@@ -123,13 +128,17 @@
         "minutes_per_window": 9.05,
         "provenance": "MEASURED: the streaming validation reported ~$0.30/window on one H200 at $1.99/GPU-h, which is 0.1508 h = 9.05 min/window, and ~$7.50 for a 25-window panel.",
         "measured": true
-      }
+      },
+      "surfaces": [
+        "packed"
+      ],
+      "surfaces_note": "stream_score.py --source {checkpoint,payload-store,dione}; all three resolve to a packed root with contract.json + inventory.json + mtp-adapter-receipt.json + payload-store/{objects,choices}, and --source dione raises 'not enabled in this build'. No 'tr3-published' reader."
     },
     "local-mps": {
       "name": "stream_score on Apple Silicon (MPS)",
       "entrypoint": "k6/tools/stream_score.py",
       "pinned": false,
-      "unpinned_reason": "Same missing file as the streaming lane, plus two Apple-Silicon constraints that must be honoured by whatever lands: MPS cannot do float64 AT ALL (not slowly -- torch raises TypeError), so the KLD accumulation must run on CPU; and 34 of 45 layers are Kimi-Delta linear attention whose only known fast paths are Triton/CUDA or a fused MLX kernel, so the torch/MPS forward is UNVERIFIED.",
+      "unpinned_reason": "VERIFIED 2026-08-28 against the real file: same packed-root and --profile blocks as the streaming lane, and NONE of the memory knobs this contract names exist. The engine has --vram-budget-gb (not --vram-budget), --slab-experts (not --expert-chunk), --stream-mode window-major (not --window-batch), and no --kld-device at all. Plus two Apple-Silicon constraints that must be honoured by whatever lands: MPS cannot do float64 AT ALL (not slowly -- torch raises TypeError), so the KLD accumulation must run on CPU; and 34 of 45 layers are Kimi-Delta linear attention whose only known fast paths are Triton/CUDA or a fused MLX kernel, so the torch/MPS forward is UNVERIFIED.",
       "launcher": [],
       "required_flags": [
         "--checkpoint",
@@ -165,13 +174,17 @@
         "minutes_per_window": 0.6,
         "provenance": "DERIVED from measured per-matrix decode on a 128 GB M4 Max (16.7 ms/matrix at 6 bits, 14.0 ms at 4 bits, MPS, int32 unpack) under the panel-batched layer-outer schedule, where the 36,288-matrix routed pass happens ONCE for the whole panel rather than once per window. That makes per-window time an amortisation, not a measurement: ~15 min for the whole 25-window panel. The forward pass itself (KDA/DSA/mHC on MPS) is UNVERIFIED and is not in this figure.",
         "measured": false
-      }
+      },
+      "surfaces": [
+        "packed"
+      ],
+      "surfaces_note": "same engine, same packed-root requirement as the streaming lane."
     },
     "local-cuda-budget": {
       "name": "stream_score under a VRAM budget (consumer CUDA)",
       "entrypoint": "k6/tools/stream_score.py",
       "pinned": false,
-      "unpinned_reason": "Same missing file as the streaming lane.",
+      "unpinned_reason": "VERIFIED 2026-08-28 against the real file: same packed-root and --profile blocks as the streaming lane. The budget knob is --vram-budget-gb, not --vram-budget; --expert-chunk, --window-batch and --nonrouted-residency do not exist (the engine has --slab-experts and a single --stream-mode window-major).",
       "launcher": [],
       "required_flags": [
         "--checkpoint",
@@ -202,7 +215,11 @@
         "minutes_per_window": 0.25,
         "provenance": "PROJECTED. No Blackwell hardware was available. Scales the measured Apple-Silicon decode by memory bandwidth (1.79 TB/s vs ~410-546 GB/s) and treats the run as I/O-bound on reading 176-254 GB once. Treat as an order-of-magnitude figure until someone runs it.",
         "measured": false
-      }
+      },
+      "surfaces": [
+        "packed"
+      ],
+      "surfaces_note": "same engine, same packed-root requirement as the streaming lane."
     }
   }
 }

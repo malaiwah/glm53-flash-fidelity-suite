@@ -30,6 +30,12 @@ _TOKEN_SHAPES = [
     re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bapi_org_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b"),
+    # Every `jl list/get/create --json` record carries a Jupyter URL with a
+    # live 64-char access token in the query string. We never serialize those
+    # records, but a debug dump or a pasted traceback would, and that token is
+    # a working credential for the instance.
+    re.compile(r"(?i)\btoken=[A-Za-z0-9._\-]{24,}"),
+    re.compile(r"(?i)\bauthorization:\s*bearer\s+[A-Za-z0-9._\-]{20,}"),
 ]
 
 _REGISTERED: List[str] = []
