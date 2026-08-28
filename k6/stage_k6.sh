@@ -100,6 +100,10 @@ export QP_PIPELINE_ROOT="$PIPE"
 # to match the extension evidence at EVERY invocation, not just at build time.
 export TORCH_CUDA_ARCH_LIST="9.0;10.0"
 export NVIDIA_TF32_OVERRIDE=0
+# Single-node collectives: pin bootstrap sockets to a real local iface —
+# multi-NIC VMs hung the first collective when gloo/NCCL picked the wrong one.
+export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-lo,enp3s0}"
+export GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-lo}"
 
 mark_done() { echo "$(date -u +%FT%TZ)" > "$DONE/$STAGE.done"; }
 
