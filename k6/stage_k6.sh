@@ -161,25 +161,29 @@ setup)
   # Idempotent: containers lose system packages on pause; everything below
   # re-runs safely and the venv persists on the fs.
   test -d "$BF16" || { echo "BF16 checkpoint missing at $BF16" >&2; exit 1; }
+  # Containers run as root; VMs run as ubuntu — prefix privileged ops with
+  # sudo when not root (VM bootstrap failed silently without this).
+  ASROOT=""
+  [ "$(id -u)" = 0 ] || ASROOT="sudo"
   # Container self-bootstrap (idempotent; containers lose apt state on pause):
   # deadsnakes python3.12 and CUDA toolkit 13.0 (nvcc must emit sm_100 for the
   # disclosed fat build).  Root inside jl containers, no sudo.
   if ! command -v python3.12 >/dev/null; then
-    apt-get update -qq >/dev/null 2>&1 || true
-    apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
-    add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1 || true
-    apt-get update -qq >/dev/null 2>&1 || true
+    $ASROOT apt-get update -qq >/dev/null 2>&1 || true
+    $ASROOT apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
+    $ASROOT add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1 || true
+    $ASROOT apt-get update -qq >/dev/null 2>&1 || true
     for p in python3.12 python3.12-venv python3.12-dev; do
-      apt-get install -y -qq "$p" >/dev/null 2>&1 || echo "apt $p failed (tolerated; guard below decides)"
+      $ASROOT apt-get install -y -qq "$p" >/dev/null 2>&1 || echo "apt $p failed (tolerated; guard below decides)"
     done
   fi
   if ! { command -v nvcc >/dev/null && nvcc --list-gpu-arch 2>/dev/null | grep -q compute_100; }; then
     ( cd /tmp \
       && wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
-      && dpkg -i cuda-keyring_1.1-1_all.deb >/dev/null 2>&1 \
-      && apt-get update -qq >/dev/null 2>&1 \
-      && apt-get install -y -qq cuda-toolkit-13-0 >/dev/null 2>&1 ) || echo "cuda-toolkit-13-0 install failed (tolerated; guard below decides)"
-    ln -sfn /usr/local/cuda-13.0 /usr/local/cuda 2>/dev/null || true
+      && $ASROOT dpkg -i cuda-keyring_1.1-1_all.deb >/dev/null 2>&1 \
+      && $ASROOT apt-get update -qq >/dev/null 2>&1 \
+      && $ASROOT apt-get install -y -qq cuda-toolkit-13-0 >/dev/null 2>&1 ) || echo "cuda-toolkit-13-0 install failed (tolerated; guard below decides)"
+    $ASROOT ln -sfn /usr/local/cuda-13.0 /usr/local/cuda 2>/dev/null || true
     export PATH="/usr/local/cuda-13.0/bin:$PATH"
   fi
   # PROVEN ENV RECIPE (DECISIONS.md item 5) was validated on python 3.12.
