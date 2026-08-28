@@ -144,6 +144,7 @@ run_workers() {  # run_workers <profile: k6|k8|k6k8> <output_root>
   for i in 0 1 2 3; do
     CUDA_VISIBLE_DEVICES=$i "$PY" "$TOOLS/k6_driver.py" encode-worker \
       --profile "$profile" --worker "h200-$i" \
+      $( [ "$profile" = k8 ] && echo --overlap-seal ) \
       --pipeline-root "$PIPE" --shapley-root "$SHAPLEY" --exllama-root "$EXL3" \
       --bf16 "$BF16" --calibration "$CAL" --output-root "$out" \
       --prune-hessians-after-layer-seal \
