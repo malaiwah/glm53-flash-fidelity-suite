@@ -701,3 +701,25 @@ justified.
 LESSON 30: a cos(|a|,|b|) ~ 2/pi with matching sorted spectra means PERMUTED,
 not broken. Weight-space audits of this pipeline must undo the
 intermediate-channel permutation first or they will lose a day.
+
+## 2026-08-28 ~20:00 — Second disk-full: measurement logits were not in the ledger
+Both cold run 2s died with SafetensorError "Disk quota exceeded" and sat idle
+36 min (~$2.4 wasted) before the check caught it. Cause: the fs ledger was
+written for the ENCODE campaign and never accounted for MEASUREMENT output —
+each streaming cold run writes ~32-44 GB of fp32 student logits, and two
+concurrent campaigns on one 2 TB fs left 1 GB free. Freed 456 GB by deleting
+what was already published or re-downloadable: ckpt-k8 (309 GB, uploaded to
+HF), glm53/activations (147 GB, published as the activations dataset),
+glm53/image (docker tarball), calibration/mtp45-ep4-full (encode-only).
+Note the fs still carries TWO campaign trees (glm53 787 GB from the overnight
+capture run, glm53-k6 1261 GB) — the old one is now down to models/bf16
+(599 GB, still needed by the streaming scorer for non-routed tensors) plus
+crosscheck receipts.
+LESSON 31: the disk ledger must cover the MEASUREMENT phase, not just encode.
+Rule of thumb per streaming panel run: positions x vocab x 4 bytes = 51,175 x
+154,880 x 4 = 31.7 GB per cold run, per model, and runs are kept for the
+determinism check. Two models x two runs = ~127 GB that no encode-era ledger
+predicted.
+LESSON 32: a failed jl run leaves the box IDLE but RUNNING. Exit-code watchers
+catch it; window-count watchers do not (the count simply stops advancing and
+looks like slow progress). Watch the run STATE, not just its output.
