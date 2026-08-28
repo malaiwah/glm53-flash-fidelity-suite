@@ -1,0 +1,15 @@
+Patch 0011: admit K8 in build_materialization_plan's MTP adapter schema
+selection (0007 covered the encode/seal sites; this third ternary still
+hard-coded the K6 schema, so K8 materialization rejected its own valid
+MTP receipt as 'foreign'). malaiwah declared extension, disclosed.
+--- a/src/quant_pipeline/campaign/glm53_direct_k4.py	2026-08-27 21:14:00.390958788 +0000
++++ b/src/quant_pipeline/campaign/glm53_direct_k4.py	2026-08-28 11:34:35.584108557 +0000
+@@ -1108,6 +1108,8 @@
+     mtp_schema = (
+         MTP_ADAPTER_RECEIPT_SCHEMA
+         if bits == 4
++        else "malaiwah.glm53-uniform-k8-mtp-adapter-receipt.v1"
++        if bits == 8
+         else "quant-pipeline.glm53-uniform-k6-mtp-adapter-receipt.v1"
+     )
+     _verify_seal(mtp_adapter_receipt, mtp_schema, "receipt_sha256")
