@@ -70,3 +70,12 @@
    credit exllamav3 kernels + Brandon's pipeline/runtime and state the
    codec-vs-runtime distinction plainly. GG/SIQ rejected: they name serving
    stacks, not the artifact format.
+10. DETERMINISM CHECKS HASH CONTENT, NOT CONTAINERS (2026-08-28, learned the
+   hard way twice in one hour): capture receipts embed elapsed_seconds and
+   backend telemetry; safetensors embed __metadata__ (cold_run, identities).
+   Both containers ALWAYS differ between runs even when the computation is
+   bit-exact. Valid determinism artifacts: raw tensor bytes, or the sealed
+   tokenwise_kld_sha256. Verified consequence: 0xSero's Dione Q4 IS bitwise
+   deterministic through our reader (max_abs_diff 0.0 over 2047x154,880
+   logits) — the property now holds across two independently-produced
+   checkpoints in different layouts (canonical vs TP4-sliced).
