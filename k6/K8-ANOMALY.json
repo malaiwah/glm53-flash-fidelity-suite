@@ -1,0 +1,201 @@
+{
+  "schema": "malaiwah.glm53-k8-anomaly-investigation.v2",
+  "date": "2026-08-28",
+  "question": "K8 (8-bit) measured worse than K6 (6-bit) on panel window final-0000, same lane, same estimator. Is the K8 checkpoint defective, or is it mis-measured?",
+
+  "verdict": {
+    "resolved": true,
+    "cause": "UNDERPOWERED COMPARISON - a single-window sampling artifact",
+    "checkpoint_defective": false,
+    "scorer_at_fault": false,
+    "reader_k8_decode": "EXONERATED - bitwise correct",
+    "one_line": "K8 is not worse. It is better. The comparison was made on one window of a 25-window panel, and per-window mean KLD is heavy-tailed enough that a single window cannot distinguish the two rates. Across all 11 windows captured by both runs, K8 wins 9 of 11 and is better in pooled mean, pooled median and top-1 agreement.",
+    "action": "Compare on the full sealed panel, never on one window."
+  },
+
+  "headline_numbers": {
+    "the_window_the_anomaly_was_seen_on": {
+      "window": "window-0000 / final-0000",
+      "k6_mean_kld": 0.016828924,
+      "k8_mean_kld": 0.018200149,
+      "delta": 0.001371225,
+      "k6_top1_pct": 95.46,
+      "k8_top1_pct": 94.72,
+      "note": "reproduced independently to ~1.6e-8 of the reported values"
+    },
+    "all_windows_captured_by_both_runs": {
+      "n_windows": 11,
+      "n_positions": 22517,
+      "pooled_k6_mean_kld": 0.013872878259070904,
+      "pooled_k8_mean_kld": 0.012655205439382658,
+      "pooled_delta_k8_minus_k6": -0.0012176728196882456,
+      "pooled_k6_median": 0.0018455919343978167,
+      "pooled_k8_median": 0.0017312150448560715,
+      "windows_where_k8_wins": 9,
+      "windows_total": 11,
+      "k6_mean_top1_pct": 96.12292934227473,
+      "k8_mean_top1_pct": 96.34498379002531,
+      "frac_positions_k8_better": 0.5339521169662476,
+      "per_window_delta_mean": -0.0012176728196882489,
+      "per_window_delta_stdev": 0.0017334539428769534,
+      "per_window_delta_stderr": 0.0005226560290804561,
+      "t_statistic": -2.33,
+      "interpretation": "K8's advantage is ~2.3 standard errors with 11 windows. The per-window spread (sd 1.73e-3) is LARGER than the effect (1.22e-3), so a single window has no power to separate the rates - which is exactly how window-0000 produced the false alarm."
+    },
+    "sealed_reference_consistency": {
+      "sealed_full_panel_k6_25_windows": 0.013723384665701147,
+      "our_pooled_k6_11_windows": 0.013872878259070904,
+      "note": "our 11-window K6 pooled mean is within 1.5e-4 of the sealed 25-window number, so the 11-window subsample is representative"
+    }
+  },
+
+  "per_window": [
+    {"window": "window-0000", "k6": 0.016828924, "k8": 0.018200149, "delta": 0.001371225, "k8_wins": false, "k6_top1": 95.46, "k8_top1": 94.72},
+    {"window": "window-0001", "k6": 0.018519538, "k8": 0.015204159, "delta": -0.003315380, "k8_wins": true, "k6_top1": 95.11, "k8_top1": 95.85},
+    {"window": "window-0002", "k6": 0.012965583, "k8": 0.010360842, "delta": -0.002604740, "k8_wins": true, "k6_top1": 96.09, "k8_top1": 96.92},
+    {"window": "window-0003", "k6": 0.014702668, "k8": 0.011963935, "delta": -0.002738733, "k8_wins": true, "k6_top1": 97.66, "k8_top1": 98.00},
+    {"window": "window-0004", "k6": 0.023965197, "k8": 0.020086832, "delta": -0.003878365, "k8_wins": true, "k6_top1": 93.50, "k8_top1": 93.94},
+    {"window": "window-0005", "k6": 0.016332868, "k8": 0.016053247, "delta": -0.000279621, "k8_wins": true, "k6_top1": 93.84, "k8_top1": 94.72},
+    {"window": "window-0006", "k6": 0.015793214, "k8": 0.014275718, "delta": -0.001517496, "k8_wins": true, "k6_top1": 97.70, "k8_top1": 97.70},
+    {"window": "window-0007", "k6": 0.007055668, "k8": 0.006850208, "delta": -0.000205461, "k8_wins": true, "k6_top1": 98.24, "k8_top1": 98.05},
+    {"window": "window-0008", "k6": 0.004777792, "k8": 0.004005599, "delta": -0.000772193, "k8_wins": true, "k6_top1": 98.19, "k8_top1": 97.85},
+    {"window": "window-0009", "k6": 0.006585449, "k8": 0.006154769, "delta": -0.000430680, "k8_wins": true, "k6_top1": 95.95, "k8_top1": 96.78},
+    {"window": "window-0010", "k6": 0.015074759, "k8": 0.016051802, "delta": 0.000977043, "k8_wins": false, "k6_top1": 95.60, "k8_top1": 95.26}
+  ],
+
+  "why_one_window_is_not_enough": {
+    "per_window_median_kld_range": [0.000015, 0.012040],
+    "max_single_position_kld": 2.13,
+    "observation": "per-position KLD is extremely heavy-tailed; a window's MEAN is dominated by a handful of positions",
+    "window_0000_excess_decomposition": {
+      "total_excess_kld_sum": 2.806897,
+      "top_8_positions_contribute": 3.444176,
+      "pct_of_total_excess_from_top_8": 122.7,
+      "meaning": "the 8 worst positions account for MORE than the entire excess; removing them flips window-0000 to a K8 win",
+      "drop_k_worst_positions_window_0000": {
+        "drop_0": {"k6": 0.016828924, "k8": 0.018200149, "k8_wins": false},
+        "drop_8": "K8 becomes competitive; the deficit is entirely outlier-driven"
+      }
+    },
+    "quantile_evidence_window_0000": {
+      "q0.95": {"k6": 0.052157, "k8": 0.046785, "k8_better": true},
+      "q0.99": {"k6": 0.213673, "k8": 0.162187, "k8_better": true},
+      "note": "even on the ADVERSE window, K8 is better in the upper tail; the loss comes from a few extreme positions plus a slightly worse median"
+    }
+  },
+
+  "shipped_store_reconstruction_error": {
+    "description": "THE decisive artifact-quality measurement: ||W_hat - W||/||W|| of the ACTUAL SHIPPED payload stores vs BF16, with the intermediate-channel permutation undone",
+    "n_experts": 10,
+    "n_matrices": 30,
+    "layers_sampled": [8, 14, 19, 26, 27, 28, 30, 34, 37, 39],
+    "projections": ["gate_proj", "up_proj", "down_proj"],
+    "k6_mean_rel_fro": 0.021489798401792843,
+    "k8_mean_rel_fro": 0.005916317521284024,
+    "k6_mean_nmse": 0.0004624096890135358,
+    "k8_mean_nmse": 3.504512684836906e-05,
+    "mean_nmse_ratio_k8_over_k6": 0.07581221195954821,
+    "k8_tighter_by": "13.2x in NMSE, 3.6x in relative Frobenius",
+    "k8_better_count": "30 of 30 matrices",
+    "conclusion": "The shipped K8 store is not merely acceptable - it is substantially tighter than K6, exactly as 8 bits should be. The artifact is sound."
+  },
+
+  "the_intermediate_channel_permutation": {
+    "status": "IDENTIFIED - this unblocked the measurement above",
+    "credit": "hypothesis supplied by the coordinator",
+    "what_it_is": "the campaign encodes each expert in a permuted intermediate-channel frame. Permuting gate_proj/up_proj output rows and down_proj input columns by the SAME permutation leaves the expert's function unchanged, so serving is unaffected.",
+    "evidence": {
+      "sorted_magnitude_spectra_rel_diff": {"gate_proj": 0.011673, "up_proj": 0.011424, "down_proj": 0.011022},
+      "unsorted_cosine": {"gate_proj": 0.002471, "up_proj": -0.000849, "down_proj": 0.000034},
+      "reading": "identical magnitude multisets, scrambled positions - a permutation, not noise",
+      "recovered_by": "matching decoded intermediate-channel rows to BF16 rows by cosine",
+      "bijection": "2048 of 2048 unique targets on every projection tested",
+      "mean_best_cosine": 0.9998,
+      "identity_matches": "0 of 2048 - a genuine non-trivial permutation",
+      "rel_err_after_unpermuting_k6": {"gate_proj": 0.020261, "up_proj": 0.020221, "down_proj": 0.019864},
+      "same_perm_across_projections": "the permutation recovered from gate_proj, applied unchanged to up_proj and down_proj, yields the expected error - confirming the symmetry is applied consistently within each expert",
+      "same_perm_across_campaigns": "perm(K6) == perm(K8) for 10 of 10 experts, consistent with same_transform_seed_as_k6_campaign"
+    },
+    "why_it_looked_like_noise": "cos(|W_hat|,|W|) = 0.6328, and 2/pi = 0.6366 is exactly the value for two independent Gaussians of equal variance - which is what a random permutation of the same magnitude multiset produces",
+    "this_was_the_blocker": "reported in v1 as an unresolved instrumentation problem; now resolved"
+  },
+
+  "cross_validation_tests_all_passing": {
+    "test_1_reader_k8_decode": {
+      "result": "BITWISE IDENTICAL",
+      "route_a": "quant_pipeline.evaluation.glm53_packed_k4_reader.decode_choice_hf (the scorer's own path)",
+      "route_b": "exllamav3 @ c5d9c657 native CUDA kernel ext.reconstruct",
+      "k8_tensors": 6, "k6_control_tensors": 6,
+      "max_abs_diff": 0.0,
+      "levels": "both pre-Hadamard (trellis unpack + MCG codebook) and post-Hadamard (sign/scale)",
+      "conclusion": "128-word K8 trellis tiles, bit-packing stride and tail handling are all correct; patch 0007's parametric claim holds"
+    },
+    "test_2_transform_convention": {
+      "hadamard_reader_vs_exllamav3": "bitwise identical, max abs diff 0.0",
+      "round_trip_rel_err": 4.176e-07,
+      "conclusion": "decode is the exact algebraic inverse of the encoder; no sign/scale mismatch"
+    },
+    "test_3_fresh_encode_on_real_experts": {
+      "L45_e152_gate_proj_real_hessian": {"k6_nmse": 5.167749e-04, "k8_nmse": 8.453205e-05},
+      "L45_e152_down_proj_real_hessian": {"k6_nmse": 5.575512e-04, "k8_nmse": 7.552343e-05},
+      "L20_e100_gate_proj_identity": {"k6_nmse": 3.245579e-04, "k8_nmse": 3.584011e-05},
+      "hessian_health": "finite, positive-definite, well-conditioned (0 negative eigenvalues)",
+      "conclusion": "the codec genuinely delivers at 8 bits"
+    },
+    "test_4_profile": {
+      "result": "K6 and K8 used a BYTE-IDENTICAL fixed default profile",
+      "shared": ["energy_balanced", "per128-grid", "public-run-qwen-fast-encode-defaults", "selection_rows_used=false"],
+      "conclusion": "the 'K8 got an untuned profile' hypothesis is false"
+    },
+    "test_5_measurement_lane": {
+      "result": "the two run plans are identical in every measurement-relevant field",
+      "identical": ["model", "model_revision", "token_panel_receipt_sha256", "windows", "prediction_positions", "parallelism", "reader_mode", "nonrouted_policy", "mtp_policy", "weight_source", "cold_run", "streaming_disclosure"],
+      "conclusion": "not a harness artifact"
+    },
+    "test_6_scope": {
+      "result": "identical between checkpoints (supplied by coordinator)",
+      "native_tensor_count": 1618, "output_tensor_count": 150226,
+      "routed_choice_count": 37152, "packed_tensor_count": 148608,
+      "nonrouted_native_exact": true
+    },
+    "test_7_materialized_checkpoint": {
+      "result": "ckpt-k8 trellis/suh/svh are byte-identical to the out-k8 payload store",
+      "conclusion": "the published checkpoint and the measured store are the same artifact"
+    }
+  },
+
+  "hypotheses_final_status": {
+    "reader_k8_decode_path_wrong": "ELIMINATED",
+    "sign_scale_convention_mismatch": "ELIMINATED",
+    "codec_cannot_do_k8": "ELIMINATED",
+    "corrupt_or_pathological_hessian": "ELIMINATED",
+    "k8_got_an_untuned_profile": "ELIMINATED",
+    "measurement_lane_artifact": "ELIMINATED",
+    "degraded_nonrouted_or_native_scope": "ELIMINATED",
+    "shipped_k8_store_underperforms_its_rate": "ELIMINATED - it is 13.2x tighter than K6",
+    "downstream_surface_assembly_fault": "ELIMINATED - no fault to explain; K8 wins on the panel",
+    "underpowered_single_window_comparison": "CONFIRMED - this is the cause"
+  },
+
+  "recommendation": {
+    "publishable_as_is": true,
+    "re_encode_needed": false,
+    "scorer_at_fault": false,
+    "guidance": [
+      "Publish the K8 artifact normally. It is a genuine improvement over K6: 13.2x tighter weights and a lower panel KLD (0.01266 vs 0.01387 pooled over 11 windows), with higher top-1 agreement (96.34% vs 96.12%).",
+      "Do NOT quote single-window KLD as a rate comparison. Per-window deltas have sd 1.73e-3 against an effect of 1.22e-3, so one window is pure noise. Quote the sealed full-panel number.",
+      "Let the in-flight K8 run finish all 25 windows and compare against the sealed 25-window K6 number (0.0137234) for the published figure.",
+      "Consider adding a trimmed or median KLD alongside the mean in future reports; per-position KLD is heavy-tailed enough that a few positions dominate any window mean.",
+      "Document the intermediate-channel permutation in the campaign notes: any future weight-space audit against BF16 must undo it, or it will look like the store is noise."
+    ]
+  },
+
+  "environment": {
+    "box": "JarvisLabs 485731 (1x H200)",
+    "python": "/home/jl_fs/glm53-k6/venv/bin/python 3.12, torch 2.11.0+cu130",
+    "exllamav3": "c5d9c657966ffeeaa9353f0cc899f18629da4a13 (v0.0.43)",
+    "workspace": "/home/jl_fs/glm53-k6/anomaly/",
+    "artifacts": ["routes-k6.json", "routes-k8.json", "shipped-error.json", "outlier-diag.json", "all-windows.json"],
+    "neighbour_policy": "all work nice -n 19, no processes killed, nothing written under out-k6/out-k8/stream-k6/stream-k8/receipts/ckpt-k8"
+  }
+}

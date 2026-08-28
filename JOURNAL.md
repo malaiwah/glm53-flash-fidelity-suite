@@ -667,3 +667,37 @@ LESSON 28: single-window extrapolation does NOT transfer across quantizers.
 Window-0000 ran 1.22-1.28x HARDER than the panel for FP8/K6 but EASIER for
 Q4 (0.0256 vs 0.0273 panel) — my ~0.020 preview extrapolation was wrong by
 36%. Previews are fine; label them, and never let one stand in for the panel.
+
+## 2026-08-28 ~17:40 — The K8 "anomaly" was an underpowered comparison
+Single-window (final-0000) streaming numbers said K8 0.018200 > K6 0.016829 —
+an 8-bit quant apparently worse than 6-bit. Investigation (lane-matched, so
+not a harness artifact) excluded, with evidence: wrong payloads (plan.json
+bits 8 / packed_root out-k8); mixed extension binaries (all 43 preps one hash
+per campaign); encoder correctness (120/120 byte-identical vs brandonmusic's
+sealed core); reader K8 decode (BITWISE identical to exllamav3 native across 6
+payloads, both transform stages, K6 controls clean); profile mismatch (K6 and
+K8 used a BYTE-IDENTICAL default profile); scope (receipts match field for
+field: 1618 native tensors, 37152 routed choices, nonrouted_native_exact both).
+The weight-space test was blocked by cos(|W_hat|,|W|) = 0.633 ~ 2/pi — the
+signature of a PERMUTATION, not noise. Confirmed: an INTERMEDIATE-CHANNEL
+permutation (the expert-MLP symmetry), recovered empirically as a perfect
+bijection (2048/2048, mean cosine 0.9998, zero identity matches), consistent
+across gate/up/down within an expert, and identical between K6 and K8 (shared
+transform seed). Serving is unaffected — the permutation is self-consistent.
+Unpermuted, the SHIPPED stores say what they should: rel Frobenius K6 0.021490
+vs K8 0.005916, NMSE 4.624e-4 vs 3.505e-5 — K8 13.2x tighter, better in 30/30
+matrices.
+THE REAL EXPLANATION: per-window KLD sd is 1.73e-3 against a K6-vs-K8 effect
+of 1.22e-3 — a single window has NO POWER to separate two rates. Pooled over
+the 11 windows both runs had captured: K6 0.013873 vs K8 0.012655, K8 winning
+9 of 11 windows, top-1 96.34% vs 96.12%. window-0000 was an unlucky draw.
+LESSON 29: NEVER quote a single-window KLD as a rate comparison. The noise
+between windows exceeds the effect between adjacent bit-widths. Previews are
+fine for "is the pipeline alive"; they are not evidence about which quant is
+better. (Lesson 28 said extrapolation doesn't transfer; this says why,
+quantitatively.) Corollary for the registry: single-window panels belong in
+their own comparability group — which they already do, now empirically
+justified.
+LESSON 30: a cos(|a|,|b|) ~ 2/pi with matching sorted spectra means PERMUTED,
+not broken. Weight-space audits of this pipeline must undo the
+intermediate-channel permutation first or they will lose a day.
