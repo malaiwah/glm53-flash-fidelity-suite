@@ -1,0 +1,1160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/schema/measurement.schema.json",
+  "title": "Fidelity measurement",
+  "description": "One fidelity number. A measurement CANNOT be expressed without naming a panel and a reference capture — panel_ref and reference_ref are required and must resolve. Every row also carries a derived comparability.key; rows are only ever ranked against rows sharing that key. Rows measured by someone else are marked in provenance.measured_by and are never silently merged with ours.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "status",
+    "model_ref",
+    "artifact_ref",
+    "panel_ref",
+    "reference_ref",
+    "pipeline_ref",
+    "scope_digest",
+    "metric",
+    "estimator",
+    "determinism",
+    "measurement_scope",
+    "provenance",
+    "comparability",
+    "disclosures"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version"
+    },
+    "id": {
+      "$ref": "common.schema.json#/$defs/measurement_id"
+    },
+    "status": {
+      "enum": [
+        "published",
+        "pending",
+        "superseded",
+        "retracted"
+      ],
+      "description": "pending = the artifact exists and is registered but no qualified number exists yet; metric.value must be null. superseded/retracted must name a successor or a reason in disclosures."
+    },
+    "supersedes": {
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/measurement_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model_ref": {
+      "$ref": "common.schema.json#/$defs/model_id"
+    },
+    "artifact_ref": {
+      "$ref": "common.schema.json#/$defs/artifact_id",
+      "description": "The candidate/student being measured."
+    },
+    "panel_ref": {
+      "$ref": "common.schema.json#/$defs/panel_id",
+      "description": "REQUIRED. No panel, no measurement."
+    },
+    "reference_ref": {
+      "$ref": "common.schema.json#/$defs/reference_id",
+      "description": "REQUIRED. The teacher capture. Its panel_ref must equal panel_ref above."
+    },
+    "pipeline_ref": {
+      "$ref": "common.schema.json#/$defs/pipeline_id",
+      "description": "The stack that computed the number. For author-reported rows this may be a pipeline record with repository=null and roles=[end-to-end], describing the author's stack as far as it is known."
+    },
+    "scope_digest": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^[a-z0-9._:|@=-]+$",
+      "description": "Echo of the candidate artifact's scope_digest, so a measurement row is self-describing in a table. The validator recomputes it from the artifact and rejects a mismatch."
+    },
+    "metric": {
+      "type": "object",
+      "required": [
+        "name",
+        "value",
+        "units",
+        "direction"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "mean_tokenwise_kld",
+            "mean_of_run_means_tokenwise_kld",
+            "context_macro_mean_kld",
+            "mean_jsd",
+            "top1_agreement",
+            "perplexity_ratio"
+          ]
+        },
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "units": {
+          "enum": [
+            "nats",
+            "bits",
+            "fraction",
+            "ratio"
+          ]
+        },
+        "direction": {
+          "enum": [
+            "reference_to_candidate",
+            "candidate_to_reference",
+            "symmetric",
+            "not_applicable"
+          ],
+          "description": "reference_to_candidate means KL(P_reference || Q_candidate). Our receipts spell this 'teacher_to_student'. The two KL directions are different numbers and are never pooled."
+        },
+        "higher_is_better": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "auxiliary_metrics": {
+      "description": "Secondary numbers from the SAME run over the SAME panel. Never a place to smuggle in a number from a different panel.",
+      "type": "object",
+      "properties": {
+        "top1_agreement": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "mean_jsd_bits": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "median_kld": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "p95_kld": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "p99_kld": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "p999_kld": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max_kld": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "context_macro_mean_kld": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "strata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "uncertainty": {
+      "type": "object",
+      "required": [
+        "method"
+      ],
+      "properties": {
+        "method": {
+          "enum": [
+            "context_cluster_bootstrap",
+            "run_spread",
+            "none",
+            "unknown"
+          ],
+          "description": "'none' means no interval was computed and none is claimed. 'unknown' is only legal for non-self-measured rows."
+        },
+        "ci95_low": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ci95_high": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "clusters": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "samples": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "estimator": {
+      "description": "How the number was computed. Two of these fields — accumulation_dtype and stack_relation — are load-bearing for comparability and feed the comparability key.",
+      "type": "object",
+      "required": [
+        "accumulation_dtype",
+        "stack_relation",
+        "head_policy"
+      ],
+      "properties": {
+        "accumulation_dtype": {
+          "enum": [
+            "float64",
+            "float32",
+            "mixed",
+            "unknown"
+          ],
+          "description": "The dtype the per-token KL sum accumulated in. fp32 accumulation over 10M positions is a materially different estimator from fp64."
+        },
+        "logits_dtype": {
+          "$ref": "common.schema.json#/$defs/numeric_format"
+        },
+        "two_pass": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "vocab_chunk": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "stack_relation": {
+          "enum": [
+            "same_stack",
+            "cross_stack",
+            "unknown"
+          ],
+          "description": "same_stack = reference and candidate logits produced by the same runtime and code path. cross_stack = they were not (e.g. vLLM capture vs a replayed packed reader). cross_stack carries a known bias and REQUIRES the bias block."
+        },
+        "head_policy": {
+          "enum": [
+            "native_head",
+            "shared_reference_head",
+            "dequantized_head",
+            "unknown"
+          ],
+          "description": "Whether the candidate's own lm_head was used, or a single shared head was applied to both sides' hidden states."
+        },
+        "softmax_note": {
+          "type": "string"
+        },
+        "zero_handling": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "determinism": {
+      "description": "Typed determinism evidence. The registry's hard-won rule is encoded here: identity of a RECEIPT FILE or a container/tarball proves nothing about numerics, because report files embed timestamps, paths and run indices and differ across bit-identical runs. Only TENSOR CONTENT hashes (tokenwise KL arrays, logits tensors) or a sealed tokenwise digest may support an identical_across_runs claim.",
+      "type": "object",
+      "required": [
+        "run_count",
+        "identical_across_runs",
+        "evidence_kind"
+      ],
+      "properties": {
+        "run_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cold_start_per_run": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "run_means": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "One entry per run. When present its length must equal run_count."
+        },
+        "population_stddev_of_run_means": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "min_run_mean": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max_run_mean": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "identical_across_runs": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "null = not assessed. true requires content-level evidence, see evidence_kind."
+        },
+        "evidence_kind": {
+          "enum": [
+            "tokenwise_kld_sha256",
+            "logits_tensor_sha256",
+            "hidden_state_tensor_sha256",
+            "sealed_tokenwise_digest",
+            "run_mean_equality_only",
+            "receipt_file_sha256",
+            "container_or_archive_sha256",
+            "none"
+          ],
+          "description": "What was compared across runs. receipt_file_sha256 and container_or_archive_sha256 are listed so contributors can record them honestly, and are BLOCKED by the conditionals below from ever supporting a determinism claim."
+        },
+        "evidence_hashes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/sha256"
+          },
+          "description": "The distinct content hashes observed. For a bitwise-identical 5-run set this array has exactly one element."
+        },
+        "distinct_evidence_hash_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "description": "A determinism claim needs content-level evidence and exactly one distinct content hash.",
+          "if": {
+            "properties": {
+              "identical_across_runs": {
+                "const": true
+              }
+            },
+            "required": [
+              "identical_across_runs"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_kind": {
+                "enum": [
+                  "tokenwise_kld_sha256",
+                  "logits_tensor_sha256",
+                  "hidden_state_tensor_sha256",
+                  "sealed_tokenwise_digest"
+                ]
+              },
+              "distinct_evidence_hash_count": {
+                "const": 1
+              },
+              "evidence_hashes": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1
+              },
+              "run_count": {
+                "minimum": 2
+              }
+            },
+            "required": [
+              "evidence_hashes",
+              "distinct_evidence_hash_count"
+            ]
+          }
+        },
+        {
+          "description": "Receipt-file and archive hashes can never back a determinism claim.",
+          "if": {
+            "properties": {
+              "evidence_kind": {
+                "enum": [
+                  "receipt_file_sha256",
+                  "container_or_archive_sha256"
+                ]
+              }
+            },
+            "required": [
+              "evidence_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "identical_across_runs": {
+                "enum": [
+                  false,
+                  null
+                ]
+              }
+            }
+          }
+        },
+        {
+          "description": "Equal run means are weak evidence: they may be recorded but never asserted as bitwise identity.",
+          "if": {
+            "properties": {
+              "evidence_kind": {
+                "const": "run_mean_equality_only"
+              }
+            },
+            "required": [
+              "evidence_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "identical_across_runs": {
+                "enum": [
+                  false,
+                  null
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "measurement_scope": {
+      "description": "Which part of the panel this number actually covers. A subset is legal and sometimes necessary; a subset silently presented as the whole panel is the failure mode this block exists to prevent.",
+      "type": "object",
+      "required": [
+        "scored_positions",
+        "covers_full_panel"
+      ],
+      "properties": {
+        "scored_positions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "contexts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "positions_per_context": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "covers_full_panel": {
+          "type": "boolean"
+        },
+        "subset_detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "position_filter": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "e.g. 'all', or a named filter applied before averaging."
+        }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "description": "WHO produced this number, and whether anyone else has reproduced it. measured_by is enumerated and mandatory; independently_verified is a SEPARATE flag and is never implied by measured_by.",
+      "type": "object",
+      "required": [
+        "measured_by",
+        "measurer",
+        "independently_verified",
+        "sources"
+      ],
+      "properties": {
+        "measured_by": {
+          "enum": [
+            "self-measured",
+            "author-reported",
+            "third-party-reported"
+          ],
+          "description": "self-measured = the registry maintainer ran the measurement and holds the receipt. author-reported = the artifact's own publisher reported it. third-party-reported = anyone else."
+        },
+        "measurer": {
+          "$ref": "common.schema.json#/$defs/attribution"
+        },
+        "measured_at": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "independently_verified": {
+          "type": "boolean",
+          "description": "true only when a party OTHER than the measurer reproduced the number on the same panel and reference. Never set true merely because we trust the source."
+        },
+        "verification": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "verified_by",
+                "method"
+              ],
+              "properties": {
+                "verified_by": {
+                  "$ref": "common.schema.json#/$defs/attribution"
+                },
+                "method": {
+                  "enum": [
+                    "independent_rerun",
+                    "receipt_recompute",
+                    "cross_stack_replay",
+                    "other"
+                  ]
+                },
+                "verification_measurement_ref": {
+                  "oneOf": [
+                    {
+                      "$ref": "common.schema.json#/$defs/measurement_id"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "agreement_note": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.schema.json#/$defs/source"
+          },
+          "description": "At least one. For self-measured rows at least one must be a receipt_file/hf_file/github_file WITH a sha256."
+        },
+        "receipt_schema": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The receipt family the row was derived from, e.g. quant-pipeline.glm53-packed-student-kld-five-cold-run.v1."
+        }
+      },
+      "additionalProperties": false
+    },
+    "comparability": {
+      "description": "The derived grouping key. Tables in this registry are grouped by comparability.key and never merged across keys. key_inputs is the human-readable expansion; the validator recomputes key from it and cross-checks each input against the referenced records.",
+      "type": "object",
+      "required": [
+        "key",
+        "key_inputs",
+        "class"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^cmp--[0-9a-f]{16}$",
+          "description": "cmp-- + first 16 hex of sha256 over the canonical join of key_inputs values with '|' in the declared field order."
+        },
+        "key_inputs": {
+          "type": "object",
+          "required": [
+            "panel_id",
+            "reference_id",
+            "metric_name",
+            "direction",
+            "accumulation_dtype",
+            "stack_relation",
+            "head_policy"
+          ],
+          "properties": {
+            "panel_id": {
+              "$ref": "common.schema.json#/$defs/panel_id"
+            },
+            "reference_id": {
+              "$ref": "common.schema.json#/$defs/reference_id"
+            },
+            "metric_name": {
+              "type": "string"
+            },
+            "direction": {
+              "type": "string"
+            },
+            "accumulation_dtype": {
+              "type": "string"
+            },
+            "stack_relation": {
+              "type": "string"
+            },
+            "head_policy": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "class": {
+          "enum": [
+            "strict",
+            "advisory"
+          ],
+          "description": "strict = self-measured, same-stack, sealed panel, sealed or fully-hashed candidate, no comparability-affecting disclosure. Everything else is advisory. Advisory rows are shown in the same table only when the key matches, and always visually marked."
+        },
+        "bias": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "direction",
+                "detail"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "cross_stack_capture_replay",
+                    "dequantized_reference",
+                    "reduced_run_count",
+                    "subset_of_panel",
+                    "undisclosed_protocol",
+                    "other"
+                  ]
+                },
+                "direction": {
+                  "enum": [
+                    "upward",
+                    "downward",
+                    "unknown"
+                  ]
+                },
+                "floor_measurement_ref": {
+                  "oneOf": [
+                    {
+                      "$ref": "common.schema.json#/$defs/measurement_id"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The same-stack self-consistency floor on this panel. A cross-stack number minus this floor is the only defensible way to read it."
+                },
+                "estimated_magnitude": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "detail": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "quality_gate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "metric",
+            "passed"
+          ],
+          "properties": {
+            "metric": {
+              "type": "string"
+            },
+            "threshold_lt": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "threshold_gt": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "notes": {
+      "type": "string"
+    },
+    "cross_refs": {
+      "$ref": "common.schema.json#/$defs/cross_refs"
+    },
+    "disclosures": {
+      "$ref": "common.schema.json#/$defs/disclosures"
+    }
+  },
+  "allOf": [
+    {
+      "description": "A published row must have a value; a pending row must not.",
+      "if": {
+        "properties": {
+          "status": {
+            "const": "published"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "metric": {
+            "properties": {
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "value"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "pending"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "metric": {
+            "properties": {
+              "value": {
+                "type": "null"
+              }
+            }
+          },
+          "determinism": {
+            "properties": {
+              "run_count": {
+                "const": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "We do not claim to have measured something without knowing our own estimator.",
+      "if": {
+        "properties": {
+          "provenance": {
+            "properties": {
+              "measured_by": {
+                "const": "self-measured"
+              }
+            },
+            "required": [
+              "measured_by"
+            ]
+          }
+        },
+        "required": [
+          "provenance"
+        ]
+      },
+      "then": {
+        "properties": {
+          "estimator": {
+            "properties": {
+              "accumulation_dtype": {
+                "enum": [
+                  "float64",
+                  "float32",
+                  "mixed"
+                ]
+              },
+              "stack_relation": {
+                "enum": [
+                  "same_stack",
+                  "cross_stack"
+                ]
+              },
+              "head_policy": {
+                "enum": [
+                  "native_head",
+                  "shared_reference_head",
+                  "dequantized_head"
+                ]
+              }
+            }
+          },
+          "uncertainty": {
+            "properties": {
+              "method": {
+                "enum": [
+                  "context_cluster_bootstrap",
+                  "run_spread",
+                  "none"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "A reported row is never strict and must disclose that it is reported.",
+      "if": {
+        "properties": {
+          "provenance": {
+            "properties": {
+              "measured_by": {
+                "enum": [
+                  "author-reported",
+                  "third-party-reported"
+                ]
+              }
+            },
+            "required": [
+              "measured_by"
+            ]
+          }
+        },
+        "required": [
+          "provenance"
+        ]
+      },
+      "then": {
+        "properties": {
+          "comparability": {
+            "properties": {
+              "class": {
+                "const": "advisory"
+              }
+            }
+          },
+          "disclosures": {
+            "contains": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "const": "author_reported_only"
+                }
+              },
+              "required": [
+                "code"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "Cross-stack estimation carries a mandatory, typed bias block and an advisory class.",
+      "if": {
+        "properties": {
+          "estimator": {
+            "properties": {
+              "stack_relation": {
+                "const": "cross_stack"
+              }
+            },
+            "required": [
+              "stack_relation"
+            ]
+          }
+        },
+        "required": [
+          "estimator"
+        ]
+      },
+      "then": {
+        "properties": {
+          "comparability": {
+            "properties": {
+              "class": {
+                "const": "advisory"
+              },
+              "bias": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "cross_stack_capture_replay"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "direction",
+                  "detail"
+                ]
+              }
+            },
+            "required": [
+              "bias"
+            ]
+          },
+          "disclosures": {
+            "anyOf": [
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "const": "cross_stack_capture"
+                    },
+                    "affects_comparability": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "affects_comparability"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "const": "cross_engine_capture"
+                    },
+                    "affects_comparability": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "affects_comparability"
+                  ]
+                }
+              }
+            ],
+            "description": "A cross-stack row must name its hazard: cross_stack_capture when the two sides came from different runtimes of the same engine family, cross_engine_capture when they came from different inference engines entirely."
+          }
+        }
+      }
+    },
+    {
+      "description": "A subset row must say so in both places.",
+      "if": {
+        "properties": {
+          "measurement_scope": {
+            "properties": {
+              "covers_full_panel": {
+                "const": false
+              }
+            },
+            "required": [
+              "covers_full_panel"
+            ]
+          }
+        },
+        "required": [
+          "measurement_scope"
+        ]
+      },
+      "then": {
+        "properties": {
+          "measurement_scope": {
+            "properties": {
+              "subset_detail": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "subset_detail"
+            ]
+          },
+          "disclosures": {
+            "contains": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "const": "subset_of_panel"
+                }
+              },
+              "required": [
+                "code"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "independently_verified=true must name the verifier and the method.",
+      "if": {
+        "properties": {
+          "provenance": {
+            "properties": {
+              "independently_verified": {
+                "const": true
+              }
+            },
+            "required": [
+              "independently_verified"
+            ]
+          }
+        },
+        "required": [
+          "provenance"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provenance": {
+            "properties": {
+              "verification": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "verification"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "description": "A strict row cannot carry any comparability-affecting disclosure.",
+      "if": {
+        "properties": {
+          "comparability": {
+            "properties": {
+              "class": {
+                "const": "strict"
+              }
+            },
+            "required": [
+              "class"
+            ]
+          }
+        },
+        "required": [
+          "comparability"
+        ]
+      },
+      "then": {
+        "properties": {
+          "disclosures": {
+            "not": {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "affects_comparability": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "affects_comparability"
+                ]
+              }
+            }
+          },
+          "provenance": {
+            "properties": {
+              "measured_by": {
+                "const": "self-measured"
+              }
+            }
+          },
+          "estimator": {
+            "properties": {
+              "stack_relation": {
+                "const": "same_stack"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

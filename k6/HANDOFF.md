@@ -76,10 +76,21 @@ record: `JOURNAL.md` (27+ lessons), `k6/DECISIONS.md` (9 operator decisions),
 10. **Supervise like money is burning, because it is.** 10-minute watchdog on
     every rental (run footer + GPU util + log growth + disk free; wedge = 2
     quiet ticks); pause/destroy boxes the second their role ends; ntfy every
-    stage transition; log the balance at every phase boundary (the `jl get`
-    cost field is a rate, not a total). Budget is SHARED across sessions —
-    announce your rentals. And keep a captain's log as you go: half of this
-    file existed in JOURNAL.md before anyone asked for it.
+    stage transition; log the balance at every phase boundary. Budget is
+    SHARED across sessions — announce your rentals. And keep a captain's log as
+    you go: half of this file existed in JOURNAL.md before anyone asked for it.
+
+    **Correction (2026-08-28):** this lesson used to say the `jl get` cost
+    field is a rate, not a total. That is wrong, and a cost model built on it
+    is off by a factor of the elapsed hours. It is a running USD **total**.
+    Verified by reconciling three live instances against their published
+    rates: an 8×H200 spot box at 2h33m reported `cost` 40.897 → $16.04/h
+    against a list rate of 8 × $1.99 = $15.92/h; a 1×H200 spot box at 2h28m
+    reported 5.081 → $2.06/h against $1.99; a CPU VM at 8h56m reported 1.901.
+    All three reconcile as accumulated totals within rounding, and none
+    reconciles as a rate. `bin/measure_cloud.py` treats it as a total and
+    cross-checks it against the account balance delta, which is the only
+    figure that also catches filesystem charges.
 
 **Standing wishes for whoever touches the stack next:** upstream the K8/K3
 admissions + `--overlap-seal` + the claim-based prep loop to brandonmusic's

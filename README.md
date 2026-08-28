@@ -7,6 +7,108 @@ hyper-connections). Everything here was produced within ~48h of the model's
 release and is receipt-driven: every published number links to a JSON receipt
 with pinned revisions and sha256s.
 
+## Measure a quant yourself — two copy-paste recipes
+
+Every number in this repo was produced by a recipe you can run on someone
+else's weights and submit to the [fidelity registry](registry/). Both recipes
+produce the **same sealed receipt**, so a number measured on a rented H200 and
+a number measured on a laptop are the same kind of object and can be ranked
+against each other.
+
+Both refuse *before* spending anything when the run will not fit, and both say
+what they need — dollars, disk, memory, hours — with each figure's provenance.
+
+### Recipe 1 — cloud: rent, measure, tear down
+
+```bash
+export JL_API_KEY=...      # never logged, never written to a receipt
+
+bin/measure-cloud \
+    --model brandonmusic/GLM-5.3-Flash-tr3-4bpw \
+    --panel brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
+    --lane  streaming --spot --max-runtime 8h
+```
+
+Resolves the repo to an immutable commit, sizes and prices the instance, asks
+for confirmation, creates it, fetches weights and panel, measures, seals the
+receipt, pulls it back, **destroys the instance**, and prints what it actually
+cost — estimated, computed, billed, and as an account-balance delta, because
+any one of those alone can lie.
+
+Start with `--dry-run`: it does every check, creates nothing, and spends
+nothing. Teardown is guaranteed on success, failure, exception and Ctrl-C, and
+three further layers sit under that trap for the case where the controller
+itself dies — see `bin/measure_cloud.py`, class `Teardown`.
+
+```
+bin/measure-cloud reaper --install    # the backstop; the runner asks for it
+bin/measure-cloud reaper --sweep      # clean up from any machine, after a laptop dies
+```
+
+### Recipe 2 — local: your own hardware
+
+```bash
+bin/measure-local \
+    --artifact brandonmusic/GLM-5.3-Flash-tr3-4bpw \
+    --panel    brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
+    --vram-budget 30
+```
+
+Works on a 128 GB Apple-Silicon Mac via MPS, and on a 32 GB consumer CUDA card
+under a `--vram-budget` that is a **hard bound, not a hint**. A 600 GB model
+fits in 30 GB because the schedule is inverted: instead of streaming the whole
+checkpoint once per panel window, it goes layer-outer and pushes all 25 windows
+through each layer, so every expert is decoded exactly once for the whole panel.
+`--expert-chunk` and `--window-batch` then shrink the peak without moving the
+number — experts are visited in ascending order and accumulated sequentially in
+fp32, so the result is bit-identical at any setting.
+
+`--estimate-only` prints the plan and stops. `--simulate-device "RTX 5090:32"`
+plans for hardware you do not own yet.
+
+```
+$ bin/measure-local --artifact ... --panel ... --vram-budget 30 --estimate-only
+  expert_chunk    156 of 288 experts  (numerics-invariant)
+  window_batch    25 of 25 windows -> 1 pass(es) over the checkpoint
+  peak VRAM       25.45 GB of 30.00 GB budget (85%)
+```
+
+Ask for too little and it refuses with the arithmetic, not a stack trace:
+
+```
+REFUSE: no schedule fits a 3.60 GB budget
+        minimum viable budget for this model at 4 bpw is 4.58 GB
+        that floor is set by the lm_head step -- the lm_head weight (1.27 GB)
+        and one window of fp32 logits (1.27 GB) must be resident together, and
+        neither shrinks with --expert-chunk or --window-batch
+        run the cloud recipe instead:  bin/measure-cloud --lane streaming
+```
+
+Verify the machine before trusting it — both selftests are offline and take
+under a minute:
+
+```bash
+bin/measure-local --selftest      # fit estimator vs known cases + decode parity
+```
+
+### Recipe 3 — submit it
+
+```bash
+bin/registry-submit <out>/receipts/measurement-receipt.json
+```
+
+Prints the row your receipt would generate, its comparability key, and the rows
+it can be ranked against — or exactly which check it failed. Then open a
+discussion on the registry dataset and attach the file; a GitHub PR against the
+mirror works too. Both paths, the paste template, and how you are credited:
+[`registry/CONTRIBUTING.md`](registry/CONTRIBUTING.md).
+
+> **Requirements.** The cloud recipe needs the `jl` CLI
+> (`uv tool install jarvislabs`). The local recipe needs only
+> `pip install torch safetensors numpy huggingface_hub` — the EXL3/TR3 decode
+> is pure PyTorch, so none of the CUDA-13/flash-attn/exllamav3 bootstrap the
+> cloud lane uses is required on your own machine.
+
 ## Headline results
 
 | Measurement | Value | Where |
@@ -20,6 +122,8 @@ with pinned revisions and sha256s.
 
 | Path | What it is |
 |---|---|
+| [`bin/`](bin/) | **The two copy-paste recipes above**: `measure-cloud`, `measure-local`, `registry-submit`, the shared fit estimator (`fidelity/census.py`), the engine pin file (`engines.json`), and two offline selftests |
+| [`registry/`](registry/) | **The fidelity registry**: schemas, seeded rows, submission receipt format, validator, and [CONTRIBUTING.md](registry/CONTRIBUTING.md) |
 | [`tools/`](tools/) | The fidelity harness (vLLM hidden-state capture → shared-head replay → exact full-vocab KL), activation capture, cross-stack checker, publishers |
 | [`remote/`](remote/) | The self-driving on-VM pipeline + stage scripts used for the overnight 8×H200 capture campaign |
 | [`k6/`](k6/) | **The K6/K6K8 EXL3 quantization program** (in progress): runbook, stage driver, patch series onto [brandonmusic's pipeline](https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw), driver tools, recipes, and the disclosed [r10 codec reconstruction](k6/fallback/) |

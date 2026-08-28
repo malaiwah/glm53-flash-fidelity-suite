@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/schema/submission.schema.json",
+  "title": "Submission receipt",
+  "description": "The ONE file a contributor sends us. It is emitted by the measurement runner (`--emit-submission`), never hand-written, and it is the only thing either submission channel carries. registry_add.py turns it into the model/artifact/panel/reference/pipeline/measurement rows; contributors never author registry rows directly, because a measurement row's derived fields (comparability.key, scope_digest) and its five cross-references cannot be produced by hand without getting them wrong. Fields here map 1:1 onto measurement.schema.json and artifact.schema.json so the mapping is mechanical and reviewable.",
+  "type": "object",
+  "required": [
+    "submission_schema",
+    "receipt_sha256",
+    "produced_by",
+    "measured_at",
+    "lane",
+    "measurer",
+    "artifact",
+    "panel",
+    "reference",
+    "metric",
+    "estimator",
+    "determinism",
+    "measurement_scope",
+    "disclosures"
+  ],
+  "properties": {
+    "submission_schema": { "const": "quant-fidelity-registry/submission-receipt.v1" },
+
+    "receipt_sha256": {
+      "$ref": "common.schema.json#/$defs/sha256",
+      "description": "Self-seal. Computed over canonical_json(this document with receipt_sha256 replaced by the empty string). Anyone can recompute it in four lines; see CONTRIBUTING.md. It proves the file was not edited after the run. It is NEVER used as determinism evidence (invariant DET-001)."
+    },
+
+    "produced_by": {
+      "description": "The runner that emitted this receipt. Becomes the pipeline record.",
+      "type": "object",
+      "required": ["tool", "revision", "entrypoint", "entrypoint_sha256"],
+      "properties": {
+        "tool": { "type": "string", "minLength": 1, "description": "e.g. glm53-fidelity-suite/measure_cloud.sh" },
+        "repository": { "type": ["string", "null"] },
+        "revision": { "$ref": "common.schema.json#/$defs/git_revision" },
+        "entrypoint": { "type": "string", "minLength": 1 },
+        "entrypoint_sha256": { "$ref": "common.schema.json#/$defs/sha256" },
+        "runtime_reader_sha256": { "$ref": "common.schema.json#/$defs/sha256_or_null" },
+        "container_image": { "type": ["string", "null"] },
+        "container_digest": { "type": ["string", "null"] },
+        "dependencies": { "type": "object", "additionalProperties": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+
+    "measured_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+
+    "lane": {
+      "description": "Which measurement lane produced the number. Lanes are NOT interchangeable: a streaming number carries a disclosed offset against the sealed lane on the same panel. The lane selects the pipeline record and forces the matching disclosure code.",
+      "enum": ["sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other"]
+    },
+
+    "measurer": {
+      "description": "You. Handle is your Hugging Face username and is how you are credited.",
+      "type": "object",
+      "required": ["name", "handle"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "handle": { "type": "string", "minLength": 1 },
+        "url": { "type": ["string", "null"], "format": "uri" },
+        "is_artifact_author": {
+          "type": "boolean",
+          "default": false,
+          "description": "true when you are measuring your own quant. Decides author-reported vs third-party-reported."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "artifact": {
+      "description": "The quant you measured. repository+revision is its identity; a revision that is not the immutable 40-hex commit is rejected (invariant IDENT-001).",
+      "type": "object",
+      "required": ["repository", "revision", "container", "codec", "scope", "producer"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[^\\/\\s]+/[^\\/\\s]+$" },
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "url": { "type": ["string", "null"], "format": "uri" },
+        "container": { "enum": ["safetensors", "gguf", "exl3", "mlx", "pytorch-bin", "other"] },
+        "precision_label": { "type": ["string", "null"] },
+        "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "index_sha256": { "$ref": "common.schema.json#/$defs/sha256_or_null" },
+        "config_sha256": { "$ref": "common.schema.json#/$defs/sha256_or_null" },
+        "shard_hash_verification": { "enum": ["full", "partial", "none"] },
+        "codec": {
+          "type": "object",
+          "required": ["family"],
+          "properties": {
+            "family": { "$ref": "common.schema.json#/$defs/numeric_format" },
+            "bits_per_weight_nominal": { "type": ["number", "null"] },
+            "bits_per_weight_effective": { "type": ["number", "null"] },
+            "group_size": { "type": ["integer", "null"] },
+            "quantizer_tool": { "type": ["string", "null"] },
+            "quantizer_version": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "scope": {
+          "description": "Verbatim artifact.schema.json#/properties/scope. The runner derives it from the checkpoint's own manifest; if it could not, treatment='unknown' is legal and forces an artifact_identity_incomplete disclosure (invariant SCOPE-009).",
+          "type": "object",
+          "required": ["policy", "assignments", "head_policy", "kv_cache_dtype"],
+          "properties": {
+            "policy": { "enum": ["uniform", "mixed", "none"] },
+            "assignments": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["tensor_class", "treatment", "format"],
+                "properties": {
+                  "tensor_class": { "$ref": "common.schema.json#/$defs/tensor_class" },
+                  "treatment": { "enum": ["quantized", "native", "reconstructed", "absent", "unknown"] },
+                  "format": { "$ref": "common.schema.json#/$defs/numeric_format" },
+                  "bits_per_weight": { "type": ["number", "null"] },
+                  "layer_range": { "type": ["string", "null"] },
+                  "note": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            },
+            "head_policy": { "enum": ["quantized", "native", "shared_with_reference", "reconstructed", "unknown"] },
+            "kv_cache_dtype": {
+              "enum": ["bf16", "fp16", "fp32", "fp8_e4m3", "fp8_e5m2", "nvfp4", "mxfp4", "int8", "not_applicable", "unknown"]
+            },
+            "activation_quantization": { "type": ["string", "null"] },
+            "mtp_included": { "type": ["boolean", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "scope_digest": {
+          "type": "string",
+          "description": "Emitted by the runner via registry_lib.scope_digest(scope). Recomputed on ingest; a mismatch rejects the submission."
+        },
+        "producer": {
+          "description": "Who made the quant. Never you, unless you made it (invariant PROV-006).",
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "handle": { "type": ["string", "null"] },
+            "url": { "type": ["string", "null"], "format": "uri" }
+          },
+          "additionalProperties": false
+        },
+        "tensor_parallel_pre_sliced": { "type": ["boolean", "null"] },
+        "tensor_parallel_world_size": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": false
+    },
+
+    "panel": {
+      "description": "Which panel you scored on, pinned by its token digest. panel_ref must already exist in the registry; to introduce a NEW panel, open a discussion first (see CONTRIBUTING.md 'New panels').",
+      "type": "object",
+      "required": ["panel_ref", "panel_token_sha256"],
+      "properties": {
+        "panel_ref": { "$ref": "common.schema.json#/$defs/panel_id" },
+        "panel_token_sha256": { "$ref": "common.schema.json#/$defs/sha256" },
+        "panel_receipt_sha256": { "$ref": "common.schema.json#/$defs/sha256_or_null" },
+        "contexts": { "type": ["integer", "null"], "minimum": 1 },
+        "scored_positions_total": { "type": ["integer", "null"], "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+
+    "reference": {
+      "description": "The teacher capture your candidate was scored against. Must already exist in the registry.",
+      "type": "object",
+      "required": ["reference_ref", "teacher_receipt_sha256"],
+      "properties": {
+        "reference_ref": { "$ref": "common.schema.json#/$defs/reference_id" },
+        "teacher_receipt_sha256": { "$ref": "common.schema.json#/$defs/sha256" },
+        "teacher_backend_identity_sha256": { "$ref": "common.schema.json#/$defs/sha256_or_null" }
+      },
+      "additionalProperties": false
+    },
+
+    "metric": {
+      "type": "object",
+      "required": ["name", "value", "units", "direction"],
+      "properties": {
+        "name": {
+          "enum": [
+            "mean_tokenwise_kld",
+            "mean_of_run_means_tokenwise_kld",
+            "context_macro_mean_kld",
+            "mean_jsd",
+            "top1_agreement",
+            "perplexity_ratio"
+          ]
+        },
+        "value": { "type": "number" },
+        "units": { "enum": ["nats", "bits", "fraction", "ratio"] },
+        "direction": {
+          "enum": ["reference_to_candidate", "candidate_to_reference", "symmetric", "not_applicable"],
+          "description": "Our receipts spell reference_to_candidate as 'teacher_to_student'. The two directions are different numbers and are never pooled."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "auxiliary_metrics": {
+      "description": "Strongly recommended: top1_agreement. A KL number without top-1 agreement hides which kind of divergence it is (invariant STAT-005, warn).",
+      "type": "object",
+      "properties": {
+        "top1_agreement": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "median_kld": { "type": ["number", "null"] },
+        "p95_kld": { "type": ["number", "null"] },
+        "p99_kld": { "type": ["number", "null"] },
+        "p999_kld": { "type": ["number", "null"] },
+        "max_kld": { "type": ["number", "null"] },
+        "context_macro_mean_kld": { "type": ["number", "null"] },
+        "strata": { "type": "object", "additionalProperties": { "type": ["number", "null"] } }
+      },
+      "additionalProperties": false
+    },
+
+    "estimator": {
+      "type": "object",
+      "required": ["accumulation_dtype", "stack_relation", "head_policy"],
+      "properties": {
+        "accumulation_dtype": { "enum": ["float64", "float32", "mixed"] },
+        "logits_dtype": { "$ref": "common.schema.json#/$defs/numeric_format" },
+        "two_pass": { "type": ["boolean", "null"] },
+        "vocab_chunk": { "type": ["integer", "null"] },
+        "stack_relation": {
+          "enum": ["same_stack", "cross_stack"],
+          "description": "Emitted by the runner. DO NOT EDIT: cross_stack carries a mandatory bias block and makes the row advisory, and claiming same_stack when it is not is the single most damaging edit a contributor can make."
+        },
+        "head_policy": { "enum": ["native_head", "shared_reference_head", "dequantized_head"] },
+        "softmax_note": { "type": "string" },
+        "zero_handling": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+
+    "determinism": {
+      "description": "Verbatim measurement.schema.json#/properties/determinism. A determinism claim needs a TENSOR-CONTENT hash (tokenwise_kld_sha256), never a receipt-file or archive hash.",
+      "type": "object",
+      "required": ["run_count", "identical_across_runs", "evidence_kind"],
+      "properties": {
+        "run_count": { "type": "integer", "minimum": 1 },
+        "cold_start_per_run": { "type": ["boolean", "null"] },
+        "run_means": { "type": "array", "items": { "type": "number" } },
+        "identical_across_runs": { "type": ["boolean", "null"] },
+        "evidence_kind": {
+          "enum": [
+            "tokenwise_kld_sha256",
+            "logits_tensor_sha256",
+            "hidden_state_tensor_sha256",
+            "sealed_tokenwise_digest",
+            "run_mean_equality_only",
+            "receipt_file_sha256",
+            "container_or_archive_sha256",
+            "none"
+          ]
+        },
+        "evidence_hashes": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/sha256" } },
+        "distinct_evidence_hash_count": { "type": ["integer", "null"], "minimum": 0 },
+        "per_run_report_sha256": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/$defs/sha256" },
+          "description": "Recorded for traceability. These DIFFER across bit-identical runs and are never determinism evidence."
+        },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "measurement_scope": {
+      "type": "object",
+      "required": ["scored_positions", "covers_full_panel"],
+      "properties": {
+        "scored_positions": { "type": "integer", "minimum": 1 },
+        "contexts": { "type": ["integer", "null"], "minimum": 1 },
+        "positions_per_context": { "type": ["integer", "null"], "minimum": 1 },
+        "covers_full_panel": { "type": "boolean" },
+        "subset_detail": { "type": ["string", "null"] },
+        "position_filter": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+
+    "environment": {
+      "description": "What it ran on. Not part of any identity; published so a reader can judge feasibility and cost.",
+      "type": "object",
+      "properties": {
+        "gpu": { "type": ["string", "null"] },
+        "gpu_count": { "type": ["integer", "null"] },
+        "tensor_parallel": { "type": ["integer", "null"] },
+        "vram_budget_gb": { "type": ["number", "null"] },
+        "peak_vram_gb": { "type": ["number", "null"] },
+        "host": { "type": ["string", "null"] },
+        "wall_clock_hours": { "type": ["number", "null"] }
+      },
+      "additionalProperties": false
+    },
+
+    "cost": {
+      "type": "object",
+      "properties": {
+        "usd": { "type": ["number", "null"], "minimum": 0 },
+        "basis": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+
+    "evidence": {
+      "description": "Where the full run output lives, if you published it. Optional but it is what turns your row from 'we believe you' into 'anyone can check'.",
+      "type": "array",
+      "items": { "$ref": "common.schema.json#/$defs/source" }
+    },
+
+    "disclosures": { "$ref": "common.schema.json#/$defs/disclosures" }
+  },
+
+  "allOf": [
+    {
+      "description": "A determinism claim needs content-level evidence and exactly one distinct hash.",
+      "if": { "properties": { "identical_across_runs": { "const": true } }, "required": ["identical_across_runs"] },
+      "then": {
+        "properties": {
+          "determinism": {
+            "properties": {
+              "evidence_kind": {
+                "enum": ["tokenwise_kld_sha256", "logits_tensor_sha256", "hidden_state_tensor_sha256", "sealed_tokenwise_digest"]
+              },
+              "distinct_evidence_hash_count": { "const": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "A subset run must say which subset.",
+      "if": {
+        "properties": { "measurement_scope": { "properties": { "covers_full_panel": { "const": false } }, "required": ["covers_full_panel"] } },
+        "required": ["measurement_scope"]
+      },
+      "then": {
+        "properties": {
+          "measurement_scope": { "properties": { "subset_detail": { "type": "string", "minLength": 1 } }, "required": ["subset_detail"] }
+        }
+      }
+    },
+    {
+      "description": "The streaming lane carries its measured offset against the sealed lane.",
+      "if": { "properties": { "lane": { "const": "streaming" } }, "required": ["lane"] },
+      "then": {
+        "properties": {
+          "disclosures": {
+            "contains": {
+              "type": "object",
+              "properties": { "code": { "const": "streaming_lane_offset" }, "affects_comparability": { "const": true } },
+              "required": ["code", "affects_comparability"]
+            }
+          }
+        }
+      }
+    }
+  ],
+
+  "additionalProperties": false
+}

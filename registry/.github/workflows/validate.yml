@@ -1,0 +1,99 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The tools validate with tools/_minischema.py and need NO dependencies at
+      # all -- that is deliberate, so a contributor can run the same checks on a
+      # stock interpreter. jsonschema is installed here only so CI can run the
+      # cross-check that keeps the vendored validator from drifting.
+      - run: pip install --quiet 'jsonschema>=4.20'
+
+      - name: Offline self-test (invariant OFFLINE-002)
+        run: python tools/registry_validate.py --offline-selftest --jsonschema-lib both
+
+      # ------------------------------------------------------------------
+      # Diff gate. A contributor adds exactly one file under receipts/.
+      # data/, index.json and schema/ are generated or contractual; a PR that
+      # edits them by hand is the failure mode this whole pipeline exists to stop.
+      # ------------------------------------------------------------------
+      - name: Diff gate
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+          echo "$CHANGED"
+          BAD=$(echo "$CHANGED" | grep -E '^(data/|index\.json$|schema/|tools/)' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::This PR edits generated or contractual files:"
+            echo "$BAD"
+            echo "Contributors add exactly one file under receipts/<handle>/. Rows are generated."
+            exit 1
+          fi
+          echo "$CHANGED" | grep -E '^receipts/.*\.json$' > changed-receipts.txt || {
+            echo "::error::No receipt added under receipts/<handle>/."
+            exit 1
+          }
+          cat changed-receipts.txt
+
+      # ------------------------------------------------------------------
+      # Receipt gate: shape, self-seal, scope_digest, handle/dir agreement.
+      # ------------------------------------------------------------------
+      - name: Receipt gate
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          while read -r f; do
+            [ -n "$f" ] || continue
+            echo "::group::$f"
+            python tools/registry_validate.py --submission "$f"
+            echo "::endgroup::"
+          done < changed-receipts.txt
+
+      # ------------------------------------------------------------------
+      # Regenerate rows from the submitted receipts, then assert the
+      # regeneration touched ONLY rows derived from them.
+      # ------------------------------------------------------------------
+      - name: Generate rows
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          ARGS=""
+          while read -r f; do
+            [ -n "$f" ] && ARGS="$ARGS --receipt $f"
+          done < changed-receipts.txt
+          python tools/registry_add.py $ARGS --write --report generated.json
+          python tools/registry_validate.py --assert-only-touched generated.json
+
+      - name: Validate registry (all invariants)
+        run: python tools/registry_validate.py --strict
+
+      - name: Report generated rows
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/registry_validate.py --summarize generated.json > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md

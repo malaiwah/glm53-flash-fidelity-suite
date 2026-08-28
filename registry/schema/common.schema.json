@@ -1,0 +1,429 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/schema/common.schema.json",
+  "title": "Common definitions (quant-fidelity-registry)",
+  "description": "Shared $defs for every collection in the quantization-fidelity registry. Id shape and the huggingface_identity block are deliberately kept compatible with 0xSero/local-ai-registry so records can be cross-linked.",
+  "$defs": {
+    "schema_version": {
+      "const": "quant-fidelity-registry/v1"
+    },
+    "registry_id": {
+      "description": "Registry-local identifier. Same character class as local-ai-registry ids (lowercase, dot/hyphen, '--' segment separator) so ids remain cross-linkable. First segment is the collection tag: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 200,
+      "pattern": "^[a-z0-9][a-z0-9.-]*(?:--[a-z0-9][a-z0-9.-]*)*$"
+    },
+    "model_id": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/registry_id"
+        },
+        {
+          "pattern": "^model--"
+        }
+      ]
+    },
+    "artifact_id": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/registry_id"
+        },
+        {
+          "pattern": "^artifact--"
+        }
+      ]
+    },
+    "panel_id": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/registry_id"
+        },
+        {
+          "pattern": "^panel--"
+        }
+      ]
+    },
+    "reference_id": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/registry_id"
+        },
+        {
+          "pattern": "^reference--"
+        }
+      ]
+    },
+    "pipeline_id": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/registry_id"
+        },
+        {
+          "pattern": "^pipeline--"
+        }
+      ]
+    },
+    "measurement_id": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/registry_id"
+        },
+        {
+          "pattern": "^measurement--"
+        }
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sha256_or_null": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "git_revision": {
+      "description": "A full or abbreviated git/HF commit sha. Abbreviated is tolerated but flagged by the validator when it is the ONLY identity a row has.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,64}$"
+    },
+    "huggingface_identity": {
+      "description": "Structurally compatible with local-ai-registry common.schema.json#/$defs/huggingface_identity, plus a required-by-us 'revision' (a repo without a pinned revision is not an identity).",
+      "type": "object",
+      "required": [
+        "repository",
+        "url",
+        "revision",
+        "status",
+        "link_type"
+      ],
+      "properties": {
+        "repository": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri",
+          "description": "null only when link_type is 'none'. Some artifacts genuinely have no repository -- e.g. a serving-runtime configuration that was measured but never published as a checkpoint. Inventing a URL for one is worse than recording its absence."
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/git_revision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Selector WITHIN the repository at that revision: a subfolder (orcarouter ships five builds as subfolders of one repo), a branch name (turboderp ships bpw variants as branches), or a single file (a .gguf). Repo+revision alone is not an identity when one repo holds several artifacts."
+        },
+        "revision_source": {
+          "enum": [
+            "hf_api",
+            "revision_txt",
+            "git_log",
+            "reported_by_author",
+            "none"
+          ]
+        },
+        "status": {
+          "enum": [
+            "known",
+            "unknown",
+            "unavailable",
+            "gated",
+            "deleted"
+          ]
+        },
+        "link_type": {
+          "enum": [
+            "repository",
+            "search",
+            "none"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "link_type": {
+                "const": "repository"
+              }
+            },
+            "required": [
+              "link_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "repository": {
+                "type": "string",
+                "pattern": "^[^\\/\\s]+/[^\\/\\s]+$"
+              },
+              "url": {
+                "type": "string",
+                "pattern": "^https://huggingface\\.co/(datasets/)?[^/]+/[^/]+/?$"
+              }
+            }
+          }
+        },
+        {
+          "description": "No repository link means no URL to give.",
+          "if": {
+            "properties": {
+              "link_type": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "link_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "repository": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "attribution": {
+      "description": "WHO is responsible for a thing. Never inferred; if unknown say so explicitly.",
+      "type": "object",
+      "required": [
+        "name",
+        "role"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "enum": [
+            "model-publisher",
+            "quantizer",
+            "panel-author",
+            "measurer",
+            "toolchain-author",
+            "registry-maintainer"
+          ]
+        },
+        "handle": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "HF username / GitHub handle, no email addresses."
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri"
+        },
+        "is_registry_maintainer": {
+          "type": "boolean",
+          "default": false,
+          "description": "true only for malaiwah. Used by the validator to decide whether a row may claim measured_by=self-measured."
+        }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "description": "A pointer to evidence. A source with kind=receipt_file/hf_file/github_file SHOULD carry a sha256; self-measured rows MUST have at least one such source with a sha256.",
+      "type": "object",
+      "required": [
+        "kind",
+        "uri"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "receipt_file",
+            "hf_file",
+            "github_file",
+            "model_card",
+            "dataset_card",
+            "discussion",
+            "url",
+            "filesystem_path",
+            "private_communication"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256_or_null"
+        },
+        "retrieved_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "disclosure": {
+      "description": "One deviation, caveat or known defect. The array that holds these is REQUIRED and non-empty everywhere it appears; a record with nothing to disclose must say so with code=no_known_deviations.",
+      "type": "object",
+      "required": [
+        "code",
+        "severity",
+        "detail"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$",
+          "description": "Stable machine code, e.g. no_known_deviations, cross_stack_capture, unsealed_source, reduced_run_count, undisclosed_panel, different_reference_kind, author_reported_only, revision_unpinned, subset_of_panel, tp_sliced_artifact."
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "caveat",
+            "blocking"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1
+        },
+        "affects_comparability": {
+          "type": "boolean",
+          "default": false,
+          "description": "true when this disclosure means the row must not be silently ranked against same-panel rows."
+        }
+      },
+      "additionalProperties": false
+    },
+    "disclosures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/disclosure"
+      }
+    },
+    "cross_refs": {
+      "description": "Links out to other registries. Kept open so more registries can be added without a schema bump.",
+      "type": "object",
+      "properties": {
+        "local_ai_registry": {
+          "type": "object",
+          "properties": {
+            "model_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model_instance_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[a-z0-9][a-z0-9.-]*(?:--[a-z0-9][a-z0-9.-]*)*$"
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uri"
+            },
+            "match_confidence": {
+              "enum": [
+                "exact",
+                "probable",
+                "unverified"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
+    "tensor_class": {
+      "description": "Coarse, model-agnostic weight class. 'other' requires a note in the enclosing entry.",
+      "enum": [
+        "embed_tokens",
+        "attn.qkv",
+        "attn.o",
+        "attn.other",
+        "mlp.gate",
+        "mlp.up",
+        "mlp.down",
+        "moe.router",
+        "moe.experts",
+        "moe.shared_expert",
+        "mtp",
+        "norm",
+        "lm_head",
+        "kv_cache",
+        "activations",
+        "other"
+      ]
+    },
+    "numeric_format": {
+      "enum": [
+        "fp64",
+        "bf16",
+        "fp16",
+        "fp32",
+        "fp8_e4m3",
+        "fp8_e5m2",
+        "nvfp4",
+        "mxfp4",
+        "int8",
+        "int4",
+        "exl3-mcg",
+        "exl3-trellis",
+        "gguf-k-quant",
+        "gguf-i-quant",
+        "awq",
+        "gptq",
+        "mlx-affine",
+        "hqq",
+        "mixed",
+        "unknown"
+      ]
+    }
+  }
+}

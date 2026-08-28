@@ -1,0 +1,53 @@
+# Files the cloud runner uploads to the instance.
+#
+# This list is the upload set. It exists so that what lands on rented hardware
+# is auditable and reviewable, rather than "whatever happened to be in the
+# directory" -- which is how a stray note, a scratch receipt, or somebody's
+# token file ends up on somebody else's machine.
+#
+# One path per line, relative to the suite root. Missing files are skipped
+# (the controller logs which), so a lane whose engine is not present in this
+# checkout does not break the upload.
+#
+# Nothing under .secrets/ is ever listed here. The HF token is transported
+# separately, as a 0600 file, and shredded during teardown.
+
+# --- orchestration -------------------------------------------------------
+bin/stage_measure.sh
+bin/watchdog.sh
+bin/invoke_engine.py
+bin/seal_receipt.py
+bin/engines.json
+bin/fidelity/__init__.py
+bin/fidelity/census.py
+bin/fidelity/common.py
+bin/fidelity/engines.py
+bin/fidelity/hfmeta.py
+bin/fidelity/receipt.py
+
+# --- measurement engines -------------------------------------------------
+# The sealed EP8 lane. Verified present and flag-checked by the planner.
+k6/tools/k6_student_capture.py
+k6/tools/k6_kld_report.py
+k6/tools/dione_surface.py
+# The streaming lane. NOT in this checkout at time of writing -- see
+# bin/engines.json, lane "streaming". Listed so it uploads the moment it lands.
+k6/tools/stream_score.py
+
+# --- receipt derivation ---------------------------------------------------
+# Uploaded so that comparability.key and scope_digest are computed on the
+# instance by the SAME code the validator runs on the caller's machine. Two
+# implementations of one hash is two chances to disagree.
+registry/tools/registry_lib.py
+registry/tools/_minischema.py
+registry/tools/registry_validate.py
+registry/schema/common.schema.json
+registry/schema/submission.schema.json
+registry/schema/measurement.schema.json
+registry/schema/artifact.schema.json
+registry/schema/panel.schema.json
+registry/schema/reference.schema.json
+registry/schema/pipeline.schema.json
+registry/schema/model.schema.json
+registry/schema/index.schema.json
+registry/schema/invariants.json

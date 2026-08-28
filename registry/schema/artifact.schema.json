@@ -1,0 +1,542 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/schema/artifact.schema.json",
+  "title": "Artifact (a concrete weight instance)",
+  "description": "One downloadable set of weights at one pinned revision. Mirrors local-ai-registry's model-instance (kind/repository/revision/weights/provenance) and adds the thing that registry has no place for: a STRUCTURED quantization scope. Scope is never prose here — 'attention in BF16, MLP K5/K5/K6, head native' is three rows in scope.assignments, not a sentence.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "model_ref",
+    "kind",
+    "huggingface",
+    "weights",
+    "codec",
+    "scope",
+    "scope_digest",
+    "producer",
+    "sources",
+    "disclosures"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version"
+    },
+    "id": {
+      "$ref": "common.schema.json#/$defs/artifact_id"
+    },
+    "model_ref": {
+      "$ref": "common.schema.json#/$defs/model_id"
+    },
+    "name": {
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "base",
+        "quant",
+        "requantized",
+        "dequantized",
+        "fine-tune"
+      ],
+      "description": "Aligned with local-ai-registry's kind enum, extended with requantized/dequantized which fidelity work needs."
+    },
+    "huggingface": {
+      "$ref": "common.schema.json#/$defs/huggingface_identity"
+    },
+    "weights": {
+      "type": "object",
+      "required": [
+        "container",
+        "precision_label",
+        "size_bytes",
+        "size_basis"
+      ],
+      "properties": {
+        "container": {
+          "enum": [
+            "safetensors",
+            "gguf",
+            "exl3",
+            "mlx",
+            "pytorch-bin",
+            "other"
+          ]
+        },
+        "precision_label": {
+          "type": "string",
+          "description": "Human label as published, e.g. '6bpw', 'Q4', 'FP8', '4-bit'. Never used for comparison — codec.bits_per_weight is."
+        },
+        "size_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "size_gb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Derived, GB = size_bytes / 1e9. Present for local-ai-registry parity."
+        },
+        "size_basis": {
+          "enum": [
+            "repo_all_files",
+            "repo_weight_files",
+            "tensor_payload",
+            "unknown"
+          ],
+          "description": "WHICH TOTAL size_bytes is. The K6 artifact alone has three correct byte counts that differ by 155 MB (tensor payload 253,536,370,680; safetensors sum 253,555,566,680; all repo files 253,691,838,479). A size with no axis label is not a size."
+        },
+        "shard_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "index_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256_or_null"
+        },
+        "config_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256_or_null"
+        },
+        "shard_sha256": {
+          "type": "object",
+          "description": "filename -> sha256. This is TENSOR CONTAINER content, the strongest artifact identity we can record.",
+          "additionalProperties": {
+            "$ref": "common.schema.json#/$defs/sha256"
+          }
+        },
+        "tensor_parallel": {
+          "type": "object",
+          "description": "Some releases ship pre-sliced for a fixed TP world size (e.g. the Dione Q4 release). That is part of the artifact's identity, not a runtime detail.",
+          "required": [
+            "pre_sliced"
+          ],
+          "properties": {
+            "pre_sliced": {
+              "type": "boolean"
+            },
+            "world_size": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "codec": {
+      "type": "object",
+      "required": [
+        "family",
+        "bits_per_weight_nominal"
+      ],
+      "properties": {
+        "family": {
+          "$ref": "common.schema.json#/$defs/numeric_format"
+        },
+        "bits_per_weight_nominal": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Nominal bpw of the quantized tensors. null for base/unquantized artifacts."
+        },
+        "bits_per_weight_effective": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Whole-checkpoint average including tensors kept native. This is the honest number for size/quality plots."
+        },
+        "group_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "quantizer": {
+          "type": "object",
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "type": "string",
+              "minLength": 1,
+              "description": "e.g. exllamav3, llm-compressor, mlx-lm, llama.cpp."
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "revision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pipeline_ref": {
+              "oneOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/pipeline_id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "calibration": {
+          "type": "object",
+          "required": [
+            "used"
+          ],
+          "properties": {
+            "used": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "corpus": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "overlaps_any_panel": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "true if the calibration corpus is known to overlap an evaluation panel in this registry. A true here forces an affects_comparability disclosure."
+            },
+            "overlapping_panel_refs": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/panel_id"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "scope": {
+      "description": "What was actually quantized and what was kept native. Structured so a validator (and a reader) can see that two artifacts at 'the same bpw' are not the same thing.",
+      "type": "object",
+      "required": [
+        "policy",
+        "assignments",
+        "head_policy",
+        "kv_cache_dtype"
+      ],
+      "properties": {
+        "policy": {
+          "enum": [
+            "uniform",
+            "mixed",
+            "none"
+          ],
+          "description": "uniform = every quantized tensor class at the same format+bpw; mixed = per-class allocation; none = base artifact."
+        },
+        "assignments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "tensor_class",
+              "treatment",
+              "format"
+            ],
+            "properties": {
+              "tensor_class": {
+                "$ref": "common.schema.json#/$defs/tensor_class"
+              },
+              "treatment": {
+                "enum": [
+                  "quantized",
+                  "native",
+                  "reconstructed",
+                  "removed",
+                  "not_present",
+                  "unknown"
+                ],
+                "description": "'unknown' is the honest entry for a third-party artifact whose per-class recipe was never published. It is deliberately visible in scope_digest, so a table shows that we do not know what this artifact quantized. Inventing an assignment list is worse than recording that it is unknown; an unknown treatment forces a disclosure."
+              },
+              "format": {
+                "$ref": "common.schema.json#/$defs/numeric_format"
+              },
+              "bits_per_weight": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "layer_range": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "e.g. 'all', '0-2', '3-92'. Free-form but machine-comparable enough to spot per-layer schemes."
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "head_policy": {
+          "enum": [
+            "quantized",
+            "native",
+            "shared_with_reference",
+            "reconstructed",
+            "unknown"
+          ],
+          "description": "How lm_head was handled IN THE ARTIFACT. Distinct from the estimator's head policy at measurement time."
+        },
+        "kv_cache_dtype": {
+          "description": "Declared KV cache dtype for the artifact's intended serving config; 'not_applicable' for weight-only records.",
+          "enum": [
+            "bf16",
+            "fp16",
+            "fp32",
+            "fp8_e4m3",
+            "fp8_e5m2",
+            "nvfp4",
+            "mxfp4",
+            "int8",
+            "not_applicable",
+            "unknown"
+          ]
+        },
+        "activation_quantization": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "e.g. 'w8a8-fp8-dynamic', or null for weight-only."
+        },
+        "mtp_included": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "scope_digest": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^[a-z0-9._:|@=-]+$",
+      "description": "Derived, canonical one-line summary of scope, recomputed and checked by the validator. Form: sorted 'class=treatment:format@bpw' joined by '|', plus 'head=<policy>' and 'kv=<dtype>'. It exists so a measurement row is readable in a table without a join, and so a scope edit that nobody restated cannot slip through."
+    },
+    "producer": {
+      "$ref": "common.schema.json#/$defs/attribution"
+    },
+    "derived_from_artifact_ref": {
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/artifact_id"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The artifact this one was produced FROM (e.g. a 4bpw quant derived from the BF16 base, or a dequantized reference derived from an FP8 release)."
+    },
+    "availability": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "public",
+            "gated",
+            "private",
+            "deleted",
+            "unknown"
+          ]
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "seal": {
+      "description": "Whether the artifact ships its own verifiable production receipts (reconstruction closures, reader ABI, etc.). Unsealed sources are scorable but must disclose it.",
+      "type": "object",
+      "required": [
+        "sealed"
+      ],
+      "properties": {
+        "sealed": {
+          "type": "boolean"
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/source"
+          }
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cross_refs": {
+      "$ref": "common.schema.json#/$defs/cross_refs"
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "common.schema.json#/$defs/source"
+      }
+    },
+    "disclosures": {
+      "$ref": "common.schema.json#/$defs/disclosures"
+    }
+  },
+  "allOf": [
+    {
+      "description": "A base artifact is not quantized: policy none, no nominal bpw claim.",
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "base"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "scope": {
+            "properties": {
+              "policy": {
+                "const": "none"
+              }
+            }
+          },
+          "codec": {
+            "properties": {
+              "bits_per_weight_nominal": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "A quant artifact must declare a real bpw and a real codec family.",
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "quant",
+              "requantized"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "codec": {
+            "properties": {
+              "bits_per_weight_nominal": {
+                "type": "number"
+              },
+              "family": {
+                "not": {
+                  "enum": [
+                    "bf16",
+                    "fp16",
+                    "fp32",
+                    "unknown"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "bits_per_weight_nominal"
+            ]
+          },
+          "scope": {
+            "properties": {
+              "policy": {
+                "enum": [
+                  "uniform",
+                  "mixed"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "A dequantized artifact must name what it was dequantized from.",
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "dequantized"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "derived_from_artifact_ref": {
+            "$ref": "common.schema.json#/$defs/artifact_id"
+          }
+        },
+        "required": [
+          "derived_from_artifact_ref"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/schema/panel.schema.json",
+  "title": "Evaluation panel",
+  "description": "A panel is the sealed set of token windows a fidelity number was computed over, INCLUDING the scored-position policy. Panels are first-class because a fidelity number means nothing without one. Changing the scoring window (e.g. score_from 0 -> 1024) produces a DIFFERENT panel record with derived_from set — never a variant field on the same panel — so the two numbers can never land in the same comparability class.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "author",
+    "tokenizer",
+    "structure",
+    "identity",
+    "corpus",
+    "contamination",
+    "sealed",
+    "availability",
+    "sources",
+    "disclosures"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "id": { "$ref": "common.schema.json#/$defs/panel_id" },
+    "name": { "type": "string", "minLength": 1 },
+    "author": { "$ref": "common.schema.json#/$defs/attribution" },
+
+    "model_scope": {
+      "description": "Panels are tokenizer-bound, therefore effectively model-family-bound. List the model ids this panel is valid for.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "common.schema.json#/$defs/model_id" }
+    },
+
+    "tokenizer": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "repository": { "type": ["string", "null"] },
+        "revision": { "type": ["string", "null"] },
+        "vocab_size": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+
+    "structure": {
+      "type": "object",
+      "required": [
+        "contexts",
+        "context_length",
+        "positions_per_context",
+        "scored_positions_total",
+        "scoring_window"
+      ],
+      "properties": {
+        "contexts": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Number of windows/contexts. null ONLY when the panel is undisclosed (sealed=false, disclosure code=undisclosed_panel)."
+        },
+        "context_length": { "type": ["integer", "null"], "minimum": 1 },
+        "positions_per_context": { "type": ["integer", "null"], "minimum": 1 },
+        "positions_per_context_min": { "type": ["integer", "null"], "minimum": 1 },
+        "positions_per_context_max": { "type": ["integer", "null"], "minimum": 1 },
+        "scored_positions_total": { "type": ["integer", "null"], "minimum": 1 },
+        "scoring_window": {
+          "description": "Part of panel identity. score_from is the first scored position index; min_left_context_tokens is how much left context the weakest scored position had.",
+          "type": "object",
+          "required": ["score_from", "windowed", "min_left_context_tokens", "policy"],
+          "properties": {
+            "score_from": { "type": ["integer", "null"], "minimum": 0 },
+            "windowed": { "type": "boolean" },
+            "min_left_context_tokens": { "type": ["integer", "null"], "minimum": 0 },
+            "dropped_positions_total": { "type": ["integer", "null"], "minimum": 0 },
+            "policy": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "strata": {
+          "description": "Optional domain strata with per-stratum context counts. Two panels with the same totals but different strata are different panels.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["contexts"],
+            "properties": {
+              "contexts": { "type": "integer", "minimum": 0 },
+              "note": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "corpus": {
+      "type": "object",
+      "required": ["lineage", "public"],
+      "properties": {
+        "lineage": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable corpus lineage, e.g. 'suite v5: 5 strata drawn from <named public sources>, deduped, GLM-tokenized'."
+        },
+        "version": { "type": ["string", "null"] },
+        "sources": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/source" } },
+        "build_tool_ref": {
+          "oneOf": [{ "$ref": "common.schema.json#/$defs/pipeline_id" }, { "type": "null" }]
+        },
+        "public": {
+          "type": "boolean",
+          "description": "Whether the token panel itself (not just its description) is downloadable."
+        },
+        "license_note": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+
+    "identity": {
+      "description": "Cryptographic identity of the token panel. Hashes here must be over TOKEN CONTENT (or a manifest of token-content hashes) — never over a report file or a tarball.",
+      "type": "object",
+      "required": ["panel_token_sha256", "hash_covers"],
+      "properties": {
+        "panel_token_sha256": { "$ref": "common.schema.json#/$defs/sha256_or_null" },
+        "manifest_sha256": { "$ref": "common.schema.json#/$defs/sha256_or_null" },
+        "panel_receipt_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256_or_null",
+          "description": "Hash of the receipt FILE that declares the panel. Recorded for traceability only. Explicitly NOT an identity of the tokens and never usable as determinism evidence."
+        },
+        "hash_covers": {
+          "enum": ["token_ids", "token_manifest", "none"],
+          "description": "What panel_token_sha256 is actually a digest of. 'none' is only legal when sealed=false."
+        },
+        "shard_token_sha256": {
+          "type": "object",
+          "additionalProperties": { "$ref": "common.schema.json#/$defs/sha256" }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "contamination": {
+      "type": "object",
+      "required": ["checked"],
+      "properties": {
+        "checked": { "type": "boolean" },
+        "method": { "type": ["string", "null"], "description": "e.g. n-gram scan against a named benchmark set." },
+        "benchmarks_scanned": { "type": "array", "items": { "type": "string" } },
+        "hits": { "type": ["integer", "null"], "minimum": 0 },
+        "receipt": {
+          "oneOf": [{ "$ref": "common.schema.json#/$defs/source" }, { "type": "null" }]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "sealed": {
+      "type": "boolean",
+      "description": "true only when the exact token ids are pinned by a content hash AND that hash is reproducible by a third party from published material."
+    },
+
+    "derived_from": {
+      "oneOf": [{ "$ref": "common.schema.json#/$defs/panel_id" }, { "type": "null" }]
+    },
+    "derivation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "detail"],
+          "properties": {
+            "kind": {
+              "enum": ["scoring_window_change", "shard_subset", "stratum_subset", "reformat", "other"]
+            },
+            "detail": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        { "type": "null" }
+      ]
+    },
+
+    "availability": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["public", "on-request", "private", "undisclosed"] },
+        "uri": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+
+    "cross_refs": { "$ref": "common.schema.json#/$defs/cross_refs" },
+    "sources": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/source" } },
+    "disclosures": { "$ref": "common.schema.json#/$defs/disclosures" }
+  },
+
+  "allOf": [
+    {
+      "description": "A sealed panel must actually be pinned by a token-content hash.",
+      "if": { "properties": { "sealed": { "const": true } }, "required": ["sealed"] },
+      "then": {
+        "properties": {
+          "identity": {
+            "properties": {
+              "panel_token_sha256": { "$ref": "common.schema.json#/$defs/sha256" },
+              "hash_covers": { "enum": ["token_ids", "token_manifest"] }
+            },
+            "required": ["panel_token_sha256"]
+          },
+          "structure": {
+            "properties": {
+              "contexts": { "type": "integer" },
+              "scored_positions_total": { "type": "integer" }
+            },
+            "required": ["contexts", "scored_positions_total"]
+          }
+        }
+      }
+    },
+    {
+      "description": "A derived panel must say how it was derived, and vice versa.",
+      "if": {
+        "properties": { "derived_from": { "type": "string" } },
+        "required": ["derived_from"]
+      },
+      "then": { "properties": { "derivation": { "type": "object" } }, "required": ["derivation"] }
+    },
+    {
+      "description": "An undisclosed panel cannot claim to be sealed.",
+      "if": {
+        "properties": { "availability": { "properties": { "status": { "const": "undisclosed" } }, "required": ["status"] } },
+        "required": ["availability"]
+      },
+      "then": { "properties": { "sealed": { "const": false } } }
+    }
+  ],
+
+  "additionalProperties": false
+}

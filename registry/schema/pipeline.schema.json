@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/schema/pipeline.schema.json",
+  "title": "Pipeline / tool",
+  "description": "A named, pinned piece of software that produced something in this registry: a quantizer, a logits capturer, a KLD scorer, an aggregator, or a panel builder. Measurements name the stack that measured them; artifacts may name the stack that built them.",
+  "type": "object",
+  "required": ["schema_version", "id", "name", "roles", "implementation", "author", "disclosures"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "id": { "$ref": "common.schema.json#/$defs/pipeline_id" },
+    "name": { "type": "string", "minLength": 1 },
+
+    "roles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "enum": ["panel-builder", "quantizer", "capture", "replay", "scorer", "aggregator", "end-to-end"]
+      }
+    },
+
+    "implementation": {
+      "type": "object",
+      "required": ["repository", "revision", "entrypoint"],
+      "properties": {
+        "repository": { "type": ["string", "null"], "description": "Repo URL or HF repo id. null only for closed/unknown third-party stacks." },
+        "revision": { "type": ["string", "null"] },
+        "entrypoint": { "type": ["string", "null"], "description": "e.g. tools/k6_kld_report.py" },
+        "file_sha256": { "$ref": "common.schema.json#/$defs/sha256_or_null" },
+        "container_image": { "type": ["string", "null"] },
+        "container_digest": { "type": ["string", "null"] },
+        "runtime_reader_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256_or_null",
+          "description": "For packed-format readers: the ABI/reader identity our receipts seal."
+        },
+        "dependencies": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Pinned versions that materially affect numerics, e.g. torch, vllm, exllamav3, flash-attn."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "numerics": {
+      "type": "object",
+      "properties": {
+        "accumulation_dtype": { "$ref": "common.schema.json#/$defs/numeric_format" },
+        "two_pass": { "type": ["boolean", "null"] },
+        "vocab_chunk": { "type": ["integer", "null"], "minimum": 1 },
+        "determinism_controls": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "batch_invariant_kernels",
+              "deterministic_algorithms",
+              "fixed_seed",
+              "fixed_batch_shape",
+              "single_stream",
+              "cold_process_per_run",
+              "none"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "hardware": {
+      "type": "object",
+      "properties": {
+        "gpu": { "type": ["string", "null"] },
+        "gpu_count": { "type": ["integer", "null"], "minimum": 0 },
+        "tensor_parallel": { "type": ["integer", "null"], "minimum": 1 },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "cost": {
+      "type": "object",
+      "description": "Optional, and the one place this registry touches local-ai-registry's territory: what one measurement costs to reproduce.",
+      "properties": {
+        "usd_per_measurement": { "type": ["number", "null"], "minimum": 0 },
+        "basis": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+
+    "author": { "$ref": "common.schema.json#/$defs/attribution" },
+    "cross_refs": { "$ref": "common.schema.json#/$defs/cross_refs" },
+    "sources": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/source" } },
+    "disclosures": { "$ref": "common.schema.json#/$defs/disclosures" }
+  },
+  "additionalProperties": false
+}

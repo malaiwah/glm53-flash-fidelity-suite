@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/schema/model.schema.json",
+  "title": "Model",
+  "description": "The upstream model being quantized. One record per (publisher, model), NOT per quantized instance. Artifacts point at this; measurements never point here directly.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "publisher",
+    "huggingface",
+    "architecture",
+    "tokenizer",
+    "canonical_weights",
+    "disclosures"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "id": { "$ref": "common.schema.json#/$defs/model_id" },
+    "name": { "type": "string", "minLength": 1 },
+    "family": { "type": ["string", "null"], "description": "e.g. glm-5.3, qwen3.8 — used to group tables." },
+    "publisher": { "$ref": "common.schema.json#/$defs/attribution" },
+    "huggingface": { "$ref": "common.schema.json#/$defs/huggingface_identity" },
+
+    "architecture": {
+      "type": "object",
+      "required": ["kind", "total_parameters"],
+      "properties": {
+        "kind": { "type": "string", "description": "e.g. moe-decoder, dense-decoder." },
+        "total_parameters": { "type": ["integer", "null"], "minimum": 0 },
+        "active_parameters": { "type": ["integer", "null"], "minimum": 0 },
+        "num_layers": { "type": ["integer", "null"], "minimum": 0 },
+        "hidden_size": { "type": ["integer", "null"], "minimum": 0 },
+        "vocab_size": { "type": ["integer", "null"], "minimum": 0 },
+        "has_mtp": { "type": "boolean", "default": false },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "tokenizer": {
+      "description": "Panels are tokenizer-bound. A measurement whose panel used a different tokenizer than the model is a hard validator error.",
+      "type": "object",
+      "required": ["id", "vocab_size"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "Stable tokenizer name, e.g. glm-5.3-flash, qwen3.8." },
+        "repository": { "type": ["string", "null"] },
+        "revision": { "type": ["string", "null"] },
+        "files_sha256": {
+          "type": "object",
+          "additionalProperties": { "$ref": "common.schema.json#/$defs/sha256" }
+        },
+        "vocab_size": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+
+    "canonical_weights": {
+      "description": "The publisher's own highest-fidelity release — the thing a BF16 teacher is normally captured from.",
+      "type": "object",
+      "required": ["artifact_ref", "precision"],
+      "properties": {
+        "artifact_ref": { "$ref": "common.schema.json#/$defs/artifact_id" },
+        "precision": { "$ref": "common.schema.json#/$defs/numeric_format" }
+      },
+      "additionalProperties": false
+    },
+
+    "license": { "type": ["string", "null"] },
+    "cross_refs": { "$ref": "common.schema.json#/$defs/cross_refs" },
+    "sources": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/source" } },
+    "disclosures": { "$ref": "common.schema.json#/$defs/disclosures" }
+  },
+  "additionalProperties": false
+}

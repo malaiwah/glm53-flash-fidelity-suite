@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/schema/index.schema.json",
+  "title": "Registry index",
+  "description": "Generated manifest of the registry. Shape intentionally echoes local-ai-registry's index (schema_version / resolver_rule / collections / counts) so a consumer written for that registry needs minimal work here. The addition is comparability_keys: the registry's grouping is data, not a README convention.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "registry_id",
+    "generated_at",
+    "resolver_rule",
+    "comparability_rule",
+    "collections",
+    "counts",
+    "comparability_keys"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "registry_id": { "type": "string", "description": "e.g. malaiwah/quant-fidelity-registry" },
+    "generated_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+
+    "resolver_rule": {
+      "type": "string",
+      "description": "How a consumer resolves a row's refs: every *_ref is the id field of a record in the collection named by the ref's id prefix."
+    },
+    "comparability_rule": {
+      "type": "string",
+      "description": "The one-sentence contract: two measurement values may be compared if and only if their comparability.key values are equal; a table that mixes keys is malformed."
+    },
+
+    "collections": {
+      "type": "object",
+      "required": ["models", "artifacts", "panels", "references", "pipelines", "measurements"],
+      "additionalProperties": {
+        "type": "object",
+        "required": ["file", "schema", "record_count"],
+        "properties": {
+          "file": { "type": "string" },
+          "schema": { "type": "string" },
+          "record_count": { "type": "integer", "minimum": 0 },
+          "sha256": { "$ref": "common.schema.json#/$defs/sha256_or_null" }
+        },
+        "additionalProperties": false
+      }
+    },
+
+    "counts": {
+      "type": "object",
+      "properties": {
+        "models": { "type": "integer", "minimum": 0 },
+        "artifacts": { "type": "integer", "minimum": 0 },
+        "panels": { "type": "integer", "minimum": 0 },
+        "references": { "type": "integer", "minimum": 0 },
+        "pipelines": { "type": "integer", "minimum": 0 },
+        "measurements": { "type": "integer", "minimum": 0 },
+        "measurements_self_measured": { "type": "integer", "minimum": 0 },
+        "measurements_author_reported": { "type": "integer", "minimum": 0 },
+        "measurements_third_party_reported": { "type": "integer", "minimum": 0 },
+        "measurements_strict": { "type": "integer", "minimum": 0 },
+        "measurements_advisory": { "type": "integer", "minimum": 0 },
+        "measurements_independently_verified": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+
+    "comparability_keys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "panel_id", "reference_id", "metric_name", "member_count"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^cmp--[0-9a-f]{16}$" },
+          "panel_id": { "$ref": "common.schema.json#/$defs/panel_id" },
+          "reference_id": { "$ref": "common.schema.json#/$defs/reference_id" },
+          "metric_name": { "type": "string" },
+          "direction": { "type": "string" },
+          "accumulation_dtype": { "type": "string" },
+          "stack_relation": { "type": "string" },
+          "head_policy": { "type": "string" },
+          "member_count": { "type": "integer", "minimum": 0 },
+          "label": { "type": "string", "description": "Human table heading for this group." }
+        },
+        "additionalProperties": false
+      }
+    },
+
+    "validator": {
+      "type": "object",
+      "properties": {
+        "tool": { "type": "string" },
+        "invariants_file": { "type": "string" },
+        "last_run_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "passed": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+
+    "cross_refs": { "$ref": "common.schema.json#/$defs/cross_refs" }
+  },
+  "additionalProperties": false
+}

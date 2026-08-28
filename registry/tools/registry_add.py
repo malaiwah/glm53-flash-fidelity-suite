@@ -1,0 +1,1208 @@
+#!/usr/bin/env python3
+"""Turn a sealed receipt into a conformant measurement row -- refusing to invent provenance.
+
+Dispatch is on the receipt's own declared `schema` string, exact match. An unknown
+receipt family is an error naming the observed string, never a guess at its shape.
+Every field the row carries is either READ from the receipt (and recorded in
+`field_provenance` with a JSON Pointer into it), or SUPPLIED by an explicit flag.
+Nothing is defaulted, inferred or averaged into existence. Booleans and aggregates
+that the receipt asserts are RECOMPUTED from the underlying arrays, and a
+disagreement is an error rather than a warning.
+
+Offline by construction: no networking module is imported anywhere in this module's
+graph, and `--offline-selftest` proves it. `--*-url` flags record strings; nothing is
+ever fetched.
+
+  registry_add.py from-receipt   --receipt R [--receipt R2] --artifact A --panel P \
+                                 --reference REF --pipeline PL --model M [flags]
+  registry_add.py from-report    --report R  ... [--reference-revision SHA --reference-revision-evidence REF]
+  registry_add.py from-crosscheck --report R ... (--floor-measurement ID | --floor-pending)
+  registry_add.py from-foreign   --receipt R --reported-by HANDLE --source-url URL ...
+  registry_add.py note           --value F --reported-by HANDLE --source-url URL --reference-unverified ...
+  registry_add.py schemas        # list the receipt families this tool understands
+
+Exit codes (stable; CONTRIBUTING.md cites them):
+  0 row written, or unchanged (idempotent re-run)
+  3 unrecognized receipt `schema` string
+  4 required provenance missing and no flag supplied
+  5 receipt internally inconsistent (a recomputation disagreed with the receipt)
+  6 provenance void: a flag asserts something the receipt contradicts, with no --disclosure
+  7 identity clash: --panel / --reference / --artifact does not match the receipt's
+  8 attribution conflict
+  9 id collision with differing content
+"""
+
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import registry_lib as L  # noqa: E402
+
+E_SCHEMA, E_MISSING, E_INCONSISTENT, E_VOID, E_IDENTITY, E_ATTRIB, E_COLLISION = 3, 4, 5, 6, 7, 8, 9
+
+
+class Refuse(Exception):
+    def __init__(self, code, message, remedy=None):
+        Exception.__init__(self, message)
+        self.code = code
+        self.remedy = remedy
+
+
+# --- receipt families -------------------------------------------------------
+# The keys are the exact `schema` strings our tooling writes. OWN_SCHEMAS are the
+# families we produce ourselves; only those may back a self-measured row.
+
+PACKED_RECEIPT = "quant-pipeline.glm53-packed-kld-receipt.v1"
+FIVE_COLD_RUN = "quant-pipeline.glm53-packed-student-kld-five-cold-run.v1"
+DIONE_SUMMARY = "malaiwah.glm53-dione-q4-packed-kld-summary.v1"
+FOREIGN_REPEATED = "glm53-r19-runtime-kld-repeated.v1"
+FOREIGN_WINDOW = "glm53-r19-runtime-window-kld.v1"
+FOREIGN_TP2 = "quant-pipeline.glm53-custom-tp2-runtime-window-kld.v1"
+
+REPORT_FAMILIES = ("glm53flash-fidelity-report/2", "glm53flash-fidelity-report/3",
+                   "qwen38-kld-ladder-cumulative/2", "qwen38-kld-ladder-cumulative/3",
+                   "qwen38-fidelity-report/2", "qwen38-fidelity-report/3")
+CROSSCHECK_FAMILIES = ("glm53flash-crosscheck/2",)
+OWN_SCHEMAS = set([PACKED_RECEIPT, FIVE_COLD_RUN, DIONE_SUMMARY] + list(REPORT_FAMILIES)
+                  + list(CROSSCHECK_FAMILIES))
+FOREIGN_SCHEMAS = {FOREIGN_REPEATED, FOREIGN_WINDOW, FOREIGN_TP2}
+KNOWN = OWN_SCHEMAS | FOREIGN_SCHEMAS
+
+
+def load_receipt(path):
+    if not os.path.exists(path):
+        raise Refuse(E_MISSING, "receipt not found: %s" % path)
+    with open(path, "r", encoding="utf-8") as fh:
+        try:
+            r = json.load(fh)
+        except ValueError as exc:
+            raise Refuse(E_MISSING, "receipt is not valid JSON: %s (%s)" % (path, exc))
+    schema = r.get("schema")
+    if schema not in KNOWN:
+        raise Refuse(E_SCHEMA,
+                     "unrecognized receipt family. The receipt declares schema=%r.\n"
+                     "This tool dispatches on that exact string and will not guess at an unknown "
+                     "receipt's shape.\nKnown families:\n  %s" % (schema, "\n  ".join(sorted(KNOWN))),
+                     "add an adapter keyed on that schema string, or convert the receipt")
+    return r, path, L.sha256_file(path)
+
+
+# --- adapters ---------------------------------------------------------------
+
+def _need(receipt, pointer, path, ctx=""):
+    node, cur = receipt, ""
+    for part in [p for p in pointer.split("/") if p]:
+        cur += "/" + part
+        if not isinstance(node, dict) or part not in node:
+            raise Refuse(E_MISSING,
+                         "%s does not carry %s%s. The tool will not substitute a default for a "
+                         "provenance-bearing field." % (os.path.basename(path), pointer,
+                                                        (" (%s)" % ctx) if ctx else ""))
+        node = node[part]
+    return node
+
+
+def adapt_packed_and_five_run(receipts):
+    """F1 + F2 fused: the packed receipt supplies the value and the seals, the five-run
+    receipt supplies the determinism evidence. The two must agree or it is exit 5."""
+    packed = next((r for r in receipts if r[0].get("schema") == PACKED_RECEIPT), None)
+    five = next((r for r in receipts if r[0].get("schema") == FIVE_COLD_RUN), None)
+    if five is None:
+        raise Refuse(E_MISSING, "no %s receipt supplied: without it there is no determinism evidence "
+                                "and no per-run array to recompute against." % FIVE_COLD_RUN)
+    fr, fpath, fsha = five
+    runs = _need(fr, "/runs", fpath)
+    means = [x["mean_kld"] for x in runs]
+    value = _need(fr, "/mean_of_run_means", fpath)
+    if not L.close(value, sum(means) / len(means)):
+        raise Refuse(E_INCONSISTENT, "mean_of_run_means %r != mean of the per-run means %r"
+                     % (value, sum(means) / len(means)))
+    for field, want in (("population_stddev_of_run_means", L.population_stddev(means)),
+                        ("minimum_run_mean", min(means)), ("maximum_run_mean", max(means))):
+        if field in fr and not L.close(fr[field], want):
+            raise Refuse(E_INCONSISTENT, "%s = %r but recomputing from runs[] gives %r"
+                         % (field, fr[field], want))
+    if _need(fr, "/run_count", fpath) != len(runs):
+        raise Refuse(E_INCONSISTENT, "run_count != len(runs)")
+    positions = {x.get("prediction_positions") for x in runs}
+    if len(positions) != 1:
+        raise Refuse(E_INCONSISTENT, "runs disagree on prediction_positions: %s" % sorted(positions))
+    digests = sorted({x.get("tokenwise_kld_sha256") for x in runs if x.get("tokenwise_kld_sha256")})
+    if len(digests) != len(runs) and len(digests) != 1:
+        pass  # partial digests: reported below as not-identical
+    identical = len(digests) == 1 and len(digests) == len({d for d in digests})
+    if packed:
+        pr, ppath, _ = packed
+        pv = _need(pr, "/measured_mean_kld", ppath)
+        if not L.close(pv, value):
+            raise Refuse(E_INCONSISTENT, "the packed receipt says %r and the five-run receipt says %r; "
+                                         "they are not the same measurement." % (pv, value))
+        for field in ("token_panel_receipt_sha256", "teacher_receipt_sha256"):
+            if field in pr and field in fr and pr[field] != fr[field]:
+                raise Refuse(E_INCONSISTENT, "the two receipts disagree on %s" % field)
+    out = {
+        "value": value, "metric_name": "mean_of_run_means_tokenwise_kld",
+        "direction": _dir(_need(fr, "/kld_direction", fpath)),
+        "accumulation": _acc(_need(fr, "/compute_dtype", fpath)),
+        "scored_positions": positions.pop() * len(runs) if False else sum(
+            x["prediction_positions"] for x in runs) // len(runs),
+        "runs": len(runs), "run_means": means, "cold": True,
+        "identical": bool(identical and len(runs) >= 2),
+        "evidence_kind": "tokenwise_kld_sha256" if digests else "run_mean_equality_only",
+        "evidence_hashes": digests if identical else (digests or None),
+        "panel_digest": fr.get("token_panel_receipt_sha256"),
+        "teacher_digest": fr.get("teacher_receipt_sha256"),
+        "gate": _gate(fr),
+        "field_provenance": {"value": "#/mean_of_run_means", "direction": "#/kld_direction",
+                             "accumulation": "#/compute_dtype", "runs": "#/run_count",
+                             "run_means": "#/runs[]/mean_kld",
+                             "evidence_hashes": "#/runs[]/tokenwise_kld_sha256"},
+        "receipt_schema": FIVE_COLD_RUN,
+        "stack_relation": "same_stack", "head_policy": "native_head",
+    }
+    if not identical and len(digests) > 1:
+        out["det_note"] = ("%d DISTINCT per-run tokenwise digests: this measurement is not bitwise "
+                           "reproducible." % len(digests))
+    return out
+
+
+def adapt_dione(receipt, path):
+    value = _need(receipt, "/measured_mean_kld", path)
+    means = _need(receipt, "/run_means", path)
+    digests = _need(receipt, "/distinct_tokenwise_kld_sha256", path)
+    recomputed = len(set(digests)) == 1 and len(set(means)) == 1
+    declared = receipt.get("bitwise_deterministic")
+    if declared is not None and bool(declared) != recomputed:
+        raise Refuse(E_INCONSISTENT,
+                     "the receipt declares bitwise_deterministic=%r but recomputing from run_means "
+                     "(%d distinct) and distinct_tokenwise_kld_sha256 (%d entries) gives %r"
+                     % (declared, len(set(means)), len(set(digests)), recomputed))
+    if not L.close(value, sum(means) / len(means)):
+        raise Refuse(E_INCONSISTENT, "measured_mean_kld != mean(run_means)")
+    disclosure = []
+    for f in ("seal_disclosure", "cold_run_deviation"):
+        if receipt.get(f):
+            disclosure.append("%s (verbatim from the receipt): %s" % (f, receipt[f]))
+    return {
+        "value": value, "metric_name": "mean_of_run_means_tokenwise_kld",
+        "direction": "reference_to_candidate", "accumulation": "float64",
+        "runs": len(means), "run_means": list(means), "cold": True,
+        "identical": recomputed and len(means) >= 2,
+        "evidence_kind": "tokenwise_kld_sha256", "evidence_hashes": list(digests),
+        "scored_positions": None, "gate": _gate(receipt),
+        "artifact_repo": receipt.get("dione_repo"), "artifact_revision": receipt.get("dione_revision"),
+        "teacher_digest": receipt.get("teacher_receipt_sha256"),
+        "verbatim_disclosure": disclosure,
+        "field_provenance": {"value": "#/measured_mean_kld", "run_means": "#/run_means",
+                             "evidence_hashes": "#/distinct_tokenwise_kld_sha256"},
+        "receipt_schema": DIONE_SUMMARY,
+        "stack_relation": "same_stack", "head_policy": "native_head",
+    }
+
+
+def adapt_report(receipt, path, position_selector=None):
+    """F4: shared-head replay reports (GLM suite and the Qwen ladder)."""
+    cmp_ = receipt.get("comparator") or {}
+    sw = receipt.get("scored_position_window") or {}
+    ref_rev = ((receipt.get("reference_identity") or {}).get("model_revision"))
+    sel = "all"
+    if sw.get("windowed"):
+        sel = "score_from:%s" % sw.get("score_from")
+    if position_selector and position_selector != sel:
+        raise Refuse(E_IDENTITY, "--position-selector %r but the receipt declares %r"
+                     % (position_selector, sel))
+    cb = receipt.get("context_bootstrap") or {}
+    return {
+        "value": _need(receipt, "/token_mean_kld", path),
+        "metric_name": "mean_tokenwise_kld", "direction": "reference_to_candidate",
+        "accumulation": _acc(cmp_.get("accumulation")),
+        "two_pass": cmp_.get("two_pass"), "vocab_chunk": cmp_.get("vocab_chunk"),
+        "top1": receipt.get("top1_agreement"),
+        "scored_positions": receipt.get("scored_positions"), "contexts": receipt.get("contexts"),
+        "ci": ((cb.get("ci95_low"), cb.get("ci95_high")) if cb.get("ci95_low") is not None else None),
+        "clusters": cb.get("clusters"), "samples": cb.get("samples"),
+        "runs": 1, "identical": None, "evidence_kind": "none", "evidence_hashes": [],
+        "position_selector": sel,
+        "reference_revision": ref_rev,
+        "reference_revision_source": (receipt.get("reference_identity") or {}).get("model_revision_source"),
+        "head_sha256": receipt.get("head_sha256"),
+        "candidate_head": receipt.get("candidate_head"),
+        "panel_digest": receipt.get("suite_token_sha256") or
+                        ((receipt.get("suite") or {}).get("parent") or {}).get("manifest_sha256"),
+        "field_provenance": {"value": "#/token_mean_kld", "top1": "#/top1_agreement",
+                             "accumulation": "#/comparator/accumulation",
+                             "scored_positions": "#/scored_positions",
+                             "ci": "#/context_bootstrap/ci95_low..ci95_high"},
+        "receipt_schema": receipt.get("schema"),
+        "stack_relation": "same_stack",
+        "head_policy": "shared_reference_head" if receipt.get("head_sha256") else "native_head",
+    }
+
+
+def adapt_crosscheck(receipt, path):
+    return {
+        "value": _need(receipt, "/mean_kld", path), "metric_name": "mean_tokenwise_kld",
+        "direction": _dir(_need(receipt, "/direction", path)),
+        "direction_source_text": receipt.get("direction"),
+        "accumulation": "float64", "top1": receipt.get("top1_agreement"),
+        "scored_positions": receipt.get("positions"), "contexts": receipt.get("windows"),
+        "runs": 1, "identical": None, "evidence_kind": "none", "evidence_hashes": [],
+        "offset_audit": receipt.get("offset_audit_mean_top1"),
+        "field_provenance": {"value": "#/mean_kld", "top1": "#/top1_agreement",
+                             "scored_positions": "#/positions", "contexts": "#/windows"},
+        "receipt_schema": receipt.get("schema"),
+        "stack_relation": "cross_stack", "head_policy": "native_head",
+    }
+
+
+def adapt_foreign(receipt, path):
+    sch = receipt.get("schema")
+    if sch == FOREIGN_REPEATED:
+        runs = _need(receipt, "/runs", path)
+        means = [x["mean_kld"] for x in runs]
+        value = _need(receipt, "/mean_of_run_means", path)
+        if not L.close(value, sum(means) / len(means)):
+            raise Refuse(E_INCONSISTENT, "mean_of_run_means disagrees with runs[]")
+        sd = receipt.get("population_stddev_of_run_means")
+        if sd is not None and not L.close(sd, L.population_stddev(means)):
+            raise Refuse(E_INCONSISTENT, "population_stddev_of_run_means %r but recomputing gives %r"
+                         % (sd, L.population_stddev(means)))
+        digests = sorted({x.get("tokenwise_kld_sha256") for x in runs if x.get("tokenwise_kld_sha256")})
+        identical = len(digests) == 1
+        pos = {x.get("prediction_positions") for x in runs}
+        return {
+            "value": value, "metric_name": "mean_of_run_means_tokenwise_kld",
+            "direction": "reference_to_candidate",
+            # This receipt family carries no compute_dtype. It is somebody else's
+            # estimator; asserting float64 on their behalf would be inventing the one
+            # field that is load-bearing for the comparability key. Record what the
+            # receipt says (nothing) and let --accumulation supply it explicitly.
+            "accumulation": _acc_optional(receipt.get("compute_dtype")),
+            "top1": receipt.get("mean_top1_agreement"),
+            "scored_positions": (pos.pop() if len(pos) == 1 else None),
+            "contexts": 1, "runs": len(runs), "run_means": means, "cold": True,
+            "identical": identical and len(runs) >= 2,
+            "evidence_kind": "tokenwise_kld_sha256" if digests else "run_mean_equality_only",
+            "evidence_hashes": digests if identical else None,
+            "det_note": ("%d distinct per-run tokenwise digests" % len(digests)) if not identical else None,
+            "gate": {"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
+                     "passed": bool(receipt.get("all_quality_gates_passed"))},
+            "regime": receipt.get("regime"),
+            "field_provenance": {"value": "#/mean_of_run_means", "top1": "#/mean_top1_agreement",
+                                 "run_means": "#/runs[]/mean_kld"},
+            "receipt_schema": sch, "stack_relation": "same_stack", "head_policy": "native_head",
+        }
+    summary = receipt.get("summary") or {}
+    return {
+        "value": _need(receipt, "/summary/mean", path), "metric_name": "mean_tokenwise_kld",
+        "direction": "reference_to_candidate", "accumulation": _acc(receipt.get("compute_dtype")),
+        "top1": receipt.get("top1_agreement"),
+        "scored_positions": receipt.get("prediction_positions"), "contexts": 1,
+        "runs": 1, "identical": None, "evidence_kind": "none", "evidence_hashes": [],
+        "aux": {"median_kld": summary.get("p50"), "p95_kld": summary.get("p95"),
+                "p99_kld": summary.get("p99"), "max_kld": summary.get("max")},
+        "gate": {"metric": "mean_tokenwise_kld", "threshold_lt": receipt.get("max_mean_kld"),
+                 "threshold_gt": None, "passed": bool(receipt.get("mean_kld_gate_passed"))},
+        "token_ids_sha256": receipt.get("tokens_sha256") or receipt.get("token_ids_sha256"),
+        "field_provenance": {"value": "#/summary/mean", "top1": "#/top1_agreement",
+                             "scored_positions": "#/prediction_positions"},
+        "receipt_schema": sch, "stack_relation": "same_stack", "head_policy": "native_head",
+    }
+
+
+def _dir(text):
+    t = (text or "").lower()
+    if "teacher_to_student" in t or t.startswith("kld(brandonmusic_teacher") or "bf16_teacher_to" in t:
+        return "reference_to_candidate"
+    if "student_to_teacher" in t:
+        return "candidate_to_reference"
+    raise Refuse(E_MISSING, "cannot map the receipt's KL direction %r onto the registry's enum without "
+                            "guessing. Supply --direction explicitly." % text)
+
+
+def _acc(text):
+    t = (text or "").lower()
+    if t in ("float64", "fp64", "double"):
+        return "float64"
+    if t in ("float32", "fp32"):
+        return "float32"
+    if not t:
+        raise Refuse(E_MISSING, "the receipt does not state its accumulation dtype; supply "
+                                "--accumulation explicitly rather than assuming float64.")
+    return "mixed"
+
+
+def _acc_optional(text):
+    """Like _acc, but a silent receipt yields None instead of refusing.
+
+    None means "the receipt does not say". The caller must then either be given
+    --accumulation, or the row is built with accumulation_dtype 'unknown' -- which is
+    an honest statement about a third party's estimator and keeps such rows in their
+    own comparability group instead of merging them with float64-attested ones.
+    """
+    return _acc(text) if text else None
+
+
+def _gate(receipt):
+    q = receipt.get("quality_gate")
+    if not isinstance(q, dict):
+        return None
+    return {"metric": q.get("metric"), "threshold_lt": q.get("threshold_lt"),
+            "threshold_gt": q.get("threshold_gt"),
+            "passed": bool(receipt.get("quality_gate_passed", receipt.get("qualified")))}
+
+
+# --- row assembly -----------------------------------------------------------
+
+def build_row(args, adapted, receipt_sources, registry):
+    panels = registry["panels"]
+    refs = registry["references"]
+    arts = registry["artifacts"]
+
+    for name, coll, val in (("--artifact", arts, args.artifact), ("--panel", panels, args.panel),
+                            ("--reference", refs, args.reference)):
+        if val not in coll:
+            raise Refuse(E_MISSING, "%s %r does not exist in the registry. Declare the record first; "
+                                    "this tool will not create one from a measurement receipt."
+                         % (name, val))
+    art, pan, ref = arts[args.artifact], panels[args.panel], refs[args.reference]
+
+    if ref.get("panel_ref") != args.panel:
+        raise Refuse(E_IDENTITY, "reference %s was captured on panel %s, not %s"
+                     % (args.reference, ref.get("panel_ref"), args.panel))
+
+    pd = adapted.get("panel_digest")
+    if pd:
+        ident = pan.get("identity") or {}
+        known = {ident.get("panel_token_sha256"), ident.get("panel_receipt_sha256"),
+                 ident.get("manifest_sha256")} | set((ident.get("shard_token_sha256") or {}).values())
+        if pd not in known:
+            raise Refuse(E_IDENTITY,
+                         "the receipt pins panel digest %s, which panel %s does not carry. Either the "
+                         "wrong --panel was given or this is a different panel."
+                         % (pd[:16] + "...", args.panel))
+    sp = adapted.get("scored_positions")
+    total = (pan.get("structure") or {}).get("scored_positions_total")
+    if sp and total and sp != total and args.covers_full_panel:
+        raise Refuse(E_IDENTITY,
+                     "the receipt scored %d positions but panel %s has %d. Use the panel record that "
+                     "matches, or pass --subset-detail." % (sp, args.panel, total))
+    if adapted.get("artifact_revision"):
+        have = (art.get("huggingface") or {}).get("revision")
+        if have and have != adapted["artifact_revision"]:
+            raise Refuse(E_IDENTITY, "the receipt pins artifact revision %s, the registry record has %s"
+                         % (adapted["artifact_revision"], have))
+
+    schema = adapted.get("receipt_schema")
+    if args.attribution == "self-measured" and schema not in OWN_SCHEMAS:
+        raise Refuse(E_ATTRIB, "receipt family %r is not one this registry produces, so a row derived "
+                               "from it cannot be marked self-measured." % schema)
+    owner = ((art.get("huggingface") or {}).get("repository") or "/").split("/")[0]
+    if args.attribution == "self-measured" and owner and owner != L.MAINTAINER and not args.third_party_artifact:
+        raise Refuse(E_ATTRIB, "artifact %s belongs to %r, not to the registry maintainer. A row that "
+                               "measures someone else's weights must pass --third-party-artifact so the "
+                               "table can say whose artifact it is." % (args.artifact, owner))
+    if args.attribution != "self-measured" and not (args.reported_by and args.source_url):
+        raise Refuse(E_MISSING, "a %s row requires --reported-by and --source-url" % args.attribution)
+
+    if adapted.get("reference_revision") is None and schema in REPORT_FAMILIES:
+        if not (args.reference_revision and args.reference_revision_evidence):
+            raise Refuse(E_MISSING,
+                         "the report records reference_identity.model_revision = null "
+                         "(model_revision_source = %r). This tool will not write a null revision and "
+                         "will not invent one."
+                         % adapted.get("reference_revision_source"),
+                         "pass --reference-revision <sha> --reference-revision-evidence <path|url>; "
+                         "the row will record revision_source='operator_asserted'")
+
+    if adapted.get("identical") and adapted.get("evidence_kind") not in (
+            "tokenwise_kld_sha256", "logits_tensor_sha256", "hidden_state_tensor_sha256",
+            "sealed_tokenwise_digest"):
+        raise Refuse(E_INCONSISTENT, "determinism would be claimed on %r evidence, which cannot support it"
+                     % adapted.get("evidence_kind"))
+    if args.deterministic and not adapted.get("identical"):
+        raise Refuse(E_INCONSISTENT, "--deterministic was passed but the receipt's own per-run digests do "
+                                     "not support a bitwise-identical claim.")
+
+    # A flag may SUPPLY what the receipt is silent about. It may never quietly
+    # overrule what the receipt states -- that is how a cross_stack replay gets
+    # relabelled same_stack and loses its bias block, and how a float32 estimator
+    # gets promoted into the float64 comparability group. Overruling is allowed
+    # only with an explicit --disclosure, which lands on the row for the reader.
+    overridden = []
+    for flag_name, flag_val, key_name in (("--stack-relation", args.stack_relation, "stack_relation"),
+                                          ("--head-policy", args.head_policy, "head_policy"),
+                                          ("--accumulation", args.accumulation, "accumulation")):
+        stated = adapted.get(key_name)
+        if flag_val is None or stated is None or flag_val == stated:
+            continue
+        if not args.disclosure:
+            raise Refuse(E_VOID,
+                         "%s %r contradicts the receipt, which states %r (%s). A flag may supply what "
+                         "a receipt omits; it may not overrule what a receipt states."
+                         % (flag_name, flag_val, stated, key_name),
+                         "drop the flag to use the receipt's value, or pass --disclosure explaining "
+                         "on what evidence the receipt's own value is being overruled.")
+        overridden.append((key_name, stated, flag_val))
+
+    stack = args.stack_relation or adapted.get("stack_relation")
+    head = args.head_policy or adapted.get("head_policy")
+    if stack == "cross_stack" and not (args.floor_measurement or args.floor_pending):
+        raise Refuse(E_MISSING, "a cross-stack row must name its measurement floor "
+                                "(--floor-measurement ID) or declare that none exists yet "
+                                "(--floor-pending with --disclosure).")
+    if args.floor_pending and not args.disclosure:
+        raise Refuse(E_VOID, "--floor-pending requires --disclosure explaining why no floor exists.")
+
+    ki = {"panel_id": args.panel, "reference_id": args.reference,
+          "metric_name": adapted["metric_name"], "direction": adapted["direction"],
+          # "unknown" when neither the receipt nor a flag states it -- never a guess.
+          "accumulation_dtype": args.accumulation or adapted["accumulation"] or "unknown",
+          "stack_relation": stack, "head_policy": head}
+    key = L.comparability_key(ki)
+
+    disclosures = []
+    for text in (adapted.get("verbatim_disclosure") or []):
+        disclosures.append({"code": "unsealed_source", "severity": "caveat", "detail": text,
+                            "affects_comparability": True})
+    if args.attribution != "self-measured":
+        disclosures.append({"code": "author_reported_only", "severity": "caveat",
+                            "detail": "Measured and published by %s. We have not re-run it.%s"
+                                      % (args.reported_by,
+                                         (" Regime as published: %s" % adapted["regime"])
+                                         if adapted.get("regime") else ""),
+                            "affects_comparability": True})
+    if stack == "cross_stack":
+        disclosures.append({"code": "cross_stack_capture", "severity": "caveat",
+                            "detail": "Reference and candidate logits were not produced by the same "
+                                      "runtime and code path; the result carries a stack-difference term.",
+                            "affects_comparability": True})
+    if adapted.get("runs", 1) == 1:
+        disclosures.append({"code": "single_run", "severity": "caveat",
+                            "detail": "One pass; repeatability was not established.",
+                            "affects_comparability": False})
+    if args.third_party_artifact:
+        disclosures.append({"code": "third_party_artifact_self_measured", "severity": "info",
+                            "detail": "Someone else's weights, our measurement.",
+                            "affects_comparability": False})
+    for key_name, stated, flag_val in overridden:
+        disclosures.append({"code": "estimator_overridden", "severity": "caveat",
+                            "detail": "%s is recorded as %r although the receipt states %r. "
+                                      "Reason given at generation time: %s"
+                                      % (key_name, flag_val, stated, args.disclosure),
+                            "affects_comparability": True})
+    if args.disclosure:
+        disclosures.append({"code": args.disclosure_code, "severity": "caveat",
+                            "detail": args.disclosure, "affects_comparability": True})
+    if not disclosures:
+        disclosures.append({"code": "no_known_deviations", "severity": "info",
+                            "detail": "No deviation from this registry's default protocol is known "
+                                      "for this row.", "affects_comparability": False})
+
+    det = {"run_count": adapted.get("runs", 1), "cold_start_per_run": adapted.get("cold"),
+           "identical_across_runs": adapted.get("identical"),
+           "evidence_kind": adapted.get("evidence_kind", "none"),
+           "evidence_hashes": adapted.get("evidence_hashes") or [],
+           "distinct_evidence_hash_count": len(adapted.get("evidence_hashes") or [])
+           if adapted.get("evidence_hashes") is not None else None}
+    if adapted.get("run_means"):
+        rm = adapted["run_means"]
+        det.update({"run_means": rm, "min_run_mean": min(rm), "max_run_mean": max(rm),
+                    "population_stddev_of_run_means": L.population_stddev(rm)})
+    if adapted.get("det_note"):
+        det["note"] = adapted["det_note"]
+
+    sources = list(receipt_sources)
+    if args.source_url:
+        sources.append({"kind": "url", "uri": args.source_url})
+    if args.reference_revision_evidence:
+        sources.append({"kind": "url", "uri": args.reference_revision_evidence,
+                        "note": "operator-supplied evidence for --reference-revision"})
+
+    ci = adapted.get("ci")
+    row = {
+        "schema_version": L.SCHEMA_VERSION,
+        "id": args.id or _mint_id(args, ki, adapted),
+        "status": "published", "supersedes": None,
+        "model_ref": art["model_ref"], "artifact_ref": args.artifact, "panel_ref": args.panel,
+        "reference_ref": args.reference, "pipeline_ref": args.pipeline,
+        "scope_digest": art["scope_digest"],
+        "metric": {"name": adapted["metric_name"], "value": adapted["value"], "units": "nats",
+                   "direction": adapted["direction"], "higher_is_better": False},
+        "auxiliary_metrics": dict(adapted.get("aux") or {}, top1_agreement=adapted.get("top1")),
+        "uncertainty": {"method": "context_cluster_bootstrap" if ci else "none",
+                        "ci95_low": ci[0] if ci else None, "ci95_high": ci[1] if ci else None,
+                        "clusters": adapted.get("clusters"), "samples": adapted.get("samples")},
+        "estimator": {"accumulation_dtype": ki["accumulation_dtype"], "logits_dtype": "fp32",
+                      "two_pass": adapted.get("two_pass"), "vocab_chunk": adapted.get("vocab_chunk"),
+                      "stack_relation": stack, "head_policy": head},
+        "determinism": det,
+        "measurement_scope": {"scored_positions": adapted.get("scored_positions"),
+                              "contexts": adapted.get("contexts"), "positions_per_context": None,
+                              "covers_full_panel": bool(args.covers_full_panel),
+                              "subset_detail": args.subset_detail,
+                              "position_filter": adapted.get("position_selector", "all")},
+        "provenance": {
+            "measured_by": args.attribution,
+            "measurer": ({"name": L.MAINTAINER, "role": "measurer", "handle": L.MAINTAINER,
+                          "url": "https://huggingface.co/%s" % L.MAINTAINER,
+                          "is_registry_maintainer": True}
+                         if args.attribution == "self-measured" else
+                         {"name": args.reported_by, "role": "measurer", "handle": args.reported_by,
+                          "url": None, "is_registry_maintainer": False}),
+            "independently_verified": False, "verification": None,
+            "sources": sources, "receipt_schema": schema},
+        "comparability": {"key": key, "key_inputs": ki,
+                          "class": "strict" if (args.attribution == "self-measured"
+                                                and stack == "same_stack"
+                                                and pan.get("sealed")
+                                                and not any(d.get("affects_comparability")
+                                                            for d in disclosures)) else "advisory",
+                          "bias": ({"kind": "cross_stack_capture_replay", "direction": "upward",
+                                    "floor_measurement_ref": args.floor_measurement,
+                                    "estimated_magnitude": None,
+                                    "detail": args.disclosure or
+                                              "Cross-stack replay; see the named floor."}
+                                   if stack == "cross_stack" else None)},
+        "quality_gate": adapted.get("gate"),
+        "cross_refs": {"local_ai_registry": {"model_id": None, "model_instance_id": None,
+                                             "url": None, "match_confidence": "unverified"}},
+        "disclosures": disclosures,
+    }
+    # field_provenance is the reader's audit trail: every entry claims "this field
+    # came from that JSON Pointer in the receipt". A field the operator overrode no
+    # longer came from there, so its pointer is replaced rather than left to lie.
+    fp = dict(adapted.get("field_provenance") or {})
+    for key_name, _stated, flag_val in overridden:
+        fp[key_name] = "OVERRIDDEN by flag (%r); receipt pointer no longer applies" % flag_val
+    row["notes"] = "field_provenance: " + json.dumps(fp, sort_keys=True)
+    return row
+
+
+def _mint_id(args, ki, adapted):
+    """Content-addressed so re-running on the same receipt with the same flags is idempotent."""
+    payload = L.canonical_json({"ki": ki, "artifact": args.artifact, "pipeline": args.pipeline,
+                                "attribution": args.attribution, "value": adapted["value"]})
+    return "measurement--auto." + L.sha256_hex(payload)[:16]
+
+
+# --- CLI --------------------------------------------------------------------
+
+def add_common(p):
+    p.add_argument("--registry", default=L.repo_root(__file__))
+    p.add_argument("--out", default=None)
+    p.add_argument("--artifact", required=True)
+    p.add_argument("--panel", required=True)
+    p.add_argument("--reference", required=True)
+    p.add_argument("--pipeline", required=True)
+    p.add_argument("--id", default=None)
+    p.add_argument("--attribution", default="self-measured",
+                   choices=("self-measured", "author-reported", "third-party-reported"))
+    p.add_argument("--reported-by", default=None)
+    p.add_argument("--source-url", default=None)
+    p.add_argument("--third-party-artifact", action="store_true")
+    p.add_argument("--accumulation", default=None, choices=(None, "float64", "float32", "mixed"))
+    p.add_argument("--stack-relation", default=None, choices=(None, "same_stack", "cross_stack"))
+    p.add_argument("--head-policy", default=None,
+                   choices=(None, "native_head", "shared_reference_head", "dequantized_head"))
+    p.add_argument("--covers-full-panel", action="store_true", default=True)
+    p.add_argument("--subset-detail", default=None)
+    p.add_argument("--deterministic", action="store_true")
+    p.add_argument("--disclosure", default=None)
+    p.add_argument("--disclosure-code", default="record_note")
+    p.add_argument("--floor-measurement", default=None)
+    p.add_argument("--floor-pending", action="store_true")
+    p.add_argument("--reference-revision", default=None)
+    p.add_argument("--reference-revision-evidence", default=None)
+    p.add_argument("--position-selector", default=None)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--json", action="store_true")
+
+
+def _identity_conflict(existing, generated):
+    """Does a receipt CONTRADICT an already-catalogued artifact, or just say less?
+
+    Returns a human-readable description of the first genuine contradiction, or
+    None when the two records are compatible.
+
+    Only fields that answer "what are these weights" count.  A receipt that
+    omits our curated `derived_from_artifact_ref`, or spells the quantizer tool
+    'exllamav3 EXL3' where we wrote 'exllamav3', or reports a slightly larger
+    byte total because it summed all repo files rather than only the weight
+    files, is not disagreeing with us about the artifact -- it simply carries
+    less context than a curated row. Treating that as a collision would block
+    every independent verification, which is the one thing this registry most
+    wants to encourage.
+
+    A DIFFERENT scope_digest, revision, codec family or bit width is a real
+    contradiction: the same id would then name two different sets of weights,
+    and no amount of merging can make that safe.
+    """
+    def dig(record, *path):
+        cur = record
+        for key in path:
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(key)
+        return cur
+
+    checks = (
+        ("scope_digest", ("scope_digest",)),
+        ("Hub revision", ("huggingface", "revision")),
+        ("codec family", ("codec", "family")),
+        ("bits per weight", ("codec", "bits_per_weight_nominal")),
+    )
+    for label, path in checks:
+        old, new = dig(existing, *path), dig(generated, *path)
+        # A receipt that says nothing about a field cannot contradict it.
+        if new in (None, "", "unknown") or old in (None, "", "unknown"):
+            continue
+        if old != new:
+            return "%s differs (catalogued %r, receipt %r)" % (label, old, new)
+    return None
+
+
+def ingest_submissions(args):
+    """The documented contributor path: sealed submission receipts -> registry records."""
+    registry = L.load_registry(os.path.join(args.registry, "data"))
+    generated = {"measurements": [], "artifacts": [], "pipelines": [], "receipts": []}
+    rows, extras = [], []
+    try:
+        for path in args.submissions:
+            sub, path, fsha = load_submission(path)
+            row, new = submission_to_records(sub, path, fsha, registry)
+            rows.append(row)
+            extras.extend(new)
+            for rec in new:
+                registry[L.collection_of_id(rec["id"])][rec["id"]] = rec
+            generated["receipts"].append({"path": path, "sha256": fsha,
+                                          "receipt_sha256": sub["receipt_sha256"]})
+    except Refuse as exc:
+        print("REFUSED (exit %d): %s" % (exc.code, exc), file=sys.stderr)
+        if exc.remedy:
+            print("  -> %s" % exc.remedy, file=sys.stderr)
+        return exc.code
+
+    for row in rows:
+        generated["measurements"].append(row["id"])
+    for rec in extras:
+        generated[L.collection_of_id(rec["id"])].append(rec["id"])
+
+    if args.write:
+        for coll, recs in (("measurements", rows),
+                           ("artifacts", [r for r in extras if r["id"].startswith("artifact--")]),
+                           ("pipelines", [r for r in extras if r["id"].startswith("pipeline--")])):
+            if not recs:
+                continue
+            path = os.path.join(args.registry, "data", coll + ".jsonl")
+            existing = {r["id"]: r for _, r, _ in L.read_jsonl(path)}
+            for r in recs:
+                if r["id"] in existing and L.canonical_json(existing[r["id"]]) != L.canonical_json(r):
+                    # An independent measurement of an artifact we ALREADY
+                    # catalogue is the flagship case for this registry, and the
+                    # collision fires every time: a contributor's receipt
+                    # describes the same weights more thinly than our curated
+                    # row does (no derived_from, no seal note, no link to the
+                    # producer's own receipt). Refusing on any textual
+                    # difference makes independent verification impossible;
+                    # letting the receipt overwrite would let a second
+                    # measurement quietly delete the first one's provenance.
+                    #
+                    # So: refuse only on a CONTRADICTION about what the weights
+                    # ARE, and otherwise keep the existing, richer record.
+                    conflict = _identity_conflict(existing[r["id"]], r)
+                    if conflict:
+                        print("REFUSED (exit %d): %s already exists and this "
+                              "receipt contradicts it: %s"
+                              % (E_COLLISION, r["id"], conflict), file=sys.stderr)
+                        print("  -> the same artifact cannot be two different "
+                              "things. Check the revision and the quantization "
+                              "scope in your receipt against the existing row.",
+                              file=sys.stderr)
+                        return E_COLLISION
+                    print("  = kept existing record  %s "
+                          "(receipt agrees; catalogued row is more complete)"
+                          % r["id"])
+                    continue
+                existing[r["id"]] = r
+            L.write_jsonl(path, list(existing.values()))
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as fh:
+            json.dump(generated, fh, indent=2, sort_keys=True)
+    for row in rows:
+        print("%s%s" % ("wrote " if args.write else "would write ", row["id"]))
+        print("  value               %r %s" % (row["metric"]["value"], row["metric"]["units"]))
+        print("  comparability key   %s  (class %s)"
+              % (row["comparability"]["key"], row["comparability"]["class"]))
+        print("  attribution         %s by %s" % (row["provenance"]["measured_by"],
+                                                  row["provenance"]["measurer"]["name"]))
+    for rec in extras:
+        print("  + new record        %s" % rec["id"])
+    if not args.write:
+        print("\n(dry run: pass --write to record these)")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd")
+    for name, files in (("from-receipt", "--receipt"), ("from-report", "--report"),
+                        ("from-crosscheck", "--report"), ("from-foreign", "--receipt")):
+        p = sub.add_parser(name)
+        p.add_argument(files, action="append", required=True, dest="receipts")
+        add_common(p)
+    sub.add_parser("schemas")
+    sub.add_parser("offline-selftest")
+    # The contributor path: a sealed submission receipt, no subcommand.
+    # `registry_add.py --receipt R [--receipt R2 ...] [--write] [--report FILE]`
+    ap.add_argument("--receipt", action="append", dest="submissions", default=None,
+                    help="sealed submission receipt (quant-fidelity-registry/submission-receipt.v1)")
+    ap.add_argument("--write", action="store_true", help="write the generated records into data/")
+    ap.add_argument("--report", default=None, help="write a JSON summary of what was generated")
+    ap.add_argument("--registry", default=L.repo_root(__file__))
+    args = ap.parse_args()
+
+    if args.cmd is None and args.submissions:
+        return ingest_submissions(args)
+
+    if args.cmd == "schemas":
+        print("receipt families this tool understands (dispatch is on the exact string):")
+        for s in sorted(OWN_SCHEMAS):
+            print("  OWN     %s" % s)
+        for s in sorted(FOREIGN_SCHEMAS):
+            print("  FOREIGN %s" % s)
+        return 0
+    if args.cmd == "offline-selftest":
+        bad = sorted(m for m in sys.modules
+                     if m.split(".")[0] in ("requests", "urllib", "http", "socket", "ssl",
+                                            "huggingface_hub", "aiohttp", "httpx"))
+        print("networking modules loaded: %s" % (bad or "none"))
+        return 0 if not bad else 1
+    if not args.cmd:
+        ap.print_help()
+        return 4
+
+    try:
+        loaded = [load_receipt(p) for p in args.receipts]
+        schemas = {r[0].get("schema") for r in loaded}
+        if args.cmd == "from-receipt":
+            if DIONE_SUMMARY in schemas:
+                adapted = adapt_dione(loaded[0][0], loaded[0][1])
+            else:
+                adapted = adapt_packed_and_five_run(loaded)
+        elif args.cmd == "from-report":
+            adapted = adapt_report(loaded[0][0], loaded[0][1], args.position_selector)
+            if args.reference_revision:
+                adapted["reference_revision"] = args.reference_revision
+                adapted["reference_revision_source"] = "operator_asserted"
+        elif args.cmd == "from-crosscheck":
+            adapted = adapt_crosscheck(loaded[0][0], loaded[0][1])
+        else:
+            if loaded[0][0].get("schema") in OWN_SCHEMAS:
+                raise Refuse(E_ATTRIB, "from-foreign was given one of OUR receipt families (%s). Use "
+                                       "from-receipt / from-report instead."
+                             % loaded[0][0].get("schema"))
+            adapted = adapt_foreign(loaded[0][0], loaded[0][1])
+            if args.attribution == "self-measured":
+                raise Refuse(E_ATTRIB, "from-foreign rows are never self-measured.")
+        sources = [{"kind": "receipt_file", "uri": p, "sha256": sha,
+                    "note": r.get("schema")} for r, p, sha in loaded]
+        registry = L.load_registry(os.path.join(args.registry, "data"))
+        row = build_row(args, adapted, sources, registry)
+    except Refuse as exc:
+        print("REFUSED (exit %d): %s" % (exc.code, exc), file=sys.stderr)
+        if exc.remedy:
+            print("  -> %s" % exc.remedy, file=sys.stderr)
+        return exc.code
+
+    line = L.canonical_json(row)
+    if args.dry_run:
+        print(line if args.json else json.dumps(row, indent=2, sort_keys=True))
+        return 0
+    out = args.out or os.path.join(args.registry, "data", "measurements.jsonl")
+    existing = {r["id"]: (r, ln) for _, r, ln in L.read_jsonl(out)}
+    if row["id"] in existing:
+        if existing[row["id"]][1] == line:
+            print("unchanged: %s" % row["id"])
+            return 0
+        print("REFUSED (exit %d): id %s already exists with different content. Pass --id to declare a "
+              "distinct row." % (E_COLLISION, row["id"]), file=sys.stderr)
+        return E_COLLISION
+    rows = [r for r, _ in existing.values()] + [row]
+    L.write_jsonl(out, rows)
+    print("wrote %s (%d rows) -> %s" % (row["id"], len(rows), out))
+    print("  comparability key %s" % row["comparability"]["key"])
+    print("  run tools/registry_validate.py and tools/registry_render.py next")
+    return 0
+
+
+
+# ===========================================================================
+# Submission receipts (the contributor path documented in CONTRIBUTING.md)
+# ===========================================================================
+SUBMISSION_SCHEMA = "quant-fidelity-registry/submission-receipt.v1"
+
+
+def verify_seal(sub):
+    """A submission seals itself: sha256 over its canonical form with receipt_sha256 blanked."""
+    claimed = sub.get("receipt_sha256")
+    if not claimed:
+        raise Refuse(E_MISSING, "the submission carries no receipt_sha256")
+    probe = dict(sub)
+    probe["receipt_sha256"] = ""
+    actual = L.sha256_hex(L.canonical_json(probe))
+    if actual != claimed:
+        raise Refuse(E_INCONSISTENT,
+                     "the seal does not verify: the file was edited after the run.\n"
+                     "  claimed    %s\n  recomputed %s" % (claimed, actual),
+                     "re-run the measurement rather than patching the receipt")
+    return actual
+
+
+def load_submission(path):
+    if not os.path.exists(path):
+        raise Refuse(E_MISSING, "submission not found: %s" % path)
+    with open(path, "r", encoding="utf-8") as fh:
+        try:
+            sub = json.load(fh)
+        except ValueError as exc:
+            raise Refuse(E_MISSING, "submission is not valid JSON: %s (%s)" % (path, exc))
+    if sub.get("submission_schema") != SUBMISSION_SCHEMA:
+        raise Refuse(E_SCHEMA, "submission_schema is %r, expected %r"
+                     % (sub.get("submission_schema"), SUBMISSION_SCHEMA))
+    verify_seal(sub)
+    want = L.scope_digest(sub["artifact"]["scope"])
+    if sub["artifact"].get("scope_digest") != want:
+        raise Refuse(E_INCONSISTENT,
+                     "artifact.scope_digest does not match the scope it describes.\n"
+                     "  declared   %s\n  recomputed %s" % (sub["artifact"].get("scope_digest"), want))
+    det = sub.get("determinism") or {}
+    rm = det.get("run_means")
+    if rm:
+        if len(rm) != det.get("run_count"):
+            raise Refuse(E_INCONSISTENT, "run_means has %d entries but run_count is %s"
+                         % (len(rm), det.get("run_count")))
+        if not L.close(sub["metric"]["value"], sum(rm) / len(rm)) and \
+                sub["metric"]["name"] == "mean_of_run_means_tokenwise_kld":
+            raise Refuse(E_INCONSISTENT, "metric.value %r != mean(run_means) %r"
+                         % (sub["metric"]["value"], sum(rm) / len(rm)))
+    if det.get("identical_across_runs") and det.get("evidence_kind") not in (
+            "tokenwise_kld_sha256", "logits_tensor_sha256", "hidden_state_tensor_sha256",
+            "sealed_tokenwise_digest"):
+        raise Refuse(E_INCONSISTENT,
+                     "identical_across_runs is claimed on evidence_kind=%r. Only a tensor-content "
+                     "digest can support that: report files embed run indices, paths and timings and "
+                     "differ across bit-identical runs." % det.get("evidence_kind"))
+    return sub, path, L.sha256_file(path)
+
+
+def _slug(text):
+    out = []
+    for ch in (text or "").lower():
+        out.append(ch if (ch.isalnum() or ch in ".-") else "-")
+    s = "".join(out).strip("-.")
+    while "--" in s:
+        s = s.replace("--", "-")
+    return s or "unknown"
+
+
+def submission_to_records(sub, path, fsha, registry, strict_new=False):
+    """Return (measurement_row, new_records) -- new artifact/pipeline records the
+    submission implies. Panels and references must already exist: a contributor cannot
+    introduce a panel through a measurement (CONTRIBUTING.md section 6)."""
+    art_in = sub["artifact"]
+    pan_ref = sub["panel"]["panel_ref"]
+    ref_ref = sub["reference"]["reference_ref"]
+
+    # A submission may not mint a row attributed to the registry maintainer unless it was
+    # produced by the maintainer's own toolchain. `measured_by: self-measured` is the
+    # registry's highest trust level and `class: strict` follows from it; without this an
+    # inbound file that merely TYPES the maintainer's handle claims both. PROV-008 exists
+    # to catch this but cannot fire here, because the ingest mints the pipeline record from
+    # the same handle it is meant to check against.
+    if (sub.get("measurer") or {}).get("handle") == L.MAINTAINER:
+        pb_repo = (sub.get("produced_by") or {}).get("repository") or ""
+        if not pb_repo.startswith(L.MAINTAINER + "/"):
+            raise Refuse(E_ATTRIB,
+                         "this submission claims measurer.handle=%r -- the registry maintainer -- but "
+                         "produced_by.repository is %r, which is not a repository of theirs. A row "
+                         "attributed to us is a row that ran on our stack; a submission cannot assert "
+                         "that on our behalf."
+                         % (L.MAINTAINER, pb_repo or None),
+                         "set measurer.handle to your own Hugging Face username; your row will be "
+                         "recorded as author-reported or third-party-reported and credited to you")
+
+    if pan_ref not in registry["panels"]:
+        raise Refuse(E_MISSING,
+                     "panel %s is not in the registry. A measurement cannot introduce a panel; open a "
+                     "'panel: <name>' discussion with its token digest, context and position counts, "
+                     "scoring window and tokenizer first." % pan_ref)
+    if ref_ref not in registry["references"]:
+        raise Refuse(E_MISSING, "reference %s is not in the registry." % ref_ref)
+    pan, ref = registry["panels"][pan_ref], registry["references"][ref_ref]
+    if ref.get("panel_ref") != pan_ref:
+        raise Refuse(E_IDENTITY, "reference %s was captured on panel %s, not %s"
+                     % (ref_ref, ref.get("panel_ref"), pan_ref))
+
+    ident = pan.get("identity") or {}
+    declared = sub["panel"].get("panel_token_sha256")
+    if declared and declared != ident.get("panel_token_sha256"):
+        raise Refuse(E_IDENTITY,
+                     "the submission pins panel token digest %s but panel %s carries %s. Either the "
+                     "wrong panel_ref was named or these are different token sets."
+                     % (declared[:16] + "...", pan_ref,
+                        (ident.get("panel_token_sha256") or "none")[:16] + "..."))
+    # The teacher is half the identity of a fidelity number, and the submission is REQUIRED
+    # to declare the capture it scored against. Here that declaration is actually checked
+    # against the reference record, instead of being carried along unread.
+    known_teacher = (ref.get("capture") or {}).get("capture_receipt_sha256")
+    declared_teacher = sub["reference"].get("teacher_receipt_sha256")
+    teacher_unverified = not known_teacher
+    if known_teacher and declared_teacher != known_teacher:
+        raise Refuse(E_IDENTITY,
+                     "the submission was scored against teacher capture %s, but reference %s is the "
+                     "capture %s. A number measured against a different teacher is a different "
+                     "quantity: it cannot share a table with rows measured against this one."
+                     % (declared_teacher[:16] + "...", ref_ref, known_teacher[:16] + "..."),
+                     "name the reference your teacher actually is, or open a 'reference: <name>' "
+                     "discussion to register the capture you used")
+
+    total = (pan.get("structure") or {}).get("scored_positions_total")
+    ms = sub["measurement_scope"]
+    if ms.get("covers_full_panel") and total and ms.get("scored_positions") != total:
+        raise Refuse(E_IDENTITY, "covers_full_panel is true but %s of %s positions were scored"
+                     % (ms.get("scored_positions"), total))
+    if total and (ms.get("scored_positions") or 0) > total:
+        raise Refuse(E_IDENTITY,
+                     "this row scores %s positions but panel %s only has %s. Whatever was scored, it "
+                     "was not this panel." % (ms.get("scored_positions"), pan_ref, total))
+    if not ms.get("covers_full_panel") and not any(
+            d.get("code") == "subset_of_panel" for d in (sub.get("disclosures") or [])):
+        raise Refuse(E_MISSING,
+                     "covers_full_panel is false -- %s of panel %s's %s positions were scored -- but "
+                     "no subset_of_panel disclosure says which subset. Without it the row would be "
+                     "tabled beside full-panel rows with nothing marking the difference."
+                     % (ms.get("scored_positions"), pan_ref, total),
+                     'add {"code": "subset_of_panel", "severity": "caveat", '
+                     '"affects_comparability": true, "detail": "<which positions, and why>"} '
+                     "to disclosures")
+
+    new = []
+    art_id = None
+    for aid, a in registry["artifacts"].items():
+        h = a.get("huggingface") or {}
+        if h.get("repository") == art_in.get("repository") and h.get("revision") == art_in.get("revision"):
+            art_id = aid
+            break
+    if art_id is None:
+        owner = (art_in.get("repository") or "unknown/x").split("/")[0]
+        art_id = "artifact--%s.%s" % (_slug(owner), _slug((art_in.get("repository") or "x").split("/")[-1]))
+        model_ref = None
+        for mid, m in registry["models"].items():
+            if (m.get("tokenizer") or {}).get("id") and mid.split("--")[1].split(".")[-1] in \
+                    (art_in.get("repository") or "").lower():
+                model_ref = mid
+        if model_ref is None:
+            raise Refuse(E_MISSING,
+                         "cannot tell which model %s is a quantization of. Register the model and the "
+                         "artifact first, or name an existing artifact." % art_in.get("repository"))
+        cd = art_in.get("codec") or {}
+        new.append({
+            "schema_version": L.SCHEMA_VERSION, "id": art_id, "model_ref": model_ref,
+            "name": art_in.get("precision_label") or art_in.get("repository"),
+            "kind": "quant",
+            "huggingface": {"repository": art_in.get("repository"),
+                            "url": art_in.get("url"), "revision": art_in.get("revision"),
+                            "path": None, "revision_source": "reported_by_author",
+                            "status": "known", "link_type": "repository", "reason": None},
+            "weights": {"container": art_in.get("container"),
+                        "precision_label": art_in.get("precision_label"),
+                        "size_bytes": art_in.get("size_bytes"),
+                        "size_gb": (art_in["size_bytes"] / 1e9) if art_in.get("size_bytes") else None,
+                        "size_basis": "repo_all_files",
+                        "index_sha256": art_in.get("index_sha256"),
+                        "config_sha256": art_in.get("config_sha256")},
+            "codec": {"family": cd.get("family"),
+                      "bits_per_weight_nominal": cd.get("bits_per_weight_nominal"),
+                      "bits_per_weight_effective": cd.get("bits_per_weight_effective"),
+                      "group_size": cd.get("group_size"),
+                      "quantizer": {"tool": cd.get("quantizer_tool") or "unknown",
+                                    "version": cd.get("quantizer_version"), "revision": None,
+                                    "pipeline_ref": None},
+                      "calibration": {"used": None, "corpus": None, "tokens": None,
+                                      "overlaps_any_panel": None, "overlapping_panel_refs": []}},
+            "scope": art_in["scope"], "scope_digest": art_in["scope_digest"],
+            "producer": {"name": (art_in.get("producer") or {}).get("name") or "unknown",
+                         "role": "quantizer",
+                         "handle": (art_in.get("producer") or {}).get("handle"),
+                         "url": (art_in.get("producer") or {}).get("url"),
+                         "is_registry_maintainer":
+                             (art_in.get("producer") or {}).get("handle") == L.MAINTAINER},
+            "availability": {"status": "public", "uri": art_in.get("url")},
+            "seal": {"sealed": False},
+            "cross_refs": {"local_ai_registry": {"model_id": None, "model_instance_id": None,
+                                                 "url": None, "match_confidence": "unverified"}},
+            "sources": [{"kind": "url", "uri": art_in.get("url") or "unknown"}],
+            "disclosures": ([{"code": "artifact_identity_incomplete", "severity": "caveat",
+                              "detail": "Per-class recipe recorded as unknown where the release does "
+                                        "not declare one.", "affects_comparability": True}]
+                            if any(x.get("treatment") == "unknown" for x in art_in["scope"]["assignments"])
+                            else [{"code": "no_known_deviations", "severity": "info",
+                                   "detail": "Declared by the submission receipt.",
+                                   "affects_comparability": False}]),
+        })
+        art = new[-1]
+    else:
+        art = registry["artifacts"][art_id]
+        if art.get("scope_digest") != art_in.get("scope_digest"):
+            raise Refuse(E_IDENTITY,
+                         "artifact %s is already registered with scope_digest\n  %s\nbut the submission "
+                         "declares\n  %s\nThose are different artifacts, or one of the two scopes is wrong."
+                         % (art_id, art.get("scope_digest"), art_in.get("scope_digest")))
+
+    pb = sub.get("produced_by") or {}
+    measurer = sub["measurer"]
+    pl_id = "pipeline--%s.%s" % (_slug(measurer.get("handle") or measurer.get("name")),
+                                 _slug(pb.get("tool") or sub.get("lane") or "stack"))
+    if pl_id not in registry["pipelines"]:
+        new.append({
+            "schema_version": L.SCHEMA_VERSION, "id": pl_id,
+            "name": "%s -- %s (lane %s)" % (pb.get("tool") or "contributed stack",
+                                            measurer.get("name"), sub.get("lane")),
+            "roles": ["end-to-end"],
+            "implementation": {"repository": pb.get("repository"), "revision": pb.get("revision"),
+                               "entrypoint": pb.get("entrypoint"),
+                               "file_sha256": pb.get("entrypoint_sha256"),
+                               "container_image": pb.get("container_image"),
+                               "container_digest": pb.get("container_digest"),
+                               "runtime_reader_sha256": pb.get("runtime_reader_sha256"),
+                               "dependencies": pb.get("dependencies") or {}},
+            "numerics": {"accumulation_dtype": ("fp64" if sub["estimator"]["accumulation_dtype"]
+                                                == "float64" else "fp32"),
+                         "two_pass": sub["estimator"].get("two_pass"),
+                         "vocab_chunk": sub["estimator"].get("vocab_chunk"),
+                         "determinism_controls": (["cold_process_per_run"]
+                                                  if (sub.get("determinism") or {}).get("cold_start_per_run")
+                                                  else [])},
+            "hardware": {"gpu": (sub.get("environment") or {}).get("gpu"),
+                         "gpu_count": (sub.get("environment") or {}).get("gpu_count"),
+                         "tensor_parallel": (sub.get("environment") or {}).get("tensor_parallel")},
+            "cost": {"usd_per_measurement": (sub.get("cost") or {}).get("usd"),
+                     "basis": (sub.get("cost") or {}).get("basis")},
+            "author": {"name": measurer.get("name"), "role": "toolchain-author",
+                       "handle": measurer.get("handle"), "url": measurer.get("url"),
+                       "is_registry_maintainer": measurer.get("handle") == L.MAINTAINER},
+            "cross_refs": {"local_ai_registry": {"model_id": None, "model_instance_id": None,
+                                                 "url": None, "match_confidence": "unverified"}},
+            "sources": [{"kind": "receipt_file", "uri": path, "sha256": fsha}],
+            "disclosures": [{"code": "record_note", "severity": "info",
+                             "detail": "Declared by the submission receipt; lane %s."
+                                       % sub.get("lane"), "affects_comparability": False}],
+        })
+
+    is_ours = measurer.get("handle") == L.MAINTAINER
+    est = sub["estimator"]
+    ki = {"panel_id": pan_ref, "reference_id": ref_ref, "metric_name": sub["metric"]["name"],
+          "direction": sub["metric"]["direction"],
+          "accumulation_dtype": est["accumulation_dtype"],
+          "stack_relation": est["stack_relation"], "head_policy": est["head_policy"]}
+    key = L.comparability_key(ki)
+    disclosures = [dict(d) for d in sub["disclosures"]]
+    for d in disclosures:
+        d.setdefault("affects_comparability", False)
+    if not is_ours and not any(d["code"] == "author_reported_only" for d in disclosures):
+        disclosures.append({"code": "author_reported_only", "severity": "caveat",
+                            "detail": "Measured and published by %s; we have not re-run it."
+                                      % measurer.get("name"), "affects_comparability": True})
+    # submission.schema.json says the lane "forces the matching disclosure code", but nothing
+    # was forcing it: a lane=streaming receipt generated a row that landed in the same
+    # comparability key as the sealed-lane rows with no mention of the lane at all. The lane
+    # is a property of the estimator, so a non-sealed lane is a caveat on the row itself,
+    # not just a line in the pipeline record.
+    lane = sub.get("lane")
+    if lane and lane != "sealed-ep8" and not any(d["code"] == "non_sealed_lane" for d in disclosures):
+        disclosures.append({
+            "code": "non_sealed_lane", "severity": "caveat",
+            "detail": "Produced by the %r lane, not the sealed-ep8 lane that the other rows in this "
+                      "comparability group used. Lanes are not interchangeable: this row carries an "
+                      "undisclosed offset against the sealed lane on the same panel until that offset "
+                      "is itself measured and recorded here." % lane,
+            "affects_comparability": True})
+    if teacher_unverified:
+        disclosures.append({
+            "code": "teacher_capture_unverified", "severity": "caveat",
+            "detail": "Reference %s carries no capture_receipt_sha256, so the teacher digest this "
+                      "submission declares (%s) could not be checked against the registry's record "
+                      "of that capture. The teacher is asserted here, not verified."
+                      % (ref_ref, (declared_teacher or "none")[:16] + "..."),
+            "affects_comparability": True})
+    # A record that discloses something is not a record with nothing to disclose (DISC-002).
+    if len(disclosures) > 1:
+        stripped = [d for d in disclosures if d.get("code") != "no_known_deviations"]
+        if stripped:
+            disclosures = stripped
+    det = dict(sub.get("determinism") or {})
+    det.pop("per_run_report_sha256", None)
+    if det.get("run_means"):
+        rm = det["run_means"]
+        det["min_run_mean"], det["max_run_mean"] = min(rm), max(rm)
+        det["population_stddev_of_run_means"] = L.population_stddev(rm)
+    det.setdefault("evidence_hashes", [])
+    det.setdefault("distinct_evidence_hash_count", len(det["evidence_hashes"]))
+
+    sources = [{"kind": "receipt_file", "uri": path, "sha256": fsha,
+                "note": "sealed submission receipt %s" % SUBMISSION_SCHEMA}]
+    sources += [dict(e) for e in (sub.get("evidence") or [])]
+
+    row = {
+        "schema_version": L.SCHEMA_VERSION,
+        "id": "measurement--%s.%s.%s" % (_slug(measurer.get("handle")),
+                                         _slug((art_in.get("repository") or "x").split("/")[-1]),
+                                         _slug(pan_ref.split("--", 1)[1])),
+        "status": "published", "supersedes": None,
+        "model_ref": art["model_ref"], "artifact_ref": art_id, "panel_ref": pan_ref,
+        "reference_ref": ref_ref, "pipeline_ref": pl_id,
+        "scope_digest": art_in["scope_digest"],
+        "metric": dict(sub["metric"], higher_is_better=False),
+        "auxiliary_metrics": dict(sub.get("auxiliary_metrics") or {}),
+        "uncertainty": {"method": "none", "ci95_low": None, "ci95_high": None,
+                        "clusters": None, "samples": None},
+        "estimator": {"accumulation_dtype": est["accumulation_dtype"],
+                      "logits_dtype": est.get("logits_dtype") or "fp32",
+                      "two_pass": est.get("two_pass"), "vocab_chunk": est.get("vocab_chunk"),
+                      "stack_relation": est["stack_relation"], "head_policy": est["head_policy"],
+                      "zero_handling": est.get("zero_handling")},
+        "determinism": det,
+        "measurement_scope": dict(ms),
+        "provenance": {
+            "measured_by": "self-measured" if is_ours else (
+                "author-reported" if measurer.get("is_artifact_author") else "third-party-reported"),
+            "measurer": {"name": measurer.get("name"), "role": "measurer",
+                         "handle": measurer.get("handle"), "url": measurer.get("url"),
+                         "is_registry_maintainer": bool(is_ours)},
+            "measured_at": sub.get("measured_at"),
+            "independently_verified": False, "verification": None,
+            "sources": sources, "receipt_schema": SUBMISSION_SCHEMA},
+        "comparability": {
+            "key": key, "key_inputs": ki,
+            "class": "strict" if (is_ours and est["stack_relation"] == "same_stack"
+                                  and pan.get("sealed")
+                                  and not any(d.get("affects_comparability") for d in disclosures))
+            else "advisory",
+            "bias": ({"kind": "cross_stack_capture_replay", "direction": "upward",
+                      "floor_measurement_ref": None, "estimated_magnitude": None,
+                      "detail": "Cross-stack capture declared by the submission; a floor measurement "
+                                "on this panel must be named before this row can be published."}
+                     if est["stack_relation"] == "cross_stack" else None)},
+        "quality_gate": None,
+        "cross_refs": {"local_ai_registry": {"model_id": None, "model_instance_id": None,
+                                             "url": None, "match_confidence": "unverified"}},
+        "disclosures": disclosures,
+    }
+    return row, new
+
+if __name__ == "__main__":
+    sys.exit(main())

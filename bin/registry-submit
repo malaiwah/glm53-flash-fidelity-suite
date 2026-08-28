@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Check a sealed receipt the way the registry will, before you send it anywhere.
+#
+#   bin/registry-submit <receipt.json>
+#
+# Prints the row it would generate, its comparability key and class, and the
+# rows it can be ranked against -- or exactly which check it failed. Offline;
+# no installs, no network, nothing published.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RECEIPT="${1:?usage: registry-submit <receipt.json>}"
+PY="${FIDELITY_PYTHON:-python3}"
+"$PY" "$ROOT/registry/tools/registry_validate.py" --submission "$RECEIPT"
+echo
+echo "If that said ACCEPTED, submit it -- see registry/CONTRIBUTING.md:"
+echo "  primary   open a discussion on the registry dataset and attach this file"
+echo "            https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/discussions"
+echo "  fallback  open a PR adding it at receipts/<your-hf-handle>/<slug>.json"

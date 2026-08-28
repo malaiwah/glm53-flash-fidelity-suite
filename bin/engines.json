@@ -1,0 +1,208 @@
+{
+  "_comment": [
+    "Which scorer each lane invokes, and how.  Edited by hand when an engine's",
+    "CLI changes; read by bin/fidelity/engines.py.  A lane with pinned:false",
+    "refuses to plan -- see the module docstring for why guessing flags is worse",
+    "than stopping.",
+    "",
+    "Verify a lane after editing:  bin/measure-local --probe-engines"
+  ],
+  "version": 1,
+  "lanes": {
+    "sealed-ep8": {
+      "name": "k6_student_capture + k6_kld_report (sealed EP8 lane)",
+      "entrypoint": "k6/tools/k6_student_capture.py",
+      "pinned": true,
+      "launcher": [
+        "torchrun",
+        "--nproc-per-node=8"
+      ],
+      "required_flags": [
+        "--checkpoint",
+        "--bf16",
+        "--teacher",
+        "--profile",
+        "--cold-run",
+        "--out",
+        "--surface",
+        "--roles",
+        "--dry-run"
+      ],
+      "flag_map": {
+        "checkpoint": "--checkpoint",
+        "bf16": "--bf16",
+        "panel": "--teacher",
+        "profile": "--profile",
+        "cold_run": "--cold-run",
+        "out": "--out",
+        "surface": "--surface",
+        "roles": "--roles",
+        "pipeline_root": "--pipeline-root",
+        "token_panel": "--token-panel",
+        "attention_backend": "--attention-backend"
+      },
+      "scorer": {
+        "entrypoint": "k6/tools/k6_kld_report.py",
+        "flag_map": {
+          "profile": "--profile",
+          "panel": "--teacher",
+          "runs": "--runs",
+          "out": "--out",
+          "five_run_out": "--five-run-out",
+          "checkpoint": "--checkpoint",
+          "output_root": "--output-root",
+          "pipeline_root": "--pipeline-root",
+          "chunk_positions": "--chunk-positions",
+          "device": "--device"
+        },
+        "required_flags": [
+          "--profile",
+          "--teacher",
+          "--runs",
+          "--out",
+          "--device"
+        ]
+      },
+      "env": {
+        "QP_GLM53_EP_SIZE": "8"
+      },
+      "timing": {
+        "minutes_per_window": 20.0,
+        "provenance": "ESTIMATE, NOT MEASURED. No per-window wall clock was recorded for the sealed EP8 lane in a form this runner can cite. The figure is a deliberately conservative placeholder so the cost estimate errs high rather than low; the max-runtime coherence check uses it, and the printed estimate labels it. Replace it with a measured number from a sealed-lane run receipt.",
+        "measured": false
+      },
+      "notes": [
+        "This is the lane K6 and Q4 were measured with, and the only one whose",
+        "flags are verified against the file in this checkout.  EP size is",
+        "env-driven (QP_GLM53_EP_SIZE) and the launcher's --nproc-per-node must",
+        "match it.  Requires the patched quant_pipeline tree (--pipeline-root)",
+        "and a BF16 skeleton carrying config.json + model.safetensors.index.json,",
+        "because the capture binds inventory.config_sha256/index_sha256 to the",
+        "LOCAL files.",
+        "--surface packed dereferences packed_root from the checkpoint's own",
+        "materialization-receipt.json.  For a third-party artifact that path is",
+        "on the producer's machine; see hfmeta.sniff_surface, which detects this",
+        "before any money is spent."
+      ]
+    },
+    "streaming": {
+      "name": "stream_score (single-GPU streaming lane)",
+      "entrypoint": "k6/tools/stream_score.py",
+      "pinned": false,
+      "unpinned_reason": "k6/tools/stream_score.py is not present in this checkout. It was built and validated on the streaming-validation box and has not been synced back. Its flags are therefore UNKNOWN, and this file will not guess them.",
+      "launcher": [],
+      "required_flags": [
+        "--checkpoint",
+        "--panel",
+        "--out",
+        "--reduce-order",
+        "--surface"
+      ],
+      "flag_map": {},
+      "contract": [
+        "--checkpoint PATH        the artifact to score",
+        "--panel PATH             the fetched teacher/panel directory",
+        "--out PATH               receipts + tokenwise-kld output root",
+        "--surface NAME           packed | dione | tr3-published",
+        "--reduce-order {fp32,native}   fp32 is the validated setting: the",
+        "                         window-0 KLD delta vs the sealed EP8 lane is",
+        "                         +1.5076e-5 at 99.80% argmax agreement",
+        "--cold-run N             labels the capture receipt",
+        "--roles final            which panel roles to score",
+        "it must emit a tokenwise-KLD tensor whose sha256 is the determinism",
+        "evidence (NOT a receipt-file hash -- see registry DET-001)"
+      ],
+      "notes": [
+        "Known properties from the validation run, which the receipt must",
+        "disclose: bitwise cross-topology parity is impossible (routed-expert",
+        "combine order moves logits rms 0.26-0.28); streaming runs ARE bitwise",
+        "identical to each other, so determinism holds WITHIN the lane; peak",
+        "34-47 GB on one H200 as currently scheduled."
+      ],
+      "timing": {
+        "minutes_per_window": 9.05,
+        "provenance": "MEASURED: the streaming validation reported ~$0.30/window on one H200 at $1.99/GPU-h, which is 0.1508 h = 9.05 min/window, and ~$7.50 for a 25-window panel.",
+        "measured": true
+      }
+    },
+    "local-mps": {
+      "name": "stream_score on Apple Silicon (MPS)",
+      "entrypoint": "k6/tools/stream_score.py",
+      "pinned": false,
+      "unpinned_reason": "Same missing file as the streaming lane, plus two Apple-Silicon constraints that must be honoured by whatever lands: MPS cannot do float64 AT ALL (not slowly -- torch raises TypeError), so the KLD accumulation must run on CPU; and 34 of 45 layers are Kimi-Delta linear attention whose only known fast paths are Triton/CUDA or a fused MLX kernel, so the torch/MPS forward is UNVERIFIED.",
+      "launcher": [],
+      "required_flags": [
+        "--checkpoint",
+        "--panel",
+        "--out",
+        "--reduce-order",
+        "--device"
+      ],
+      "flag_map": {},
+      "contract": [
+        "everything the streaming lane requires, plus:",
+        "--device {auto,mps,cuda,cpu}",
+        "--kld-device cpu         MANDATORY on MPS. estimator.accumulation_dtype",
+        "                         is a comparability key input, so silently",
+        "                         degrading fp64 to fp32 would move the row into",
+        "                         a different comparability group. Refuse, do",
+        "                         not degrade.",
+        "--expert-chunk N         numerics-invariant memory knob",
+        "--window-batch N         numerics-invariant memory knob",
+        "--vram-budget GB         honoured as a hard bound"
+      ],
+      "notes": [
+        "Measured on a 128 GB M4 Max: the EXL3/TR3 decode is pure PyTorch (no",
+        "custom kernel, no exllamav3 build) and is BITWISE IDENTICAL on MPS and",
+        "CPU at both 4 and 6 bits, over full-size 8,388,608-element matrices.",
+        "So the local lanes carry NO device offset from weight decode; any",
+        "local-vs-sealed offset comes from the forward pass alone.",
+        "Consequence for the recipe: `pip install torch safetensors numpy",
+        "huggingface_hub` is sufficient locally. None of stage_k6.sh's",
+        "bootstrap (deadsnakes, CUDA 13, flash-attn, exllamav3) is needed."
+      ],
+      "timing": {
+        "minutes_per_window": 0.6,
+        "provenance": "DERIVED from measured per-matrix decode on a 128 GB M4 Max (16.7 ms/matrix at 6 bits, 14.0 ms at 4 bits, MPS, int32 unpack) under the panel-batched layer-outer schedule, where the 36,288-matrix routed pass happens ONCE for the whole panel rather than once per window. That makes per-window time an amortisation, not a measurement: ~15 min for the whole 25-window panel. The forward pass itself (KDA/DSA/mHC on MPS) is UNVERIFIED and is not in this figure.",
+        "measured": false
+      }
+    },
+    "local-cuda-budget": {
+      "name": "stream_score under a VRAM budget (consumer CUDA)",
+      "entrypoint": "k6/tools/stream_score.py",
+      "pinned": false,
+      "unpinned_reason": "Same missing file as the streaming lane.",
+      "launcher": [],
+      "required_flags": [
+        "--checkpoint",
+        "--panel",
+        "--out",
+        "--reduce-order",
+        "--vram-budget"
+      ],
+      "flag_map": {},
+      "contract": [
+        "everything the streaming lane requires, plus:",
+        "--vram-budget GB         hard bound, honoured not approximated",
+        "--expert-chunk N         numerics-invariant",
+        "--window-batch N         numerics-invariant",
+        "--nonrouted-residency {pinned,mmap,gpu}",
+        "the scatter-add over experts MUST be sequential in ascending expert",
+        "order. An atomicAdd-based scatter would make the result depend on the",
+        "memory knobs, which destroys the invariance the recipe promises."
+      ],
+      "notes": [
+        "Peak for the panel-batched layer-outer schedule on GLM-5.3-Flash at",
+        "4bpw: 23.5 GB whole-layer, 25.5 GB at the solver's default fill for a",
+        "30 GB budget. The floor for ANY schedule is 4.6 GB, set by the lm_head",
+        "weight plus one window of fp32 logits -- neither shrinks with the",
+        "memory knobs."
+      ],
+      "timing": {
+        "minutes_per_window": 0.25,
+        "provenance": "PROJECTED. No Blackwell hardware was available. Scales the measured Apple-Silicon decode by memory bandwidth (1.79 TB/s vs ~410-546 GB/s) and treats the run as I/O-bound on reading 176-254 GB once. Treat as an order-of-magnitude figure until someone runs it.",
+        "measured": false
+      }
+    }
+  }
+}

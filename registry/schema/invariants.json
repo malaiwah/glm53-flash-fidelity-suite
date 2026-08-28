@@ -1,0 +1,475 @@
+{
+  "schema_version": "quant-fidelity-registry/v1",
+  "title": "Cross-record invariants for registry_validate.py",
+  "description": "JSON Schema enforces the shape of one record. These are the checks that need two or more records, or a recomputation. registry_validate.py must implement every id below and report failures with the invariant id. Severity 'error' fails the run; 'warn' is reported and does not fail unless --strict.",
+  "invariants": [
+    {
+      "id": "BIAS-001",
+      "severity": "error",
+      "statement": "estimator.stack_relation=cross_stack requires comparability.bias with kind=cross_stack_capture_replay, a non-unknown direction, and either floor_measurement_ref or an explicit detail saying no floor exists."
+    },
+    {
+      "id": "BIAS-002",
+      "severity": "error",
+      "statement": "comparability.bias.floor_measurement_ref, when set, points at a measurement with the SAME comparability.key as the biased row. A floor from a different panel or estimator is not a floor."
+    },
+    {
+      "id": "BIAS-003",
+      "severity": "error",
+      "statement": "A row with any bias block is never comparability.class=strict."
+    },
+    {
+      "id": "BIAS-004",
+      "severity": "error",
+      "statement": "comparability.bias.floor_measurement_ref points at a row measuring the reference's own artifact, or an artifact of kind=base that derives from it -- for a cross-ENGINE floor the unquantized weights are necessarily repackaged for the other engine (a BF16 .gguf of the same base). A floor measures unquantized weights through the candidate's stack; anything else is a comparison, not a floor.",
+      "amended": "v1.0.0: the cross-engine GGUF floor measures unsloth's BF16 .gguf repack of Qwen3.8-27B, not the reference safetensors themselves. Requiring literal artifact equality would have rejected a correct floor."
+    },
+    {
+      "id": "BIAS-005",
+      "severity": "warn",
+      "statement": "A floor row (artifact_ref == the reference's artifact_ref) is reported so the renderer can label it 'measurement floor' rather than ranking it as a quantization result."
+    },
+    {
+      "id": "CMP-001",
+      "severity": "error",
+      "statement": "comparability.key equals 'cmp--' + sha256(join('|', [key_inputs.panel_id, key_inputs.reference_id, key_inputs.metric_name, key_inputs.direction, key_inputs.accumulation_dtype, key_inputs.stack_relation, key_inputs.head_policy]))[:16]. Recomputed, never trusted."
+    },
+    {
+      "id": "CMP-002",
+      "severity": "error",
+      "statement": "key_inputs.panel_id == measurement.panel_ref; key_inputs.reference_id == measurement.reference_ref; key_inputs.metric_name == metric.name; key_inputs.direction == metric.direction; key_inputs.accumulation_dtype == estimator.accumulation_dtype; key_inputs.stack_relation == estimator.stack_relation; key_inputs.head_policy == estimator.head_policy."
+    },
+    {
+      "id": "CMP-003",
+      "severity": "error",
+      "statement": "Within one comparability key, all member measurements agree on measurement_scope.scored_positions, or every disagreeing member has covers_full_panel=false plus a subset_of_panel disclosure."
+    },
+    {
+      "id": "CMP-004",
+      "severity": "error",
+      "statement": "No two measurements share (artifact_ref, panel_ref, reference_ref, pipeline_ref, metric.name, estimator.stack_relation, estimator.head_policy, provenance.measured_by) unless one has status superseded/retracted and names the other via supersedes.",
+      "amended": "v1.0.0: added pipeline_ref. brandonmusic's v44/v71/v75 rows measure the same weights on the same panel against the same teacher and differ only in the serving stack -- which is the variable he is actually reporting. Excluding pipeline_ref would have rejected three legitimate rows as duplicates."
+    },
+    {
+      "id": "CMP-005",
+      "severity": "warn",
+      "statement": "A comparability key with exactly one member is reported: a single-row group is a number nobody can compare to anything, and the README must say so rather than imply a ranking."
+    },
+    {
+      "id": "CMP-006",
+      "severity": "error",
+      "statement": "index.json comparability_keys is exactly the set of distinct keys present in measurements, with correct member_count, panel_id, reference_id and metric_name."
+    },
+    {
+      "id": "DET-001",
+      "severity": "error",
+      "statement": "determinism.identical_across_runs=true requires evidence_kind in {tokenwise_kld_sha256, logits_tensor_sha256, hidden_state_tensor_sha256, sealed_tokenwise_digest}, distinct_evidence_hash_count == 1, len(evidence_hashes) == 1, and run_count >= 2. Receipt-file and archive hashes are never acceptable evidence: report files embed run indices, paths and timestamps and differ across bit-identical runs (see the five-run K6 receipt, where report_file_sha256 differs per run while tokenwise_kld_sha256 is constant)."
+    },
+    {
+      "id": "DET-002",
+      "severity": "error",
+      "statement": "If determinism.run_means is present, len(run_means) == run_count, min_run_mean == min(run_means), max_run_mean == max(run_means), and population_stddev_of_run_means matches the population standard deviation of run_means to 1e-12 relative tolerance."
+    },
+    {
+      "id": "DET-003",
+      "severity": "error",
+      "statement": "If metric.name is mean_of_run_means_tokenwise_kld and run_means is present, metric.value equals mean(run_means) to 1e-12 relative tolerance."
+    },
+    {
+      "id": "DET-004",
+      "severity": "error",
+      "statement": "population_stddev_of_run_means == 0 with run_count >= 2 may NOT be presented as identical_across_runs=true unless evidence_kind is a content-hash kind (tokenwise_kld_sha256, logits_tensor_sha256, hidden_state_tensor_sha256, sealed_tokenwise_digest) with exactly one distinct hash. Equal run means alone are recorded as evidence_kind=run_mean_equality_only with identical_across_runs false or null. Equal means without a content hash is a coincidence claim, not a determinism claim.",
+      "amended": "v1.0.0: original wording required identical_across_runs=true whenever stddev was 0, which would have forced a false determinism claim onto every zero-spread row that publishes no per-run output digest. Inverted to match the invariant's stated intent."
+    },
+    {
+      "id": "DET-005",
+      "severity": "error",
+      "statement": "determinism.run_count == 0 only when status=pending."
+    },
+    {
+      "id": "DET-006",
+      "severity": "warn",
+      "statement": "A self-measured published row with run_count < 5 carries a disclosure with code=reduced_run_count."
+    },
+    {
+      "id": "DISC-001",
+      "severity": "error",
+      "statement": "Every record's disclosures array is non-empty. A record with nothing to disclose carries exactly one entry with code=no_known_deviations, severity=info, affects_comparability=false."
+    },
+    {
+      "id": "DISC-002",
+      "severity": "error",
+      "statement": "code=no_known_deviations never coexists with any other disclosure in the same array."
+    },
+    {
+      "id": "DISC-003",
+      "severity": "error",
+      "statement": "A disclosure with severity=blocking forces status in {pending, retracted}: a blocking caveat and a published number are contradictory."
+    },
+    {
+      "id": "DISC-004",
+      "severity": "error",
+      "statement": "Disclosure codes come from the registry's known-code list; a new code requires adding it to that list in the same change, so codes stay groupable."
+    },
+    {
+      "id": "IDENT-001",
+      "severity": "error",
+      "statement": "artifact.huggingface.revision is non-null for every artifact backing a published measurement, or the row carries a revision_unpinned disclosure with affects_comparability=true."
+    },
+    {
+      "id": "IDENT-002",
+      "severity": "error",
+      "statement": "Two artifacts never share the same (huggingface.repository, huggingface.revision, huggingface.path) unless their scope_digest differs and both disclose why. One repository can hold several artifacts (subfolders, branches, .gguf files), which is what path distinguishes."
+    },
+    {
+      "id": "IDENT-003",
+      "severity": "error",
+      "statement": "weights.size_gb, when present, equals weights.size_bytes / 1e9 to 1e-6 relative tolerance."
+    },
+    {
+      "id": "IDENT-004",
+      "severity": "warn",
+      "statement": "cross_refs.local_ai_registry.match_confidence=exact requires model_instance_id to be present and to satisfy the shared id pattern."
+    },
+    {
+      "id": "IDENT-005",
+      "severity": "error",
+      "statement": "weights.size_bytes is accompanied by weights.size_basis naming which total it is. Sizes are only compared within one basis."
+    },
+    {
+      "id": "IDENT-006",
+      "severity": "warn",
+      "statement": "Two artifacts sharing (repository, revision) with no path selector are reported: if one repository really holds both, huggingface.path should say which is which."
+    },
+    {
+      "id": "OFFLINE-001",
+      "severity": "error",
+      "statement": "Validation performs no network access. Every $ref resolves from the local schema/ directory and every source is checked for shape only, never fetched."
+    },
+    {
+      "id": "OFFLINE-002",
+      "severity": "error",
+      "statement": "No module reachable from the tools imports a networking library (socket, ssl, urllib, http, requests, huggingface_hub, aiohttp). Sources are shape-checked, never fetched."
+    },
+    {
+      "id": "PANEL-001",
+      "severity": "error",
+      "statement": "panel.sealed=true requires identity.panel_token_sha256 non-null and identity.hash_covers in {token_ids, token_manifest}."
+    },
+    {
+      "id": "PANEL-002",
+      "severity": "error",
+      "statement": "identity.panel_receipt_sha256 is never reused as identity.panel_token_sha256, and never appears in any determinism.evidence_hashes array."
+    },
+    {
+      "id": "PANEL-003",
+      "severity": "error",
+      "statement": "When contexts, positions_per_context and scored_positions_total are all non-null and scoring_window.windowed=false, scored_positions_total == contexts * positions_per_context."
+    },
+    {
+      "id": "PANEL-004",
+      "severity": "error",
+      "statement": "Two panels never share an identity.panel_token_sha256 unless they belong to one token-identity family: a connected component of the derived_from graph in which every edge has derivation.kind in {reformat, scoring_window_change}. Those derivations re-score identical tokens; every other derivation changes which tokens are in the panel and must therefore change the digest.",
+      "amended": "v1.0.0: restated as a family rule. Two sibling scoring-window views of one parent share the parent's digest without either deriving from the other, which the original pairwise wording rejected."
+    },
+    {
+      "id": "PANEL-005",
+      "severity": "error",
+      "statement": "A panel with derived_from and derivation.kind=scoring_window_change has a scoring_window.score_from different from its parent's. This is the check that keeps a score-from-1024 number out of the score-from-0 table."
+    },
+    {
+      "id": "PANEL-006",
+      "severity": "warn",
+      "statement": "panel.contamination.checked=false is reported for any panel backing a strict-class measurement."
+    },
+    {
+      "id": "PANEL-007",
+      "severity": "error",
+      "statement": "A measurement with comparability.class=strict requires panels[panel_ref].sealed=true."
+    },
+    {
+      "id": "PANEL-008",
+      "severity": "error",
+      "statement": "A panel whose derivation.kind is shard_subset or stratum_subset does NOT share its parent's identity.panel_token_sha256: it contains different tokens, so an identical digest would be a false claim of identical content."
+    },
+    {
+      "id": "PANEL-009",
+      "severity": "error",
+      "statement": "A panel that declares derivation.kind=scoring_window_change has strictly fewer scored_positions_total than its parent, and its scoring_window.score_from is greater than the parent's."
+    },
+    {
+      "id": "PROV-001",
+      "severity": "error",
+      "statement": "provenance.measured_by=self-measured requires provenance.measurer.is_registry_maintainer=true AND at least one provenance.sources entry with kind in {receipt_file, hf_file, github_file} and a non-null sha256."
+    },
+    {
+      "id": "PROV-002",
+      "severity": "error",
+      "statement": "provenance.measured_by != self-measured requires measurer.is_registry_maintainer to be false or absent, comparability.class=advisory, and a disclosure with code=author_reported_only."
+    },
+    {
+      "id": "PROV-003",
+      "severity": "error",
+      "statement": "provenance.independently_verified=true requires provenance.verification.verified_by to be a DIFFERENT party than provenance.measurer (different name and different handle)."
+    },
+    {
+      "id": "PROV-004",
+      "severity": "error",
+      "statement": "provenance.independently_verified is never true on a row whose provenance.sources contains no verifiable source (all sources of kind private_communication or url without sha256)."
+    },
+    {
+      "id": "PROV-005",
+      "severity": "warn",
+      "statement": "Every source with kind receipt_file whose uri is a local filesystem path also has a published mirror source (hf_file or github_file). A receipt only we can see is a receipt nobody can check."
+    },
+    {
+      "id": "PROV-006",
+      "severity": "error",
+      "statement": "The attribution.name on a producer/author/measurer of a third-party artifact or panel is never the registry maintainer. Credit is not transferable."
+    },
+    {
+      "id": "PROV-007",
+      "severity": "error",
+      "statement": "A row carrying an author_reported_only disclosure is never measured_by=self-measured. Relabelling somebody else's measurement as ours is the single worst thing this registry could do, so it is checked from both directions."
+    },
+    {
+      "id": "PROV-008",
+      "severity": "error",
+      "statement": "A measured_by=self-measured row names a pipeline whose author is the measurer. A number we claim to have produced must have run on a stack we own."
+    },
+    {
+      "id": "PROV-009",
+      "severity": "error",
+      "statement": "An inbound submission may not be attributed to the registry maintainer unless produced_by.repository is a maintainer-owned repository. self-measured is the registry's highest trust level and comparability.class=strict follows from it; a submission cannot assert either on the maintainer's behalf.",
+      "enforced_by": "tools/registry_add.py submission_to_records (exit 8)"
+    },
+    {
+      "id": "PROV-010",
+      "severity": "error",
+      "statement": "A measured_by=self-measured row cites at least one hashed source that the registry maintainer actually holds: a local receipt path, or a URI in the maintainer's own HuggingFace/GitHub namespace. A row whose entire evidence lives in a third party's repository is that party's measurement wearing our name -- the failure mode PROV-007 only catches while the author_reported_only disclosure is still attached."
+    },
+    {
+      "id": "PROV-011",
+      "severity": "error",
+      "statement": "A row generated from a submission receipt whose lane is not sealed-ep8 carries a non_sealed_lane disclosure with affects_comparability=true. submission.schema.json states that the lane forces the matching disclosure code; without this, a streaming-lane number lands in the sealed lane's comparability group with nothing on the row to say so.",
+      "enforced_by": "tools/registry_add.py submission_to_records"
+    },
+    {
+      "id": "REF-001",
+      "severity": "error",
+      "statement": "Every *_ref in every record resolves to an existing record whose id matches exactly and whose collection matches the ref's id prefix."
+    },
+    {
+      "id": "REF-002",
+      "severity": "error",
+      "statement": "Ids are unique within a collection and globally unique across collections."
+    },
+    {
+      "id": "REF-003",
+      "severity": "error",
+      "statement": "measurement.model_ref equals artifacts[measurement.artifact_ref].model_ref."
+    },
+    {
+      "id": "REF-004",
+      "severity": "error",
+      "statement": "references[measurement.reference_ref].panel_ref equals measurement.panel_ref. A teacher captured on a different panel can never back a measurement."
+    },
+    {
+      "id": "REF-005",
+      "severity": "error",
+      "statement": "artifacts[references[m.reference_ref].artifact_ref].model_ref equals measurement.model_ref, unless the reference carries a disclosure with code=cross_model_reference."
+    },
+    {
+      "id": "REF-006",
+      "severity": "error",
+      "statement": "panels[m.panel_ref].model_scope contains measurement.model_ref."
+    },
+    {
+      "id": "REF-007",
+      "severity": "error",
+      "statement": "panels[p].tokenizer.id equals models[m].tokenizer.id for every model m in the panel's model_scope."
+    },
+    {
+      "id": "REF-008",
+      "severity": "error",
+      "statement": "A panel's derived_from does not form a cycle, and the parent panel exists."
+    },
+    {
+      "id": "REF-009",
+      "severity": "error",
+      "statement": "artifact.derived_from_artifact_ref does not form a cycle."
+    },
+    {
+      "id": "REF-010",
+      "severity": "error",
+      "statement": "measurement.supersedes, comparability.bias.floor_measurement_ref, provenance.verification.verification_measurement_ref and reference.self_consistency.floor_measurement_ref all resolve to existing measurements, and none is self-referential."
+    },
+    {
+      "id": "REFC-001",
+      "severity": "error",
+      "statement": "reference.reference_kind=dequantized_from_quant requires artifacts[reference.artifact_ref].kind=dequantized, and every measurement using that reference is comparability.class=advisory with a bias.kind=dequantized_reference."
+    },
+    {
+      "id": "REFC-002",
+      "severity": "error",
+      "statement": "reference.reference_kind starting with native_ requires artifacts[reference.artifact_ref].kind=base."
+    },
+    {
+      "id": "REFC-003",
+      "severity": "error",
+      "statement": "A reference whose capture.head_source=shared_head_artifact requires every measurement against it to have estimator.head_policy=shared_reference_head, and vice versa."
+    },
+    {
+      "id": "REFC-004",
+      "severity": "warn",
+      "statement": "reference.self_consistency.floor_measurement_ref is set for every reference backing at least one cross_stack measurement."
+    },
+    {
+      "id": "REFC-005",
+      "severity": "error",
+      "statement": "A submission's declared reference.teacher_receipt_sha256 must equal the capture_receipt_sha256 of the reference record it names. Where the reference record carries no capture digest the row is forced to disclose teacher_capture_unverified, which makes it advisory.",
+      "enforced_by": "tools/registry_add.py submission_to_records (exit 7)"
+    },
+    {
+      "id": "SCOPE-001",
+      "severity": "error",
+      "statement": "measurement.scope_digest equals the recomputed digest of artifacts[measurement.artifact_ref].scope."
+    },
+    {
+      "id": "SCOPE-002",
+      "severity": "error",
+      "statement": "artifact.scope_digest equals the canonical digest recomputed from artifact.scope: sorted 'class=treatment:format@bpw' segments joined by '|', then '|head=<head_policy>|kv=<kv_cache_dtype>'. bpw omitted (no '@') when null."
+    },
+    {
+      "id": "SCOPE-003",
+      "severity": "error",
+      "statement": "artifact.scope.policy=uniform requires all assignments with treatment=quantized to share one (format, bits_per_weight); policy=mixed requires at least two distinct (format, bits_per_weight) pairs among quantized assignments."
+    },
+    {
+      "id": "SCOPE-004",
+      "severity": "error",
+      "statement": "artifact.scope.assignments has no duplicate (tensor_class, layer_range) pair, and covers at minimum: embed_tokens, lm_head, and at least one attn.* and one mlp.*/moe.* class."
+    },
+    {
+      "id": "SCOPE-005",
+      "severity": "error",
+      "statement": "If scope.head_policy=quantized then some assignment with tensor_class=lm_head has treatment=quantized; if native, that assignment has treatment=native. The two statements of head handling must agree."
+    },
+    {
+      "id": "SCOPE-006",
+      "severity": "warn",
+      "statement": "codec.bits_per_weight_effective, when present, lies between the minimum and maximum bits_per_weight over quantized assignments and 16."
+    },
+    {
+      "id": "SCOPE-007",
+      "severity": "error",
+      "statement": "measurement_scope.covers_full_panel=true requires measurement_scope.scored_positions == panels[panel_ref].structure.scored_positions_total (when that is non-null), and contexts == panel contexts."
+    },
+    {
+      "id": "SCOPE-008",
+      "severity": "error",
+      "statement": "codec.calibration.overlaps_any_panel=true requires overlapping_panel_refs to be non-empty, and every measurement of that artifact against a listed panel carries an affects_comparability disclosure."
+    },
+    {
+      "id": "SCOPE-009",
+      "severity": "error",
+      "statement": "An artifact with any scope.assignments entry whose treatment is 'unknown' carries a disclosure with code=artifact_identity_incomplete, and no measurement of that artifact is comparability.class=strict."
+    },
+    {
+      "id": "SCOPE-010",
+      "severity": "error",
+      "statement": "A submission with measurement_scope.covers_full_panel=false must carry a subset_of_panel disclosure, and may never score more positions than the panel it names.",
+      "enforced_by": "tools/registry_add.py submission_to_records (exit 4 / exit 7)"
+    },
+    {
+      "id": "STAT-001",
+      "severity": "error",
+      "statement": "uncertainty.ci95_low <= metric.value <= uncertainty.ci95_high whenever all three are non-null."
+    },
+    {
+      "id": "STAT-002",
+      "severity": "error",
+      "statement": "uncertainty.method=none requires ci95_low and ci95_high to be null; a stated interval requires a stated method."
+    },
+    {
+      "id": "STAT-003",
+      "severity": "error",
+      "statement": "metric.units matches metric.name: *_kld -> nats, mean_jsd -> bits or nats, top1_agreement -> fraction in [0,1], perplexity_ratio -> ratio."
+    },
+    {
+      "id": "STAT-004",
+      "severity": "error",
+      "statement": "A KL-family metric.value is >= -1e-9; a negative mean KL is an estimator bug, not a result."
+    },
+    {
+      "id": "STAT-005",
+      "severity": "warn",
+      "statement": "auxiliary_metrics.top1_agreement is present on every published KL row: a KL number without top-1 agreement hides which kind of divergence it is."
+    },
+    {
+      "id": "STAT-006",
+      "severity": "error",
+      "statement": "metric.value survives serialization without precision loss: repr(value) round-trips to the same float and the serialized line contains that repr, so the data file never stores a display-rounded number in place of the computed one. LIMIT, stated because the wording used to imply more: this cannot detect a value that was already rounded BEFORE it reached the registry -- 0.0053 round-trips perfectly. Binding a value to its receipt is the seeder's job (live-read for the Qwen rows) and, for the transcribed GLM rows, a manual fetch-and-hash against provenance.sources[].sha256.",
+      "amended": "v1.0.1 (audit 2026-08-28): statement narrowed to what the check actually enforces. An adversarial fixture that rounded a headline value to 4 decimal places passed STAT-006 cleanly, because a rounded float round-trips through repr like any other."
+    }
+  ],
+  "known_disclosure_codes": [
+    "artifact_identity_incomplete",
+    "author_reported_only",
+    "calibration_panel_overlap",
+    "contamination_unchecked",
+    "cross_engine_capture",
+    "cross_model_reference",
+    "cross_stack_capture",
+    "different_reference_kind",
+    "estimator_overridden",
+    "estimator_unknown",
+    "local_device_reduction_order",
+    "memory_budget_schedule",
+    "no_known_deviations",
+    "non_sealed_lane",
+    "qualification_pending",
+    "quality_gate_failed",
+    "record_note",
+    "reduced_run_count",
+    "revision_unpinned",
+    "shared_reference_head",
+    "single_run",
+    "size_unverified",
+    "streaming_lane_offset",
+    "subset_of_panel",
+    "superseded_by_newer_run",
+    "teacher_capture_unverified",
+    "third_party_artifact_self_measured",
+    "third_party_reported_only",
+    "tp_sliced_artifact",
+    "undisclosed_panel",
+    "unsealed_source",
+    "value_identical_to_sibling",
+    "weak_contamination_guard"
+  ],
+  "comparability_key_field_order": [
+    "panel_id",
+    "reference_id",
+    "metric_name",
+    "direction",
+    "accumulation_dtype",
+    "stack_relation",
+    "head_policy"
+  ],
+  "scope_digest_recipe": {
+    "segment": "<tensor_class>=<treatment>:<format>[@<bits_per_weight>]",
+    "join": "|",
+    "sort": "lexicographic over segments",
+    "suffix": "|head=<scope.head_policy>|kv=<scope.kv_cache_dtype>",
+    "example": "attn.o=native:bf16|attn.qkv=native:bf16|embed_tokens=native:bf16|lm_head=native:bf16|mlp.down=quantized:exl3-mcg@6|mlp.gate=quantized:exl3-mcg@5|mlp.up=quantized:exl3-mcg@5|head=native|kv=bf16"
+  },
+  "canonical_serialization": {
+    "description": "The single serialization rule used for every derived hash and every line in data/*.jsonl. registry_add.py and registry_validate.py both call tools/registry_lib.py, so they cannot drift.",
+    "json": "json.dumps(obj, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False)",
+    "floats": "repr() of the IEEE-754 double; values are never rounded on the way in",
+    "jsonl": "one canonical object per line, file sorted ascending by the record id",
+    "comparability_key": "'cmp--' + sha256('|'.join(str(key_inputs[f]) for f in comparability_key_field_order)).hexdigest()[:16]; inputs are enum values and ids, none of which may contain '|'",
+    "scope_digest_numbers": "bits_per_weight renders as str(int(v)) when integral, else repr(float(v)), so 6 and 6.0 agree"
+  }
+}

@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/schema/reference.schema.json",
+  "title": "Reference (teacher capture)",
+  "description": "A reference is NOT a model — it is one capture of reference logits: (artifact, panel, stack, precision). This granularity is deliberate. Two numbers computed against 'BF16' are still incomparable if one teacher was captured in fp32 on vLLM over a 25-window panel and the other in bf16 on exllamav3 over a 5120-window panel. Making the teacher a record with a panel_ref means a measurement that names a reference has already named a panel, a stack and a precision, and a reference whose kind is dequantized_from_quant (e.g. FP8 dequantized, as used by the MLX author) can never be silently read as a BF16-teacher number.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "artifact_ref",
+    "panel_ref",
+    "reference_kind",
+    "capture",
+    "author",
+    "sources",
+    "disclosures"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version"
+    },
+    "id": {
+      "$ref": "common.schema.json#/$defs/reference_id"
+    },
+    "name": {
+      "type": "string"
+    },
+    "artifact_ref": {
+      "$ref": "common.schema.json#/$defs/artifact_id",
+      "description": "The weights the reference logits came from."
+    },
+    "panel_ref": {
+      "$ref": "common.schema.json#/$defs/panel_id",
+      "description": "REQUIRED. Reference logits only exist over a panel. A measurement's panel_ref must equal this."
+    },
+    "reference_kind": {
+      "enum": [
+        "native_bf16",
+        "native_fp16",
+        "native_fp32",
+        "dequantized_from_quant",
+        "quantized_proxy",
+        "unknown"
+      ],
+      "description": "What the teacher actually IS. dequantized_from_quant means the reference distribution is itself a quantized model's, so student numbers against it are systematically SMALLER than against a true BF16 teacher and must never be ranked against native_* rows."
+    },
+    "capture": {
+      "type": "object",
+      "required": [
+        "stack",
+        "logits_dtype",
+        "head_source"
+      ],
+      "properties": {
+        "stack": {
+          "type": "string",
+          "minLength": 1,
+          "description": "e.g. vllm, exllamav3, transformers, mlx-lm."
+        },
+        "stack_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pipeline_ref": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/pipeline_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "compute_dtype": {
+          "$ref": "common.schema.json#/$defs/numeric_format"
+        },
+        "logits_dtype": {
+          "$ref": "common.schema.json#/$defs/numeric_format",
+          "description": "Precision the teacher logits were STORED at. fp32 storage of a bf16 forward pass is fp32 here and bf16 in compute_dtype."
+        },
+        "kv_cache_dtype": {
+          "enum": [
+            "bf16",
+            "fp16",
+            "fp32",
+            "fp8_e4m3",
+            "fp8_e5m2",
+            "nvfp4",
+            "mxfp4",
+            "int8",
+            "not_applicable",
+            "unknown"
+          ]
+        },
+        "head_source": {
+          "enum": [
+            "own_head",
+            "shared_head_artifact",
+            "unknown"
+          ],
+          "description": "own_head = the teacher's own lm_head produced the logits. shared_head_artifact = hidden states were captured and a single named head applied to both sides (our replay protocol)."
+        },
+        "head_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256_or_null"
+        },
+        "batch_invariant": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "captured_at": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "capture_receipt_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256_or_null"
+        }
+      },
+      "additionalProperties": false
+    },
+    "author": {
+      "$ref": "common.schema.json#/$defs/attribution",
+      "description": "Who produced this capture. A third party's teacher capture reused by us is still theirs."
+    },
+    "logits_available": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the reference logits/hidden states are retained and re-scorable by us. false means a number against this reference can never be re-derived, only re-run."
+    },
+    "self_consistency": {
+      "description": "The floor: what this reference scores against a same-kind replay of itself on this panel. Cross-stack rows are only interpretable against this floor, so we record the pointer here.",
+      "type": "object",
+      "properties": {
+        "floor_measurement_ref": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/measurement_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "common.schema.json#/$defs/source"
+      }
+    },
+    "disclosures": {
+      "$ref": "common.schema.json#/$defs/disclosures"
+    }
+  },
+  "allOf": [
+    {
+      "description": "A dequantized teacher must be an artifact that is itself marked dequantized, and must carry a comparability-affecting disclosure.",
+      "if": {
+        "properties": {
+          "reference_kind": {
+            "const": "dequantized_from_quant"
+          }
+        },
+        "required": [
+          "reference_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "disclosures": {
+            "contains": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "const": "different_reference_kind"
+                },
+                "affects_comparability": {
+                  "const": true
+                }
+              },
+              "required": [
+                "code",
+                "affects_comparability"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "A shared-head capture must name the head it shared.",
+      "if": {
+        "properties": {
+          "capture": {
+            "properties": {
+              "head_source": {
+                "const": "shared_head_artifact"
+              }
+            },
+            "required": [
+              "head_source"
+            ]
+          }
+        },
+        "required": [
+          "capture"
+        ]
+      },
+      "then": {
+        "properties": {
+          "capture": {
+            "properties": {
+              "head_sha256": {
+                "$ref": "common.schema.json#/$defs/sha256"
+              }
+            },
+            "required": [
+              "head_sha256"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}
