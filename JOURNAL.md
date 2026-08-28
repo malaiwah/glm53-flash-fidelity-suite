@@ -607,3 +607,17 @@ publication timestamp; (3) L4 freight box (484453→485016) uploading the
 Overlap-smoke postscript: the disk-ledger calibration deletion preempted the
 A/B's overlap leg (control banked); flag enabled on verified correctness,
 gain measured from campaign receipts instead. TR3 naming live everywhere.
+
+## 2026-08-28 ~04:50 — Overnight contract (operator handing off for the night)
+Operator: keep K8 only under close supervision; unattended autonomy granted.
+CONTRACT (armed as overnight_supervisor.sh + 2-min ntfy reporter):
+process-level checks every 5 min (stack dumps over exit codes); K8 abort rule
+— if payload store <1GB by 06:30 UTC, pause fleet, park K8 for spot tomorrow;
+budget guard at $150 (pause all but K6 publication); idle-box guard; K6 lane
+completes autonomously (qualify → card → public flip → receipts → discussion
+post). Night state at handoff: K6 weights private on HF (259 files);
+qualify take-3 in receipt-walk (~39/44); K8 contract take-5 prepping with
+gated worker chain. Friction ledger tonight, all mine, all fixed+pushed:
+CUDA_VISIBLE_DEVICES-vs-preflight (twice), nice-env ordering, prep/contract
+doc race, symlink-farm machine-locality, port collisions, VM sudo bootstrap,
+ext rebuild clobber. The K8 path from here reuses the exact chain K6 proved.
