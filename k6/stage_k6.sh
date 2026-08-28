@@ -227,7 +227,11 @@ setup)
   # --no-deps per the proven recipe (DECISIONS.md 5): exllamav3's declared deps
   # (formatron/kbnf/...) are import-guarded and their resolver pulls broke the
   # smoke rounds; every dep the campaign actually needs is pinned above.
-  ( cd "$EXL3" && TORCH_CUDA_ARCH_LIST="9.0;10.0" "$VENV/bin/pip" -q install --no-build-isolation --no-deps -e . )
+  # Rebuild guard: a rebuilt .so breaks sealed prep identities (two boxes
+  # sharing this tree clobbered a campaign once). Build ONLY if import fails.
+  if ! TORCH_CUDA_ARCH_LIST="9.0;10.0" "$PY" -c "import exllamav3; from exllamav3 import ext" 2>/dev/null; then
+    ( cd "$EXL3" && TORCH_CUDA_ARCH_LIST="9.0;10.0" "$VENV/bin/pip" -q install --no-build-isolation --no-deps -e . )
+  fi
   # Import smoke + extension-binary receipt.  If the editable install did not
   # precompile, this import JIT-builds into ~/.cache/torch_extensions (container
   # -local: re-runs after preemption, which is why setup always re-runs).  The
