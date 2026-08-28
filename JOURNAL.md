@@ -630,3 +630,17 @@ malaiwah/GLM-5.3-Flash-TR3-6bpw public with provisional-flagged card
 (TR3 naming, codec-vs-runtime, provenance + disclosed deviations, family
 table, co-credits). Qualify runs 2-5 continue; card + discussion update on
 the sealed aggregate. K8 prep continues on the fleet in parallel.
+
+## 2026-08-28 ~09:20 — K6 SEALED: 0.013723 nats, five bitwise-identical runs
+The headline the campaign was built for: mean KLD(teacher‖K6) = 0.013723
+nats over the full sealed panel (25 windows × 51,175 positions × 5 cold
+runs, population stddev EXACTLY 0.0 — the determinism property transfers to
+our stack). Quality gate passed. 1.5× better than official FP8 at 77% of its
+bytes; 1.8× better than the 4bpw; 4.4× better than NVFP4. Card updated with
+receipts; reports in the fidelity suite; final table posted on the
+collaboration thread. TP-runtime serving smoke disclosed as not-run (SM90 box
+vs SM120 kernels; serving validation = AIBeast). 8× VM destroyed on
+completion. BUDGET DRAMA: balance hit $24 (the VM's overnight qualify burn);
+supervisor guard fought the operator's K8-must-finish directive — supervisor
+stopped, K8 encode racing the wire (~$16 needed, 16/42 layers at the check).
+Every number above is free-published; only K8's tail is money-gated.
