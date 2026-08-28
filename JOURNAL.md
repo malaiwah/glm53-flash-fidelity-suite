@@ -621,3 +621,12 @@ gated worker chain. Friction ledger tonight, all mine, all fixed+pushed:
 CUDA_VISIBLE_DEVICES-vs-preflight (twice), nice-env ordering, prep/contract
 doc race, symlink-farm machine-locality, port collisions, VM sudo bootstrap,
 ext rebuild clobber. The K8 path from here reuses the exact chain K6 proved.
+
+## 2026-08-28 ~05:30 — K6 PUBLIC (operator call on the preview strength)
+Preview (run 1/5, window-0000, unofficial): KLD 0.0168 / top-1 95.5% vs FP8
+0.0265 on the SAME window — 1.6x better at 77% of FP8's bytes. Operator:
+publish now, update card after the aggregate. Done:
+malaiwah/GLM-5.3-Flash-TR3-6bpw public with provisional-flagged card
+(TR3 naming, codec-vs-runtime, provenance + disclosed deviations, family
+table, co-credits). Qualify runs 2-5 continue; card + discussion update on
+the sealed aggregate. K8 prep continues on the fleet in parallel.
