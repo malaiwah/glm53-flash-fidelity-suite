@@ -475,6 +475,13 @@ PYEOF
   ;;
 
 convert_k8)
+  # K8 TREE OF RECORD: the K8 contract/preparations were sealed from the
+  # isolated pipeline-k8 tree (0007 applied pre-K6-completion, legal because
+  # isolated).  The prepared-backend closure seal binds those exact bytes -
+  # every K8 driver call must use the same tree, not $ROOT/pipeline.
+  PIPE="$ROOT/pipeline-k8"
+  export QP_PIPELINE_ROOT="$PIPE"
+  export PYTHONPATH="$PIPE/src:$SHAPLEY:$SQGEXP"
   # P1b - K8-UNIFORM parts-bin campaign (operator directive, DECISIONS.md 7):
   # runs on the SAME 4x H200 fleet immediately after convert_k6.  Same
   # calibration, same transform seed, same profile parameters - only the rate
@@ -603,6 +610,13 @@ JSON
   ;;
 
 materialize_k8)
+  # K8 TREE OF RECORD: the K8 contract/preparations were sealed from the
+  # isolated pipeline-k8 tree (0007 applied pre-K6-completion, legal because
+  # isolated).  The prepared-backend closure seal binds those exact bytes -
+  # every K8 driver call must use the same tree, not $ROOT/pipeline.
+  PIPE="$ROOT/pipeline-k8"
+  export QP_PIPELINE_ROOT="$PIPE"
+  export PYTHONPATH="$PIPE/src:$SHAPLEY:$SQGEXP"
   # Ledger-gated K8 checkpoint materialization (operator: materialize AFTER
   # uploading/deleting what the ledger allows).  Deletes the re-downloadable
   # calibration captures first (mirrors convert_k6 step 4), then requires
@@ -709,6 +723,13 @@ PYEOF
   ;;
 
 qualify_k8)
+  # K8 TREE OF RECORD: the K8 contract/preparations were sealed from the
+  # isolated pipeline-k8 tree (0007 applied pre-K6-completion, legal because
+  # isolated).  The prepared-backend closure seal binds those exact bytes -
+  # every K8 driver call must use the same tree, not $ROOT/pipeline.
+  PIPE="$ROOT/pipeline-k8"
+  export QP_PIPELINE_ROOT="$PIPE"
+  export PYTHONPATH="$PIPE/src:$SHAPLEY:$SQGEXP"
   # K8 qualification: THREE cold EP8 student captures (budget; disclosed) +
   # fp64 tokenwise KLD + TP4 packed-runtime qualification (K8 is a shippable
   # flagship, so the runtime receipt is required like K6's).
