@@ -966,7 +966,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     # local BF16 tree (~the model's non-routed footprint) before any capture.
     materialized_bytes = (
         cen.nonrouted_bytes
-        if plan["target"].get("surface") == "exl3hf" else 0.0
+        if plan["target"].get("surface") in ("exl3hf", "tr3-published") else 0.0
     )
     need = C.storage_need(artifact_bytes=artifact_bytes, panel_bytes=panel_bytes,
                           keep_student_logits=args.keep_student_logits,
@@ -1113,11 +1113,13 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
         ("bootstrap", 0.42, "apt + cuda13 + torch + exllamav3 build"),
         ("fetch", max(0.05, fetch_gb / 190.0 / 3600.0 * 1000.0), "%.0f GB @ ~190 MB/s" % fetch_gb),
     ]
-    if plan["target"].get("surface") == "exl3hf":
+    if plan["target"].get("surface") in ("exl3hf", "tr3-published"):
         phases.append(
-            ("materialize", 0.35,
-             "dequantize non-routed -> %s BF16 tree (ESTIMATED)"
-             % human_bytes(materialized_bytes)))
+            ("materialize", 0.06,
+             "%s non-routed -> %s tree (MEASURED 2m06s on exl3hf; a tr3 "
+             "release copies rather than decodes)"
+             % ("dequantize" if plan["target"].get("surface") == "exl3hf"
+                else "re-shard", human_bytes(materialized_bytes))))
     phases += [
         ("measure", args.cold_runs * descriptor.contexts * per_window / 60.0,
          "%d run(s) x %d windows @ ~%.1f min%s"
@@ -1466,9 +1468,12 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
                int(args.heartbeat_timeout), td.fs_root, td.fs_root))
 
     stages = ["setup", "fetch_target", "fetch_panel", "measure", "score", "seal"]
-    if (plan_data.get("target") or {}).get("surface") == "exl3hf":
-        # stock-exllamav3 artifacts must materialize their non-routed BF16
-        # tree from the fetched snapshot before any capture reads --bf16
+    if (plan_data.get("target") or {}).get("surface") in ("exl3hf", "tr3-published"):
+        # Both surfaces read --bf16 from a tree of the artifact's own non-routed
+        # tensors: exl3hf because they are quantized and must be decoded,
+        # tr3-published because they share shards with the routed payloads and
+        # transformers keys its load off the shard files (there the
+        # materializer decodes nothing and copies verbatim).
         stages.insert(2, "materialize")
     for stage in stages:
         _run_stage(args, con, jl, td, plan_data, stage)

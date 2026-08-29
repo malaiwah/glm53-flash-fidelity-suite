@@ -874,6 +874,12 @@ def main() -> int:
                     "nonrouted_policy_declared": student_receipt.get(
                         "nonrouted_policy_declared"
                     ),
+                    # TWO receipts, and conflating them would lose the one that
+                    # matters: the ARTIFACT's own published seal, and the
+                    # non-routed tree this run materialized from it.
+                    "artifact_materialization_receipt_sha256": student_receipt.get(
+                        "artifact_materialization_receipt_sha256"
+                    ),
                     "materialization_receipt_sha256": student_receipt.get(
                         "materialization_receipt_sha256"
                     ),

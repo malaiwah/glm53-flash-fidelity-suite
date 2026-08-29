@@ -210,13 +210,22 @@ PY
   ;;
 
 materialize)
-  # exl3hf only: dequantize the artifact's non-routed function into the BF16
-  # tree the streaming engine loads as --bf16.  A no-op for other surfaces.
+  # Write the artifact's NON-ROUTED function into a tree of its own, which the
+  # streaming engine loads as --bf16.  Two surfaces need it, for two different
+  # reasons, and the same code serves both:
+  #   exl3hf  -- the non-routed tensors are QUANTIZED, so they must be decoded.
+  #   tr3     -- they are already the official tensors, but they share shards
+  #              with the routed payloads, and transformers derives its
+  #              checkpoint key set from the shard FILES rather than the index.
+  #              A symlink view therefore reports 54,272 routed payload tensors
+  #              as unloaded and the load gate refuses. Here the materializer
+  #              decodes NOTHING: it re-shards the natives verbatim.
   SURFACE="$(jqget target.surface)"
-  if [ "$SURFACE" != "exl3hf" ]; then
-    log "surface=$SURFACE needs no materialization -- skipping"
-    touch "$marker"; exit 0
-  fi
+  case "$SURFACE" in
+    exl3hf|tr3-published) ;;
+    *) log "surface=$SURFACE needs no materialization -- skipping"
+       touch "$marker"; exit 0 ;;
+  esac
   REPO="$(jqget target.repo_id)"
   REV="$(jqget target.revision)"
   BF16_DIR="${BF16:-/home/jl_fs/models/bf16}"

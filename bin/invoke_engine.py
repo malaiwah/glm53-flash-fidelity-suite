@@ -127,8 +127,16 @@ def main() -> int:
         # a second tree would make it ambiguous which non-routed weights were
         # measured.  Blanking the value is what drops the flag
         # (build_invocation skips None/"" -- see fidelity/engines.py).
+        # --bf16 is the tree `stage_measure.sh materialize` wrote from THIS
+        # snapshot -- the same contract exl3hf has. For a TR3 release the
+        # materializer decodes nothing (routed-experts-only scope); it exists
+        # here because transformers keys its checkpoint load off the shard
+        # FILES, and the artifact's non-routed tensors share shards with
+        # 148,608 routed payload objects.
+        materialized = os.environ.get(
+            "TR3_BF16", "%s/models/target-bf16-materialized" % fs)
         extra.update({
-            "bf16": "",
+            "bf16": materialized,
             "tr3_root": "%s/models/target" % fs,
             "tr3_repo": target.get("repo_id", ""),
             "tr3_revision": target.get("revision", ""),

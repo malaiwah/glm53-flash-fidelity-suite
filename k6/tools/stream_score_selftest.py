@@ -815,6 +815,7 @@ GATED_RECEIPT_KEYS = frozenset({
     "tr3_repo", "tr3_revision", "codec_family", "exllamav3_pin",
     "scope_census_sha256", "nonrouted_policy_declared",
     "seal_verification", "shard_verification",
+    "artifact_materialization_receipt_sha256",
 })
 
 

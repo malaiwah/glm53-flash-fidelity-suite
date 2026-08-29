@@ -365,7 +365,54 @@ try:
           t3.scope_digest(t3.load_tr3_surface(good, repo="fixture/tr3", revision=REV))
           == digest)
 
-    # [7] the routed census ---------------------------------------------------
+    # [7] the materializer, on a TR3 tree ------------------------------------
+    # The non-routed tensors cannot serve transformers from the artifact's own
+    # shards: they are interleaved with 148,608 routed payload objects, and
+    # transformers derives its checkpoint key set from the shard FILES. So the
+    # SAME materializer exl3hf uses re-shards them -- and for a TR3 release it
+    # must decode NOTHING. This rung proves that: the emitted set is the
+    # official 1,618 names and every tensor is bitwise what the artifact holds.
+    out = work / "materialized"
+    official_index = work / "official-index.json"
+    official_index.write_text(json.dumps({"weight_map": dict(
+        {n: "x.safetensors" for n in t3.official_nonrouted_names()},
+        **{"model.language_model.layers.3.mlp.experts.0.gate_proj.weight": "y.safetensors"})}))
+    receipt = xs.materialize_nonrouted(
+        good, out, device="cpu", source_repo="fixture/tr3", source_revision=REV,
+        official_index=official_index)
+    check("materializer runs on a TR3 tree",
+          receipt.get("written_tensor_count") == 1618,
+          "written_tensor_count=%r, official_index_check=%r"
+          % (receipt.get("written_tensor_count"),
+             (receipt.get("official_index_check") or {}).get("checked")))
+    check("the materializer's official-index gate ran and passed",
+          (receipt.get("official_index_check") or {}).get("checked") is True)
+    mat_index = json.loads((out / "model.safetensors.index.json").read_text())["weight_map"]
+    produced = {n for n in mat_index if t3._ROUTED.search(n) is None}
+    check("materialized name set == the official non-routed set",
+          produced == set(t3.official_nonrouted_names()),
+          "%d produced" % len(produced))
+    from safetensors import safe_open as _open
+    src_handle = _open(str(good / NONROUTED_SHARD), framework="pt", device="cpu")
+    same, checked = True, 0
+    for name in sorted(produced)[:400]:
+        want = src_handle.get_tensor(name)
+        shard = mat_index[name]
+        with _open(str(out / shard), framework="pt", device="cpu") as h:
+            got = h.get_tensor(name)
+        checked += 1
+        if got.dtype != want.dtype or not torch.equal(got, want):
+            same = False
+            check("materialized tensors are bitwise the artifact's", False,
+                  "%s: %s vs %s" % (name, got.dtype, want.dtype))
+            break
+    check("materialized tensors are bitwise the artifact's (no decode)", same,
+          "%d checked, dtypes preserved (bf16 stays bf16, fp32 stays fp32)" % checked)
+    matcfg = json.loads((out / "config.json").read_text())
+    check("the materialized config drops quantization_config",
+          "quantization_config" not in matcfg)
+
+    # [8] the routed census ---------------------------------------------------
     cens = t3.routed_census(surface)
     check("executed routed surface closes",
           cens["executed_modules"] == 42 * 288 * 3, str(cens["executed_modules"]))

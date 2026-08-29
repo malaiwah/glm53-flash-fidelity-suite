@@ -1953,23 +1953,12 @@ def main() -> int:
         # materialization-receipt.json state digests over the emitted name set,
         # the plan, the config and the index, and tr3_surface.verify_seal
         # RECOMPUTES every one of them from the published bytes before a single
-        # payload is read.  Its scope is routed-experts-only with the non-routed
-        # set byte-exact official, so -- exactly as for nvfp4 -- there is nothing
-        # to materialize and a second tree would be ambiguous.
-        if args.tr3_root is None:
-            raise _fail("--source tr3 requires --tr3-root (local snapshot of the release)")
-        if args.bf16 is not None:
-            raise _fail(
-                "REFUSED: --bf16 plays no role in a TR3 run. The release quantizes the routed "
-                "experts ONLY and ships all 1,618 non-routed tensors as the OFFICIAL source "
-                "tensors under their official names (non_routed_dtype_policy "
-                "official_source_native, nonrouted_native_exact, name set verified against the "
-                "official release). The non-routed view is built from the artifact snapshot; a "
-                "second tree would make it ambiguous which one was measured. Drop --bf16; to "
-                "compare trees run `tr3_surface.py verify` / `probe` instead."
-            )
-        if not args.tr3_revision or sealed_capture.REVISION.fullmatch(args.tr3_revision) is None:
-            raise _fail("--source tr3 requires --tr3-revision <immutable 40-hex repo commit>")
+        # payload is read.
+        if args.tr3_root is None or not args.tr3_repo or not args.tr3_revision:
+            raise _fail("--source tr3 requires --tr3-root, --tr3-repo and --tr3-revision")
+        if sealed_capture.REVISION.fullmatch(args.tr3_revision) is None:
+            raise _fail("--tr3-revision must be the immutable 40-hex commit")
+        import exl3hf_surface as xs3  # noqa: F811 - the shared decode + materializer ABI
         import tr3_surface as tr3_module  # noqa: F811 - sibling tool module
 
         tr3 = tr3_module.load_tr3_surface(
@@ -1984,7 +1973,47 @@ def main() -> int:
                 f"--profile {args.profile} names a {want_bits} bpw release, but the "
                 f"release declares bits={tr3.declared_bits}"
             )
-        model_revision = args.tr3_revision
+        # --bf16 points at the MATERIALIZED non-routed tree, exactly as it does
+        # for exl3hf -- and for a reason that is mechanical, not about scope.
+        # A TR3 release's non-routed tensors ARE the official ones, so morally
+        # the snapshot could serve as the model tree. It cannot, because they
+        # are INTERLEAVED with routed payloads in the same 120 shards, and
+        # transformers derives its checkpoint key set from the shard FILES, not
+        # from the index: a symlink view whose index lists only the 1,618
+        # non-routed names still reports the 54,272 routed payload tensors
+        # living in those same files as unloaded, and the load gate -- rightly
+        # -- refuses. The materializer writes the non-routed set into clean
+        # shards of its own, VERBATIM for a TR3 release: nothing is decoded,
+        # bf16 stays bf16 and the fp32 natives stay fp32.
+        inventory_path = (
+            args.inventory.resolve() if args.inventory
+            else (args.bf16.resolve() / "inventory.json")
+        )
+        inventory = _sealed_json(inventory_path, RELEASE_INVENTORY_SCHEMA, "inventory_sha256")
+        model_revision = str(inventory.get("model_revision", ""))
+        if model_revision != args.tr3_revision:
+            raise _fail(
+                "the materialized tree's inventory binds revision "
+                f"{model_revision!r}, not --tr3-revision {args.tr3_revision!r}"
+            )
+        if inventory.get("seal_mode") != "full-shard-sha256":
+            raise _fail("streaming capture requires the exact full-hash inventory")
+        materialization = _sealed_json(
+            args.bf16.resolve() / "materialization-receipt.json",
+            xs3.EXL3HF_MATERIALIZATION_SCHEMA,
+            "receipt_sha256",
+        )
+        if (
+            materialization.get("source_repo") != args.tr3_repo
+            or materialization.get("source_revision") != args.tr3_revision
+            or materialization.get("source_config_sha256") != tr3.config_sha256
+            or materialization.get("source_index_sha256") != tr3.index_sha256
+            or materialization.get("inventory_sha256") != inventory["inventory_sha256"]
+        ):
+            raise _fail(
+                "the --bf16 tree was not materialized from THIS tr3 snapshot; "
+                "re-run exl3hf_surface materialize against the same --tr3-root"
+            )
         bits = int(round(tr3.declared_bits))
     elif args.source == "nvfp4":
         # There is no contract, no payload store, no sealed inventory and no
@@ -2590,11 +2619,13 @@ def main() -> int:
             "bfloat16 decoded from TR3 EXL3/MCG payloads (fp32 decode, one rounding)"
         )
         disclosure["dtype_policy"]["nonrouted"] = (
-            "the ARTIFACT's own non-routed tensors, read verbatim: the release quantizes "
+            "the ARTIFACT's own non-routed tensors, copied VERBATIM: the release quantizes "
             "the routed experts only and ships all %d non-routed tensors as the official "
             "source tensors (non_routed_dtype_policy official_source_native; dtype census "
-            "%s). Nothing is materialized and no second tree is in the path; lm_head is "
-            "native BF16 (head_bits 16)"
+            "%s). The materializer re-shards them without decoding anything -- bf16 stays "
+            "bf16, the fp32 natives stay fp32 -- because they share shards with the routed "
+            "payloads and transformers keys its load off the shard FILES. lm_head is native "
+            "BF16 (head_bits 16) and no official-release weight is in the path"
             % (tr3.nonrouted_tensor_count,
                json.dumps(tr3.dtype_census, sort_keys=True))
         )
@@ -2607,10 +2638,12 @@ def main() -> int:
             "which tr3_surface.verify_seal recomputed from the published bytes before "
             "decoding (%d checks)"
             % (int(round(tr3.declared_bits)), len(tr3.seal.get("checks") or [])),
-            "non-routed weights: the artifact's OWN tensors, which are byte-exact "
-            "official (nonrouted_native_exact, and the name set was verified equal to the "
-            "official release's %d non-routed names). The head is applied natively from "
-            "those weights and is not quantized"
+            "non-routed weights: the artifact's OWN tensors, re-sharded verbatim by "
+            "exl3hf_surface.materialize_nonrouted (no decode -- this release quantizes "
+            "nothing outside the routed experts). They are byte-exact official "
+            "(nonrouted_native_exact, and the name set was verified equal to the official "
+            "release's %d non-routed names). The head is applied natively from those "
+            "weights and is not quantized"
             % tr3.nonrouted_tensor_count,
         ]
         disclosure["tr3_routed_layout"] = tr3_layout
@@ -2837,7 +2870,7 @@ def main() -> int:
             if args.source == "gguf"
             else "quant_snapshot_bf16_parameters_official_name_set_unquantized_in_artifact"
             if args.source == "nvfp4"
-            else "artifact_own_official_source_native_tensors_name_set_verified_official"
+            else "artifact_own_official_source_native_tensors_materialized_verbatim_no_decode"
             if args.source == "tr3"
             else "untouched_official_checkpoint_parameters"
         ),
@@ -2890,8 +2923,9 @@ def main() -> int:
                 "declared_head_bits": tr3.declared_head_bits,
                 "scope_policy": tr3.scope_policy,
                 "nonrouted_policy_declared": tr3.nonrouted_policy,
-                "materialization_receipt_sha256":
+                "artifact_materialization_receipt_sha256":
                     tr3.seal["materialization"]["receipt_sha256"],
+                "materialization_receipt_sha256": materialization["receipt_sha256"],
                 "seal_verification": tr3.seal,
                 "shard_verification": tr3.shard_verification,
                 "scope_census_sha256": tr3.scope_census_sha256(),
@@ -3107,8 +3141,9 @@ def main() -> int:
             else "quant-snapshot bfloat16 bytes, untouched (official non-routed name set, "
                  "unquantized in the artifact)"
             if args.source == "nvfp4"
-            else "the artifact's OWN official-source-native bytes, untouched (routed-experts-"
-                 "only scope; name set verified equal to the official non-routed set)"
+            else "the artifact's OWN official-source-native bytes, re-sharded verbatim (no "
+                 "decode; routed-experts-only scope, name set verified equal to the official "
+                 "non-routed set)"
             if args.source == "tr3"
             else "official source dtype, untouched"
         ),
@@ -3511,8 +3546,9 @@ def main() -> int:
         receipt["declared_head_bits"] = tr3.declared_head_bits
         receipt["scope_policy"] = tr3.scope_policy
         receipt["nonrouted_policy_declared"] = tr3.nonrouted_policy
-        receipt["materialization_receipt_sha256"] = \
+        receipt["artifact_materialization_receipt_sha256"] = \
             tr3.seal["materialization"]["receipt_sha256"]
+        receipt["materialization_receipt_sha256"] = materialization["receipt_sha256"]
         receipt["seal_verification"] = tr3.seal
         receipt["shard_verification"] = tr3.shard_verification
         receipt["scope_census_sha256"] = tr3.scope_census_sha256()
