@@ -723,3 +723,14 @@ predicted.
 LESSON 32: a failed jl run leaves the box IDLE but RUNNING. Exit-code watchers
 catch it; window-count watchers do not (the count simply stops advancing and
 looks like slow progress). Watch the run STATE, not just its output.
+
+## 2026-08-29 ~00:15 — K6 streaming lane SEALED; the cheap lane is validated
+stream_mean_kld 0.013714888822596553 vs sealed 0.013723384665701147 —
+delta -8.4958e-06 (0.06%), worst single window 2.87e-4. cold_runs 2,
+cross_run_payload_bitwise_identical TRUE (the determinism property transfers
+from the 8xH200 sealed lane to a single GPU), quality_gate_passed TRUE. The
+tool correctly refuses to overclaim: tokenwise_kld_sha256_matches_sealed FALSE
+and publishable_as_reproduction FALSE, because a different expert-combine
+order is an INDEPENDENT measurement that agrees closely, not a bitwise
+reproduction. Cost: ~$6/model vs ~$50 for the sealed 8xH200 protocol.
+K6 box destroyed on completion (receipts live on the shared fs).

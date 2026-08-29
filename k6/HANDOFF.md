@@ -98,3 +98,90 @@ repo so campaigns start patch-free; make capture contracts embed upstream
 repo+revision (not container paths); add the seal fraction to the rehearsal
 receipt so fleet sizing is automatic; and get the tiny-fixture recipe into CI
 of whatever serving runtime hosts these quants.
+
+---
+
+# Part 2 — measurement, publication and community (added 2026-08-29)
+
+The ten tips above are about *making* a quant. These are about *measuring*,
+*publishing* and *comparing* one — the half of the campaign that produced the
+most surprises.
+
+11. **Budget disk for the MEASUREMENT phase, not just the encode.** Each
+    streaming panel run writes `positions x vocab x 4` bytes of fp32 student
+    logits — for GLM-5.3-Flash that is 51,175 x 154,880 x 4 = **31.7 GB per
+    cold run per model**, and runs are KEPT for the determinism check. Two
+    models x two runs = ~127 GB that no encode-era ledger predicts. We hit
+    "Disk quota exceeded" twice; the second time cost 36 idle minutes because
+    the watcher was counting output files rather than run state.
+
+12. **A failed `jl run` leaves the box IDLE but RUNNING.** Window-count
+    watchers cannot see it — a stalled counter looks exactly like slow
+    progress. Poll `jl run status --json` and alert on `failed`. Better still,
+    compute a pace (min/window) and an ETA from file mtimes: a real stall
+    moves "minutes since last write" past one window's pace, while GPU
+    utilisation at any instant proves nothing (these workloads are bursty and
+    frequently sample at 0%).
+
+13. **Hash CONTENT, never CONTAINERS, when testing determinism.** Capture
+    receipts embed `elapsed_seconds`; safetensors embed `__metadata__`
+    (cold_run, backend identity). Both differ between runs of a bit-exact
+    computation. We raised two false "nondeterminism" alarms in one hour
+    before comparing tensor bytes and finding max_abs_diff exactly 0.0. The
+    only valid artifacts are raw tensor bytes or a sealed tokenwise hash.
+
+14. **Never quote a single-window KLD as a rate comparison.** Per-window
+    scatter (sd 1.73e-3 here) exceeds the effect between adjacent bit-widths
+    (K6 vs K8 = 1.22e-3). One unlucky window made our K8 look WORSE than K6;
+    the full 25-window panel showed it winning decisively. Previews are fine
+    for "is the pipeline alive" — label them, and never let one stand in for
+    the panel. A corollary for any registry: single-window panels belong in
+    their own comparability group.
+
+15. **`cos(|a|,|b|) ~ 2/pi` with matching sorted spectra means PERMUTED, not
+    broken.** A weight-space audit of this pipeline showed decoded payloads
+    uncorrelated with the BF16 tensors their provenance named. The cause was
+    an intermediate-channel permutation (the expert-MLP symmetry), recovered
+    empirically as a perfect bijection and identical across K6/K8 because they
+    share a transform seed. Undo it before comparing to source weights, or
+    lose a day.
+
+16. **Two lanes need a measured bridge, not an assumption.** Bitwise
+    cross-topology parity is IMPOSSIBLE — expert-combine order alone moves
+    logits by rms 0.26-0.28, because bf16 addition is not associative. What IS
+    achievable: NCCL's bf16 all_reduce behaves like an fp32 accumulate, so
+    `--reduce-order fp32` brought the single-GPU lane to within -8.5e-6 (0.06%)
+    of the 8xH200 sealed lane on the full panel. Publish the offset as a field;
+    mark `publishable_as_reproduction: false`; never silently rank rows from
+    different lanes.
+
+17. **Right-size by the phase's bottleneck.** Encode is CPU-bound (GPUs idle
+    ~85%). Sealed qualification is a MEMORY problem (decoded-BF16 experts /
+    EP ranks must fit VRAM). Streaming qualification is decode-bound and fits
+    ONE GPU — ~$6/model against ~$50 for the 8xGPU protocol, because the
+    schedule goes layer-outer and decodes each expert once for the whole panel
+    instead of once per window (a 25x difference on identical hardware).
+
+18. **Sync is a two-way street.** The repo copy and the box copy of
+    `stage_k6.sh` diverged for hours — the box gained an entire stage the repo
+    never received, so a downstream agent "verified" a CLI that did not exist
+    and wrote a runner against a guessed contract. After every on-box fix,
+    pull it back to git the same way you push. Pin engine CLIs by PROBING the
+    real file, never by reading its docs.
+
+19. **HF lineage is a discovery decision with an honesty cost.** Z.ai
+    published two sibling roots (`GLM-5.3-Flash` FP8 with ~1,484 likes and
+    `GLM-5.3-Flash-BF16` with 41) and neither declares the other. Quants that
+    declare the FP8 as `base_model` appear on the busy page; ours declare BF16
+    because that is what we quantized from. Do not "fix" visibility by
+    declaring a base you did not use — use collections, cross-links, an
+    explicit lineage section, and discovery tags instead.
+
+20. **Engage the ecosystem with numbers, not claims.** Publishing a measured
+    comparison on someone else's artifact (with their method, their panel, and
+    a receipt link) got the sealed numeric core we were missing published
+    within a day, turned a "disclosed reconstruction" into a **verified-
+    equivalent** codec (120/120 encodes byte-identical, 0 differing bytes of
+    624 MiB), and produced an independent base measurement nobody had. Lead
+    with what the other person did well, state your deviations before anyone
+    asks, and close the loop when they deliver.
