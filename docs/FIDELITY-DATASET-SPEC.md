@@ -598,6 +598,27 @@ instead of silently comparable. Both are expressible; neither is comparable to t
 **PANEL-D4** `token_ids_first16` / `token_ids_last16` are adopted from Festr's 32×2048 suite: a
 costless eyeball check that does not require downloading `tokens/`.
 
+**PANEL-D5 — the `contexts` name collision. KNOWN DEFECT, v1-frozen.**
+`panel.json.contexts` is an **integer record count**. In the one format v1 claims compatibility with,
+`contexts` is the **record list**. Same key, same nesting level, incompatible types. Consequences,
+all measured rather than predicted:
+
+* Handing `panel/panel.json` to Festr's comparator as `--suite-manifest` fails with
+  `TypeError: 'int' object is not iterable`, from `suite.get("contexts", suite.get("windows"))`.
+* Any reader that sniffs a manifest by probing for `contexts` — a reasonable thing to write, given
+  his artifact is the only prior art — mis-types our panel.
+* The mitigation is structural, not cosmetic: `--emit-k3-compat` (§12.3) must write a **separate**
+  `compat/suite-manifest.json` in which `contexts` is the list. The two spellings can never coexist
+  in one file.
+
+This should have been `context_count`, which is unambiguous and collides with nothing. It is **not**
+being renamed: §1.3 freezes key types for the life of v1, and no key has ever been more likely to be
+read by a tool written against the other format. It is called out here, in the JSON Schema
+description, and in §12.3 so that nobody has to discover it the way we did. **v2 renames it to
+`context_count` and keeps `contexts` as a deprecated integer alias.** Anyone building on v1 today
+should treat "is `contexts` an int or a list?" as the format-discrimination test between the two
+lineages — it is, unfortunately, a reliable one.
+
 ### 7.3 Panel record ↔ capture record binding
 
 **BIND-1** Every capture record's `index` has a panel record with the same `index`.
@@ -1134,29 +1155,91 @@ to converge would be inventing a difference that does not exist.
 
 ### 12.3 `--emit-k3-compat`
 
+> **STATUS: SPECIFIED, NOT YET IMPLEMENTED.** `bin/fidelity-dataset capture` has no
+> `--emit-k3-compat` flag today and emits no `compat/` tree; `interop.k3_compat_emitted` is
+> therefore `false` in every dataset this repo has produced. The design below has been **proven by
+> a reference shim** against Festr's unmodified comparator (§12.3.2) — but until the flag lands,
+> `interop.compatible_with: ["kimi-k3-distribution-fidelity/1"]` claims only that this format is a
+> deliberate superset of his, **not** that his tools can read a dataset as emitted. Do not cite it
+> as the latter.
+
 Writes `compat/` with the alias keys his comparator reads (`contexts`, `context_index`,
 compact `token_ids_json_sha256`, `allocation_stratum`, `source_cluster_id`) and a
 `compat/lm-head/weight.safetensors` whose single tensor key is `"weight"`. Cost: a few hundred bytes
-of duplicated JSON per dataset plus one optional alias file. Benefit: **his comparator runs on our
-data unmodified.**
+of duplicated JSON per dataset plus one optional alias file. Benefit: his comparator runs on our
+data unmodified.
 
-Checked line-by-line against his `validate_source_manifest`, the complete list of what our dataset
-must satisfy for his tool to read it:
+#### 12.3.1 What his reader requires
 
-1. tensor dir `manifest.json` whose `suite_token_hash_sha256` matches the `--suite-manifest` we ship;
-2. that manifest has `contexts` **or** `windows`;
+Checked line-by-line against his `validate_source_manifest`, then **executed**, the complete list of
+what our dataset must satisfy for his tool to read it:
+
+1. tensor dir `manifest.json` whose `suite_token_hash_sha256` matches the `--suite-manifest` we ship.
+   **We do not emit this key in `capture/manifest.json` at all** — it lives only in `panel/panel.json`.
+   `compat/` must copy it up. This is the first hard stop; his reader raises
+   `Suite token hash mismatch` before looking at anything else.
+2. that manifest has `contexts` **or** `windows` as a **list**. Ours names the list `records`, so his
+   `manifest.get("contexts", manifest.get("windows"))` returns `None` and he raises
+   `Source manifest has no contexts or windows`. Second hard stop.
 3. each record has `context_index` \| `window_index` \| `index`; `file`; `key == "hidden_states"`;
-   `sha256`; `token_ids_json_sha256` matching the suite record;
+   `sha256`; `token_ids_json_sha256` matching the suite record. **Already satisfied natively** —
+   v1 records carry all three index aliases and the compact token digest.
 4. the suite manifest has `context_length` and a record list with `token_file` +
-   `token_ids_json_sha256`, and `tokens/` files hash under **his compact preimage**;
-5. tensors BF16, `shape[0] >= context_length - 1`, `shape[1] == --hidden-width` (pass `4096`);
-6. `--lm-head` is a BF16 `[vocab, hidden]` safetensors whose single tensor key is **`weight`**
-   (ours is `lm_head.weight`, hence the alias file), and if `manifest.json` sits beside it its
-   `file_sha256` must match;
+   `token_ids_json_sha256`, and `tokens/` files hash under **his compact preimage**.
+   Two traps here, and neither was in the original analysis:
+   * **`token_file` resolves against the suite manifest's OWN directory**, because he calls
+     `validate_suite_tokens(args.suite_manifest.parent, contexts)`. Our
+     `panel.records[].token_file` is **dataset-root-relative** (`panel/tokens/context-0000.json`),
+     so pointing him at `panel/panel.json` makes him look in `panel/panel/tokens/`. `compat/` must
+     rewrite `token_file` relative to itself.
+   * **`panel.json` cannot be handed to him directly under any aliasing**, because of the
+     `contexts` collision in §7.2: ours is an integer count, his is the record list. Feeding him
+     `panel/panel.json` yields `TypeError: 'int' object is not iterable`. `compat/suite-manifest.json`
+     must be a **separate file**, not `panel.json` with keys bolted on.
+5. tensors BF16, `shape[0] >= context_length - 1`, `shape[1] == --hidden-width` (pass `4096`).
+   **Already satisfied natively.**
+6. `--lm-head` is a BF16 `[vocab, hidden]` safetensors whose single tensor key is **`weight`**, and
+   if `manifest.json` sits beside it its `file_sha256` must match. **Already satisfied natively** —
+   v1 writes `head/weight.safetensors` with tensor key `weight`, and names our sidecar `head.json`,
+   not `manifest.json`, so his optional cross-check correctly no-ops.
 7. `--vocab-size 154880` must be divisible by `--vocab-chunk`; **9,680 works, his default 10,240 does
    not** and his parser errors out.
 
-Items 4, 6, 7 are the only real work. Everything else we already satisfy.
+So the real work is items **1, 2 and 4** — all metadata, all in `compat/`. Items 3, 5, 6 were already
+true, and item 7 is a documented invocation argument.
+
+#### 12.3.2 Executed proof, and the number it produced
+
+A reference shim emitting `compat/` per the above was run over two real v1 datasets adapted from our
+own published capture (BF16 root and as-served FP8, 2 contexts x 2047 rows, vocab 154,880, our real
+`[154880, 4096]` BF16 head). Festr's **unmodified** `compare-kimi-k3-hidden-replay.py` then ran
+end to end:
+
+```
+validate_suite_tokens            PASS   his compact preimage over our tokens/
+validate_source_manifest ref     PASS   2 tensors, container hashes verified
+validate_source_manifest cand    PASS   2 tensors, container hashes verified
+full two-pass comparison         OK     --vocab-chunk 9680 --position-block 128 --device cpu
+```
+
+| | mean KL(ref‖cand), nats | top-1 agreement |
+|---|---|---|
+| **his** comparator, fp32 log-probs, `clamp_min_(0)` | 0.03564599129280951 | 0.925256472887152 |
+| **ours** (`fidelity-dataset compare`), fp64 log-probs | 0.03526219355348638 | 0.9257449926722032 |
+| difference | **3.84e-4 (+1.09 % relative)** | 4.9e-4 |
+
+**This is the empirical case for D-5.** Two careful implementations, the same bytes, the same panel,
+the same head, the same direction — and a 1.1 % disagreement that comes entirely from estimator
+precision (his log-probs are fp32 with a `clamp_min_(0)` that can only bias the mean upward; ours are
+fp64 throughout, `dscompare.token_kld` casting to `float64` before the log-softmax). It is small in
+absolute terms and **larger than the entire quantization-attributable signal we report for K6**
+(0.00221 nats). A KLD number without `estimator.accumulation_dtype` is not comparable to another
+KLD number, and this table is the receipt for that claim rather than an argument for it.
+
+Note also what his receipt records about the head: `comparator.lm_head_file_sha256` names the one
+head he was given and says nothing about whether it was the candidate's own. In this run that was
+harmless (both sides are our TR3 lineage with a native BF16 head), but it is exactly the head trap
+D-1 exists to refuse, visible in his own output format.
 
 ### 12.4 The k3 adapter — precisely what it needs
 

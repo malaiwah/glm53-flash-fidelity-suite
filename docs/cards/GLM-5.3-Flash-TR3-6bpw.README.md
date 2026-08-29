@@ -236,7 +236,6 @@ x_fidelity:
     - measurement--glm53.k6-6bpw.brandonmusic-final25
     - measurement--glm53.k6-6bpw.brandonmusic-final25.clean17
     snapshot:
-      root: /Users/mbelleau/Projects/glm53-fidelity-suite/registry
       data_sha256:
         models: 91c950e9708acce30a7210caa3286a40104a54c22e440d5c3a8279fb04b9d55a
         artifacts: 3b4e3f14ee7989e933271efbabb4cde488ac52fc09ad005ac483784620163622

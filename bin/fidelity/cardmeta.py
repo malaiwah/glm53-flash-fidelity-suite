@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -90,7 +91,15 @@ def load_registry(registry_dir: Optional[str] = None) -> Dict[str, Dict[str, Any
                     row = json.loads(line)
                     rows[row["id"]] = row
         out[name] = rows
-    out["_snapshot"] = {"root": os.path.abspath(root), "data_sha256": digests}
+    # NEVER put the local checkout path here.  This dict is copied verbatim into
+    # `x_fidelity.registry.snapshot` on a card that gets PUBLISHED, and an
+    # absolute host path is precisely the defect this whole format exists to
+    # prevent (the dead `packed_root: /home/jl_fs/glm53-k6/out-k6`, and Festr's
+    # validator-enforced `raw_chunks_retained: false` rule we adopt in
+    # FIDELITY-DATASET-SPEC 5.A).  The registry is identified by
+    # `x_fidelity.registry.dataset` plus these content digests; the reader's own
+    # filesystem layout is not part of that identity.
+    out["_snapshot"] = {"data_sha256": digests}
     return out
 
 
@@ -619,6 +628,27 @@ def _roundtrip_axis(text: str) -> Dict[str, Any]:
                        "FIDELITY_CARD_PYTHON" % [c for c in candidates if c]}
 
 
+#: An absolute POSIX path into a user/host filesystem.  Deliberately NOT a bare
+#: "starts with /" test: `/api/...` fragments and rooted URL paths are fine, and
+#: a *prose* mention of a dead path (documenting the defect) lives in the body,
+#: never in front matter.
+_HOST_PATH_RE = re.compile(r"^/(Users|home|root|private|var/folders|tmp|mnt|media|opt/homebrew)(/|$)")
+
+
+def _walk_scalars(node: Any, path: str = "") -> List[Tuple[str, Any]]:
+    """Every (dotted-path, scalar) pair in a nested mapping/sequence."""
+    out: List[Tuple[str, Any]] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            out.extend(_walk_scalars(value, "%s.%s" % (path, key) if path else str(key)))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            out.extend(_walk_scalars(value, "%s[%d]" % (path, i)))
+    else:
+        out.append((path, node))
+    return out
+
+
 def _our_axis(text: str, registry: Dict[str, Any]) -> Dict[str, Any]:
     """Role-conditional required fields plus XC-1..XC-5."""
     errors: List[str] = []
@@ -628,6 +658,21 @@ def _our_axis(text: str, registry: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(fidelity, dict):
         return {"axis": "ours", "ran": True, "ok": False,
                 "errors": ["no x_fidelity block"], "warnings": []}
+    # GEN-10 / HOSTPATH-1.  A card is a PUBLISHED artifact.  An absolute host
+    # path in it leaks the author's filesystem and, worse, encodes a location
+    # nobody else can resolve -- the exact defect that made the K6
+    # materialization receipt useless once its box died.  Festr's validator
+    # enforces the same rule from the other side (`raw_chunks_retained: false`
+    # requires the host-local capture-chunk keys to be stripped before
+    # publication); FIDELITY-DATASET-SPEC 5.A adopts it verbatim, so the card
+    # surface must honour it too.  Checked over the whole front matter, not just
+    # x_fidelity, because any generator field can regress into one.
+    for path, value in _walk_scalars(front):
+        if isinstance(value, str) and _HOST_PATH_RE.match(value):
+            errors.append(
+                "HOSTPATH-1: %s carries an absolute host path %r; a published card "
+                "must never encode the author's filesystem layout" % (path, value))
+
     role = fidelity.get("role")
     if role not in ROLES:
         errors.append("x_fidelity.role %r is not one of %s" % (role, ROLES))

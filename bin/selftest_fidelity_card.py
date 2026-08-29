@@ -258,6 +258,42 @@ def main(argv):
     check("K12 a hand-set verified/verifyToken is stripped (GEN-7)",
           "verified" not in emitted and "verifyToken" not in emitted)
 
+    # -- K14: an absolute host path in front matter is refused ----------------
+    # Regression guard.  The generator used to copy `os.path.abspath(registry)`
+    # into `x_fidelity.registry.snapshot.root`, which shipped
+    # `/Users/<name>/...` into two cards queued for publication.  The Hub's own
+    # validate-yaml accepts that happily -- it is only ever OUR check -- and it
+    # is the same class of defect as the dead `packed_root` that motivated the
+    # whole format.  Both the leak and the silence are covered here.
+    leaky = dict(minimal_fidelity)
+    leaky["registry"] = dict(leaky.get("registry") or {})
+    leaky["registry"]["snapshot"] = {
+        "root": "/Users/someone/Projects/glm53-fidelity-suite/registry",
+        "data_sha256": {"measurements": "00" * 32},
+    }
+    merged = cardmeta.merge_card(
+        card_text({"license": "mit"}),
+        model_index=[{"name": "A", "results": [one_result("streaming")]}],
+        x_fidelity=leaky)
+    axis = cardmeta._our_axis(merged, cardmeta.load_registry())
+    check("K14 an absolute host path in front matter is refused (HOSTPATH-1)",
+          not axis["ok"] and any("HOSTPATH-1" in e for e in axis["errors"]),
+          "errors=%r" % (axis["errors"],))
+
+    # ... and the check must not fire on the legitimately rooted strings that
+    # live in front matter: URL paths, and our own `/api/...`-style fragments.
+    ok_fidelity = dict(minimal_fidelity)
+    ok_fidelity["registry"] = dict(ok_fidelity.get("registry") or {})
+    ok_fidelity["registry"]["snapshot"] = {"data_sha256": {"measurements": "00" * 32}}
+    merged = cardmeta.merge_card(
+        card_text({"license": "mit"}),
+        model_index=[{"name": "A", "results": [one_result("streaming")]}],
+        x_fidelity=ok_fidelity)
+    axis = cardmeta._our_axis(merged, cardmeta.load_registry())
+    check("K15 HOSTPATH-1 does not fire on URLs or a snapshot without a root",
+          not any("HOSTPATH-1" in e for e in axis["errors"]),
+          "errors=%r" % (axis["errors"],))
+
     print("\nselftest_fidelity_card: %d passed, %d failed, %d skipped"
           % (len(PASS), len(FAIL), len(SKIP)))
     for name, detail in FAIL:

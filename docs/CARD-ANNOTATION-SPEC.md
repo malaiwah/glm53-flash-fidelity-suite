@@ -303,8 +303,26 @@ card carries no `sealed-ep8` result (XC-3).
 | Hub `validate-yaml`, root card | clean |
 | Hub `validate-yaml`, dataset card (`repoType: dataset`) | clean |
 | Hub `validate-yaml`, K6 card **after** a library round-trip | clean |
-| `huggingface_hub` 1.28.0 `ModelCard` parse | OK — 4 eval results, `model_name` resolved, `x_fidelity` preserved in `to_dict()` |
+| `huggingface_hub` 1.29.0 `ModelCard.load` parse, K6 / K8 | OK — **6** / **3** eval results, `model_name` resolved, `x_fidelity` preserved in `to_dict()` |
+| `ModelCard.save()` → `load()` round-trip, K6 | `x_fidelity` **deep-equal to the source**, 6 eval results and every `metrics[].args` key retained, `base_model_relation` retained |
 | YAML → `ModelCardData` → YAML deep structural equality | **True** (zero lost / added / changed keys) for K6 and root |
+| Hub `validate-yaml` accepts an unknown top-level `x_fidelity` | HTTP 200 (isolated probe, minimal card) |
+| Hub `validate-yaml` accepts unknown `metrics[].args` keys | HTTP 200 (isolated probe) |
+| Hub `validate-yaml` rejects a malformed `model-index` | HTTP 400 `"model-index[0].results[0].metrics" must be an array` — so the 200s above are meaningful |
+| generic `model-index` walk (PyYAML only, no spec knowledge) | extracts all 6 `(model, dataset, config, metric, value)` rows from K6 |
+
+`ModelCard.validate()` is a real network POST to `https://huggingface.co/api/validate-yaml`
+(`huggingface_hub.repocard.RepoCard.validate`), not a local check — so a PASS on that axis is the
+Hub's own verdict, not ours.
+
+**Real-world shape comparison.** Three published cards that actually carry `model-index` were fetched
+and compared field-for-field: `distilbert/distilbert-base-uncased-finetuned-sst-2-english` (17 rows,
+`verified: true`), `facebook/wav2vec2-base-960h` (2 rows), and `BAAI/bge-small-en-v1.5` (**990** rows,
+MTEB, every row pinning `dataset.revision`). Our shape is the MTEB shape: many results on one card,
+each scoped by `dataset.type` + `config` + `split` and pinned by `revision`. The one field we use
+that **none** of them uses is `metrics[].args` — it parses, round-trips and validates, but we are
+alone in it, which is the whole substance of the §6 friction analysis. None of the three sets
+`metric_args`; `verified` is HF-controlled and we correctly never set it (GEN-7).
 
 Negative controls (proving the validator is not a no-op): bad `license`, bad `language`,
 non-string `size_categories`, missing `model-index[0].name`, missing metric `value`, missing
@@ -404,6 +422,34 @@ alongside the Festr conversation.
   widget. State this in the card body.
 * **`datasets:` renders as "Datasets used to train:"** — semantically wrong for an eval panel, and
   unavoidable (§2.1).
+* **A naive leaderboard cannot tell our headline number from our derived number.** Measured, not
+  supposed: a generic `model-index` walk over the K6 card (PyYAML, no knowledge of this spec) yields
+  six rows, of which **four** are `kl_divergence` — two lanes x two scopes — plus one
+  `kl_divergence_quantization_attributable` at **0.00221** sitting in the same `metrics[]` list as
+  the raw **0.01371**. `model-index` has no concept of a *primary* metric, and everything that
+  disambiguates these rows (`lane`, `derived: true`, `floor_measurement_id`, `higher_is_better:
+  false`) lives in `metrics[].args`, which — per §4.1 — **no published card in the wild uses and no
+  existing consumer reads**. So the honest statement of Layer 1's reach is:
+
+  > a leaderboard-style consumer can extract our KLD **value** with zero bespoke code, and cannot
+  > extract its **comparability** with any amount of it short of implementing this spec.
+
+  Three consequences we accept deliberately. (1) The value is still in the standard slot, because a
+  wrong-but-findable number that we can correct beats a right number nobody can parse. (2) The metric
+  `type` strings are self-describing (`kl_divergence_quantization_attributable` is not going to be
+  mistaken for `kl_divergence` by a *human*), which is why the derived metric got a distinct type
+  rather than an `args` flag on the same one. (3) **This is the strongest argument for the
+  `.eval_results/` v2 path in §6**, whose per-benchmark scoping would let the headline row be named
+  once and the rest be omitted. Until then, GEN-* must never emit a card whose *only*
+  `kl_divergence`-family row is the derived one, and a consumer we care about should be pointed at
+  `x_fidelity.measurements[]`, which is ordered and unambiguous.
+* **`dataset.split` carries the lane, which is not what `split` means anywhere else.** HF's `split`
+  is train/validation/test; we put `streaming` / `sealed-ep8` there. This is deliberate and is
+  documented at the top of `bin/fidelity/cardmeta.py`: `huggingface_hub` merges eval results on
+  `(task.type, dataset.type, dataset.config, dataset.split, dataset.revision)`, so a lane carried
+  only in `args` would cause two lanes' results to **silently collapse into one row** — precisely
+  the lane mixing BIAS-006 forbids. Overloading `split` is the least-bad available slot, but an
+  outsider will not guess it; XC-2 enforces `args.lane == dataset.split` so the two can never drift.
 * **Our K6/K8 cards cannot carry a non-null head content digest until the capture tool publishes
   one.** `head-extraction.json` / `head-equality-fp8.json` publish the *file* digest `47eaf729…`;
   `k6/hidden-replay-evidence/nonrouted-sparse-fetch.json` publishes the *content* digest
