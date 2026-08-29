@@ -2,15 +2,15 @@
   "collections": {
     "artifacts": {
       "file": "data/artifacts.jsonl",
-      "record_count": 32,
+      "record_count": 33,
       "schema": "schema/artifact.schema.json",
-      "sha256": "3b4e3f14ee7989e933271efbabb4cde488ac52fc09ad005ac483784620163622"
+      "sha256": "ed13eb1ea423acf4c1267c5273ce1293ac798cc50c869603b994a24d6894206b"
     },
     "measurements": {
       "file": "data/measurements.jsonl",
-      "record_count": 66,
+      "record_count": 67,
       "schema": "schema/measurement.schema.json",
-      "sha256": "9e29ee25ca77784f9220d0f50d95106cc4df7d1645ed4a3d693e9f057046f662"
+      "sha256": "98a2261726e5b82bb7e31c94834b452270ef25217257c7b40c5b4214987ebc97"
     },
     "models": {
       "file": "data/models.jsonl",
@@ -92,7 +92,7 @@
       "head_policy": "native_head",
       "key": "cmp--202b717f3219c414",
       "label": "mean_of_run_means_tokenwise_kld on panel--glm53.brandonmusic.final25 (same_stack, native_head)",
-      "member_count": 6,
+      "member_count": 7,
       "metric_name": "mean_of_run_means_tokenwise_kld",
       "panel_id": "panel--glm53.brandonmusic.final25",
       "reference_id": "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
@@ -221,12 +221,12 @@
   ],
   "comparability_rule": "Two measurement values may be compared IF AND ONLY IF their comparability.key values are equal. A table that mixes keys is malformed.",
   "counts": {
-    "artifacts": 32,
-    "measurements": 66,
-    "measurements_advisory": 63,
+    "artifacts": 33,
+    "measurements": 67,
+    "measurements_advisory": 64,
     "measurements_author_reported": 15,
     "measurements_independently_verified": 0,
-    "measurements_self_measured": 51,
+    "measurements_self_measured": 52,
     "measurements_strict": 3,
     "measurements_third_party_reported": 0,
     "models": 2,
@@ -242,13 +242,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-08-29T19:13:35+00:00",
+  "generated_at": "2026-08-29T21:16:53+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-08-29T19:13:35+00:00",
+    "last_run_at": "2026-08-29T21:16:53+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }

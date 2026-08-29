@@ -223,11 +223,40 @@ class Teardown:
     # -- steps -------------------------------------------------------------
 
     def _pull_receipts(self) -> None:
+        """Bring the receipts home as ONE archive, not as a directory walk.
+
+        `jl download -r` moves a tree file by file, and each file is an API
+        round trip of ten seconds or so. A 34-file, 21 MB receipts directory
+        therefore blew the 300-second timeout and the whole measurement came
+        home with nothing -- twice, observed. Tarring on the instance turns it
+        into one transfer, and the tar is kept next to the extracted tree as
+        the thing whose digest can be quoted.
+        """
         if self.machine_id is None or self.jl.dry:
             return
         dest = self.outdir / "receipts"
         dest.mkdir(parents=True, exist_ok=True)
         self.con.step("pulling receipts (timeout %ds)" % int(self.pull_timeout))
+        archive = "%s/receipts.tar.gz" % self.fs_root
+        try:
+            self.jl.exec(self.machine_id,
+                         "cd %s && tar czf %s receipts" % (self.fs_root, archive),
+                         timeout=self.pull_timeout)
+            local = self.outdir / "receipts.tar.gz"
+            self.jl.download(self.machine_id, archive, str(local),
+                             recursive=False, timeout=self.pull_timeout)
+            if local.is_file():
+                import tarfile
+
+                with tarfile.open(local) as tf:
+                    tf.extractall(self.outdir)          # noqa: S202 - our own archive
+                n = len(list(dest.rglob("*")))
+                self.con.ok("receipts pulled", "%d entries via %s"
+                            % (n, local.name))
+                return
+        except Exception as exc:                        # noqa: BLE001
+            self.con.warn("archive pull failed (%s); falling back to a tree walk"
+                          % redact(str(exc)))
         self.jl.download(self.machine_id, self.fs_root + "/receipts", str(dest),
                          recursive=True, timeout=self.pull_timeout)
         n = len(list(dest.rglob("*")))

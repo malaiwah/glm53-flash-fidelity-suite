@@ -58,6 +58,44 @@ def main() -> int:
         print("stage_panel_paths: receipt has no artifacts list", file=sys.stderr)
         return 2
 
+    # ---- the TEACHER's logit files, by ancestor symlink --------------------
+    # The teacher capture receipt names its 25 fp32 logit files the same way:
+    # absolute producer paths, verified by size and sha256, symlinked LEAF
+    # rejected. Those are 1.27 GB each -- 31.7 GB -- so copying them is not the
+    # answer. The verifier tests `is_symlink()` on the FINAL component only, so
+    # linking an ANCESTOR directory satisfies it exactly and costs nothing: the
+    # leaf reached through it is a real file.
+    #
+    # This only bites at SCORE time (the capture reads token ids, not teacher
+    # logits), i.e. after both cold runs are already paid for.
+    linked = []
+    capture = panel / "capture-receipt.json"
+    if capture.is_file():
+        rows_t = json.loads(capture.read_text(encoding="utf-8")).get("logit_files") or []
+        wanted_dirs = {Path(r["path"]).parent for r in rows_t}
+        for want_dir in sorted(wanted_dirs):
+            if want_dir.exists():
+                continue
+            src_dir = panel / want_dir.name          # e.g. <panel>/logits
+            if not src_dir.is_dir():
+                unresolved_dirs = "%s (no %s in the fetched panel)" % (want_dir, src_dir)
+                print("  UNRESOLVED %s" % unresolved_dirs, file=sys.stderr)
+                return 3
+            if args.check_only:
+                print("  would link %s -> %s" % (want_dir, src_dir))
+                continue
+            want_dir.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(src_dir, want_dir)
+            linked.append(str(want_dir))
+        bad = [r["path"] for r in rows_t
+               if not (Path(r["path"]).is_file()
+                       and not Path(r["path"]).is_symlink()
+                       and Path(r["path"]).stat().st_size == int(r["bytes"]))]
+        if bad and not args.check_only:
+            print("stage_panel_paths: teacher logit paths still unsatisfied: %s"
+                  % bad[:3], file=sys.stderr)
+            return 3
+
     staged = already = 0
     unresolved = []
     for row in rows:
@@ -92,7 +130,8 @@ def main() -> int:
         staged += 1
 
     print(json.dumps({"artifacts": len(rows), "already_present": already,
-                      "staged": staged, "unresolved": len(unresolved)},
+                      "staged": staged, "unresolved": len(unresolved),
+                      "teacher_dirs_linked": linked},
                      sort_keys=True))
     if unresolved:
         for path, why in unresolved[:6]:

@@ -227,6 +227,21 @@ score)
   "$PY" "$FS/bin/invoke_scorer.py" --job "$CONF" --lane "$LANE" \
       --receipts "$RCPT" --device "${KLD_DEVICE:-cuda}" \
       2>&1 | tee -a "$LOGS/score.log"
+  # The fp32 student logits are transient by design: ~31.7 GB per cold run,
+  # and the divergence they were captured for is now computed and sealed. They
+  # also sit inside the receipts tree the controller downloads at teardown, so
+  # leaving them turns a receipts pull into a 63 GB transfer that times out
+  # (observed: `jl download ... timed out after 300.0 seconds`).
+  KEEP="$(jqget keep_student_logits false)"
+  if [ "$KEEP" != "True" ] && [ "$KEEP" != "true" ]; then
+    for d in "$RCPT"/run-*/logits; do
+      [ -d "$d" ] || continue
+      log "removing transient student logits: $d ($(du -sh "$d" | cut -f1))"
+      rm -rf "$d"
+    done
+  else
+    log "keep_student_logits is set -- the per-run logit trees are retained"
+  fi
   df -h "$FS" | tee -a "$LOGS/score.log"
   touch "$marker"
   log "done"

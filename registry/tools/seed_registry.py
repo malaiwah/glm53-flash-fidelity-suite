@@ -53,6 +53,8 @@ STREAM_K6_RECEIPT = "receipts/malaiwah/stream-k6-kld.json"
 STREAM_K6_RECEIPT_SHA = "7ee0de697d050ff1aca9b85981a158f57304a46c020408b39742f5f85a0ff969"
 STREAM_K6_VERDICT = "receipts/malaiwah/stream-k6-verdict.json"
 STREAM_K6_VERDICT_SHA = "e205c14f5700417b32f4cb4a2d6724f3bf416ffc9d4cca3f129c18b0a0e7b005"
+STREAM_TURBO405_RECEIPT = "receipts/malaiwah/stream-turbo-4.05bpw-kld.json"
+STREAM_TURBO405_RECEIPT_SHA = "68ef836737f9eeb59f62da5107246249fcd30c462ccf25493bab75f917df0706"
 STREAM_K8_RECEIPT = "receipts/malaiwah/stream-k8-kld.json"
 STREAM_K8_RECEIPT_SHA = "8eab14b0ef3ba042e49735973d91dcc47e470b9331f9e65151635b2862bb05d1"
 STREAM_BF16_RECEIPT = "receipts/malaiwah/stream-bf16-kld.json"
@@ -62,6 +64,8 @@ HF_REGISTRY_RAW = "https://huggingface.co/datasets/malaiwah/quant-fidelity-regis
 MAL = lambda role: attr("malaiwah", role, handle="malaiwah", url="https://huggingface.co/malaiwah", maintainer=True)
 BRANDON = lambda role: attr("brandonmusic", role, handle="brandonmusic", url="https://huggingface.co/brandonmusic")
 SERO = lambda role: attr("0xSero", role, handle="0xSero", url="https://huggingface.co/0xSero")
+TURBODERP = lambda role: attr("turboderp", role, handle="turboderp",
+                              url="https://huggingface.co/turboderp")
 ORCA = lambda role: attr("orcarouter", role, handle="orcarouter", url="https://huggingface.co/orcarouter")
 TURBO = lambda role: attr("turboderp", role, handle="turboderp", url="https://huggingface.co/turboderp")
 ZAI = lambda role: attr("Z.ai", role, handle="zai-org", url="https://huggingface.co/zai-org")
@@ -562,6 +566,7 @@ A_K6 = "artifact--malaiwah.glm-5.3-flash-tr3-6bpw"
 A_K8 = "artifact--malaiwah.glm-5.3-flash-tr3-8bpw"
 A_DIONE = "artifact--0xsero.glm-5.3-flash-exl3-q4"
 A_B4 = "artifact--brandonmusic.glm-5.3-flash-tr3-4bpw"
+A_TURBO405 = "artifact--turboderp.glm-5.3-flash-exl3-4.05bpw"
 A_FP8_DEQ = "artifact--orcarouter.glm-5.3-flash-fp8-dequantized"
 ORCA_IDS = {b: "artifact--orcarouter.glm-5.3-flash-mlx-%s" % b.replace("-", "").replace("_", "")
             for b in ("6-bit", "4-bit", "3-bit", "2-bit", "2bit-lite")}
@@ -736,6 +741,104 @@ ARTIFACTS = [
              availability={"status": "public", "uri": "https://huggingface.co/0xSero/GLM-5.3-Flash-EXL3-Q4"},
              cross_refs=lair(model_id="glm-5.3-flash", url="https://huggingface.co/datasets/0xSero/local-ai-registry",
                             confidence="probable"),
+             seal={"sealed": False, "note": "unsealed source; see the unsealed_source disclosure"}),
+    artifact(A_TURBO405, GLM,
+             "turboderp GLM-5.3-Flash EXL3 4.05bpw (stock exllamav3, mul1, quantized head)",
+             "quant",
+             hf("turboderp/GLM-5.3-Flash-exl3",
+                "2a30229e67012798ba9f0cd832bb78abf4c363d5", "hf_api",
+                path="branch 4.05bpw"),
+             "exl3", "4.05 bpw", 165151543361,
+             codec("exl3-mul1", 4.05, None, tool="exllamav3", version="1.4.4",
+                   # the release states its own calibration shape: 250 rows x 2048 cols
+                   calibration={"used": True, "corpus": None, "tokens": 250 * 2048,
+                                "overlaps_any_panel": None, "overlapping_panel_refs": []}),
+             # Every rate below was READ, not assumed -- see NOTE.
+             scope("mixed", [
+                 asg("embed_tokens", "native", "bf16", 16, note="read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("attn.qkv", "quantized", "exl3-mul1", 6,
+                     note="KDA layers ship a FUSED qkv_proj (rows q|k|v); MLA layers ship "
+                          "q_a/q_b/kv_a_with_mqa/wq_b. All K6. " + "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("attn.o", "quantized", "exl3-mul1", 6, note="read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("attn.other", "native", "fp16", 16,
+                     note="b_proj, f_a/f_b_proj, g_a/g_b_proj, weights_proj, wk, conv1d and the "
+                          "attention norms ship as plain fp16/bf16 tensors. " + "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("mlp.gate", "quantized", "exl3-mul1", 5, layer_range="0-2",
+                     note="only the three DENSE layers have an mlp.*; layers 3-44 are MoE. "
+                          + "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("mlp.up", "quantized", "exl3-mul1", 5, layer_range="0-2", note="read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("mlp.down", "quantized", "exl3-mul1", 5, layer_range="0-2", note="read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("moe.router", "native", "fp32", 32, layer_range="3-44",
+                     note="the routing gate ships fp16/fp32, unquantized. " + "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("moe.experts", "quantized", "exl3-mul1", 4, layer_range="3-44",
+                     note="12,096 modules = 42 layers x 288 experts x 3 projections, all K4. "
+                          + "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("moe.shared_expert", "quantized", "exl3-mul1", 6, layer_range="3-44",
+                     note="read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("norm", "native", "bf16", 16, note="read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("mtp", "quantized", "exl3-mul1", 4, layer_range="45",
+                     note="layer 45 ships in a separate mtp.safetensors and is NOT executed by "
+                          "standard-logits scoring; present in the artifact, outside the measured "
+                          "function. " + "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("lm_head", "quantized", "exl3-mul1", 6,
+                     note="stock exllamav3 quantizes the head (head_bits 6), unlike TR3 which "
+                          "keeps it native BF16. The FP8 parent had lm_head in "
+                          "modules_to_not_convert, so this 6-bit head was quantized from BF16 "
+                          "weights. " + "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+                 asg("other", "quantized", "exl3-mul1", 6,
+                     note="vision tower (model.visual.*): attn q/k/v/o and MLP are EXL3 at K6, "
+                          "patch embed and norms native. Never executed by text-only scoring. "
+                          + "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class"),
+             ], "quantized", kv="not_applicable", mtp=True),
+             TURBODERP("quantizer"),
+             [src("url", "https://huggingface.co/api/models/turboderp/GLM-5.3-Flash-exl3?blobs=true",
+                  None, "31 files at revision 2a30229e; 19 safetensors shards + mtp.safetensors; "
+                        "all-files sum 165,151,543,361"),
+              src("hf_file",
+                  "https://huggingface.co/turboderp/GLM-5.3-Flash-exl3/resolve/"
+                  "2a30229e67012798ba9f0cd832bb78abf4c363d5/quantization_config.json",
+                  None,
+                  "47.9 MB, one tensor_storage entry per module: every per-tensor-class bit rate "
+                  "in scope.assignments was READ from it. config.json sha256 df80c17a68120aeae4c"
+                  "1eca8a9aa67866603484f0487cd5458c08dfd3c45156d and "
+                  "model.safetensors.index.json sha256 ee1f2dbea800dea0b4225c38193f7ef41180ed42d"
+                  "d51f80a0cee58daf44cf606, both verified against the fetched copy on the "
+                  "measurement instance"),
+              src("hf_file",
+                  "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/"
+                  "resolve/main/reports/turbo-4.05bpw-packed-kld.json",
+                  "68ef836737f9eeb59f62da5107246249fcd30c462ccf25493bab75f917df0706",
+                  "malaiwah.glm53-turbo-4.05bpw-packed-kld-summary.v1")],
+             [disc("unsealed_source", "caveat",
+                   "Stock exllamav3 releases ship no upstream receipts, reconstruction closures "
+                   "or sealed reader ABI. The packed surface was decoded WITHOUT seal "
+                   "verification; the immutable repo revision, the artifact's own config/index "
+                   "sha256 and the consumed payload digests were recorded instead.", True),
+              disc("quantized_from_quantized_parent", "caveat",
+                   "The release's own quantization_config declares "
+                   "original_quantization_config.fmt = e4m3: this artifact was quantized from the "
+                   "FP8 release, not from BF16. Its divergence against a BF16 reference therefore "
+                   "includes the FP8 parent's, and it is not lineage-comparable with a 4-bpw "
+                   "artifact quantized directly from BF16.", True),
+              disc("quantized_head", "caveat",
+                   "head_bits 6: stock exllamav3 quantizes lm_head, unlike the TR3 artifacts in "
+                   "this registry which keep it native BF16. The head is APPLIED natively from "
+                   "the artifact's own weights (no shared or replayed head), so measurements of "
+                   "it carry head_policy native_head; the quantization is artifact identity, "
+                   "recorded here.", True),
+              disc("redundant_tensor_representations", "info",
+                   "Each of the 24 vision blocks ships BOTH the EXL3-quantized split "
+                   "attn.{q,k,v}_proj AND the untouched original fused attn.qkv.{weight,bias} -- "
+                   "48 names with two representations. The fused copy was verified to be bitwise "
+                   "the official BF16 weight cast to fp16. Any measurement must say which it "
+                   "used; ours uses the quantized split. The vision tower is not executed by "
+                   "text-only scoring, so it does not affect the published number.")],
+             weights_extra={"size_basis": "repo_all_files", "shard_count": 19,
+                            "tensor_parallel": {"pre_sliced": False, "world_size": None}},
+             derived_from_artifact_ref=A_FP8,
+             availability={"status": "public",
+                           "uri": "https://huggingface.co/turboderp/GLM-5.3-Flash-exl3"},
+             cross_refs=lair(),
              seal={"sealed": False, "note": "unsealed source; see the unsealed_source disclosure"}),
     artifact(A_B4, GLM, "brandonmusic GLM-5.3-Flash tr3 4bpw", "quant",
              hf("brandonmusic/GLM-5.3-Flash-tr3-4bpw", None, "none"),
@@ -1667,6 +1770,77 @@ def build_measurements(artifacts_map):
     # same-stack streaming row, nor this floor from a cross-stack one. BIAS-006 (new)
     # refuses a floor_measurement_ref that crosses lanes; build_row refuses it at
     # write time (exit 7) before a row like that could even be generated.
+
+    # turboderp's stock-exllamav3 4.05bpw, measured 2026-08-29 by bin/measure-cloud's
+    # first end-to-end run. Same lane, same panel, same teacher as the K6/K8/floor rows
+    # above -- comparability key cmp--202b717f3219c414, identical to K8's.
+    STURBO405 = 0.025526426915472484
+    out.append(M("measurement--glm53.turbo-4.05bpw-stream.brandonmusic-final25", GLM,
+                 A_TURBO405, P_B25, R_B25, PL_STREAM, STURBO405,
+                 metric_name="mean_of_run_means_tokenwise_kld",
+                 scored_positions=51175, contexts=25, runs=2, cold=True,
+                 run_means=[STURBO405] * 2,
+                 identical=True, evidence_kind="tokenwise_kld_sha256",
+                 evidence_hashes=["68cc5f61c8924c9962bdd446f60dc84a7880d2ab2eefa3020cdc2fa5d3275aa9"],
+                 det_note="2 cold runs, 2 distinct kld_report_sha256 values, 1 distinct "
+                          "tokenwise_kld_sha256. The report-file digests differ per run and prove "
+                          "nothing; the single tokenwise digest is the determinism evidence.",
+                 sources=[src("receipt_file", STREAM_TURBO405_RECEIPT, STREAM_TURBO405_RECEIPT_SHA,
+                              "malaiwah.glm53-turbo-4.05bpw-packed-kld-summary.v1"),
+                          src("hf_file", HF_REGISTRY_RAW + STREAM_TURBO405_RECEIPT,
+                              STREAM_TURBO405_RECEIPT_SHA),
+                          src("hf_file",
+                              "https://huggingface.co/datasets/malaiwah/"
+                              "GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/"
+                              "turbo-4.05bpw-packed-kld.json",
+                              "68ef836737f9eeb59f62da5107246249fcd30c462ccf25493bab75f917df0706")],
+                 receipt_schema="malaiwah.glm53-turbo-4.05bpw-packed-kld-summary.v1",
+                 cls="advisory",
+                 bias={"kind": "other", "direction": "unknown", "floor_measurement_ref": M_BF16_FLOOR,
+                       "estimated_magnitude": None,
+                       "detail": "Measured on the 'streaming' lane, whose offset against the sealed-ep8 "
+                                 "lane is known to be non-zero but was NOT measured for this artifact: no "
+                                 "sealed-lane row for it exists to bridge against. This lane's own "
+                                 "measurement floor (%s) is %r nats; netting it out gives an estimated "
+                                 "quantization-attributable error of %r nats here -- an estimate, not an "
+                                 "identity, because KL is not additive, and it is only meaningful because "
+                                 "both terms share the same reference and lane."
+                                 % (M_BF16_FLOOR, BF16_FLOOR, STURBO405 - BF16_FLOOR)},
+                 gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
+                       "passed": True},
+                 disclosures=[
+                     disc("unsealed_source", "caveat",
+                          "seal_disclosure (verbatim from the receipt): unsealed-source scoring: stock "
+                          "exllamav3 releases ship no upstream receipts, reconstruction closures or "
+                          "sealed reader ABI; the packed surface was decoded WITHOUT seal verification "
+                          "(consumed payload sha256s and the immutable repo revision are recorded "
+                          "instead)", True),
+                     disc("reduced_run_count", "caveat",
+                          "cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 "
+                          "(budget; disclosed)", True),
+                     disc("quantized_head", "caveat",
+                          "declared_head_bits 6 (verbatim from the receipt): this artifact's lm_head is "
+                          "itself quantized by the producer, unlike the TR3 artifacts on this panel "
+                          "which keep it native BF16. It is APPLIED natively from the artifact's own "
+                          "weights -- no shared or replayed head -- so estimator.head_policy is "
+                          "native_head; the quantization is artifact identity.", True),
+                     disc("non_sealed_lane", "caveat",
+                          "Produced by the 'streaming' lane, not the sealed-ep8 lane. The lane's offset "
+                          "against the sealed lane is NOT measured for this artifact: no sealed-lane row "
+                          "for it exists to bridge against.", True),
+                     disc("third_party_artifact_self_measured", "info",
+                          "The artifact is turboderp's; the measurement is ours. Credit for the quant "
+                          "and credit for the number are separate.", False)],
+                 notes="First artifact measured end to end by bin/measure-cloud. The receipt's family "
+                       "name carries no lane marker, so 'streaming' is SUPPLIED by --lane; direction, "
+                       "accumulation dtype, scored positions and context count are supplied too (this "
+                       "family is a scalar summary). determinism.identical_across_runs is RECOMPUTED "
+                       "from run_means and distinct_tokenwise_kld_sha256. The non-routed weights are "
+                       "the ARTIFACT's own, dequantized from its shards -- including its 6-bit head -- "
+                       "so no official-release weight is in the measured function; the materialization "
+                       "receipt is 3653c55f0dc729c3fccc6bbe5d8949b55e27517ade5d8c546fec79de03dd1c81. "
+                       "907,200 K4 expert matrices were decoded per cold run. No top-1 agreement was "
+                       "produced for this run."))
     out.append(M(M_BF16_FLOOR, GLM, A_BF16_A6, P_B25, R_B25, PL_STREAM, BF16_FLOOR,
                  metric_name="mean_of_run_means_tokenwise_kld",
                  scored_positions=51175, contexts=25, runs=2, cold=True, run_means=[BF16_FLOOR] * 2,

@@ -1,0 +1,42 @@
+{
+  "artifact_config_sha256": "df80c17a68120aeae4c1eca8a9aa67866603484f0487cd5458c08dfd3c45156d",
+  "artifact_index_sha256": "ee1f2dbea800dea0b4225c38193f7ef41180ed42dd51f80a0cee58daf44cf606",
+  "artifact_repo": "turboderp/GLM-5.3-Flash-exl3",
+  "artifact_revision": "2a30229e67012798ba9f0cd832bb78abf4c363d5",
+  "bitwise_deterministic": true,
+  "codebook": "mul1",
+  "cold_run_count": 2,
+  "cold_run_deviation": "2 cold runs, not 5 (budget; disclosed)",
+  "declared_bits": 4.05,
+  "declared_head_bits": 6,
+  "distinct_tokenwise_kld_sha256": [
+    "68cc5f61c8924c9962bdd446f60dc84a7880d2ab2eefa3020cdc2fa5d3275aa9"
+  ],
+  "exllamav3_version": "1.4.4",
+  "kld_report_sha256": [
+    "0166f527a3b1c1c98cad9c3c071b2097a86719fa405c5c8d1e0005339c3a43ec",
+    "0347195bbe4c55adab77e85ba2531d07077fb8fef85199546ba3d4ab4b9ef26a"
+  ],
+  "materialization_receipt_sha256": "3653c55f0dc729c3fccc6bbe5d8949b55e27517ade5d8c546fec79de03dd1c81",
+  "measured_mean_kld": 0.025526426915472484,
+  "profile": "turbo-4.05bpw-hf-sharded",
+  "quality_gate": {
+    "metric": "mean_tokenwise_kld",
+    "threshold_lt": 0.06
+  },
+  "quality_gate_passed": true,
+  "routed_bits_decode_histogram": {
+    "K4": 907200
+  },
+  "run_means": [
+    0.025526426915472484,
+    0.025526426915472484
+  ],
+  "schema": "malaiwah.glm53-turbo-4.05bpw-packed-kld-summary.v1",
+  "seal_disclosure": "unsealed-source scoring: stock exllamav3 releases ship no upstream receipts, reconstruction closures or sealed reader ABI; the packed surface was decoded WITHOUT seal verification (consumed payload sha256s and the immutable repo revision are recorded instead)",
+  "student_label": "turboderp-exl3-mul1-4.05bpw",
+  "student_receipt_sha256": "5449c4c6fb8beb160f5360d556e7e096cc6f210880dfd7c06d9aa64ef0edc045",
+  "teacher_label": "sealed-ep8",
+  "teacher_receipt_sha256": "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5",
+  "teacher_source": "sealed_ep8_bf16_teacher"
+}

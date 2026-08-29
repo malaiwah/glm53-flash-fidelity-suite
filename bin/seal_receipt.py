@@ -178,7 +178,10 @@ def main() -> int:
             "evidence_hashes": evidence_hashes,
             "distinct_evidence_hash_count": len(evidence_hashes),
             "per_run_report_sha256": m.get("per_run_report_sha256") or [],
-            "note": m.get("determinism_note"),
+            # never None: the schema types this as a string.
+            "note": m.get("determinism_note") or (
+                "%d cold run(s); determinism evidence is the tokenwise-KLD "
+                "tensor digest, not any report file" % len(run_means)),
         },
         measurement_scope={
             "scored_positions": panel.get("scored_positions"),
@@ -290,6 +293,19 @@ def _aggregate(receipts: Path, con: Console) -> Optional[Dict[str, Any]]:
         "evidence_hashes": list(doc.get("distinct_tokenwise_kld_sha256") or []),
         "per_run_report_sha256": list(doc.get("kld_report_sha256") or []),
         "top1_agreement": doc.get("top1_agreement"),
+        # The schema requires determinism.note to be a STRING, and a receipt
+        # sealed from the aggregate had nothing to put there, so every cloud
+        # run ended in "REJECTED: /determinism/note: expected type string, got
+        # null" -- after the measurement. Say what was actually observed.
+        "determinism_note": (
+            "%d cold runs, %d distinct kld_report_sha256, %d distinct "
+            "tokenwise_kld_sha256. The report-file digests differ per run and "
+            "prove nothing; the tokenwise digest is the determinism evidence.%s"
+            % (len(run_means),
+               len(set(doc.get("kld_report_sha256") or [])),
+               len(set(doc.get("distinct_tokenwise_kld_sha256") or [])),
+               (" cold_run_deviation (verbatim): %s" % doc["cold_run_deviation"])
+               if doc.get("cold_run_deviation") else "")),
         "aggregate_receipt": candidates[0].name,
         "aggregate_receipt_schema": doc.get("schema"),
         "aggregate_receipt_sha256": sha256_file(str(candidates[0])),

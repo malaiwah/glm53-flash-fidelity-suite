@@ -318,21 +318,29 @@ def adapt_turbo(receipt, path):
                      % (declared, len(set(means)), len(set(digests)), recomputed))
     if not L.close(value, sum(means) / len(means)):
         raise Refuse(E_INCONSISTENT, "measured_mean_kld != mean(run_means)")
-    disclosure = []
-    for f in ("seal_disclosure", "cold_run_deviation"):
-        if receipt.get(f):
-            disclosure.append("%s (verbatim from the receipt): %s" % (f, receipt[f]))
+    # CODED disclosures, not a bag of strings: the untyped `verbatim_disclosure`
+    # list is stamped `unsealed_source` for every entry it holds, so three
+    # different facts came out as three identical codes on one row.
+    coded = []
+    if receipt.get("seal_disclosure"):
+        coded.append({"code": "unsealed_source",
+                      "detail": "seal_disclosure (verbatim from the receipt): %s"
+                                % receipt["seal_disclosure"]})
+    if receipt.get("cold_run_deviation"):
+        coded.append({"code": "reduced_run_count",
+                      "detail": "cold_run_deviation (verbatim from the receipt): %s"
+                                % receipt["cold_run_deviation"]})
     head_bits = receipt.get("declared_head_bits")
     if head_bits is not None and float(head_bits) < 16:
-        disclosure.append(
-            "quantized_head (from the receipt's declared_head_bits): this artifact's "
-            "lm_head is itself quantized at %s bits by the producer; it is APPLIED "
-            "natively from the artifact's own weights (no shared or replayed head), "
-            "so head_policy is native_head and the quantization is artifact identity"
-            % head_bits)
-    if receipt.get("codebook"):
-        disclosure.append("codebook (verbatim from the receipt): %s (exllamav3 %s)"
-                          % (receipt["codebook"], receipt.get("exllamav3_version", "unknown")))
+        coded.append({
+            "code": "quantized_head",
+            "detail": ("declared_head_bits %s (verbatim from the receipt): this "
+                       "artifact's lm_head is itself quantized by the producer, "
+                       "unlike the TR3 artifacts on this panel which keep it native "
+                       "BF16. It is APPLIED natively from the artifact's own weights "
+                       "-- no shared or replayed head -- so estimator.head_policy is "
+                       "native_head; the quantization is artifact identity."
+                       % head_bits)})
     return {
         "value": value, "metric_name": "mean_of_run_means_tokenwise_kld",
         "direction": "reference_to_candidate", "accumulation": "float64",
@@ -343,11 +351,15 @@ def adapt_turbo(receipt, path):
         "artifact_repo": receipt.get("artifact_repo"),
         "artifact_revision": receipt.get("artifact_revision"),
         "teacher_digest": receipt.get("teacher_receipt_sha256"),
-        "verbatim_disclosure": disclosure,
+        "verbatim_disclosure_coded": coded,
         "field_provenance": {"value": "#/measured_mean_kld", "run_means": "#/run_means",
                              "evidence_hashes": "#/distinct_tokenwise_kld_sha256",
                              "artifact_repo": "#/artifact_repo",
-                             "artifact_revision": "#/artifact_revision"},
+                             "artifact_revision": "#/artifact_revision",
+                             "head_policy": ("SUPPLIED: how the head is APPLIED "
+                                             "(natively, from the artifact's own "
+                                             "weights). #/declared_head_bits says "
+                                             "what the artifact's head IS.")},
         "receipt_schema": receipt.get("schema"),
         "stack_relation": "same_stack", "head_policy": "native_head",
     }
