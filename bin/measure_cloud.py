@@ -114,6 +114,14 @@ class Teardown:
         self.lease_path: Optional[Path] = None
         self.done = False
         self.leaked = False
+        # --hold-on-failure: on a FAILED exit, pull the receipts and shred the
+        # secrets as always, but leave the instance alive so the half-finished
+        # work (a 165 GB fetch, a materialized tree, one cold run) can be
+        # inspected and resumed instead of re-bought.  L1/L2/L3 still expire
+        # it: the lease is deliberately KEPT, and the name still carries the
+        # deadline, so a held box is bounded, not leaked.
+        self.hold_on_failure = False
+        self.held = False
         self._lock = threading.Lock()
 
     def adopt(self, machine_id: Optional[int]) -> None:
@@ -154,12 +162,17 @@ class Teardown:
                 prev[sig] = signal.signal(sig, signal.SIG_IGN)
             except (ValueError, OSError):
                 pass
+        hold = bool(self.hold_on_failure and reason.startswith("failed"))
         self.con.say("")
         self.con.step("teardown%s (^C is ignored until this finishes)"
                       % ((" -- " + reason) if reason else ""))
+        steps = [self._pull_receipts, self._collect_env, self._shred_secrets]
+        if hold:
+            self.held = True
+        else:
+            steps += [self._destroy_instance, self._destroy_fs, self._drop_lease]
         try:
-            for step in (self._pull_receipts, self._collect_env, self._shred_secrets,
-                         self._destroy_instance, self._destroy_fs, self._drop_lease):
+            for step in steps:
                 try:
                     step()
                 except Exception as exc:                # noqa: BLE001
@@ -174,6 +187,20 @@ class Teardown:
                     signal.signal(sig, handler)
                 except (ValueError, OSError):
                     pass
+        if self.held:
+            self.con.say("")
+            self.con.say("*" * 78)
+            self.con.say("**  HELD (--hold-on-failure): instance %s is STILL RUNNING and"
+                         % self.machine_id)
+            self.con.say("**  STILL BILLING, so the finished stages survive for a resume.")
+            self.con.say("**    inspect:  jl exec %s 'tail -50 %s/logs/*.log'"
+                         % (self.machine_id, self.fs_root))
+            self.con.say("**    resume :  bin/measure-cloud adopt --job <id> (stage markers skip"
+                         " what is done)")
+            self.con.say("**    DESTROY:  jl destroy %s --yes" % self.machine_id)
+            self.con.say("**  Its lease is kept, so the reaper still destroys it at the"
+                         " deadline.")
+            self.con.say("*" * 78)
 
     # -- steps -------------------------------------------------------------
 
@@ -1352,6 +1379,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--on-preempt", default="resume",
                    choices=("resume", "recreate", "fail"))
     s.add_argument("--i-accept-leak-risk", action="store_true")
+    s.add_argument("--hold-on-failure", action="store_true",
+                        help="on a FAILED stage, keep the instance alive (receipts "
+                             "pulled, secrets shredded, lease kept so the reaper "
+                             "still expires it) instead of destroying it. For "
+                             "proving an unexercised path, where re-buying a "
+                             "finished fetch costs more than the hold.")
     s.add_argument("--yes", action="store_true", help="skip the cost confirmation")
     s.add_argument("--dry-run", action="store_true",
                    help="validate everything, create nothing, spend $0.00")
@@ -1392,6 +1425,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     jl = JL(dry=args.dry_run)
     td = Teardown(jl, con, Path(args.out or ".").resolve())
     td.keep_fs = args.keep_fs
+    td.hold_on_failure = bool(getattr(args, "hold_on_failure", False))
 
     def _signal(signum, _frame):
         con.say("")
