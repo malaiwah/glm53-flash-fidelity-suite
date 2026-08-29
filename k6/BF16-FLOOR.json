@@ -1,0 +1,18 @@
+{
+  "schema": "malaiwah.glm53-bf16-floor-analysis.v1",
+  "floor_mean_kld": 0.011505922619330299,
+  "floor_cold_runs": 2,
+  "floor_bitwise_deterministic": true,
+  "panel": "brandonmusic sealed 25-window / 51175 positions",
+  "lane": "streaming (single GPU, EP8 emulated, reduce-order fp32)",
+  "k6_panel_kld": 0.013714888822596553,
+  "k8_panel_kld": 0.012384191023436866,
+  "k6_attributable": 0.0022089662032662542,
+  "k8_attributable": 0.0008782684041065674,
+  "attributable_ratio_k6_over_k8": 2.5151379611718587,
+  "raw_ratio_k6_over_k8": 1.1074513302194195,
+  "k8_removes_fraction_of_k6_residual": 0.6024074959553799,
+  "cross_stack_floor_do_not_mix": 0.01271159981725071,
+  "cost_usd": 18.902,
+  "cost_note": "includes building the native-BF16 student mode; repeat ~, single run ~"
+}
