@@ -760,7 +760,42 @@ window, 25 windows. `--decode-cache ram` is therefore worth more here than on
 the packed lanes, and it is capped by the container's cgroup, not the host's
 RAM. Measured figures are in `k6/BF16-FLOOR.md`.
 
-<!-- FLOOR-NUMBERS -->
+Measured, 1x H200 spot (IN2, 28 vCPU, 300 GiB cgroup, 200 GB local NVMe),
+`--decode-cache ram --decode-threads 28 --ep-emulate 8 --reduce-order fp32`,
+BF16 tree on the shared CephFS filesystem:
+
+| stage | measured |
+|---|---|
+| non-routed model build (1,618 tensors, 47 of 120 shards) + device move | 22.5 s |
+| window 1 (cold; all 42 layers filled) | 678.3 s |
+| steady-state window | 467-549 s |
+| routed BF16 read per layer | 14.50 GB |
+| routed BF16 read per cold run | **9.31 TB** (42 layers x window 1, then 25 uncached layers x 24 windows) |
+| filesystem read throughput, 28 reader threads | ~1.05 GB/s in the run; 1.44 GB/s measured in isolation |
+| RAM decode cache | budget 257.7 GB of the 300 GiB cgroup -> 17 of 42 layers; 408 hits, 625 refusals |
+| **peak device memory** | **47.08 GB** - identical to the K6/K8 streaming runs |
+| cold run, end to end | **12,514.5 s = 3.48 h** |
+| fp64 KLD report, per run | ~90 s |
+
+Two cold runs are therefore ~6.95 GPU-hours. For comparison, on the same box
+class and the same panel, the K6 payload-store lane measured 11,018.9 s and
+10,488.7 s (5.97 h for two cold runs) and K8 measured 14,254.5 s and 13,755.8 s
+(7.78 h). **The floor costs about what one more model costs** — it reads 609 GB
+of BF16 per window against K6's 231 GB payload store, and saves the decode.
+
+Two knobs did NOT pay off here and are worth knowing about:
+
+* `--decode-cache ram` is nearly a wash on this box. Its host mirror is
+  pageable, so serving a cached layer is a 14.50 GB pageable H2D copy (~11.8 s)
+  against ~13.8 s to re-read the layer from the filesystem. It saves ~34 s per
+  window on 17 layers and costs ~78 s in window 1 to fill; net ~12 min per run.
+  A pinned mirror would make cached layers nearly free and is the obvious next
+  optimisation.
+* Local NVMe staging is pointless for this lane: the shared filesystem
+  delivered ~1.05-1.44 GB/s against the ~900 MB/s previously measured for the
+  box's own disk, and the routed set (609 GB) does not fit a 200 GB volume
+  anyway.
+
 
 ---
 

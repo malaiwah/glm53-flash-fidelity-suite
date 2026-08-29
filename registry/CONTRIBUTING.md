@@ -93,7 +93,49 @@ ledger written for encoding never accounted for measurement output.
 **Keep two cold runs.** `run_count >= 2` is required, and the second run is not
 a formality: it is the determinism evidence.
 
-<!-- CONTRIBUTOR-COST-NUMBERS -->
+#### The bill, measured
+
+Two reference points from our own runs, both 25-window panels with two cold
+runs, both on **1x H200 spot in IN2 at $1.99/GPU-h**, weights already on a
+local filesystem:
+
+| what was measured | capture wall clock, 2 cold runs | GPU-hours | at $1.99/h |
+|---|---:|---:|---:|
+| K6 (231 GB payload store) | 11,018.9 s + 10,488.7 s | 5.97 | **$11.89** |
+| K8 (304 GB payload store) | 14,254.5 s + 13,755.8 s | 7.78 | **$15.48** |
+| BF16 floor (599 GB source tree, no decode) | 12,514.5 s + 12,4xx s | ~6.95 | **~$13.83** |
+
+Add the transfers if the bytes are not already on the box. Measured from IN2
+with plain `curl` against Hugging Face: **50.9 MB/s** on one stream, **180
+MB/s** on four (`hf_transfer` uses more and should beat this):
+
+| transfer | 180 MB/s |
+|---|---:|
+| a 176 GB quant | 0.27 h |
+| a 331 GB quant | 0.51 h |
+| teacher panel, 30 GB | 0.05 h |
+| BF16 non-routed shards, ~235 GB, only if your artifact lacks its own | 0.36 h |
+
+Bootstrap (python3.12 + `torch==2.11.0+cu130` + `transformers==5.16.1` +
+safetensors/numpy/accelerate) is another ~5-10 min. **A stranger starting from
+nothing** should therefore budget roughly **5.5-9.5 hours and $11-19** for a
+176-331 GB quant on H200 spot, or about half that if a cheaper SM90-or-newer
+card is free. Add ~0.4 h and ~$0.8 if you also have to pull the BF16 shards.
+
+Two hardware traps worth knowing before you rent:
+
+* **The driver, not the GPU generation, is the gate.** An A100-80GB at
+  $0.89/GPU-h fits the 47.1 GB working set and `transformers`'
+  `_can_use_grouped_mm` has no compute-capability check — but the instance
+  image we drew shipped NVIDIA driver 12080, and a `torch 2.11.0+cu130` venv
+  cannot initialise CUDA on it at all. Check
+  `nvidia-smi --query-gpu=driver_version` and one `torch.cuda` init in the
+  first five minutes.
+* **Disk is sized by the measurement, not the artifact.** Each cold run writes
+  `positions x vocab x 4` bytes of fp32 student logits — 31.7 GB here — and
+  both runs are kept, because comparing them is the determinism evidence.
+
+
 
 ### Fields that must be filled
 

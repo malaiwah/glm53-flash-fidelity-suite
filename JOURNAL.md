@@ -734,3 +734,61 @@ and publishable_as_reproduction FALSE, because a different expert-combine
 order is an INDEPENDENT measurement that agrees closely, not a bitwise
 reproduction. Cost: ~$6/model vs ~$50 for the sealed 8xH200 protocol.
 K6 box destroyed on completion (receipts live on the shared fs).
+
+## 2026-08-29 ~05:25 — The BF16 FLOOR of the streaming lane: 0.011506
+`stream_score.py --source native --profile native-bf16` — the identical
+streaming capture with the 36,288 routed expert matrices read straight out of
+the official BF16 checkpoint by their released tensor names, no codec in the
+path — scores **0.011505922619330299** nats on the sealed 25-window panel
+(51,175 positions, fp64, teacher receipt 2ae08117…). Same panel, same teacher,
+same estimator, same non-routed view, same EP8 emulation, same
+`--reduce-order fp32`, same `grouped_mm` kernel, same H200 spot box class as
+K6 and K8. The only difference is where the expert weights come from.
+
+What it does to the story:
+
+    student   panel mean     floor          quantization-attributable   floor share
+    K6        0.013714889    0.011505923     0.002208966                 83.9%
+    K8        0.012384191    0.011505923     0.000878268                 92.9%
+
+K6/K8 is **1.107x on the raw panel mean and 2.515x on quantization-attributable
+error** — K8 removes 60.2% of K6's quantization error. That is the number that
+belongs next to "K8's shipped store is 13.2x tighter in weight-space NMSE";
+"11% better" was never a statement about the codec, it was mostly a statement
+about the lane. Note the floor is LANE-specific: the independently measured
+cross-stack floor on a different lane was 0.012712, above ours.
+
+Peak device memory 47.08 GB — byte-for-byte the K6/K8 figure, which is the
+cheapest possible evidence that nothing about the schedule changed.
+
+Validation before spending: L1 ladder a–f green, including a NEW rung **L1.f**
+that proves `NativeCheckpointSource` + `fuse_gate_up` rebuild the stacked
+expert parameters transformers' own checkpoint conversion produces, BITWISE, on
+the 0.1B fixture (16 experts, max_abs delta 0.0). Negative controls: `--source
+native --profile k6` is refused; a K6 packed-store `--dry-run` on the modified
+tool still resolves `checkpoint_identity_sha256 a8668be3…`, the sealed one, so
+default behaviour is unchanged. `runtime_reader_sha256` moves 0582ba57… →
+c1112843… by construction (it hashes stream_score.py) and that is disclosed.
+
+Cost, instrumented because it was asked for: 1× H200 spot IN2, $1.99/GPU-h
+list. Cold run 1 12,514.5 s (3.48 h), window 1 678 s cold, steady state
+467–549 s, 9.31 TB read off CephFS at ~1.05 GB/s with 28 threads. The A100-80GB
+at $0.89/h was tried FIRST and rejected in 28 minutes and ~$0.42: its image
+ships NVIDIA driver 12080 and the proven venv is torch 2.11.0+cu130, so
+`torch._C._cuda_init()` refuses. Not an SM80 problem — `_can_use_grouped_mm`
+has no compute-capability check at all. RTX-PRO6000 at $0.99/h in IN1 could not
+be tested: 0 free spot CONTAINERS (the free devices were VM-only rows, and
+`--spot` is container-only).
+
+Also corrected a number this journal got wrong: the streaming lane is **~$12
+per model for two cold runs** (K6 5.97 GPU-h = $11.89; K8 7.78 GPU-h = $15.48,
+from the capture receipts), not the ~$6 recorded on 2026-08-29 ~00:15 — that
+figure was one cold run, not the pair.
+
+LESSON 21: the GPU generation is rarely the gate, the DRIVER is; a
+shared-filesystem venv is a hard pin on it.
+LESSON 22: the account balance is not your bill when another session is
+renting on the same account — and `jl destroy` erases the cost record.
+LESSON 23: a panel mean is a floor plus an error, and only one of those is the
+codec. Measure the floor once per lane, early.
+LESSON 24: a cache that can refuse should refuse before it allocates.
