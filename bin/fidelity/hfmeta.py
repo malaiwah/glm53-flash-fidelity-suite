@@ -607,7 +607,14 @@ DEFAULT_PANEL = PanelDescriptor(
     panel_ref="panel--glm53.brandonmusic.final25",
     repo_id="brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits",
     revision="main",
-    include=["logits/window-*.safetensors", "*.json"],
+    # The token-panel receipt names 667 artifacts by ABSOLUTE path and verifies
+    # each by size and sha256 -- panel.json plus 666 .npy token/mask arrays,
+    # 5.8 MB in total. They are not JSON, so the first two globs miss them, and
+    # the capture then dies at load_panel_windows with "artifact identity
+    # mismatch" AFTER the fetch, the materialize and the model load. Cheap to
+    # fetch, fatal to omit.
+    include=["logits/window-*.safetensors", "*.json",
+             "calibration/panel-v1/arrays/*.npy"],
     contexts=25,
     positions_per_context=2047,
     scored_positions=51175,
@@ -618,9 +625,10 @@ DEFAULT_PANEL = PanelDescriptor(
     teacher_receipt_sha256="2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5",
     teacher_backend_identity_sha256="85b11599c6b36a83fa8099a09a298a386a0c603d1f18d3702e7fb1c470962ce4",
     note=(
-        "25 sealed 'final' windows, fp32 teacher logits. The repo also holds "
-        "the calibration trees (475 GB) and non-final logits; the include set "
-        "fetches ~2.4% of it."
+        "25 sealed 'final' windows, fp32 teacher logits, plus the 5.8 MB of "
+        "token-panel arrays the panel receipt verifies by digest. The repo "
+        "also holds the calibration trees (475 GB) and non-final logits; the "
+        "include set fetches ~2.4% of it."
     ),
 )
 

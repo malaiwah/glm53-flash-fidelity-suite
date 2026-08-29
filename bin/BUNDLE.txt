@@ -23,6 +23,9 @@ bin/invoke_engine.py
 # The scorer stage: stream_score CAPTURES logits, k6_kld_report turns them into
 # the divergence. Without this the seal stage has nothing to seal.
 bin/invoke_scorer.py
+# The token-panel receipt names its artifacts by the PRODUCER's absolute paths
+# and rejects symlinked leaves; this stages the fetched copies there.
+bin/stage_panel_paths.py
 bin/seal_receipt.py
 bin/engines.json
 bin/fidelity/__init__.py

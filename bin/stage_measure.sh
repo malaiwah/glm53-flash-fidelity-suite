@@ -166,6 +166,11 @@ PY
     "$VENV/bin/hf" download "$REPO" --repo-type dataset --revision "$REV" \
       --local-dir "$PANEL" $INCLUDES >>"$LOGS/fetch_panel.log" 2>&1
   du -sh "$PANEL" | tee -a "$LOGS/fetch_panel.log"
+  # The sealed token-panel receipt names its 667 artifacts by ABSOLUTE producer
+  # path and verifies each by digest. Stage them there now, where a miss is one
+  # named file, rather than at load_panel_windows four stages later.
+  python3 "$FS/bin/stage_panel_paths.py" --panel "$PANEL" \
+      2>&1 | tee -a "$LOGS/fetch_panel.log"
   touch "$marker"
   log "done"
   ;;
