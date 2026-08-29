@@ -478,6 +478,7 @@
   "known_disclosure_codes": [
     "artifact_identity_incomplete",
     "author_reported_only",
+    "byte_identical_redistribution",
     "calibration_panel_overlap",
     "contamination_unchecked",
     "cross_engine_capture",

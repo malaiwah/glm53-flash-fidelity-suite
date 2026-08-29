@@ -63,6 +63,7 @@ HF_REGISTRY_RAW = "https://huggingface.co/datasets/malaiwah/quant-fidelity-regis
 
 MAL = lambda role: attr("malaiwah", role, handle="malaiwah", url="https://huggingface.co/malaiwah", maintainer=True)
 BRANDON = lambda role: attr("brandonmusic", role, handle="brandonmusic", url="https://huggingface.co/brandonmusic")
+MIA = lambda role: attr("Mia-AiLab", role, handle="Mia-AiLab", url="https://huggingface.co/Mia-AiLab")
 SERO = lambda role: attr("0xSero", role, handle="0xSero", url="https://huggingface.co/0xSero")
 TURBODERP = lambda role: attr("turboderp", role, handle="turboderp",
                               url="https://huggingface.co/turboderp")
@@ -567,6 +568,7 @@ A_K8 = "artifact--malaiwah.glm-5.3-flash-tr3-8bpw"
 A_DIONE = "artifact--0xsero.glm-5.3-flash-exl3-q4"
 A_B4 = "artifact--brandonmusic.glm-5.3-flash-tr3-4bpw"
 A_TURBO405 = "artifact--turboderp.glm-5.3-flash-exl3-4.05bpw"
+A_TR3MIRROR = "artifact--mia-ailab.glm-5.3-flash-exl3-tr3-4bpw"
 A_FP8_DEQ = "artifact--orcarouter.glm-5.3-flash-fp8-dequantized"
 ORCA_IDS = {b: "artifact--orcarouter.glm-5.3-flash-mlx-%s" % b.replace("-", "").replace("_", "")
             for b in ("6-bit", "4-bit", "3-bit", "2-bit", "2bit-lite")}
@@ -931,6 +933,96 @@ ARTIFACTS = [
              derived_from_artifact_ref=A_BF16_A6,
              availability={"status": "public", "uri": "https://huggingface.co/brandonmusic/GLM-5.3-Flash-tr3-4bpw"},
              cross_refs=lair(), seal={"sealed": True, "note": "ships its own five-cold-run receipt and reader digest 1fb3be87..."}),
+    # The SAME WEIGHTS as A_B4, redistributed at a PINNED revision. It gets its
+    # own record rather than being folded into brandonmusic's for one reason: it
+    # is the tree that was actually fetched and measured, and a registry that
+    # says "we measured X" must name the bytes it opened. The relationship is
+    # not asserted from the mirror's README -- it is proven twice, and both
+    # proofs are in the sources below.
+    artifact(A_TR3MIRROR, GLM,
+             "Mia-AiLab GLM-5.3-Flash EXL3 TR3 4bpw (byte-identical mirror of brandonmusic's)",
+             "quant",
+             hf("Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw",
+                "024db9f7e9871e8efdf21538ba55af7442be3cd5", "hf_api"),
+             "exl3", "4bpw", 175642157752,
+             codec("exl3-mcg", 4.0, None, tool="exllamav3", version="0.0.43"),
+             EXL3_SCOPE_UNIFORM(4.0), BRANDON("quantizer"),
+             [src("url",
+                  "https://huggingface.co/api/models/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw"
+                  "/revision/024db9f7e9871e8efdf21538ba55af7442be3cd5?blobs=true",
+                  None,
+                  "PROOF 1 of byte-identity: the LFS oid of all 120 *.safetensors is "
+                  "equal, file for file, to brandonmusic/GLM-5.3-Flash-tr3-4bpw @ "
+                  "5ab363a8dcf6405955fd5f99671e01a1c9fb124b. Of the 142 files the two "
+                  "repos share, only README.md differs; the mirror adds MIRROR.json and "
+                  "ORIGINAL_MODEL_CARD.md and omits brandonmusic's 192 "
+                  ".materialization/shards/*.json sidecars."),
+              src("hf_file",
+                  "https://huggingface.co/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw/resolve/"
+                  "024db9f7e9871e8efdf21538ba55af7442be3cd5/SHA256SUMS",
+                  None,
+                  "PROOF 2, independent of the Hub's own hashing: the mirror republishes "
+                  "brandonmusic's SHA256SUMS verbatim, and all 120 downloaded shards were "
+                  "verified against it byte-wise on the measurement instance "
+                  "(malaiwah.published-sums-verification.v1: weights_verified 120, "
+                  "weights_failed 0, weights_not_covered_by_list 0)."),
+              src("hf_file",
+                  "https://huggingface.co/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw/resolve/"
+                  "024db9f7e9871e8efdf21538ba55af7442be3cd5/MIRROR.json",
+                  None,
+                  "the mirror's own declaration: mirror_of brandonmusic/"
+                  "GLM-5.3-Flash-tr3-4bpw @ 5ab363a8, quant_author 'Brandon M. Music', "
+                  "'Byte-identical redistribution. Not an original quantization.' It is "
+                  "recorded because the producer said it, and it is BELIEVED because the "
+                  "two proofs above check it."),
+              src("hf_file",
+                  "https://huggingface.co/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw/resolve/"
+                  "024db9f7e9871e8efdf21538ba55af7442be3cd5/config.json",
+                  "4f5341e048984459471bfb9c894e6bf87e69b9c67402672af901631d1349f265",
+                  "the release's own quantization_config: bits 4, codebook mcg, "
+                  "head_bits 16, scope glm53_routed_experts_only, "
+                  "non_routed_dtype_policy official_source_native, version 0.0.43. "
+                  "Every per-tensor-class entry in scope.assignments is read from it."),
+              src("hf_file",
+                  "https://huggingface.co/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw/resolve/"
+                  "024db9f7e9871e8efdf21538ba55af7442be3cd5/materialization-receipt.json",
+                  "092be1ffa8db66bf02d4c370d0433a57aa48d4a6e5ce89723ef6a3bb7ca32643",
+                  "the release's own seal. Its self-declared receipt_sha256 RECOMPUTES "
+                  "from its canonical content; it states native_tensor_count 1618, "
+                  "packed_tensor_count 148608, routed_choice_count 37152, "
+                  "nonrouted_native_exact true, and it binds config_sha256 / "
+                  "index_sha256 to the published files.")],
+             [disc("byte_identical_redistribution", "info",
+                   "This is NOT an original quantization. Its 120 weight shards are "
+                   "byte-identical to brandonmusic/GLM-5.3-Flash-tr3-4bpw @ 5ab363a8 "
+                   "(artifact--brandonmusic.glm-5.3-flash-tr3-4bpw), proven two ways: "
+                   "equal LFS oids for all 120 files, and a byte-wise verification of the "
+                   "downloaded shards against brandonmusic's own published SHA256SUMS, "
+                   "which the mirror republishes verbatim. Credit for the quantization is "
+                   "brandonmusic's; the mirror's contribution is a pinned, durable fetch "
+                   "target -- which is why the measurement targets it: the upstream record "
+                   "carries no revision at all.", True),
+              disc("sealed_source_verified", "info",
+                   "Unlike every other third-party artifact in this registry, this release "
+                   "SEALS itself: exl3-mcg-storage-abi.json and "
+                   "materialization-receipt.json state digests over the emitted tensor-name "
+                   "set, the materialization plan, the config and the index. All 12 claims "
+                   "were RECOMPUTED from the published bytes -- once before renting "
+                   "anything (a few hundred KB), and again on the instance against the "
+                   "downloaded tree. The ABI's own serving_reader_qualified=false and empty "
+                   "qualified_tp_sizes concern TP SERVING ('ExLlamaV3 v0.0.43 has no "
+                   "audited GLM-5.3 TP model load/inference receipt'), not the offline "
+                   "single-device decode this registry's measurement performs; its "
+                   "storage_checkpoint_verified is true.")],
+             weights_extra={"size_basis": "repo_weight_files", "shard_count": 120},
+             derived_from_artifact_ref=A_BF16_A6,
+             availability={"status": "public",
+                           "uri": "https://huggingface.co/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw"},
+             cross_refs=lair(),
+             seal={"sealed": True,
+                   "note": "exl3-mcg-storage-abi.json + materialization-receipt.json "
+                           "(receipt 092be1ff..., plan a359003a...); all 12 claims "
+                           "recomputed from the published bytes by tr3_surface.verify_seal"}),
     artifact(A_FP8_MLAKV, GLM, "GLM-5.3-Flash official FP8 weights served with FP8 MLA KV", "quant",
              hf("zai-org/GLM-5.3-Flash", None, "none"),
              "safetensors", "FP8 + FP8 MLA KV", None,
