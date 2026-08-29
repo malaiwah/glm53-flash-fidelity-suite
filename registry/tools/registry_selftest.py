@@ -224,6 +224,28 @@ def m_pending_row_with_a_value(C):
     return "L1.SCHEMA", "a pending row must not carry a number"
 
 
+def m_stream_row_loses_its_lane(C):
+    """The failure this whole lane split exists to stop: a streaming-lane number filed with
+    nothing on it that says so, sitting in the sealed lane's table one line above the sealed
+    row for the SAME weights."""
+    a = C["measurements"]["measurement--glm53.k6-6bpw-stream.brandonmusic-final25"]
+    a["disclosures"] = [d for d in a["disclosures"] if d["code"] != "non_sealed_lane"]
+    return "PROV-012", "a streaming-lane row must say it is a streaming-lane row"
+
+
+def m_stream_row_loses_its_bias(C):
+    a = C["measurements"]["measurement--glm53.k6-6bpw-stream.brandonmusic-final25"]
+    a["comparability"]["bias"] = None
+    return "PROV-012", "a lane offset is measured or unknown, never absent"
+
+
+def m_lane_is_its_own_baseline(C):
+    p = C["pipelines"]["pipeline--malaiwah.glm53-stream-packed-kld"]
+    p["lane"]["bridge"]["sealed_measurement_ref"] = \
+        "measurement--glm53.k6-6bpw-stream.brandonmusic-final25"
+    return "PROV-012", "a lane cannot bridge to a row it produced itself"
+
+
 def m_non_canonical_line(C):
     return None  # handled specially below
 
@@ -256,6 +278,9 @@ MUTATIONS = [
     ("no-deviations-plus-a-caveat", m_no_known_deviations_plus_caveat),
     ("undeclared-duplicate-row", m_duplicate_row),
     ("pending-row-carrying-a-value", m_pending_row_with_a_value),
+    ("stream-row-without-its-lane", m_stream_row_loses_its_lane),
+    ("stream-row-without-its-bias", m_stream_row_loses_its_bias),
+    ("lane-bridged-to-itself", m_lane_is_its_own_baseline),
 ]
 
 
@@ -404,6 +429,46 @@ def main():
                               "--panel", "panel--glm53.brandonmusic.final25",
                               "--reference", "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
                               "--pipeline", "pipeline--malaiwah.glm53-dione-packed-kld", "--dry-run"]))
+    stream_common = ["--registry", args.root, "--panel", "panel--glm53.brandonmusic.final25",
+                     "--reference", "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+                     "--pipeline", "pipeline--malaiwah.glm53-stream-packed-kld",
+                     "--direction", "reference_to_candidate", "--accumulation", "float64",
+                     "--scored-positions", "51175", "--dry-run"]
+    if receipts.get("stream_k8"):
+        cases.append(("streaming summary that does not name its lane", 4,
+                      base + ["from-receipt", "--receipt", receipts["stream_k8"],
+                              "--artifact", "artifact--malaiwah.glm-5.3-flash-tr3-8bpw",
+                              "--contexts", "25"] + stream_common))
+    if receipts.get("stream_k6"):
+        cases.append(("a lane flag contradicting the receipt's own family", 6,
+                      base + ["from-receipt", "--receipt", receipts["stream_k6"],
+                              "--artifact", "artifact--malaiwah.glm-5.3-flash-tr3-6bpw",
+                              "--contexts", "25", "--lane", "sealed-ep8"] + stream_common))
+        cases.append(("streaming summary with no --direction", 4,
+                      base + ["from-receipt", "--receipt", receipts["stream_k6"],
+                              "--artifact", "artifact--malaiwah.glm-5.3-flash-tr3-6bpw",
+                              "--registry", args.root, "--panel", "panel--glm53.brandonmusic.final25",
+                              "--reference", "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+                              "--pipeline", "pipeline--malaiwah.glm53-stream-packed-kld",
+                              "--accumulation", "float64", "--scored-positions", "51175",
+                              "--contexts", "25", "--dry-run"]))
+        # A receipt whose asserted determinism flag disagrees with its own arrays.
+        tampered = os.path.join(scratch, "stream-k6-flag-lie.json")
+        with open(receipts["stream_k6"], encoding="utf-8") as fh:
+            bad = json.load(fh)
+        bad["run_means"] = [bad["run_means"][0], bad["run_means"][0] + 1e-9]
+        with open(tampered, "w") as fh:
+            json.dump(bad, fh)
+        cases.append(("bitwise_deterministic contradicted by run_means", 5,
+                      base + ["from-receipt", "--receipt", tampered,
+                              "--artifact", "artifact--malaiwah.glm-5.3-flash-tr3-6bpw",
+                              "--contexts", "25"] + stream_common))
+    if receipts.get("stream_k6_verdict"):
+        cases.append(("a verdict receipt offered as a measurement", 4,
+                      base + ["from-receipt", "--receipt", receipts["stream_k6_verdict"],
+                              "--artifact", "artifact--malaiwah.glm-5.3-flash-tr3-6bpw",
+                              "--contexts", "25"] + stream_common))
+
     for label, want, cmd in cases:
         out = subprocess.run(cmd, capture_output=True, text=True)
         ok = out.returncode == want
@@ -434,6 +499,59 @@ def main():
             ok = same
         print("  %-58s %s" % ("K6 rebuilt from receipts matches the seeded row",
                               "PASS" if ok else "FAIL"))
+        passed += ok
+        failed += not ok
+
+    for label, mid, cmd in (
+            ("K6 streaming row rebuilt from its receipt + verdict",
+             "measurement--glm53.k6-6bpw-stream.brandonmusic-final25",
+             (base + ["from-receipt", "--receipt", receipts.get("stream_k6", ""),
+                      "--receipt", receipts.get("stream_k6_verdict", ""),
+                      "--artifact", "artifact--malaiwah.glm-5.3-flash-tr3-6bpw",
+                      "--registry", args.root, "--panel", "panel--glm53.brandonmusic.final25",
+                      "--reference", "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+                      "--pipeline", "pipeline--malaiwah.glm53-stream-packed-kld",
+                      "--direction", "reference_to_candidate", "--accumulation", "float64",
+                      "--scored-positions", "51175", "--dry-run"])
+             if receipts.get("stream_k6") and receipts.get("stream_k6_verdict") else None),
+            ("K8 streaming row rebuilt from its receipt + an asserted lane",
+             "measurement--glm53.k8-8bpw-stream.brandonmusic-final25",
+             (base + ["from-receipt", "--receipt", receipts.get("stream_k8", ""),
+                      "--artifact", "artifact--malaiwah.glm-5.3-flash-tr3-8bpw",
+                      "--registry", args.root, "--panel", "panel--glm53.brandonmusic.final25",
+                      "--reference", "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+                      "--pipeline", "pipeline--malaiwah.glm53-stream-packed-kld",
+                      "--direction", "reference_to_candidate", "--accumulation", "float64",
+                      "--scored-positions", "51175", "--contexts", "25",
+                      "--lane", "streaming", "--dry-run"])
+             if receipts.get("stream_k8") else None)):
+        if cmd is None:
+            continue
+        out = subprocess.run(cmd, capture_output=True, text=True)
+        ok = False
+        detail = out.stderr.strip()[:200]
+        if out.returncode == 0:
+            row = json.loads(out.stdout)
+            seeded = L.load_registry(os.path.join(args.root, "data"))["measurements"][mid]
+            checks = {
+                "value": row["metric"]["value"] == seeded["metric"]["value"],
+                "key": row["comparability"]["key"] == seeded["comparability"]["key"],
+                "evidence": (row["determinism"]["evidence_hashes"]
+                             == seeded["determinism"]["evidence_hashes"]),
+                "positions": (row["measurement_scope"]["scored_positions"]
+                              == seeded["measurement_scope"]["scored_positions"]),
+                "contexts": row["measurement_scope"]["contexts"] == seeded["measurement_scope"]["contexts"],
+                "bias": row["comparability"]["bias"] == seeded["comparability"]["bias"],
+                "disclosure codes": (sorted(d["code"] for d in row["disclosures"])
+                                     == sorted(d["code"] for d in seeded["disclosures"])),
+                "top1": (row["auxiliary_metrics"]["top1_agreement"]
+                         == seeded["auxiliary_metrics"]["top1_agreement"]),
+            }
+            ok = all(checks.values())
+            detail = "differs on: %s" % ", ".join(k for k, v in checks.items() if not v)
+        print("  %-58s %s" % (label, "PASS" if ok else "FAIL"))
+        if not ok:
+            print("      %s" % detail)
         passed += ok
         failed += not ok
 
@@ -607,6 +725,15 @@ def _find_receipts():
             p = os.path.join(d, fn)
             if os.path.exists(p):
                 out.setdefault(key, p)
+    # The streaming lane's receipts are committed to this repository, so these are always
+    # present -- for everyone, not only on the machine that ran them.
+    here = os.path.join(L.repo_root(__file__), "receipts", "malaiwah")
+    for key, fn in (("stream_k6", "stream-k6-kld.json"),
+                    ("stream_k6_verdict", "stream-k6-verdict.json"),
+                    ("stream_k8", "stream-k8-kld.json")):
+        fp = os.path.join(here, fn)
+        if os.path.exists(fp):
+            out[key] = fp
     q = "/Users/mbelleau/Projects/qwen38-27b-exl3/receipts/kld5-10M-fp8.json"
     if os.path.exists(q):
         out["qwen_report"] = q

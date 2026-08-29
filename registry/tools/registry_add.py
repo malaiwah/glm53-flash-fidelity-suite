@@ -61,11 +61,27 @@ FOREIGN_REPEATED = "glm53-r19-runtime-kld-repeated.v1"
 FOREIGN_WINDOW = "glm53-r19-runtime-window-kld.v1"
 FOREIGN_TP2 = "quant-pipeline.glm53-custom-tp2-runtime-window-kld.v1"
 
+# The single-GPU streaming lane. Two summary families and one verdict.
+#
+# The K6 family's own name carries `-stream-`: that string is written by
+# tools/stream_score.py's aggregator and by nothing else, so dispatching on it IS
+# a statement about which lane produced the file. The K8 family's name carries no
+# such marker and its `profile` reads "k8-tp4", so that receipt does NOT say which
+# lane it came from and the lane has to be supplied by --lane. The difference is
+# recorded per-family in LANE_STATED_BY_SCHEMA rather than sniffed out of strings
+# at read time.
+STREAM_K6_SUMMARY = "malaiwah.glm53-k6-stream-packed-kld-summary.v1"
+K8_SUMMARY = "malaiwah.glm53-k8-packed-kld-summary.v1"
+STREAM_VERDICT = "malaiwah.glm53-streaming-measurement-verdict.v1"
+STREAM_SUMMARIES = (STREAM_K6_SUMMARY, K8_SUMMARY)
+LANE_STATED_BY_SCHEMA = {STREAM_K6_SUMMARY: "streaming", K8_SUMMARY: None}
+
 REPORT_FAMILIES = ("glm53flash-fidelity-report/2", "glm53flash-fidelity-report/3",
                    "qwen38-kld-ladder-cumulative/2", "qwen38-kld-ladder-cumulative/3",
                    "qwen38-fidelity-report/2", "qwen38-fidelity-report/3")
 CROSSCHECK_FAMILIES = ("glm53flash-crosscheck/2",)
-OWN_SCHEMAS = set([PACKED_RECEIPT, FIVE_COLD_RUN, DIONE_SUMMARY] + list(REPORT_FAMILIES)
+OWN_SCHEMAS = set([PACKED_RECEIPT, FIVE_COLD_RUN, DIONE_SUMMARY, STREAM_VERDICT]
+                  + list(STREAM_SUMMARIES) + list(REPORT_FAMILIES)
                   + list(CROSSCHECK_FAMILIES))
 FOREIGN_SCHEMAS = {FOREIGN_REPEATED, FOREIGN_WINDOW, FOREIGN_TP2}
 KNOWN = OWN_SCHEMAS | FOREIGN_SCHEMAS
@@ -200,6 +216,168 @@ def adapt_dione(receipt, path):
         "receipt_schema": DIONE_SUMMARY,
         "stack_relation": "same_stack", "head_policy": "native_head",
     }
+
+
+def adapt_stream_summary(receipts):
+    """F5: the single-GPU streaming lane -- a packed-KLD summary, optionally with its verdict.
+
+    Shape-wise this is the Dione summary's twin (measured_mean_kld / run_means /
+    distinct_tokenwise_kld_sha256 / bitwise_deterministic / cold_run_count), and it is
+    recomputed the same way: the asserted mean is re-derived from run_means and the
+    asserted `bitwise_deterministic` flag is re-derived from the per-run means and the
+    distinct tokenwise digests. The flag is never trusted; a disagreement is exit 5.
+
+    What this family does NOT state, and therefore what this adapter refuses to invent:
+
+      * the KL direction and the accumulation dtype -- neither appears anywhere in the
+        file, so --direction and --accumulation must supply them;
+      * how many positions and contexts were scored -- the summary is a scalar, so
+        --scored-positions and --contexts must supply them, unless a verdict receipt
+        is also given, in which case the context count is READ from its per-window
+        array and the array's mean is checked against the summary's scalar;
+      * which lane produced it, for the K8 family (see LANE_STATED_BY_SCHEMA).
+
+    When the verdict IS supplied it is not carried along unread. Every number it
+    asserts about the bridge to the sealed lane -- the per-window deltas, their
+    maximum, the mean delta -- is recomputed from its own per_window array, and the
+    verdict is required to agree with the summary about the value, the per-run means
+    and the tokenwise digests. That is what makes the bias block on the resulting row
+    a measurement rather than a claim.
+    """
+    summaries = [r for r in receipts if r[0].get("schema") in STREAM_SUMMARIES]
+    verdicts = [r for r in receipts if r[0].get("schema") == STREAM_VERDICT]
+    if len(summaries) != 1:
+        raise Refuse(E_MISSING,
+                     "expected exactly one %s receipt, got %d. The verdict receipt describes a "
+                     "summary; it is not a measurement on its own."
+                     % (" / ".join(STREAM_SUMMARIES), len(summaries)))
+    rec, path, _ = summaries[0]
+    sch = rec.get("schema")
+
+    value = _need(rec, "/measured_mean_kld", path)
+    means = _need(rec, "/run_means", path)
+    digests = _need(rec, "/distinct_tokenwise_kld_sha256", path)
+    runs = _need(rec, "/cold_run_count", path)
+    if not L.close(value, sum(means) / len(means)):
+        raise Refuse(E_INCONSISTENT, "measured_mean_kld %r != mean(run_means) %r"
+                     % (value, sum(means) / len(means)))
+    if runs != len(means):
+        raise Refuse(E_INCONSISTENT, "cold_run_count is %r but run_means has %d entries"
+                     % (runs, len(means)))
+    recomputed = len(set(digests)) == 1 and len(set(means)) == 1 and len(means) >= 2
+    declared = rec.get("bitwise_deterministic")
+    if declared is not None and bool(declared) != recomputed:
+        raise Refuse(E_INCONSISTENT,
+                     "the receipt declares bitwise_deterministic=%r but recomputing from run_means "
+                     "(%d distinct over %d runs) and distinct_tokenwise_kld_sha256 (%d entries) "
+                     "gives %r" % (declared, len(set(means)), len(means), len(set(digests)),
+                                   recomputed))
+    reports = rec.get("kld_report_sha256")
+    det_note = None
+    if reports is not None:
+        if len(reports) != runs:
+            raise Refuse(E_INCONSISTENT, "kld_report_sha256 has %d entries but cold_run_count is %r"
+                         % (len(reports), runs))
+        det_note = ("%d cold runs, %d distinct kld_report_sha256 values, %d distinct "
+                    "tokenwise_kld_sha256. The report-file digests differ per run and prove "
+                    "nothing; the single tokenwise digest is the determinism evidence."
+                    % (runs, len(set(reports)), len(set(digests))))
+
+    out = {
+        "value": value, "metric_name": "mean_of_run_means_tokenwise_kld",
+        # Not stated by this receipt family. Left as None so a flag must supply them.
+        "direction": None, "accumulation": None,
+        "scored_positions": None, "contexts": None,
+        "runs": len(means), "run_means": list(means), "cold": True,
+        "identical": recomputed,
+        "evidence_kind": "tokenwise_kld_sha256", "evidence_hashes": list(digests),
+        "det_note": det_note,
+        "gate": _gate(rec),
+        "teacher_digest": rec.get("teacher_receipt_sha256"),
+        "lane": LANE_STATED_BY_SCHEMA.get(sch),
+        "requires_lane": True,
+        "verbatim_disclosure_coded": [],
+        "field_provenance": {"value": "#/measured_mean_kld", "run_means": "#/run_means",
+                             "runs": "#/cold_run_count",
+                             "evidence_hashes": "#/distinct_tokenwise_kld_sha256",
+                             "identical_across_runs": "RECOMPUTED from #/run_means and "
+                                                      "#/distinct_tokenwise_kld_sha256; the "
+                                                      "receipt's own bitwise_deterministic flag "
+                                                      "was checked against it, not copied"},
+        "receipt_schema": sch,
+        "stack_relation": "same_stack", "head_policy": "native_head",
+    }
+    if out["lane"]:
+        out["field_provenance"]["lane"] = ("#/schema (this exact family string is written by the "
+                                           "streaming runner and by nothing else)")
+    if rec.get("cold_run_deviation"):
+        out["verbatim_disclosure_coded"].append(
+            {"code": "reduced_run_count",
+             "detail": "cold_run_deviation (verbatim from the receipt): %s"
+                       % rec["cold_run_deviation"]})
+
+    if verdicts:
+        _apply_stream_verdict(out, rec, path, verdicts)
+    return out
+
+
+def _apply_stream_verdict(out, summary, spath, verdicts):
+    """Fold a streaming verdict into the adapted row, recomputing everything it asserts."""
+    if len(verdicts) != 1:
+        raise Refuse(E_MISSING, "expected at most one %s receipt, got %d" % (STREAM_VERDICT,
+                                                                            len(verdicts)))
+    v, vpath, _ = verdicts[0]
+    stream = _need(v, "/stream_mean_kld", vpath)
+    if not L.close(stream, out["value"]):
+        raise Refuse(E_INCONSISTENT,
+                     "the verdict says the streaming mean is %r and %s says %r; they are not the "
+                     "same measurement." % (stream, os.path.basename(spath), out["value"]))
+    for field in ("run_means", "distinct_tokenwise_kld_sha256"):
+        if field in v and field in summary and list(v[field]) != list(summary[field]):
+            raise Refuse(E_INCONSISTENT, "the verdict and the summary disagree on %s" % field)
+
+    windows = _need(v, "/per_window", vpath)
+    got = sum(w["stream_mean"] for w in windows) / len(windows)
+    if not L.close(got, stream, rel=1e-9):
+        raise Refuse(E_INCONSISTENT,
+                     "the verdict's %d per-window streaming means average to %r, but it declares a "
+                     "streaming mean of %r. Either the windows are not equally weighted or one of "
+                     "the two numbers is wrong." % (len(windows), got, stream))
+    for w in windows:
+        if not L.close(w["stream_mean"] - w["sealed_mean"], w["delta"], rel=1e-6, abs_=1e-18):
+            raise Refuse(E_INCONSISTENT, "window %s: stream_mean - sealed_mean != delta"
+                         % w.get("window_id"))
+    max_abs = max(abs(w["delta"]) for w in windows)
+    if "max_abs_per_window_delta" in v and not L.close(v["max_abs_per_window_delta"], max_abs):
+        raise Refuse(E_INCONSISTENT, "max_abs_per_window_delta %r but recomputing over per_window "
+                                     "gives %r" % (v["max_abs_per_window_delta"], max_abs))
+    sealed = _need(v, "/sealed_mean_kld", vpath)
+    delta = stream - sealed
+    if "delta_mean_kld" in v and not L.close(v["delta_mean_kld"], delta):
+        raise Refuse(E_INCONSISTENT, "delta_mean_kld %r but stream_mean_kld - sealed_mean_kld is %r"
+                     % (v["delta_mean_kld"], delta))
+    if "abs_delta_mean_kld" in v and not L.close(v["abs_delta_mean_kld"], abs(delta)):
+        raise Refuse(E_INCONSISTENT, "abs_delta_mean_kld disagrees with |delta_mean_kld|")
+
+    out["contexts"] = len(windows)
+    out["top1"] = v.get("top1_agreement")
+    out["stream_bridge"] = {
+        "stream_mean_kld": stream, "sealed_mean_kld": sealed, "delta_mean_kld": delta,
+        "max_abs_per_window_delta": max_abs, "windows_compared": len(windows),
+        "tokenwise_kld_sha256_matches_sealed": v.get("tokenwise_kld_sha256_matches_sealed"),
+        "publishable_as_reproduction": v.get("publishable_as_reproduction"),
+        "scored_the_sealed_surface": v.get("scored_the_sealed_k6_surface"),
+        "sealed_top1_agreement": v.get("sealed_top1_agreement"),
+        "verdict": v.get("verdict"),
+        "checkpoint_identity_sha256": v.get("student_checkpoint_identity_sha256"),
+        "sealed_checkpoint_identity_sha256": v.get("sealed_checkpoint_identity_sha256"),
+    }
+    out["field_provenance"].update({
+        "contexts": "#/per_window[] (length), verdict receipt",
+        "top1": "#/top1_agreement, verdict receipt",
+        "bias.estimated_magnitude": "RECOMPUTED as #/stream_mean_kld - #/sealed_mean_kld, verdict "
+                                    "receipt; checked against its own #/delta_mean_kld",
+    })
 
 
 def adapt_report(receipt, path, position_selector=None):
@@ -345,6 +523,48 @@ def _acc_optional(text):
     return _acc(text) if text else None
 
 
+def _stream_bias(adapted, lane):
+    """The bias block for a non-sealed-lane row.
+
+    A lane offset is not a cross-stack capture replay and must not be filed as one: the
+    reference and the candidate came off the same runtime, and the offset here is the
+    routed-expert combine, measured against the sealed lane's own number rather than
+    bounded by a floor row. `estimated_magnitude` is that measured delta -- the only
+    place in this file where the field is a measurement instead of a null.
+
+    Returns None when the lane is the sealed one, or when the row is not from a lane-
+    bearing receipt family at all.
+    """
+    if not lane or lane == "sealed-ep8":
+        return None
+    bridge = adapted.get("stream_bridge") or {}
+    delta = bridge.get("delta_mean_kld")
+    if delta is None:
+        return {"kind": "other", "direction": "unknown", "floor_measurement_ref": None,
+                "estimated_magnitude": None,
+                "detail": "Measured on the %r lane, whose offset against the sealed-ep8 lane is "
+                          "known to be non-zero but was NOT measured for this artifact: no "
+                          "sealed-lane row for it exists to bridge against. The lane offset "
+                          "measured for a sibling artifact on this panel is not transferable -- "
+                          "it is a property of the routing, not a constant." % lane}
+    reproduces = bridge.get("tokenwise_kld_sha256_matches_sealed")
+    return {
+        "kind": "other",
+        "direction": "downward" if delta < 0 else ("upward" if delta > 0 else "unknown"),
+        "floor_measurement_ref": None,
+        "estimated_magnitude": abs(delta),
+        "detail": "Lane offset, MEASURED not estimated: this %r-lane run scores %r against the "
+                  "sealed-ep8 lane's %r on the same panel, a signed delta of %r nats "
+                  "(|max| %r on any one of %d windows). The tokenwise KL array %s the sealed "
+                  "one, and the runner's own verdict is publishable_as_reproduction=%r, so this "
+                  "number stands beside the sealed one rather than replacing it."
+                  % (lane, bridge.get("stream_mean_kld"), bridge.get("sealed_mean_kld"), delta,
+                     bridge.get("max_abs_per_window_delta"), bridge.get("windows_compared"),
+                     "matches" if reproduces else "does NOT match",
+                     bridge.get("publishable_as_reproduction")),
+    }
+
+
 def _gate(receipt):
     q = receipt.get("quality_gate")
     if not isinstance(q, dict):
@@ -369,6 +589,24 @@ def build_row(args, adapted, receipt_sources, registry):
                          % (name, val))
     art, pan, ref = arts[args.artifact], panels[args.panel], refs[args.reference]
 
+    # A receipt family that does not state its scope leaves these None; the flags then
+    # supply them and `field_provenance` says so. A flag may not quietly restate what a
+    # receipt already carries as something else -- that is exit 7, not a merge.
+    for flag_name, flag_val, key_name in (("--scored-positions", args.scored_positions,
+                                           "scored_positions"),
+                                          ("--contexts", args.contexts, "contexts")):
+        stated = adapted.get(key_name)
+        if flag_val is None:
+            continue
+        if stated is not None and stated != flag_val:
+            raise Refuse(E_IDENTITY,
+                         "%s %r contradicts the receipt, which carries %r for %s."
+                         % (flag_name, flag_val, stated, key_name))
+        if stated is None:
+            adapted[key_name] = flag_val
+            adapted.setdefault("field_provenance", {})[key_name] = (
+                "SUPPLIED by %s; this receipt family does not carry it" % flag_name)
+
     if ref.get("panel_ref") != args.panel:
         raise Refuse(E_IDENTITY, "reference %s was captured on panel %s, not %s"
                      % (args.reference, ref.get("panel_ref"), args.panel))
@@ -383,6 +621,18 @@ def build_row(args, adapted, receipt_sources, registry):
                          "the receipt pins panel digest %s, which panel %s does not carry. Either the "
                          "wrong --panel was given or this is a different panel."
                          % (pd[:16] + "...", args.panel))
+    # The teacher is half the identity of a fidelity number. REFC-005 checks this on the
+    # submission path; a receipt that names its teacher deserves the same check here,
+    # because a number measured against a different capture is a different quantity.
+    td = adapted.get("teacher_digest")
+    known_teacher = (ref.get("capture") or {}).get("capture_receipt_sha256")
+    if td and known_teacher and td != known_teacher:
+        raise Refuse(E_IDENTITY,
+                     "the receipt was scored against teacher capture %s..., but reference %s is the "
+                     "capture %s.... A number measured against a different teacher cannot share a "
+                     "table with rows measured against this one."
+                     % (td[:16], args.reference, known_teacher[:16]))
+
     sp = adapted.get("scored_positions")
     total = (pan.get("structure") or {}).get("scored_positions_total")
     if sp and total and sp != total and args.covers_full_panel:
@@ -434,7 +684,9 @@ def build_row(args, adapted, receipt_sources, registry):
     overridden = []
     for flag_name, flag_val, key_name in (("--stack-relation", args.stack_relation, "stack_relation"),
                                           ("--head-policy", args.head_policy, "head_policy"),
-                                          ("--accumulation", args.accumulation, "accumulation")):
+                                          ("--accumulation", args.accumulation, "accumulation"),
+                                          ("--direction", args.direction, "direction"),
+                                          ("--lane", args.lane, "lane")):
         stated = adapted.get(key_name)
         if flag_val is None or stated is None or flag_val == stated:
             continue
@@ -449,6 +701,27 @@ def build_row(args, adapted, receipt_sources, registry):
 
     stack = args.stack_relation or adapted.get("stack_relation")
     head = args.head_policy or adapted.get("head_policy")
+    direction = args.direction or adapted.get("direction")
+    if direction is None:
+        raise Refuse(E_MISSING,
+                     "this receipt does not state the KL direction and no --direction was given. "
+                     "Direction is a comparability key input: KLD(teacher||student) and "
+                     "KLD(student||teacher) are different numbers.",
+                     "pass --direction reference_to_candidate or --direction candidate_to_reference")
+    lane = args.lane or adapted.get("lane")
+    if adapted.get("requires_lane") and not lane:
+        raise Refuse(E_MISSING,
+                     "this receipt family does not name the measurement lane it came from, and no "
+                     "--lane was given. Lanes are not interchangeable: a non-sealed lane carries a "
+                     "disclosed offset against the sealed lane on the same panel.",
+                     "pass --lane sealed-ep8 | streaming | local-mps | local-cuda-budget | other")
+    if lane and lane not in ("sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other"):
+        raise Refuse(E_MISSING, "unknown lane %r" % lane)
+    for flag_name, flag_val, key_name in (("--direction", args.direction, "direction"),
+                                          ("--lane", args.lane, "lane")):
+        if flag_val is not None and adapted.get(key_name) is None:
+            adapted.setdefault("field_provenance", {})[key_name] = (
+                "SUPPLIED by %s; this receipt family does not carry it" % flag_name)
     if stack == "cross_stack" and not (args.floor_measurement or args.floor_pending):
         raise Refuse(E_MISSING, "a cross-stack row must name its measurement floor "
                                 "(--floor-measurement ID) or declare that none exists yet "
@@ -457,7 +730,7 @@ def build_row(args, adapted, receipt_sources, registry):
         raise Refuse(E_VOID, "--floor-pending requires --disclosure explaining why no floor exists.")
 
     ki = {"panel_id": args.panel, "reference_id": args.reference,
-          "metric_name": adapted["metric_name"], "direction": adapted["direction"],
+          "metric_name": adapted["metric_name"], "direction": direction,
           # "unknown" when neither the receipt nor a flag states it -- never a guess.
           "accumulation_dtype": args.accumulation or adapted["accumulation"] or "unknown",
           "stack_relation": stack, "head_policy": head}
@@ -467,6 +740,26 @@ def build_row(args, adapted, receipt_sources, registry):
     for text in (adapted.get("verbatim_disclosure") or []):
         disclosures.append({"code": "unsealed_source", "severity": "caveat", "detail": text,
                             "affects_comparability": True})
+    # A receipt that discloses its own deviation in its own words: the code says which
+    # deviation, the detail keeps the receipt's wording rather than a paraphrase of it.
+    for d in (adapted.get("verbatim_disclosure_coded") or []):
+        disclosures.append({"code": d["code"], "severity": "caveat", "detail": d["detail"],
+                            "affects_comparability": True})
+    if lane and lane != "sealed-ep8":
+        bridge = adapted.get("stream_bridge") or {}
+        measured = ("On this panel the lane's offset against the sealed lane IS measured: "
+                    "%r nats on the mean (max %r on any one window over %d windows), and the "
+                    "tokenwise KL array is NOT the sealed one, so the run is not a reproduction "
+                    "of the sealed number."
+                    % (bridge["delta_mean_kld"], bridge["max_abs_per_window_delta"],
+                       bridge["windows_compared"])
+                    if bridge.get("delta_mean_kld") is not None else
+                    "The lane's offset against the sealed lane is NOT measured for this artifact: "
+                    "no sealed-lane row for it exists to bridge against.")
+        disclosures.append({
+            "code": "non_sealed_lane", "severity": "caveat",
+            "detail": "Produced by the %r lane, not the sealed-ep8 lane. %s" % (lane, measured),
+            "affects_comparability": True})
     if args.attribution != "self-measured":
         disclosures.append({"code": "author_reported_only", "severity": "caveat",
                             "detail": "Measured and published by %s. We have not re-run it.%s"
@@ -522,6 +815,7 @@ def build_row(args, adapted, receipt_sources, registry):
                         "note": "operator-supplied evidence for --reference-revision"})
 
     ci = adapted.get("ci")
+    lane_bias = _stream_bias(adapted, lane)
     row = {
         "schema_version": L.SCHEMA_VERSION,
         "id": args.id or _mint_id(args, ki, adapted),
@@ -530,7 +824,7 @@ def build_row(args, adapted, receipt_sources, registry):
         "reference_ref": args.reference, "pipeline_ref": args.pipeline,
         "scope_digest": art["scope_digest"],
         "metric": {"name": adapted["metric_name"], "value": adapted["value"], "units": "nats",
-                   "direction": adapted["direction"], "higher_is_better": False},
+                   "direction": direction, "higher_is_better": False},
         "auxiliary_metrics": dict(adapted.get("aux") or {}, top1_agreement=adapted.get("top1")),
         "uncertainty": {"method": "context_cluster_bootstrap" if ci else "none",
                         "ci95_low": ci[0] if ci else None, "ci95_high": ci[1] if ci else None,
@@ -560,7 +854,8 @@ def build_row(args, adapted, receipt_sources, registry):
                                                 and pan.get("sealed")
                                                 and not any(d.get("affects_comparability")
                                                             for d in disclosures)) else "advisory",
-                          "bias": ({"kind": "cross_stack_capture_replay", "direction": "upward",
+                          "bias": (lane_bias if lane_bias
+                                   else {"kind": "cross_stack_capture_replay", "direction": "upward",
                                     "floor_measurement_ref": args.floor_measurement,
                                     "estimated_magnitude": None,
                                     "detail": args.disclosure or
@@ -604,6 +899,17 @@ def add_common(p):
     p.add_argument("--source-url", default=None)
     p.add_argument("--third-party-artifact", action="store_true")
     p.add_argument("--accumulation", default=None, choices=(None, "float64", "float32", "mixed"))
+    p.add_argument("--direction", default=None,
+                   choices=(None, "reference_to_candidate", "candidate_to_reference"),
+                   help="supply the KL direction when the receipt does not state it")
+    p.add_argument("--lane", default=None,
+                   choices=(None, "sealed-ep8", "streaming", "local-mps", "local-cuda-budget",
+                            "other"),
+                   help="supply the measurement lane when the receipt does not name it")
+    p.add_argument("--scored-positions", type=int, default=None,
+                   help="supply the scored-position count when the receipt is a scalar summary")
+    p.add_argument("--contexts", type=int, default=None,
+                   help="supply the context count when the receipt is a scalar summary")
     p.add_argument("--stack-relation", default=None, choices=(None, "same_stack", "cross_stack"))
     p.add_argument("--head-policy", default=None,
                    choices=(None, "native_head", "shared_reference_head", "dequantized_head"))
@@ -789,8 +1095,14 @@ def main():
         loaded = [load_receipt(p) for p in args.receipts]
         schemas = {r[0].get("schema") for r in loaded}
         if args.cmd == "from-receipt":
-            if DIONE_SUMMARY in schemas:
+            if schemas & set(STREAM_SUMMARIES):
+                adapted = adapt_stream_summary(loaded)
+            elif DIONE_SUMMARY in schemas:
                 adapted = adapt_dione(loaded[0][0], loaded[0][1])
+            elif STREAM_VERDICT in schemas:
+                raise Refuse(E_MISSING,
+                             "a %s receipt describes a summary; it carries no measurement of its "
+                             "own. Pass the summary receipt alongside it." % STREAM_VERDICT)
             else:
                 adapted = adapt_packed_and_five_run(loaded)
         elif args.cmd == "from-report":

@@ -46,6 +46,16 @@ def attr(name, role, handle=None, url=None, maintainer=False):
     return d
 
 
+# Receipts this repository holds, at receipts/<handle>/<slug>.json. The digest is of the
+# committed file, so a row citing one of these is citing bytes any reader can fetch and hash.
+STREAM_K6_RECEIPT = "receipts/malaiwah/stream-k6-kld.json"
+STREAM_K6_RECEIPT_SHA = "7ee0de697d050ff1aca9b85981a158f57304a46c020408b39742f5f85a0ff969"
+STREAM_K6_VERDICT = "receipts/malaiwah/stream-k6-verdict.json"
+STREAM_K6_VERDICT_SHA = "e205c14f5700417b32f4cb4a2d6724f3bf416ffc9d4cca3f129c18b0a0e7b005"
+STREAM_K8_RECEIPT = "receipts/malaiwah/stream-k8-kld.json"
+STREAM_K8_RECEIPT_SHA = "8eab14b0ef3ba042e49735973d91dcc47e470b9331f9e65151635b2862bb05d1"
+HF_REGISTRY_RAW = "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/"
+
 MAL = lambda role: attr("malaiwah", role, handle="malaiwah", url="https://huggingface.co/malaiwah", maintainer=True)
 BRANDON = lambda role: attr("brandonmusic", role, handle="brandonmusic", url="https://huggingface.co/brandonmusic")
 SERO = lambda role: attr("0xSero", role, handle="0xSero", url="https://huggingface.co/0xSero")
@@ -668,19 +678,31 @@ ARTIFACTS = [
     artifact(A_K8, GLM, "malaiwah GLM-5.3-Flash TR3 8bpw (K8)", "quant",
              hf("malaiwah/GLM-5.3-Flash-TR3-8bpw", None, "none", status="unavailable",
                 reason="HTTP 401 unauthenticated at seeding time: private, or not yet created."),
-             "exl3", "8bpw", None,
+             "exl3", "8bpw", 331449761784,
              codec("exl3-mcg", 8.0, None, tool="exllamav3"),
              EXL3_SCOPE_UNIFORM(8.0), MAL("quantizer"),
              [src("private_communication", "operator inventory, 2026-08-28",
-                  None, "reports the artifact as materialized at 331,449,761,784 bytes with qualification pending")],
-             [disc("qualification_pending", "caveat",
-                   "Materialized but not qualified: no fidelity measurement exists, so this artifact has NO row in "
-                   "measurements.jsonl. An artifact without a measurement is legal here; a measurement without a "
-                   "number is not."),
+                  None, "materialization facts: output_logical_bytes 331,449,761,784; 37,152 routed choices; "
+                        "1,618 native (non-routed) checkpoint tensors; bits 8; qualified_tp_sizes []"),
+              src("receipt_file", STREAM_K8_RECEIPT, STREAM_K8_RECEIPT_SHA,
+                  "malaiwah.glm53-k8-packed-kld-summary.v1: student_label uniform-k8, profile k8-tp4")],
+             # 2026-08-28: qualification_pending is GONE because it is no longer true -- this
+             # artifact now carries a measurement row. The size is recorded instead of left null:
+             # it is the materialization receipt's own output_logical_bytes and it closes on its
+             # own arithmetic, 19,339,524,984 native + 37,152 x 8,400,900 routed = 331,449,761,784,
+             # which is a check the number either passes or fails. What is still missing is an
+             # independent look at the repository, and that is what size_unverified now says.
+             [REV_UNPINNED("The repository returns HTTP 401 unauthenticated, so no commit sha could "
+                           "be read; identity rests on the materialization receipt's bits=8, 37,152 "
+                           "routed choices and 1,618 native tensors, and on the scope below."),
               disc("size_unverified", "caveat",
-                   "The claimed 331,449,761,784 bytes could not be confirmed: the repository returns HTTP 401 "
-                   "unauthenticated, so size_bytes is recorded as null rather than as an unverified number.")],
-             weights_extra={"size_basis": "unknown"},
+                   "331,449,761,784 is the materialization receipt's output_logical_bytes and closes on its own "
+                   "arithmetic (native 19,339,524,984 + 37,152 routed choices x 8,400,900 bytes). It has NOT been "
+                   "confirmed against the repository, which returns HTTP 401 unauthenticated, and it is a tensor "
+                   "payload total -- not a safetensors sum and not an all-files sum, both of which would be larger."),
+              ],
+             weights_extra={"size_basis": "tensor_payload",
+                            "tensor_parallel": {"pre_sliced": False, "world_size": None}},
              derived_from_artifact_ref=A_BF16_A6,
              availability={"status": "private", "uri": None}, cross_refs=lair(), seal={"sealed": False}),
     artifact(A_DIONE, GLM, "0xSero GLM-5.3-Flash EXL3 Q4 (Dione, TP4-sliced)", "quant",
@@ -1185,6 +1207,7 @@ for rid, pid, floor, note in ((R_Q10M, P_Q10M, None, None), (R_Q1M, P_Q1M, M_FLO
 # 5. PIPELINES
 # ===========================================================================
 PL_K6 = "pipeline--malaiwah.glm53-packed-kld"
+PL_STREAM = "pipeline--malaiwah.glm53-stream-packed-kld"
 PL_DIONE = "pipeline--malaiwah.glm53-dione-packed-kld"
 PL_GSUITE = "pipeline--malaiwah.glm53-fidelity-replay"
 PL_XCHECK = "pipeline--malaiwah.glm53-crosscheck"
@@ -1227,6 +1250,72 @@ PIPELINES = [
              cost={"usd_per_measurement": None, "basis": None},
              sources=[src("hf_file", "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/k6-five-run-kld.json",
                           "1611800a1ff37cbae5e8e46a0024fb49d62955efc682c4e609e5a6e43aa714da")],
+             cross_refs=lair()),
+    # The streaming lane. Everything that makes it a DIFFERENT lane from PL_K6 is a field
+    # here, not an adjective: one device instead of eight, the EP8 partition emulated in
+    # process rather than run across real ranks, and an fp32 routed-expert combine where the
+    # sealed lane had NCCL summing bf16 per-rank partials in a topology-dependent order.
+    # `lane.bridge` is what stops that being a story: it is the measured distance between
+    # this lane and the sealed one on the same panel, read off the verdict receipt, together
+    # with the two flags that say the run is NOT a reproduction of the sealed number.
+    pipeline(PL_STREAM,
+             "malaiwah GLM-5.3-Flash streaming single-GPU KLD scorer (EP8 emulated, reduce-order fp32)",
+             ["replay", "scorer", "aggregator"], None, None,
+             "tools/stream_score.py (single-device capture) -> tools/k6_kld_report.py --profile k6-stream "
+             "(unmodified fp64 scorer)",
+             MAL("toolchain-author"),
+             [disc("non_sealed_lane", "caveat",
+                   "This is the streaming lane, not the sealed-ep8 lane. It scores the same sealed panel "
+                   "against the same stored teacher logits on ONE GPU by streaming one layer of routed "
+                   "experts at a time, and it emulates the sealed run's 8-way expert-parallel partition "
+                   "inside a single process. Numbers from this lane sit beside the sealed lane's, never "
+                   "in place of them.", True),
+              disc("local_device_reduction_order", "caveat",
+                   "The one op that differs is the routed-expert combine, in each of 42 layers. The sealed "
+                   "run rounded each rank's partial to bf16 and let NCCL sum the ~5 nonzero partials in an "
+                   "order set by the 8-GPU NVSwitch topology; a single process cannot reproduce that order, "
+                   "so this lane sums in fp32 (--reduce-order fp32). Because top-8-of-288 routing is "
+                   "discontinuous in the hidden state, an ULP-scale difference there flips marginal routing "
+                   "decisions downstream -- which is why the tokenwise KL array differs from the sealed one "
+                   "even though the panel mean is within 8.5e-06 nats.", True)],
+             impl={"dependencies": {
+                 "sealed_checkpoint_identity_sha256":
+                     "a8668be3592493035e98a52994e0e3c43548a9757eadb79f7ae939f2f32de1c1"}},
+             numerics={"accumulation_dtype": "fp64", "two_pass": None, "vocab_chunk": None,
+                       "determinism_controls": ["cold_process_per_run", "fixed_batch_shape"]},
+             hardware={"gpu": "H200", "gpu_count": 1, "tensor_parallel": None,
+                       "note": "one device; the tp4/tp8 strings in the profile names describe the sealed "
+                               "partition being emulated, not a real world size"},
+             cost={"usd_per_measurement": None,
+                   "basis": "1x H200 spot at $1.99/h. No invoice was captured for these two runs, so no "
+                            "single figure is asserted here; the measured decode is 10.94 ms/matrix over "
+                            "36,288 matrices and a full-panel cold run projects at ~2.8 h (~$5.6), against "
+                            "~2.37 h x 8 GPUs x 5 cold runs for the sealed lane."},
+             lane={"name": "streaming", "device_count": 1, "expert_parallel_emulated": True,
+                   "expert_parallel_world_size": 8, "reduce_order": "fp32",
+                   "bridge": {
+                       "compared_to_lane": "sealed-ep8",
+                       "panel_ref": P_B25,
+                       "sealed_measurement_ref": "measurement--glm53.k6-6bpw.brandonmusic-final25",
+                       "delta_mean_kld": -8.495843104593809e-06,
+                       "max_abs_per_window_delta": 0.00028735280093581186,
+                       "windows_compared": 25,
+                       "tokenwise_kld_sha256_matches_sealed": False,
+                       "publishable_as_reproduction": False,
+                       "verdict": "LARGER_DELTA_SEE_DISCLOSURE",
+                       "evidence": [src("receipt_file", STREAM_K6_VERDICT, STREAM_K6_VERDICT_SHA,
+                                        "malaiwah.glm53-streaming-measurement-verdict.v1: scored the sealed "
+                                        "K6 surface (student and sealed checkpoint_identity_sha256 both "
+                                        "a8668be3...), 25 per-window pairs, cross-run payload bitwise "
+                                        "identical over 2 cold runs"),
+                                    src("hf_file", HF_REGISTRY_RAW + STREAM_K6_VERDICT,
+                                        STREAM_K6_VERDICT_SHA, "the same file, published")]}},
+             sources=[src("receipt_file", STREAM_K6_RECEIPT, STREAM_K6_RECEIPT_SHA,
+                          "malaiwah.glm53-k6-stream-packed-kld-summary.v1, profile k6-stream-tp4"),
+                      src("receipt_file", STREAM_K8_RECEIPT, STREAM_K8_RECEIPT_SHA,
+                          "malaiwah.glm53-k8-packed-kld-summary.v1, profile k8-tp4"),
+                      src("hf_file", HF_REGISTRY_RAW + STREAM_K6_RECEIPT, STREAM_K6_RECEIPT_SHA),
+                      src("hf_file", HF_REGISTRY_RAW + STREAM_K8_RECEIPT, STREAM_K8_RECEIPT_SHA)],
              cross_refs=lair()),
     pipeline(PL_DIONE, "malaiwah Dione-surface KLD scorer (dione-q4-tp4)",
              ["replay", "scorer", "aggregator"], None, None, "tools/k6_kld_report.py (dione surface adapter)",
@@ -1436,6 +1525,106 @@ def build_measurements(artifacts_map):
                        "threshold_gt": None, "passed": True},
                  disclosures=[disc("no_known_deviations", "info",
                                    "Full 25-window panel, five cold runs, float64, bitwise identical.")]))
+
+    # ---------------------------------------------------------------- streaming lane
+    # Same artifacts, same panel, same teacher, DIFFERENT lane: one GPU, the sealed run's
+    # 8-way expert-parallel partition emulated in process, and the routed-expert combine
+    # summed in fp32 instead of by NCCL over bf16 per-rank partials. The K6 row is the one
+    # that can be bridged, because a sealed-lane K6 number exists on this panel to bridge
+    # against; the verdict receipt scored both surfaces and the delta is on the row as a
+    # measured bias, not as prose. The K8 row has no such bridge and says so.
+    SK6 = 0.013714888822596553
+    STREAM_DISC = lambda measured: [
+        disc("reduced_run_count", "caveat",
+             "cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 (budget; disclosed)", True),
+        disc("non_sealed_lane", "caveat",
+             "Produced by the 'streaming' lane, not the sealed-ep8 lane. %s" % measured, True)]
+    out.append(M("measurement--glm53.k6-6bpw-stream.brandonmusic-final25", GLM, A_K6, P_B25, R_B25,
+                 PL_STREAM, SK6,
+                 metric_name="mean_of_run_means_tokenwise_kld",
+                 top1=0.9656277479237909,
+                 scored_positions=51175, contexts=25, runs=2, cold=True, run_means=[SK6] * 2,
+                 identical=True, evidence_kind="tokenwise_kld_sha256",
+                 evidence_hashes=["9657ede36b9f4b09a2c74916239c6d9a3baebce5f3fa64af7af388b0686aa284"],
+                 det_note="2 cold runs, 2 distinct kld_report_sha256 values, 1 distinct "
+                          "tokenwise_kld_sha256. The report-file digests differ per run and prove "
+                          "nothing; the single tokenwise digest is the determinism evidence.",
+                 sources=[src("receipt_file", STREAM_K6_RECEIPT, STREAM_K6_RECEIPT_SHA,
+                              "malaiwah.glm53-k6-stream-packed-kld-summary.v1"),
+                          src("receipt_file", STREAM_K6_VERDICT, STREAM_K6_VERDICT_SHA,
+                              "malaiwah.glm53-streaming-measurement-verdict.v1"),
+                          src("hf_file", HF_REGISTRY_RAW + STREAM_K6_RECEIPT, STREAM_K6_RECEIPT_SHA),
+                          src("hf_file", HF_REGISTRY_RAW + STREAM_K6_VERDICT, STREAM_K6_VERDICT_SHA)],
+                 receipt_schema="malaiwah.glm53-k6-stream-packed-kld-summary.v1",
+                 cls="advisory",
+                 bias={"kind": "other", "direction": "downward", "floor_measurement_ref": None,
+                       "estimated_magnitude": 8.495843104593809e-06,
+                       "detail": "Lane offset, MEASURED not estimated: this 'streaming'-lane run scores "
+                                 "0.013714888822596553 against the sealed-ep8 lane's 0.013723384665701147 on "
+                                 "the same panel, a signed delta of -8.495843104593809e-06 nats (|max| "
+                                 "0.00028735280093581186 on any one of 25 windows). The tokenwise KL array "
+                                 "does NOT match the sealed one, and the runner's own verdict is "
+                                 "publishable_as_reproduction=False, so this number stands beside the sealed "
+                                 "one rather than replacing it."},
+                 gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
+                       "passed": True},
+                 disclosures=STREAM_DISC(
+                     "On this panel the lane's offset against the sealed lane IS measured: "
+                     "-8.495843104593809e-06 nats on the mean (max 0.00028735280093581186 on any one "
+                     "window over 25 windows), and the tokenwise KL array is NOT the sealed one, so the "
+                     "run is not a reproduction of the sealed number."),
+                 notes="Provenance of the fields the summary receipt does not carry. metric.direction and "
+                       "estimator.accumulation_dtype: SUPPLIED -- the k6-stream summary states neither, and "
+                       "both are recorded as the sealed lane's because the scorer is the same unmodified "
+                       "tools/k6_kld_report.py, invoked as --profile k6-stream. measurement_scope.contexts: "
+                       "READ from the verdict receipt's 25-entry per_window array, whose streaming means "
+                       "average to exactly the summary's measured_mean_kld. scored_positions: SUPPLIED as "
+                       "the panel's own 51,175 (25 x 2047), which the equal-weighted window average is "
+                       "consistent with. determinism.identical_across_runs: RECOMPUTED from run_means and "
+                       "distinct_tokenwise_kld_sha256; the receipt's bitwise_deterministic flag was checked "
+                       "against that, not copied. The verdict's sealed_mean_kld is bit-identical to the "
+                       "sealed K6 row in this file, which is what makes the delta a comparison of these two "
+                       "rows and not of two unrelated numbers."))
+
+    SK8 = 0.012384191023436866
+    out.append(M("measurement--glm53.k8-8bpw-stream.brandonmusic-final25", GLM, A_K8, P_B25, R_B25,
+                 PL_STREAM, SK8,
+                 metric_name="mean_of_run_means_tokenwise_kld",
+                 scored_positions=51175, contexts=25, runs=2, cold=True, run_means=[SK8] * 2,
+                 identical=True, evidence_kind="tokenwise_kld_sha256",
+                 evidence_hashes=["763bc4a56a371e11a0f96469885b920deb6acb2c7c576d1268fb0907577f0942"],
+                 det_note="2 cold runs, 2 distinct kld_report_sha256 values, 1 distinct "
+                          "tokenwise_kld_sha256. The report-file digests differ per run and prove "
+                          "nothing; the single tokenwise digest is the determinism evidence.",
+                 sources=[src("receipt_file", STREAM_K8_RECEIPT, STREAM_K8_RECEIPT_SHA,
+                              "malaiwah.glm53-k8-packed-kld-summary.v1"),
+                          src("hf_file", HF_REGISTRY_RAW + STREAM_K8_RECEIPT, STREAM_K8_RECEIPT_SHA)],
+                 receipt_schema="malaiwah.glm53-k8-packed-kld-summary.v1",
+                 cls="advisory",
+                 bias={"kind": "other", "direction": "unknown", "floor_measurement_ref": None,
+                       "estimated_magnitude": None,
+                       "detail": "Measured on the 'streaming' lane, whose offset against the sealed-ep8 lane "
+                                 "is known to be non-zero but was NOT measured for this artifact: no "
+                                 "sealed-lane row for it exists to bridge against. The lane offset measured "
+                                 "for a sibling artifact on this panel is not transferable -- it is a "
+                                 "property of the routing, not a constant."},
+                 gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
+                       "passed": True},
+                 disclosures=STREAM_DISC(
+                     "The lane's offset against the sealed lane is NOT measured for this artifact: no "
+                     "sealed-lane row for it exists to bridge against."),
+                 notes="This receipt does not name its lane. Its schema string is "
+                       "malaiwah.glm53-k8-packed-kld-summary.v1 and its profile reads 'k8-tp4' -- neither "
+                       "carries the '-stream-' marker the K6 summary's family name does -- so 'streaming' "
+                       "here is OPERATOR-ASSERTED (operator inventory, 2026-08-28) and not read off the "
+                       "file. It is recorded as the more caveated of the two possibilities on purpose: if "
+                       "the assertion is wrong the row is under-claimed, never over-claimed. Also supplied "
+                       "rather than read: metric.direction, estimator.accumulation_dtype, "
+                       "measurement_scope.scored_positions and contexts -- this family is a scalar summary "
+                       "and states none of them, and unlike the K6 row there is no verdict receipt here to "
+                       "read the window count from. No top-1 agreement was produced for this run. "
+                       "determinism.identical_across_runs is RECOMPUTED from run_means and "
+                       "distinct_tokenwise_kld_sha256."))
 
     DQ = 0.027262784814670614
     out.append(M("measurement--glm53.dione-q4.brandonmusic-final25", GLM, A_DIONE, P_B25, R_B25, PL_DIONE, DQ,

@@ -76,6 +76,62 @@
       "additionalProperties": false
     },
 
+    "lane": {
+      "type": "object",
+      "description": "Which MEASUREMENT LANE this stack is. Lanes are NOT interchangeable: submission.schema.json's `lane` enum names them, and a number from a non-sealed lane carries an offset against the sealed lane on the same panel. Declaring the lane here is what lets a row say which lane produced it without a human choosing; `bridge` is where that offset stops being an adjective and becomes a measured number.",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "enum": ["sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other"]
+        },
+        "device_count": { "type": ["integer", "null"], "minimum": 1 },
+        "expert_parallel_emulated": {
+          "type": ["boolean", "null"],
+          "description": "true when the lane reproduces an expert-parallel partition inside one process instead of across real ranks."
+        },
+        "expert_parallel_world_size": { "type": ["integer", "null"], "minimum": 1 },
+        "reduce_order": {
+          "type": ["string", "null"],
+          "description": "The routed-expert combine order/precision this lane used, verbatim as the runner names it (e.g. fp32, sequential, reverse, pairwise). This is the op that differs between lanes; naming it is the difference between a disclosed offset and an unexplained one."
+        },
+        "bridge": {
+          "type": "object",
+          "description": "The MEASURED relation between this lane and the sealed lane, on one named panel, for one named pair of measurements. Never an estimate: every field here is read off a verdict receipt that scored both surfaces.",
+          "required": ["compared_to_lane", "evidence"],
+          "properties": {
+            "compared_to_lane": { "type": "string" },
+            "panel_ref": { "$ref": "common.schema.json#/$defs/panel_id" },
+            "sealed_measurement_ref": {
+              "oneOf": [ { "$ref": "common.schema.json#/$defs/measurement_id" }, { "type": "null" } ]
+            },
+            "delta_mean_kld": {
+              "type": ["number", "null"],
+              "description": "this lane's mean minus the sealed lane's mean, in nats. Signed."
+            },
+            "max_abs_per_window_delta": { "type": ["number", "null"], "minimum": 0 },
+            "windows_compared": { "type": ["integer", "null"], "minimum": 0 },
+            "tokenwise_kld_sha256_matches_sealed": {
+              "type": ["boolean", "null"],
+              "description": "false means this lane produced a DIFFERENT tokenwise array, however close the mean. A lane that cannot reproduce the array is not a reproduction of the sealed run."
+            },
+            "publishable_as_reproduction": {
+              "type": ["boolean", "null"],
+              "description": "The runner's own verdict on whether this lane's output may be published as a reproduction of the sealed number. false is the honest answer for a lane whose combine order differs."
+            },
+            "verdict": { "type": ["string", "null"], "description": "The verdict receipt's own verdict string, verbatim." },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "common.schema.json#/$defs/source" },
+              "description": "The verdict receipt(s) these numbers were read from."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
     "cost": {
       "type": "object",
       "description": "Optional, and the one place this registry touches local-ai-registry's territory: what one measurement costs to reproduce.",

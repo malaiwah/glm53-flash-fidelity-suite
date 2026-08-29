@@ -1,0 +1,26 @@
+{
+  "bitwise_deterministic": true,
+  "cold_run_count": 2,
+  "cold_run_deviation": "2 cold runs, not 5 (budget; disclosed)",
+  "distinct_tokenwise_kld_sha256": [
+    "763bc4a56a371e11a0f96469885b920deb6acb2c7c576d1268fb0907577f0942"
+  ],
+  "kld_report_sha256": [
+    "965566f1d62e75051612045ff88424e50c46a6d1abfecfb92b04af78e8bf3798",
+    "d223567460e4c22cccc432b082cf74bfbc7339628b13db823fd0e0590f2f20bb"
+  ],
+  "measured_mean_kld": 0.012384191023436866,
+  "profile": "k8-tp4",
+  "quality_gate": {
+    "metric": "mean_tokenwise_kld",
+    "threshold_lt": 0.06
+  },
+  "quality_gate_passed": true,
+  "run_means": [
+    0.012384191023436866,
+    0.012384191023436866
+  ],
+  "schema": "malaiwah.glm53-k8-packed-kld-summary.v1",
+  "student_label": "uniform-k8",
+  "teacher_receipt_sha256": "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5"
+}

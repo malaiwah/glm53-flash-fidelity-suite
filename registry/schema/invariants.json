@@ -255,6 +255,11 @@
       "enforced_by": "tools/registry_add.py submission_to_records"
     },
     {
+      "id": "PROV-012",
+      "severity": "error",
+      "statement": "A measurement whose pipeline record declares lane.name other than sealed-ep8 carries a non_sealed_lane disclosure with affects_comparability=true AND a comparability.bias block. The comparability key has seven inputs and none of them is the lane, so two rows produced on different machines by different code paths land in the same table by construction. PROV-011 forces the disclosure on the submission path only; this forces it on every path, including rows the maintainer seeds. Additionally, a lane.bridge that names a sealed_measurement_ref must name a measurement on the bridge's own panel_ref, produced by a DIFFERENT pipeline: a lane cannot be its own baseline."
+    },
+    {
       "id": "REF-001",
       "severity": "error",
       "statement": "Every *_ref in every record resolves to an existing record whose id matches exactly and whose collection matches the ref's id prefix."

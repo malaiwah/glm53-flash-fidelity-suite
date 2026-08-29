@@ -183,6 +183,17 @@ def check_referential(C, rep):
         if fm:
             _ref_ok(rep, "REF-010", rid, "self_consistency.floor_measurement_ref", fm, "measurements", C)
 
+    # A pipeline that declares a lane may name the sealed measurement it was bridged
+    # against. That reference is the whole evidentiary weight of the bridge -- a dangling
+    # one would leave a delta hanging off nothing.
+    for pid, pl in C["pipelines"].items():
+        br = ((pl.get("lane") or {}).get("bridge") or {})
+        if br.get("panel_ref"):
+            _ref_ok(rep, "REF-001", pid, "lane.bridge.panel_ref", br["panel_ref"], "panels", C)
+        if br.get("sealed_measurement_ref"):
+            _ref_ok(rep, "REF-010", pid, "lane.bridge.sealed_measurement_ref",
+                    br["sealed_measurement_ref"], "measurements", C)
+
     for mid, m in C["measurements"].items():
         art = _ref_ok(rep, "REF-001", mid, "artifact_ref", m.get("artifact_ref"), "artifacts", C)
         pan = _ref_ok(rep, "REF-001", mid, "panel_ref", m.get("panel_ref"), "panels", C)
@@ -499,6 +510,44 @@ def check_provenance(C, rep):
                                           "A receipt nobody can fetch is a receipt nobody can check."
                              % (mid, s.get("uri")), mid)
                 break
+
+    # PROV-012 - the lane is a property of the row, not a footnote on the pipeline
+    for mid, m in sorted(C["measurements"].items()):
+        pl = C["pipelines"].get(m.get("pipeline_ref")) or {}
+        lane = (pl.get("lane") or {}).get("name")
+        if not lane or lane == "sealed-ep8":
+            continue
+        if not L.has_disclosure(m, "non_sealed_lane", affects=True):
+            rep.err("PROV-012",
+                    "%s ran on pipeline %s, whose declared lane is %r, but the row carries no "
+                    "non_sealed_lane disclosure with affects_comparability=true. The comparability "
+                    "key has no lane input, so this row is tabled beside sealed-lane rows with "
+                    "nothing on it to say which machine produced it."
+                    % (mid, m.get("pipeline_ref"), lane), mid,
+                    'add {"code": "non_sealed_lane", "severity": "caveat", '
+                    '"affects_comparability": true, "detail": "<which lane, and its measured or '
+                    'unmeasured offset against the sealed lane>"} to disclosures')
+        if not (m.get("comparability") or {}).get("bias"):
+            rep.err("PROV-012",
+                    "%s is a %r-lane row with no comparability.bias block. A lane offset is either "
+                    "measured, in which case say the number, or it is not, in which case say "
+                    "direction unknown -- but it is never absent." % (mid, lane), mid)
+
+    for pid, pl in sorted(C["pipelines"].items()):
+        br = ((pl.get("lane") or {}).get("bridge") or {})
+        smr = br.get("sealed_measurement_ref")
+        sealed = C["measurements"].get(smr) if smr else None
+        if not sealed:
+            continue
+        if br.get("panel_ref") and sealed.get("panel_ref") != br["panel_ref"]:
+            rep.err("PROV-012",
+                    "%s bridges to %s, which was measured on panel %s, not on the bridge's declared "
+                    "panel %s. A bridge across two panels measures the panels, not the lanes."
+                    % (pid, smr, sealed.get("panel_ref"), br["panel_ref"]), pid)
+        if sealed.get("pipeline_ref") == pid:
+            rep.err("PROV-012",
+                    "%s bridges to %s, which this same pipeline produced. A lane cannot be its own "
+                    "baseline." % (pid, smr), pid)
 
     # PROV-006 - credit is not transferable
     maint = L.MAINTAINER

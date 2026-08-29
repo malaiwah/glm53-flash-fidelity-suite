@@ -74,8 +74,9 @@ in float64. They are printed as **two tables, not one**, because they are two qu
 skims tables rather than paragraphs should be stopped by the layout, not only by the prose underneath
 it:
 
-**Group `cmp--202b717f3219c414`** -- sealed same-stack capture, five cold runs each. These three may be
-ranked against one another.
+**Group `cmp--202b717f3219c414`** -- sealed-lane same-stack capture, five cold runs each. These three may
+be ranked against one another. (This group holds five rows today; the other two came off a different
+measurement *lane* and are the subject of the section after next.)
 
 | | value | metric | stack_relation |
 |---|---:|---|---|
@@ -114,6 +115,28 @@ through our stack scores **0.012712** against those same teacher logits. So 0.02
 not a result. The naive difference is 0.007904 -- an *estimate*, not an identity, because KL is not
 additive. **This registry does not subtract floors and publish the remainder.** It puts the floor in
 the table, in bold, labelled, immediately above the biased row.
+
+### And one comparison the key alone does not stop
+
+A comparability key has seven inputs and none of them is the measurement lane. Two rows can therefore
+share a key -- same panel, same teacher, same metric, same direction, same float64, same
+`same_stack`, same `native_head` -- and still have been produced on different machines by different
+code paths. Group `cmp--202b717f3219c414` now contains exactly that: our K6 measured on the sealed
+8x H200 lane at **0.013723384665701147**, and the *same weights* measured on a one-GPU streaming lane
+at **0.013714888822596553**. Sorted into one list, the streaming row lands above the sealed one and
+reads as a better quant. It is not a quant at all: it is one artifact, measured twice.
+
+So the renderer tables a non-sealed lane's rows apart from the rest of its group, and the lane's
+pipeline record carries the *measured* bridge to the sealed lane rather than an adjective: signed
+delta **-8.4958e-06** nats on the panel mean, worst single window **2.8735e-04**,
+`tokenwise_kld_sha256_matches_sealed: false`, `publishable_as_reproduction: false`. The last two are
+the load-bearing ones. A mean that agrees to five decimal places is not a reproduction when the
+per-token array underneath it differs, and the lane says so about itself.
+
+That bridge is one artifact's, on one panel, and it is not subtractable. The 8bpw row in the same
+lane has no sealed-lane sibling to bridge against, so its bias block records the offset as
+`direction: unknown` and its magnitude as null -- which is what "we do not know" looks like when it
+has to survive a schema.
 
 The second differing axis is the metric itself: the K6 / 4bpw / Dione rows are
 `mean_of_run_means_tokenwise_kld` over five cold runs, while the cross-stack rows are a single

@@ -232,6 +232,135 @@ def elsewhere_note(C, key, rows):
     return [head, ">"] + lines + [""]
 
 
+def lane_of(C, m):
+    """Which measurement lane produced a row, as declared by its pipeline record.
+
+    None means the pipeline does not declare one. That is NOT the same as "the sealed
+    lane" and this function does not pretend otherwise: rows with no declared lane stay
+    in the group's main table, which makes no claim about their lane, while a row whose
+    pipeline names a non-sealed lane is tabled apart from them.
+    """
+    pl = C["pipelines"].get(m.get("pipeline_ref")) or {}
+    return (pl.get("lane") or {}).get("name")
+
+
+def row_line(C, mid, ref_art):
+    """One table row. Returns (is_floor, line)."""
+    m = C["measurements"][mid]
+    a = C["artifacts"][m["artifact_ref"]]
+    m["_artifact_owner"] = (g(a, "huggingface", "repository") or "/").split("/")[0]
+    unc = m.get("uncertainty") or {}
+    ci = ("[%s, %s]" % (fmt(unc.get("ci95_low")), fmt(unc.get("ci95_high")))
+          if unc.get("ci95_low") is not None else "--")
+    srcs = m.get("provenance", {}).get("sources", [])
+    link = "--"
+    for src in srcs:
+        if src.get("kind") in ("hf_file", "github_file"):
+            link = "[receipt](%s)" % src["uri"]
+            break
+    else:
+        if srcs:
+            link = "local receipt" if srcs[0].get("kind") == "receipt_file" else srcs[0].get("kind")
+    is_floor = m["artifact_ref"] == ref_art or (
+        g(m, "comparability", "bias", "floor_measurement_ref") is None
+        and g(m, "comparability", "bias", "kind") == "cross_stack_capture_replay")
+    name = a.get("name")
+    cell = ("| **%s** _(measurement floor)_ " % name) if is_floor else ("| %s " % name)
+    line = (cell
+            + "| `%s` " % (("%s @%s" % (g(a, "codec", "family"),
+                                        fmt(g(a, "codec", "bits_per_weight_nominal"))))
+                           if g(a, "codec", "bits_per_weight_nominal") is not None
+                           else g(a, "codec", "family"))
+            + "| %s " % fmt_size(g(a, "weights", "size_bytes"))
+            + "| **%s** " % fmt(m["metric"]["value"])
+            + "| %s " % ci
+            + "| %s " % fmt_pct(g(m, "auxiliary_metrics", "top1_agreement"))
+            + "| %s " % det_badge(m)
+            + "| %s " % badge(m)
+            + "| %s |" % link)
+    return is_floor, line
+
+
+def bias_callouts(C, rows):
+    """Every biased row's bias, named. Rendering only the first row's silently dropped the
+    others -- and in the GLM cross-stack group the first row is the FLOOR, so the row whose
+    bias text actually matters (official FP8: "0.020615 is an UPPER BOUND, do not subtract
+    and publish") was the one being discarded."""
+    out, seen = [], set()
+    for mid in rows:
+        bias = g(C["measurements"][mid], "comparability", "bias")
+        if not bias:
+            continue
+        sig = (bias.get("kind"), bias.get("direction"), bias.get("detail"))
+        if sig in seen:
+            continue
+        seen.add(sig)
+        art = C["artifacts"].get(C["measurements"][mid]["artifact_ref"]) or {}
+        out.append("> **Bias on %s** -- %s, direction %s. %s"
+                   % (art.get("name") or mid, bias["kind"], bias["direction"], bias["detail"]))
+        out.append("")
+    return out
+
+
+def lane_note(C, lane, rows, total):
+    """What a non-sealed lane IS, from its pipeline record's own fields.
+
+    The comparability key has seven inputs and none of them is the lane, so a streaming-lane
+    row and a sealed-lane row of the same artifact land in the same group -- adjacent, sorted
+    by value, differing in the fourth decimal. Read as a ranking that says the streaming K6
+    beat the sealed K6, which is not a thing that happened: it is one artifact measured twice
+    on two machines. So the lane's rows get their own table, and this note says what the lane
+    changed, using the numbers on the pipeline record rather than adjectives.
+    """
+    pl = None
+    for mid in rows:
+        cand = C["pipelines"].get(C["measurements"][mid].get("pipeline_ref"))
+        if cand and (cand.get("lane") or {}).get("name") == lane:
+            pl = cand
+            break
+    ln = (pl or {}).get("lane") or {}
+    out = ["##### Lane `%s` -- %d of this group's %d rows" % (lane, len(rows), total), ""]
+    out.append("> **A different lane. Same key, and that is exactly the problem this table solves.** "
+               "The comparability key is a function of the panel, the teacher, the metric, the "
+               "direction, the estimator precision, the stack relation and the head policy -- and "
+               "these rows match the table above on all seven. What they do not share is the machine "
+               "and the code path that produced the candidate logits, and lanes are not "
+               "interchangeable. Sorting them into one list would read as a ranking; where the same "
+               "artifact appears in both, it is one set of weights measured twice, not two quants.")
+    out.append(">")
+    bits = []
+    if ln.get("device_count") is not None:
+        bits.append("**%d device%s**" % (ln["device_count"], "" if ln["device_count"] == 1 else "s"))
+    if ln.get("expert_parallel_emulated"):
+        bits.append("expert-parallel width **%s emulated in one process**"
+                    % (ln.get("expert_parallel_world_size") or "?"))
+    if ln.get("reduce_order"):
+        bits.append("routed-expert combine order `%s`" % ln["reduce_order"])
+    if bits:
+        out.append("> **What the lane is** (from `%s`): %s." % (pl["id"], ", ".join(bits)))
+        out.append(">")
+    br = ln.get("bridge") or {}
+    if br.get("delta_mean_kld") is not None:
+        out.append("> **Bridge to the `%s` lane, measured on this panel:** signed delta **%s** nats "
+                   "on the mean against `%s`, worst single window **%s**, over %s windows. "
+                   "Tokenwise KL array matches the sealed run: **%s**. The runner's own verdict on "
+                   "whether this may be published as a reproduction of the sealed number: **%s**%s."
+                   % (br.get("compared_to_lane"), fmt(br["delta_mean_kld"], 5),
+                      br.get("sealed_measurement_ref"), fmt(br.get("max_abs_per_window_delta"), 5),
+                      fmt(br.get("windows_compared")),
+                      "yes" if br.get("tokenwise_kld_sha256_matches_sealed") else "no",
+                      "yes" if br.get("publishable_as_reproduction") else "no",
+                      (" (verdict `%s`)" % br["verdict"]) if br.get("verdict") else ""))
+        out.append(">")
+        out.append("> That bridge is one artifact's, on one panel. It is not a constant and it is not "
+                   "subtractable: a row in this table whose artifact has no sealed-lane row has no "
+                   "measured offset at all, and says so in its own bias line.")
+    else:
+        out.append("> **No bridge to the sealed lane is recorded for this lane.**")
+    out.append("")
+    return out
+
+
 def render_group(C, key, members, groups):
     out = []
     out += caption(C, key, members)
@@ -242,64 +371,47 @@ def render_group(C, key, members, groups):
         C["measurements"][mid]["metric"]["value"] is None,
         C["measurements"][mid]["metric"]["value"] or 0.0))
     ref_art = (C["references"][C["measurements"][members[0]]["reference_ref"]] or {}).get("artifact_ref")
+
+    primary, lanes = [], {}
+    for mid in rows:
+        ln = lane_of(C, C["measurements"][mid])
+        if ln is None or ln == "sealed-ep8":
+            primary.append(mid)
+        else:
+            lanes.setdefault(ln, []).append(mid)
+
     header = ("| Artifact | Codec | Size | %s (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |"
               % C["measurements"][members[0]]["metric"]["name"])
-    out.append(header)
-    out.append("|---|---|---:|---:|---|---:|---|---|---|")
-    floor_rows, normal_rows = [], []
-    for mid in rows:
-        m = C["measurements"][mid]
-        a = C["artifacts"][m["artifact_ref"]]
-        m["_artifact_owner"] = (g(a, "huggingface", "repository") or "/").split("/")[0]
-        unc = m.get("uncertainty") or {}
-        ci = ("[%s, %s]" % (fmt(unc.get("ci95_low")), fmt(unc.get("ci95_high")))
-              if unc.get("ci95_low") is not None else "--")
-        srcs = m.get("provenance", {}).get("sources", [])
-        link = "--"
-        for s in srcs:
-            if s.get("kind") in ("hf_file", "github_file"):
-                link = "[receipt](%s)" % s["uri"]
-                break
-        else:
-            if srcs:
-                link = "local receipt" if srcs[0].get("kind") == "receipt_file" else srcs[0].get("kind")
-        is_floor = m["artifact_ref"] == ref_art or (
-            g(m, "comparability", "bias", "floor_measurement_ref") is None
-            and g(m, "comparability", "bias", "kind") == "cross_stack_capture_replay")
-        name = a.get("name")
-        cell = ("| **%s** _(measurement floor)_ " % name) if is_floor else ("| %s " % name)
-        line = (cell +
-                "| `%s` " % (("%s @%s" % (g(a, "codec", "family"),
-                                            fmt(g(a, "codec", "bits_per_weight_nominal"))))
-                              if g(a, "codec", "bits_per_weight_nominal") is not None
-                              else g(a, "codec", "family"))
-                + "| %s " % fmt_size(g(a, "weights", "size_bytes"))
-                + "| **%s** " % fmt(m["metric"]["value"])
-                + "| %s " % ci
-                + "| %s " % fmt_pct(g(m, "auxiliary_metrics", "top1_agreement"))
-                + "| %s " % det_badge(m)
-                + "| %s " % badge(m)
-                + "| %s |" % link)
-        (floor_rows if is_floor else normal_rows).append(line)
-    out += floor_rows + normal_rows
-    out.append("")
-    # Every biased row gets its own callout, named. Rendering only members[0]'s bias
-    # silently dropped the others -- and in the GLM cross-stack group members[0] is the
-    # FLOOR, so the row whose bias text actually matters (official FP8: "0.020615 is an
-    # UPPER BOUND, do not subtract and publish") was the one being discarded.
-    seen_bias = set()
-    for mid in rows:
-        bias = g(C["measurements"][mid], "comparability", "bias")
-        if not bias:
-            continue
-        sig = (bias.get("kind"), bias.get("direction"), bias.get("detail"))
-        if sig in seen_bias:
-            continue
-        seen_bias.add(sig)
-        art = C["artifacts"].get(C["measurements"][mid]["artifact_ref"]) or {}
-        out.append("> **Bias on %s** -- %s, direction %s. %s"
-                   % (art.get("name") or mid, bias["kind"], bias["direction"], bias["detail"]))
+    rule = "|---|---|---:|---:|---|---:|---|---|---|"
+
+    if lanes:
+        out.append("> **%d of this group's %d rows came off a different measurement lane** (%s) and are "
+                   "tabled on their own below, not mixed into the ordering here. The key does not carry "
+                   "the lane; this file does."
+                   % (sum(len(v) for v in lanes.values()), len(rows),
+                      ", ".join("`%s`" % k for k in sorted(lanes))))
         out.append("")
+
+    floor_rows, normal_rows = [], []
+    for mid in primary:
+        is_floor, line = row_line(C, mid, ref_art)
+        (floor_rows if is_floor else normal_rows).append(line)
+    if primary:
+        out.append(header)
+        out.append(rule)
+        out += floor_rows + normal_rows
+        out.append("")
+        out += bias_callouts(C, primary)
+
+    for lane in sorted(lanes):
+        out += lane_note(C, lane, lanes[lane], len(rows))
+        out.append(header)
+        out.append(rule)
+        for mid in lanes[lane]:
+            out.append(row_line(C, mid, ref_art)[1])
+        out.append("")
+        out += bias_callouts(C, lanes[lane])
+
     out += elsewhere_note(C, key, rows)
     notes = []
     for mid in rows:

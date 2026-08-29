@@ -4,13 +4,13 @@
       "file": "data/artifacts.jsonl",
       "record_count": 32,
       "schema": "schema/artifact.schema.json",
-      "sha256": "c527a98342168414e6058b4e757f079952dc555e8c1e813cfc455d80b01fe8e9"
+      "sha256": "3b4e3f14ee7989e933271efbabb4cde488ac52fc09ad005ac483784620163622"
     },
     "measurements": {
       "file": "data/measurements.jsonl",
-      "record_count": 57,
+      "record_count": 59,
       "schema": "schema/measurement.schema.json",
-      "sha256": "0f15e59fb51e0c432e2af0e5ae46f5a12ecc31dae5e39ba97c5a5fb0229708d0"
+      "sha256": "fb5006b17642567ffc2e80f2944ab49a1be2a05e937fce4dc2fce5a0e41a981c"
     },
     "models": {
       "file": "data/models.jsonl",
@@ -26,9 +26,9 @@
     },
     "pipelines": {
       "file": "data/pipelines.jsonl",
-      "record_count": 12,
+      "record_count": 13,
       "schema": "schema/pipeline.schema.json",
-      "sha256": "ff46d4a9fa639bf6ece009cd79fa85d061cd1003d9827b4ee6174fe759a66a0e"
+      "sha256": "eb41cedabd5321d1d848d0b4257dd976eb59b9e57f0fae702e5d33f939c8ac74"
     },
     "references": {
       "file": "data/references.jsonl",
@@ -92,7 +92,7 @@
       "head_policy": "native_head",
       "key": "cmp--202b717f3219c414",
       "label": "mean_of_run_means_tokenwise_kld on panel--glm53.brandonmusic.final25 (same_stack, native_head)",
-      "member_count": 3,
+      "member_count": 5,
       "metric_name": "mean_of_run_means_tokenwise_kld",
       "panel_id": "panel--glm53.brandonmusic.final25",
       "reference_id": "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
@@ -198,16 +198,16 @@
   "comparability_rule": "Two measurement values may be compared IF AND ONLY IF their comparability.key values are equal. A table that mixes keys is malformed.",
   "counts": {
     "artifacts": 32,
-    "measurements": 57,
-    "measurements_advisory": 54,
+    "measurements": 59,
+    "measurements_advisory": 56,
     "measurements_author_reported": 14,
     "measurements_independently_verified": 0,
-    "measurements_self_measured": 43,
+    "measurements_self_measured": 45,
     "measurements_strict": 3,
     "measurements_third_party_reported": 0,
     "models": 2,
     "panels": 10,
-    "pipelines": 12,
+    "pipelines": 13,
     "references": 10
   },
   "cross_refs": {
@@ -218,13 +218,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-08-28T14:44:15+00:00",
+  "generated_at": "2026-08-29T01:34:19+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-08-28T14:44:15+00:00",
+    "last_run_at": "2026-08-29T01:34:19+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }
