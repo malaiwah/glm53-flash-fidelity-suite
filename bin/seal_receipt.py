@@ -125,7 +125,11 @@ def main() -> int:
                 "bits_per_weight_effective": None,
                 "group_size": None,
                 "quantizer_tool": "exllamav3 EXL3",
-                "quantizer_version": target.get("exllamav3_pin"),
+                # the storage-ABI pin when there is one (TR3), else the
+                # quantizer version the release's own config states (stock
+                # exllamav3 ships no ABI file but does say "1.4.4")
+                "quantizer_version": (target.get("exllamav3_pin")
+                                      or target.get("quantizer_version")),
             },
             "scope": scope,
             "producer": job.get("producer") or {
@@ -196,7 +200,7 @@ def main() -> int:
         environment=host_environment(job.get("environment")),
         cost=job.get("cost") or {"usd": None, "basis": None},
         evidence=job.get("evidence") or [],
-        extra_disclosures=job.get("disclosures") or [],
+        extra_disclosures=(job.get("disclosures") or []) + _lineage_disclosures(target),
     )
 
     write_json(args.out, doc)
@@ -333,6 +337,34 @@ def _scope_from_registry(suite_root: Path, target: Dict[str, Any],
     except (OSError, ValueError):
         return None
     return None
+
+
+def _lineage_disclosures(target: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """A quant OF a quant is not a quant of the reference.
+
+    Stock exllamav3 records the checkpoint it consumed in
+    `original_quantization_config`. When that says the parent was itself
+    quantized -- turboderp's GLM-5.3-Flash releases were made from the FP8
+    e4m3 release, not from BF16 -- the divergence this row measures includes
+    whatever the parent already cost, and a reader comparing it against a row
+    quantized straight from BF16 is comparing two different lineages. Read
+    from the release's own metadata by the sniffer; never assumed.
+    """
+    parent = target.get("quantized_from")
+    if not parent or str(parent).lower() in ("bf16", "fp32", "unknown", "none"):
+        return []
+    return [{
+        "code": "quantized_from_quantized_parent",
+        "severity": "caveat",
+        "affects_comparability": True,
+        "detail": (
+            "The release's own quantization_config declares "
+            "original_quantization_config.fmt = %s: this artifact was quantized "
+            "from an already-quantized checkpoint, not from the BF16 reference "
+            "this row is scored against. Its divergence therefore includes the "
+            "parent's, and it is not lineage-comparable with a row quantized "
+            "directly from BF16 at the same bit rate." % parent)
+    }]
 
 
 def _default_scope(target: Dict[str, Any]) -> Dict[str, Any]:

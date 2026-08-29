@@ -666,6 +666,13 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
             "bits": surface.bits, "exllamav3_pin": surface.exllamav3_pin,
             "nonrouted_native": surface.nonrouted_native,
             "tp_sliced": surface.tp_sliced,
+            # Sniffed evidence the receipt would otherwise drop on the floor.
+            # A stock-exllamav3 release has no storage-ABI file, so
+            # exllamav3_pin is null -- but its config states the quantizer
+            # VERSION, and the artifact record has a field for exactly that.
+            "quantizer_version": surface.evidence.get("quantizer_version"),
+            "head_bits": surface.evidence.get("head_bits"),
+            "quantized_from": surface.evidence.get("original_quantization_config_fmt"),
         }
         if surface.problems:
             raise Refusal(
