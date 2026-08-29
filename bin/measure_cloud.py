@@ -54,7 +54,8 @@ from fidelity.common import (                          # noqa: E402
 )
 from fidelity.engines import EngineUnpinned, build_invocation, load_engines  # noqa: E402
 from fidelity.hfmeta import (                          # noqa: E402
-    HFError, RepoMeta, hf_token, load_panel_descriptor, repo_meta, sniff_surface,
+    HFError, RepoMeta, fetch_json, hf_token, load_panel_descriptor, repo_meta,
+    safetensors_header, sniff_surface,
 )
 from fidelity.jlapi import JL, JLError, JLNotInstalled, select_offer  # noqa: E402
 from fidelity.receipt import produced_by_block                      # noqa: E402
@@ -527,6 +528,71 @@ def job_id_for(args: argparse.Namespace) -> str:
     return hashlib.sha1(key.encode()).hexdigest()[:8]
 
 
+def _refuse_incomplete_exl3hf(con: Console, repo_id: str, revision: str,
+                              plan: Dict[str, Any]) -> None:
+    """Does this release actually contain the whole model?
+
+    A stock-exllamav3 conversion is only measurable if its non-routed tensors
+    cover the official non-routed set: the streaming lane loads them as the
+    model. This is decidable from two index files -- the artifact's and the
+    official release's -- plus the MTP sidecar's safetensors header, so it
+    costs metadata, not a rental.
+
+    It is not hypothetical. turboderp's 3.05bpw branch is missing 22 tensors
+    the 4.05bpw branch and the official release both carry
+    (`self_attn.indexer.index_kpool_compress_{ape,gate}` on all 11 MLA layers).
+    Loading it would leave the sparse-attention indexer's k-pool compression
+    randomly initialised, and the resulting number would describe a model
+    nobody has.
+    """
+    import sys as _sys
+    tools = SUITE_ROOT / "k6" / "tools"
+    if str(tools) not in _sys.path:
+        _sys.path.insert(0, str(tools))
+    try:
+        import exl3hf_surface as xs3
+    except Exception as exc:                             # noqa: BLE001
+        con.warn("completeness gate skipped: %s" % redact(str(exc)))
+        return
+    try:
+        artifact_wm = fetch_json(repo_id, "model.safetensors.index.json",
+                                    revision=revision)["weight_map"]
+        official_wm = fetch_json("zai-org/GLM-5.3-Flash-BF16",
+                                    "model.safetensors.index.json",
+                                    revision=OFFICIAL_BF16_REVISION)["weight_map"]
+        maps = [artifact_wm]
+        mtp = safetensors_header(repo_id, "mtp.safetensors", revision=revision)
+        if mtp:
+            maps.append({name: "mtp.safetensors" for name in mtp})
+    except HFError as exc:
+        con.warn("completeness gate skipped: %s" % redact(str(exc)))
+        return
+
+    planned = xs3.planned_names(maps)
+    want = {n for n in official_wm if not xs3._ROUTED.search(n)}
+    missing = sorted(want - set(planned))
+    duplicated = sorted({n for n in planned if planned.count(n) > 1})         if len(set(planned)) != len(planned) else []
+    plan.setdefault("target", {})["nonrouted_completeness"] = {
+        "official_nonrouted": len(want), "planned": len(set(planned)),
+        "missing": len(missing), "duplicated": len(duplicated),
+    }
+    if missing:
+        raise Refusal(
+            "this release is missing %d of the official model's %d non-routed "
+            "tensors, so it cannot be loaded complete" % (len(missing), len(want)),
+            ["first missing: %s" % m for m in missing[:4]]
+            + ["... and %d more" % (len(missing) - 4) if len(missing) > 4 else "",
+               "",
+               "The streaming lane loads the non-routed tensors AS the model. A "
+               "tensor the release does not ship would be randomly initialised by "
+               "transformers, and the measured number would describe a model "
+               "nobody has.",
+               "Read from the release's own index at the pinned revision.",
+               "Nothing was created. $0.00 spent."])
+    con.ok("non-routed completeness", "%d/%d official tensors, no duplicates"
+           % (len(set(planned)), len(want)))
+
+
 def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     """Everything that must be true BEFORE money is spent."""
     plan: Dict[str, Any] = {"job_id": job_id_for(args), "created": False}
@@ -681,6 +747,8 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
             "head_bits": surface.evidence.get("head_bits"),
             "quantized_from": surface.evidence.get("original_quantization_config_fmt"),
         }
+        if surface.surface == "exl3hf" and not surface.problems:
+            _refuse_incomplete_exl3hf(con, target.repo_id, target.revision, plan)
         if surface.problems:
             raise Refusal(
                 "this artifact cannot be read by any available surface adapter",

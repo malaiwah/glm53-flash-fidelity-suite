@@ -282,12 +282,15 @@ def repo_meta(repo_id: str, repo_type: str = "model",
 
 
 def fetch_file(repo_id: str, path: str, *, repo_type: str = "model",
-               revision: str = "main", timeout: float = 60.0) -> bytes:
+               revision: str = "main", timeout: float = 60.0,
+               byte_range: Optional[Tuple[int, int]] = None) -> bytes:
     kind = "datasets/" if repo_type == "dataset" else ""
     url = "%s/%s%s/resolve/%s/%s" % (
         HF_ENDPOINT, kind, repo_id, revision, urllib.parse.quote(path)
     )
     req = urllib.request.Request(url, headers={"User-Agent": "fidelity-suite/0.1"})
+    if byte_range is not None:
+        req.add_header("Range", "bytes=%d-%d" % byte_range)
     token = hf_token()
     if token:
         req.add_header("Authorization", "Bearer " + token)
@@ -300,6 +303,31 @@ def fetch_file(repo_id: str, path: str, *, repo_type: str = "model",
 
 def fetch_json(repo_id: str, path: str, **kw) -> Any:
     return json.loads(fetch_file(repo_id, path, **kw).decode("utf-8"))
+
+
+def safetensors_header(repo_id: str, path: str, **kw) -> Optional[Dict[str, Any]]:
+    """The tensor headers of one safetensors file, by RANGE request.
+
+    A safetensors file begins with an 8-byte little-endian header length and
+    then that many bytes of JSON, so its full tensor inventory is readable in
+    two small requests -- no matter that the file itself is gigabytes. Used to
+    see inside sidecars an index does not cover (mtp.safetensors). Returns None
+    when the file is absent.
+    """
+    import struct
+
+    try:
+        raw = fetch_file(repo_id, path, byte_range=(0, 7), **kw)
+        if len(raw) < 8:
+            return None
+        length = struct.unpack("<Q", raw)[0]
+        if not 0 < length < (64 << 20):
+            return None
+        body = fetch_file(repo_id, path, byte_range=(8, 8 + length - 1), **kw)
+        header = json.loads(body.decode("utf-8"))
+    except (HFError, ValueError, struct.error):
+        return None
+    return {k: v for k, v in header.items() if k != "__metadata__"}
 
 
 @dataclass
