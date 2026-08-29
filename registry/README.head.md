@@ -138,6 +138,21 @@ lane has no sealed-lane sibling to bridge against, so its bias block records the
 `direction: unknown` and its magnitude as null -- which is what "we do not know" looks like when it
 has to survive a schema.
 
+The streaming lane also carries its own floor: the reference's own **unquantized BF16 weights**,
+scored through this SAME streaming harness rather than the cross-stack replay pipeline. It reads
+**0.011506** nats -- the cost of comparing across capture stacks plus bf16 non-associativity, with
+zero quantization involved -- and it is emphatically NOT the cross-stack floor above (0.012712,
+a different pipeline, a different lane, a different comparability key). Unlike the cross-stack case,
+this registry DOES publish the netted-out number here, as an *Attributable (nats)* column in the
+lane's own sub-table: K6-stream nets to 0.002209, K8-stream to 0.000878, a 2.52x spread against a
+raw ratio of only 1.11x. It is still an estimate, not an identity -- KL is not additive -- but both
+terms are small, share the same reference, and now also share the same lane, which the cross-stack
+pair does not. `BIAS-006` is what keeps the two floors from ever crossing: a floor's
+`floor_measurement_ref` must have been measured on the SAME lane as the row naming it, so the
+cross-stack floor can never be subtracted from a streaming-lane row, nor this one from a
+cross-stack row, even on the rare occasion the two share a comparability key. See
+`k6/BF16-FLOOR.md` for the full analysis.
+
 The second differing axis is the metric itself: the K6 / 4bpw / Dione rows are
 `mean_of_run_means_tokenwise_kld` over five cold runs, while the cross-stack rows are a single
 `mean_tokenwise_kld` pass. When a measurement is bitwise reproducible those two coincide numerically,

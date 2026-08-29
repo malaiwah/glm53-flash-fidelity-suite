@@ -30,6 +30,12 @@
       "statement": "A floor row (artifact_ref == the reference's artifact_ref) is reported so the renderer can label it 'measurement floor' rather than ranking it as a quantization result."
     },
     {
+      "id": "BIAS-006",
+      "severity": "error",
+      "statement": "comparability.bias.floor_measurement_ref, when set, points at a measurement produced by a pipeline declaring the SAME measurement lane as the biased row's own pipeline (a pipeline with no `lane` object is the sealed-ep8 lane). The comparability key carries no lane input (PROV-012), so a sealed-lane row and a streaming-lane row of the same artifact routinely share one key, and BIAS-002's same-key check alone would let a floor measured on one lane be named as another lane's zero-point. A floor is the zero-point for its own lane only: this registry's cross-stack floor (0.012712 nats, pipeline--malaiwah.glm53-crosscheck) must never be subtracted from a streaming-lane row, nor a streaming-lane floor from a cross-stack row, even where the two rows happen to share a comparability key.",
+      "enforced_by": "tools/registry_add.py build_row (exit 7 at write time)"
+    },
+    {
       "id": "CMP-001",
       "severity": "error",
       "statement": "comparability.key equals 'cmp--' + sha256(join('|', [key_inputs.panel_id, key_inputs.reference_id, key_inputs.metric_name, key_inputs.direction, key_inputs.accumulation_dtype, key_inputs.stack_relation, key_inputs.head_policy]))[:16]. Recomputed, never trusted."

@@ -54,6 +54,8 @@ STREAM_K6_VERDICT = "receipts/malaiwah/stream-k6-verdict.json"
 STREAM_K6_VERDICT_SHA = "e205c14f5700417b32f4cb4a2d6724f3bf416ffc9d4cca3f129c18b0a0e7b005"
 STREAM_K8_RECEIPT = "receipts/malaiwah/stream-k8-kld.json"
 STREAM_K8_RECEIPT_SHA = "8eab14b0ef3ba042e49735973d91dcc47e470b9331f9e65151635b2862bb05d1"
+STREAM_BF16_RECEIPT = "receipts/malaiwah/stream-bf16-kld.json"
+STREAM_BF16_RECEIPT_SHA = "8abee678d26fc4be92f3b6327419da25c505de2021043dc2719c1e355290090b"
 HF_REGISTRY_RAW = "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/"
 
 MAL = lambda role: attr("malaiwah", role, handle="malaiwah", url="https://huggingface.co/malaiwah", maintainer=True)
@@ -1314,8 +1316,12 @@ PIPELINES = [
                           "malaiwah.glm53-k6-stream-packed-kld-summary.v1, profile k6-stream-tp4"),
                       src("receipt_file", STREAM_K8_RECEIPT, STREAM_K8_RECEIPT_SHA,
                           "malaiwah.glm53-k8-packed-kld-summary.v1, profile k8-tp4"),
+                      src("receipt_file", STREAM_BF16_RECEIPT, STREAM_BF16_RECEIPT_SHA,
+                          "malaiwah.glm53-native-bf16-packed-kld-summary.v1, profile native-bf16-stream -- "
+                          "the reference's own unquantized weights, this lane's measurement floor"),
                       src("hf_file", HF_REGISTRY_RAW + STREAM_K6_RECEIPT, STREAM_K6_RECEIPT_SHA),
-                      src("hf_file", HF_REGISTRY_RAW + STREAM_K8_RECEIPT, STREAM_K8_RECEIPT_SHA)],
+                      src("hf_file", HF_REGISTRY_RAW + STREAM_K8_RECEIPT, STREAM_K8_RECEIPT_SHA),
+                      src("hf_file", HF_REGISTRY_RAW + STREAM_BF16_RECEIPT, STREAM_BF16_RECEIPT_SHA)],
              cross_refs=lair()),
     pipeline(PL_DIONE, "malaiwah Dione-surface KLD scorer (dione-q4-tp4)",
              ["replay", "scorer", "aggregator"], None, None, "tools/k6_kld_report.py (dione surface adapter)",
@@ -1533,6 +1539,9 @@ def build_measurements(artifacts_map):
     # that can be bridged, because a sealed-lane K6 number exists on this panel to bridge
     # against; the verdict receipt scored both surfaces and the delta is on the row as a
     # measured bias, not as prose. The K8 row has no such bridge and says so.
+    M_BF16_FLOOR = "measurement--glm53.bf16-stream-floor.brandonmusic-final25"
+    BF16_FLOOR = 0.011505922619330299
+
     SK6 = 0.013714888822596553
     STREAM_DISC = lambda measured: [
         disc("reduced_run_count", "caveat",
@@ -1557,7 +1566,7 @@ def build_measurements(artifacts_map):
                           src("hf_file", HF_REGISTRY_RAW + STREAM_K6_VERDICT, STREAM_K6_VERDICT_SHA)],
                  receipt_schema="malaiwah.glm53-k6-stream-packed-kld-summary.v1",
                  cls="advisory",
-                 bias={"kind": "other", "direction": "downward", "floor_measurement_ref": None,
+                 bias={"kind": "other", "direction": "downward", "floor_measurement_ref": M_BF16_FLOOR,
                        "estimated_magnitude": 8.495843104593809e-06,
                        "detail": "Lane offset, MEASURED not estimated: this 'streaming'-lane run scores "
                                  "0.013714888822596553 against the sealed-ep8 lane's 0.013723384665701147 on "
@@ -1565,7 +1574,12 @@ def build_measurements(artifacts_map):
                                  "0.00028735280093581186 on any one of 25 windows). The tokenwise KL array "
                                  "does NOT match the sealed one, and the runner's own verdict is "
                                  "publishable_as_reproduction=False, so this number stands beside the sealed "
-                                 "one rather than replacing it."},
+                                 "one rather than replacing it. This lane's own measurement floor (%s) is "
+                                 "%r nats; netting it out gives an estimated quantization-attributable error "
+                                 "of %r nats here -- an estimate, not an identity, because KL is not "
+                                 "additive, and it is only meaningful because both terms are small and share "
+                                 "the same reference and lane."
+                                 % (M_BF16_FLOOR, BF16_FLOOR, SK6 - BF16_FLOOR)},
                  gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
                        "passed": True},
                  disclosures=STREAM_DISC(
@@ -1584,7 +1598,10 @@ def build_measurements(artifacts_map):
                        "distinct_tokenwise_kld_sha256; the receipt's bitwise_deterministic flag was checked "
                        "against that, not copied. The verdict's sealed_mean_kld is bit-identical to the "
                        "sealed K6 row in this file, which is what makes the delta a comparison of these two "
-                       "rows and not of two unrelated numbers."))
+                       "rows and not of two unrelated numbers. comparability.bias.floor_measurement_ref: "
+                       "SUPPLIED by --floor-measurement once the streaming-lane floor row below existed; "
+                       "build_row checked it was measured on this SAME lane before writing the reference "
+                       "(exit 7 otherwise)."))
 
     SK8 = 0.012384191023436866
     out.append(M("measurement--glm53.k8-8bpw-stream.brandonmusic-final25", GLM, A_K8, P_B25, R_B25,
@@ -1601,13 +1618,18 @@ def build_measurements(artifacts_map):
                           src("hf_file", HF_REGISTRY_RAW + STREAM_K8_RECEIPT, STREAM_K8_RECEIPT_SHA)],
                  receipt_schema="malaiwah.glm53-k8-packed-kld-summary.v1",
                  cls="advisory",
-                 bias={"kind": "other", "direction": "unknown", "floor_measurement_ref": None,
+                 bias={"kind": "other", "direction": "unknown", "floor_measurement_ref": M_BF16_FLOOR,
                        "estimated_magnitude": None,
                        "detail": "Measured on the 'streaming' lane, whose offset against the sealed-ep8 lane "
                                  "is known to be non-zero but was NOT measured for this artifact: no "
                                  "sealed-lane row for it exists to bridge against. The lane offset measured "
                                  "for a sibling artifact on this panel is not transferable -- it is a "
-                                 "property of the routing, not a constant."},
+                                 "property of the routing, not a constant. This lane's own measurement floor "
+                                 "(%s) is %r nats; netting it out gives an estimated quantization-"
+                                 "attributable error of %r nats here -- an estimate, not an identity, "
+                                 "because KL is not additive, and it is only meaningful because both terms "
+                                 "are small and share the same reference and lane."
+                                 % (M_BF16_FLOOR, BF16_FLOOR, SK8 - BF16_FLOOR)},
                  gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
                        "passed": True},
                  disclosures=STREAM_DISC(
@@ -1624,7 +1646,82 @@ def build_measurements(artifacts_map):
                        "and states none of them, and unlike the K6 row there is no verdict receipt here to "
                        "read the window count from. No top-1 agreement was produced for this run. "
                        "determinism.identical_across_runs is RECOMPUTED from run_means and "
-                       "distinct_tokenwise_kld_sha256."))
+                       "distinct_tokenwise_kld_sha256. comparability.bias.floor_measurement_ref: SUPPLIED by "
+                       "--floor-measurement once the streaming-lane floor row below existed; build_row "
+                       "checked it was measured on this SAME lane before writing the reference (exit 7 "
+                       "otherwise)."))
+
+    # ------------------------------------------------------------ streaming-lane floor
+    # 2026-08-29: the UNQUANTIZED BF16 weights, scored as the streaming lane's own
+    # "student" against the reference's stored teacher logits, on the SAME panel and
+    # the SAME harness as the two rows above (tools/stream_score.py --source native ->
+    # tools/k6_kld_report.py --profile native-bf16-stream). Zero quantization is
+    # involved: the divergence here is purely the cost of comparing across capture
+    # stacks plus bf16 non-associativity across differing expert-combine orders --
+    # this streaming lane's zero-point. See k6/BF16-FLOOR.md for the full analysis.
+    #
+    # It is NOT the cross-stack floor (measurement--glm53.bf16-replay-floor...,
+    # 0.012712 nats, a different pipeline and a different comparability key): that
+    # number bounds CROSS-STACK rows on this panel and must never be subtracted from a
+    # same-stack streaming row, nor this floor from a cross-stack one. BIAS-006 (new)
+    # refuses a floor_measurement_ref that crosses lanes; build_row refuses it at
+    # write time (exit 7) before a row like that could even be generated.
+    out.append(M(M_BF16_FLOOR, GLM, A_BF16_A6, P_B25, R_B25, PL_STREAM, BF16_FLOOR,
+                 metric_name="mean_of_run_means_tokenwise_kld",
+                 scored_positions=51175, contexts=25, runs=2, cold=True, run_means=[BF16_FLOOR] * 2,
+                 identical=True, evidence_kind="tokenwise_kld_sha256",
+                 evidence_hashes=["c033bcd30f0a67c1be972619f46bf18d598a8f6861df384cdf81add9bdc36546"],
+                 det_note="2 cold runs, 2 distinct kld_report_sha256 values, 1 distinct "
+                          "tokenwise_kld_sha256. The report-file digests differ per run and prove "
+                          "nothing; the single tokenwise digest is the determinism evidence.",
+                 sources=[src("receipt_file", STREAM_BF16_RECEIPT, STREAM_BF16_RECEIPT_SHA,
+                              "malaiwah.glm53-native-bf16-packed-kld-summary.v1"),
+                          src("hf_file", HF_REGISTRY_RAW + STREAM_BF16_RECEIPT, STREAM_BF16_RECEIPT_SHA)],
+                 receipt_schema="malaiwah.glm53-native-bf16-packed-kld-summary.v1",
+                 cls="advisory",
+                 bias={"kind": "other", "direction": "unknown", "floor_measurement_ref": None,
+                       "estimated_magnitude": None,
+                       "detail": "THIS ROW IS THE FLOOR for the 'streaming' lane: it replays the "
+                                 "reference's own unquantized weights through the SAME streaming harness "
+                                 "that scored every other row on this pipeline, so its divergence against "
+                                 "the stored teacher logits is the lane's zero-point, not a quantization "
+                                 "result. It is NOT the cross-stack floor recorded elsewhere in this "
+                                 "registry (a different pipeline, a different lane, a different "
+                                 "comparability key) and is never interchangeable with it: subtracting one "
+                                 "lane's floor from another lane's row is exactly the mistake BIAS-006 "
+                                 "exists to catch. The lane's offset against the sealed-ep8 lane is NOT "
+                                 "measured for this artifact: no sealed-lane counterpart to this profile "
+                                 "exists to bridge against."},
+                 gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
+                       "passed": True},
+                 disclosures=[
+                     disc("reduced_run_count", "caveat",
+                          "cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 (budget; "
+                          "disclosed)", True),
+                     disc("non_sealed_lane", "caveat",
+                          "Produced by the 'streaming' lane, not the sealed-ep8 lane. The lane's offset "
+                          "against the sealed lane is NOT measured for this artifact: no sealed-lane row "
+                          "for it exists to bridge against. This row is itself the streaming lane's "
+                          "measurement floor -- the zero-point the K6-stream and K8-stream rows in this "
+                          "same table subtract to obtain their own quantization-attributable error (see "
+                          "their bias blocks).", True),
+                     disc("third_party_artifact_self_measured", "info",
+                          "Someone else's weights, our measurement.")],
+                 notes="CONTROL ROW / STREAMING-LANE MEASUREMENT FLOOR. Not the cross-stack floor "
+                       "(measurement--glm53.bf16-replay-floor.brandonmusic-final25, 0.012712 nats, "
+                       "pipeline--malaiwah.glm53-crosscheck): a different pipeline, a different lane, a "
+                       "different comparability key -- BIAS-002 already keeps the two apart by key, and "
+                       "BIAS-006 additionally forbids naming one as the other's floor even inside a shared "
+                       "key. Provenance of the fields the summary receipt does not carry: metric.direction "
+                       "and estimator.accumulation_dtype are SUPPLIED as reference_to_candidate / float64, "
+                       "matching every other row on this pipeline, because the scorer is the same "
+                       "unmodified tools/k6_kld_report.py. measurement_scope.scored_positions and contexts "
+                       "are SUPPLIED as the panel's own 51,175 positions over 25 contexts (25 x 2047) -- "
+                       "like the K8-stream row, no verdict receipt exists for this profile to read the "
+                       "window count from. determinism.identical_across_runs is RECOMPUTED from run_means "
+                       "and distinct_tokenwise_kld_sha256; the receipt's own bitwise_deterministic flag was "
+                       "checked against that, not copied. cold_run_count (2) was checked against "
+                       "len(run_means) and len(kld_report_sha256), both 2."))
 
     DQ = 0.027262784814670614
     out.append(M("measurement--glm53.dione-q4.brandonmusic-final25", GLM, A_DIONE, P_B25, R_B25, PL_DIONE, DQ,

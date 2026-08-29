@@ -244,7 +244,30 @@ def lane_of(C, m):
     return (pl.get("lane") or {}).get("name")
 
 
-def row_line(C, mid, ref_art):
+def attributable_of(C, m):
+    """value minus the row's own named floor (comparability.bias.floor_measurement_ref).
+
+    None when the row names no floor, or when the floor cannot be resolved. This is
+    computed here, at render time, from the two rows' own metric.value -- never stored as
+    a field on the row -- so there is exactly one place a reader can be shown a stale
+    number: nowhere. The pairing itself is guaranteed sound by the data, not by this
+    function: BIAS-002 requires the floor to share this row's comparability key, BIAS-004
+    requires it to measure unquantized weights, and BIAS-006 requires it to have been
+    measured on this row's own lane -- so by the time a floor_measurement_ref reaches
+    here it can never be the wrong panel, the wrong kind of thing, or the wrong lane.
+    """
+    floor_ref = g(m, "comparability", "bias", "floor_measurement_ref")
+    if not floor_ref:
+        return None
+    floor = C["measurements"].get(floor_ref)
+    fv = g(floor, "metric", "value")
+    v = m["metric"]["value"]
+    if fv is None or v is None:
+        return None
+    return v - fv
+
+
+def row_line(C, mid, ref_art, show_attributable=False):
     """One table row. Returns (is_floor, line)."""
     m = C["measurements"][mid]
     a = C["artifacts"][m["artifact_ref"]]
@@ -266,6 +289,10 @@ def row_line(C, mid, ref_art):
         and g(m, "comparability", "bias", "kind") == "cross_stack_capture_replay")
     name = a.get("name")
     cell = ("| **%s** _(measurement floor)_ " % name) if is_floor else ("| %s " % name)
+    attributable_cell = ""
+    if show_attributable:
+        att = attributable_of(C, m)
+        attributable_cell = "| %s " % (fmt(att) if att is not None else "--")
     line = (cell
             + "| `%s` " % (("%s @%s" % (g(a, "codec", "family"),
                                         fmt(g(a, "codec", "bits_per_weight_nominal"))))
@@ -273,6 +300,7 @@ def row_line(C, mid, ref_art):
                            else g(a, "codec", "family"))
             + "| %s " % fmt_size(g(a, "weights", "size_bytes"))
             + "| **%s** " % fmt(m["metric"]["value"])
+            + attributable_cell
             + "| %s " % ci
             + "| %s " % fmt_pct(g(m, "auxiliary_metrics", "top1_agreement"))
             + "| %s " % det_badge(m)
@@ -300,6 +328,25 @@ def bias_callouts(C, rows):
                    % (art.get("name") or mid, bias["kind"], bias["direction"], bias["detail"]))
         out.append("")
     return out
+
+
+def attributable_note(rows):
+    """Explain the Attributable column once per table, rather than trusting the header
+    alone to carry it. `rows` is unused beyond confirming the caller only calls this when
+    at least one row in the table actually names a floor (table_header's own test)."""
+    return [
+        "> **Attributable (nats)** = this row's value minus its named floor's value "
+        "(`comparability.bias.floor_measurement_ref`) -- the raw number with this "
+        "lane's own measurement floor netted out. It is an estimate, not an identity: KL "
+        "is not additive, and the subtraction is only meaningful because both terms are "
+        "small and share the same reference and the same lane. A row with no floor named "
+        "shows `--`, not zero: absence of a floor is not evidence the floor is zero. "
+        "BIAS-002/004/006 guarantee any floor named here shares this row's comparability "
+        "key, measures unquantized weights, and was measured on this row's own lane -- so "
+        "this column can never mix a floor from a different panel, a different kind of "
+        "thing, or a different lane into the subtraction.",
+        "",
+    ]
 
 
 def lane_note(C, lane, rows, total):
@@ -380,9 +427,30 @@ def render_group(C, key, members, groups):
         else:
             lanes.setdefault(ln, []).append(mid)
 
-    header = ("| Artifact | Codec | Size | %s (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |"
-              % C["measurements"][members[0]]["metric"]["name"])
-    rule = "|---|---|---:|---:|---|---:|---|---|---|"
+    metric_name = C["measurements"][members[0]]["metric"]["name"]
+
+    def table_header(mids, allow_attributable):
+        # The Attributable column is added ONLY to a non-sealed-LANE sub-table that has a
+        # row naming a floor (comparability.bias.floor_measurement_ref); `allow_attributable`
+        # is False for the primary table. This registry has an older, deliberately more
+        # cautious convention for a CROSS-STACK floor -- "the naive difference is X, do not
+        # subtract and publish" stays prose-only there (see the bias callouts below) -- and
+        # the primary table is where every cross_stack group's rows live, since a crosscheck
+        # pipeline never declares a `lane`. A same-stack LANE floor is a different case this
+        # registry is choosing to formalize (k6/BF16-FLOOR.md): both terms are small, share
+        # the same reference AND the same lane, and BIAS-002/004/006 guarantee the pairing is
+        # sound, so the derived number earns a column instead of staying prose-only.
+        show = allow_attributable and any(
+            g(C["measurements"][mid], "comparability", "bias", "floor_measurement_ref")
+            for mid in mids)
+        cols = ["Artifact", "Codec", "Size", "%s (nats)" % metric_name]
+        if show:
+            cols.append("Attributable (nats)")
+        cols += ["CI95", "Top-1", "Runs", "Attribution", "Receipt"]
+        right = {"Size", "%s (nats)" % metric_name, "Attributable (nats)", "Top-1"}
+        header = "| " + " | ".join(cols) + " |"
+        rule = "|" + "|".join("---:" if c in right else "---" for c in cols) + "|"
+        return show, header, rule
 
     if lanes:
         out.append("> **%d of this group's %d rows came off a different measurement lane** (%s) and are "
@@ -392,24 +460,30 @@ def render_group(C, key, members, groups):
                       ", ".join("`%s`" % k for k in sorted(lanes))))
         out.append("")
 
-    floor_rows, normal_rows = [], []
-    for mid in primary:
-        is_floor, line = row_line(C, mid, ref_art)
-        (floor_rows if is_floor else normal_rows).append(line)
     if primary:
+        show_att, header, rule = table_header(primary, allow_attributable=False)
+        floor_rows, normal_rows = [], []
+        for mid in primary:
+            is_floor, line = row_line(C, mid, ref_art, show_att)
+            (floor_rows if is_floor else normal_rows).append(line)
         out.append(header)
         out.append(rule)
         out += floor_rows + normal_rows
         out.append("")
+        if show_att:
+            out += attributable_note(primary)
         out += bias_callouts(C, primary)
 
     for lane in sorted(lanes):
         out += lane_note(C, lane, lanes[lane], len(rows))
+        show_att, header, rule = table_header(lanes[lane], allow_attributable=True)
         out.append(header)
         out.append(rule)
         for mid in lanes[lane]:
-            out.append(row_line(C, mid, ref_art)[1])
+            out.append(row_line(C, mid, ref_art, show_att)[1])
         out.append("")
+        if show_att:
+            out += attributable_note(lanes[lane])
         out += bias_callouts(C, lanes[lane])
 
     out += elsewhere_note(C, key, rows)

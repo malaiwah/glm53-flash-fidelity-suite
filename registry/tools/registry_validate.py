@@ -344,6 +344,21 @@ def check_comparability(C, rep):
                                          "artifact %s nor an unquantized repack of it. A floor measures "
                                          "UNQUANTIZED weights through the candidate's stack."
                             % (mid, floor.get("artifact_ref"), ref.get("artifact_ref")), mid)
+                # BIAS-006: same key is not same lane. The comparability key has no lane
+                # input (PROV-012), so a sealed-lane row and a streaming-lane row of the
+                # SAME artifact routinely share one key -- BIAS-002 alone would wave a
+                # cross-lane floor through as long as the panel/estimator matched. This is
+                # the check that stops a floor measured on one lane (e.g. this registry's
+                # cross-stack floor, 0.012712 nats) from ever being named as another lane's
+                # zero-point (e.g. a streaming-lane row): registry_add.py refuses this at
+                # write time (exit 7); this recomputes it for hand-edited data.
+                row_lane = _row_lane(C, m)
+                floor_lane = _row_lane(C, floor)
+                if row_lane != floor_lane:
+                    rep.err("BIAS-006", "%s ran on lane %r but its floor %s ran on lane %r. A floor "
+                                         "measured on one lane is not the zero-point for a different "
+                                         "lane, even when the two rows share a comparability key."
+                            % (mid, row_lane, bias["floor_measurement_ref"], floor_lane), mid)
 
     # CMP-003 / CMP-005
     for key, members in sorted(groups.items()):
@@ -423,6 +438,17 @@ def _ours(uri):
     if owner == "local":
         return True
     return owner.lower().startswith(L.MAINTAINER.lower())
+
+
+def _row_lane(C, m):
+    """The measurement lane a row's pipeline declares (BIAS-006), defaulting to sealed-ep8.
+
+    Mirrors registry_render.py's lane_of and the inline lookup PROV-012 uses: a pipeline
+    with no `lane` object is the sealed-ep8 lane by convention, since every pipeline that
+    predates the `lane` field is one of the sealed ones.
+    """
+    pl = C["pipelines"].get(m.get("pipeline_ref")) or {}
+    return (pl.get("lane") or {}).get("name") or "sealed-ep8"
 
 
 def _is_floor_artifact(C, floor_aid, ref_aid):

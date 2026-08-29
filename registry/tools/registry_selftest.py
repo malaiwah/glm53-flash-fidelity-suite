@@ -246,6 +246,20 @@ def m_lane_is_its_own_baseline(C):
     return "PROV-012", "a lane cannot bridge to a row it produced itself"
 
 
+def m_floor_measured_on_a_different_lane(C):
+    """Exactly the mistake k6/BF16-FLOOR.md warns about, made mechanically: a floor gets
+    re-pointed at a row measured on a DIFFERENT lane than the row citing it, without
+    touching either row's artifact, panel, teacher or comparability key -- so BIAS-002
+    (same key) and BIAS-004 (floor measures unquantized weights) still pass, and only
+    BIAS-006 stands between this and a published cross-lane subtraction. The floor's
+    pipeline_ref is swapped to the SEALED lane's pipeline (no `lane` object at all, so it
+    defaults to sealed-ep8); the K6-stream and K8-stream rows that cite it stay on the
+    streaming lane."""
+    floor = C["measurements"]["measurement--glm53.bf16-stream-floor.brandonmusic-final25"]
+    floor["pipeline_ref"] = "pipeline--malaiwah.glm53-packed-kld"
+    return "BIAS-006", "a floor measured on one lane is not the zero-point for a different lane"
+
+
 def m_non_canonical_line(C):
     return None  # handled specially below
 
@@ -281,6 +295,7 @@ MUTATIONS = [
     ("stream-row-without-its-lane", m_stream_row_loses_its_lane),
     ("stream-row-without-its-bias", m_stream_row_loses_its_bias),
     ("lane-bridged-to-itself", m_lane_is_its_own_baseline),
+    ("floor-measured-on-a-different-lane", m_floor_measured_on_a_different_lane),
 ]
 
 
@@ -439,6 +454,17 @@ def main():
                       base + ["from-receipt", "--receipt", receipts["stream_k8"],
                               "--artifact", "artifact--malaiwah.glm-5.3-flash-tr3-8bpw",
                               "--contexts", "25"] + stream_common))
+        # The write-time half of BIAS-006: this registry's CROSS-STACK floor
+        # (measurement--glm53.bf16-replay-floor...) was measured on the sealed-ep8 lane
+        # (pipeline--malaiwah.glm53-crosscheck declares no `lane` object at all); naming it
+        # as a streaming-lane row's floor is exactly the cross-lane subtraction
+        # k6/BF16-FLOOR.md warns against, and must never even reach a written row.
+        cases.append(("a floor measured on a different lane", 7,
+                      base + ["from-receipt", "--receipt", receipts["stream_k8"],
+                              "--artifact", "artifact--malaiwah.glm-5.3-flash-tr3-8bpw",
+                              "--contexts", "25", "--lane", "streaming", "--floor-measurement",
+                              "measurement--glm53.bf16-replay-floor.brandonmusic-final25"]
+                      + stream_common))
     if receipts.get("stream_k6"):
         cases.append(("a lane flag contradicting the receipt's own family", 6,
                       base + ["from-receipt", "--receipt", receipts["stream_k6"],
@@ -512,7 +538,9 @@ def main():
                       "--reference", "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
                       "--pipeline", "pipeline--malaiwah.glm53-stream-packed-kld",
                       "--direction", "reference_to_candidate", "--accumulation", "float64",
-                      "--scored-positions", "51175", "--dry-run"])
+                      "--scored-positions", "51175",
+                      "--floor-measurement", "measurement--glm53.bf16-stream-floor.brandonmusic-final25",
+                      "--dry-run"])
              if receipts.get("stream_k6") and receipts.get("stream_k6_verdict") else None),
             ("K8 streaming row rebuilt from its receipt + an asserted lane",
              "measurement--glm53.k8-8bpw-stream.brandonmusic-final25",
@@ -523,8 +551,21 @@ def main():
                       "--pipeline", "pipeline--malaiwah.glm53-stream-packed-kld",
                       "--direction", "reference_to_candidate", "--accumulation", "float64",
                       "--scored-positions", "51175", "--contexts", "25",
-                      "--lane", "streaming", "--dry-run"])
-             if receipts.get("stream_k8") else None)):
+                      "--lane", "streaming",
+                      "--floor-measurement", "measurement--glm53.bf16-stream-floor.brandonmusic-final25",
+                      "--dry-run"])
+             if receipts.get("stream_k8") else None),
+            ("native-BF16 streaming floor row rebuilt from its receipt",
+             "measurement--glm53.bf16-stream-floor.brandonmusic-final25",
+             (base + ["from-receipt", "--receipt", receipts.get("stream_bf16", ""),
+                      "--artifact", "artifact--zai-org.glm-5.3-flash-bf16.a6c167b6",
+                      "--registry", args.root, "--panel", "panel--glm53.brandonmusic.final25",
+                      "--reference", "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+                      "--pipeline", "pipeline--malaiwah.glm53-stream-packed-kld",
+                      "--direction", "reference_to_candidate", "--accumulation", "float64",
+                      "--scored-positions", "51175", "--contexts", "25",
+                      "--lane", "streaming", "--third-party-artifact", "--dry-run"])
+             if receipts.get("stream_bf16") else None)):
         if cmd is None:
             continue
         out = subprocess.run(cmd, capture_output=True, text=True)
@@ -730,7 +771,8 @@ def _find_receipts():
     here = os.path.join(L.repo_root(__file__), "receipts", "malaiwah")
     for key, fn in (("stream_k6", "stream-k6-kld.json"),
                     ("stream_k6_verdict", "stream-k6-verdict.json"),
-                    ("stream_k8", "stream-k8-kld.json")):
+                    ("stream_k8", "stream-k8-kld.json"),
+                    ("stream_bf16", "stream-bf16-kld.json")):
         fp = os.path.join(here, fn)
         if os.path.exists(fp):
             out[key] = fp

@@ -27,7 +27,8 @@ Exit codes (stable; CONTRIBUTING.md cites them):
   4 required provenance missing and no flag supplied
   5 receipt internally inconsistent (a recomputation disagreed with the receipt)
   6 provenance void: a flag asserts something the receipt contradicts, with no --disclosure
-  7 identity clash: --panel / --reference / --artifact does not match the receipt's
+  7 identity clash: --panel / --reference / --artifact does not match the receipt's, or
+    --floor-measurement names a floor measured on a different lane than this row's own
   8 attribution conflict
   9 id collision with differing content
 """
@@ -61,20 +62,30 @@ FOREIGN_REPEATED = "glm53-r19-runtime-kld-repeated.v1"
 FOREIGN_WINDOW = "glm53-r19-runtime-window-kld.v1"
 FOREIGN_TP2 = "quant-pipeline.glm53-custom-tp2-runtime-window-kld.v1"
 
-# The single-GPU streaming lane. Two summary families and one verdict.
+# The single-GPU streaming lane. Three summary families and one verdict.
 #
 # The K6 family's own name carries `-stream-`: that string is written by
 # tools/stream_score.py's aggregator and by nothing else, so dispatching on it IS
-# a statement about which lane produced the file. The K8 family's name carries no
-# such marker and its `profile` reads "k8-tp4", so that receipt does NOT say which
-# lane it came from and the lane has to be supplied by --lane. The difference is
-# recorded per-family in LANE_STATED_BY_SCHEMA rather than sniffed out of strings
-# at read time.
+# a statement about which lane produced the file. The K8 and native-BF16 families'
+# names carry no such marker -- K8's `profile` reads "k8-tp4" and the native-BF16
+# receipt's own `profile` reads "native-bf16-stream", but this tool dispatches lane
+# identity off the `schema` string alone, never off a content field a receipt could
+# spell differently -- so neither receipt says which lane it came from and the lane
+# has to be supplied by --lane. The difference is recorded per-family in
+# LANE_STATED_BY_SCHEMA rather than sniffed out of strings at read time.
+#
+# The native-BF16 family is shaped exactly like the other two (measured_mean_kld /
+# run_means / distinct_tokenwise_kld_sha256 / cold_run_count / bitwise_deterministic)
+# but its artifact is not a quant at all: it is the reference's OWN unquantized
+# weights, scored through this same streaming harness (tools/stream_score.py
+# --source native). That makes a row built from it the streaming lane's measurement
+# floor -- see build_row's is_floor test and BIAS-004/005/006.
 STREAM_K6_SUMMARY = "malaiwah.glm53-k6-stream-packed-kld-summary.v1"
 K8_SUMMARY = "malaiwah.glm53-k8-packed-kld-summary.v1"
+NATIVE_BF16_SUMMARY = "malaiwah.glm53-native-bf16-packed-kld-summary.v1"
 STREAM_VERDICT = "malaiwah.glm53-streaming-measurement-verdict.v1"
-STREAM_SUMMARIES = (STREAM_K6_SUMMARY, K8_SUMMARY)
-LANE_STATED_BY_SCHEMA = {STREAM_K6_SUMMARY: "streaming", K8_SUMMARY: None}
+STREAM_SUMMARIES = (STREAM_K6_SUMMARY, K8_SUMMARY, NATIVE_BF16_SUMMARY)
+LANE_STATED_BY_SCHEMA = {STREAM_K6_SUMMARY: "streaming", K8_SUMMARY: None, NATIVE_BF16_SUMMARY: None}
 
 REPORT_FAMILIES = ("glm53flash-fidelity-report/2", "glm53flash-fidelity-report/3",
                    "qwen38-kld-ladder-cumulative/2", "qwen38-kld-ladder-cumulative/3",
@@ -235,7 +246,8 @@ def adapt_stream_summary(receipts):
         --scored-positions and --contexts must supply them, unless a verdict receipt
         is also given, in which case the context count is READ from its per-window
         array and the array's mean is checked against the summary's scalar;
-      * which lane produced it, for the K8 family (see LANE_STATED_BY_SCHEMA).
+      * which lane produced it, for the K8 and native-BF16 families (see
+        LANE_STATED_BY_SCHEMA).
 
     When the verdict IS supplied it is not carried along unread. Every number it
     asserts about the bridge to the sealed lane -- the per-window deltas, their
@@ -523,7 +535,7 @@ def _acc_optional(text):
     return _acc(text) if text else None
 
 
-def _stream_bias(adapted, lane):
+def _stream_bias(adapted, lane, is_floor=False, floor_ref=None, floor_value=None):
     """The bias block for a non-sealed-lane row.
 
     A lane offset is not a cross-stack capture replay and must not be filed as one: the
@@ -532,6 +544,20 @@ def _stream_bias(adapted, lane):
     bounded by a floor row. `estimated_magnitude` is that measured delta -- the only
     place in this file where the field is a measurement instead of a null.
 
+    `is_floor` marks a row whose artifact IS the reference's own unquantized weights
+    (build_row's test: --artifact equals the reference's artifact_ref), replayed through
+    this SAME streaming pipeline. Such a row is the lane's own zero-point, not a
+    quantization result, and never carries a floor_measurement_ref of its own.
+
+    `floor_ref` / `floor_value` let a DIFFERENT row on the same lane name that zero-point.
+    build_row has already checked, before calling this, that the floor was measured on
+    the SAME lane as this row (E_IDENTITY otherwise) -- this function only ever renders
+    the netted-out estimate it is handed, it does not itself decide whether the pairing
+    is legal. The estimate is prose, not a new field: KL is not additive, so "value minus
+    floor" is recorded as words a reader can question, the same way the cross-stack floor's
+    "naive difference" already is (see adapt_crosscheck's callers) -- never as a number the
+    schema asserts is exact.
+
     Returns None when the lane is the sealed one, or when the row is not from a lane-
     bearing receipt family at all.
     """
@@ -539,21 +565,54 @@ def _stream_bias(adapted, lane):
         return None
     bridge = adapted.get("stream_bridge") or {}
     delta = bridge.get("delta_mean_kld")
+    no_bridge_text = (
+        "The lane's offset against the sealed-ep8 lane is NOT measured for this artifact: "
+        "no sealed-lane counterpart to this profile exists to bridge against."
+        if is_floor else
+        "Measured on the %r lane, whose offset against the sealed-ep8 lane is known to be "
+        "non-zero but was NOT measured for this artifact: no sealed-lane row for it exists "
+        "to bridge against. The lane offset measured for a sibling artifact on this panel "
+        "is not transferable -- it is a property of the routing, not a constant." % lane)
+    floor_sentence = ""
+    if floor_ref is not None and floor_value is not None:
+        attributable = adapted["value"] - floor_value
+        floor_sentence = (
+            " This lane's own measurement floor (%s) is %r nats; netting it out gives an "
+            "estimated quantization-attributable error of %r nats here -- an estimate, not "
+            "an identity, because KL is not additive, and it is only meaningful because both "
+            "terms are small and share the same reference and lane."
+            % (floor_ref, floor_value, attributable))
+    if is_floor:
+        detail = (
+            "THIS ROW IS THE FLOOR for the %r lane: it replays the reference's own "
+            "unquantized weights through the SAME streaming harness that scored every other "
+            "row on this pipeline, so its divergence against the stored teacher logits is "
+            "the lane's zero-point, not a quantization result. It is NOT the cross-stack "
+            "floor recorded elsewhere in this registry (a different pipeline, a different "
+            "lane, a different comparability key) and is never interchangeable with it: "
+            "subtracting one lane's floor from another lane's row is exactly the mistake "
+            "BIAS-006 exists to catch." % lane)
+        if delta is None:
+            return {"kind": "other", "direction": "unknown", "floor_measurement_ref": None,
+                    "estimated_magnitude": None, "detail": detail + " " + no_bridge_text}
+        reproduces = bridge.get("tokenwise_kld_sha256_matches_sealed")
+        detail += (" Bridge to the sealed-ep8 lane, measured: signed delta %r nats against %r "
+                  "(|max| %r on any one of %d windows); tokenwise KL array %s the sealed one."
+                  % (delta, bridge.get("sealed_mean_kld"), bridge.get("max_abs_per_window_delta"),
+                     bridge.get("windows_compared"), "matches" if reproduces else "does NOT match"))
+        return {"kind": "other",
+                "direction": "downward" if delta < 0 else ("upward" if delta > 0 else "unknown"),
+                "floor_measurement_ref": None, "estimated_magnitude": abs(delta), "detail": detail}
     if delta is None:
-        return {"kind": "other", "direction": "unknown", "floor_measurement_ref": None,
-                "estimated_magnitude": None,
-                "detail": "Measured on the %r lane, whose offset against the sealed-ep8 lane is "
-                          "known to be non-zero but was NOT measured for this artifact: no "
-                          "sealed-lane row for it exists to bridge against. The lane offset "
-                          "measured for a sibling artifact on this panel is not transferable -- "
-                          "it is a property of the routing, not a constant." % lane}
+        return {"kind": "other", "direction": "unknown", "floor_measurement_ref": floor_ref,
+                "estimated_magnitude": None, "detail": no_bridge_text + floor_sentence}
     reproduces = bridge.get("tokenwise_kld_sha256_matches_sealed")
     return {
         "kind": "other",
         "direction": "downward" if delta < 0 else ("upward" if delta > 0 else "unknown"),
-        "floor_measurement_ref": None,
+        "floor_measurement_ref": floor_ref,
         "estimated_magnitude": abs(delta),
-        "detail": "Lane offset, MEASURED not estimated: this %r-lane run scores %r against the "
+        "detail": ("Lane offset, MEASURED not estimated: this %r-lane run scores %r against the "
                   "sealed-ep8 lane's %r on the same panel, a signed delta of %r nats "
                   "(|max| %r on any one of %d windows). The tokenwise KL array %s the sealed "
                   "one, and the runner's own verdict is publishable_as_reproduction=%r, so this "
@@ -561,7 +620,7 @@ def _stream_bias(adapted, lane):
                   % (lane, bridge.get("stream_mean_kld"), bridge.get("sealed_mean_kld"), delta,
                      bridge.get("max_abs_per_window_delta"), bridge.get("windows_compared"),
                      "matches" if reproduces else "does NOT match",
-                     bridge.get("publishable_as_reproduction")),
+                     bridge.get("publishable_as_reproduction"))) + floor_sentence,
     }
 
 
@@ -729,6 +788,34 @@ def build_row(args, adapted, receipt_sources, registry):
     if args.floor_pending and not args.disclosure:
         raise Refuse(E_VOID, "--floor-pending requires --disclosure explaining why no floor exists.")
 
+    # A floor is the zero-point for ONE lane. The comparability key carries no lane input
+    # (PROV-012), so a row on one lane and a floor measured on another can share a key
+    # without sharing a lane -- BIAS-002 (same key) is not enough to catch that. Checked
+    # here, at write time, rather than only at validate time, because "refuse what it
+    # cannot substantiate" should stop a bad row before it is ever written, not just flag
+    # one that already was.
+    floor_value = None
+    if args.floor_measurement:
+        floor_row = registry["measurements"].get(args.floor_measurement)
+        if floor_row is None:
+            raise Refuse(E_MISSING,
+                         "--floor-measurement %r does not exist in the registry. A floor must be a "
+                         "row already on file, not one invented for this occasion." % args.floor_measurement)
+        floor_value = floor_row["metric"]["value"]
+        floor_lane = (registry["pipelines"].get(floor_row.get("pipeline_ref")) or {}).get(
+            "lane") or {}
+        floor_lane_name = floor_lane.get("name") or "sealed-ep8"
+        this_lane_name = lane or "sealed-ep8"
+        if floor_lane_name != this_lane_name:
+            raise Refuse(E_IDENTITY,
+                         "--floor-measurement %s was measured on lane %r, but this row is on lane "
+                         "%r. A floor measured on one lane is not the zero-point for a different "
+                         "lane, even when the two rows share a comparability key: the key carries "
+                         "no lane input." % (args.floor_measurement, floor_lane_name, this_lane_name))
+    # The floor itself: this row's own artifact IS the reference's unquantized weights,
+    # replayed through this same pipeline. Mirrors BIAS-004/005's structural test.
+    is_floor = (args.artifact == ref.get("artifact_ref"))
+
     ki = {"panel_id": args.panel, "reference_id": args.reference,
           "metric_name": adapted["metric_name"], "direction": direction,
           # "unknown" when neither the receipt nor a flag states it -- never a guess.
@@ -815,7 +902,8 @@ def build_row(args, adapted, receipt_sources, registry):
                         "note": "operator-supplied evidence for --reference-revision"})
 
     ci = adapted.get("ci")
-    lane_bias = _stream_bias(adapted, lane)
+    lane_bias = _stream_bias(adapted, lane, is_floor=is_floor,
+                             floor_ref=args.floor_measurement, floor_value=floor_value)
     row = {
         "schema_version": L.SCHEMA_VERSION,
         "id": args.id or _mint_id(args, ki, adapted),
