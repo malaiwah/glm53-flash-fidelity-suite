@@ -106,6 +106,20 @@ encodes all of this as a comparability key and renders rows from different
 keys in separate tables. If a number you meet in the wild does not pin
 these, it is an anecdote, not a measurement.
 
+**Scope policy is not a formality.** Our own EXL3/TR3 artifacts and the
+third-party Dione trees quantize the routed experts and leave everything
+else at the official BF16 bytes. Community Apple-silicon (MLX) and
+llama.cpp (GGUF) conversions do not: measured from orcarouter's own index,
+its MLX build also quantizes the dense MLPs, the shared experts and four
+DSA attention projections — 186 non-routed modules on top of the 36,288
+routed ones, at a 4/5/6-bit mix — and only 1,432 tensors keep their source
+dtype. A row for such an artifact therefore carries a `scope_policy` block
+**censused from the artifact's own index and shard headers**, never inferred
+from the format family, and the registry renders it as a disclosure. Reading
+"0.0x nats, 4-bit" without it would silently compare a
+quantized-experts-only artifact against one that also quantized its
+attention path.
+
 ## 6. What these numbers are NOT
 
 - Not a task benchmark: KLD measures distributional fidelity to the

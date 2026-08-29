@@ -52,6 +52,19 @@ t "zero-floor identity (T4; SKIPs inside when numpy/torch absent)" \
                                            0 "$PY" bin/selftest_zero_floor.py
 t "stream_score ladder rungs g,h,i,j (teacher role / preview refusal / \
 sampling / receipt stability)"             0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j
+# The MLX surface adapter: dequant vs mlx (replayed from committed real-tensor
+# fixtures, plus a live mlx rung on macOS), the REAL orcarouter census and its
+# refusals, the streaming/decoded-view plumbing, both dry-runs and the registry
+# adapter. Needs torch+numpy+safetensors, so it runs under FIDELITY_PYTHON like
+# the fixture ladder rather than the system python3.
+MLXPY="${FIDELITY_PYTHON:-/opt/homebrew/bin/python3.14}"
+[ -x "$MLXPY" ] || MLXPY="$PY"
+if have_module "$MLXPY" torch && have_module "$MLXPY" safetensors; then
+  t "mlx surface offline (8 rungs: mlx equality, census, refusals, plumbing, \
+dry-runs, registry adapter)"               0 "$MLXPY" k6/tools/selftest_mlx_offline.py
+else
+  s "mlx surface offline" "torch/safetensors not importable under $MLXPY -- export FIDELITY_PYTHON"
+fi
 
 echo "== cloud planner (NETWORK, ACCOUNT; --dry-run creates nothing) =="
 # This target is 'tr3-published' and NO lane has a reader for it: both engines

@@ -1098,3 +1098,85 @@ becomes a partial install on any host that pre-ships a subset. Fixed three ways:
 it, and a hard fail-closed check (the fetch stages demand the flag, so a box
 without the package must not proceed). It now also prints into
 `wheel-versions.txt`, so the receipt shows whether the accelerated path existed.
+
+## 2026-08-29 — MLX surface: a third weight-decode surface, built and validated with no GPU
+
+`k6/tools/mlx_surface.py` + `stream_score.py --source mlx --profile mlx` score
+community **MLX affine** conversions of GLM-5.3-Flash (orcarouter dialect: HF
+tensor names, per-expert `weight`/`scales`/`biases` triplets) on the sealed
+25-window panel, through the same streaming capture, the same fp64 estimator
+and the same EP8/fp32 lane as K6/K8/Dione/native-BF16. Summary schema
+`malaiwah.glm53-mlx-packed-kld-summary.v1`; full write-up in
+[`k6/tools/MLX-SURFACE.md`](k6/tools/MLX-SURFACE.md).
+
+**The finding that shaped the design.** This format quantizes PAST the routed
+experts. Censused from orcarouter's own index and shard headers (revision
+c80f6810, 113,446 stored tensors): 36,288 routed + 864 MTP expert modules, and
+also 129 shared-expert (6-bit), 9 dense-MLP and 48 DSA attention modules —
+37,338 quantized modules and 1,432 passthrough tensors, together bijecting the
+38,770-tensor official BF16 set exactly. So `--bf16` stops being an input of
+this source: the non-routed model is a MATERIALIZED DECODED VIEW of the quant
+snapshot (passthrough verbatim, quantized non-routed fp32-dequantized and
+rounded once to bf16, ~19 GB, hash-stamped and reused, stale views refused),
+which the sealed `from_pretrained` then loads with its zero-missing /
+zero-stray assertions unchanged. Everything downstream — residency, slab
+binding, fuse_gate_up, the single bf16 rounding, the combine — is the lane's
+own, untouched.
+
+**Decode proven, not asserted.** Plain-torch byte-level unpack, fp32 accumulate,
+no float64 and no uint32 views (so it runs on CUDA, MPS and CPU). Our fp32
+dequant rounded ONCE to mlx's own output dtype is BITWISE equal to
+`mlx.core.dequantize` (mlx 0.32.2) on six real ranged-fetched orcarouter
+tensors — 4-bit `experts.0.gate_proj` [2048,4096], 5-bit `experts.0.down_proj`,
+6-bit `shared_experts.gate_proj`, 5-bit dense `layers.0.mlp.down_proj`
+[4096,12288], the MTP layer-45 expert, and 4-bit `self_attn.o_proj`
+[4096,16384] — and on an 8-bit BF16-scale `embed_tokens` row slice from
+pipenetwork's mixed-4_8bit build, which covers the width and scale dtype
+orcarouter does not contain. In fp32 the two differ by ≤1 ulp (mlx fuses the
+multiply-add), so the claim is bitwise equality AT MLX'S OUTPUT DTYPE with the
+fp32 delta reported — never "equal in fp32".
+
+**Bits are derived, not believed.** Per-tensor `(bits, group_size)` come from
+the stored shapes against the official BF16 shape census
+(`bits = 32*packed_cols/in_features`), cross-checked against config.json's
+override map; a disagreement on layers 0–44 refuses. Measured disclosure: 291
+layer-45 modules are stored at 5/6-bit while the config override map does not
+mention layer 45 at all — recorded, not refused (layer 45 never executes).
+
+**Free integrity check discovered while validating the fetch ledger:** the
+index's declared `metadata.total_size` for this snapshot is the ON-DISK total,
+and our per-class ledger reconciles with it exactly —
+203,976,457,080 tensor bytes + 15,619,216 bytes of safetensors container
+headers (62 shards) = 203,992,076,296. Which convention a snapshot used is
+now RECORDED (`declared_total_matches`) rather than assumed, since writers
+differ (transformers declares tensor bytes only).
+
+**Validation, all offline (`k6/tools/selftest_mlx_offline.py`, 8 rungs, ~8 s,
+wired into `bin/selftest_all.sh`):** reference-packer round trip over 18
+bits×group-size combos; real-tensor mlx replay from 7 committed fixtures (runs
+where mlx cannot be installed — every CUDA box); live `mlx.core.quantize`
+round trip over 36 cells (codes EXACTLY mlx's codes, output bitwise equal, f16
+AND bf16 scales); the real orcarouter census plus 9 named refusals; the
+streaming/decoded-view plumbing at real routed geometry; both dry-runs; and the
+registry adapter. `bin/selftest_all.sh` is 32 passed / 0 failed / 2 skipped
+(account-gated) with the new rung in.
+
+**Refused by name, never skipped:** the mlx-vlm ("pipenetwork") dialect (fused
+`switch_mlp`, renamed modules, no MTP layer), non-affine MLX modes, a census
+that does not close, a passthrough tensor differing from the official
+dtype/shape, an underivable bit width, a config declaration disagreeing with
+the stored shapes, and a capture without a pinned 40-hex revision.
+inferencerlabs Q9 (gs32, BF16 scales, no index.json) is decodable by this
+kernel but needs a header-glob census: second wave.
+
+**Registry.** `registry_add` gains the family (lane supplied by `--lane`, like
+K8 and native-BF16) and, for it alone, refuses a receipt that carries no
+`mlx_scope_policy` census — a row that does not say what was quantized would be
+read as if only the experts were.
+
+LESSON 33 (scope is part of the measurement): "quantized to 4 bits" names a
+codec, not an artifact. Two 4-bit GLM-5.3-Flash conversions can differ by
+36,288 vs 37,338 quantized modules, and the difference lands in the same
+scalar we publish. Every surface adapter from now on censuses what the
+artifact actually quantized, from the artifact's own metadata, and the receipt
+carries that census verbatim.

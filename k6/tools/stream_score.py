@@ -78,6 +78,26 @@ Outputs
 per-run ``kld-report.json`` is directly comparable to the sealed one).
 ``backend.json`` and ``capture-receipt.json`` additionally carry a
 ``streaming_disclosure`` block naming every deviation from the sealed path.
+
+Community MLX surfaces (``--source mlx``)
+-----------------------------------------
+``--source mlx`` scores an MLX affine-quantized community conversion
+(orcarouter dialect: HF tensor names, per-expert ``weight/scales/biases``
+triplets) through ``mlx_surface.py``.  Two structural differences from every
+other source, both disclosed in the receipt:
+
+  * SCOPE: the artifact quantizes beyond the routed experts (dense MLPs,
+    shared experts, DSA attention projections).  The non-routed model is
+    therefore built from a MATERIALIZED DECODED VIEW of the quant snapshot
+    itself (passthrough tensors verbatim, quantized non-routed tensors
+    decoded fp32 and rounded once to bf16), and ``--bf16`` is NOT an input of
+    this source - passing it only enables an optional byte-identity
+    cross-check of the passthrough tensors.  The receipt carries the measured
+    ``scope_policy`` census.
+  * PROVENANCE: community checkpoints are unsealed (no contract, no payload
+    hashes); identity is the immutable repo revision + config/index sha256 +
+    the official-BF16 shape-census binding, and the receipt carries
+    ``seal_disclosure`` saying so (same policy as the Dione lane).
 """
 
 from __future__ import annotations
@@ -671,6 +691,7 @@ class ExpertStreamer:
         dione_shards: Any = None,
         native_source: Optional[NativeCheckpointSource] = None,
         exl3hf_source: Optional[Tuple[Any, Any]] = None,
+        mlx_source: Any = None,
     ):
         import torch
 
@@ -688,6 +709,20 @@ class ExpertStreamer:
         # the packed lane's own producer/consumer with the payload IO and the
         # decode call swapped for exl3hf_surface's.
         self.exl3hf_source = exl3hf_source
+        # when set, the routed surface is an MLX affine snapshot: the pool
+        # threads run mlx_surface.dequant_affine on CPU (IO + fp32 decode per
+        # tensor), and the consumer does the same device move / fuse_gate_up /
+        # single bf16 rounding / copy_ / torch.equal close as every other lane.
+        self.mlx_source = mlx_source
+        routed_sources = [name for name, value in (
+            ("dione", dione_shards), ("native", native_source),
+            ("exl3hf", exl3hf_source), ("mlx", mlx_source),
+        ) if value is not None]
+        if len(routed_sources) > 1:
+            raise _fail(
+                "ExpertStreamer cannot serve two routed sources at once: %s"
+                % ", ".join(routed_sources)
+            )
         if 288 % slab_experts:
             raise _fail("--slab-experts must divide 288")
         self.surface = surface
@@ -981,17 +1016,18 @@ class ExpertStreamer:
 
         jobs: "queue.Queue[Any]" = queue.Queue(maxsize=max(2, self.decode_threads * 2))
         error: List[BaseException] = []
-        # ONE loop serves both surfaces.  The packed lane submits
+        # ONE loop serves every per-tensor surface.  The packed lane submits
         # load_payload_cpu (IO + the three sealed hash gates) and the consumer
-        # runs decode_from_payload; the native lane submits a checkpoint read and
-        # the consumer only moves the released bf16 tensor to the device.  Every
+        # runs decode_from_payload; the native lane submits a checkpoint read
+        # and the mlx lane a checkpoint read + CPU fp32 dequant, and for both
+        # the consumer only moves the returned CPU tensor to the device.  Every
         # line after that -- fuse_gate_up, the single bf16 rounding, copy_ into
         # the slab, the torch.equal close check, the host cache -- is shared.
-        native = self.native_source
+        source = self.native_source if self.native_source is not None else self.mlx_source
 
         def submit(pool, expert: int, projection: str):
-            if native is not None:
-                return pool.submit(native.load, layer=layer, expert=expert, projection=projection)
+            if source is not None:
+                return pool.submit(source.load, layer=layer, expert=expert, projection=projection)
             return pool.submit(load_payload_cpu, self.surface, layer=layer,
                                expert=expert, projection=projection)
 
@@ -1033,10 +1069,13 @@ class ExpertStreamer:
                 for (payload_cpu, choice), projection in zip(
                     payloads, ("gate_proj", "up_proj", "down_proj")
                 ):
-                    if native is not None:
-                        # payload_cpu is the RELEASED bf16 tensor; `choice` is its
-                        # census row.  No codec, no hash gate: the shard bytes are
-                        # what the sealed inventory's index_sha256 binds.
+                    if source is not None:
+                        # payload_cpu is the RELEASED bf16 tensor (native) or
+                        # the fp32 CPU dequant (mlx); `choice` is its census
+                        # row.  No sealed hash gate exists for either: the
+                        # binding is the inventory's index_sha256 (native) or
+                        # the mlx checkpoint identity (repo revision +
+                        # config/index sha256), disclosed in the receipt.
                         decoded.append(payload_cpu.to(self.device))
                         continue
                     tensor, _ = decode_from_payload(
@@ -1061,18 +1100,19 @@ class ExpertStreamer:
                     cpu_down[expert].copy_(down_bf16.to("cpu"))
                 self.decoded_matrices += 3
                 choices = [row[1] for row in payloads]
-                if native is not None:
+                if source is not None:
                     self.payload_bytes += sum(int(row["bytes"]) for row in choices)
                     if record_census:
-                        self.census.append(
-                            {
-                                "layer": layer,
-                                "global_expert": expert,
-                                "local_expert": offset,
-                                "tensors": [row["tensor"] for row in choices],
-                                "shards": [row["shard"] for row in choices],
-                            }
-                        )
+                        census_row = {
+                            "layer": layer,
+                            "global_expert": expert,
+                            "local_expert": offset,
+                            "tensors": [row["tensor"] for row in choices],
+                            "shards": [row["shard"] for row in choices],
+                        }
+                        if any("quant" in row for row in choices):
+                            census_row["quant"] = [row.get("quant") for row in choices]
+                        self.census.append(census_row)
                 else:
                     self.payload_bytes += sum(int(row["logical_payload_bytes"]) for row in choices)
                     if record_census:
@@ -1281,12 +1321,19 @@ def _prepare_nonrouted_view_single_file(bf16_root: Path, work_dir: Path) -> Tupl
 
 
 def build_streaming_model(*, bf16_root: Path, work_dir: Path, device, attn_implementation: str,
-                          experts_implementation: str, layers: Tuple[int, ...]):
+                          experts_implementation: str, layers: Tuple[int, ...],
+                          prebuilt_view: Optional[Tuple[Path, Dict[str, Any]]] = None):
     import torch
     from transformers import AutoModelForImageTextToText
     import transformers.models.glm5_next.modeling_glm5_next as glm5_next
 
-    view, view_record = prepare_nonrouted_view(bf16_root, work_dir)
+    if prebuilt_view is not None:
+        # --source mlx: the non-routed view was MATERIALIZED (decoded) by
+        # mlx_surface.prepare_nonrouted_view_decoded; it already contains only
+        # the non-routed tensors, so the symlink/filter step does not apply.
+        view, view_record = prebuilt_view
+    else:
+        view, view_record = prepare_nonrouted_view(bf16_root, work_dir)
     started = time.monotonic()
     experts_class = glm5_next.Glm5NextTextExperts
     original_init = experts_class.__init__
@@ -1466,7 +1513,7 @@ def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     src = parser.add_argument_group("weight source")
     src.add_argument("--source", choices=("checkpoint", "payload-store", "dione", "native",
-                                          "exl3hf"),
+                                          "exl3hf", "mlx"),
                      default="payload-store",
                      help="checkpoint = materialized shards (its receipt names the packed root); "
                           "payload-store = the content-addressed store directly (default); "
@@ -1475,7 +1522,10 @@ def main() -> int:
                           "(the measurement floor of this lane); "
                           "exl3hf = a stock-exllamav3 HF-sharded release (mul1/mcg codebook, "
                           "full-scope quant) via exl3hf_surface -- --bf16 must point at its "
-                          "materialized non-routed tree")
+                          "materialized non-routed tree; "
+                          "mlx = a community MLX affine snapshot via mlx_surface (EVERY tensor "
+                          "from the quant repo: routed experts streamed-decoded, non-routed "
+                          "decoded into a materialized bf16 view)")
     src.add_argument("--checkpoint", type=Path, help="--source checkpoint: materialized checkpoint root")
     src.add_argument("--packed-root", type=Path,
                      help="--source payload-store: encode output root (out-k6) carrying "
@@ -1489,12 +1539,27 @@ def main() -> int:
                      help="--source exl3hf: the HF repo id the snapshot came from")
     src.add_argument("--exl3hf-revision",
                      help="--source exl3hf: the immutable 40-hex revision of that snapshot")
+    src.add_argument("--mlx-root", type=Path,
+                     help="--source mlx: MLX snapshot root (config.json + index + shards; a "
+                          "fetch-meta metadata root is enough for --dry-run)")
+    src.add_argument("--mlx-repo", help="--source mlx: HF repo id, recorded in the identity")
+    src.add_argument("--mlx-revision",
+                     help="--source mlx: immutable 40-hex repo commit (REQUIRED unless --dry-run)")
+    src.add_argument("--mlx-official-census", type=Path,
+                     help="--source mlx: official BF16 shape census "
+                          "(default k6/tools/mlx-evidence/bf16-shape-census.json.gz)")
+    src.add_argument("--mlx-skip-shard-hashes", action="store_true",
+                     help="--source mlx: skip the whole-shard sha256 gate (disclosed in the receipt)")
     src.add_argument("--inventory", type=Path,
                      help="--source native: sealed quant-pipeline.glm-release-inventory.v1 that "
                           "binds the BF16 config/index (defaults to <packed-root>/inventory.json). "
                           "It is the only provenance anchor a native run has, since there is no "
                           "contract and no payload store")
-    src.add_argument("--bf16", type=Path, required=True, help="official BF16 checkpoint (non-routed source)")
+    src.add_argument("--bf16", type=Path,
+                     help="official BF16 checkpoint (non-routed source). REQUIRED for every "
+                          "source except mlx, whose non-routed tensors come decoded from the "
+                          "quant snapshot itself (with --source mlx this flag only enables an "
+                          "optional passthrough byte-identity cross-check)")
 
     parser.add_argument("--teacher", type=Path, required=True,
                         help="teacher final-window tree (panel receipt search root)")
@@ -1502,7 +1567,7 @@ def main() -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--cold-run", type=int, required=True)
     parser.add_argument("--profile", default="k6",
-                        choices=("k6", "k8", "k6k8", "native-bf16",
+                        choices=("k6", "k8", "k6k8", "native-bf16", "mlx",
                                  "turbo-4.05bpw", "turbo-3.05bpw"))
     parser.add_argument("--roles", default="final")
     parser.add_argument("--windows", help="comma-separated window ids to score (default: all)")
@@ -1618,6 +1683,18 @@ def main() -> int:
             "selects the student label the KLD report expects"
             % "/".join(sorted(EXL3HF_PROFILES))
         )
+    if (args.source == "mlx") != (args.profile == "mlx"):
+        raise _fail(
+            "--source mlx and --profile mlx must be used together: the profile names the "
+            "receipt family (malaiwah.glm53-mlx-packed-kld-summary.v1) and an MLX surface "
+            "is not a K6/K8 one"
+        )
+    if args.source != "mlx" and args.bf16 is None:
+        raise _fail(
+            "--bf16 is required for --source checkpoint/payload-store/dione/native/exl3hf (the "
+            "non-routed tensors come from a BF16 tree); only --source mlx supplies every "
+            "tensor from the quant snapshot itself"
+        )
 
     # ---- teacher role and preview sampling (both flag-gated; defaults are
     # byte-identical to the sealed behaviour) ------------------------------
@@ -1669,7 +1746,34 @@ def main() -> int:
     contract = None
     mtp_adapter = None
     bits: Optional[int] = None
-    if args.source == "native":
+    mlx_surface_obj = None
+    inventory: Optional[Dict[str, Any]] = None
+    if args.source == "mlx":
+        import mlx_surface as mlxs
+
+        if args.mlx_root is None:
+            raise _fail("--source mlx requires --mlx-root (the MLX snapshot root)")
+        if not args.dry_run and (
+            args.mlx_revision is None
+            or mlxs._REVISION.fullmatch(args.mlx_revision) is None
+        ):
+            raise _fail(
+                "--source mlx requires --mlx-revision <40-hex immutable commit> for a real "
+                "capture: an unsealed community artifact's ONLY provenance anchor is the "
+                "pinned revision plus the config/index sha256 (--dry-run may omit it)"
+            )
+        try:
+            mlx_surface_obj = mlxs.load_mlx_surface(
+                args.mlx_root,
+                repo=args.mlx_repo,
+                revision=args.mlx_revision,
+                official_census_path=args.mlx_official_census,
+                require_shard_hashes=not args.mlx_skip_shard_hashes,
+            )
+        except ValueError as error:
+            raise _fail(str(error))
+        model_revision = mlx_surface_obj.revision
+    elif args.source == "native":
         # There is no contract, no payload store and no codec.  The ONE
         # provenance anchor is the sealed release inventory, which binds the
         # BF16 config.json and model.safetensors.index.json this run reads its
@@ -1795,29 +1899,38 @@ def main() -> int:
             packed_root / "mtp-adapter-receipt.json", _mtp_adapter_schema(bits), "receipt_sha256"
         )
 
-    # ---- official BF16 identity ------------------------------------------
-    model_root = args.bf16.resolve()
-    config_path = model_root / "config.json"
-    index_path = model_root / "model.safetensors.index.json"
-    if not config_path.is_file() or not index_path.is_file():
-        raise _fail("official model requires config.json and model.safetensors.index.json")
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    text_config = config.get("text_config", {})
-    if (
-        config.get("architectures") != [RELEASED_ARCHITECTURE]
-        or config.get("model_type") != RELEASED_MODEL_TYPE
-        or text_config.get("model_type") != RELEASED_TEXT_MODEL_TYPE
-        or text_config.get("num_hidden_layers") != 45
-        or text_config.get("num_nextn_predict_layers") != 1
-        or text_config.get("n_routed_experts") != 288
-        or text_config.get("hidden_size") != 4096
-        or text_config.get("moe_intermediate_size") != 2048
-    ):
-        raise _fail("official GLM5Next main/MTP geometry differs")
-    if inventory.get("config_sha256") != sha256_file(config_path) or inventory.get(
-        "index_sha256"
-    ) != sha256_file(index_path):
-        raise _fail("BF16 inventory does not bind the local config/index")
+    # ---- source model identity -------------------------------------------
+    if args.source == "mlx":
+        # The quant snapshot IS the model: geometry was gated by
+        # load_mlx_surface against the same released constants, and identity
+        # is the repo revision + config/index sha256 + official-census binding
+        # (there is no sealed inventory for a community artifact).
+        model_root = mlx_surface_obj.root
+        config = dict(mlx_surface_obj.config)
+        text_config = config.get("text_config", {})
+    else:
+        model_root = args.bf16.resolve()
+        config_path = model_root / "config.json"
+        index_path = model_root / "model.safetensors.index.json"
+        if not config_path.is_file() or not index_path.is_file():
+            raise _fail("official model requires config.json and model.safetensors.index.json")
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        text_config = config.get("text_config", {})
+        if (
+            config.get("architectures") != [RELEASED_ARCHITECTURE]
+            or config.get("model_type") != RELEASED_MODEL_TYPE
+            or text_config.get("model_type") != RELEASED_TEXT_MODEL_TYPE
+            or text_config.get("num_hidden_layers") != 45
+            or text_config.get("num_nextn_predict_layers") != 1
+            or text_config.get("n_routed_experts") != 288
+            or text_config.get("hidden_size") != 4096
+            or text_config.get("moe_intermediate_size") != 2048
+        ):
+            raise _fail("official GLM5Next main/MTP geometry differs")
+        if inventory.get("config_sha256") != sha256_file(config_path) or inventory.get(
+            "index_sha256"
+        ) != sha256_file(index_path):
+            raise _fail("BF16 inventory does not bind the local config/index")
 
     # ---- surface + panel --------------------------------------------------
     surface_started = time.monotonic()
@@ -1825,7 +1938,34 @@ def main() -> int:
     native_layout: Optional[Dict[str, Any]] = None
     exl3hf_reader = None
     exl3hf_layout: Optional[Dict[str, Any]] = None
-    if args.source == "native":
+    mlx_expert_source = None
+    mlx_layout: Optional[Dict[str, Any]] = None
+    if args.source == "mlx":
+        import mlx_surface as mlxs
+
+        mlx_layout = {
+            "routed_expert_modules": len(mlx_surface_obj.census["routed_modules"]),
+            "mtp_expert_modules": len(mlx_surface_obj.census["routed_mtp_modules"]),
+            "nonrouted_quantized_modules": len(
+                mlx_surface_obj.census["nonrouted_quantized_modules"]
+            ),
+            "passthrough_tensor_count": len(mlx_surface_obj.census["passthrough_tensors"]),
+            "bits_histogram": dict(mlx_surface_obj.census["bits_histogram"]),
+            "fetch_ledger": mlx_surface_obj.fetch_ledger(),
+            "config_agreement": dict(mlx_surface_obj.config_agreement),
+            "metadata_only": mlx_surface_obj.metadata_only,
+        }
+        if not args.dry_run:
+            if mlx_surface_obj.metadata_only:
+                raise _fail(
+                    "--source mlx capture needs the real shards on disk; this root is a "
+                    "metadata-only fetch-meta snapshot (fine for --dry-run only)"
+                )
+            try:
+                mlx_expert_source = mlxs.MlxExpertSource(mlx_surface_obj)
+            except ValueError as error:
+                raise _fail(str(error))
+    elif args.source == "native":
         native_source = NativeCheckpointSource(model_root)
         native_layout = native_source.routed_tensor_census(
             tuple(MAIN_ROUTED_LAYERS), int(text_config["n_routed_experts"])
@@ -1891,6 +2031,11 @@ def main() -> int:
                 }
             )
         )
+    if args.source == "mlx":
+        import mlx_surface as mlxs
+
+        identity = mlxs.mlx_reader_identity(Path(__file__).resolve(), mlx_surface_obj)
+        checkpoint_identity = mlx_surface_obj.checkpoint_identity_sha256()
     elif args.source == "native":
         identity = native_source_identity(
             Path(reader_module.__file__).resolve(), Path(__file__).resolve()
@@ -2053,6 +2198,65 @@ def main() -> int:
         ]
         disclosure["exl3hf_routed_layout"] = exl3hf_layout
         disclosure["seal_disclosure"] = xs3.SEAL_DISCLOSURE
+    elif args.source == "mlx":
+        import mlx_surface as mlxs
+
+        # The MLX lane differs from a K6/K8 streaming run in TWO places, both
+        # named here: where the routed expert bytes come from (an unsealed
+        # community snapshot, affine-decoded) and where the non-routed model
+        # comes from (a DECODED bf16 view of that same snapshot, because this
+        # format quantizes beyond the routed experts).  Residency, topology,
+        # slab binding, the from_pretrained constructor and the expert combine
+        # are unchanged and still true above.
+        disclosure["routed_weight_source"] = (
+            "MLX affine u32-packed community snapshot, read per expert by the released "
+            "tensor names and dequantized in fp32 (q * scale + bias, groups of "
+            f"{mlx_surface_obj.default_group_size} along the input axis; per-tensor bits "
+            "derived from shapes against the official BF16 shape census)"
+        )
+        disclosure["dtype_policy"] = dict(disclosure["dtype_policy"])
+        disclosure["dtype_policy"]["weights"] = (
+            "bfloat16 decoded from the MLX affine payload (fp32 dequant, one rounding); "
+            "proven bitwise-equal to mlx.core.dequantize at f16 on real tensors"
+        )
+        disclosure["dtype_policy"]["nonrouted"] = (
+            "materialized decoded view of the quant snapshot: passthrough tensors verbatim "
+            "(byte-identical dtype/shape to the official tree), quantized non-routed tensors "
+            "fp32-dequantized and rounded once to bf16"
+        )
+        disclosure["sealed_path_identical"] = [
+            item
+            for item in disclosure["sealed_path_identical"]
+            if not item.startswith("decode contract:")
+        ]
+        # The generic "model construction" difference above says the non-routed
+        # index lists symlinked OFFICIAL shards.  That is false for this source
+        # and a receipt must not carry a false clause next to a true one, so the
+        # clause is rewritten in place rather than contradicted further down.
+        disclosure["sealed_path_differences"] = [
+            item.replace(
+                "(shards symlinked), instead of reading all 599 GB to discard 580 GB of it",
+                "(shards MATERIALIZED by mlx_surface as decoded bf16, NOT symlinked official "
+                "shards - see nonrouted_policy), instead of reading the whole artifact to "
+                "discard the routed part of it",
+            )
+            for item in disclosure["sealed_path_differences"]
+        ]
+        disclosure["sealed_path_differences"] = list(disclosure["sealed_path_differences"]) + [
+            "routed surface: an UNSEALED community MLX artifact. No payload store, no "
+            "contract, no MCG codebook and no hash-gated decode are in the path; the "
+            "provenance anchor is the immutable repo revision plus config/index sha256 "
+            "plus the official-BF16 shape-census binding (see seal_disclosure)",
+            "non-routed model: built from a materialized DECODED view of the quant snapshot "
+            "instead of the official BF16 tree, because this artifact quantizes dense MLPs, "
+            "shared experts and DSA attention projections too (see scope_policy); the "
+            "sealed from_pretrained constructor and its zero-missing/zero-stray load "
+            "assertions run over that view unchanged",
+        ]
+        disclosure["scope_policy"] = mlx_surface_obj.scope_policy()
+        disclosure["seal_disclosure"] = mlxs.SEAL_DISCLOSURE
+        disclosure["dtype_disclosure"] = mlxs.DTYPE_DISCLOSURE
+        disclosure["mlx_routed_layout"] = mlx_layout
 
     plan = {
         "schema": STREAM_PLAN_SCHEMA,
@@ -2062,7 +2266,7 @@ def main() -> int:
         "packed_root": str(packed_root) if packed_root is not None else None,
         "checkpoint_root": str(args.checkpoint.resolve()) if args.checkpoint else None,
         "materialization_receipt_sha256": (materialization or {}).get("receipt_sha256"),
-        "inventory_sha256": inventory["inventory_sha256"],
+        "inventory_sha256": inventory["inventory_sha256"] if inventory is not None else None,
         "contract_sha256": surface.contract_sha256 if surface is not None else None,
         "checkpoint_identity_sha256": checkpoint_identity,
         "runtime_reader_sha256": identity["runtime_reader_sha256"],
@@ -2083,15 +2287,24 @@ def main() -> int:
         "main_routed_policy": (
             "streamed_official_bf16_checkpoint_experts_no_decode_one_layer_resident"
             if args.source == "native"
-            else f"streamed_decode_hash_verified_packed_k{bits}_mcg_to_bf16_one_layer_resident"
+            else (
+                "streamed_decoded_mlx_affine_u32_to_bf16_one_layer_resident"
+                if args.source == "mlx"
+                else f"streamed_decode_hash_verified_packed_k{bits}_mcg_to_bf16_one_layer_resident"
+            )
         ),
         "native_routed_layout": native_layout,
+        "mlx_routed_layout": mlx_layout,
         "mtp_policy": (
             "mtp_layer_45_present_in_the_checkpoint_but_not_executed_by_standard_logits"
-            if args.source == "native"
+            if args.source in ("native", "mlx")
             else "complete_and_receipt_required_but_not_executed_by_standard_logits"
         ),
-        "nonrouted_policy": "untouched_official_checkpoint_parameters",
+        "nonrouted_policy": (
+            "decoded_bf16_view_materialized_from_the_quant_snapshot"
+            if args.source == "mlx"
+            else "untouched_official_checkpoint_parameters"
+        ),
         "stored_logits_dtype": "float32",
         "surface_load_seconds": surface_seconds,
         "memory_plan": memory,
@@ -2125,6 +2338,24 @@ def main() -> int:
                 "exl3hf_routed_layout": exl3hf_layout,
             }
         )
+    if args.source == "mlx":
+        plan["mlx"] = {
+            "mlx_repo": mlx_surface_obj.repo,
+            "mlx_revision": mlx_surface_obj.revision,
+            "config_sha256": mlx_surface_obj.config_sha256,
+            "index_sha256": mlx_surface_obj.index_sha256,
+            "official_census_sha256": mlx_surface_obj.official_census_sha256,
+            "official_source_repo": mlx_surface_obj.official_source_repo,
+            "official_source_revision": mlx_surface_obj.official_source_revision,
+            "default_bits": mlx_surface_obj.default_bits,
+            "default_group_size": mlx_surface_obj.default_group_size,
+            "student_label": mlx_surface_obj.student_label(),
+            "scope_policy": mlx_surface_obj.scope_policy(),
+            "fetch_ledger": mlx_surface_obj.fetch_ledger(),
+            "config_agreement": dict(mlx_surface_obj.config_agreement),
+            "shard_hash_verification": mlx_surface_obj.shard_hash_verification,
+            "bf16_passthrough_crosscheck_planned": args.bf16 is not None,
+        }
     print(json.dumps(plan, sort_keys=True), flush=True)
     if args.dry_run:
         return 0
@@ -2154,6 +2385,22 @@ def main() -> int:
     load_started = time.monotonic()
     work_dir = (args.work_dir or (output_root.parent / ".stream-work")).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
+    prebuilt_view = None
+    mlx_bf16_crosscheck: Optional[Dict[str, Any]] = None
+    if args.source == "mlx":
+        import mlx_surface as mlxs
+
+        try:
+            prebuilt_view = mlxs.prepare_nonrouted_view_decoded(mlx_surface_obj, work_dir)
+            if args.bf16 is not None:
+                # OPTIONAL: the quantizer left the passthrough tensors
+                # untouched, so a deterministic sample must be byte-identical
+                # to the official tree when the operator supplies one.
+                mlx_bf16_crosscheck = mlxs.verify_nonrouted_passthrough(
+                    mlx_surface_obj, args.bf16.resolve()
+                )
+        except ValueError as error:
+            raise _fail(str(error))
     model, build = build_streaming_model(
         bf16_root=model_root,
         work_dir=work_dir,
@@ -2161,6 +2408,7 @@ def main() -> int:
         attn_implementation=args.attention_backend,
         experts_implementation=args.experts_implementation,
         layers=layers,
+        prebuilt_view=prebuilt_view,
     )
     streamer = ExpertStreamer(
         surface=surface,
@@ -2174,6 +2422,7 @@ def main() -> int:
         cache_dir=args.decode_cache_dir.resolve() if args.decode_cache_dir else None,
         native_source=native_source,
         exl3hf_source=(exl3hf, exl3hf_reader) if args.source == "exl3hf" else None,
+        mlx_source=mlx_expert_source,
     )
     if decode_device != device:
         raise _fail(
@@ -2203,7 +2452,7 @@ def main() -> int:
         "schema": STREAM_BACKEND_SCHEMA,
         "architecture": RELEASED_ARCHITECTURE,
         "model_revision": model_revision,
-        "inventory_sha256": inventory["inventory_sha256"],
+        "inventory_sha256": inventory["inventory_sha256"] if inventory is not None else None,
         "checkpoint_identity_sha256": checkpoint_identity,
         "contract_sha256": surface.contract_sha256 if surface is not None else None,
         "runtime_reader_sha256": identity["runtime_reader_sha256"],
@@ -2237,19 +2486,31 @@ def main() -> int:
                 "bfloat16 streamed-decoded from stock exl3 %s payloads (per-module bits)"
                 % exl3hf.codebook
                 if args.source == "exl3hf"
-                else f"bfloat16 streamed-decoded from packed K{bits} payload"
+                else (
+                    "bfloat16 streamed-decoded from MLX affine u32 payload (fp32 dequant, "
+                    "one rounding)"
+                    if args.source == "mlx"
+                    else f"bfloat16 streamed-decoded from packed K{bits} payload"
+                )
             )
         ),
         "nonrouted_runtime_dtype": (
             "bfloat16 materialized from the artifact's own tensors (dequantized/cast)"
             if args.source == "exl3hf"
-            else "official source dtype, untouched"
+            else (
+                "decoded bf16 view of the quant snapshot (passthrough verbatim, quantized "
+                "non-routed fp32-dequantized, one bf16 rounding)"
+                if args.source == "mlx"
+                else "official source dtype, untouched"
+            )
         ),
         "mtp_standard_logits_executed": False,
         "mtp_pack_receipt_sha256": (
             surface.mtp_pack_receipt_sha256 if surface is not None else None
         ),
         "native_routed_layout": native_layout,
+        "mlx_routed_layout": mlx_layout,
+        "mlx_nonrouted_passthrough_crosscheck": mlx_bf16_crosscheck,
         "stored_encoder_closure": closure,
         "model_build": build,
         "streaming_wiring": wiring,
@@ -2306,6 +2567,11 @@ def main() -> int:
         student_label = NATIVE_STUDENT_LABEL
     elif args.source == "exl3hf":
         student_label = EXL3HF_PROFILES[args.profile][1]
+    elif args.source == "mlx":
+        # DERIVED from the artifact, not from the profile: an MLX repo's bit mix is
+        # part of what is being measured, so the label carries it (and the KLD report
+        # gates the family prefix + cross-run equality instead of one fixed string).
+        student_label = mlx_surface_obj.student_label()
     else:
         student_label = f"uniform-k{bits}"
     capture_role = NATIVE_CAPTURE_ROLE if args.source == "native" else "packed_student"
@@ -2458,8 +2724,18 @@ def main() -> int:
             "decoded_matrix_count": streamer.decoded_matrices,
             "distinct_matrix_census": census_matrices,
             "census_closes_main_routed_surface": census_matrices == expected_matrices,
+            # "verified" means hash-gated by the sealed payload store.  Neither the
+            # native lane (no payload at all) nor the MLX lane (an unsealed artifact
+            # with no per-payload digest to gate on) has such bytes; the MLX artifact
+            # bytes actually read are reported separately, unqualified.
             "verified_packed_payload_bytes": (
-                None if args.source == "native" else streamer.payload_bytes
+                None if args.source in ("native", "mlx") else streamer.payload_bytes
+            ),
+            "mlx_artifact_bytes_read": (
+                int(mlx_expert_source.bytes_read) if mlx_expert_source is not None else None
+            ),
+            "mlx_shards_read": (
+                len(mlx_expert_source.shards_read) if mlx_expert_source is not None else None
             ),
             "native_checkpoint_bytes_read": (
                 int(native_source.bytes_read) if native_source is not None else None
@@ -2508,7 +2784,14 @@ def main() -> int:
                 "stock EXL3 (%s codebook, per-module bits) streamed offline-decoded to BF16"
                 % exl3hf.codebook
                 if args.source == "exl3hf"
-                else f"EXL3/TR3 uniform-k{bits} streamed offline-decoded to BF16"
+                else (
+                    "MLX affine u32-packed weights streamed offline-dequantized to BF16 "
+                    f"({mlx_surface_obj.student_label() if mlx_surface_obj is not None else ''}); "
+                    "the artifact also quantizes non-routed tensors, decoded into the "
+                    "materialized view this forward was built from (see scope_policy)"
+                    if args.source == "mlx"
+                    else f"EXL3/TR3 uniform-k{bits} streamed offline-decoded to BF16"
+                )
             )
         ),
         "logits_dtype": "float32",
@@ -2520,8 +2803,8 @@ def main() -> int:
         "elapsed_seconds": time.monotonic() - capture_started,
         "streaming_disclosure": disclosure,
     }
-    # Both blocks below are added BEFORE receipt_sha256 is computed, so the
-    # seal covers them.  Neither appears in a default invocation, which keeps
+    # Every block below is added BEFORE receipt_sha256 is computed, so the seal
+    # covers it.  None of them appears in a default invocation, which keeps
     # default receipts field-identical to the sealed layout (asserted by
     # stream_score_selftest rung L1.j).
     if args.source == "exl3hf":
@@ -2541,6 +2824,42 @@ def main() -> int:
         receipt["seal_disclosure"] = xs3.SEAL_DISCLOSURE
         receipt["routed_bits_decode_histogram"] = dict(
             sorted(exl3hf.routed_bits_histogram.items())
+        )
+    if args.source == "mlx":
+        # The provenance a community artifact CAN carry, at the top level where
+        # k6_kld_report lifts it into the headline summary (mirrors the Dione
+        # capture receipt's dione_* block).  There is no contract and no payload
+        # digest to record here, which is exactly what seal_disclosure says.
+        receipt.update(
+            {
+                "mlx_repo": mlx_surface_obj.repo,
+                "mlx_revision": mlx_surface_obj.revision,
+                "mlx_format": mlxs.MLX_FORMAT,
+                "mlx_default_bits": mlx_surface_obj.default_bits,
+                "mlx_default_group_size": mlx_surface_obj.default_group_size,
+                "mlx_bits_histogram": dict(mlx_surface_obj.census["bits_histogram"]),
+                "mlx_config_sha256": mlx_surface_obj.config_sha256,
+                "mlx_index_sha256": mlx_surface_obj.index_sha256,
+                "mlx_shard_hash_verification": mlx_surface_obj.shard_hash_verification,
+                "mlx_scope_policy": mlx_surface_obj.scope_policy(),
+                "mlx_nonrouted_view": {
+                    key: prebuilt_view[1].get(key)
+                    for key in (
+                        "nonrouted_tensor_count",
+                        "decoded_module_count",
+                        "passthrough_tensor_count",
+                        "shards_written",
+                        "total_bytes",
+                        "config_quantization_block_stripped",
+                    )
+                },
+                "mlx_nonrouted_passthrough_crosscheck": mlx_bf16_crosscheck,
+                "mlx_fetch_ledger": mlx_surface_obj.fetch_ledger(),
+                "source_repo": mlx_surface_obj.official_source_repo,
+                "source_revision": mlx_surface_obj.official_source_revision,
+                "official_shape_census_sha256": mlx_surface_obj.official_census_sha256,
+                "seal_disclosure": mlxs.SEAL_DISCLOSURE,
+            }
         )
     if args.capture_role == "teacher":
         receipt["teacher_provenance"] = {

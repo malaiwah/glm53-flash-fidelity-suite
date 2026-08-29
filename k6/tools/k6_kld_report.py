@@ -36,6 +36,10 @@ import numpy as np
 FINAL_WINDOW_COUNT = 25
 FINAL_WINDOW_IDS = tuple(f"final-{index:04d}" for index in range(25))
 FINAL_PREDICTION_POSITIONS = 25 * 2047
+# --profile mlx: mlx_surface.MlxSurface.student_label() builds
+# "mlx-affine-b<bits>-gs<group>[-mixed-<hash of the bit histogram>]", so the
+# report gates the FAMILY here and the exact string across runs.
+MLX_STUDENT_LABEL_PREFIX = "mlx-affine-"
 
 
 def _fail(message: str, code: int = 1) -> "SystemExit":
@@ -440,6 +444,9 @@ def _comparison_table(
         ("dione-3.0bpw", "3.0 (TP4-sliced)", "~139 GiB"),
         ("turbo-4.05bpw", "4.05 (full-scope, head 6)", "150.2 GiB"),
         ("turbo-3.05bpw", "3.05 (full-scope, head 6)", "116.6 GiB"),
+        # community MLX affine snapshots: bit mix and size are properties of the
+        # artifact, so both are READ from the receipt instead of hardcoded here
+        ("mlx", None, None),
     ):
         receipt_path = receipts_dir / f"{profile}-packed-kld.json"
         if receipt_path.is_file():
@@ -454,7 +461,18 @@ def _comparison_table(
                 "dione-3.0bpw": "0xSero Dione 3.0bpw (EXL3 K3, unsealed source)",
                 "turbo-4.05bpw": "turboderp 4.05bpw (stock EXL3 mul1, quantized head, unsealed source)",
                 "turbo-3.05bpw": "turboderp 3.05bpw (stock EXL3 mul1, quantized head, unsealed source)",
+                "mlx": "%s (MLX affine, unsealed source, quantized BEYOND the routed experts)"
+                       % (receipt.get("mlx_repo") or "community MLX"),
             }[profile]
+            if profile == "mlx":
+                histogram = receipt.get("mlx_bits_histogram") or {}
+                bpw = " ".join(f"{key}:{value}" for key, value in sorted(histogram.items())) or "?"
+                artifact_bytes = receipt.get("mlx_artifact_bytes")
+                size = (
+                    f"{artifact_bytes / (1 << 30):.1f} GiB"
+                    if isinstance(artifact_bytes, int)
+                    else "?"
+                )
             teacher_sha = str(
                 receipt.get("teacher_receipt_sha256") or SEALED_EP8_TEACHER_SHA
             )
@@ -491,7 +509,7 @@ def main() -> int:
     parser.add_argument("--profile", required=True,
                         choices=("k6", "k6-stream", "k8", "k6k8", "dione-q4", "dione-3.0bpw",
                                  "turbo-4.05bpw", "turbo-3.05bpw",
-                                 "native-bf16"))
+                                 "native-bf16", "mlx"))
     parser.add_argument("--teacher", type=Path, required=True)
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
     parser.add_argument("--fp8-baseline", type=float, default=0.020615)
@@ -540,12 +558,31 @@ def main() -> int:
         # in the path (stream_score.py --source native).  Subtracting this mean
         # from a quant's mean leaves that quant's quantization-attributable error.
         "native-bf16": "native-bf16",
+        # community MLX affine snapshots (stream_score.py --source mlx).  The
+        # label is DERIVED from the artifact's own bit mix, so it cannot be a
+        # constant here; it is read from the first run's capture receipt below,
+        # gated on the family prefix, and then required of every other run.
+        "mlx": None,
     }[args.profile]
     # a native run is not a packed student and does not claim to be one
     expected_capture_role = (
         "native_bf16_student" if args.profile == "native-bf16" else "packed_student"
     )
     runs = [path.resolve() for path in args.runs]
+    if args.profile == "mlx":
+        first = runs[0] / "capture-receipt.json"
+        if not first.is_file():
+            raise _fail(f"--profile mlx needs the first run's capture receipt: {first}")
+        declared = json.loads(first.read_text(encoding="utf-8")).get("student_label")
+        if not isinstance(declared, str) or not declared.startswith(MLX_STUDENT_LABEL_PREFIX):
+            raise _fail(
+                f"--profile mlx expects a student_label starting with "
+                f"{MLX_STUDENT_LABEL_PREFIX!r} (mlx_surface derives it from the artifact's "
+                f"bit mix); {first} declares {declared!r}"
+            )
+        # every remaining run must now carry this EXACT label, which is the
+        # cross-run gate the fixed-label profiles get for free
+        student_label = declared
     campaign_root = runs[0].parent.parent
     checkpoint = (
         args.checkpoint.resolve()
@@ -692,11 +729,13 @@ def main() -> int:
             "schema": f"malaiwah.glm53-{args.profile}-packed-kld-summary.v1",
             # STORAGE layout, not lane: the dione conversions ship TP4-sliced
             # ranks, the stock-exllamav3 (turbo) releases ship canonical HF
-            # shards, and the native lane is single-device (EP8-emulated).
-            # Suffixing every profile "-tp4" put a false storage claim in the
-            # headline receipt of an artifact that is not sliced at all.
+            # shards, the MLX conversions ship per-expert HF-named tensors, and
+            # the native lane is single-device (EP8-emulated).  Suffixing every
+            # profile "-tp4" put a false storage claim in the headline receipt
+            # of an artifact that is not sliced at all.
             "profile": (
                 "native-bf16-stream" if args.profile == "native-bf16"
+                else "mlx-stream" if args.profile == "mlx"
                 else f"{args.profile}-hf-sharded" if args.profile.startswith("turbo")
                 else f"{args.profile}-tp4"
             ),
@@ -761,6 +800,49 @@ def main() -> int:
                         "seal_disclosure": student_receipt.get("seal_disclosure"),
                     }
                 )
+        elif args.profile == "mlx":
+            # Same rule as Dione: the headline receipt carries the unsealed-source
+            # disclosure and the immutable pins itself.  It additionally carries
+            # the SCOPE POLICY, because this artifact family quantizes beyond the
+            # routed experts and a registry row must disclose that.
+            from quant_pipeline.evaluation.glm53_logits import (
+                CAPTURE_SCHEMA,
+                sealed_json,
+            )
+
+            student_receipt = sealed_json(
+                runs[0] / "capture-receipt.json", CAPTURE_SCHEMA, "receipt_sha256"
+            )
+            for field in ("mlx_repo", "mlx_revision", "mlx_scope_policy"):
+                if student_receipt.get(field) is None:
+                    raise _fail(
+                        f"--profile mlx: the capture receipt carries no {field}; it was not "
+                        "produced by stream_score.py --source mlx"
+                    )
+            summary.update(
+                {
+                    "student_receipt_sha256": student_receipt["receipt_sha256"],
+                    "mlx_repo": student_receipt.get("mlx_repo"),
+                    "mlx_revision": student_receipt.get("mlx_revision"),
+                    "mlx_format": student_receipt.get("mlx_format"),
+                    "mlx_default_bits": student_receipt.get("mlx_default_bits"),
+                    "mlx_default_group_size": student_receipt.get("mlx_default_group_size"),
+                    "mlx_bits_histogram": student_receipt.get("mlx_bits_histogram"),
+                    "mlx_config_sha256": student_receipt.get("mlx_config_sha256"),
+                    "mlx_index_sha256": student_receipt.get("mlx_index_sha256"),
+                    "mlx_shard_hash_verification": student_receipt.get(
+                        "mlx_shard_hash_verification"
+                    ),
+                    "mlx_scope_policy": student_receipt.get("mlx_scope_policy"),
+                    "mlx_artifact_bytes": (
+                        student_receipt.get("mlx_fetch_ledger") or {}
+                    ).get("on_disk_total_bytes"),
+                    "nonrouted_policy": "decoded_bf16_view_materialized_from_the_quant_snapshot",
+                    "source_repo": student_receipt.get("source_repo"),
+                    "source_revision": student_receipt.get("source_revision"),
+                    "seal_disclosure": student_receipt.get("seal_disclosure"),
+                }
+            )
         _atomic_json(args.out.resolve(), summary)
         print(
             json.dumps(

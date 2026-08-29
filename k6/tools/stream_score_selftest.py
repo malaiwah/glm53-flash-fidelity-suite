@@ -781,12 +781,22 @@ GOLDEN_RECEIPT_KEYS = frozenset({
 #   exl3hf:           the stock-exllamav3 artifact pins (source == "exl3hf"),
 #                     which name the artifact revision, its config/index shas,
 #                     the codebook and the non-routed materialization receipt
+#   mlx:              the community MLX artifact pins (source == "mlx") plus the
+#                     two things that family MUST disclose - the measured
+#                     quantization scope (it reaches past the routed experts)
+#                     and the decoded non-routed view the forward was built from
 GATED_RECEIPT_KEYS = frozenset({
     "teacher_provenance", "schema", "not_submittable", "sampling_design",
     "exl3hf_repo", "exl3hf_revision", "artifact_config_sha256",
     "artifact_index_sha256", "codebook", "exllamav3_version", "declared_bits",
     "declared_head_bits", "materialization_receipt_sha256", "seal_disclosure",
     "routed_bits_decode_histogram",
+    "mlx_repo", "mlx_revision", "mlx_format", "mlx_default_bits",
+    "mlx_default_group_size", "mlx_bits_histogram", "mlx_config_sha256",
+    "mlx_index_sha256", "mlx_shard_hash_verification", "mlx_scope_policy",
+    "mlx_nonrouted_view", "mlx_nonrouted_passthrough_crosscheck",
+    "mlx_fetch_ledger", "official_shape_census_sha256",
+    "source_repo", "source_revision",
 })
 
 
@@ -794,9 +804,16 @@ def check_receipt_stability() -> None:
     """Static AST proof that default invocations build the SEALED receipt shape.
 
     The receipt dict literal must carry exactly the golden keys, and every
-    later receipt[...] assignment except receipt_sha256 must sit inside an
-    `if` (i.e. be flag-gated) -- which is what makes the teacher/preview
-    additions invisible to a default run.
+    later addition except receipt_sha256 must sit inside an `if` (i.e. be
+    flag-gated) -- which is what makes the teacher/preview/exl3hf/mlx blocks
+    invisible to a default run.
+
+    "Addition" means BOTH spellings: `receipt[key] = ...` and
+    `receipt.update({...})`.  Only the first was checked until the mlx surface
+    used the second, which would have slipped a whole block of fields past the
+    one rung whose job is to notice them; a `.update()` whose argument is not a
+    literal dict of constant keys is reported as ungated, because the rung can
+    then prove nothing about it.
     """
     import ast
 
@@ -809,7 +826,30 @@ def check_receipt_stability() -> None:
     literal_keys: Optional[set] = None
     ungated: List[str] = []
     gated: List[str] = []
+
+    def _flag_gated(node) -> bool:
+        cursor = node
+        while cursor in parents:
+            cursor = parents[cursor]
+            if isinstance(cursor, ast.If):
+                return True
+        return False
+
     for node in ast.walk(tree):
+        # receipt.update({...}) -- the same act as a subscript assignment, and
+        # held to the same rule
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "update"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "receipt"):
+            bucket = gated if _flag_gated(node) else ungated
+            if len(node.args) != 1 or not isinstance(node.args[0], ast.Dict):
+                bucket.append("<receipt.update(non-literal)>")
+            else:
+                for key in node.args[0].keys:
+                    bucket.append(key.value if isinstance(key, ast.Constant)
+                                  else "<receipt.update(computed-key)>")
         if not isinstance(node, ast.Assign) or len(node.targets) != 1:
             continue
         target = node.targets[0]
@@ -822,16 +862,9 @@ def check_receipt_stability() -> None:
                 and target.value.id == "receipt"
                 and isinstance(target.slice, ast.Constant)):
             key = target.slice.value
-            inside_if = False
-            cursor = node
-            while cursor in parents:
-                cursor = parents[cursor]
-                if isinstance(cursor, ast.If):
-                    inside_if = True
-                    break
             if key == "receipt_sha256":
                 continue
-            (gated if inside_if else ungated).append(key)
+            (gated if _flag_gated(node) else ungated).append(key)
     unreviewed = sorted(set(gated) - GATED_RECEIPT_KEYS)
     ok = (literal_keys == GOLDEN_RECEIPT_KEYS and not ungated and not unreviewed)
     _record(

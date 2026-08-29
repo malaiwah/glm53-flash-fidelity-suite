@@ -50,6 +50,12 @@ k6/tools/stream_score.py
 # which is the only place that check can be made before a paid capture.
 k6/tools/exl3hf_surface.py
 k6/tools/selftest_exl3hf_offline.py
+# Community MLX affine snapshots (stream_score.py --source mlx). The evidence
+# dir travels with it: bf16-shape-census.json.gz is the architecture yardstick
+# every derived (bits, group_size) is checked against, and the adapter REFUSES
+# to load without it.
+k6/tools/mlx_surface.py
+k6/tools/mlx-evidence/bf16-shape-census.json.gz
 
 # --- pipeline patch series -------------------------------------------------
 # bootstrap_measure.sh clones the quant pipeline at its pin and applies these.

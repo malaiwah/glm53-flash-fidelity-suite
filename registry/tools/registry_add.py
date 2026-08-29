@@ -89,12 +89,24 @@ FOREIGN_TP2 = "quant-pipeline.glm53-custom-tp2-runtime-window-kld.v1"
 # weights, scored through this same streaming harness (tools/stream_score.py
 # --source native). That makes a row built from it the streaming lane's measurement
 # floor -- see build_row's is_floor test and BIAS-004/005/006.
+#
+# The MLX family is the same shape again, produced by the same aggregator from a
+# stream_score.py --source mlx capture.  Two things make it different from every
+# other family here and both end up on the row as disclosures rather than as
+# assumptions: its artifact is an UNSEALED third-party conversion (no contract,
+# no payload digests -- the pins are the repo revision and the config/index
+# sha256), and its quantization SCOPE reaches past the routed experts into dense
+# MLPs, shared experts and attention projections, so the row must not be read as
+# "experts quantized, everything else official".  The receipt states the measured
+# scope policy; this tool copies it onto the row verbatim.
 STREAM_K6_SUMMARY = "malaiwah.glm53-k6-stream-packed-kld-summary.v1"
 K8_SUMMARY = "malaiwah.glm53-k8-packed-kld-summary.v1"
 NATIVE_BF16_SUMMARY = "malaiwah.glm53-native-bf16-packed-kld-summary.v1"
+MLX_SUMMARY = "malaiwah.glm53-mlx-packed-kld-summary.v1"
 STREAM_VERDICT = "malaiwah.glm53-streaming-measurement-verdict.v1"
-STREAM_SUMMARIES = (STREAM_K6_SUMMARY, K8_SUMMARY, NATIVE_BF16_SUMMARY)
-LANE_STATED_BY_SCHEMA = {STREAM_K6_SUMMARY: "streaming", K8_SUMMARY: None, NATIVE_BF16_SUMMARY: None}
+STREAM_SUMMARIES = (STREAM_K6_SUMMARY, K8_SUMMARY, NATIVE_BF16_SUMMARY, MLX_SUMMARY)
+LANE_STATED_BY_SCHEMA = {STREAM_K6_SUMMARY: "streaming", K8_SUMMARY: None,
+                         NATIVE_BF16_SUMMARY: None, MLX_SUMMARY: None}
 
 REPORT_FAMILIES = ("glm53flash-fidelity-report/2", "glm53flash-fidelity-report/3",
                    "qwen38-kld-ladder-cumulative/2", "qwen38-kld-ladder-cumulative/3",
@@ -405,10 +417,65 @@ def adapt_stream_summary(receipts):
             {"code": "reduced_run_count",
              "detail": "cold_run_deviation (verbatim from the receipt): %s"
                        % rec["cold_run_deviation"]})
+    if sch == MLX_SUMMARY:
+        _apply_mlx_provenance(out, rec, path)
 
     if verdicts:
         _apply_stream_verdict(out, rec, path, verdicts)
     return out
+
+
+def _apply_mlx_provenance(out, rec, path):
+    """The MLX family's extra fields: the artifact pins, the unsealed-source
+    disclosure and the MEASURED quantization scope, all verbatim.
+
+    Nothing here is inferred.  A receipt that does not carry the scope census is
+    refused rather than rowed as if the scope were the usual experts-only one:
+    the whole point of the family is that it is NOT.
+    """
+    scope = rec.get("mlx_scope_policy")
+    if not isinstance(scope, dict) or scope.get("quantized_module_count") is None:
+        raise Refuse(E_MISSING,
+                     "%s carries no mlx_scope_policy census. This artifact family quantizes "
+                     "beyond the routed experts, and a row that does not say what was quantized "
+                     "would be read as if only the experts were." % os.path.basename(path))
+    out["artifact_repo"] = rec.get("mlx_repo")
+    out["artifact_revision"] = rec.get("mlx_revision")
+    out["field_provenance"].update({
+        "artifact_repo": "#/mlx_repo", "artifact_revision": "#/mlx_revision",
+    })
+    if rec.get("seal_disclosure"):
+        out["verbatim_disclosure_coded"].append(
+            {"code": "unsealed_source",
+             "detail": "seal_disclosure (verbatim from the receipt): %s" % rec["seal_disclosure"]})
+    detail = (
+        "mlx_scope_policy (measured from the artifact's own index + shard headers, verbatim "
+        "from the receipt): %s -- %d quantized modules = %d routed expert + %d MTP expert + "
+        "%d non-routed (%s); %d tensors left at source dtype; bit mix %s. Weights only: %s."
+        % (scope.get("policy"), scope.get("quantized_module_count", -1),
+           scope.get("routed_expert_modules", -1), scope.get("mtp_expert_modules", -1),
+           scope.get("nonrouted_quantized_modules", -1),
+           ", ".join("%s x%d" % (k.split(".")[-1], v)
+                     for k, v in sorted((scope.get("nonrouted_quantized_kinds") or {}).items()))
+           or "none",
+           scope.get("passthrough_tensor_count", -1),
+           " ".join("%s:%d" % (k, v) for k, v in sorted((scope.get("bits_histogram") or {}).items())),
+           scope.get("activations"))
+    )
+    out["verbatim_disclosure_coded"].append({"code": "quantization_scope", "detail": detail})
+    if rec.get("nonrouted_policy"):
+        out["verbatim_disclosure_coded"].append(
+            {"code": "nonrouted_weights_decoded",
+             "detail": "nonrouted_policy (verbatim from the receipt): %s. The non-routed model was "
+                       "built from a decoded view of the quant snapshot, NOT from the official "
+                       "BF16 tree." % rec["nonrouted_policy"]})
+    if rec.get("mlx_shard_hash_verification") == "skipped":
+        out["verbatim_disclosure_coded"].append(
+            {"code": "shard_hashes_unverified",
+             "detail": "mlx_shard_hash_verification is \"skipped\": the shards were read without "
+                       "whole-file sha256 verification against the HF manifest; the pins are the "
+                       "repo revision and the config/index sha256 only."})
+    out["field_provenance"]["quantization_scope"] = "#/mlx_scope_policy (measured, not declared)"
 
 
 def _apply_stream_verdict(out, summary, spath, verdicts):
