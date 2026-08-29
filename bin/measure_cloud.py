@@ -50,7 +50,7 @@ OFFICIAL_BF16_REVISION = "a6c167b62691b2bac901344b65cb651a70f53e43"
 from fidelity import census as C                       # noqa: E402
 from fidelity.common import (                          # noqa: E402
     Console, human_bytes, human_duration, parse_duration, read_json,
-    redact, register_secret, utcnow, write_json,
+    redact, register_secret, sha256_file, utcnow, write_json,
 )
 from fidelity.engines import EngineUnpinned, build_invocation, load_engines  # noqa: E402
 from fidelity.hfmeta import (                          # noqa: E402
@@ -1173,13 +1173,40 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
     bundle = SUITE_ROOT / "bin" / "BUNDLE.txt"
     files = [ln.strip() for ln in bundle.read_text(encoding="utf-8").splitlines()
              if ln.strip() and not ln.startswith("#")]
-    con.step("uploading bundle (%d files)" % len(files))
-    made: set = set()
+    present = [rel for rel in files if (SUITE_ROOT / rel).is_file()]
     for rel in files:
-        src = SUITE_ROOT / rel
-        if not src.is_file():
+        if rel not in present:
             con.warn("bundle entry not present locally, skipped: %s" % rel)
-            continue
+
+    # Upload only what actually differs.  Each `jl upload` is one API round
+    # trip of ~10-15 s, so re-sending 49 unchanged files costs ~10 minutes of a
+    # billing instance -- paid again on every adoption of a box that already
+    # has them.  One `sha256sum` over the remote paths answers the question in
+    # a single call; a box with no bundle yet simply returns nothing and
+    # everything uploads, which is the same behaviour as before.
+    remote_digests: Dict[str, str] = {}
+    if present:
+        try:
+            listing = jl.exec_stdout(
+                td.machine_id,
+                "sha256sum %s 2>/dev/null || true"
+                % " ".join("%s/%s" % (td.fs_root, rel) for rel in present),
+                timeout=300, check=False)
+            for line in listing.splitlines():
+                parts = line.split(None, 1)
+                if len(parts) == 2 and len(parts[0]) == 64:
+                    remote_digests[parts[1].strip()] = parts[0]
+        except JLError:
+            remote_digests = {}
+
+    stale = [rel for rel in present
+             if remote_digests.get("%s/%s" % (td.fs_root, rel))
+             != sha256_file(str(SUITE_ROOT / rel))]
+    con.step("uploading bundle (%d of %d files; %d already current)"
+             % (len(stale), len(present), len(present) - len(stale)))
+    made: set = set()
+    for rel in stale:
+        src = SUITE_ROOT / rel
         remote_dir = "%s/%s" % (td.fs_root, os.path.dirname(rel))
         if remote_dir not in made:
             jl.exec(td.machine_id, "mkdir -p %s" % remote_dir, timeout=120)
