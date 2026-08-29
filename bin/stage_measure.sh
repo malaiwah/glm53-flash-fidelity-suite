@@ -143,6 +143,25 @@ fetch_target)
     log "no SHA256SUMS published; recording that fact in the receipt"
     echo "no SHA256SUMS in release" > "$RCPT/shard-verification.txt"
   fi
+  # A surface that can verify its release's PUBLISHED seal does it here --
+  # right after the bytes land, ~10 minutes in -- not at capture time four
+  # stages and three GPU-hours later. The same pass writes the artifact's own
+  # scope, which seal_receipt prefers over the registry's record and over its
+  # pessimistic default (M1 lesson: recording `unknown` when the producer
+  # published the answer is the same failure as guessing).
+  SURFACE="$(jqget target.surface)"
+  if [ "$SURFACE" = "tr3-published" ]; then
+    log "verifying the release's published seal (tr3)"
+    "$VENV/bin/python" "$FS/k6/tools/tr3_surface.py" verify \
+        --root "$DEST" --repo "$REPO" --revision "$REV" \
+        --shards crosscheck --out "$RCPT/artifact-seal-verification.json" \
+        >/dev/null 2>>"$LOGS/fetch_target.log"
+    "$VENV/bin/python" "$FS/k6/tools/tr3_surface.py" scope \
+        --root "$DEST" --repo "$REPO" --revision "$REV" \
+        --out "$RCPT/artifact-scope.json" \
+        >/dev/null 2>>"$LOGS/fetch_target.log"
+    log "seal verified; scope written to $RCPT/artifact-scope.json"
+  fi
   df -h "$FS" | tee -a "$LOGS/fetch_target.log"
   touch "$marker"
   log "done"

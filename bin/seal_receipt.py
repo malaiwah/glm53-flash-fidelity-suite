@@ -98,6 +98,7 @@ def main() -> int:
     bits = target.get("bits")
 
     scope = (job.get("scope")
+             or _scope_from_receipts(receipts, con)
              or _scope_from_registry(suite_root, target, con)
              or _default_scope(target))
 
@@ -310,6 +311,33 @@ def _aggregate(receipts: Path, con: Console) -> Optional[Dict[str, Any]]:
         "aggregate_receipt_schema": doc.get("schema"),
         "aggregate_receipt_sha256": sha256_file(str(candidates[0])),
     }
+
+
+def _scope_from_receipts(receipts: Path, con: Console) -> Optional[Dict[str, Any]]:
+    """The scope a SURFACE read off the artifact itself, during this run.
+
+    Ranked above the registry's record and far above the pessimistic default,
+    because it is the only one derived from the bytes this measurement actually
+    consumed.  A surface that can read its release's published recipe writes
+    `artifact-scope.json` into the receipts tree (see stage_measure.sh); one
+    that cannot, writes nothing and the chain falls through unchanged.
+    """
+    path = Path(receipts) / "artifact-scope.json"
+    if not path.is_file():
+        return None
+    try:
+        doc = read_json(str(path))
+    except Exception as exc:                              # noqa: BLE001
+        con.warn("artifact-scope.json unreadable (%s); falling through" % exc)
+        return None
+    scope = doc.get("scope") if isinstance(doc, dict) else None
+    if not isinstance(scope, dict) or not scope.get("assignments"):
+        con.warn("artifact-scope.json carries no assignments; falling through")
+        return None
+    con.ok("scope read from the artifact itself",
+           "%d tensor classes, source %s"
+           % (len(scope["assignments"]), scope.get("schema", "?")))
+    return scope
 
 
 def _scope_from_registry(suite_root: Path, target: Dict[str, Any],

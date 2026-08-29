@@ -508,7 +508,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", required=True,
                         choices=("k6", "k6-stream", "k8", "k6k8", "dione-q4", "dione-3.0bpw",
-                                 "turbo-4.05bpw", "turbo-3.05bpw",
+                                 "turbo-4.05bpw", "turbo-3.05bpw", "tr3-4bpw",
                                  "native-bf16", "mlx", "gguf", "nvfp4"))
     parser.add_argument("--teacher", type=Path, required=True)
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
@@ -530,7 +530,7 @@ def main() -> int:
     from quant_pipeline.core.artifacts import sha256_file
     from quant_pipeline.evaluation.glm53_logits import load_capture_receipt
 
-    bits = {"k6": 6, "k6-stream": 6, "k8": 8, "nvfp4": 4}.get(args.profile)
+    bits = {"k6": 6, "k6-stream": 6, "k8": 8, "nvfp4": 4, "tr3-4bpw": 4}.get(args.profile)
     student_label = {
         "k6": "uniform-k6",
         # single-device STREAMING capture of the same sealed K6 surface: the
@@ -553,6 +553,12 @@ def main() -> int:
         # Labels must match stream_score.EXL3HF_PROFILES.
         "turbo-4.05bpw": "turboderp-exl3-mul1-4.05bpw",
         "turbo-3.05bpw": "turboderp-exl3-mul1-3.05bpw",
+        # a SEALED TR3-published EXL3/MCG release (brandonmusic's layout and its
+        # byte-identical mirrors), scored through stream_score --source tr3.
+        # Routed experts only, native BF16 head, and -- unlike every other
+        # third-party surface here -- a publisher seal this lane recomputes.
+        # Label must match stream_score.TR3_PROFILES.
+        "tr3-4bpw": "tr3-exl3-mcg-4bpw",
         # the BF16 FLOOR of the streaming lane: the identical capture with the
         # routed experts read straight from the official checkpoint and no codec
         # in the path (stream_score.py --source native).  Subtracting this mean
@@ -755,7 +761,8 @@ def main() -> int:
                 else "mlx-stream" if args.profile == "mlx"
                 else "gguf-stream" if args.profile == "gguf"
                 else "nvfp4-stream" if args.profile == "nvfp4"
-                else f"{args.profile}-hf-sharded" if args.profile.startswith("turbo")
+                else f"{args.profile}-hf-sharded"
+                if args.profile.startswith("turbo") or args.profile.startswith("tr3")
                 else f"{args.profile}-tp4"
             ),
             "student_label": student_label,
@@ -827,6 +834,63 @@ def main() -> int:
                         "seal_disclosure": student_receipt.get("seal_disclosure"),
                     }
                 )
+        elif args.profile.startswith("tr3"):
+            # Same rule as Dione/turbo -- the headline receipt carries the
+            # provenance pins itself -- with one difference that matters: a TR3
+            # release SEALS itself, so what travels here is the VERIFICATION
+            # (which claims were recomputed, and how the shard bytes were bound),
+            # not an unsealed-source caveat.  The scope policy travels too,
+            # because routed-experts-only with a native BF16 head is artifact
+            # identity a registry row must state.
+            from quant_pipeline.evaluation.glm53_logits import (
+                CAPTURE_SCHEMA,
+                sealed_json,
+            )
+
+            student_receipt = sealed_json(
+                runs[0] / "capture-receipt.json", CAPTURE_SCHEMA, "receipt_sha256"
+            )
+            for field in ("tr3_repo", "tr3_revision", "seal_verification"):
+                if student_receipt.get(field) is None:
+                    raise _fail(
+                        f"--profile {args.profile}: the capture receipt carries no {field}; "
+                        "it was not produced by stream_score.py --source tr3"
+                    )
+            seal = student_receipt.get("seal_verification") or {}
+            summary.update(
+                {
+                    "student_receipt_sha256": student_receipt["receipt_sha256"],
+                    "artifact_repo": student_receipt.get("tr3_repo"),
+                    "artifact_revision": student_receipt.get("tr3_revision"),
+                    "artifact_config_sha256": student_receipt.get("artifact_config_sha256"),
+                    "artifact_index_sha256": student_receipt.get("artifact_index_sha256"),
+                    "codebook": student_receipt.get("codebook"),
+                    "codec_family": student_receipt.get("codec_family"),
+                    "exllamav3_version": student_receipt.get("exllamav3_version"),
+                    "exllamav3_pin": student_receipt.get("exllamav3_pin"),
+                    "declared_bits": student_receipt.get("declared_bits"),
+                    "declared_head_bits": student_receipt.get("declared_head_bits"),
+                    "scope_policy": student_receipt.get("scope_policy"),
+                    "nonrouted_policy_declared": student_receipt.get(
+                        "nonrouted_policy_declared"
+                    ),
+                    "materialization_receipt_sha256": student_receipt.get(
+                        "materialization_receipt_sha256"
+                    ),
+                    "scope_census_sha256": student_receipt.get("scope_census_sha256"),
+                    "routed_bits_decode_histogram": student_receipt.get(
+                        "routed_bits_decode_histogram"
+                    ),
+                    "seal_verified": bool(seal.get("verified")),
+                    "seal_checks_passed": sum(
+                        1 for c in (seal.get("checks") or []) if c.get("passed")),
+                    "seal_check_names": [c.get("check") for c in (seal.get("checks") or [])],
+                    "shard_verification": (
+                        student_receipt.get("shard_verification") or {}
+                    ).get("verification"),
+                    "seal_disclosure": student_receipt.get("seal_disclosure"),
+                }
+            )
         elif args.profile == "mlx":
             # Same rule as Dione: the headline receipt carries the unsealed-source
             # disclosure and the immutable pins itself.  It additionally carries

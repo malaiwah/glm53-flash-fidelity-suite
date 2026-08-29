@@ -86,6 +86,7 @@ def main() -> int:
         "packed": "checkpoint",
         "native-bf16": "native",
         "exl3hf": "exl3hf",
+        "tr3-published": "tr3",
     }
     if "source" in (engine.flag_map or {}) and surface not in source_by_surface:
         con.err(
@@ -117,6 +118,28 @@ def main() -> int:
         missing = [k for k in ("exl3hf_repo", "exl3hf_revision") if not extra[k]]
         if missing:
             con.err("job.json target is missing %s -- an exl3hf capture cannot "
+                    "seal its provenance without them" % ", ".join(missing))
+            return 3
+    elif surface == "tr3-published":
+        # A TR3 release quantizes the routed experts ONLY and ships all 1,618
+        # non-routed tensors as the OFFICIAL source tensors, in-repo, under
+        # their official names.  The engine therefore REFUSES --bf16 outright:
+        # a second tree would make it ambiguous which non-routed weights were
+        # measured.  Blanking the value is what drops the flag
+        # (build_invocation skips None/"" -- see fidelity/engines.py).
+        extra.update({
+            "bf16": "",
+            "tr3_root": "%s/models/target" % fs,
+            "tr3_repo": target.get("repo_id", ""),
+            "tr3_revision": target.get("revision", ""),
+            # the fetch stage verifies the release's published SHA256SUMS
+            # byte-wise; `crosscheck` proves that list equals the seal's own
+            # shard_sha256 map, which is the binding the receipt claims
+            "tr3_verify_shards": os.environ.get("TR3_VERIFY_SHARDS", "crosscheck"),
+        })
+        missing = [k for k in ("tr3_repo", "tr3_revision") if not extra[k]]
+        if missing:
+            con.err("job.json target is missing %s -- a tr3 capture cannot "
                     "seal its provenance without them" % ", ".join(missing))
             return 3
     try:

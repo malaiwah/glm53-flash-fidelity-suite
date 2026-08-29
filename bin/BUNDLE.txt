@@ -52,6 +52,8 @@ k6/tools/stream_score.py
 # self-skips without quant_pipeline on the laptop and RUNS on the instance,
 # which is the only place that check can be made before a paid capture.
 k6/tools/exl3hf_surface.py
+k6/tools/tr3_surface.py
+k6/tools/nvfp4-evidence/official-nonrouted-names.json
 k6/tools/selftest_exl3hf_offline.py
 # Community MLX affine snapshots (stream_score.py --source mlx). The evidence
 # dir travels with it: bf16-shape-census.json.gz is the architecture yardstick
@@ -74,7 +76,6 @@ k6/tools/selftest_gguf_offline.py
 # (structural census) and records the weaker gate in the receipt -- so shipping
 # it is the difference between a strong claim and a disclosed weak one.
 k6/tools/nvfp4_surface.py
-k6/tools/nvfp4-evidence/official-nonrouted-names.json
 
 # --- pipeline patch series -------------------------------------------------
 # bootstrap_measure.sh clones the quant pipeline at its pin and applies these.

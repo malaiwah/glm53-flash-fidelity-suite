@@ -809,6 +809,12 @@ GATED_RECEIPT_KEYS = frozenset({
     "gguf_architecture", "gguf_type_census", "gguf_quant_metadata",
     "scope_policy",
     "source_repo", "source_revision",
+    # --source tr3 (M2): a TR3-published release is the one third-party surface
+    # that seals itself, so its receipt carries the VERIFICATION and the scope
+    # it read off the artifact, not only the artifact's claims.
+    "tr3_repo", "tr3_revision", "codec_family", "exllamav3_pin",
+    "scope_census_sha256", "nonrouted_policy_declared",
+    "seal_verification", "shard_verification",
 })
 
 

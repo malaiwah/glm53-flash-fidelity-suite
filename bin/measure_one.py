@@ -229,8 +229,9 @@ def run(args: argparse.Namespace, con: Console) -> int:
                         "%s publishes surface '%s'; no lane can read it "
                         "(engines.json). This tool can (a) report existing "
                         "rows [%s], (b) plan (--plan-only). Measuring "
-                        "third-party surfaces needs the tr3-published reader "
-                        "(out of scope, tracked in JOURNAL.md)."
+                        "third-party surfaces needs a reader for THIS "
+                        "surface; the streaming lane reads packed, native-bf16, "
+                        "exl3hf and tr3-published today."
                         % (target["repo"], surface.surface,
                            "listed above" if rows else "none"),
                         lines)

@@ -148,6 +148,11 @@ EXL3HF_PROFILES = {
     "turbo-4.05bpw": (4.05, "turboderp-exl3-mul1-4.05bpw"),
     "turbo-3.05bpw": (3.05, "turboderp-exl3-mul1-3.05bpw"),
 }
+# TR3-published (sealed EXL3/MCG, routed-experts-only) profiles.  Same shape as
+# EXL3HF_PROFILES and the same rule: the label must match k6_kld_report's map.
+TR3_PROFILES = {
+    "tr3-4bpw": (4.0, "tr3-exl3-mcg-4bpw"),
+}
 TEACHER_CAPTURE_ROLE = "bf16_teacher"
 # --source gguf: a community llama.cpp artifact that quantizes EVERYTHING, so
 # the whole forward (not only the routed experts) is the artifact's weights.
@@ -1607,7 +1612,7 @@ def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     src = parser.add_argument_group("weight source")
     src.add_argument("--source", choices=("checkpoint", "payload-store", "dione", "native",
-                                          "exl3hf", "mlx", "gguf", "nvfp4"),
+                                          "exl3hf", "tr3", "mlx", "gguf", "nvfp4"),
                      default="payload-store",
                      help="checkpoint = materialized shards (its receipt names the packed root); "
                           "payload-store = the content-addressed store directly (default); "
@@ -1617,6 +1622,10 @@ def main() -> int:
                           "exl3hf = a stock-exllamav3 HF-sharded release (mul1/mcg codebook, "
                           "full-scope quant) via exl3hf_surface -- --bf16 must point at its "
                           "materialized non-routed tree; "
+                          "tr3 = a SEALED TR3-published EXL3/MCG release via tr3_surface "
+                          "(routed experts only; the artifact's own official-native non-routed "
+                          "tensors serve the rest, so nothing is materialized and --bf16 is "
+                          "refused); "
                           "mlx = a community MLX affine snapshot via mlx_surface (EVERY tensor "
                           "from the quant repo: routed experts streamed-decoded, non-routed "
                           "decoded into a materialized bf16 view); "
@@ -1639,6 +1648,20 @@ def main() -> int:
                      help="--source exl3hf: the HF repo id the snapshot came from")
     src.add_argument("--exl3hf-revision",
                      help="--source exl3hf: the immutable 40-hex revision of that snapshot")
+    src.add_argument("--tr3-root", type=Path,
+                     help="--source tr3: local snapshot of the TR3-published release "
+                          "(config.json + index + shards + exl3-mcg-storage-abi.json + "
+                          "materialization-receipt.json)")
+    src.add_argument("--tr3-repo",
+                     help="--source tr3: the HF repo id the snapshot came from")
+    src.add_argument("--tr3-revision",
+                     help="--source tr3: the immutable 40-hex revision of that snapshot")
+    src.add_argument("--tr3-verify-shards", choices=("crosscheck", "full", "skip"),
+                     default="crosscheck",
+                     help="--source tr3: how the shard BYTES are bound to the published seal. "
+                          "crosscheck (default) proves the receipt's shard_sha256 map equals the "
+                          "release's own SHA256SUMS, which the fetch stage verifies byte-wise; "
+                          "full re-hashes every shard here (~176 GB); skip is disclosed")
     src.add_argument("--mlx-root", type=Path,
                      help="--source mlx: MLX snapshot root (config.json + index + shards; a "
                           "fetch-meta metadata root is enough for --dry-run)")
@@ -1678,13 +1701,14 @@ def main() -> int:
     src.add_argument("--bf16", type=Path,
                      help="official BF16 checkpoint (non-routed source). REQUIRED for "
                           "checkpoint/payload-store/dione/native/exl3hf/gguf and REFUSED for "
-                          "nvfp4. --source mlx supplies every tensor from the quant snapshot "
+                          "nvfp4/tr3. --source mlx supplies every tensor from the quant snapshot "
                           "itself, so there the flag only enables an optional passthrough "
                           "byte-identity cross-check; --source gguf still needs it but its role "
                           "NARROWS to config/tokenizer plus the vision tower (the main GGUF "
                           "carries none), every measured weight being decoded from the artifact; "
-                          "--source nvfp4 quantizes the routed experts ONLY and ships its own "
-                          "BF16 non-routed set in-repo, so a second tree would be ambiguous")
+                          "--source nvfp4 and --source tr3 quantize the routed experts ONLY and "
+                          "ship their own non-routed set in-repo, so a second tree would be "
+                          "ambiguous")
 
     parser.add_argument("--teacher", type=Path, required=True,
                         help="teacher final-window tree (panel receipt search root)")
@@ -1693,7 +1717,7 @@ def main() -> int:
     parser.add_argument("--cold-run", type=int, required=True)
     parser.add_argument("--profile", default="k6",
                         choices=("k6", "k8", "k6k8", "native-bf16", "mlx", "gguf", "nvfp4",
-                                 "turbo-4.05bpw", "turbo-3.05bpw"))
+                                 "turbo-4.05bpw", "turbo-3.05bpw", "tr3-4bpw"))
     parser.add_argument("--roles", default="final")
     parser.add_argument("--windows", help="comma-separated window ids to score (default: all)")
     parser.add_argument("--pipeline-root")
@@ -1808,6 +1832,13 @@ def main() -> int:
             "selects the student label the KLD report expects"
             % "/".join(sorted(EXL3HF_PROFILES))
         )
+    if (args.source == "tr3") != (args.profile in TR3_PROFILES):
+        raise _fail(
+            "--source tr3 and a tr3 profile (%s) must be used together: the profile names the "
+            "receipt family (malaiwah.glm53-<profile>-packed-kld-summary.v1) and selects the "
+            "student label the KLD report expects"
+            % "/".join(sorted(TR3_PROFILES))
+        )
     if (args.source == "mlx") != (args.profile == "mlx"):
         raise _fail(
             "--source mlx and --profile mlx must be used together: the profile names the "
@@ -1826,12 +1857,12 @@ def main() -> int:
             "receipt family (malaiwah.glm53-nvfp4-packed-kld-summary.v1) and selects the "
             "student label the KLD report expects; an NVFP4 run is not a K6/K8 one"
         )
-    if args.source not in ("mlx", "nvfp4") and args.bf16 is None:
+    if args.source not in ("mlx", "nvfp4", "tr3") and args.bf16 is None:
         raise _fail(
             "--bf16 is required for --source checkpoint/payload-store/dione/native/exl3hf/gguf "
             "(with --source gguf only for config/tokenizer/vision; every measured weight is "
             "decoded from the artifact). --source mlx supplies every tensor, config included, "
-            "from the quant snapshot itself, and --source nvfp4 refuses --bf16 outright"
+            "from the quant snapshot itself, and --source nvfp4/tr3 refuse --bf16 outright"
         )
 
     # ---- teacher role and preview sampling (both flag-gated; defaults are
@@ -1888,6 +1919,8 @@ def main() -> int:
     gguf_surface_obj = None
     nvfp4_module = None
     nvfp4 = None
+    tr3_module = None
+    tr3 = None
     inventory: Optional[Dict[str, Any]] = None
     if args.source == "mlx":
         import mlx_surface as mlxs
@@ -1914,6 +1947,45 @@ def main() -> int:
         except ValueError as error:
             raise _fail(str(error))
         model_revision = mlx_surface_obj.revision
+    elif args.source == "tr3":
+        # A TR3-published release is the one third-party surface in this suite
+        # that SEALS itself: exl3-mcg-storage-abi.json and
+        # materialization-receipt.json state digests over the emitted name set,
+        # the plan, the config and the index, and tr3_surface.verify_seal
+        # RECOMPUTES every one of them from the published bytes before a single
+        # payload is read.  Its scope is routed-experts-only with the non-routed
+        # set byte-exact official, so -- exactly as for nvfp4 -- there is nothing
+        # to materialize and a second tree would be ambiguous.
+        if args.tr3_root is None:
+            raise _fail("--source tr3 requires --tr3-root (local snapshot of the release)")
+        if args.bf16 is not None:
+            raise _fail(
+                "REFUSED: --bf16 plays no role in a TR3 run. The release quantizes the routed "
+                "experts ONLY and ships all 1,618 non-routed tensors as the OFFICIAL source "
+                "tensors under their official names (non_routed_dtype_policy "
+                "official_source_native, nonrouted_native_exact, name set verified against the "
+                "official release). The non-routed view is built from the artifact snapshot; a "
+                "second tree would make it ambiguous which one was measured. Drop --bf16; to "
+                "compare trees run `tr3_surface.py verify` / `probe` instead."
+            )
+        if not args.tr3_revision or sealed_capture.REVISION.fullmatch(args.tr3_revision) is None:
+            raise _fail("--source tr3 requires --tr3-revision <immutable 40-hex repo commit>")
+        import tr3_surface as tr3_module  # noqa: F811 - sibling tool module
+
+        tr3 = tr3_module.load_tr3_surface(
+            args.tr3_root,
+            repo=args.tr3_repo,
+            revision=args.tr3_revision,
+            verify_shards=args.tr3_verify_shards,
+        )
+        want_bits = TR3_PROFILES[args.profile][0]
+        if abs(tr3.declared_bits - want_bits) > 1e-6:
+            raise _fail(
+                f"--profile {args.profile} names a {want_bits} bpw release, but the "
+                f"release declares bits={tr3.declared_bits}"
+            )
+        model_revision = args.tr3_revision
+        bits = int(round(tr3.declared_bits))
     elif args.source == "nvfp4":
         # There is no contract, no payload store, no sealed inventory and no
         # official tree in the path.  The provenance anchors are the quant
@@ -2097,7 +2169,7 @@ def main() -> int:
             packed_root / "mtp-adapter-receipt.json", _mtp_adapter_schema(bits), "receipt_sha256"
         )
 
-    # ---- model-tree identity (official BF16, or the mlx/nvfp4 snapshot) --
+    # ---- model-tree identity (official BF16, or the mlx/nvfp4/tr3 snapshot) --
     if args.source == "mlx":
         # The quant snapshot IS the model: geometry was gated by
         # load_mlx_surface against the same released constants, and identity
@@ -2115,6 +2187,13 @@ def main() -> int:
             # because those tensors are already plain BF16 under the official
             # names -- so it goes through the ordinary config/index gate below.
             model_root = args.nvfp4_root.resolve()
+        elif args.source == "tr3":
+            # same shape as nvfp4: the release IS the model tree.  Its
+            # non-routed tensors are the OFFICIAL ones under the official names
+            # (verified name-set equality plus the publisher's own
+            # nonrouted_native_exact seal), so the ordinary config/index gate
+            # below applies unchanged and nothing is materialized.
+            model_root = args.tr3_root.resolve()
         else:
             if args.bf16 is None:
                 raise _fail(
@@ -2138,7 +2217,16 @@ def main() -> int:
             or text_config.get("moe_intermediate_size") != 2048
         ):
             raise _fail("official GLM5Next main/MTP geometry differs")
-        if args.source == "nvfp4":
+        if args.source == "tr3":
+            # the binding here is STRONGER than a community snapshot's: the
+            # release's own materialization receipt declares the config/index
+            # digests, tr3_surface verified those declarations reproduce, and
+            # this re-checks them against the files THIS run reads.
+            if tr3.config_sha256 != sha256_file(config_path) or (
+                tr3.index_sha256 != sha256_file(index_path)
+            ):
+                raise _fail("tr3 surface does not bind the local config/index")
+        elif args.source == "nvfp4":
             # no sealed inventory exists for a community snapshot; the binding
             # is the surface's own config/index hashes, re-checked against the
             # files this run actually reads (they enter
@@ -2164,6 +2252,8 @@ def main() -> int:
     gguf_layout: Optional[Dict[str, Any]] = None
     gguf_summary: Optional[Dict[str, Any]] = None
     nvfp4_expert_source = None
+    tr3_reader = None
+    tr3_layout: Optional[Dict[str, Any]] = None
     if args.source == "mlx":
         import mlx_surface as mlxs
 
@@ -2211,6 +2301,14 @@ def main() -> int:
             json.loads(index_path.read_text(encoding="utf-8"))["weight_map"].keys(),
         )
         gguf_summary = gguf_module.surface_summary(gguf_surface_obj)
+    elif args.source == "tr3":
+        # The routed payload layout and the decode are IDENTICAL to exl3hf's,
+        # so the streamer gets the same (surface, reader) pair and runs the
+        # same fill loop.  A second fill implementation would be a second thing
+        # to keep correct, for no gain: what differs about TR3 is the seal, the
+        # scope and the non-routed source, none of which the fill loop touches.
+        exl3hf, tr3_reader = tr3_module.expert_source(tr3)
+        tr3_layout = tr3_module.routed_census(tr3)
     elif args.source == "nvfp4":
         # census/geometry already closed inside load_nvfp4_surface; the
         # source object only adds the thread-safe read+decode machinery.
@@ -2326,6 +2424,9 @@ def main() -> int:
                 }
             )
         )
+    elif args.source == "tr3":
+        identity = tr3_module.tr3_reader_identity(Path(__file__).resolve(), tr3)
+        checkpoint_identity = tr3.checkpoint_identity_sha256()
     elif args.source == "nvfp4":
         identity = nvfp4_module.nvfp4_reader_identity(Path(__file__).resolve(), nvfp4)
         checkpoint_identity = nvfp4.checkpoint_identity_sha256()
@@ -2472,6 +2573,49 @@ def main() -> int:
         ]
         disclosure["exl3hf_routed_layout"] = exl3hf_layout
         disclosure["seal_disclosure"] = xs3.SEAL_DISCLOSURE
+    elif args.source == "tr3":
+        # Two disclosed differences from a packed K6/K8 run, and NEITHER is
+        # "unsealed": where the routed bytes come from (a TR3-published
+        # release's own shards, whose seal this run recomputed) and where the
+        # non-routed weights come from (the artifact's own tensors, which the
+        # publisher declares and this run verifies to be the OFFICIAL ones).
+        disclosure["routed_weight_source"] = (
+            "TR3-published EXL3/MCG payloads (<module>.{trellis,suh,svh,mcg}) read per "
+            "expert from the artifact's own HF shards and offline-decoded with the "
+            "campaign decode ABI (fp32 hadamards, frozen MCG LUT, one bf16 rounding) - "
+            "the identical codec the K6/K8 rows on this lane were measured through"
+        )
+        disclosure["dtype_policy"] = dict(disclosure["dtype_policy"])
+        disclosure["dtype_policy"]["weights"] = (
+            "bfloat16 decoded from TR3 EXL3/MCG payloads (fp32 decode, one rounding)"
+        )
+        disclosure["dtype_policy"]["nonrouted"] = (
+            "the ARTIFACT's own non-routed tensors, read verbatim: the release quantizes "
+            "the routed experts only and ships all %d non-routed tensors as the official "
+            "source tensors (non_routed_dtype_policy official_source_native; dtype census "
+            "%s). Nothing is materialized and no second tree is in the path; lm_head is "
+            "native BF16 (head_bits 16)"
+            % (tr3.nonrouted_tensor_count,
+               json.dumps(tr3.dtype_census, sort_keys=True))
+        )
+        disclosure["sealed_path_differences"] = list(disclosure["sealed_path_differences"]) + [
+            "routed surface: a TR3-published release (codebook mcg, uniform K%d). There "
+            "is no payload store and no encoder closure in the path, but unlike the "
+            "stock-exllamav3 and Dione surfaces this release SEALS itself: the "
+            "provenance anchors are the immutable artifact revision plus "
+            "exl3-mcg-storage-abi.json and materialization-receipt.json, every claim of "
+            "which tr3_surface.verify_seal recomputed from the published bytes before "
+            "decoding (%d checks)"
+            % (int(round(tr3.declared_bits)), len(tr3.seal.get("checks") or [])),
+            "non-routed weights: the artifact's OWN tensors, which are byte-exact "
+            "official (nonrouted_native_exact, and the name set was verified equal to the "
+            "official release's %d non-routed names). The head is applied natively from "
+            "those weights and is not quantized"
+            % tr3.nonrouted_tensor_count,
+        ]
+        disclosure["tr3_routed_layout"] = tr3_layout
+        disclosure["tr3"] = tr3_module.surface_summary(tr3)
+        disclosure["seal_disclosure"] = tr3_module.SEAL_DISCLOSURE
     elif args.source == "mlx":
         import mlx_surface as mlxs
 
@@ -2658,6 +2802,8 @@ def main() -> int:
             if args.source == "gguf"
             else "streamed_exact_fp32_nvfp4_e2m1_gs16_decode_to_bf16_one_layer_resident"
             if args.source == "nvfp4"
+            else f"streamed_decode_seal_verified_tr3_published_k{bits}_mcg_to_bf16_one_layer_resident"
+            if args.source == "tr3"
             else f"streamed_decode_hash_verified_packed_k{bits}_mcg_to_bf16_one_layer_resident"
         ),
         "native_routed_layout": native_layout,
@@ -2672,6 +2818,11 @@ def main() -> int:
                 "standard_logits" % nvfp4.scope["mtp_expert_format"].replace("-", "_")
             )
             if args.source == "nvfp4"
+            else (
+                "mtp_layer_45_experts_present_as_exl3_mcg_k%d_and_seal_covered_but_not_"
+                "executed_by_standard_logits" % int(round(tr3.declared_bits))
+            )
+            if args.source == "tr3"
             else "complete_and_receipt_required_but_not_executed_by_standard_logits"
         ),
         "nonrouted_policy": (
@@ -2686,6 +2837,8 @@ def main() -> int:
             if args.source == "gguf"
             else "quant_snapshot_bf16_parameters_official_name_set_unquantized_in_artifact"
             if args.source == "nvfp4"
+            else "artifact_own_official_source_native_tensors_name_set_verified_official"
+            if args.source == "tr3"
             else "untouched_official_checkpoint_parameters"
         ),
         "stored_logits_dtype": "float32",
@@ -2719,6 +2872,31 @@ def main() -> int:
                     "but_not_executed_by_standard_logits"
                 ),
                 "exl3hf_routed_layout": exl3hf_layout,
+            }
+        )
+    if args.source == "tr3":
+        plan.update(
+            {
+                "tr3_repo": args.tr3_repo,
+                "tr3_revision": args.tr3_revision,
+                "tr3_root": str(args.tr3_root.resolve()),
+                "artifact_config_sha256": tr3.config_sha256,
+                "artifact_index_sha256": tr3.index_sha256,
+                "codebook": tr3.codebook,
+                "codec_family": "exl3-mcg",
+                "exllamav3_version": tr3.quantizer_version,
+                "exllamav3_pin": tr3.exllamav3_pin,
+                "declared_bits": tr3.declared_bits,
+                "declared_head_bits": tr3.declared_head_bits,
+                "scope_policy": tr3.scope_policy,
+                "nonrouted_policy_declared": tr3.nonrouted_policy,
+                "materialization_receipt_sha256":
+                    tr3.seal["materialization"]["receipt_sha256"],
+                "seal_verification": tr3.seal,
+                "shard_verification": tr3.shard_verification,
+                "scope_census_sha256": tr3.scope_census_sha256(),
+                "seal_disclosure": tr3_module.SEAL_DISCLOSURE,
+                "tr3_routed_layout": tr3_layout,
             }
         )
     if args.source == "mlx":
@@ -2808,12 +2986,15 @@ def main() -> int:
         experts_implementation=args.experts_implementation,
         layers=layers,
         nonrouted_view=nonrouted_view,
-        # the nvfp4 view is a DIFFERENT artifact than a bf16 view sharing the
-        # same work_dir, and its config must lose quantization_config so
+        # an nvfp4 / tr3 view is a DIFFERENT artifact than a bf16 view sharing
+        # the same work_dir, and its config must lose quantization_config so
         # from_pretrained builds the sealed plain-BF16 model instead of
         # engaging a quantized-loading integration
-        view_name=("nvfp4-nonrouted-view" if args.source == "nvfp4" else "bf16-nonrouted-view"),
-        config_strip_keys=(("quantization_config",) if args.source == "nvfp4" else ()),
+        view_name=("nvfp4-nonrouted-view" if args.source == "nvfp4"
+                   else "tr3-nonrouted-view" if args.source == "tr3"
+                   else "bf16-nonrouted-view"),
+        config_strip_keys=(("quantization_config",)
+                           if args.source in ("nvfp4", "tr3") else ()),
     )
     streamer = ExpertStreamer(
         surface=surface,
@@ -2831,7 +3012,11 @@ def main() -> int:
         # caller still does fuse_gate_up, the single bf16 rounding and the
         # torch.equal close.
         native_source=native_source,
-        exl3hf_source=(exl3hf, exl3hf_reader) if args.source == "exl3hf" else None,
+        # tr3 rides the exl3hf fill loop deliberately: identical payload
+        # objects, identical decode ABI, and one implementation to keep correct
+        exl3hf_source=((exl3hf, exl3hf_reader) if args.source == "exl3hf"
+                       else (exl3hf, tr3_reader) if args.source == "tr3"
+                       else None),
         mlx_source=mlx_expert_source,
         gguf_source=gguf_source,
         nvfp4_source=nvfp4_expert_source,
@@ -2906,6 +3091,8 @@ def main() -> int:
             if args.source == "gguf"
             else "bfloat16 streamed-decoded from NVFP4 e2m1 gs16 (exact fp32 decode, one rounding)"
             if args.source == "nvfp4"
+            else f"bfloat16 streamed-decoded from TR3-published EXL3/MCG K{bits} payload"
+            if args.source == "tr3"
             else f"bfloat16 streamed-decoded from packed K{bits} payload"
         ),
         "nonrouted_runtime_dtype": (
@@ -2920,6 +3107,9 @@ def main() -> int:
             else "quant-snapshot bfloat16 bytes, untouched (official non-routed name set, "
                  "unquantized in the artifact)"
             if args.source == "nvfp4"
+            else "the artifact's OWN official-source-native bytes, untouched (routed-experts-"
+                 "only scope; name set verified equal to the official non-routed set)"
+            if args.source == "tr3"
             else "official source dtype, untouched"
         ),
         "mtp_standard_logits_executed": False,
@@ -2989,6 +3179,8 @@ def main() -> int:
         student_label = mlx_surface_obj.student_label()
     elif args.source == "exl3hf":
         student_label = EXL3HF_PROFILES[args.profile][1]
+    elif args.source == "tr3":
+        student_label = TR3_PROFILES[args.profile][1]
     elif args.source == "nvfp4":
         student_label = nvfp4_module.NVFP4_STUDENT_LABEL
     else:
@@ -3157,8 +3349,21 @@ def main() -> int:
             # seal-CHECKED.  The artifact bytes each of them actually read are
             # reported separately, unqualified.
             "verified_packed_payload_bytes": (
-                None if args.source in ("native", "mlx", "gguf", "nvfp4")
+                # "verified" here means hash-gated PER PAYLOAD by a sealed
+                # payload store.  A TR3 release is sealed at the SHARD level
+                # (its receipt's shard_sha256 map, cross-checked against the
+                # published SHA256SUMS the fetch verified byte-wise), which is
+                # a real seal but not this field's claim -- so tr3 reports its
+                # bytes under tr3_payload_bytes_read like the other
+                # artifact-shard readers.
+                None if args.source in ("native", "mlx", "gguf", "nvfp4", "tr3")
                 else streamer.payload_bytes
+            ),
+            "tr3_payload_bytes_read": (
+                int(tr3_reader.bytes_read) if tr3_reader is not None else None
+            ),
+            "tr3_shards_read": (
+                len(tr3_reader.shards_read) if tr3_reader is not None else None
             ),
             "mlx_artifact_bytes_read": (
                 int(mlx_expert_source.bytes_read) if mlx_expert_source is not None else None
@@ -3249,6 +3454,13 @@ def main() -> int:
                 "(non-routed BF16 from the artifact itself)"
             )
             if args.source == "nvfp4"
+            else (
+                "TR3-published EXL3/MCG uniform-k%d routed experts streamed offline-decoded "
+                "to BF16 (routed-experts-only scope: the artifact's own official-native "
+                "non-routed tensors, native BF16 head, serve the rest); the release's "
+                "published seal was recomputed before decoding" % bits
+            )
+            if args.source == "tr3"
             else f"EXL3/TR3 uniform-k{bits} streamed offline-decoded to BF16"
         ),
         "logits_dtype": "float32",
@@ -3279,6 +3491,32 @@ def main() -> int:
         receipt["declared_head_bits"] = exl3hf.declared_head_bits
         receipt["materialization_receipt_sha256"] = materialization["receipt_sha256"]
         receipt["seal_disclosure"] = xs3.SEAL_DISCLOSURE
+        receipt["routed_bits_decode_histogram"] = dict(
+            sorted(exl3hf.routed_bits_histogram.items())
+        )
+    if args.source == "tr3":
+        # Same rule as exl3hf: the summary receipt republishes these, so they are
+        # sealed in the capture first.  What is different is that a TR3 release
+        # can pin its own seal -- so the receipt carries the verification block,
+        # not just the artifact's claims.
+        receipt["tr3_repo"] = args.tr3_repo
+        receipt["tr3_revision"] = args.tr3_revision
+        receipt["artifact_config_sha256"] = tr3.config_sha256
+        receipt["artifact_index_sha256"] = tr3.index_sha256
+        receipt["codebook"] = tr3.codebook
+        receipt["codec_family"] = "exl3-mcg"
+        receipt["exllamav3_version"] = tr3.quantizer_version
+        receipt["exllamav3_pin"] = tr3.exllamav3_pin
+        receipt["declared_bits"] = tr3.declared_bits
+        receipt["declared_head_bits"] = tr3.declared_head_bits
+        receipt["scope_policy"] = tr3.scope_policy
+        receipt["nonrouted_policy_declared"] = tr3.nonrouted_policy
+        receipt["materialization_receipt_sha256"] = \
+            tr3.seal["materialization"]["receipt_sha256"]
+        receipt["seal_verification"] = tr3.seal
+        receipt["shard_verification"] = tr3.shard_verification
+        receipt["scope_census_sha256"] = tr3.scope_census_sha256()
+        receipt["seal_disclosure"] = tr3_module.SEAL_DISCLOSURE
         receipt["routed_bits_decode_histogram"] = dict(
             sorted(exl3hf.routed_bits_histogram.items())
         )

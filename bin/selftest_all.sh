@@ -105,23 +105,46 @@ fi
 # indexes, and the registry adapter exercised. Needs torch (float8 + MPS); its
 # two conditional rungs (live compressed-tensors, stream_score --dry-run) print
 # their own SKIP line rather than failing, so this stays one case either way.
-if have_module "$VPY" torch; then
+# TPY: the first interpreter that actually has torch.  Selecting $VPY and then
+# SKIPPING when the venv has no torch meant these rungs had never run on this
+# machine at all -- a skip is a verdict, and "not run" is not one of the good
+# ones.
+TPY="$VPY"
+have_module "$TPY" torch || TPY="$PY"
+have_module "$TPY" torch || TPY=""
+if [ -n "$TPY" ]; then
   t "nvfp4 surface offline (decode vs compressed-tensors, census, registry adapter)" \
-                                           0 "$VPY" k6/tools/selftest_nvfp4_offline.py \
+                                           0 "$TPY" k6/tools/selftest_nvfp4_offline.py \
                                              ${QP_PIPELINE_ROOT:+--pipeline-root "$QP_PIPELINE_ROOT"}
 else
-  s "nvfp4 surface offline" "no torch in $VPY"
+  s "nvfp4 surface offline" "no torch in $VPY or $PY"
+fi
+
+# tr3 surface: the SEALED TR3-published reader. The fixture carries the real
+# 1,618 official non-routed names and the real 150,226-name index shape, so the
+# seal arithmetic is exercised against the same numbers the live release
+# satisfies. The MCG decode-parity rung self-skips without quant_pipeline.
+if [ -n "$TPY" ]; then
+  t "tr3 surface offline (seal recompute, tampers, scope, decode == exl3hf)" \
+                                           0 "$TPY" k6/tools/selftest_tr3_offline.py
+else
+  s "tr3 surface offline" "no torch in $VPY or $PY"
 fi
 
 echo "== cloud planner (NETWORK, ACCOUNT; --dry-run creates nothing) =="
-# This target is 'tr3-published' and NO lane has a reader for it: both engines
-# resolve a packed_root out of the materialization receipt and require the
-# payload store to be present, which a third-party repo never publishes. The
-# check that was supposed to catch this (hfmeta.sniff_surface's packed_root
-# trap) is guarded by `if info.surface == "packed"`, and this repo carries
-# exl3-mcg-storage-abi.json, so it classifies as tr3-published and routes
-# around the trap. Asserting rc=0 here asserted that a rental which cannot
-# possibly succeed would be approved.
+# This target is 'tr3-published'. The SEALED-EP8 lane still has no reader for
+# it: that engine resolves a packed_root out of the materialization receipt and
+# requires the payload store to be present, which a third-party repo never
+# publishes. (The check that was supposed to catch this -- hfmeta.sniff_surface's
+# packed_root trap -- is guarded by `if info.surface == "packed"`, and this repo
+# carries exl3-mcg-storage-abi.json, so it classifies as tr3-published and
+# routes around the trap. Asserting rc=0 there asserted that a rental which
+# cannot possibly succeed would be approved.)
+#
+# The STREAMING lane gained a reader in M2 (stream_score --source tr3 via
+# tr3_surface), so its case flipped from "refuses" to "plans, having recomputed
+# the release's published seal for free". The refusal it now produces is the
+# max-runtime one below, which is a different property.
 # --skip-registry-check everywhere below: these cases test the PLANNER's own
 # refusals; the registry front gate (tested separately) would otherwise answer
 # "already measured" first, because this target has published rows.
@@ -129,10 +152,14 @@ t "sealed-ep8 refuses: no reader for tr3-published" 3 \
   "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
     --lane sealed-ep8 --spot --max-runtime 30h --i-accept-leak-risk \
     --skip-registry-check --dry-run --out "$TMP/c1"
-t "streaming refuses: no reader for tr3-published (lane now PINNED)" 3 \
+t "streaming PLANS a tr3-published target (reader landed in M2)" 0 \
   "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
-    --lane streaming --spot --max-runtime 12h --i-accept-leak-risk \
+    --lane streaming --gpu H200 --spot --max-runtime 12h --i-accept-leak-risk \
     --skip-registry-check --dry-run --out "$TMP/c2"
+grep -q '"seal_verification"' "$TMP/c2/plan.json" \
+  && grep -q '"checks_passed": 12' "$TMP/c2/plan.json" \
+  && t "the tr3 plan carries a 12/12 seal recompute" 0 true \
+  || t "the tr3 plan carries a 12/12 seal recompute" 0 false
 t "refuses without a teardown backstop" 3 \
   "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
     --lane sealed-ep8 --spot --max-runtime 30h --skip-registry-check \

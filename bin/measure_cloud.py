@@ -54,8 +54,8 @@ from fidelity.common import (                          # noqa: E402
 )
 from fidelity.engines import EngineUnpinned, build_invocation, load_engines  # noqa: E402
 from fidelity.hfmeta import (                          # noqa: E402
-    HFError, RepoMeta, fetch_json, hf_token, load_panel_descriptor, repo_meta,
-    safetensors_header, sniff_surface,
+    HFError, RepoMeta, fetch_file, fetch_json, hf_token, load_panel_descriptor,
+    repo_meta, safetensors_header, sniff_surface,
 )
 from fidelity.jlapi import JL, JLError, JLNotInstalled, select_offer  # noqa: E402
 from fidelity.receipt import produced_by_block                      # noqa: E402
@@ -645,6 +645,82 @@ def _refuse_incomplete_exl3hf(con: Console, repo_id: str, revision: str,
            % (len(set(planned)), len(want)))
 
 
+def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
+                     plan: Dict[str, Any]) -> None:
+    """Recompute the release's OWN seal from its metadata, before renting.
+
+    A TR3-published release is the one third-party surface in this suite that
+    seals itself, and every claim of that seal is checkable from three small
+    files -- config.json, model.safetensors.index.json and the two receipts --
+    which is a few hundred kilobytes and no rental at all. Doing it here rather
+    than on the instance means a release whose seal does NOT reproduce costs
+    $0.00 to reject, and one whose seal DOES reproduce arrives at the box with
+    its verification already recorded in the plan.
+
+    It also subsumes the exl3hf completeness gate: check 7 is name-set equality
+    against the official release's own non-routed set.
+    """
+    import sys as _sys
+    tools = SUITE_ROOT / "k6" / "tools"
+    if str(tools) not in _sys.path:
+        _sys.path.insert(0, str(tools))
+    try:
+        import tr3_surface as tr3s
+    except Exception as exc:                             # noqa: BLE001
+        con.warn("seal gate skipped: %s" % redact(str(exc)))
+        return
+    import tempfile
+
+    try:
+        weight_map = fetch_json(repo_id, "model.safetensors.index.json",
+                                revision=revision)["weight_map"]
+        blobs = {name: fetch_file(repo_id, name, revision=revision)
+                 for name in ("config.json", tr3s.ABI_FILE, tr3s.MATERIALIZATION_FILE)}
+    except HFError as exc:
+        con.warn("seal gate skipped: %s" % redact(str(exc)))
+        return
+    with tempfile.TemporaryDirectory(prefix="tr3-seal-") as tmp:
+        root = Path(tmp)
+        for name, blob in blobs.items():
+            (root / name).write_bytes(blob)
+        # the index is re-serialised byte-exactly by re-fetching it raw: the
+        # seal digests the FILE, not our parse of it
+        index_bytes = fetch_file(repo_id, "model.safetensors.index.json",
+                                 revision=revision)
+        (root / "model.safetensors.index.json").write_bytes(index_bytes)
+        try:
+            seal = tr3s.verify_seal(
+                root, weight_map,
+                config_path=root / "config.json",
+                index_path=root / "model.safetensors.index.json")
+        except ValueError as exc:
+            raise Refusal(
+                "this release's PUBLISHED seal does not reproduce",
+                [redact(str(exc)),
+                 "",
+                 "A seal that does not reproduce is worse than no seal: it "
+                 "invites the reader to trust a claim nobody checked.",
+                 "Recomputed from the release's own bytes at the pinned "
+                 "revision. Nothing was created. $0.00 spent."])
+    passed = sum(1 for c in seal["checks"] if c["passed"])
+    plan.setdefault("target", {})["seal_verification"] = {
+        "verified": True, "checks_passed": passed,
+        "checks": [c["check"] for c in seal["checks"]],
+        "materialization_receipt_sha256": seal["materialization"]["receipt_sha256"],
+        "plan_sha256": seal["abi"]["plan_sha256"],
+        "exllamav3_git_commit": seal["abi"]["exllamav3_git_commit"],
+        "nonrouted_native_exact": seal["materialization"]["nonrouted_native_exact"],
+        "serving_reader_qualified": seal["abi"]["serving_reader_qualified"],
+    }
+    plan["target"]["nonrouted_completeness"] = {
+        "official_nonrouted": seal["materialization"]["native_tensor_count"],
+        "planned": seal["materialization"]["native_tensor_count"],
+        "missing": 0, "duplicated": 0,
+    }
+    con.ok("published seal", "%d/%d claims recomputed from the release's own bytes"
+           % (passed, len(seal["checks"])))
+
+
 def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     """Everything that must be true BEFORE money is spent."""
     plan: Dict[str, Any] = {"job_id": job_id_for(args), "created": False}
@@ -801,6 +877,8 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
         }
         if surface.surface == "exl3hf" and not surface.problems:
             _refuse_incomplete_exl3hf(con, target.repo_id, target.revision, plan)
+        if surface.surface == "tr3-published" and not surface.problems:
+            _verify_tr3_seal(con, target.repo_id, target.revision, plan)
         if surface.problems:
             raise Refusal(
                 "this artifact cannot be read by any available surface adapter",
@@ -1269,6 +1347,16 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
         "recipe": "cloud",
         "job_id": plan_data["job_id"],
         "lane": args.lane,
+        # Who made the measurement.  Without it seal_receipt defaults to
+        # "unknown", so every cloud receipt UNDER-CLAIMED its own provenance
+        # even when the registry row was authored correctly by hand (M1 blocker).
+        # --measurer overrides; the default is the identity this suite publishes
+        # its registry and its receipts under.
+        "measurer": {
+            "name": args.measurer, "handle": args.measurer,
+            "url": "https://huggingface.co/%s" % args.measurer,
+            "is_artifact_author": False,
+        },
         "reduce_order": args.reduce_order,
         "cold_runs": args.cold_runs,
         "profile": profile,
@@ -1631,6 +1719,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--on-preempt", default="resume",
                    choices=("resume", "recreate", "fail"))
     s.add_argument("--i-accept-leak-risk", action="store_true")
+    s.add_argument("--measurer", default="malaiwah",
+                   help="handle credited as the MEASURER on the sealed receipt "
+                        "(the artifact's producer is read from the repo id and "
+                        "is a separate field)")
     s.add_argument("--scope-json",
                    help="JSON file carrying the artifact's quantization SCOPE "
                         "(policy/head_policy/kv_cache_dtype/assignments), for a "

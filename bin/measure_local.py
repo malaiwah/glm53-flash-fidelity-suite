@@ -875,11 +875,12 @@ def execute(args: argparse.Namespace, result: Dict[str, Any], con: Console,
         problems.append({
             "missing": "a reader for surface %r (lane %s reads: %s)"
                        % (surface, lane, ", ".join(engine.surfaces)),
-            "remedy": "no lane can read '%s' today (a tr3-published reader is "
-                      "engine work, tracked in JOURNAL.md). This tool can "
-                      "still (a) report existing registry rows for the repo, "
-                      "(b) plan its cost -- it will not rent or run against "
-                      "bytes nothing can open" % surface})
+            "remedy": "no lane can read '%s' today; the streaming lane reads "
+                      "packed, native-bf16, exl3hf and tr3-published (adding a "
+                      "surface is engine work, tracked in JOURNAL.md). This "
+                      "tool can still (a) report existing registry rows for the "
+                      "repo, (b) plan its cost -- it will not rent or run "
+                      "against bytes nothing can open" % surface})
     if not args.artifact_path:
         problems.append({
             "missing": "local artifact tree (--artifact-path)",
