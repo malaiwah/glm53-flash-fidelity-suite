@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from typing import Any, Dict, List, Optional, Sequence
@@ -363,6 +364,22 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
     counts = sorted({w["count"] for w in per_window})
     equal_windows = len(counts) == 1
+    if not equal_windows and not args.allow_unequal_windows:
+        # window_block_bootstrap sees only means, so its point estimate is the
+        # EQUAL-WEIGHT mean; se_from_window_summaries weights by token count.
+        # Those agree only on equal windows. Emitting both would put a BCa
+        # interval around a different number than the receipt's headline mean.
+        tw = (math.fsum(w["count"] * w["mean"] for w in per_window)
+              / math.fsum(w["count"] for w in per_window))
+        ew = math.fsum(w["mean"] for w in per_window) / len(per_window)
+        sys.stderr.write(
+            "REFUSED: the scope mixes window sizes %s. The bootstrap resamples "
+            "windows and can only form the equal-weight mean (%.12g); the summary "
+            "weights by token count (%.12g). They differ by %.3g, so a BCa "
+            "interval here would not bracket this receipt's own headline. Pass "
+            "--allow-unequal-windows if you intend an explicitly equal-weight "
+            "analysis.\n" % (counts, ew, tw, abs(ew - tw)))
+        return EXIT_REFUSED
 
     summary = stats_mod.se_from_window_summaries(per_window)
     means = {w["window_id"]: w["mean"] for w in per_window}
@@ -378,7 +395,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     sr = stats_mod.sigma_run(args.run_mean or [])
     quad = stats_mod.combine_quadrature(
         summary.get("se_clustered_window", float("nan")),
-        sr.get("sigma_run"), gate=proto.sigma_run_gate)
+        sr.get("sigma_run"), gate=proto.sigma_run_gate,
+        mean=summary.get("mean"))
 
     doc: Dict[str, Any] = {
         "schema": ANALYSIS_SCHEMA,
@@ -514,6 +532,9 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--scope-file")
     q.add_argument("--scope", choices=["selected", "panel"], default=None)
     q.add_argument("--allow-partial", action="store_true")
+    q.add_argument("--allow-unequal-windows", action="store_true",
+                   help="permit an explicitly equal-weight analysis over windows "
+                        "of different lengths")
     q.add_argument("--run-mean", type=float, action="append",
                    help="repeat once per cold run to get sigma_run")
     q.add_argument("--bootstrap-b", type=int, default=5000)

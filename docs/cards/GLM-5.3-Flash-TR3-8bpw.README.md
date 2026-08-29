@@ -231,6 +231,67 @@ official FP8 release's footprint, at 1.66× lower divergence.
 
 ## Quality — SEALED, full panel, two bitwise-identical cold runs
 
+> ### ⚠ Scope disclosure — this number is a **panel25** number
+>
+> Added 2026-08-29. **Nothing here is a correction: 0.012384 is and remains the
+> correct mean over the full 25-window panel.** What changed is that the panel is
+> now known to contain calibration-adjacent windows, so the scope has to travel
+> with the number.
+>
+> [brandonmusic](https://huggingface.co/brandonmusic/GLM-5.3-Flash-tr3-4bpw)
+> ran a **13-gram overlap scan** of his sealed panel against its own
+> calibration-role windows and found that the whole `axis4_reasoning` domain
+> shares **37–39 %** of its 13-grams with calibration material — despite the
+> panel being clean at the *document-hash* level. Document-hash dedup is not
+> enough. He excluded that domain and scored his primary numbers on the **17
+> windows that survive**. The finding, the scan and the 0.05 threshold are his.
+>
+> Every malaiwah number on this panel used all 25 windows, so every one of them
+> carries the same contamination. Recomputed on his clean scope, from our own
+> published per-window arrays (no GPU, no re-measurement — this is arithmetic on
+> data already published):
+>
+> | | panel25 (published) | clean17 (his scope) | move |
+> |---|---:|---:|---:|
+> | **K8** | 0.012384 | **0.010829** | −12.55 % |
+> | K6 sealed | 0.013723 | 0.011677 | −14.91 % |
+> | K6 streaming | 0.013715 | 0.011676 | −14.87 % |
+> | official FP8 | 0.020615 | 0.018665 | −9.46 % |
+> | BF16 floor (cross-stack) | 0.012712 | 0.010648 | −16.24 % |
+> | brandonmusic 4bpw | 0.024555 | 0.024949 | **+1.61 %** |
+>
+> **The comparisons hold, and one of them weakens.** K8 beats the official FP8
+> on **17 of 17** clean windows, and the margin *widens*: 1.66× on panel25
+> becomes **1.72×** on clean17. The K8-over-K6 result survives but weakens — the
+> paired BCa interval still excludes zero, but its lower bound falls from
+> +0.000695 to +0.000153 and the sign test goes from p = 0.0041 to p = 0.049.
+> **We will not restate "K8 is better than K6" without naming the scope.**
+>
+> **Do not difference a panel25 number against a clean17 one.** They are answers
+> to different questions. Our registry enforces this structurally: `clean17` is
+> its own derived panel with its own comparability key.
+>
+> The **quantization-attributable** table below cannot be recomputed on the clean
+> scope — its floor is the *streaming* BF16 floor, whose receipt is scalar-only
+> (run means and a tokenwise digest, no per-window array), and substituting the
+> cross-stack floor would be the cross-lane subtraction our registry refuses. It
+> stands as a panel25 number.
+>
+> Full recompute, with per-domain tables, paired intervals and provenance:
+> [`reports/clean-scope-recompute.json`](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/blob/main/reports/clean-scope-recompute.json).
+> Working: [PROTOCOL-ALIGNMENT.md](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/PROTOCOL-ALIGNMENT.md) §4.
+>
+> **One protocol note, not a correction.** His protocol masks the 24 padded
+> `lm_head` columns before the log-softmax; ours never has. Measured on his real
+> teacher window, the padded columns hold ~1.6e-8 of the probability mass, and
+> because this quant shares the teacher's native BF16 head the effect collapses
+> to `KLD × mass` — **1.0e-10 nats**, moving the value above at its *9th*
+> significant figure. For scale, our own sealed-vs-streaming bridge is 8.5e-6 and
+> the window-clustered SE on this panel is 3.19e-3. No correction and no bias
+> disclosure is warranted; we are adopting masking anyway. Script and receipts:
+> [`bin/padded_column_study.py`](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/bin/padded_column_study.py).
+
+
 **Mean KLD(teacher ‖ K8) = 0.012384191023436866** over the full sealed panel
 (25 windows / 51,175 positions), **two cold runs producing identical means to
 the last digit** (`bitwise_deterministic: true`). Quality gate passed.

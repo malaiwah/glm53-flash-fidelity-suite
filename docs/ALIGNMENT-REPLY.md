@@ -10,62 +10,74 @@ Full working: `docs/PROTOCOL-ALIGNMENT.md` in
 
 ## Message 1 — what we took
 
-Read the whole harness, ran your tests, reproduced your numbers. Short version:
-your protocol is better than ours on most of it and we've adopted it rather than
-argue. Here's what changed on our side.
+Read the whole harness, ran your tests, reproduced your numbers. Your protocol is
+better than ours on most of it, so we adopted it rather than argue. What we took,
+and where each one honestly stands:
 
-Adopted from you, now live in our tooling and registry:
+**Live in our tooling and data:** window-clustered block bootstrap with BCa (12
+rows carry intervals now — all 16 rows we'd published on your two panels had
+`uncertainty: none`); per-domain tables, on 12 rows, which we'd been computing
+in every report and publishing in none; the 13-gram overlap scan; `sigma_run`
+beside the SE and in quadrature, on 8 rows; paired-difference ranking with BCa and
+a sign test; one frozen protocol file, hashed into every receipt the new tooling
+emits.
 
-- Window-clustered block bootstrap with BCa intervals. Every one of our published
-  rows said `uncertainty: none` before this week. That was the biggest hole we
-  had and you're the reason it's closed.
-- Per-domain tables. We were computing them in every report and publishing none
-  of them.
-- 13-gram calibration-overlap scanning.
-- `sigma_run` reported beside the statistical SE and combined in quadrature.
-- Percentile-exceedance guard, and never comparing a max across different N.
-- Ranking by paired differences plus McNemar instead of eyeballing overlapping CIs.
-- One frozen protocol file with its hash stamped into every receipt we emit.
-- R0 canary as a real gate.
+**Adopted in code, not yet in our results — worth being clear about:** McNemar
+runs and matches your five published p-values, but we can't apply it to our own
+rows at all; a contingency table needs per-position top-1 agreement and per-window
+means can't supply one. Same for the percentile guard: our receipts have no
+pooled percentiles for it to guard, so the verb returns a refusal. And R0 fires on
+every case in our selftest and gates the new CLI, but it is not yet wired into our
+production capture path.
 
-Validation, because none of that is worth anything unstated: from your 25
-per-window means alone we reproduce all 16 of your published percentile and BCa
-endpoints to within one ULP (max |diff| 2.8e-17), all four `se_clustered_window`
-values exactly, your paired diff and ratio CIs exactly, and all five McNemar
-p-values to 1e-14 relative. Different OS, numpy 2.5.2 vs your 1.26.4. Then we ran
-the same input through your own `kld_eval.analysis.stats` and got agreement to
-7e-18. Your 16 unit tests pass unmodified on a fresh macOS venv.
+One correction in your favour, since you can check it: an earlier draft said
+*every* row we publish had no interval. Not true — elsewhere in the registry 39
+of 60 rows already carried a context-cluster bootstrap. Your panel was the hole,
+not the whole registry.
 
-## Message 2 — the padded columns, settled with a measurement
+Validation, from your 25 per-window means alone: all 16 of your published
+percentile and BCa endpoints to within one ULP (max |diff| 2.8e-17); three of
+your four `se_clustered_window` bit-identical and the fourth to one ULP
+(1.7e-18); your paired diff and ratio CIs exactly; all five McNemar p-values to
+1.5e-14 relative. Different OS, numpy 2.5.2 vs your 1.26.4. The same input
+through your own `kld_eval.analysis.stats` agrees to 7e-18, and your 16 unit
+tests pass unmodified on a fresh macOS venv.
 
-You mask the 24 padded lm_head columns. We never have. Rather than guess whether
-it matters we measured it.
+## Message 2 — the padded columns, bounded on your teacher
 
-Downloaded your teacher window final-0000 (1.27 GB, sha256 verified), recovered
-the hidden states out of it by least squares against a real lm_head (rel. rms
-residual 1.6e-3), and ran masked vs unmasked on real logits for ten student
-configurations spanning mean KLD 4.8e-5 to 1.0 nats.
+You mask the 24 padded lm_head columns. We never have. Rather than guess, we
+measured it.
 
-The padded rows are not dead, which surprised us: norm ~0.4795 vs ~1.21 for a
-typical real row, and all 24 mutually cosine-0.999998 — one untrained direction
-repeated. They carry about 1.6e-8 of the probability mass.
+Downloaded your teacher window final-0000 (1.27 GB, sha256 verified). Straight
+about what's real: the teacher numbers come out of your tensor; the students
+don't. A real delta for K6 or FP8 needs their student logits on your panel, i.e.
+a GPU run we didn't do, so we reconstructed the hidden states by least squares
+against a real lm_head (rel. rms residual 1.6e-3) and built thirteen *synthetic*
+students on top, mean KLD 4.8e-5 to 1.0 nats, to stress it.
 
-The masking effect is +7.2e-9 to +7.4e-9 relative, roughly 1e-10 nats absolute,
-and essentially constant across everything we threw at it: shared native BF16
-head, RTN per-row int8/int6/int4 heads, group-128 affine 6b and 4b. Including a
-deliberately awful global-scale int4 head that shifts the padded logits by +2.1
-nats mean, 4.2 nats worst case, and blows the KLD to 0.183 — even there the
-answer moves by 5e-8 nats.
+The teacher side carries the answer. The padded rows aren't dead: norm ~0.4795 vs
+~1.21 for a typical real row, all 24 mutually cosine-0.999998 — one untrained
+direction repeated. They hold ~1.6e-8 of the probability mass. What that caps
+depends on the case, and the two cases are four orders apart: in general the
+delta is that mass times however many nats the student's padded logits are
+displaced, so ~1e-8, never past ~1e-7. Share the head and the displacement is
+zero and it collapses to KLD x mass — that's the 1e-10, and every row of ours on
+your panel is shared-head.
 
-So: every number we've published changes at the 8th or 9th significant figure and
-nowhere earlier. K6 sealed 0.013723384665701147 becomes 0.013723384767254605. No
-correction, no bias disclosure, just a protocol-policy field recording which
-convention was used.
+The synthetic students agree: +7.2e-9 to +7.4e-9 relative across shared BF16, RTN
+per-row int8/int6/int4 and group-128 affine 6b/4b — including a deliberately
+awful global-scale int4 head displacing the padded logits +2.1 nats and blowing
+KLD to 0.183. Even there it moves 5e-8 nats.
 
-For scale in nats: this delta 1e-10, our sealed-vs-streaming bridge 8.5e-6, your
-window-clustered SE 3.19e-3. It's 83,000x below our tightest real uncertainty.
+Every published number of ours moves at the 8th or 9th significant figure,
+nowhere earlier: K6 sealed 0.013723384665701147 -> 0.013723384767254605. No
+correction, no bias disclosure, just a field recording the convention. For scale:
+delta 1e-10, our sealed-vs-streaming bridge 8.5e-6, your SE 3.19e-3. We're
+adopting masking anyway — costs nothing, one less difference.
 
-We're adopting masking anyway. It costs nothing and it's one less difference.
+That ran out of tree at first, results only, which by your standard isn't good
+enough. It's committed now — `bin/padded_column_study.py` + receipts. The
+load-bearing half needs only your window, no lm_head, 7 s.
 
 ## Message 3 — your contamination finding, reproduced, and what it does to our numbers
 
@@ -90,13 +102,17 @@ our own per-window arrays. No GPU, no re-measurement.
     K6 stream   0.013715 -> 0.011676  (-14.9%)
     K8 stream   0.012384 -> 0.010829  (-12.6%)
     FP8 x-stack 0.020615 -> 0.018665  (-9.5%)
-    BF16 floor  0.012712 -> 0.010648  (-16.2%)
+    BF16 floor (cross-stack) 0.012712 -> 0.010648  (-16.2%)
     your 4bpw   0.024555 -> 0.024949  (+1.6%)
 
-Every one of ours falls. Yours rises. Not an artifact of the threshold either —
-we checked eight thresholds from 0.02 to 0.20 and the sign difference holds at
-all of them. Which means neither scope can stand in for the other and both have
-to be published.
+Four of ours fall, yours rises. We checked eight thresholds from 0.02 to 0.20:
+yours rises at all eight, and K6, K8 and the BF16 floor fall at all eight, so the
+contrast isn't an artifact of 0.05. One exception, in our own numbers: the
+cross-stack FP8 row falls at the five tightest thresholds and rises +2.6% at 0.075
+and looser, because the two windows that separate the 17-window scope from the
+19-window one (final-0021, final-0022) score more than twice FP8's clean-scope
+mean. Either way neither scope stands in for the other and both have to be
+published.
 
 Two of our rows can't be recomputed at all: the BF16 streaming floor and the
 Dione Q4 have scalar-only receipts with no per-window array. Our fault, noted.
@@ -116,8 +132,10 @@ K6 better than FP8 gets stronger: 17/17 windows on the clean scope, ratio
 
 Also worth noting because it's your point about ranking: the marginal CIs for K6
 and K8 overlap almost entirely on both scopes. Anyone eyeballing them calls it a
-tie. The paired interval is about 10x tighter and doesn't. Our data makes your
-argument better than our old paired t-interval did.
+tie. The paired interval is 4.2x tighter on the clean scope (1.42e-3 wide against
+5.93e-3 and 5.77e-3 for the two marginals) and 3.4x on the panel scope, and it
+doesn't call it a tie. Our data makes your argument better than our old paired
+t-interval did.
 
 Your per-domain non-uniformity reproduces on our artifacts too. Clean scope,
 FP8-over-K6 ratio: general 1.67x, legal 1.81x, code-agentic 1.30x. A 1.39x spread,
@@ -136,29 +154,38 @@ plateau anywhere. Moving from 0.075 to 0.05 triples the size of the correction.
 Highest overlap among your retained windows is 4.75%, so 0.05 does separate — but
 only just, and nothing about 0.05 is derived. Worth a joint decision.
 
-## Message 5 — three places our data backs yours
+## Message 5 — one real mutual confirmation, and a claim we cut
 
-Three places our stuff independently confirms yours:
+We had three of these written. On checking, only one is actually our data
+confirming yours, so here's the honest version.
 
-1. The lane gap. Your same 4bpw artifact reads 0.0305 on your serving stack and
-0.024555 on the packed reference stack. That's exactly the distinction our
-registry's `stack_relation` field exists to enforce, and you got there without
-needing our field. Our measured BF16 floors are the same gap written down:
-0.011506 same-stack, 0.012712 cross-stack, 0.001206 nats apart. A number is a
-(model, panel, teacher, stack) tuple and your data shows why.
+**The real one: determinism is a kernel-path property.** You: 25/25 bitwise
+across three cold boots with shuffled window order, sigma_run exactly 0.0. Us on
+a completely different lane: 5 cold runs, one distinct tokenwise KLD hash,
+sigma_run exactly 0.0. Two independent stacks, same conclusion. And your NVFP4
+counter-example (0/25 bitwise, 93.65% of tokens changed, 2652 top-1 flips, one
+token swinging 4.69 nats, mean barely moving) is the best demonstration of why
+sigma_run belongs next to the mean that anyone's published.
 
-2. Determinism is a kernel-path property. You: 25/25 bitwise across three cold
-boots with shuffled window order, sigma_run exactly 0.0. Us on a completely
-different lane: 5 cold runs, one distinct tokenwise KLD hash, sigma_run exactly
-0.0. Two stacks, same conclusion. And your NVFP4 counter-example (0/25 bitwise,
-93.65% of tokens changed, 2652 top-1 flips, one token swinging 4.69 nats, mean
-barely moving) is the best demonstration of why sigma_run belongs next to the
-mean that anyone's published.
+**The one we cut.** We were going to say your 0.030480-vs-0.024555 gap confirms
+our registry's lane rule. It doesn't, twice over. Both numbers are yours — we
+measured neither, we just ingested one. And `stack_relation` in our schema means
+"did reference and candidate logits come from the same runtime *within one
+measurement*", which both your readings satisfy; we actually tag the 0.024555 row
+`same_stack`. What separates your two numbers is the pipeline, and we keep
+`pipeline_ref` out of the comparability key — six rows from five pipelines share
+one key in our data right now.
 
-3. Our registry flagged the contamination risk before you scanned. Our panel
-record for your panel has carried a `weak_contamination_guard` disclosure since
-we ingested it, saying role separation alone is materially weaker than an n-gram
-scan. Then you ran the scan and found 37-39%.
+So your gap is a finding neither the standard nor our registry encodes yet, and
+that's the gap we'd most like to close jointly: the key needs an engine-path
+component, or every number needs an engine identity beside it. (And see Message 9
+before either of us builds a headline on 0.024555 anyway.)
+
+**Smaller, but true:** our panel record for your panel has carried a
+`weak_contamination_guard` disclosure since 28 Aug, a day before your scan
+published, saying role separation alone is materially weaker than an n-gram scan.
+Flagging a missing check isn't predicting its result — the finding is yours. It
+does suggest the disclosure field was pointed at the right thing.
 
 ## Message 6 — what we can put on the table
 
@@ -173,24 +200,34 @@ scan. Then you ran the scan and found 37-39%.
   It caught a real mistake in this very work: our first clean-scope rows sat
   under the parent panel's comparability key and the validator refused them,
   because a different window set is a different panel. They now have their own
-  panel record.
-- Multi-format decode surfaces (TR3/EXL3, dione, MLX, GGUF, NVFP4) so one
-  yardstick spans formats.
+  panel record. 90 invariants, runs on a stock interpreter, no pip install.
+- Multi-format decode surfaces. `k6/tools/stream_score.py --source` takes
+  checkpoint, payload-store, dione, native, exl3hf, mlx, gguf, nvfp4 — so one
+  KLD yardstick spans EXL3, Dione, MLX, GGUF and NVFP4 against the same teacher.
+  Working today; the NVFP4 surface is the one most likely to be useful to you.
 - A protocol-hash fix, below.
-- An R0-b implementation that actually runs against the real teacher in-session.
-  Yours has the shift check as a synthetic unit test on V=512 random logits;
-  the session gate only does the exactly-0.0 half. Ours does both, and the
-  interesting failure it catches is a teacher whose rows barely differ — a
-  left-on prefix cache — which passes the 0.0 check perfectly and is still
-  broken. Happy to hand that over.
+- An R0-b implementation that runs against the real teacher in-session. Yours has
+  the shift check as a synthetic unit test on V=512 random logits; the session
+  gate does the exactly-0.0 half. Ours does both, and the failure it catches is a
+  teacher whose rows barely differ — a left-on prefix cache — which passes the 0.0
+  check perfectly and is still broken. ~200 lines, stdlib + numpy, no dependency
+  on the rest of our stack. Yours if you want it.
+
+Caveat on all of it: our repo ships **no LICENSE file** right now, so none of
+these offers is legally usable as it stands. That's on us, fixing it this week.
+Say what works for you — you clearly thought harder about your licence than we
+did about ours.
 
 ## Message 7 — small corrections both ways
 
 Ours first:
 
-- We published 60 rows with no interval at all. Anyone who inferred one from
-  std/sqrt(N) was off by 4.6x to 10x; the window design effect on this panel runs
-  21-29 for our rows and 74-105 for your 4bpw.
+- Every row we published on your panels — 16 of them, 8 on final25 and 8 on the
+  final-0000 sub-panel — carried no interval at all.
+  Anyone who inferred one from std/sqrt(N) would have been off by 4.6x to 10x;
+  the window design effect on this panel runs 21-29 for our rows and 74-105 for
+  your 4bpw. (We never published a naive SE ourselves. We published nothing,
+  which on your panel is worse.)
 - Our 2.52x attributable-error ratio is a panel-scope number. The clean-scope
   version needs one re-measured streaming BF16 floor with per-window output.
 

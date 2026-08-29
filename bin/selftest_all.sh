@@ -68,6 +68,12 @@ t "fidelity card annotation, 3 axes (T7)" \
 # loudly otherwise; its FIRE cases prove every gate rejects bad input.
 t "joint standard (known answers, canary FIRE cases, registry invariants)" \
                                            0 "$PY" bin/selftest_joint_standard.py
+# Every anchored number in docs/PROTOCOL-ALIGNMENT.md and docs/ALIGNMENT-REPLY.md
+# re-derived from the committed receipts, plus the two model cards' scope
+# disclosure. Nothing tied those documents to the data before this, and five
+# wrong numbers reached them through the gap; this is the gate that closes it.
+t "doc-vs-receipt: every alignment/card number re-derived" \
+                                           0 python3 bin/check_doc_numbers.py
 t "stream_score ladder rungs g,h,i,j,k (teacher role / preview refusal / \
 sampling / receipt stability / source dispatch)" \
                                            0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k

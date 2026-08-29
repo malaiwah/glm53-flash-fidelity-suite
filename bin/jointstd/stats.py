@@ -19,13 +19,23 @@ THREE BACKENDS, and the receipt says which one produced the number.
                 Carlo error; used on interpreters with no numpy, which is the
                 only environment ``registry/ make check`` is allowed to assume.
 
-EQUAL-WEIGHT WINDOWS.  His bootstrap resamples windows and concatenates their
-per-TOKEN arrays.  Every window in this panel is exactly 2047 scored positions,
-so the token-weighted mean of a resample equals the plain mean of the resampled
-window means, and a bootstrap over window means is the same estimator.  Our
-published receipts carry per-window means but not per-token arrays, so this
-equivalence is what makes our existing rows analysable at all.  It is asserted
-in the selftest, not assumed: a window-count check refuses unequal windows.
+EQUAL-WEIGHT WINDOWS, AND THE CONDITION THAT MAKES THAT LEGAL.  His bootstrap
+resamples windows and concatenates their per-TOKEN arrays.  Every window in this
+panel is exactly 2047 scored positions, so the token-weighted mean of a resample
+equals the plain mean of the resampled window means, and a bootstrap over window
+means is the same estimator.  Our published receipts carry per-window means but
+not per-token arrays, so this equivalence is what makes our existing rows
+analysable at all.
+
+``window_block_bootstrap`` below takes ONLY window means: it never sees a token
+count and therefore always computes the EQUAL-WEIGHT mean, while
+``se_from_window_summaries`` computes the TOKEN-WEIGHTED one.  On equal windows
+those coincide exactly; on unequal windows they do not, and a receipt carrying
+both would quote a BCa interval around a different point estimate than its own
+headline mean.  The equivalence is therefore a precondition, not a property:
+``bin/joint_standard.py::cmd_analyze`` checks the window sizes and REFUSES when
+they differ (``--allow-unequal-windows`` to override deliberately), and
+``registry/tools/joint_enrich.py`` runs only on 2047-position panels.
 """
 
 from __future__ import annotations
@@ -261,26 +271,65 @@ def sigma_run(run_means: Sequence[float]) -> Dict[str, Any]:
 
 
 def combine_quadrature(se_stat: float, sigma: Optional[float],
-                       gate: float = 0.2) -> Dict[str, Any]:
+                       gate: float = 0.2,
+                       mean: Optional[float] = None,
+                       z: float = 1.96) -> Dict[str, Any]:
     """SE_total = hypot(SE_stat, sigma_run), with the gate that decides whether
-    the run term has to appear in the headline."""
+    the run term has to appear in the headline.
+
+    AND, when ``mean`` is given and the run term is real, the interval that
+    goes with it.  Without that the receipt tells its reader to quote SE_total
+    and then hands them no interval built from it -- the BCa endpoints come
+    from the bootstrap, which resamples windows within ONE run and therefore
+    cannot see run-to-run spread at all.  A consumer following the instruction
+    literally had nothing to follow.
+
+    ``ci95_total`` is deliberately a plain z-interval, ``mean +- 1.96*SE_total``,
+    and is labelled ``interval_kind: "z"``.  It is NOT a BCa interval and must
+    not be presented as one: sigma_run has no bootstrap distribution to be
+    bias-corrected or accelerated against, so there is nothing for BCa to
+    correct.  Quote it BESIDE the BCa interval, not instead of it -- the BCa
+    endpoints remain the better statement of the statistical half, and on a
+    skewed panel they are visibly asymmetric where this one cannot be.
+
+    It is emitted only when ``sigma_run > 0``.  At exactly 0.0 -- every
+    bitwise-deterministic path, which is every malaiwah row published so far --
+    SE_total == SE_stat and the BCa interval already IS the total interval;
+    emitting a second, worse-shaped copy of it would invite someone to quote
+    the z-interval when the BCa one was available.
+    """
     if sigma is None:
         return {"se_stat": se_stat, "sigma_run": None, "se_total": se_stat,
                 "ratio": None, "gate": gate, "gate_ok": True,
+                "ci95_total": None, "interval_kind": None,
                 "note": "sigma_run not estimable; SE_total = SE_stat"}
     total = math.hypot(se_stat, sigma)
     ratio = (sigma / se_stat) if se_stat else float("inf")
-    return {
+    out = {
         "se_stat": se_stat,
         "sigma_run": sigma,
         "se_total": total,
         "ratio": ratio,
         "gate": gate,
         "gate_ok": ratio <= gate,
+        "ci95_total": None,
+        "interval_kind": None,
         "note": ("run-to-run term is negligible against the statistical SE"
                  if ratio <= gate else
                  "run-to-run term is NOT negligible: quote SE_total, not SE_stat"),
     }
+    if sigma > 0.0 and mean is not None:
+        out["ci95_total"] = [mean - z * total, mean + z * total]
+        out["interval_kind"] = "z"
+        out["z"] = z
+        out["note"] += ("; ci95_total = mean +- %.2f*SE_total is a z-interval, "
+                        "not BCa -- quote it beside the BCa endpoints, which "
+                        "remain the better statement of the statistical half"
+                        % z)
+    elif sigma == 0.0:
+        out["note"] += ("; sigma_run is exactly 0.0, so SE_total == SE_stat and "
+                        "the BCa interval already is the total interval")
+    return out
 
 
 # =================================================================== McNemar
@@ -335,7 +384,14 @@ def percentile_guard(n: int, quantiles: Sequence[float] = (0.90, 0.95, 0.99, 0.9
     rows = []
     for q in quantiles:
         exc = n * (1.0 - q)
-        rows.append({"q": q, "exceedances": exc, "ok": exc >= min_exceedances})
+        # percentile_ok(), not a second inline copy of the comparison: written
+        # inline this used the bare `exc >= min_exceedances` and so disagreed
+        # with percentile_ok() at exactly the boundary percentile_ok() exists to
+        # fix (n=1000, q=0.90 -> ok here, refused there). Decision-neutral on
+        # every real panel size (51175 / 34799 / 2047), but two functions in one
+        # module must not answer the same question differently.
+        rows.append({"q": q, "exceedances": exc,
+                     "ok": percentile_ok(n, q, min_exceedances)})
     return {"n": n, "min_exceedances": min_exceedances, "quantiles": rows}
 
 

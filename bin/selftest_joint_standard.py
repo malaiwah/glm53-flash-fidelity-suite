@@ -479,6 +479,55 @@ def t_sigma_run() -> None:
     else:
         bad("one-run sigma", repr(z))
 
+    # ---- ci95_total: a live run term has to produce an INTERVAL, not just an SE.
+    # The complaint this answers: the receipt said "quote SE_total" and then gave
+    # the reader no interval built from SE_total, because the BCa endpoints
+    # resample windows within ONE run and cannot contain sigma_run.
+    m = 0.0305
+    q3 = stats_mod.combine_quadrature(1e-3, 5e-4, mean=m)
+    if q3["ci95_total"] is None:
+        bad("ci95_total on a live sigma_run", "not emitted")
+    else:
+        lo, hi = q3["ci95_total"]
+        close("ci95_total low  == mean - 1.96*SE_total", lo,
+              m - 1.96 * math.hypot(1e-3, 5e-4), 0.0, "%.15e")
+        close("ci95_total high == mean + 1.96*SE_total", hi,
+              m + 1.96 * math.hypot(1e-3, 5e-4), 0.0, "%.15e")
+        if q3["interval_kind"] == "z" and "NOT BCa" not in q3["note"] and "not BCa" in q3["note"]:
+            ok("ci95_total is labelled a z-interval, not BCa", q3["note"][-46:])
+        elif q3["interval_kind"] == "z":
+            ok("ci95_total is labelled a z-interval, not BCa",
+               "interval_kind=%s" % q3["interval_kind"])
+        else:
+            bad("ci95_total kind", repr(q3["interval_kind"]))
+        # it must be WIDER than the statistical half alone, or it is pointless
+        if (hi - lo) > 2 * 1.96 * 1e-3:
+            ok("ci95_total is wider than the statistical SE alone",
+               "%.4e vs %.4e" % (hi - lo, 2 * 1.96 * 1e-3))
+        else:
+            bad("ci95_total width", "%.6e" % (hi - lo))
+
+    # sigma_run == 0.0 must NOT emit a second, worse-shaped copy of the BCa interval
+    q4 = stats_mod.combine_quadrature(1e-3, 0.0, mean=m)
+    if q4["ci95_total"] is None and q4["se_total"] == 1e-3:
+        ok("sigma_run == 0 -> no ci95_total; BCa already is the total",
+           q4["note"][-44:])
+    else:
+        bad("ci95_total at sigma_run=0", repr(q4["ci95_total"]))
+    # and neither should the not-estimable case
+    q5 = stats_mod.combine_quadrature(1e-3, None, mean=m)
+    if q5["ci95_total"] is None:
+        ok("sigma_run not estimable -> no ci95_total", q5["note"])
+    else:
+        bad("ci95_total when sigma_run is None", repr(q5["ci95_total"]))
+    # the old 3-positional-arg call must still work unchanged
+    q6 = stats_mod.combine_quadrature(1e-3, 5e-4, 0.2)
+    if q6["se_total"] == math.hypot(1e-3, 5e-4) and q6["ci95_total"] is None:
+        ok("mean is optional: the pre-existing call site is unchanged",
+           "se_total=%.9e" % q6["se_total"])
+    else:
+        bad("combine_quadrature back-compat", repr(q6))
+
 
 # ======================================================================== 7
 def t_percentile_guard() -> None:
@@ -781,6 +830,61 @@ def t_cli() -> None:
             ok("FIRE: analyze refuses a scope the receipt cannot cover", "exit 3")
         else:
             bad("scope refusal", "rc=%d expected 3" % rc)
+
+    # FIRE: analyze must refuse a scope that MIXES WINDOW SIZES.
+    #
+    # This is the check whose absence made the stats module's docstring a lie:
+    # window_block_bootstrap sees only means, so its point estimate is the
+    # equal-weight mean, while se_from_window_summaries weights by token count.
+    # On unequal windows the receipt would carry a BCa interval around a
+    # different number than its own headline. Numbers below are chosen so the
+    # two means disagree by ~6x, which no tolerance could hide.
+    if os.path.exists(per):
+        uneq = os.path.join(tmp, "unequal.json")
+        d = json.load(open(per))
+        base = d["per_window"][0]
+        d["per_window"] = [
+            dict(base, window_id="w-big", count=10000, mean=0.010),
+            dict(base, window_id="w-s1", count=100, mean=0.100),
+            dict(base, window_id="w-s2", count=100, mean=0.100),
+        ]
+        json.dump(d, open(uneq, "w"))
+        argv = [sys.executable, os.path.join(HERE, "joint_standard.py"), "analyze",
+                "--report", uneq, "--bootstrap-b", "200",
+                "--domain-bootstrap-b", "100", "--out", os.path.join(tmp, "u.json")]
+        p = subprocess.run(argv, capture_output=True)
+        if p.returncode == 3 and b"REFUSED" in p.stderr and b"mixes window sizes" in p.stderr:
+            ok("FIRE: analyze refuses a scope that mixes window sizes",
+               "exit 3, both means named")
+        else:
+            bad("unequal-window refusal", "rc=%d stderr=%s"
+                % (p.returncode, p.stderr.decode()[:120]))
+        # and the override must restore the capability, not just silence it
+        p2 = subprocess.run(argv + ["--allow-unequal-windows"], capture_output=True)
+        if p2.returncode == 0:
+            u = json.load(open(os.path.join(tmp, "u.json")))
+            if u["scope"]["equal_window_sizes"] is False:
+                ok("--allow-unequal-windows runs and records equal_window_sizes=false",
+                   "positions_per_window=%s" % (u["scope"]["positions_per_window"],))
+            else:
+                bad("unequal override", "scope did not record the inequality")
+        else:
+            bad("unequal override", "rc=%d" % p2.returncode)
+        # equal windows must be untouched by all of this
+        p3 = subprocess.run(
+            [sys.executable, os.path.join(HERE, "joint_standard.py"), "analyze",
+             "--report", per, "--bootstrap-b", "200", "--domain-bootstrap-b", "100",
+             "--out", os.path.join(tmp, "eq.json")], capture_output=True)
+        if p3.returncode == 0:
+            e = json.load(open(os.path.join(tmp, "eq.json")))
+            if e["scope"]["equal_window_sizes"] is True:
+                ok("equal-window analyze is unaffected by the new guard",
+                   "%d windows x %s positions"
+                   % (e["scope"]["n_windows"], e["scope"]["positions_per_window"]))
+            else:
+                bad("equal-window regression", "guard changed the equal case")
+        else:
+            bad("equal-window analyze", "rc=%d" % p3.returncode)
 
     # FIRE: stamp must refuse to rewrite a receipt in place
     src = os.path.join(tmp, "r.json")

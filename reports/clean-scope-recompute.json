@@ -1,0 +1,1327 @@
+{
+ "schema": "malaiwah.glm53-clean-scope-recompute/1",
+ "title": "GLM-5.3-Flash fidelity: brandonmusic's calibration-clean scope, recomputed from published per-window data",
+ "generated_by": "bin/emit_clean_scope_report.py",
+ "gpu_used": false,
+ "is_a_correction": false,
+ "summary": "brandonmusic's 13-gram calibration-overlap scan excludes 8 of the 25 windows of his sealed final panel -- the whole axis4_reasoning domain plus final-0021 and final-0022 -- leaving a 17-window calibration-clean scope. Every malaiwah number published on that panel used all 25 windows and therefore carries the same contamination. This report recomputes all six series on his clean scope from our own published per-window arrays. Five of the six fall (-9.5% to -16.2%); his 4bpw artifact rises (+1.6%). The FP8-minus-floor attributable error rises 1.44% while both of its inputs fall, which is the measured argument for reporting subtracted numbers.",
+ "provenance": {
+  "protocol_file": "registry/protocol/glm53-joint-kld-protocol.v1.json",
+  "protocol_file_sha256": "80df521eb46fba68538dd90aa3f2baf22b1e440b8b560555646ff9bbeb35961b",
+  "protocol_scoring_sha256": null,
+  "window_selection_file": "registry/protocol/window-selection.brandonmusic-final25.json",
+  "window_selection_sha256": "180678c464c8c325a4675a9fd5c54247e99624f0fc911580805e98fd960f79fe",
+  "scan": {
+   "method": "document-id check + 13-token-gram overlap (blake2b-12 digests, deduplicated denominator)",
+   "ngram_n": 13,
+   "threshold": 0.05,
+   "calibration_windows_scanned": 640,
+   "calibration_grams": 1118487
+  },
+  "cross_check_against_his_published_selection": {
+   "against": "window_selection.json",
+   "against_sha256": "688611b173e738cf9d60d7906c74603a5df6a269de185d0b86d0ee2769874943",
+   "identical": true,
+   "mismatches": [],
+   "note": "Independent reimplementation of brandonmusic's 13-gram calibration-overlap scan, run on the real published token arrays. Every window's shared-gram count and fraction match his published window_selection.json exactly.",
+   "windows_checked": 25
+  },
+  "credit": "The contamination finding, the 13-gram scan and the 0.05 threshold are brandonmusic's. His harness, protocol, receipts and panel: huggingface.co/brandonmusic/GLM-5.3-Flash-tr3-4bpw/tree/main/eval/kld ; teacher logits: huggingface.co/datasets/brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits . This report is the arithmetic consequence of his finding applied to our published numbers."
+ },
+ "scopes": {
+  "panel25": {
+   "panel_ref": "panel--glm53.brandonmusic.final25",
+   "windows": 25,
+   "positions_per_window": 2047,
+   "scored_positions": 51175,
+   "note": "the full sealed panel, and the scope of every previously published malaiwah number on it"
+  },
+  "clean17": {
+   "panel_ref": "panel--glm53.brandonmusic.final25-clean17",
+   "windows": 17,
+   "positions_per_window": 2047,
+   "scored_positions": 34799,
+   "window_ids": [
+    "final-0000",
+    "final-0001",
+    "final-0002",
+    "final-0004",
+    "final-0005",
+    "final-0006",
+    "final-0008",
+    "final-0009",
+    "final-0010",
+    "final-0012",
+    "final-0013",
+    "final-0014",
+    "final-0016",
+    "final-0017",
+    "final-0018",
+    "final-0020",
+    "final-0024"
+   ],
+   "excluded": [
+    {
+     "window_id": "final-0003",
+     "shared_ngram_fraction": 0.381153,
+     "domain": "axis4_reasoning_termination"
+    },
+    {
+     "window_id": "final-0007",
+     "shared_ngram_fraction": 0.37027,
+     "domain": "axis4_reasoning_termination"
+    },
+    {
+     "window_id": "final-0011",
+     "shared_ngram_fraction": 0.373626,
+     "domain": "axis4_reasoning_termination"
+    },
+    {
+     "window_id": "final-0015",
+     "shared_ngram_fraction": 0.379973,
+     "domain": "axis4_reasoning_termination"
+    },
+    {
+     "window_id": "final-0019",
+     "shared_ngram_fraction": 0.377005,
+     "domain": "axis4_reasoning_termination"
+    },
+    {
+     "window_id": "final-0021",
+     "shared_ngram_fraction": 0.071392,
+     "domain": "axis2_legal"
+    },
+    {
+     "window_id": "final-0022",
+     "shared_ngram_fraction": 0.057935,
+     "domain": "axis3_code_agentic"
+    },
+    {
+     "window_id": "final-0023",
+     "shared_ngram_fraction": 0.390071,
+     "domain": "axis4_reasoning_termination"
+    }
+   ],
+   "note": "a different window set is a different panel: clean17 carries its own comparability key so that a clean17-vs-panel25 difference is structurally impossible, not merely discouraged"
+  }
+ },
+ "rows": [
+  {
+   "series": "k6-sealed",
+   "label": "K6 tr3-6bpw sealed 5-run",
+   "lane": "sealed-ep8",
+   "registry_measurement_ref": "measurement--glm53.k6-6bpw.brandonmusic-final25",
+   "source_note": "Per-window means extracted verbatim from the receipt named in \"source\". This file exists so the joint-standard analysis is reproducible without refetching; it adds no new measurement.",
+   "scopes": {
+    "panel25": {
+     "mean_kld_nats": 0.013723384665701145,
+     "windows": 25,
+     "scored_positions": 51175,
+     "se_clustered_window": 0.0014396809848740985,
+     "ci95_bca": [
+      0.011154809315386134,
+      0.016626707781305778
+     ],
+     "ci95_percentile": [
+      0.011116447872808355,
+      0.01655974445139994
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.011739694055877225,
+       "se_clustered_window": 0.003195509740141823,
+       "ci95_bca": [
+        0.006526936053395054,
+        0.018053914165752267
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.014657753884586004,
+       "se_clustered_window": 0.003796051219974006,
+       "ci95_bca": [
+        0.009450599552105435,
+        0.02296411936624807
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.012911952347228223,
+       "se_clustered_window": 0.0022221512440916036,
+       "ci95_bca": [
+        0.007584138204590299,
+        0.01589801780947474
+       ]
+      },
+      {
+       "domain": "axis4_reasoning_termination",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.015914753476750452,
+       "se_clustered_window": 0.0023717048393595537,
+       "ci95_bca": [
+        0.010934744466255227,
+        0.019468774294601573
+       ]
+      }
+     ]
+    },
+    "clean17": {
+     "mean_kld_nats": 0.011677286368695299,
+     "windows": 17,
+     "scored_positions": 34799,
+     "se_clustered_window": 0.0015634720783838894,
+     "ci95_bca": [
+      0.008855914041658055,
+      0.014785105583174722
+     ],
+     "ci95_percentile": [
+      0.008791097011913157,
+      0.01475285806648363
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.011739694055877225,
+       "se_clustered_window": 0.003195509740141823,
+       "ci95_bca": [
+        0.006526936053395054,
+        0.018053914165752267
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.011448683071708841,
+       "se_clustered_window": 0.0024835064070602027,
+       "ci95_bca": [
+        0.007417640938314718,
+        0.016069063162784794
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.011818518903627059,
+       "se_clustered_window": 0.002369290861006419,
+       "ci95_bca": [
+        0.006691972210055817,
+        0.014703047099550021
+       ]
+      }
+     ]
+    }
+   },
+   "scope_delta": {
+    "absolute_nats": -0.0020460982970058467,
+    "relative_pct": -14.909574764887704,
+    "direction": "down"
+   }
+  },
+  {
+   "series": "k6-streaming",
+   "label": "K6 tr3-6bpw streaming 2-run",
+   "lane": "streaming",
+   "registry_measurement_ref": "measurement--glm53.k6-6bpw.brandonmusic-final25-stream",
+   "source_note": "Per-window means extracted verbatim from the receipt named in \"source\". This file exists so the joint-standard analysis is reproducible without refetching; it adds no new measurement.",
+   "scopes": {
+    "panel25": {
+     "mean_kld_nats": 0.013714888822596551,
+     "windows": 25,
+     "scored_positions": 51175,
+     "se_clustered_window": 0.0014372012222096185,
+     "ci95_bca": [
+      0.011156714543112723,
+      0.016629987751331676
+     ],
+     "ci95_percentile": [
+      0.011119653820829358,
+      0.01655029038960878
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "deff_window": 23.291465915742382,
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.011760871660686201,
+       "se_clustered_window": 0.003196150771600996,
+       "ci95_bca": [
+        0.00652904155193087,
+        0.0179698106065556
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.014675231714109943,
+       "se_clustered_window": 0.0037888679988247833,
+       "ci95_bca": [
+        0.009487646301823235,
+        0.023115281689548062
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.012844753725643303,
+       "se_clustered_window": 0.0021965157354470496,
+       "ci95_bca": [
+        0.00752306464090629,
+        0.01577732487220709
+       ]
+      },
+      {
+       "domain": "axis4_reasoning_termination",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.015904367716931822,
+       "se_clustered_window": 0.002375639210261843,
+       "ci95_bca": [
+        0.01089916429991012,
+        0.019457482305643287
+       ]
+      }
+     ]
+    },
+    "clean17": {
+     "mean_kld_nats": 0.011675992693734857,
+     "windows": 17,
+     "scored_positions": 34799,
+     "se_clustered_window": 0.0015593749081984104,
+     "ci95_bca": [
+      0.008862707095335811,
+      0.014779150441169443
+     ],
+     "ci95_percentile": [
+      0.008806685856410881,
+      0.014735920328532751
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "deff_window": 28.45223499740042,
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.011760871660686201,
+       "se_clustered_window": 0.003196150771600996,
+       "ci95_bca": [
+        0.00652904155193087,
+        0.0179698106065556
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.011469656467137568,
+       "se_clustered_window": 0.0024738051808448425,
+       "ci95_bca": [
+        0.007484325087806757,
+        0.016067808508382842
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.01176349836660026,
+       "se_clustered_window": 0.0023416558963500166,
+       "ci95_bca": [
+        0.006611361111392565,
+        0.014645576539362859
+       ]
+      }
+     ]
+    }
+   },
+   "scope_delta": {
+    "absolute_nats": -0.002038896128861694,
+    "relative_pct": -14.866297169703802,
+    "direction": "down"
+   }
+  },
+  {
+   "series": "k8-streaming",
+   "label": "K8 tr3-8bpw streaming 2-run",
+   "lane": "streaming",
+   "registry_measurement_ref": "measurement--glm53.k8-8bpw.brandonmusic-final25-stream",
+   "source_note": "Per-window means extracted verbatim from the receipt named in \"source\". This file exists so the joint-standard analysis is reproducible without refetching; it adds no new measurement.",
+   "scopes": {
+    "panel25": {
+     "mean_kld_nats": 0.012384191023436866,
+     "windows": 25,
+     "scored_positions": 51175,
+     "se_clustered_window": 0.0013870397068192204,
+     "ci95_bca": [
+      0.009990565373832765,
+      0.015219299083379228
+     ],
+     "ci95_percentile": [
+      0.009919408899049622,
+      0.01514395724462396
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "deff_window": 21.118186261459297,
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.01136703558705986,
+       "se_clustered_window": 0.0031050257891583354,
+       "ci95_bca": [
+        0.0059795366362445515,
+        0.01718562569038074
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.013399716050517279,
+       "se_clustered_window": 0.0035532932739297837,
+       "ci95_bca": [
+        0.008461196535330735,
+        0.021552934899312558
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.010502908041343519,
+       "se_clustered_window": 0.0019035629741204728,
+       "ci95_bca": [
+        0.0063085275289640275,
+        0.013400582816622009
+       ]
+      },
+      {
+       "domain": "axis4_reasoning_termination",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.014436630320889642,
+       "se_clustered_window": 0.002594699602928338,
+       "ci95_bca": [
+        0.010118355144113711,
+        0.019331366645720594
+       ]
+      }
+     ]
+    },
+    "clean17": {
+     "mean_kld_nats": 0.010829419869882874,
+     "windows": 17,
+     "scored_positions": 34799,
+     "se_clustered_window": 0.0015000884254381746,
+     "ci95_bca": [
+      0.008063199874715557,
+      0.01383775237335415
+     ],
+     "ci95_percentile": [
+      0.008042643959148683,
+      0.013826730165050026
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "deff_window": 24.889061068372047,
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.01136703558705986,
+       "se_clustered_window": 0.0031050257891583354,
+       "ci95_bca": [
+        0.0059795366362445515,
+        0.01718562569038074
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.010324226620147562,
+       "se_clustered_window": 0.0021796529038721297,
+       "ci95_bca": [
+        0.006769076652949154,
+        0.014042167600572347
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.010581951115570407,
+       "se_clustered_window": 0.00232936821548005,
+       "ci95_bca": [
+        0.0063316676582741635,
+        0.014203168394175621
+       ]
+      }
+     ]
+    }
+   },
+   "scope_delta": {
+    "absolute_nats": -0.0015547711535539924,
+    "relative_pct": -12.554482974395462,
+    "direction": "down"
+   }
+  },
+  {
+   "series": "fp8-crossstack",
+   "label": "official FP8 (cross-stack)",
+   "lane": "cross-stack",
+   "registry_measurement_ref": "measurement--glm53.official-fp8.brandonmusic-final25",
+   "source_note": "Per-window means extracted verbatim from the receipt named in \"source\". This file exists so the joint-standard analysis is reproducible without refetching; it adds no new measurement.",
+   "scopes": {
+    "panel25": {
+     "mean_kld_nats": 0.020615254540417995,
+     "windows": 25,
+     "scored_positions": 51175,
+     "se_clustered_window": 0.002348395074265463,
+     "ci95_bca": [
+      0.016468873471594935,
+      0.025623881613769408
+     ],
+     "ci95_percentile": [
+      0.016300361571617746,
+      0.025336589627253776
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.019568764759592266,
+       "se_clustered_window": 0.005603126838726583,
+       "ci95_bca": [
+        0.010918587736131663,
+        0.030808019022281665
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.023988326217099922,
+       "se_clustered_window": 0.005207217782918072,
+       "ci95_bca": [
+        0.016162669006653967,
+        0.033310927762297625
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.020173329632765,
+       "se_clustered_window": 0.005305639742680075,
+       "ci95_bca": [
+        0.01292955316766,
+        0.03367228696461461
+       ]
+      },
+      {
+       "domain": "axis4_reasoning_termination",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.01890501251568574,
+       "se_clustered_window": 0.0028153357532178323,
+       "ci95_bca": [
+        0.013419729332568466,
+        0.02341539244796427
+       ]
+      }
+     ]
+    },
+    "clean17": {
+     "mean_kld_nats": 0.018665326569455153,
+     "windows": 17,
+     "scored_positions": 34799,
+     "se_clustered_window": 0.002739033213087847,
+     "ci95_bca": [
+      0.014192372880624355,
+      0.02479357729359287
+     ],
+     "ci95_percentile": [
+      0.013837917492582187,
+      0.024198795591836124
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.019568764759592266,
+       "se_clustered_window": 0.005603126838726583,
+       "ci95_bca": [
+        0.010918587736131663,
+        0.030808019022281665
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.02067276158943368,
+       "se_clustered_window": 0.004917643984446201,
+       "ci95_bca": [
+        0.013378249458854168,
+        0.03127708952451608
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.01539307808328466,
+       "se_clustered_window": 0.002819310607967072,
+       "ci95_bca": [
+        0.009373788795748766,
+        0.01882924510668396
+       ]
+      }
+     ]
+    }
+   },
+   "scope_delta": {
+    "absolute_nats": -0.001949927970962842,
+    "relative_pct": -9.4586655097556,
+    "direction": "down"
+   }
+  },
+  {
+   "series": "bf16-floor-crossstack",
+   "label": "BF16 replay floor (cross-stack)",
+   "lane": "cross-stack",
+   "registry_measurement_ref": "measurement--glm53.bf16-replay-floor.brandonmusic-final25",
+   "source_note": "Per-window means extracted verbatim from the receipt named in \"source\". This file exists so the joint-standard analysis is reproducible without refetching; it adds no new measurement.",
+   "scopes": {
+    "panel25": {
+     "mean_kld_nats": 0.012711599817250709,
+     "windows": 25,
+     "scored_positions": 51175,
+     "se_clustered_window": 0.001341608627795298,
+     "ci95_bca": [
+      0.010328695080841702,
+      0.015391827897039015
+     ],
+     "ci95_percentile": [
+      0.010289050047320747,
+      0.015366932124763422
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.01147672334551312,
+       "se_clustered_window": 0.0029724902534535814,
+       "ci95_bca": [
+        0.006182818292934442,
+        0.016948196670624614
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.012820487412096968,
+       "se_clustered_window": 0.003166440983445429,
+       "ci95_bca": [
+        0.008689585777679565,
+        0.020155525322219738
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.011602361431698821,
+       "se_clustered_window": 0.0022491963613079026,
+       "ci95_bca": [
+        0.007201436639257549,
+        0.015295580879197029
+       ]
+      },
+      {
+       "domain": "axis4_reasoning_termination",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.015152639824983528,
+       "se_clustered_window": 0.0025975104681862727,
+       "ci95_bca": [
+        0.010690462166129629,
+        0.019922926093400375
+       ]
+      }
+     ]
+    },
+    "clean17": {
+     "mean_kld_nats": 0.010647639361035206,
+     "windows": 17,
+     "scored_positions": 34799,
+     "se_clustered_window": 0.0014025316095133238,
+     "ci95_bca": [
+      0.008124326189112754,
+      0.013490628950062747
+     ],
+     "ci95_percentile": [
+      0.008051370599049,
+      0.013447196242587596
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.01147672334551312,
+       "se_clustered_window": 0.0029724902534535814,
+       "ci95_bca": [
+        0.006182818292934442,
+        0.016948196670624614
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.010085462091388418,
+       "se_clustered_window": 0.001954220431550372,
+       "ci95_bca": [
+        0.006809533168284386,
+        0.01348940530906309
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.010049099052412918,
+       "se_clustered_window": 0.0019923328986953216,
+       "ci95_bca": [
+        0.0058285823064676626,
+        0.012760614287555577
+       ]
+      }
+     ]
+    }
+   },
+   "scope_delta": {
+    "absolute_nats": -0.002063960456215503,
+    "relative_pct": -16.236826881652892,
+    "direction": "down"
+   }
+  },
+  {
+   "series": "brandonmusic-4bpw",
+   "label": "brandonmusic tr3-4bpw (his artifact, our scorer)",
+   "lane": "cross-stack",
+   "registry_measurement_ref": "measurement--glm53.brandonmusic-4bpw.brandonmusic-final25",
+   "source_note": "Per-window means extracted verbatim from the receipt named in \"source\". This file exists so the joint-standard analysis is reproducible without refetching; it adds no new measurement.",
+   "scopes": {
+    "panel25": {
+     "mean_kld_nats": 0.024554564249958208,
+     "windows": 25,
+     "scored_positions": 51175,
+     "se_clustered_window": 0.0038096648053362373,
+     "ci95_bca": [
+      0.01943300772561162,
+      0.035880990710038654
+     ],
+     "ci95_percentile": [
+      0.018376258672456885,
+      0.033157369579253096
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "deff_window": 73.89752052684781,
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.02888438570910585,
+       "se_clustered_window": 0.012840972742839154,
+       "ci95_bca": [
+        0.013086348460342848,
+        0.06324589958688848
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.027608301692711928,
+       "se_clustered_window": 0.005084917973307845,
+       "ci95_bca": [
+        0.020692171443685067,
+        0.03817680417629283
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.02162042033684949,
+       "se_clustered_window": 0.0036391061443090543,
+       "ci95_bca": [
+        0.013785215044190419,
+        0.02661726118079259
+       ]
+      },
+      {
+       "domain": "axis4_reasoning_termination",
+       "windows": 6,
+       "scored_positions": 12282,
+       "mean_kld_nats": 0.01938351235130761,
+       "se_clustered_window": 0.002648656298750324,
+       "ci95_bca": [
+        0.013134739642267067,
+        0.02319595968434919
+       ]
+      }
+     ]
+    },
+    "clean17": {
+     "mean_kld_nats": 0.024948837055614983,
+     "windows": 17,
+     "scored_positions": 34799,
+     "se_clustered_window": 0.0053478921956119346,
+     "ci95_bca": [
+      0.018140680375487554,
+      0.04166215976296881
+     ],
+     "ci95_percentile": [
+      0.0168399187674312,
+      0.036569376748791814
+     ],
+     "bootstrap_b": 5000,
+     "bootstrap_seed": 20260829,
+     "interval_kind": "bca",
+     "cluster_unit": "window",
+     "deff_window": 104.99945042128226,
+     "by_domain": [
+      {
+       "domain": "axis1_general",
+       "windows": 7,
+       "scored_positions": 14329,
+       "mean_kld_nats": 0.02888438570910585,
+       "se_clustered_window": 0.012840972742839154,
+       "ci95_bca": [
+        0.013086348460342848,
+        0.06324589958688848
+       ]
+      },
+      {
+       "domain": "axis2_legal",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.023508184008518444,
+       "se_clustered_window": 0.003683495440006614,
+       "ci95_bca": [
+        0.01765220028325968,
+        0.03054002779953001
+       ]
+      },
+      {
+       "domain": "axis3_code_agentic",
+       "windows": 5,
+       "scored_positions": 10235,
+       "mean_kld_nats": 0.020879721987824302,
+       "se_clustered_window": 0.004363678405651466,
+       "ci95_bca": [
+        0.013138090501507268,
+        0.027413902661521064
+       ]
+      }
+     ]
+    }
+   },
+   "scope_delta": {
+    "absolute_nats": 0.000394272805656775,
+    "relative_pct": 1.6057006821346709,
+    "direction": "up"
+   }
+  }
+ ],
+ "headline": {
+  "five_of_six_fall": [
+   "K6 tr3-6bpw sealed 5-run",
+   "K6 tr3-6bpw streaming 2-run",
+   "K8 tr3-8bpw streaming 2-run",
+   "official FP8 (cross-stack)",
+   "BF16 replay floor (cross-stack)"
+  ],
+  "rises": [
+   "brandonmusic tr3-4bpw (his artifact, our scorer)"
+  ],
+  "note": "His artifact rising while ours fall is not a paradox: the excluded windows are ones his quant happens to score well on and ours score badly on, which is exactly why a contaminated scope flatters some codecs and not others."
+ },
+ "attributable": {
+  "lane": "cross_stack (both sides)",
+  "by_scope": {
+   "panel25": {
+    "fp8": 0.020615254540417995,
+    "same_lane_floor": 0.012711599817250709,
+    "attributable_nats": 0.007903654723167286,
+    "ratio": 1.6217671132504787
+   },
+   "clean17": {
+    "fp8": 0.018665326569455153,
+    "same_lane_floor": 0.010647639361035206,
+    "attributable_nats": 0.008017687208419947,
+    "ratio": 1.7530013871206505
+   }
+  },
+  "attributable_move_pct": 1.4427817161395935,
+  "fp8_move_pct": -9.4586655097556,
+  "floor_move_pct": -16.236826881652892,
+  "reading": "Both inputs move by 9-16% between scopes and their difference moves by 1.4%. The subtraction is the stable quantity. This is a measured answer to the objection that subtracted numbers should not be published.",
+  "what_cannot_be_recomputed": "The same-lane K6/K8 attributable table has no clean-scope form: its floor is the STREAMING BF16 floor, whose receipt is scalar-only (run means and a tokenwise digest, no per-window array). Substituting the cross-stack floor would be the cross-lane subtraction invariant BIAS-006 refuses, so it is not done. The published panel25 attributable ratio (K6 0.002209 / K8 0.000878 = 2.52x) stands as a panel25 number only."
+ },
+ "paired": {
+  "method": "paired per-window differences, BCa on the differences, B=5000, seed 20260829; ranking by paired differences rather than by eyeballing overlapping marginal intervals is brandonmusic's rule and it is adopted here",
+  "comparisons": [
+   {
+    "comparison": "K6 - K8",
+    "scopes": {
+     "panel25": {
+      "label_a": "K6",
+      "label_b": "K8",
+      "mean_a": 0.013723384665701145,
+      "mean_b": 0.012384191023436866,
+      "mean_diff": 0.0013391936422642808,
+      "mean_diff_se": 0.0004113627565877189,
+      "ratio_a_over_b": 1.1081373534799228,
+      "ci95_diff_bca": [
+       0.0006950254663237393,
+       0.002330012568459839
+      ],
+      "ci95_diff_percentile": [
+       0.0006086850953940536,
+       0.002155431593397423
+      ],
+      "ci95_ratio_percentile": [
+       1.0472020107189215,
+       1.182749286848613
+      ],
+      "bca_excludes_zero": true,
+      "n_windows": 25,
+      "windows_a_better": 5,
+      "windows_b_better": 20,
+      "sign_test_p": 0.004077315330505371,
+      "bootstrap_b": 2000,
+      "seed": 20260829,
+      "mcnemar": {
+       "available": false,
+       "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+      }
+     },
+     "clean17": {
+      "label_a": "K6",
+      "label_b": "K8",
+      "mean_a": 0.011677286368695299,
+      "mean_b": 0.010829419869882874,
+      "mean_diff": 0.0008478664988124246,
+      "mean_diff_se": 0.00037094614244505514,
+      "ratio_a_over_b": 1.0782928826289562,
+      "ci95_diff_bca": [
+       0.00015263386794256493,
+       0.0015726736943635375
+      ],
+      "ci95_diff_percentile": [
+       0.00014080495453142413,
+       0.001543381354877994
+      ],
+      "ci95_ratio_percentile": [
+       1.01302086874327,
+       1.1459499730414509
+      ],
+      "bca_excludes_zero": true,
+      "n_windows": 17,
+      "windows_a_better": 4,
+      "windows_b_better": 13,
+      "sign_test_p": 0.049041748046875,
+      "bootstrap_b": 2000,
+      "seed": 20260829,
+      "mcnemar": {
+       "available": false,
+       "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+      }
+     }
+    }
+   },
+   {
+    "comparison": "K6 - FP8",
+    "scopes": {
+     "panel25": {
+      "label_a": "K6",
+      "label_b": "FP8",
+      "mean_a": 0.013723384665701145,
+      "mean_b": 0.020615254540417995,
+      "mean_diff": -0.006891869874716846,
+      "mean_diff_se": 0.001301752907754084,
+      "ratio_a_over_b": 0.6656907698517746,
+      "ci95_diff_bca": [
+       -0.00998188991080092,
+       -0.004871771853581246
+      ],
+      "ci95_diff_percentile": [
+       -0.009551549548161847,
+       -0.004656731199619706
+      ],
+      "ci95_ratio_percentile": [
+       0.5988570331372767,
+       0.7385656317080437
+      ],
+      "bca_excludes_zero": true,
+      "n_windows": 25,
+      "windows_a_better": 25,
+      "windows_b_better": 0,
+      "sign_test_p": 5.960464477539063e-08,
+      "bootstrap_b": 2000,
+      "seed": 20260829,
+      "mcnemar": {
+       "available": false,
+       "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+      }
+     },
+     "clean17": {
+      "label_a": "K6",
+      "label_b": "FP8",
+      "mean_a": 0.011677286368695299,
+      "mean_b": 0.018665326569455153,
+      "mean_diff": -0.006988040200759852,
+      "mean_diff_se": 0.0014220776635363343,
+      "ratio_a_over_b": 0.6256138260020897,
+      "ci95_diff_bca": [
+       -0.010505581002404119,
+       -0.004798315410995557
+      ],
+      "ci95_diff_percentile": [
+       -0.010047083166893423,
+       -0.00454810543437745
+      ],
+      "ci95_ratio_percentile": [
+       0.5677690284535463,
+       0.7004716381926112
+      ],
+      "bca_excludes_zero": true,
+      "n_windows": 17,
+      "windows_a_better": 17,
+      "windows_b_better": 0,
+      "sign_test_p": 1.52587890625e-05,
+      "bootstrap_b": 2000,
+      "seed": 20260829,
+      "mcnemar": {
+       "available": false,
+       "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+      }
+     }
+    }
+   },
+   {
+    "comparison": "K8 - FP8",
+    "scopes": {
+     "panel25": {
+      "label_a": "K8",
+      "label_b": "FP8",
+      "mean_a": 0.012384191023436866,
+      "mean_b": 0.020615254540417995,
+      "mean_diff": -0.008231063516981128,
+      "mean_diff_se": 0.0015730581502276402,
+      "ratio_a_over_b": 0.6007294743393338,
+      "ci95_diff_bca": [
+       -0.012363393795458423,
+       -0.005958279789258152
+      ],
+      "ci95_diff_percentile": [
+       -0.01146855427737559,
+       -0.005601543439388204
+      ],
+      "ci95_ratio_percentile": [
+       0.5165808904085457,
+       0.6874500782316917
+      ],
+      "bca_excludes_zero": true,
+      "n_windows": 25,
+      "windows_a_better": 25,
+      "windows_b_better": 0,
+      "sign_test_p": 5.960464477539063e-08,
+      "bootstrap_b": 2000,
+      "seed": 20260829,
+      "mcnemar": {
+       "available": false,
+       "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+      }
+     },
+     "clean17": {
+      "label_a": "K8",
+      "label_b": "FP8",
+      "mean_a": 0.010829419869882874,
+      "mean_b": 0.018665326569455153,
+      "mean_diff": -0.007835906699572277,
+      "mean_diff_se": 0.0016135223133465616,
+      "ratio_a_over_b": 0.5801891453431446,
+      "ci95_diff_bca": [
+       -0.011965929569340398,
+       -0.00549332459728512
+      ],
+      "ci95_diff_percentile": [
+       -0.011309869933934565,
+       -0.005116241289488721
+      ],
+      "ci95_ratio_percentile": [
+       0.5089075590288945,
+       0.6629650019233225
+      ],
+      "bca_excludes_zero": true,
+      "n_windows": 17,
+      "windows_a_better": 17,
+      "windows_b_better": 0,
+      "sign_test_p": 1.52587890625e-05,
+      "bootstrap_b": 2000,
+      "seed": 20260829,
+      "mcnemar": {
+       "available": false,
+       "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+      }
+     }
+    }
+   },
+   {
+    "comparison": "FP8 - BF16 floor",
+    "scopes": {
+     "panel25": {
+      "label_a": "FP8",
+      "label_b": "BF16floor-xstack",
+      "mean_a": 0.020615254540417995,
+      "mean_b": 0.012711599817250709,
+      "mean_diff": 0.007903654723167284,
+      "mean_diff_se": 0.0013514689584912015,
+      "ratio_a_over_b": 1.6217671132504787,
+      "ci95_diff_bca": [
+       0.005823013130950891,
+       0.011253055396632681
+      ],
+      "ci95_diff_percentile": [
+       0.005590520585988117,
+       0.010668339688496982
+      ],
+      "ci95_ratio_percentile": [
+       1.4590025822293584,
+       1.7919222367834746
+      ],
+      "bca_excludes_zero": true,
+      "n_windows": 25,
+      "windows_a_better": 0,
+      "windows_b_better": 25,
+      "sign_test_p": 5.960464477539063e-08,
+      "bootstrap_b": 2000,
+      "seed": 20260829,
+      "mcnemar": {
+       "available": false,
+       "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+      }
+     },
+     "clean17": {
+      "label_a": "FP8",
+      "label_b": "BF16floor-xstack",
+      "mean_a": 0.018665326569455153,
+      "mean_b": 0.010647639361035206,
+      "mean_diff": 0.008017687208419945,
+      "mean_diff_se": 0.0015537966868837015,
+      "ratio_a_over_b": 1.7530013871206505,
+      "ci95_diff_bca": [
+       0.005662547163198646,
+       0.012022096581834504
+      ],
+      "ci95_diff_percentile": [
+       0.005394237003947808,
+       0.011323734349656705
+      ],
+      "ci95_ratio_percentile": [
+       1.573476765949015,
+       1.9440707664213417
+      ],
+      "bca_excludes_zero": true,
+      "n_windows": 17,
+      "windows_a_better": 0,
+      "windows_b_better": 17,
+      "sign_test_p": 1.52587890625e-05,
+      "bootstrap_b": 2000,
+      "seed": 20260829,
+      "mcnemar": {
+       "available": false,
+       "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+      }
+     }
+    }
+   },
+   {
+    "comparison": "his 4bpw - K6",
+    "scopes": {
+     "panel25": {
+      "label_a": "BM4bpw",
+      "label_b": "K6",
+      "mean_a": 0.024554564249958208,
+      "mean_b": 0.013723384665701145,
+      "mean_diff": 0.010831179584257057,
+      "mean_diff_se": 0.002988063105448762,
+      "ratio_a_over_b": 1.789249871522397,
+      "ci95_diff_bca": [
+       0.007168229527067136,
+       0.02142276050623659
+      ],
+      "ci95_diff_percentile": [
+       0.006399080487370276,
+       0.01817594094802104
+      ],
+      "ci95_ratio_percentile": [
+       1.493535291750217,
+       2.236810037096485
+      ],
+      "bca_excludes_zero": true,
+      "n_windows": 25,
+      "windows_a_better": 0,
+      "windows_b_better": 25,
+      "sign_test_p": 5.960464477539063e-08,
+      "bootstrap_b": 2000,
+      "seed": 20260829,
+      "mcnemar": {
+       "available": false,
+       "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+      }
+     },
+     "clean17": {
+      "label_a": "BM4bpw",
+      "label_b": "K6",
+      "mean_a": 0.024948837055614983,
+      "mean_b": 0.011677286368695299,
+      "mean_diff": 0.013271550686919681,
+      "mean_diff_se": 0.0042092133523146565,
+      "ratio_a_over_b": 2.1365269522291004,
+      "ci95_diff_bca": [
+       0.008429901162114532,
+       0.028684493424825933
+      ],
+      "ci95_diff_percentile": [
+       0.007544346414062993,
+       0.02239005753803982
+      ],
+      "ci95_ratio_percentile": [
+       1.7259761757388528,
+       2.73184925171125
+      ],
+      "bca_excludes_zero": true,
+      "n_windows": 17,
+      "windows_a_better": 0,
+      "windows_b_better": 17,
+      "sign_test_p": 1.52587890625e-05,
+      "bootstrap_b": 2000,
+      "seed": 20260829,
+      "mcnemar": {
+       "available": false,
+       "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+      }
+     }
+    }
+   }
+  ]
+ },
+ "per_domain_clean17": {
+  "table": [
+   {
+    "domain": "axis1_general",
+    "windows": 7,
+    "scored_positions": 14329,
+    "k6-sealed": 0.011739694055877225,
+    "k8-streaming": 0.01136703558705986,
+    "fp8-crossstack": 0.019568764759592266,
+    "bf16-floor-crossstack": 0.01147672334551312,
+    "fp8_over_k6": 1.6668888189463154,
+    "fp8_over_floor_same_lane": 1.7050829030607215
+   },
+   {
+    "domain": "axis2_legal",
+    "windows": 5,
+    "scored_positions": 10235,
+    "k6-sealed": 0.011448683071708841,
+    "k8-streaming": 0.010324226620147562,
+    "fp8-crossstack": 0.02067276158943368,
+    "bf16-floor-crossstack": 0.010085462091388418,
+    "fp8_over_k6": 1.8056890438795283,
+    "fp8_over_floor_same_lane": 2.04975849416809
+   },
+   {
+    "domain": "axis3_code_agentic",
+    "windows": 5,
+    "scored_positions": 10235,
+    "k6-sealed": 0.011818518903627059,
+    "k8-streaming": 0.010581951115570407,
+    "fp8-crossstack": 0.01539307808328466,
+    "bf16-floor-crossstack": 0.010049099052412918,
+    "fp8_over_k6": 1.302454073036223,
+    "fp8_over_floor_same_lane": 1.5317868798983112
+   }
+  ],
+  "spread": 1.3863744459489356,
+  "worst_domain": "axis2_legal",
+  "reading": "He measured NVFP4-over-EXL3 ratios of 1.50x general / 1.97x legal / 1.65x code-agentic and concluded that a single-corpus mean hides where a codec hurts. Same test on our artifacts reproduces the shape: legal is the worst domain here as it is on his data. A per-domain table is therefore not decoration -- one number cannot carry this."
+ }
+}

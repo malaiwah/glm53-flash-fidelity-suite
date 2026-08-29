@@ -193,6 +193,12 @@
       "statement": "A row carrying a protocol block should carry both hashes. Two rows are protocol-comparable when protocol.scoring_sha256 matches; a differing file_sha256 with a matching scoring hash is a provenance note, not an incomparability."
     },
     {
+      "id": "JOINT-009",
+      "severity": "error",
+      "statement": "A row whose uncertainty.sigma_run is nonzero must also carry a TOTAL-uncertainty interval, either as uncertainty.ci95_total or named explicitly in uncertainty.note. The block bootstrap resamples windows WITHIN one cold run, so ci95_low/high can never contain run-to-run spread: on a nondeterministic kernel path those endpoints are the statistical half only and understate the row's own uncertainty. Every row in this registry today has sigma_run exactly 0.0 -- brandonmusic's five 4bpw runs are bitwise identical and so are ours -- so this passes vacuously and is a LATCH, not a gate: the first measurement on a nondeterministic path (his NVFP4 MoE path is the known example, sigma_run 3.3e-4) fails here until `uncertainty` gains a real ci95_total field. That schema addition is owed and is deliberately not pre-added, so that nothing claims a field it has never emitted.",
+      "enforced_by": "tools/registry_joint_check.py (exit 1)"
+    },
+    {
       "id": "OFFLINE-001",
       "severity": "error",
       "statement": "Validation performs no network access. Every $ref resolves from the local schema/ directory and every source is checked for shape only, never fetched."

@@ -7,7 +7,7 @@ JSON Schema can say "se_total must be a number".  It cannot say "se_total must
 equal hypot(se_clustered, sigma_run)", or "the per-domain positions must add up
 to the panel positions", or "this row's value must be the equal-weight mean of
 exactly the windows its scope names".  Those are the ones that catch a real
-mistake, so they live here.  JOINT-001..008 in schema/invariants.json are the
+mistake, so they live here.  JOINT-001..009 in schema/invariants.json are the
 published statements; this file is their implementation.
 
 Exit 0 clean, 1 on any error.  Stdlib only; no network.
@@ -158,6 +158,30 @@ def main() -> int:
                 rep.check(det.get("identical_across_runs") is True, "JOINT-003",
                           "%s: sigma_run == 0 is only legal with bitwise-identical runs"
                           % mid)
+            else:
+                # JOINT-009, and it is deliberately fail-closed. The BCa
+                # endpoints come from resampling windows WITHIN one run, so
+                # they cannot contain sigma_run. A row with a LIVE run term
+                # therefore publishes ci95_low/high that understate its own
+                # total uncertainty, and the row must carry the total interval
+                # somewhere a reader can find it.
+                #
+                # Every row in this registry today has sigma_run exactly 0.0
+                # (his five 4bpw runs are bitwise identical; so are ours), so
+                # this check passes vacuously and is a latch, not a gate: the
+                # first row measured on a nondeterministic kernel path fails
+                # here until `uncertainty` gains a real `ci95_total` field.
+                # That schema edit is owed and is named in the failure text
+                # rather than left as a comment nobody reads.
+                has_total = (unc.get("ci95_total") is not None
+                             or "ci95_total" in (unc.get("note") or ""))
+                rep.check(has_total, "JOINT-009",
+                          "%s: sigma_run is %.3e (live), so the BCa endpoints are "
+                          "the statistical half only -- the row must also carry a "
+                          "total-uncertainty interval. Add `uncertainty.ci95_total` "
+                          "to measurement.schema.json and emit it from "
+                          "joint_enrich._uncertainty."
+                          % (mid, unc["sigma_run"]))
 
         # JOINT-001: an interval must bracket the point estimate
         if unc.get("ci95_low") is not None and row["metric"].get("value") is not None:

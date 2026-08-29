@@ -1,0 +1,66 @@
+{
+ "schema": "malaiwah.glm53-padded-column-study/1",
+ "generated_by": "bin/padded_column_study.py",
+ "stages_run": [
+  "teacher",
+  "canary"
+ ],
+ "teacher_window": {
+  "file": "window-0000.safetensors",
+  "sha256": "9f49af1b1b1a6ac88a00f5feaa89c25232597306d73d7c0cd30bb7e9c775cfb6",
+  "matches_published": true,
+  "window_id": "final-0000",
+  "domain": "axis1_general",
+  "source": "huggingface.co/datasets/brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits",
+  "tokens_sha256": "338027e62f41540f73e38c6f9b4b9a06a50196cbd38cd9c69f11886af9d3cf9f",
+  "tokens_match_published": true,
+  "shape": [
+   2047,
+   154880
+  ],
+  "dtype": "F32"
+ },
+ "vocab": {
+  "stored": 154880,
+  "real": 154856,
+  "padded": 24,
+  "padded_ids": [
+   154856,
+   154879
+  ]
+ },
+ "teacher_padded": {
+  "logit_min": -4.1875,
+  "logit_p50": -2.296875,
+  "logit_max": -0.455078125,
+  "top1_real_logit_mean": 19.72441377625794,
+  "per_position_gap_top1_minus_pad_min": 14.96875,
+  "effective_gap_nats_mean": 19.45268534705638,
+  "effective_gap_nats_worst": 13.608649021373497,
+  "Pm_mean": 1.6006386701531373e-08,
+  "Pm_p50": 4.868453215215212e-09,
+  "Pm_max": 1.2298122759907192e-06,
+  "entropy_delta_mean": 2.8622891666726596e-07,
+  "entropy_delta_max": 1.5166649745879113e-05,
+  "best_pad_rank_min": 66378,
+  "teacher_entropy_mean_nats": 1.4923418172971632,
+  "positions": 2047
+ },
+ "r0_canary": {
+  "r0a_self_kld_full_max": 0.0,
+  "r0a_self_kld_masked_max": 0.0,
+  "r0a_pass": true,
+  "r0b_shift_mean_nats": 11.662644942770392,
+  "r0b_teacher_entropy_nats": 1.4923418172971632,
+  "r0b_ratio": 7.814995738639188,
+  "r0b_gate": 3.0,
+  "r0b_pass": true
+ },
+ "elapsed_s": 7.3,
+ "conclusion": {
+  "teacher_side_padded_mass": 1.6006386701531373e-08,
+  "general_cap_nats": "order e_p ~ 1e-8, and never past ~1e-7 even for a student whose padded logits are displaced by 4 nats",
+  "shared_head_cap_nats": "KL * e_p, i.e. ~1e-10 at our KLDs; every malaiwah row on his panel is in this case",
+  "verdict": "no correction and no bias disclosure to any published malaiwah number; a protocol-policy disclosure only. The delta is 83,000x below our own sealed-vs-streaming bridge (8.5e-6 nats) and 31,000,000x below his window-clustered SE on this panel (3.19e-3 nats)."
+ }
+}

@@ -83,9 +83,18 @@ def chi2_sf(x: float, df: int = 1) -> float:
 
 
 def binom_sf_two_sided(k: int, n: int) -> float:
-    """Exact two-sided binomial p at p0=0.5 -- the exact McNemar test."""
+    """Exact two-sided binomial p at p0=0.5 -- the exact McNemar test.
+
+    The division is int/int ON PURPOSE.  ``float(2 ** n)`` raises OverflowError
+    for n >= 1024, which crashed every contingency table with 1024..2000
+    discordant pairs -- squarely inside the range McNemar is used on.  CPython's
+    ``int.__truediv__`` divides two arbitrary-precision integers with a single
+    correct rounding and never materialises either side as a float, so this is
+    both crash-free and exact (checked against scipy.stats.binomtest to 9e-14
+    relative out to n = 2592, including tails down to 1e-299).
+    """
     if n == 0:
         return float("nan")
     kk = min(k, n - k)
-    tail = sum(math.comb(n, i) for i in range(kk + 1)) / float(2 ** n)
+    tail = sum(math.comb(n, i) for i in range(kk + 1)) / (2 ** n)
     return min(1.0, 2.0 * tail)

@@ -199,7 +199,8 @@ def _uncertainty(per_window: List[Dict[str, Any]], run_means: Optional[List[floa
     elif run_means and len(run_means) >= 2:
         sr = _stats.sigma_run(run_means)
         q = _stats.combine_quadrature(summary["se_clustered_window"],
-                                      sr["sigma_run"], gate=gate)
+                                      sr["sigma_run"], gate=gate,
+                                      mean=summary["mean"])
         unc["sigma_run"] = _round(sr["sigma_run"])
         unc["sigma_run_runs"] = sr["runs"]
         unc["se_total"] = _round(q["se_total"])
@@ -208,6 +209,18 @@ def _uncertainty(per_window: List[Dict[str, Any]], run_means: Optional[List[floa
                     % (sr["runs"], sr["sigma_run"], q["se_total"],
                        "run term negligible" if q["gate_ok"]
                        else "RUN TERM NOT NEGLIGIBLE"))
+        if q["ci95_total"] is not None:
+            # The BCa endpoints resample windows WITHIN one run and cannot see
+            # run-to-run spread. With a live sigma_run the row's own note told
+            # its reader to quote SE_total and then handed them no interval
+            # built from it; this is that interval. It is a z-interval, not
+            # BCa, and it is stated as such. JOINT-008 refuses a published row
+            # that has a live sigma_run and neither this line nor a schema
+            # field carrying the same thing.
+            note.append("ci95_total (z, NOT BCa) = [%.9f, %.9f] = mean +- 1.96*SE_total; "
+                        "the ci95_low/high above are the BCa endpoints of the "
+                        "statistical half only and do not include sigma_run."
+                        % (q["ci95_total"][0], q["ci95_total"][1]))
         if sr["runs"] == 2:
             note.append("Two cold runs give sigma = |delta|/sqrt(2) with one degree of "
                         "freedom; the joint protocol asks for three.")

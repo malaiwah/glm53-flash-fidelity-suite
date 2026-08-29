@@ -9,10 +9,13 @@ governed by `kld quantization fidelity report.md`
 file `80df521eb46fba68538dd90aa3f2baf22b1e440b8b560555646ff9bbeb35961b`,
 scoring `20ea68c0c730a9d2444148b234a610a5821a50dfa9980e2446c02723317b5e98`
 
-Short version: **his standard is better than what we had on seven of eleven
-elements, and we adopted all seven.** Two elements are ours and he has no
-equivalent. Two are genuine divergences, both now measured rather than argued
-about. One of his own rules broke inside his own campaign and we propose a fix.
+Short version: the table below has eighteen rows. **He is ahead on eight of
+them and we took his design on all eight** — rows 6-13, which are the core of
+the standard. Four rows we already had under another name. Five are ours with no
+equivalent on his side. Three are genuine divergences (padded columns §3, the
+clean scope §4, floors and subtraction §7), and all three are now measured or
+bounded rather than argued about. One of his own rules broke inside his own
+campaign and we propose a fix.
 
 Everything below is reproducible offline from this repository:
 `bin/selftest_joint_standard.py` (112 cases) and `registry/ make check`
@@ -35,7 +38,7 @@ it under another name. **DIVERGENT** — we differ, with a measured reason.
 | 5 | Frozen token ids, published hashes, teacher-forced, bs=1, eager, no MTP/spec/prefix-cache | yes | yes | EQUIVALENT | our panel record pins the same `token_ids_sha256` values |
 | 6 | **R0 canary: self-KLD exactly 0.0 AND a one-position shift explodes** | half — the shift half is a synthetic unit test, not a session gate | self-KLD only | **ADOPTED, and extended** — §5.1 | `bin/joint-standard canary`; 5 FIRE cases in the selftest |
 | 7 | **≥3 cold runs, report `sigma_run` beside the statistical SE, combine in quadrature** | yes | run means recorded, sigma never reported | **ADOPTED** — §5.4 | `uncertainty.sigma_run`, `.se_total`, invariant JOINT-002/003 |
-| 8 | **Window-clustered block bootstrap, BCa, B=5000** | yes | `uncertainty.method = "none"` on all 60 rows | **ADOPTED** — §5.3 | every row now carries a BCa interval; 16/16 of his published endpoints reproduced |
+| 8 | **Window-clustered block bootstrap, BCa, B=5000** | yes | `uncertainty.method = "none"` on **all 16 of our rows on his two panels** (39 of our 60 rows elsewhere already carried a context-cluster bootstrap) | **ADOPTED** — §5.3 | 12 rows now carry a BCa interval; 16/16 of his published endpoints reproduced |
 | 9 | **Percentile only with ≥100 exceedances; never compare max across different N** | yes | not enforced | **ADOPTED** — §5.5 | `percentile_guard`, plus a refusal our data needs (§5.5) |
 | 10 | **Per-domain and per-position tables** | yes | computed in every kld-report, never published | **ADOPTED** — §5.2 | `by_domain` on 12 rows; his non-uniformity finding reproduces on our data |
 | 11 | **Calibration-overlap scan: document hash AND 13-gram** | yes | document/shingle scan on OUR panels, none on his | **ADOPTED** — §4 | our scan reproduces his 25/25 exactly |
@@ -43,13 +46,15 @@ it under another name. **DIVERGENT** — we differ, with a measured reason.
 | 13 | **Rank by paired differences + McNemar, never by overlapping CIs** | yes | paired per-window t-interval | **ADOPTED** — §5.6 | his 5 published McNemar p-values reproduced; ours upgraded to BCa + sign test |
 | 14 | Measured BF16 **floor** and attributable error | no equivalent; §5.3 of his report argues against subtraction | yes | **OURS — divergent, §7** | the floor framing is scope-stable where its inputs are not (+1.4% vs −9% / −16%) |
 | 15 | Schema-enforced registry with mechanical refusals | no | yes | **OURS** | 90 invariants, 8 new; CMP-003 caught a real error in this very work (§4.3) |
-| 16 | Lane separation (`same_stack` / `cross_stack`) | no field, but his data proves the need | yes | **OURS — and his data confirms it, §8** | his 0.0305 vs 0.0246 for one artifact |
+| 16 | Lane separation (`same_stack` / `cross_stack`) | no field | yes, on the teacher-vs-student axis only | **OURS, but narrower than we first claimed — §8** | our two BF16 floors, 0.011506 vs 0.012712, same panel and teacher. It does **not** separate his 0.0305 from his 0.024555: that is a pipeline difference and `pipeline_ref` is not a key input |
 | 17 | Multi-format decode surfaces (TR3/EXL3, dione, MLX, GGUF, NVFP4) | EXL3 + NVFP4 | 5 surfaces | OURS | `k6/tools/stream_score.py --source` |
-| 18 | Threshold for the overlap scan justified | bare `0.05` literal, no sensitivity analysis | n/a | **OURS — new, §4.2** | the published means swing 15% across plausible thresholds |
+| 18 | Threshold for the overlap scan justified | bare `0.05` literal, no sensitivity analysis | n/a — his scanner, his threshold | **CONTRIBUTION BACK on row 11, §4.2** | the published means swing 15% across plausible thresholds |
 
-**Where he is plainly ahead and we simply took his design:** rows 6–13. That is
-most of the standard. Our contribution to those rows is implementation and
-validation, not design, and the protocol file says so.
+**Where he is plainly ahead and we simply took his design:** rows 6-13. That is
+the core of the standard. Our contribution to those rows is implementation and
+validation, not design, and the protocol file says so. Row 18 is not a column of
+ours either — the scanner and the threshold are his; the sensitivity sweep is
+something we hand back to it.
 
 ---
 
@@ -82,24 +87,36 @@ His protocol masks the 24 padded columns out of both sides before the
 log-softmax. Ours never has: `k6/tools/k6_kld_report.py::_token_kld` takes a
 log-softmax over the full last dimension.
 
-We did not argue about the size of this. We downloaded his teacher window
-`final-0000` (1,268,157,840 B, sha256 `9f49af1b…`, verified), reconstructed the
-4096-dim hidden states from it by least squares against a real `lm_head.weight`
-(relative rms residual 1.6e-3), and ran the full masked-vs-unmasked comparison on
-real logits for ten student configurations spanning mean KLD 4.8e-5 to 1.0 nats.
+We did not argue about the size of this, but we could not measure it directly
+either, and the distinction matters.
+
+**What is real and what is simulated.** We downloaded his teacher window
+`final-0000` (1,268,157,840 B, sha256 `9f49af1b…`, verified). The *teacher* logits
+below — including every number about the padded columns themselves — are read
+straight out of that tensor. The *students* are not. Measuring a real
+masked-vs-unmasked delta for K6 or FP8 needs K6 and FP8 student logits on his
+panel, which needs a GPU run we did not do. So we reconstructed the 4096-dim
+hidden states from his teacher tensor by least squares against a real
+`lm_head.weight` (relative rms residual 1.6e-3) and built thirteen **synthetic**
+students on top of them, spanning mean KLD 4.8e-5 to 1.0 nats and tuned so that
+four of them land near our published values. They are a stress test of the bound,
+not a re-measurement of our quants. The table's row labels name the configuration
+each synthetic student imitates, not a re-run of that row.
 
 **The padded columns are not dead.** Their rows have norm ≈ 0.4795 against a
 typical real-row norm of 1.21, and they are mutually cosine-0.999998 — one
 untrained direction, repeated 24 times. Their logits run −4.19 to −0.46 against
 a mean top-1 logit of 19.72, so they hold about 1.6e-8 of the probability mass.
 
-**The measured effect of masking:**
+**The measured effect of masking** (ten of the thirteen; the three omitted are
+higher-KLD checks at 0.030, 0.300 and 0.999 nats, whose deltas are +2.16e-10,
++1.61e-09 and +3.07e-09 — the same 3e-9-to-7e-9 relative band):
 
-| student configuration | unmasked mean KLD | masked − unmasked | relative |
+| synthetic student configuration | unmasked mean KLD | masked − unmasked | relative |
 |---|---|---|---|
-| BF16 floor (shared native head) | 0.011512861121 | +8.56e-11 | +7.44e-09 |
-| K6 tr3-6bpw (shared native head) | 0.013709446677 | +1.01e-10 | +7.40e-09 |
-| official FP8 (shared native head) | 0.020555552137 | +1.50e-10 | +7.31e-09 |
+| BF16 floor (shared native head) | 0.011512590648 | +8.56e-11 | +7.44e-09 |
+| K6 tr3-6bpw (shared native head) | 0.013733076402 | +1.02e-10 | +7.40e-09 |
+| official FP8 (shared native head) | 0.020605959271 | +1.51e-10 | +7.31e-09 |
 | Dione Q4 (shared native head) | 0.027261644072 | +1.97e-10 | +7.24e-09 |
 | RTN per-row int8 head | 0.000048287080 | +4.45e-13 | +9.21e-09 |
 | RTN per-row int6 head (stock EXL3) | 0.000997485627 | +4.60e-12 | +4.61e-09 |
@@ -111,6 +128,34 @@ a mean top-1 logit of 19.72, so they hold about 1.6e-8 of the probability mass.
 The last row is the stress case: a deliberately bad head quantization that
 shifts the padded logits by +2.1 nats on average and 4.2 nats at worst, and
 blows the KLD to 0.183. Even there the masking changes the answer by 5e-8 nats.
+
+**The load-bearing result is the teacher-side one, and it does not depend on the
+simulation.** The padded columns hold ~1.6e-8 of the teacher's probability mass
+on a real window of his real teacher. The masked and unmasked log-partition
+functions therefore differ by ~1.6e-8 on the teacher side. Writing `e_p` and
+`e_q` for the padded mass on each side, the masked-minus-unmasked delta is
+exactly
+
+```
+    KL * e_p/(1-e_p)  -  D_pad/(1-e_p)  -  log(1-e_p) + log(1-e_q)
+    where  D_pad = e_p*log(e_p/e_q) + e_p*KL(pbar||qbar)
+```
+
+so **every term is `e_p` times either the KLD or a log-ratio.** Two consequences,
+and only the second one is 1e-10:
+
+* In general the cap is **order `e_p` itself, ~1e-8 nats**, times however many
+  nats the student's padded logits are displaced. A student whose padded mass is
+  off by a factor of e^4 is still bounded by ~1e-7.
+* When teacher and student **share the head**, `e_q = e_p` and `D_pad = 0`, and
+  the whole thing collapses to `KL * e_p` — 2.2e-10 at K6's KLD, and 1.0e-10
+  measured, because the per-position average weights `e_p` by KLD rather than
+  uniformly. Every malaiwah row on his panel is in this case.
+
+The thirteen synthetic students exist
+to check that the cap survives a student whose padded logits do *not* sit near
+the teacher's — the adversarial row moves them by 2-4 nats and the answer still
+does not reach 1e-7. That is the argument. The per-row numbers are illustration.
 
 **Verdict for every published malaiwah number: neither a correction nor a bias
 disclosure. A protocol-policy disclosure only.** Each of our eight published
@@ -142,11 +187,36 @@ re-key all 66 rows and break every published cross-reference for nothing.
 
 **Where it would have mattered and did not:** we worried about stock-EXL3 quants
 with `head_bits=6..8` and about the Dione Q4, where teacher and student have
-different head weights so the padded columns can genuinely differ. Case B above
-covers exactly that — quantized heads, including group-128 affine — and the
+different head weights so the padded columns can genuinely differ. The quantized-head
+rows above cover exactly that shape — per-row RTN and group-128 affine — and the
 answer is the same to within a factor of two. The Dione Q4 turns out to keep
 `lm_head` native BF16 anyway, so every malaiwah number on his panel has a shared
 unquantized head.
+
+**Reproducibility gap, now closed.** An earlier draft of this section shipped
+without its script or its receipt — the reconstruction and the synthetic students
+were run out of tree and only the results were written down. By the standard this
+document argues for, that was not good enough. Both are now committed:
+
+- `bin/padded_column_study.py` — one script, inputs named on the command line,
+  seven stages, refusing on a teacher window whose sha256 is not the published one.
+- `docs/joint-standard/padded-column/padded-column-study.json` — the full run
+  (all thirteen students, 384 s).
+- `docs/joint-standard/padded-column/teacher-side-reproduction.json` — the
+  load-bearing half on its own (7 s), which needs **only his 1.27 GB window** and
+  no `lm_head`. Anyone can re-derive every teacher-side number in this section
+  from his published dataset alone.
+
+`bin/check_doc_numbers.py` re-derives this section's numbers from that receipt on
+every run, so the table and the receipt cannot drift apart again.
+
+Two honest notes on the re-run. The six **quantized-head** students reproduce the
+out-of-tree originals *bit for bit* — those are the stress cases the argument
+rests on. The four **shared-head** rows differ in the 5th–7th digit of the
+unmasked mean, because the committed script brackets the noise bisection over
+`[1e-4, 3.0]` where the original capped at 0.2; the same wider bracket is why the
+Dione Q4 row, which the original had to drop, is present here. The quantity that
+matters — the masked-minus-unmasked delta — is unchanged at every row.
 
 ---
 
@@ -207,9 +277,23 @@ K6. The highest overlap among the retained windows is 4.75 % (`final-0014`), so
 0.05 separates cleanly — but only just, and nothing about 0.05 is derived.
 **This is the first thing worth a joint decision.**
 
-One result *is* robust across every threshold: **every malaiwah row moves down
-and his 4bpw row moves up, at all eight thresholds.** The sign flip between
-contributors is not an artifact of 0.05.
+One result is *nearly* robust across every threshold: **his 4bpw row moves up at
+all eight thresholds, and three of our four rows (K6, K8, BF16 floor) move down
+at all eight.** So the sign flip between contributors is not an artifact of 0.05.
+
+**The exception is our cross-stack FP8 row, and the table above shows it.** FP8
+moves down at the five tightest thresholds (−7.00 %, −11.40 %, −5.23 %, −9.46 %,
+−2.61 %) and *up* by +2.62 % at 0.075 and every looser threshold.
+
+Exactly two windows separate the 17-window scope from the 19-window one:
+`final-0021` (axis2_legal, 7.1 % overlap) and `final-0022` (axis3_code_agentic,
+5.8 %). FP8 scores 0.040566 and 0.044075 on them — more than twice its clean17
+mean of 0.018665 — so putting them back lifts FP8 to 0.021155, which is *above*
+its 25-window mean of 0.020615. Every other row has the same two windows above
+its clean17 mean too, but not far enough above its panel25 mean to cross over
+(K6 reaches 0.013031 against a panel25 of 0.013723, still −5.04 %). One
+contributor row therefore does change sign inside the window-count plateau, which
+is one more reason the threshold deserves a joint decision rather than a default.
 
 ### 4.3 Both scopes, published side by side
 
@@ -269,9 +353,11 @@ Paired per-window comparisons, BCa on the differences, on both scopes:
 - **K6 better than FP8 STRENGTHENS.** 17/17 windows on the clean scope, ratio
   0.666 → 0.626.
 - Note the two marginal CIs for K6 and K8 overlap almost completely on both
-  scopes. Anyone eyeballing them would call it a tie. The paired interval is
-  ~10× tighter and says otherwise. That is exactly his point about ranking, and
-  our data demonstrates it.
+  scopes. Anyone eyeballing them would call it a tie. The paired interval says
+  otherwise, and it is **4.2× tighter** on clean17 (width 1.420e-03 against
+  5.929e-03 and 5.775e-03 for the two marginals) and 3.4× on panel25. The paired
+  SE moves the same way: 3.71e-04 against a marginal 1.56e-03. That is exactly his
+  point about ranking, and our data demonstrates it.
 
 ### 4.5 Attributable error on the clean scope, and a result that argues for it
 
@@ -291,7 +377,7 @@ report ("do not publish subtracted numbers"), and §7 below takes it up properly
 The **same-lane K6/K8 attributable table cannot be recomputed** on the clean
 scope: their same-lane floor is the streaming BF16 floor, whose receipt is
 scalar-only. Borrowing the cross-stack floor instead would be exactly the
-cross-lane subtraction our own BIAS-006 refuses, so we do not. The published
+cross-lane subtraction BIAS-006 refuses, so we do not. The published
 panel25 attributable ratio (K6 0.002209 / K8 0.000878 = 2.52×) therefore stands
 as a panel25 number only, and re-deriving it on the clean scope needs one
 re-measurement of the streaming BF16 floor with per-window output — cheap, and
@@ -307,7 +393,7 @@ test, our artifacts, clean scope:
 |---|---|---|---|---|---|
 | axis1_general (7 w) | 0.011739694 | 0.011367036 | 0.019568765 | 1.667× | 1.705× |
 | axis2_legal (5 w) | 0.011448683 | 0.010324227 | 0.020672762 | **1.806×** | 2.050× |
-| axis3_code_agentic (5 w) | 0.011818519 | 0.010581951 | 0.015393078 | **1.303×** | 1.532× |
+| axis3_code_agentic (5 w) | 0.011818519 | 0.010581951 | 0.015393078 | **1.302×** | 1.532× |
 
 A 1.39× spread across domains, and legal is the worst domain on our data as it
 is on his. On the panel25 scope the contaminated axis4 domain shows the smallest
@@ -347,8 +433,9 @@ Ours runs both, against whatever logits it is given, and refuses on failure:
 
 The R0-b FIRE case is the interesting one. It hands the canary a teacher whose
 rows barely differ — what a left-on prefix cache looks like. That teacher passes
-R0-a at **exactly 0.0** and is still broken, and only R0-b catches it. A canary
-nobody has watched fire is decoration.
+R0-a at **exactly 0.0** and is still broken, and only R0-b catches it. That is
+the concrete reason his standard is right to name both halves, and the reason we
+wired the second half into the session gate rather than leaving it in tests.
 
 On his real teacher window: self-KLD 0.0 in both the masked and unmasked scopes,
 one-position shift 7.903 nats against a mean teacher entropy of 1.770 — 4.5×.
@@ -395,8 +482,12 @@ GPU. It is asserted in the checker, not assumed.
 
 The **design effect** this exposes is the practical payoff:
 `deff_window` runs 21–29 on our rows and 74–105 on his 4bpw. The naive SE
-understates by 4.6× to 10×. Anyone who has ever quoted `std/sqrt(N)` on this
-panel — us included — was quoting an interval five to ten times too narrow.
+understates by 4.6× to 10×, so anyone reading `std/sqrt(N)` off this panel would
+be reading an interval five to ten times too narrow. To be precise about our own
+record: we never published a naive SE — on his panels we published **no interval
+at all**, on all sixteen rows, which is its own failure and the one row 8 fixes.
+Elsewhere in the registry 39 of 60 rows already carried a context-cluster
+bootstrap; those were never the problem.
 
 ### 5.4 sigma_run and quadrature
 
@@ -470,7 +561,7 @@ verb says exactly that instead of inventing one.
 
 ---
 
-## 6. His "one frozen protocol file" rule broke — and the fix
+## 6. The "one frozen protocol file" rule, and a fix for the way it slipped
 
 His rule is right. It did not survive his own campaign. Three distinct
 `protocol_sha256` values appear across his published receipts:
@@ -496,7 +587,10 @@ That is precisely the failure the rule exists to prevent, and it is not
 carelessness — it is what happens when the hash covers bytes that include
 identity metadata.
 
-**Our fix: hash the scoring-relevant subset, and publish both hashes.**
+We hit the same problem the moment we wrote a protocol file of our own, which is
+why the fix below is a proposal and not a criticism.
+
+**The fix: hash the scoring-relevant subset, and publish both hashes.**
 
 - `protocol_file_sha256` — sha256 of the raw bytes. His rule, unchanged,
   byte-level provenance.
@@ -527,10 +621,14 @@ subtraction. This is a real disagreement and we are not going to paper over it.
 
 Our position, and what we changed:
 
-1. **The subtraction is strictly same-lane.** Registry rule BIAS-006 refuses a
-   floor whose lane differs from the row's, and now also refuses one whose
-   *scope* differs (§4.5). We never publish a subtracted number without the raw
-   row and the floor beside it.
+1. **The subtraction is strictly same-lane and same-scope.** Two different rules
+   do that work, and it is worth naming them correctly: **BIAS-006** refuses a
+   floor whose *lane* differs from the row's, and that is all BIAS-006 does.
+   The *scope* refusal comes from **BIAS-002** (a floor must share the row's
+   comparability key) now that `clean17` is a separate panel with its own key,
+   backed by the joint checker's rule that one comparability key holds exactly
+   one `scope_name`. We never publish a subtracted number without the raw row
+   and the floor beside it.
 2. **His §5.3 item 1 is our BIAS-006, independently arrived at.** "Isolate and
    gate … measure the engine's floor … report the decomposition" is what the
    floor rows are for. The disagreement is narrower than it looks: it is about
@@ -553,30 +651,69 @@ compatible with that.
 
 ---
 
-## 8. Where our data independently confirms his, and vice versa
+## 8. Where the two bodies of evidence line up
 
-Worth stating plainly because collaboration is the point.
+Worth stating plainly because collaboration is the point — and worth stating
+narrowly, because an earlier draft of this section claimed more than the evidence
+carries. Of the three items below, exactly one is a case of our measurements
+confirming his. The other two are smaller and are labelled as what they are.
 
-**His data confirms our lane rule.** His same 4bpw artifact reads **0.0305** on
-his serving stack and **0.024555** on the packed reference stack. That ~24 % gap
-between two readings of one checkpoint is exactly what our
-`estimator.stack_relation` field exists to keep apart, and our measured BF16
-floors (0.011506 same-stack, 0.012712 cross-stack, a 0.001206 nats difference)
-are that gap's formalisation. He arrived at the observation independently and
-without needing our field.
+**His engine-path gap is his own result, and it is the strongest argument for
+lane discipline that either of us has.** He reports **0.030480** (headline
+0.0305) for his 4bpw through the vLLM/b12x serving path, and **0.024555** for
+what his `five-cold-run-kld.json` calls the `k4-tp2` packed profile. Both numbers
+are his. The panel and teacher are provably identical — the same
+`token_panel_receipt_sha256 0beec577…`, the same `teacher_receipt_sha256
+2ae08117…`, the same 51,175 positions — and he states twice that it is the same
+checkpoint (`RUN_SUMMARY.md`: "Window set and tokenization are byte-identical").
+So a ~24 % swing on one checkpoint, one panel, one teacher, from the runtime
+alone. That is a real and important finding.
 
-**Our registry predicted his contamination finding.** Our panel record for his
-panel has carried the disclosure `weak_contamination_guard` since we ingested it:
+**Three corrections to how we were about to present it.**
+
+1. *It is not our confirmation.* We contributed no measurement to either side.
+   Our part is that we ingested one of the two numbers into the registry and
+   attached provenance to it. Calling this "our data confirms his" was wrong.
+2. *It is not what `stack_relation` encodes.* Our schema defines
+   `stack_relation` as whether *reference and candidate logits within one
+   measurement* came from the same runtime. Both of his readings are
+   teacher-vs-student on one stack; our registry tags the 0.024555 row
+   `same_stack`, and a 0.0305 row would very likely be tagged `same_stack` too.
+   The axis that separates them is the **pipeline**, and `pipeline_ref` is
+   deliberately *not* a comparability key input (CMP-001) — six rows from five
+   different pipelines currently share key `cmp--202b717f3219c414`. So our
+   registry does not today keep these two numbers apart, and there is no 0.0305
+   row in it at all. Saying the field "exists to enforce" this distinction was a
+   claim about our tooling that our tooling does not support.
+3. *The 0.024555 label is itself unresolved* (§12). Building a headline on it
+   before that is settled would repeat the mistake §12 is asking him to fix.
+
+**What our floors genuinely do say.** Our two BF16 floors — 0.011506 measured
+same-stack and 0.012712 measured cross-stack, 0.001206 nats apart — are a
+same-panel, same-teacher measurement of how much the *estimation path* alone
+costs, with nothing quantized. That is our own contribution to the same argument,
+on the axis `stack_relation` really does encode. It is adjacent to his result
+rather than a confirmation of it, and the honest joint statement is: two
+different axes, two independent demonstrations that a fidelity number is a
+(model, panel, teacher, stack, pipeline) tuple. **What the standard is missing is
+a field for his axis** — see §13.
+
+**Our registry flagged the contamination risk before he scanned, which is a
+smaller claim than "predicted".** Our panel record for his panel has carried the
+disclosure `weak_contamination_guard` since 2026-08-28, a day before his scan was
+published. It says an n-gram scan is missing, not what one would find:
 
 > This panel's only contamination guard is ROLE SEPARATION … No lexical or
 > n-gram scan is published … materially weaker than the malaiwah v5 suites,
 > which run a 12-word shingle whole-document pre-exclusion and report 0 hits.
 
-He then ran the scan and found 37–39 % overlap in axis4. That is a mutual
-confirmation running in our direction.
+He then ran the scan and found 37–39 % overlap in axis4. Flagging the absence of
+a check is not the same as predicting its result, and the credit for the finding
+is entirely his. What it does show is that the disclosure field was pointed at
+the right thing.
 
-**His determinism result matches ours on a different lane.** EXL3 through the
-b12x path: 25/25 windows bitwise identical across three cold boots including a
+**This one is a real mutual confirmation: determinism on two independent lanes.**
+EXL3 through the b12x path: 25/25 windows bitwise identical across three cold boots including a
 shuffled window order, `sigma_run` exactly 0.0. Our sealed lane: 5 cold runs, one
 distinct `tokenwise_kld_sha256`, `sigma_run` exactly 0.0. Two independent stacks,
 same conclusion — **determinism is a property of the kernel path, not of the
@@ -683,8 +820,13 @@ answer removes the ambiguity entirely.
 
 **Ours:**
 
-1. `uncertainty.method: "none"` on all 60 rows — **fixed**, 12 rows now carry BCa
-   intervals and the rest carry the new fields where their receipts allow.
+1. `uncertainty.method: "none"` on **every one of the 16 rows we published on his
+   two panels** (8 on `final25`, 8 on the `final-0000` sub-panel) — **fixed**: 12
+   rows now carry BCa intervals and the rest carry the new
+   fields where their receipts allow. (Registry-wide the picture was less bad than
+   that sentence used to say: 39 of our 60 rows already carried a context-cluster
+   bootstrap. His panel was the hole, not the whole registry, and an earlier draft
+   of this document overstated it in his favour.)
 2. No per-domain publication despite computing it — **fixed** (`by_domain`).
 3. No protocol file — **fixed** (`registry/protocol/glm53-joint-kld-protocol.v1.json`).
 4. No masking policy recorded — **fixed** (`estimator.vocab_masking_policy`,
@@ -747,19 +889,24 @@ is described three different ways:
 
 **We have never measured his 4bpw ourselves.** Our published `reports/` tree
 contains no 4bpw report, and both 4bpw rows in our registry sit on *his*
-pipelines. So (1) is very likely him attributing his own k4-tp2 number to us, and
-(3) is a TP2 packed-surface replay, not "transformers eager, EP4, B200". And
+pipelines. So (1) looks like his own `k4-tp2` number attributed to us by mistake,
+and (3) is a TP2 packed-surface replay, not "transformers eager, EP4, B200". And
 there is a plausible collision behind (2): our registry also holds the official
 FP8 on the single-window sub-panel at 0.024629 / 0.024582 / 0.024611 — **two
 unrelated quantities that both round to 0.0246 at three significant figures.**
+None of this is a gotcha; it is the kind of thing that happens when a number
+travels between two people's write-ups, and it travelled in both directions.
 
 The arithmetic he built on it checks out: 0.030480 − 0.024555 = **0.005926 nats**
 (ratio 1.2413), and his panel BCa lower bound 0.024965 excludes 0.024555 by
 0.000410 — exactly his "narrowly excludes by ~0.0004". **The number is right; the
-label on it is wrong in at least two of three places.** Our registry already
-marks that row `class: advisory` because it is a different reader; his Discord
-post cites our 0.0137 beside his numbers as a same-panel reference point with no
-such caveat. Both should be fixed before either lane-gap claim goes out.
+label on it is wrong in at least two of three places.**
+The same caveat cuts both ways and both sides should fix it together: our registry
+marks that row `class: advisory` because it is a different reader, and his Discord
+post lists our 0.0137 as a same-panel reference point — true of the panel, but our
+0.0137 comes off a different stack from his 0.0305, which is exactly the
+distinction §8 is about. Neither of us should publish a lane-gap headline until
+the labels are agreed.
 
 ---
 
@@ -788,6 +935,15 @@ such caveat. Both should be fixed before either lane-gap claim goes out.
 7. **Licence terms for depending on `kld_eval`** (§10).
 8. **Minimum cold runs on a non-deterministic path.** His own standard says ≥3;
    his headline NVFP4 sigma is n = 2. We would rather the standard held.
+9. **The standard has no field for the axis his own strongest result sits on**
+   (§8). His 0.030480 and his 0.024555 differ by the *runtime/kernel path of the
+   student* on one checkpoint, one panel, one teacher. Our `stack_relation`
+   describes teacher-vs-student within a measurement and does not reach it; our
+   `pipeline_ref` names it but is deliberately excluded from the comparability
+   key, so two rows differing only in engine path compare as if they were the
+   same measurement. Either the key gains an engine-path component or every
+   number carries an engine identity beside it. This is the gap we would most
+   like to close jointly, and his data is what exposed it.
 
 ---
 
@@ -804,6 +960,18 @@ bin/joint-standard overlap-scan --panel panel.json --arrays arrays/ \
 # R0 on a real teacher window
 bin/joint-standard canary --teacher window-0000.safetensors
 
+# section 3, load-bearing half: needs ONLY his 1.27 GB window, ~7 s
+bin/padded_column_study.py --teacher-window window-0000.safetensors \
+    --tokens final-0000.tokens.npy --stages teacher,canary --out study.json
+
+# section 3, all thirteen synthetic students: adds lm_head.weight, ~6.5 min
+bin/padded_column_study.py --teacher-window window-0000.safetensors \
+    --tokens final-0000.tokens.npy --head head.safetensors \
+    --stages all --out study.json
+
+# the clean-scope recompute we published (no GPU, no downloads)
+bin/emit_clean_scope_report.py --out reports/clean-scope-recompute.json
+
 # any of our rows, either scope
 bin/joint-standard analyze \
     --report registry/protocol/per-window/k6-sealed.json \
@@ -816,10 +984,27 @@ bin/joint-standard paired --a …/k6-sealed.json --b …/k8-streaming.json \
     --scope-file registry/protocol/window-selection.brandonmusic-final25.json
 
 # validation
-python3 bin/selftest_joint_standard.py          # 106 cases (112 with the oracle + real data)
+python3 bin/selftest_joint_standard.py          # 116 cases (122 with the oracle + real data)
+python3 bin/check_doc_numbers.py --sweep        # 155 doc claims re-derived from receipts
 cd registry && make check                       # 62 cases + 433 joint-invariant checks
-bin/selftest_all.sh                             # 38 cases
+bin/selftest_all.sh                             # 40 cases
 ```
 
 Emitted analyses are in `docs/joint-standard/analysis/`; the per-window inputs
 they read are in `registry/protocol/per-window/`.
+
+**Every section now reproduces from this repository**, §3 included: its script
+is `bin/padded_column_study.py` and its receipts are in
+`docs/joint-standard/padded-column/`. The only external input anywhere is his
+1.27 GB teacher window, and the half of §3 that carries the conclusion — padded
+columns hold ~1.6e-8 of the teacher's mass — needs *only* that window, no
+`lm_head` and no reconstruction, in about seven seconds.
+
+`bin/check_doc_numbers.py` re-derives every anchored number in **both**
+documents from the committed receipts and fails on a mismatch. It exists because
+five wrong numbers reached these documents while nothing mechanically tied them
+to the data: a scope-direction claim three rows contradicted, a "10× tighter"
+that measured 4.2×, a row count that was 16 rather than 13, a padded-column cap
+quoted an order tighter than the identity supports, and a student count of ten
+that was thirteen. On its first run against the repaired documents it found a
+sixth — a per-domain ratio printed as 1.303× where the receipt says 1.302×.
