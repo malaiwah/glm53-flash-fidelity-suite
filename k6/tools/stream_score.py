@@ -109,6 +109,7 @@ import platform
 import queue
 import random
 import re
+import shutil
 import sys
 import threading
 import time
@@ -1312,6 +1313,25 @@ def prepare_nonrouted_view(bf16_root: Path, work_dir: Path, *,
         raise _fail("the BF16 index carries no routed expert tensors to filter - wrong checkpoint?")
     shards = sorted(set(keep.values()))
     view = work_dir / view_name
+    # A view is REUSED across cold runs on purpose -- rebuilding 1,618 symlinks
+    # twice is waste. But "reuse" must mean "the same source", and it did not:
+    # only the index was rewritten, so a view built from one root and reused
+    # against another kept the first root's symlinks beside the second's index.
+    # Stamp the source and rebuild from scratch when it changes; a stale view is
+    # the kind of thing that surfaces as an inexplicable load error three stages
+    # later, which is exactly where it did surface.
+    stamp_path = view / ".view-source.json"
+    stamp = {"bf16_root": str(bf16_root.resolve()),
+             "index_sha256": __import__("hashlib").sha256(
+                 index_path.read_bytes()).hexdigest(),
+             "config_strip_keys": sorted(config_strip_keys)}
+    if view.is_dir():
+        try:
+            current = json.loads(stamp_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            current = None
+        if current != stamp:
+            shutil.rmtree(view)
     view.mkdir(parents=True, exist_ok=True)
     for entry in bf16_root.iterdir():
         if entry.name == "model.safetensors.index.json" or entry.is_dir():
@@ -1328,6 +1348,7 @@ def prepare_nonrouted_view(bf16_root: Path, work_dir: Path, *,
         json.dumps({"metadata": dict(index.get("metadata", {})), "weight_map": keep}),
         encoding="utf-8",
     )
+    stamp_path.write_text(json.dumps(stamp, sort_keys=True), encoding="utf-8")
     return view, {
         "checkpoint_tensor_count": len(weight_map),
         "nonrouted_tensor_count": len(keep),
@@ -1624,8 +1645,9 @@ def main() -> int:
                           "materialized non-routed tree; "
                           "tr3 = a SEALED TR3-published EXL3/MCG release via tr3_surface "
                           "(routed experts only; the artifact's own official-native non-routed "
-                          "tensors serve the rest, so nothing is materialized and --bf16 is "
-                          "refused); "
+                          "tensors serve the rest, materialized VERBATIM into --bf16 by "
+                          "exl3hf_surface materialize because they share shards with the routed "
+                          "payloads); "
                           "mlx = a community MLX affine snapshot via mlx_surface (EVERY tensor "
                           "from the quant repo: routed experts streamed-decoded, non-routed "
                           "decoded into a materialized bf16 view); "
@@ -1701,14 +1723,16 @@ def main() -> int:
     src.add_argument("--bf16", type=Path,
                      help="official BF16 checkpoint (non-routed source). REQUIRED for "
                           "checkpoint/payload-store/dione/native/exl3hf/gguf and REFUSED for "
-                          "nvfp4/tr3. --source mlx supplies every tensor from the quant snapshot "
+                          "nvfp4. --source mlx supplies every tensor from the quant snapshot "
                           "itself, so there the flag only enables an optional passthrough "
                           "byte-identity cross-check; --source gguf still needs it but its role "
                           "NARROWS to config/tokenizer plus the vision tower (the main GGUF "
                           "carries none), every measured weight being decoded from the artifact; "
-                          "--source nvfp4 and --source tr3 quantize the routed experts ONLY and "
-                          "ship their own non-routed set in-repo, so a second tree would be "
-                          "ambiguous")
+                          "--source nvfp4 quantizes the routed experts ONLY and ships its own "
+                          "BF16 non-routed set in-repo, so a second tree would be ambiguous; "
+                          "--source tr3 also quantizes the routed experts only, but its "
+                          "non-routed tensors share shards with the routed payloads, so it "
+                          "REQUIRES the materialized tree here")
 
     parser.add_argument("--teacher", type=Path, required=True,
                         help="teacher final-window tree (panel receipt search root)")
@@ -1857,12 +1881,14 @@ def main() -> int:
             "receipt family (malaiwah.glm53-nvfp4-packed-kld-summary.v1) and selects the "
             "student label the KLD report expects; an NVFP4 run is not a K6/K8 one"
         )
-    if args.source not in ("mlx", "nvfp4", "tr3") and args.bf16 is None:
+    if args.source not in ("mlx", "nvfp4") and args.bf16 is None:
         raise _fail(
             "--bf16 is required for --source checkpoint/payload-store/dione/native/exl3hf/gguf "
             "(with --source gguf only for config/tokenizer/vision; every measured weight is "
             "decoded from the artifact). --source mlx supplies every tensor, config included, "
-            "from the quant snapshot itself, and --source nvfp4/tr3 refuse --bf16 outright"
+            "from the quant snapshot itself, and --source nvfp4 refuses --bf16 outright. "
+            "--source tr3 needs it for the same mechanical reason exl3hf does: the non-routed "
+            "tensors must reach transformers in shards that hold nothing else"
         )
 
     # ---- teacher role and preview sampling (both flag-gated; defaults are
@@ -2216,13 +2242,6 @@ def main() -> int:
             # because those tensors are already plain BF16 under the official
             # names -- so it goes through the ordinary config/index gate below.
             model_root = args.nvfp4_root.resolve()
-        elif args.source == "tr3":
-            # same shape as nvfp4: the release IS the model tree.  Its
-            # non-routed tensors are the OFFICIAL ones under the official names
-            # (verified name-set equality plus the publisher's own
-            # nonrouted_native_exact seal), so the ordinary config/index gate
-            # below applies unchanged and nothing is materialized.
-            model_root = args.tr3_root.resolve()
         else:
             if args.bf16 is None:
                 raise _fail(
@@ -2246,16 +2265,7 @@ def main() -> int:
             or text_config.get("moe_intermediate_size") != 2048
         ):
             raise _fail("official GLM5Next main/MTP geometry differs")
-        if args.source == "tr3":
-            # the binding here is STRONGER than a community snapshot's: the
-            # release's own materialization receipt declares the config/index
-            # digests, tr3_surface verified those declarations reproduce, and
-            # this re-checks them against the files THIS run reads.
-            if tr3.config_sha256 != sha256_file(config_path) or (
-                tr3.index_sha256 != sha256_file(index_path)
-            ):
-                raise _fail("tr3 surface does not bind the local config/index")
-        elif args.source == "nvfp4":
+        if args.source == "nvfp4":
             # no sealed inventory exists for a community snapshot; the binding
             # is the surface's own config/index hashes, re-checked against the
             # files this run actually reads (they enter
