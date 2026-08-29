@@ -135,10 +135,25 @@ fetch_target)
     "$VENV/bin/hf" download "$REPO" --revision "$REV" \
       --local-dir "$DEST" --max-workers 8 >>"$LOGS/fetch_target.log" 2>&1
   # Verify what the release seals, not what we hope: SHA256SUMS if published.
+  #
+  # `sha256sum -c` over the whole list is the wrong instrument for a MIRROR.
+  # Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw republishes brandonmusic's weights
+  # byte-for-byte but trims his 120 .materialization/shards/*.json sidecars and
+  # ships its own README/LICENSE -- while copying his SHA256SUMS verbatim. So
+  # `-c` reports 122 failures, all of them files that are absent or deliberately
+  # different, and NONE of them a weight. Under `set -o pipefail` that non-zero
+  # exit killed the stage after a 175 GB download and a full checksum pass.
+  #
+  # What the verification has to answer is narrower and stronger: does every
+  # WEIGHT file present on disk match the digest the release published for it,
+  # and is every weight file covered by the list at all? Entries for files this
+  # repo does not publish are REPORTED, never silently dropped and never
+  # treated as a weight failure.
   if [ -f "$DEST/SHA256SUMS" ]; then
-    log "verifying published SHA256SUMS"
-    ( cd "$DEST" && sha256sum -c SHA256SUMS --quiet ) \
-      | tee -a "$RCPT/shard-verification.txt"
+    log "verifying published SHA256SUMS (weights fail-closed; absent sidecars reported)"
+    python3 "$FS/bin/verify_published_sums.py" --root "$DEST" \
+        --out "$RCPT/shard-verification.json" \
+        2>&1 | tee "$RCPT/shard-verification.txt"
   else
     log "no SHA256SUMS published; recording that fact in the receipt"
     echo "no SHA256SUMS in release" > "$RCPT/shard-verification.txt"
