@@ -311,6 +311,28 @@ class JL:
                    redact((str(res.get("stderr") or res.get("stdout") or ""))[:400])))
         return res
 
+    def exec_stdout(self, machine_id: int, command: str, *,
+                    timeout: float = 600, check: bool = True) -> str:
+        """Just the remote STDOUT, as a string.
+
+        `jl exec --json` answers {machine_id, command, exit_code, stdout,
+        stderr}, and `command` echoes the command back.  Any caller that
+        stringifies the whole dict and looks for a token is really searching
+        its OWN command text: the probe
+
+            test -f <marker> && echo DONE || echo PENDING
+
+        matched "DONE" on every single call, so every stage of every run was
+        declared finished at the first 120-second poll -- setup "completed" in
+        2m07s with an empty receipts directory, and the controller marched on
+        to fetch, measure and seal against a box that had done nothing.
+        Reading stdout, and only stdout, is the whole fix.
+        """
+        res = self.exec(machine_id, command, timeout=timeout, check=check)
+        if isinstance(res, dict):
+            return str(res.get("stdout") or "")
+        return str(res or "")
+
     def upload(self, machine_id: int, local: str, remote: str) -> Any:
         return self._call(["upload", str(machine_id), local, remote],
                           mutating=True, timeout=1800)

@@ -62,6 +62,15 @@ if [ "$STAGE" != "setup" ] && [ -f "$marker" ]; then
   exit 0
 fi
 
+# Every stage after setup runs under the venv setup builds.  Without this guard
+# a stage launched before setup finished died as a bare `exit 127` -- "not
+# found" -- which says nothing about the actual dependency.
+if [ "$STAGE" != "setup" ] && [ ! -x "$PY" ]; then
+  echo "stage_measure: error: $STAGE needs the venv interpreter $PY, which does not exist yet." >&2
+  echo "  The setup stage builds it. Run (or finish) 'stage_measure.sh setup' first." >&2
+  exit 3
+fi
+
 # Load the HF token from its 0600 file, never from argv or the environment of a
 # command line that could be observed in the process list.
 load_token() {

@@ -124,17 +124,27 @@ class Teardown:
         self.held = False
         self._lock = threading.Lock()
 
-    def adopt(self, machine_id: Optional[int]) -> None:
+    def adopt(self, machine_id: Optional[int], fs_id: Optional[int] = None) -> None:
         """Adopt a (possibly renumbered) machine id and persist it immediately.
 
         `jl resume` can return a NEW machine_id.  Anything that does not adopt
         it unconditionally will destroy the wrong box, or nothing at all.
+
+        The filesystem id goes into the lease too.  A lease naming only the
+        instance leaves the reaper able to stop the compute bill and unable to
+        remove the 400 GB volume behind it, which keeps billing on its own --
+        and that is exactly the case when an EXISTING instance is adopted,
+        because the lease is written before the adoption that learns its fs.
         """
         self.machine_id = machine_id
+        if fs_id is not None:
+            self.fs_id = fs_id
         if self.lease_path and self.lease_path.is_file():
             try:
                 lease = read_json(str(self.lease_path))
                 lease["machine_id"] = machine_id
+                if self.fs_id is not None:
+                    lease["fs_id"] = self.fs_id
                 lease["updated_at"] = utcnow()
                 write_json(str(self.lease_path), lease)
             except OSError:
@@ -219,14 +229,12 @@ class Teardown:
         if self.machine_id is None or self.jl.dry:
             return
         try:
-            out = self.jl.exec(
+            out = self.jl.exec_stdout(
                 self.machine_id,
                 "nvidia-smi || true; df -h || true; "
                 "%s/venv/bin/pip freeze 2>/dev/null || true" % self.fs_root,
-                timeout=120)
-            (self.outdir / "environment.txt").write_text(
-                redact(out if isinstance(out, str) else json.dumps(out, indent=2)),
-                encoding="utf-8")
+                timeout=120, check=False)
+            (self.outdir / "environment.txt").write_text(redact(out), encoding="utf-8")
         except Exception:                               # noqa: BLE001
             pass
 
@@ -1033,8 +1041,7 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
         if (inst.name or "").startswith(job_prefix) and inst.status == "Running":
             con.step("adopting existing instance %d for this job (name %s)"
                      % (inst.machine_id, inst.name))
-            td.adopt(inst.machine_id)
-            td.fs_id = inst.fs_id
+            td.adopt(inst.machine_id, fs_id=inst.fs_id)
             # The lease and the plan must now speak about the instance that
             # EXISTS, or teardown's L3 sweep looks for a name nobody wears.
             plan_data["instance_name"] = inst.name
@@ -1302,14 +1309,18 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
             continue
         quiet = 0
 
-        # 1. the stage's own marker: authoritative for success.
+        # 1. the stage's own marker: authoritative for success.  Compare the
+        #    remote STDOUT exactly -- `jl exec --json` echoes the command back
+        #    in its payload, so a substring test over the whole response finds
+        #    the probe's own words and answers "done" every time.
         try:
-            marker = jl.exec(td.machine_id,
-                             "test -f %s/receipts/done/%s.done && echo DONE || echo PENDING"
-                             % (td.fs_root, stage), timeout=120)
-            if "DONE" in str(marker):
+            marker = jl.exec_stdout(
+                td.machine_id,
+                "test -f %s/receipts/done/%s.done && echo yes || echo no"
+                % (td.fs_root, stage), timeout=120)
+            if marker.strip().splitlines()[-1:] == ["yes"]:
                 return "done"
-        except JLError:
+        except (JLError, IndexError):
             pass
 
         # 2. the managed run's state.
