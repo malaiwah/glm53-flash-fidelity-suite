@@ -361,6 +361,40 @@ try:
     check("the routed experts are the only quantized class",
           sorted(a["tensor_class"] for a in scope["assignments"]
                  if a["treatment"] == "quantized") == ["moe.experts", "mtp"])
+    # The scope is submitted verbatim into an artifact record, and
+    # artifact.schema.json's `scope` is additionalProperties:false. A stray key
+    # here is not extra documentation -- it is a REJECTED submission at the seal
+    # stage, after both cold runs are paid for. Check it against the schema
+    # itself, not against a remembered list.
+    schema_path = (TOOLS.parent.parent / "registry" / "schema" / "artifact.schema.json")
+    if schema_path.is_file():
+        allowed = set(json.loads(schema_path.read_text())["properties"]["scope"]["properties"])
+        required = set(json.loads(schema_path.read_text())["properties"]["scope"]["required"])
+        check("scope carries ONLY keys artifact.schema.json allows",
+              set(scope) <= allowed and required <= set(scope),
+              "extra=%s missing=%s" % (sorted(set(scope) - allowed),
+                                       sorted(required - set(scope))))
+        item_allowed = set(json.loads(schema_path.read_text())["properties"]["scope"]
+                           ["properties"]["assignments"]["items"]["properties"])
+        bad = [a["tensor_class"] for a in scope["assignments"]
+               if not set(a) <= item_allowed]
+        check("every assignment carries only allowed keys", not bad, str(bad))
+        common = json.loads((schema_path.parent / "common.schema.json").read_text())
+        classes = set(common["$defs"]["tensor_class"]["enum"])
+        formats = set(common["$defs"]["numeric_format"]["enum"])
+        unknown_cls = [a["tensor_class"] for a in scope["assignments"]
+                       if a["tensor_class"] not in classes]
+        unknown_fmt = [a["format"] for a in scope["assignments"]
+                       if a["format"] not in formats]
+        check("every tensor_class and format is in the registry vocabulary",
+              not unknown_cls and not unknown_fmt,
+              "classes=%s formats=%s" % (unknown_cls, unknown_fmt))
+        report = t3.scope_report(surface)
+        check("scope_report keeps provenance OUTSIDE the scope object",
+              report["scope"] == scope and "source" in report
+              and "schema" in report and "source" not in report["scope"])
+    else:
+        skip("scope validates against artifact.schema.json", "schema not present")
     check("scope digest is stable across loads",
           t3.scope_digest(t3.load_tr3_surface(good, repo="fixture/tr3", revision=REV))
           == digest)

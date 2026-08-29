@@ -610,14 +610,27 @@ def published_scope(surface: Tr3Surface) -> Dict[str, Any]:
                  "release, and are NOT executed by standard-logits scoring: "
                  "present in the artifact, outside the measured function. %s" % cite},
     ]
+    # EXACTLY the six keys artifact.schema.json's `scope` allows -- it is
+    # additionalProperties:false, so a `schema` or `source` key here is not
+    # extra documentation, it is a rejected submission at the seal stage, i.e.
+    # after both cold runs are paid for. Provenance travels in the WRAPPER that
+    # scope_report() builds around this, where seal_receipt reads doc["scope"].
     return {
-        "schema": TR3_SCOPE_SCHEMA,
         "policy": "uniform",
         "head_policy": "native",
         "kv_cache_dtype": "not_applicable",
         "mtp_included": True,
         "activation_quantization": None,
         "assignments": assignments,
+    }
+
+
+def scope_report(surface: Tr3Surface) -> Dict[str, Any]:
+    """The scope plus its provenance: what `tr3_surface.py scope` writes."""
+    return {
+        "schema": TR3_SCOPE_SCHEMA,
+        "scope": published_scope(surface),
+        "scope_digest": scope_digest(surface),
         "source": {
             "config_sha256": surface.config_sha256,
             "index_sha256": surface.index_sha256,
@@ -758,8 +771,7 @@ def main() -> int:
         return 0
 
     if args.command == "scope":
-        payload = {"scope": published_scope(surface),
-                   "scope_digest": scope_digest(surface)}
+        payload = scope_report(surface)
         text = json.dumps(payload, indent=2, sort_keys=True)
         if args.out:
             Path(args.out).write_text(text + "\n", encoding="utf-8")
