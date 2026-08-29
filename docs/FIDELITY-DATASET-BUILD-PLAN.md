@@ -543,7 +543,7 @@ the plan:
 
 ```
 bin/selftest_fidelity_dataset.py   66 passed, 0 failed   F1-F15 P1-P9 H1-H11 L1-L5 C1-C4 X1-X2 I1-I15 R1 R4
-bin/selftest_fidelity_compare.py   14 passed, 0 failed   N1-N11 (+N3b, N8b, N11b)
+bin/selftest_fidelity_compare.py   16 passed, 0 failed   N1-N11 (+N3b, N6b, N6c, N8b, N11b)
 bin/selftest_fidelity_card.py      14 passed, 0 failed   K1-K13 (+K8b), live Hub axis included
 bin/selftest_all.sh                38 passed, 0 failed, 3 skipped
 cd registry && make check          62 passed, 0 failed

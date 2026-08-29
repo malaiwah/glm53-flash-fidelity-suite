@@ -139,6 +139,34 @@ def main():
               and floor["self_compare"]["capture_content_digest_equal"] is False,
               floor["comparison_kind"])
 
+        # -- N6b every emitted receipt validates, including the cross_stack and
+        #    cross_lane paths whose bias block is only reachable with a flag.
+        d = os.path.join(tmp, "d")
+        fixtures.build_dataset(d, seed=3, role="quant", quantized=True,
+                               stack="stack-b", lane_identity="lane-b", lane="streaming",
+                               model_revision="c" * 40, checkpoint_identity="d" * 64)
+        cross = dscompare.compare(a, d, os.path.join(tmp, "cross"),
+                                  {"vocab_chunk": 8, "allow_cross_lane": True})
+        head_sub = dscompare.compare(
+            a, d, os.path.join(tmp, "cross2"),
+            {"vocab_chunk": 8, "allow_cross_lane": True,
+             "disclose_head_substitution": True})
+        problems = []
+        for label, candidate_receipt in (("same_stack", receipt), ("floor", floor),
+                                         ("cross_stack+cross_lane", cross),
+                                         ("head_substituted", head_sub)):
+            report = dsvalidate.validate_receipt(candidate_receipt, label)
+            if report.errors:
+                problems.append("%s: %s" % (label, report.errors[0]["message"][:70]))
+        check("N6b every emitted receipt validates against its own schema, including the "
+              "cross_stack / cross_lane / head-substituted paths",
+              not problems, "; ".join(problems))
+        check("N6c a cross-lane receipt is stamped usable_as_floor false (BIAS-006) and "
+              "carries the registry's own bias kind",
+              cross["comparability"]["usable_as_floor"] is False
+              and cross["comparability"]["bias"]["kind"] == "cross_stack_capture_replay",
+              json.dumps(cross["comparability"]["bias"])[:120])
+
         # -- N7 vocab-chunk invariance --------------------------------------
         out4 = os.path.join(tmp, "chunk4")
         out16 = os.path.join(tmp, "chunk16")

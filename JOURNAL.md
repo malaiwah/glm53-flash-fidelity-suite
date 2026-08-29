@@ -1553,12 +1553,12 @@ head-substituted number is not publishable, which is the correct price.
 
 ### Validated without a GPU, and against real bytes where they exist
 
-94 cases across three selftests, all offline, all on the system python3:
+96 cases across three selftests, all offline, all on the system python3:
 
 - `bin/selftest_fidelity_dataset.py` — **66 passed, 0 failed**. F1–F15 format
   and seal, P1–P9 panel binding, H1–H11 head identity, L1–L5 lane/stack,
   C1–C4 coverage, X1–X2 lossy, I1–I15 interop, R1/R4 real artifacts.
-- `bin/selftest_fidelity_compare.py` — **14 passed, 0 failed**. Known-answer KLD
+- `bin/selftest_fidelity_compare.py` — **16 passed, 0 failed**. Known-answer KLD
   against an independent plain-python oracle (agrees to fp64 epsilon), the
   self-compare exactness assertions, and the T1 constant.
 - `bin/selftest_fidelity_card.py` — **14 passed, 0 failed**, including the live

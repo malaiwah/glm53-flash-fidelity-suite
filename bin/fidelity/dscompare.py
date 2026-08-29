@@ -255,9 +255,11 @@ def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
     if not same_stack:
         findings["class"] = "advisory"
         findings["bias"] = {
-            "kind": "cross_stack_comparison",
+            # The registry's own enum value (measurement.schema.json); BIAS-001
+            # binds it to estimator.stack_relation == cross_stack.
+            "kind": "cross_stack_capture_replay",
             "direction": "unknown",
-            "magnitude_estimate": None,
+            "estimated_magnitude": None,
             "floor_measurement_ref": None,
             "detail": "the two captures were produced by different stacks; BIAS-001 requires "
                       "this block, and a residual of the 1e-2 class is expected from a "
@@ -432,7 +434,7 @@ def _head_gate(reference: Dataset, candidate: Dataset, options: Dict[str, Any],
     findings["bias"] = {
         "kind": "other",
         "direction": "downward",
-        "magnitude_estimate": None,
+        "estimated_magnitude": None,
         "floor_measurement_ref": None,
         "detail": "a single head was applied to hidden states captured under two different "
                   "heads; the candidate's own head-quantization error is erased, biasing the "
