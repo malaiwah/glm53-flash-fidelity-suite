@@ -30,8 +30,14 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 # asking the user, because the user usually does not know either.
 SURFACE_MARKERS = {
     "tr3-published": ("materialization-receipt.json", "exl3-mcg-storage-abi.json"),
-    "dione": ("exl3-manifest.json",),
+    # 0xSero publishes the manifest as EXL3_MANIFEST.json on newer repos; the
+    # sniffer matches the name case-insensitively with _ and - equivalent.
+    "dione": ("exl3-manifest.json", "EXL3_MANIFEST.json"),
     "packed": ("materialization-receipt.json",),
+    # stock exllamav3 HF-sharded release: no marker FILE at all -- identified
+    # by config.json's inline quantization_config.quant_method == "exl3" plus
+    # a canonical model.safetensors.index.json.
+    "exl3hf": ("config.json (inline quantization_config, quant_method exl3)",),
 }
 
 
@@ -335,10 +341,18 @@ def normalize_codec(quant_method: Optional[str],
     if raw in _CODEC_VOCABULARY:
         return raw
     if raw in ("exl3", "exllamav3"):
-        if book in ("mcg", ""):
-            return "exl3-mcg" if book == "mcg" else "exl3-trellis"
-        if book == "trellis":
+        if book == "mcg":
+            return "exl3-mcg"
+        if book == "mul1":
+            # exllamav3 >= 1.4 default codebook; a DIFFERENT decode map than
+            # MCG (multiplier 0x83DCD12D, dp4a byte-sum).  Labeling it
+            # exl3-mcg would write a false codec family on artifact records.
+            return "exl3-mul1"
+        if book in ("trellis", "3inst", ""):
             return "exl3-trellis"
+        return "exl3-%s" % book
+    if raw == "exl3_selective_tp4":
+        # the Dione conversion: standard EXL3/MCG payloads, TP4-sliced storage
         return "exl3-mcg"
     aliases = {
         "gptq": "gptq", "awq": "awq", "hqq": "hqq",
@@ -378,21 +392,68 @@ def sniff_surface(meta: RepoMeta) -> SurfaceInfo:
             info.evidence["packed_reader_abi_sha256"] = abi.get("packed_reader_abi_sha256")
         except HFError as exc:
             info.problems.append("cannot read exl3-mcg-storage-abi.json: %s" % exc)
-    elif "exl3-manifest.json" in names:
+    elif any(n.lower().replace("_", "-") == "exl3-manifest.json" for n in names):
         info.surface = "dione"
     elif "materialization-receipt.json" in names:
         info.surface = "packed"
 
-    if "quantization_config.json" in names:
+    def _apply_quant_config(qc):
+        info.codebook = qc.get("codebook")
+        info.codec_family = normalize_codec(qc.get("quant_method"), info.codebook)
+        # stock exllamav3 writes `bits`; the Dione conversion writes
+        # `bits_per_weight` (and `target_expert_bpw`).  Read whichever exists.
+        bits = qc.get("bits")
+        if bits is None:
+            bits = qc.get("bits_per_weight")
+        if bits is None:
+            bits = qc.get("target_expert_bpw")
+        info.bits = float(bits) if bits is not None else None
+        if qc.get("head_bits") is not None:
+            info.evidence["head_bits"] = qc.get("head_bits")
+        if qc.get("version"):
+            info.evidence["quantizer_version"] = qc.get("version")
+
+    # Where the quantization block lives is a PUBLISHER's choice, not a format
+    # property: exllamav3 inlines it in config.json AND (turboderp's releases)
+    # also ships a standalone quantization_config.json carrying the full
+    # per-module bit map -- 47.9 MB on GLM-5.3-Flash-exl3, for three fields we
+    # actually need.  Prefer the small inline block; fall back to the file.
+    # Classification is done AFTER, on whichever block was parsed, so a repo
+    # that ships both is not misclassified by which arm ran (that bug refused
+    # turboderp/GLM-5.3-Flash-exl3 as "unreadable" while its codec parsed fine).
+    quant_config = None
+    if "config.json" in names:
         try:
-            qc = fetch_json(meta.repo_id, "quantization_config.json",
-                            revision=meta.revision)
-            info.codebook = qc.get("codebook")
-            info.codec_family = normalize_codec(qc.get("quant_method"), info.codebook)
-            bits = qc.get("bits")
-            info.bits = float(bits) if bits is not None else None
+            cfg = fetch_json(meta.repo_id, "config.json", revision=meta.revision)
+            inline = cfg.get("quantization_config") or \
+                (cfg.get("text_config") or {}).get("quantization_config")
+            if isinstance(inline, dict) and inline:
+                quant_config = inline
+                info.evidence["quantization_config_source"] = "config.json (inline)"
         except HFError:
             pass
+    if quant_config is None and "quantization_config.json" in names:
+        try:
+            quant_config = fetch_json(meta.repo_id, "quantization_config.json",
+                                      revision=meta.revision)
+            info.evidence["quantization_config_source"] = "quantization_config.json"
+        except HFError:
+            pass
+    if isinstance(quant_config, dict) and quant_config:
+        _apply_quant_config(quant_config)
+        if info.surface == "unknown" and \
+                str(quant_config.get("quant_method", "")).lower() == "exl3" and \
+                "model.safetensors.index.json" in names and not info.tp_sliced:
+            # stock exllamav3 HF-sharded release (turboderp layout):
+            # canonical index, per-module {trellis,suh,svh,<codebook>}
+            # payloads, full-scope quant.  Read by the exl3hf surface.
+            info.surface = "exl3hf"
+        if quant_config.get("original_quantization_config") is not None:
+            # quantized FROM another quant (e.g. the FP8 release): lineage
+            # that the artifact record must disclose
+            oqc = quant_config["original_quantization_config"]
+            info.evidence["original_quantization_config_fmt"] = \
+                str(oqc.get("fmt") or oqc.get("quant_method") or "unknown")
 
     if "materialization-receipt.json" in names:
         try:

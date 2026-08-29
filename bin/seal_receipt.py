@@ -69,15 +69,24 @@ def main() -> int:
     if args.metrics_json:
         m = read_json(args.metrics_json)
     else:
-        runs = collect_runs(receipts)
-        if not runs:
+        m = _aggregate(receipts, con)
+        if m is None:
+            runs = collect_runs(receipts)
+            if not runs:
+                con.err(
+                    "no per-run summaries under %s (looked for run-*/kld-report.json, "
+                    "capture-receipt.json, summary.json). Nothing measured, nothing to "
+                    "seal. Pass --metrics-json to supply the values explicitly."
+                    % receipts)
+                return 2
+            m = _rollup(runs)
+        if m.get("value") is None:
             con.err(
-                "no per-run summaries under %s (looked for run-*/kld-report.json, "
-                "capture-receipt.json, summary.json). Nothing measured, nothing to "
-                "seal. Pass --metrics-json to supply the values explicitly."
+                "the runs under %s carry no mean tokenwise KLD (the capture stage "
+                "writes LOGITS; the `score` stage runs k6_kld_report.py over them). "
+                "Run `stage_measure.sh score` before sealing, or pass --metrics-json."
                 % receipts)
             return 2
-        m = _rollup(runs)
 
     run_means = list(m.get("run_means") or [])
     evidence_hashes = sorted(set(m.get("evidence_hashes") or []))
@@ -208,18 +217,35 @@ def main() -> int:
     return 0
 
 
+def _run_mean(doc: Dict[str, Any]) -> Optional[float]:
+    """The run's mean tokenwise KLD, wherever this engine puts it.
+
+    k6_kld_report's per-run `kld-report.json` nests it as summary.mean -- a
+    flat-key-only search found nothing there and sealed a NULL metric after a
+    fully paid measurement.
+    """
+    for key in ("mean_tokenwise_kld", "mean_kld", "measured_mean_kld", "value"):
+        if isinstance(doc.get(key), (int, float)):
+            return float(doc[key])
+    summary = doc.get("summary")
+    if isinstance(summary, dict) and isinstance(summary.get("mean"), (int, float)):
+        return float(summary["mean"])
+    return None
+
+
 def _rollup(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    means, hashes, reports = [], [], []
+    means, hashes, reports, top1 = [], [], [], []
     for r in runs:
         doc = r["doc"]
-        for key in ("mean_tokenwise_kld", "mean_kld", "value"):
-            if isinstance(doc.get(key), (int, float)):
-                means.append(float(doc[key]))
-                break
+        mean = _run_mean(doc)
+        if mean is not None:
+            means.append(mean)
         for key in ("tokenwise_kld_sha256", "tokenwise_sha256"):
             if doc.get(key):
                 hashes.append(doc[key])
                 break
+        if isinstance(doc.get("top1_agreement"), (int, float)):
+            top1.append(float(doc["top1_agreement"]))
         p = Path(r["dir"]) / r["file"]
         reports.append(sha256_file(str(p)))
     return {
@@ -227,6 +253,42 @@ def _rollup(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
         "run_means": means,
         "evidence_hashes": hashes,
         "per_run_report_sha256": reports,
+        "top1_agreement": sum(top1) / len(top1) if top1 else None,
+    }
+
+
+def _aggregate(receipts: Path, con: Console) -> Optional[Dict[str, Any]]:
+    """The lane scorer's OWN aggregate receipt, when the score stage ran.
+
+    `k6_kld_report.py --out <profile>-packed-kld.json` already computed the
+    mean of run means, the distinct tokenwise-kld hashes and the determinism
+    verdict in fp64.  Recomputing them here from the per-run files would be a
+    second implementation of the same arithmetic; read the sealed one instead
+    and fall back to the per-run rollup only when it is absent.
+    """
+    candidates = sorted(receipts.glob("*-packed-kld.json"))
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        con.err("more than one aggregate KLD receipt under %s (%s) -- refusing "
+                "to guess which one this measurement is"
+                % (receipts, ", ".join(c.name for c in candidates)))
+        raise SystemExit(2)
+    doc = read_json(str(candidates[0]))
+    mean = doc.get("measured_mean_kld")
+    run_means = list(doc.get("run_means") or [])
+    if not isinstance(mean, (int, float)) or not run_means:
+        return None
+    con.ok("aggregate KLD receipt", candidates[0].name)
+    return {
+        "value": float(mean),
+        "run_means": [float(x) for x in run_means],
+        "evidence_hashes": list(doc.get("distinct_tokenwise_kld_sha256") or []),
+        "per_run_report_sha256": list(doc.get("kld_report_sha256") or []),
+        "top1_agreement": doc.get("top1_agreement"),
+        "aggregate_receipt": candidates[0].name,
+        "aggregate_receipt_schema": doc.get("schema"),
+        "aggregate_receipt_sha256": sha256_file(str(candidates[0])),
     }
 
 

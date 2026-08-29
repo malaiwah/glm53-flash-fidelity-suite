@@ -774,6 +774,21 @@ GOLDEN_RECEIPT_KEYS = frozenset({
     "student_label", "logit_files", "elapsed_seconds", "streaming_disclosure",
 })
 
+# Keys a NON-default run may add on top of the golden literal, each reviewed
+# once and each provably behind an `if`.  A key that is not on this list fails
+# the rung: adding a receipt field is a deliberate act, not a side effect.
+#   teacher/preview:  the capture-role and sampling additions
+#   exl3hf:           the stock-exllamav3 artifact pins (source == "exl3hf"),
+#                     which name the artifact revision, its config/index shas,
+#                     the codebook and the non-routed materialization receipt
+GATED_RECEIPT_KEYS = frozenset({
+    "teacher_provenance", "schema", "not_submittable", "sampling_design",
+    "exl3hf_repo", "exl3hf_revision", "artifact_config_sha256",
+    "artifact_index_sha256", "codebook", "exllamav3_version", "declared_bits",
+    "declared_head_bits", "materialization_receipt_sha256", "seal_disclosure",
+    "routed_bits_decode_histogram",
+})
+
 
 def check_receipt_stability() -> None:
     """Static AST proof that default invocations build the SEALED receipt shape.
@@ -817,9 +832,8 @@ def check_receipt_stability() -> None:
             if key == "receipt_sha256":
                 continue
             (gated if inside_if else ungated).append(key)
-    ok = (literal_keys == GOLDEN_RECEIPT_KEYS and not ungated
-          and set(gated) <= {"teacher_provenance", "schema",
-                             "not_submittable", "sampling_design"})
+    unreviewed = sorted(set(gated) - GATED_RECEIPT_KEYS)
+    ok = (literal_keys == GOLDEN_RECEIPT_KEYS and not ungated and not unreviewed)
     _record(
         "L1.j-receipt-stability",
         "PASS" if ok else "FAIL",
@@ -829,6 +843,7 @@ def check_receipt_stability() -> None:
             "unexpected": sorted((literal_keys or set()) - GOLDEN_RECEIPT_KEYS),
             "ungated_receipt_assignments": ungated,
             "flag_gated_assignments": sorted(set(gated)),
+            "unreviewed_gated_assignments": unreviewed,
         },
     )
 

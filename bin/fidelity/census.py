@@ -704,13 +704,18 @@ class StorageNeed:
     student_logits_bytes: float
     toolchain_bytes: float
     slack_fraction: float
+    # Two cold runs hold BOTH their fp32 student logit trees on disk before
+    # the report is sealed (~2x the panel bytes), whether or not the caller
+    # keeps them afterwards.  Sizing the filesystem without this transient is
+    # lesson 31 (disk-full at window 19 of run 2).
+    transient_student_logits_bytes: float = 0.0
 
     @property
     def total_bytes(self) -> float:
         raw = (
             self.artifact_bytes
             + self.panel_bytes
-            + self.student_logits_bytes
+            + max(self.student_logits_bytes, self.transient_student_logits_bytes)
             + self.toolchain_bytes
         )
         return raw * (1.0 + self.slack_fraction)
@@ -728,11 +733,14 @@ def storage_need(
     keep_student_logits: bool,
     toolchain_bytes: float = 40 * GB,
     slack_fraction: float = 0.15,
+    cold_runs: int = 2,
+    extra_bytes: float = 0.0,
 ) -> StorageNeed:
     return StorageNeed(
-        artifact_bytes=artifact_bytes,
+        artifact_bytes=artifact_bytes + extra_bytes,
         panel_bytes=panel_bytes,
-        student_logits_bytes=panel_bytes if keep_student_logits else 0.0,
+        student_logits_bytes=panel_bytes * cold_runs if keep_student_logits else 0.0,
+        transient_student_logits_bytes=panel_bytes * cold_runs,
         toolchain_bytes=toolchain_bytes,
         slack_fraction=slack_fraction,
     )

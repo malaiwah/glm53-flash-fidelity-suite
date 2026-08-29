@@ -27,6 +27,7 @@ MODELS="$FS/models"
 PANEL="$FS/panel"
 VENV="$ROOT/venv"
 PY="$VENV/bin/python"
+export VENV
 
 mkdir -p "$RCPT" "$DONE" "$LOGS" "$MODELS" "$PANEL" "$FS/.secrets"
 chmod 700 "$FS/.secrets" 2>/dev/null || true
@@ -73,31 +74,42 @@ load_token() {
 case "$STAGE" in
 
 setup)
-  log "delegating bootstrap to k6/stage_k6.sh setup"
-  # stage_k6.sh guards on the BF16 directory existing. For the measurement
-  # recipe we do not need the 643 GB of weights -- both published surfaces ship
-  # non-routed tensors natively -- but the capture DOES bind
-  # inventory.config_sha256/index_sha256 to the local files, so the skeleton
-  # must carry the ORIGINAL config.json and model.safetensors.index.json bytes
-  # verbatim. Rewriting either would break the seal.
+  # The measurement lane owns its bootstrap (bin/bootstrap_measure.sh).  It
+  # used to call k6/stage_k6.sh, which (a) was never in the upload bundle and
+  # (b) hard-stops a decode-only run on an ENCODER closure gate.  See that
+  # script's header for the full reasoning.
+  #
+  # The official BF16 config + index are still fetched: the capture binds
+  # inventory.config_sha256/index_sha256 to local files, and the exl3hf
+  # materializer checks its produced non-routed name set against the official
+  # index.  Both need the ORIGINAL bytes -- at the PINNED revision, not main,
+  # which can move under us between two measurements of the same artifact.
   BF16_DIR="${BF16:-/home/jl_fs/models/bf16}"
-  mkdir -p "$BF16_DIR"
-  if [ ! -f "$BF16_DIR/config.json" ]; then
-    log "fetching BF16 metadata skeleton (config + index only, ~4 MB)"
-    python3 - "$BF16_DIR" <<'PY'
+  BF16_REV="$(jqget official_bf16_revision a6c167b62691b2bac901344b65cb651a70f53e43)"
+  mkdir -p "$BF16_DIR" "$ROOT"
+  if [ ! -f "$BF16_DIR/config.json" ] || [ ! -f "$BF16_DIR/model.safetensors.index.json" ]; then
+    log "fetching BF16 metadata skeleton @ $BF16_REV (config + index only, ~16 MB)"
+    python3 - "$BF16_DIR" "$BF16_REV" <<'PYSKEL'
 import sys, urllib.request, pathlib
-root = pathlib.Path(sys.argv[1])
-base = "https://huggingface.co/zai-org/GLM-5.3-Flash-BF16/resolve/main/"
+root, rev = pathlib.Path(sys.argv[1]), sys.argv[2]
+base = "https://huggingface.co/zai-org/GLM-5.3-Flash-BF16/resolve/%s/" % rev
 for name in ("config.json", "model.safetensors.index.json"):
     dest = root / name
     if dest.exists():
         continue
-    with urllib.request.urlopen(base + name, timeout=120) as r:
+    with urllib.request.urlopen(base + name, timeout=300) as r:
         dest.write_bytes(r.read())
     print("fetched", name, dest.stat().st_size, "bytes")
-PY
+PYSKEL
   fi
-  bash "$ROOT/stage_k6.sh" setup
+  # patches-v2 ships in the upload tree; the pipeline clone expects it at $ROOT.
+  if [ -d "$FS/k6/patches-v2" ]; then
+    mkdir -p "$ROOT/patches-v2"
+    cp -f "$FS"/k6/patches-v2/* "$ROOT/patches-v2/"
+  fi
+  log "bootstrapping (measurement-only recipe)"
+  bash "$FS/bin/bootstrap_measure.sh" 2>&1 | tee -a "$LOGS/setup.log"
+  df -h "$FS" | tee -a "$LOGS/setup.log"
   touch "$marker"
   log "done"
   ;;
@@ -149,6 +161,28 @@ PY
   log "done"
   ;;
 
+materialize)
+  # exl3hf only: dequantize the artifact's non-routed function into the BF16
+  # tree the streaming engine loads as --bf16.  A no-op for other surfaces.
+  SURFACE="$(jqget target.surface)"
+  if [ "$SURFACE" != "exl3hf" ]; then
+    log "surface=$SURFACE needs no materialization -- skipping"
+    touch "$marker"; exit 0
+  fi
+  REPO="$(jqget target.repo_id)"
+  REV="$(jqget target.revision)"
+  BF16_DIR="${BF16:-/home/jl_fs/models/bf16}"
+  log "materializing non-routed BF16 tree from $MODELS/target"
+  "$VENV/bin/python" "$FS/k6/tools/exl3hf_surface.py" materialize \
+      --root "$MODELS/target" --out "$MODELS/target-bf16-materialized" \
+      --device cuda --source-repo "$REPO" --source-revision "$REV" \
+      --official-index "$BF16_DIR/model.safetensors.index.json" \
+      2>&1 | tee -a "$LOGS/materialize.log"
+  df -h "$FS" | tee -a "$LOGS/materialize.log"
+  touch "$marker"
+  log "done"
+  ;;
+
 measure)
   LANE="$(jqget lane streaming)"
   RUNS="$(jqget cold_runs 1)"
@@ -162,7 +196,7 @@ measure)
     fi
     mkdir -p "$RCPT/run-$run"
     log "run $run starting"
-    python3 "$FS/bin/invoke_engine.py" --job "$CONF" --lane "$LANE" \
+    "$PY" "$FS/bin/invoke_engine.py" --job "$CONF" --lane "$LANE" \
       --cold-run "$run" --out "$RCPT/run-$run" \
       2>&1 | tee -a "$LOGS/measure-run-$run.log"
   done
@@ -170,9 +204,23 @@ measure)
   log "done"
   ;;
 
+score)
+  # stream_score CAPTURES logits; the divergence is computed here, across the
+  # cold runs, by the lane's pinned scorer.  Without this stage `seal` finds no
+  # kld-report.json and exits 2 -- after the whole rental is spent.
+  LANE="$(jqget lane streaming)"
+  log "scoring cold runs (lane=$LANE)"
+  "$PY" "$FS/bin/invoke_scorer.py" --job "$CONF" --lane "$LANE" \
+      --receipts "$RCPT" --device "${KLD_DEVICE:-cuda}" \
+      2>&1 | tee -a "$LOGS/score.log"
+  df -h "$FS" | tee -a "$LOGS/score.log"
+  touch "$marker"
+  log "done"
+  ;;
+
 seal)
   log "sealing submission receipt"
-  python3 "$FS/bin/seal_receipt.py" --job "$CONF" --receipts "$RCPT" \
+  "$PY" "$FS/bin/seal_receipt.py" --job "$CONF" --receipts "$RCPT" \
       --out "$RCPT/measurement-receipt.json" 2>&1 | tee -a "$LOGS/seal.log"
   ( cd "$RCPT" && sha256sum measurement-receipt.json > RECEIPT.sha256 ) || true
   touch "$marker"
@@ -181,7 +229,7 @@ seal)
 
 *)
   echo "unknown stage: $STAGE" >&2
-  echo "stages: setup fetch_target fetch_panel measure seal" >&2
+  echo "stages: setup fetch_target fetch_panel materialize measure score seal" >&2
   exit 2
   ;;
 esac

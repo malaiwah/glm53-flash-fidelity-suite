@@ -1,0 +1,45 @@
+{
+  "artifact": "turboderp/GLM-5.3-Flash-exl3",
+  "audit_sha256": "cc876db041c7db81b97e87f89655f26b08a3f5f49ac0e9dc4d3c3785113c6a25",
+  "checks": [
+    {
+      "cos_k": 0.9998049756192843,
+      "cos_q": 0.9998051887590842,
+      "cos_v": 0.9998049435854084,
+      "cross_cos_q_vs_officialK": 0.0030664015666841344,
+      "name": "kda_layer0_qkv_proj_K6_split_vs_official"
+    },
+    {
+      "name": "kda_layer0_conv1d_slices_vs_official",
+      "slices": [
+        {
+          "bitwise_equal": true,
+          "slice": "q_conv1d"
+        },
+        {
+          "bitwise_equal": true,
+          "slice": "k_conv1d"
+        },
+        {
+          "bitwise_equal": true,
+          "slice": "v_conv1d"
+        }
+      ]
+    },
+    {
+      "cos": 0.9998445797649251,
+      "name": "visual_block0_qkv_fused_vs_official"
+    },
+    {
+      "cos": 0.9970918154063559,
+      "name": "routed_L3E0_gate_proj_K4_vs_official",
+      "rel_l2": 0.07623245871145022
+    }
+  ],
+  "date": "2026-08-29",
+  "decoder": "exl3hf_surface.decode_payload_hf (mul1 LUT, fp32 campaign decode ABI)",
+  "interpretation": "matched-slice cosines ~0.997-0.9998 with cross-slice cosine ~0.003 prove the mul1 LUT, the trellis unpack/permutation/hadamard layout, and the q|k|v split order simultaneously; conv1d slices are BITWISE equal to the official split tensors (natives pass through the FP8 parent unchanged); residuals match the expected K6/K4 reconstruction error",
+  "official_reference": "zai-org/GLM-5.3-Flash-BF16 @ a6c167b62691b2bac901344b65cb651a70f53e43",
+  "revision": "2a30229e67012798ba9f0cd832bb78abf4c363d5",
+  "schema": "malaiwah.glm53-exl3hf-local-decode-audit.v1"
+}

@@ -438,6 +438,8 @@ def _comparison_table(
         ("k6k8", "6.68", "260.3 GiB"),
         ("dione-q4", "4.0 (TP4-sliced)", "174.5 GiB"),
         ("dione-3.0bpw", "3.0 (TP4-sliced)", "~139 GiB"),
+        ("turbo-4.05bpw", "4.05 (full-scope, head 6)", "150.2 GiB"),
+        ("turbo-3.05bpw", "3.05 (full-scope, head 6)", "116.6 GiB"),
     ):
         receipt_path = receipts_dir / f"{profile}-packed-kld.json"
         if receipt_path.is_file():
@@ -450,6 +452,8 @@ def _comparison_table(
                 "k6k8": "malaiwah K6K8 (down@8)",
                 "dione-q4": "0xSero Dione Q4 (EXL3 K4, unsealed source)",
                 "dione-3.0bpw": "0xSero Dione 3.0bpw (EXL3 K3, unsealed source)",
+                "turbo-4.05bpw": "turboderp 4.05bpw (stock EXL3 mul1, quantized head, unsealed source)",
+                "turbo-3.05bpw": "turboderp 3.05bpw (stock EXL3 mul1, quantized head, unsealed source)",
             }[profile]
             teacher_sha = str(
                 receipt.get("teacher_receipt_sha256") or SEALED_EP8_TEACHER_SHA
@@ -486,6 +490,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", required=True,
                         choices=("k6", "k6-stream", "k8", "k6k8", "dione-q4", "dione-3.0bpw",
+                                 "turbo-4.05bpw", "turbo-3.05bpw",
                                  "native-bf16"))
     parser.add_argument("--teacher", type=Path, required=True)
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
@@ -524,6 +529,12 @@ def main() -> int:
         # disclosed in the capture receipt's seal_disclosure)
         "dione-q4": "dione-exl3-k4-tp4",
         "dione-3.0bpw": "dione-exl3-k3-tp4",
+        # third-party stock-exllamav3 releases (turboderp), scored on the same
+        # sealed panel through stream_score --source exl3hf (mul1 codebook,
+        # FULL-scope quant incl. the 6-bit head, unsealed source, disclosed).
+        # Labels must match stream_score.EXL3HF_PROFILES.
+        "turbo-4.05bpw": "turboderp-exl3-mul1-4.05bpw",
+        "turbo-3.05bpw": "turboderp-exl3-mul1-3.05bpw",
         # the BF16 FLOOR of the streaming lane: the identical capture with the
         # routed experts read straight from the official checkpoint and no codec
         # in the path (stream_score.py --source native).  Subtracting this mean
@@ -679,9 +690,15 @@ def main() -> int:
         mean = means[0]
         summary = {
             "schema": f"malaiwah.glm53-{args.profile}-packed-kld-summary.v1",
-            # the native lane is single-device (EP8-emulated), never TP4
+            # STORAGE layout, not lane: the dione conversions ship TP4-sliced
+            # ranks, the stock-exllamav3 (turbo) releases ship canonical HF
+            # shards, and the native lane is single-device (EP8-emulated).
+            # Suffixing every profile "-tp4" put a false storage claim in the
+            # headline receipt of an artifact that is not sliced at all.
             "profile": (
-                "native-bf16-stream" if args.profile == "native-bf16" else f"{args.profile}-tp4"
+                "native-bf16-stream" if args.profile == "native-bf16"
+                else f"{args.profile}-hf-sharded" if args.profile.startswith("turbo")
+                else f"{args.profile}-tp4"
             ),
             "student_label": student_label,
             "cold_run_count": len(reports),
@@ -697,7 +714,7 @@ def main() -> int:
             "teacher_source": teacher_source,
             "teacher_label": teacher_label,
         }
-        if args.profile.startswith("dione"):
+        if args.profile.startswith(("dione", "turbo")):
             # the headline number's own receipt must carry the unsealed-source
             # disclosure and the immutable provenance pins, not only the
             # capture receipt underneath it
@@ -709,19 +726,41 @@ def main() -> int:
             student_receipt = sealed_json(
                 runs[0] / "capture-receipt.json", CAPTURE_SCHEMA, "receipt_sha256"
             )
-            summary.update(
-                {
-                    "student_receipt_sha256": student_receipt["receipt_sha256"],
-                    "dione_repo": student_receipt.get("dione_repo"),
-                    "dione_revision": student_receipt.get("dione_revision"),
-                    "dione_shard_hash_verification": student_receipt.get(
-                        "dione_shard_hash_verification"
-                    ),
-                    "source_repo": student_receipt.get("source_repo"),
-                    "source_revision": student_receipt.get("source_revision"),
-                    "seal_disclosure": student_receipt.get("seal_disclosure"),
-                }
-            )
+            if args.profile.startswith("turbo"):
+                summary.update(
+                    {
+                        "student_receipt_sha256": student_receipt["receipt_sha256"],
+                        "artifact_repo": student_receipt.get("exl3hf_repo"),
+                        "artifact_revision": student_receipt.get("exl3hf_revision"),
+                        "artifact_config_sha256": student_receipt.get("artifact_config_sha256"),
+                        "artifact_index_sha256": student_receipt.get("artifact_index_sha256"),
+                        "codebook": student_receipt.get("codebook"),
+                        "exllamav3_version": student_receipt.get("exllamav3_version"),
+                        "declared_bits": student_receipt.get("declared_bits"),
+                        "declared_head_bits": student_receipt.get("declared_head_bits"),
+                        "materialization_receipt_sha256": student_receipt.get(
+                            "materialization_receipt_sha256"
+                        ),
+                        "routed_bits_decode_histogram": student_receipt.get(
+                            "routed_bits_decode_histogram"
+                        ),
+                        "seal_disclosure": student_receipt.get("seal_disclosure"),
+                    }
+                )
+            else:
+                summary.update(
+                    {
+                        "student_receipt_sha256": student_receipt["receipt_sha256"],
+                        "dione_repo": student_receipt.get("dione_repo"),
+                        "dione_revision": student_receipt.get("dione_revision"),
+                        "dione_shard_hash_verification": student_receipt.get(
+                            "dione_shard_hash_verification"
+                        ),
+                        "source_repo": student_receipt.get("source_repo"),
+                        "source_revision": student_receipt.get("source_revision"),
+                        "seal_disclosure": student_receipt.get("seal_disclosure"),
+                    }
+                )
         _atomic_json(args.out.resolve(), summary)
         print(
             json.dumps(

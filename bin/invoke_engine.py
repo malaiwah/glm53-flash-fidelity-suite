@@ -23,7 +23,32 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from fidelity.common import Console, run                # noqa: E402
-from fidelity.engines import EngineUnpinned, build_invocation, load_engines  # noqa: E402
+from fidelity.engines import (                          # noqa: E402
+    EngineUnpinned, build_invocation, fidelity_python, load_engines,
+)
+
+
+def engine_python(fs: str) -> str:
+    """The torch-capable interpreter the engine script runs under.
+
+    build_invocation returns `[<launcher...>, <script.py>, ...]`; the engine
+    scripts are mode 644 with an `env python3` shebang, so the argv MUST be
+    prefixed with an interpreter, and it must be the venv's -- the stage
+    driver calls THIS file with the system python3 (it has to: it runs before
+    the venv exists), so sys.executable is the wrong answer here.
+    measure_local's execute path does the same thing one line further down.
+    """
+    env = os.environ.get("FIDELITY_ENGINE_PYTHON")
+    if env:
+        return env
+    for candidate in (
+        os.environ.get("VENV") and "%s/bin/python" % os.environ["VENV"],
+        "%s/venv/bin/python" % os.environ.get("FIDELITY_K6_ROOT", "/home/jl_fs/glm53-k6"),
+        "%s/venv/bin/python" % fs,
+    ):
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return fidelity_python()
 
 
 def main() -> int:
@@ -45,13 +70,55 @@ def main() -> int:
         return 3
 
     fs = os.environ.get("FIDELITY_FS_ROOT", "/home/jl_fs/fidelity")
-    surface = job.get("target", {}).get("surface", "packed")
+    target = job.get("target", {}) or {}
+    surface = target.get("surface", "packed")
     # The streaming-family engines spell the input mode --source (vocabulary:
-    # checkpoint | payload-store | native), not --surface.  measure_local's
-    # own execute path sets source="checkpoint" for a materialized target
-    # tree; mirror that here so the backstop composes the same argv.  Lanes
-    # whose flag_map has no "source" key (sealed-ep8) ignore it.
-    source = {"packed": "checkpoint", "native-bf16": "native"}.get(surface, "")
+    # checkpoint | payload-store | dione | native | exl3hf), not --surface.
+    # measure_local's own execute path sets source="checkpoint" for a
+    # materialized target tree; mirror that here so the backstop composes the
+    # same argv.  Lanes whose flag_map has no "source" key (sealed-ep8) ignore
+    # it.  A surface with no mapping yields "" -- build_invocation then DROPS
+    # the flag and the engine falls back to its own default, which is how an
+    # unmapped surface used to reach the GPU and die on argparse an hour into
+    # a rental.  Refuse here instead: a surface this file cannot spell is a
+    # missing mapping, not a default.
+    source_by_surface = {
+        "packed": "checkpoint",
+        "native-bf16": "native",
+        "exl3hf": "exl3hf",
+    }
+    if "source" in (engine.flag_map or {}) and surface not in source_by_surface:
+        con.err(
+            "no --source spelling for surface %r on lane %r: add it to "
+            "invoke_engine.source_by_surface (the engine would otherwise run "
+            "with its default source and fail after the fetch)" % (surface, args.lane)
+        )
+        return 3
+    source = source_by_surface.get(surface, "")
+
+    # exl3hf: the measured non-routed function is the ARTIFACT's own, so
+    # --bf16 must point at the tree `stage_measure.sh materialize` wrote from
+    # this same snapshot -- never at the official BF16 metadata skeleton.
+    extra = {
+        "source": source,
+        "bf16": os.environ.get("BF16", "/home/jl_fs/models/bf16"),
+        "pipeline_root": os.environ.get(
+            "QP_PIPELINE_ROOT", "/home/jl_fs/glm53-k6/pipeline"),
+    }
+    if surface == "exl3hf":
+        materialized = os.environ.get(
+            "EXL3HF_BF16", "%s/models/target-bf16-materialized" % fs)
+        extra.update({
+            "bf16": materialized,
+            "exl3hf_root": "%s/models/target" % fs,
+            "exl3hf_repo": target.get("repo_id", ""),
+            "exl3hf_revision": target.get("revision", ""),
+        })
+        missing = [k for k in ("exl3hf_repo", "exl3hf_revision") if not extra[k]]
+        if missing:
+            con.err("job.json target is missing %s -- an exl3hf capture cannot "
+                    "seal its provenance without them" % ", ".join(missing))
+            return 3
     try:
         argv = build_invocation(
             engine,
@@ -64,18 +131,17 @@ def main() -> int:
             cold_run=args.cold_run,
             reduce_order=job.get("reduce_order", "fp32"),
             roles=job.get("panel", {}).get("roles", "final"),
-            extra={
-                "source": source,
-                "bf16": os.environ.get("BF16", "/home/jl_fs/models/bf16"),
-                "pipeline_root": os.environ.get(
-                    "QP_PIPELINE_ROOT", "/home/jl_fs/glm53-k6/pipeline"),
-            },
+            extra=extra,
         )
         # Same rule as measure_local's execute path: a lane's fixed_flags are
         # part of its pinned contract and must be on every composed argv.
         for flag, value in (engine.fixed_flags or {}).items():
             if flag not in argv:
                 argv.extend([flag, str(value)])
+        # A lane with its own launcher (sealed-ep8: torchrun) already names the
+        # program; everything else is a bare script path that needs one.
+        if not engine.launcher:
+            argv = [engine_python(fs)] + argv
     except EngineUnpinned as exc:
         con.err(str(exc))
         return 3

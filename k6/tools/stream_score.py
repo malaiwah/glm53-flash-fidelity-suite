@@ -122,6 +122,12 @@ NATIVE_IDENTITY_SCHEMA = "malaiwah.glm53-native-bf16-source-identity.v1"
 NATIVE_STUDENT_IDENTITY_SCHEMA = "malaiwah.glm53-native-bf16-student-identity.v1"
 NATIVE_STUDENT_LABEL = "native-bf16"
 NATIVE_CAPTURE_ROLE = "native_bf16_student"
+# stock-exllamav3 (exl3hf) profiles: profile -> (declared bpw, student label).
+# The label must match k6_kld_report's map for the same profile.
+EXL3HF_PROFILES = {
+    "turbo-4.05bpw": (4.05, "turboderp-exl3-mul1-4.05bpw"),
+    "turbo-3.05bpw": (3.05, "turboderp-exl3-mul1-3.05bpw"),
+}
 TEACHER_CAPTURE_ROLE = "bf16_teacher"
 TEACHER_PROVENANCE_SCHEMA = "malaiwah.glm53-same-lane-teacher-provenance.v1"
 TEACHER_LABEL = "native-bf16-streaming-v1"
@@ -664,6 +670,7 @@ class ExpertStreamer:
         progress: bool = True,
         dione_shards: Any = None,
         native_source: Optional[NativeCheckpointSource] = None,
+        exl3hf_source: Optional[Tuple[Any, Any]] = None,
     ):
         import torch
 
@@ -676,6 +683,11 @@ class ExpertStreamer:
         # the slab is filled by reading the released per-expert tensors, with no
         # codec in the path at all (the measurement floor of this lane).
         self.native_source = native_source
+        # when set, the routed surface is a stock-exllamav3 HF-sharded release:
+        # (exl3hf_surface.Exl3HfSurface, Exl3HfShardReader).  The fill loop is
+        # the packed lane's own producer/consumer with the payload IO and the
+        # decode call swapped for exl3hf_surface's.
+        self.exl3hf_source = exl3hf_source
         if 288 % slab_experts:
             raise _fail("--slab-experts must divide 288")
         self.surface = surface
@@ -858,9 +870,112 @@ class ExpertStreamer:
                     )
                 del decoded, gate_up_bf16, down_bf16
 
+    def _fill_range_exl3hf(self, layer: int, lo: int, count: int, cpu_gate_up, cpu_down,
+                           record_census: bool) -> None:
+        """Stock-exllamav3 surface: threaded payload IO + on-device decode.
+
+        The packed lane's producer/consumer shape, with load_payload_cpu
+        replaced by Exl3HfShardReader.payload (thread-local safetensors
+        handles) and decode_from_payload by exl3hf_surface.decode_module (the
+        campaign decode ABI with the artifact's own codebook LUT).  The
+        install algebra after decode - fuse_gate_up, single fp32->bf16
+        rounding, copy_ into the slab, torch.equal close - is shared verbatim.
+        """
+        import torch
+        import exl3hf_surface as xs3
+        from quant_pipeline.evaluation.glm53_packed_k4_reader import fuse_gate_up
+
+        xsurface, xreader = self.exl3hf_source
+        jobs: "queue.Queue[Any]" = queue.Queue(maxsize=max(2, self.decode_threads * 2))
+        error: List[BaseException] = []
+
+        def producer() -> None:
+            try:
+                with ThreadPoolExecutor(max_workers=self.decode_threads) as pool:
+                    pending: List[Any] = []
+                    for offset in range(count):
+                        expert = lo + offset
+                        pending.append(
+                            (
+                                offset,
+                                expert,
+                                [
+                                    pool.submit(
+                                        xreader.payload,
+                                        xs3.routed_module_name(layer, expert, proj),
+                                    )
+                                    for proj in ("gate_proj", "up_proj", "down_proj")
+                                ],
+                            )
+                        )
+                        while len(pending) > self.decode_threads:
+                            jobs.put(pending.pop(0))
+                    for item in pending:
+                        jobs.put(item)
+            except BaseException as exc:  # noqa: BLE001 - propagated to the consumer
+                error.append(exc)
+            finally:
+                jobs.put(None)
+
+        thread = threading.Thread(target=producer, daemon=True)
+        thread.start()
+        with torch.inference_mode():
+            while True:
+                item = jobs.get()
+                if item is None:
+                    break
+                offset, expert, futures = item
+                payloads = [future.result() for future in futures]
+                decoded = []
+                rows = []
+                for payload, projection in zip(payloads, ("gate_proj", "up_proj", "down_proj")):
+                    module = xs3.routed_module_name(layer, expert, projection)
+                    tensor, row = xs3.decode_module(
+                        xsurface,
+                        payload,
+                        module=module,
+                        device=self.device,
+                        expected_shape=xs3.PROJECTION_SHAPE[projection],
+                        unpack_device=self.unpack_device,
+                        hash_payload=record_census,
+                    )
+                    key = f"K{row['bits']}"
+                    xsurface.routed_bits_histogram[key] = (
+                        xsurface.routed_bits_histogram.get(key, 0) + 1
+                    )
+                    decoded.append(tensor)
+                    rows.append(row)
+                    self.payload_bytes += sum(
+                        int(payload[name].numel() * payload[name].element_size())
+                        for name in ("trellis", "suh", "svh")
+                    )
+                gate_up_bf16 = fuse_gate_up(decoded[0], decoded[1]).to(dtype=torch.bfloat16)
+                down_bf16 = decoded[2].to(dtype=torch.bfloat16)
+                self.gate_up[offset].copy_(gate_up_bf16)
+                self.down[offset].copy_(down_bf16)
+                if not torch.equal(self.gate_up[offset], gate_up_bf16) or not torch.equal(
+                    self.down[offset], down_bf16
+                ):
+                    raise RuntimeError("BF16 streamed expert installation did not close exactly")
+                if cpu_gate_up is not None:
+                    cpu_gate_up[expert].copy_(gate_up_bf16.to("cpu"))
+                    cpu_down[expert].copy_(down_bf16.to("cpu"))
+                self.decoded_matrices += 3
+                if record_census:
+                    self.census.append(
+                        {"layer": layer, "global_expert": expert, "local_expert": offset,
+                         "payloads": rows}
+                    )
+                del decoded, gate_up_bf16, down_bf16
+        thread.join()
+        if error:
+            raise error[0]
+
     def _fill_range(self, layer: int, lo: int, count: int, cpu_gate_up, cpu_down, record_census: bool) -> None:
         if self.dione_shards is not None:
             return self._fill_range_dione(layer, lo, count, cpu_gate_up, cpu_down, record_census)
+        if self.exl3hf_source is not None:
+            return self._fill_range_exl3hf(layer, lo, count, cpu_gate_up, cpu_down, record_census)
         import torch
         from quant_pipeline.evaluation.glm53_packed_k4_reader import fuse_gate_up
 
@@ -1350,13 +1465,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     src = parser.add_argument_group("weight source")
-    src.add_argument("--source", choices=("checkpoint", "payload-store", "dione", "native"),
+    src.add_argument("--source", choices=("checkpoint", "payload-store", "dione", "native",
+                                          "exl3hf"),
                      default="payload-store",
                      help="checkpoint = materialized shards (its receipt names the packed root); "
                           "payload-store = the content-addressed store directly (default); "
                           "dione = a Dione-style selective-EXL3 tree via dione_surface; "
                           "native = the official BF16 checkpoint's own routed experts, NO decode "
-                          "(the measurement floor of this lane)")
+                          "(the measurement floor of this lane); "
+                          "exl3hf = a stock-exllamav3 HF-sharded release (mul1/mcg codebook, "
+                          "full-scope quant) via exl3hf_surface -- --bf16 must point at its "
+                          "materialized non-routed tree")
     src.add_argument("--checkpoint", type=Path, help="--source checkpoint: materialized checkpoint root")
     src.add_argument("--packed-root", type=Path,
                      help="--source payload-store: encode output root (out-k6) carrying "
@@ -1364,6 +1483,12 @@ def main() -> int:
     src.add_argument("--dione-root", type=Path)
     src.add_argument("--dione-repo")
     src.add_argument("--dione-revision")
+    src.add_argument("--exl3hf-root", type=Path,
+                     help="--source exl3hf: local snapshot of the stock-exllamav3 checkpoint")
+    src.add_argument("--exl3hf-repo",
+                     help="--source exl3hf: the HF repo id the snapshot came from")
+    src.add_argument("--exl3hf-revision",
+                     help="--source exl3hf: the immutable 40-hex revision of that snapshot")
     src.add_argument("--inventory", type=Path,
                      help="--source native: sealed quant-pipeline.glm-release-inventory.v1 that "
                           "binds the BF16 config/index (defaults to <packed-root>/inventory.json). "
@@ -1376,7 +1501,9 @@ def main() -> int:
     parser.add_argument("--token-panel", type=Path, help="explicit sealed token-panel receipt path")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--cold-run", type=int, required=True)
-    parser.add_argument("--profile", default="k6", choices=("k6", "k8", "k6k8", "native-bf16"))
+    parser.add_argument("--profile", default="k6",
+                        choices=("k6", "k8", "k6k8", "native-bf16",
+                                 "turbo-4.05bpw", "turbo-3.05bpw"))
     parser.add_argument("--roles", default="final")
     parser.add_argument("--windows", help="comma-separated window ids to score (default: all)")
     parser.add_argument("--pipeline-root")
@@ -1485,6 +1612,12 @@ def main() -> int:
             "--source native and --profile native-bf16 must be used together: the profile "
             "selects the student label the KLD report expects, and a native run is not a K6/K8 one"
         )
+    if (args.source == "exl3hf") != (args.profile in EXL3HF_PROFILES):
+        raise _fail(
+            "--source exl3hf and an exl3hf profile (%s) must be used together: the profile "
+            "selects the student label the KLD report expects"
+            % "/".join(sorted(EXL3HF_PROFILES))
+        )
 
     # ---- teacher role and preview sampling (both flag-gated; defaults are
     # byte-identical to the sealed behaviour) ------------------------------
@@ -1569,6 +1702,58 @@ def main() -> int:
         packed_root = Path(str(materialization.get("packed_root", ""))).resolve()
         if not packed_root.is_dir():
             raise _fail(f"packed root from the materialization receipt is absent: {packed_root}")
+    elif args.source == "exl3hf":
+        # The measured function is the stock-exllamav3 artifact ALONE: routed
+        # experts stream-decode from its shards, and everything else comes from
+        # the --bf16 tree that exl3hf_surface.materialize_nonrouted dequantized
+        # from the SAME snapshot.  The provenance chain is: artifact revision
+        # -> materialization receipt (binds the artifact's config/index shas)
+        # -> local inventory (binds the materialized tree the model loads).
+        import exl3hf_surface as xs3
+
+        if args.exl3hf_root is None or not args.exl3hf_repo or not args.exl3hf_revision:
+            raise _fail(
+                "--source exl3hf requires --exl3hf-root, --exl3hf-repo and --exl3hf-revision"
+            )
+        if sealed_capture.REVISION.fullmatch(args.exl3hf_revision) is None:
+            raise _fail("--exl3hf-revision must be the immutable 40-hex commit")
+        exl3hf = xs3.load_surface(args.exl3hf_root)
+        want_bits = EXL3HF_PROFILES[args.profile][0]
+        if abs(exl3hf.declared_bits - want_bits) > 1e-6:
+            raise _fail(
+                f"profile {args.profile} expects a {want_bits}-bpw artifact, but the "
+                f"checkpoint declares bits={exl3hf.declared_bits}"
+            )
+        inventory_path = (
+            args.inventory.resolve() if args.inventory
+            else (args.bf16.resolve() / "inventory.json")
+        )
+        inventory = _sealed_json(inventory_path, RELEASE_INVENTORY_SCHEMA, "inventory_sha256")
+        model_revision = str(inventory.get("model_revision", ""))
+        if model_revision != args.exl3hf_revision:
+            raise _fail(
+                "the materialized tree's inventory binds revision "
+                f"{model_revision!r}, not --exl3hf-revision {args.exl3hf_revision!r}"
+            )
+        if inventory.get("seal_mode") != "full-shard-sha256":
+            raise _fail("streaming capture requires the exact full-hash inventory")
+        materialization = _sealed_json(
+            args.bf16.resolve() / "materialization-receipt.json",
+            xs3.EXL3HF_MATERIALIZATION_SCHEMA,
+            "receipt_sha256",
+        )
+        if (
+            materialization.get("source_repo") != args.exl3hf_repo
+            or materialization.get("source_revision") != args.exl3hf_revision
+            or materialization.get("source_config_sha256") != exl3hf.config_sha256
+            or materialization.get("source_index_sha256") != exl3hf.index_sha256
+            or materialization.get("inventory_sha256") != inventory["inventory_sha256"]
+        ):
+            raise _fail(
+                "the materialized non-routed tree does not bind this exact artifact "
+                "snapshot (repo/revision/config/index/inventory mismatch) - "
+                "re-run exl3hf_surface materialize against the same --exl3hf-root"
+            )
     else:
         if args.packed_root is None:
             raise _fail("--source payload-store requires --packed-root (the encode output root)")
@@ -1638,10 +1823,17 @@ def main() -> int:
     surface_started = time.monotonic()
     native_source: Optional[NativeCheckpointSource] = None
     native_layout: Optional[Dict[str, Any]] = None
+    exl3hf_reader = None
+    exl3hf_layout: Optional[Dict[str, Any]] = None
     if args.source == "native":
         native_source = NativeCheckpointSource(model_root)
         native_layout = native_source.routed_tensor_census(
             tuple(MAIN_ROUTED_LAYERS), int(text_config["n_routed_experts"])
+        )
+    elif args.source == "exl3hf":
+        exl3hf_reader = xs3.Exl3HfShardReader(exl3hf)
+        exl3hf_layout = xs3.routed_census(
+            exl3hf, tuple(MAIN_ROUTED_LAYERS), int(text_config["n_routed_experts"])
         )
     else:
         surface = load_complete_surface(
@@ -1672,7 +1864,34 @@ def main() -> int:
     else:
         selection = list(enumerate(all_windows))
 
-    if args.source == "native":
+    if args.source == "exl3hf":
+        identity = xs3.reader_identity(
+            Path(__file__).resolve(),
+            codebook=exl3hf.codebook,
+            bits_note=(
+                f"per-module (declared {exl3hf.declared_bits} bpw, "
+                f"head_bits {exl3hf.declared_head_bits})"
+            ),
+        )
+        checkpoint_identity = sha256_bytes(
+            canonical_json(
+                {
+                    "schema": xs3.EXL3HF_IDENTITY_SCHEMA,
+                    "inventory_sha256": inventory["inventory_sha256"],
+                    "artifact_repo": args.exl3hf_repo,
+                    "artifact_revision": args.exl3hf_revision,
+                    "artifact_config_sha256": exl3hf.config_sha256,
+                    "artifact_index_sha256": exl3hf.index_sha256,
+                    "materialization_receipt_sha256": materialization["receipt_sha256"],
+                    "codebook": exl3hf.codebook.upper(),
+                    "declared_bits": exl3hf.declared_bits,
+                    "declared_head_bits": exl3hf.declared_head_bits,
+                    "routed_policy": "streamed_offline_decode_stock_exl3_full_matrices",
+                    "nonrouted_policy": "artifact_dequantized_bf16_materialized_tree",
+                }
+            )
+        )
+    elif args.source == "native":
         identity = native_source_identity(
             Path(reader_module.__file__).resolve(), Path(__file__).resolve()
         )
@@ -1800,6 +2019,40 @@ def main() -> int:
             "on the packed lane, whose non-routed tensors come from the same shards)",
         ]
         disclosure["native_routed_layout"] = native_layout
+    if args.source == "exl3hf":
+        # Same lane, two disclosed differences from a packed K6/K8 run: where
+        # the routed bytes come from (stock exl3 payloads, variable K, no seal
+        # to verify) and where the non-routed weights come from (the artifact's
+        # own tensors, dequantized to BF16 by the materializer -- NOT the
+        # official release).  Both are artifact identity, not lane identity.
+        disclosure["routed_weight_source"] = (
+            "stock exllamav3 payloads (<module>.{trellis,suh,svh,%s}) read per expert "
+            "from the artifact's own HF shards and offline-decoded with the campaign "
+            "decode ABI (fp32 hadamards, %s LUT, one bf16 rounding)"
+            % (exl3hf.codebook, exl3hf.codebook.upper())
+        )
+        disclosure["dtype_policy"] = dict(disclosure["dtype_policy"])
+        disclosure["dtype_policy"]["weights"] = (
+            "bfloat16 decoded from stock exl3 payloads (fp32 decode, one rounding)"
+        )
+        disclosure["dtype_policy"]["nonrouted"] = (
+            "bfloat16 MATERIALIZED from the artifact's own (quantized or native) "
+            "tensors by exl3hf_surface.materialize_nonrouted - the lm_head included; "
+            "no official-release weight is part of the measured function"
+        )
+        disclosure["sealed_path_differences"] = list(disclosure["sealed_path_differences"]) + [
+            "routed surface: a stock-exllamav3 release (codebook %s, per-module bit "
+            "rate). No payload store, no contract and no encoder closure exist; the "
+            "provenance anchors are the immutable artifact revision, the materialization "
+            "receipt and the consumed-payload sha256 census (seal_disclosure records the "
+            "same unsealed-source deviation the Dione rows carry)" % exl3hf.codebook,
+            "non-routed weights: dequantized from the SAME artifact snapshot (its "
+            "attention, shared experts, dense MLPs, vision tower and 6-bit lm_head are "
+            "part of the measured function; the official BF16 release contributes "
+            "nothing). The head is applied natively from those dequantized weights",
+        ]
+        disclosure["exl3hf_routed_layout"] = exl3hf_layout
+        disclosure["seal_disclosure"] = xs3.SEAL_DISCLOSURE
 
     plan = {
         "schema": STREAM_PLAN_SCHEMA,
@@ -1846,6 +2099,32 @@ def main() -> int:
         "output": str(args.out.resolve()),
         "dry_run": args.dry_run,
     }
+    if args.source == "exl3hf":
+        plan.update(
+            {
+                "exl3hf_repo": args.exl3hf_repo,
+                "exl3hf_revision": args.exl3hf_revision,
+                "exl3hf_root": str(args.exl3hf_root.resolve()),
+                "artifact_config_sha256": exl3hf.config_sha256,
+                "artifact_index_sha256": exl3hf.index_sha256,
+                "codebook": exl3hf.codebook,
+                "exllamav3_version": exl3hf.exllamav3_version,
+                "declared_bits": exl3hf.declared_bits,
+                "declared_head_bits": exl3hf.declared_head_bits,
+                "materialization_receipt_sha256": materialization["receipt_sha256"],
+                "seal_disclosure": xs3.SEAL_DISCLOSURE,
+                "main_routed_policy": (
+                    "streamed_decode_stock_exl3_%s_per_module_bits_to_bf16_one_layer_resident"
+                    % exl3hf.codebook
+                ),
+                "nonrouted_policy": "artifact_dequantized_bf16_materialized_tree",
+                "mtp_policy": (
+                    "mtp_layer_45_nonrouted_materialized_from_artifact_mtp_file_"
+                    "but_not_executed_by_standard_logits"
+                ),
+                "exl3hf_routed_layout": exl3hf_layout,
+            }
+        )
     print(json.dumps(plan, sort_keys=True), flush=True)
     if args.dry_run:
         return 0
@@ -1894,6 +2173,7 @@ def main() -> int:
         cache_mode=args.decode_cache,
         cache_dir=args.decode_cache_dir.resolve() if args.decode_cache_dir else None,
         native_source=native_source,
+        exl3hf_source=(exl3hf, exl3hf_reader) if args.source == "exl3hf" else None,
     )
     if decode_device != device:
         raise _fail(
@@ -1953,9 +2233,18 @@ def main() -> int:
         "main_routed_runtime_dtype": (
             "bfloat16 read straight from the official checkpoint shards (no decode)"
             if args.source == "native"
-            else f"bfloat16 streamed-decoded from packed K{bits} payload"
+            else (
+                "bfloat16 streamed-decoded from stock exl3 %s payloads (per-module bits)"
+                % exl3hf.codebook
+                if args.source == "exl3hf"
+                else f"bfloat16 streamed-decoded from packed K{bits} payload"
+            )
         ),
-        "nonrouted_runtime_dtype": "official source dtype, untouched",
+        "nonrouted_runtime_dtype": (
+            "bfloat16 materialized from the artifact's own tensors (dequantized/cast)"
+            if args.source == "exl3hf"
+            else "official source dtype, untouched"
+        ),
         "mtp_standard_logits_executed": False,
         "mtp_pack_receipt_sha256": (
             surface.mtp_pack_receipt_sha256 if surface is not None else None
@@ -2013,7 +2302,12 @@ def main() -> int:
                     f"--sweep needs --slab-experts 288 to serve ep={sweep_ep} "
                     f"(have {memory['slab_experts']})"
                 )
-    student_label = NATIVE_STUDENT_LABEL if args.source == "native" else f"uniform-k{bits}"
+    if args.source == "native":
+        student_label = NATIVE_STUDENT_LABEL
+    elif args.source == "exl3hf":
+        student_label = EXL3HF_PROFILES[args.profile][1]
+    else:
+        student_label = f"uniform-k{bits}"
     capture_role = NATIVE_CAPTURE_ROLE if args.source == "native" else "packed_student"
     if args.capture_role == "teacher":
         # the label stays native-bf16 (it IS the native forward); only the ROLE
@@ -2210,7 +2504,12 @@ def main() -> int:
         "weight_dtype": (
             "official BF16 checkpoint routed experts, streamed, NO decode"
             if args.source == "native"
-            else f"EXL3/TR3 uniform-k{bits} streamed offline-decoded to BF16"
+            else (
+                "stock EXL3 (%s codebook, per-module bits) streamed offline-decoded to BF16"
+                % exl3hf.codebook
+                if args.source == "exl3hf"
+                else f"EXL3/TR3 uniform-k{bits} streamed offline-decoded to BF16"
+            )
         ),
         "logits_dtype": "float32",
         "kld_direction": "teacher_to_student",
@@ -2225,6 +2524,24 @@ def main() -> int:
     # seal covers them.  Neither appears in a default invocation, which keeps
     # default receipts field-identical to the sealed layout (asserted by
     # stream_score_selftest rung L1.j).
+    if args.source == "exl3hf":
+        # The summary receipt (k6_kld_report) republishes these pins; they are
+        # sealed here first so the headline number's provenance chain starts in
+        # the capture itself.  Default receipts are field-identical to the
+        # sealed layout (L1.j) - these keys exist only on exl3hf runs.
+        receipt["exl3hf_repo"] = args.exl3hf_repo
+        receipt["exl3hf_revision"] = args.exl3hf_revision
+        receipt["artifact_config_sha256"] = exl3hf.config_sha256
+        receipt["artifact_index_sha256"] = exl3hf.index_sha256
+        receipt["codebook"] = exl3hf.codebook
+        receipt["exllamav3_version"] = exl3hf.exllamav3_version
+        receipt["declared_bits"] = exl3hf.declared_bits
+        receipt["declared_head_bits"] = exl3hf.declared_head_bits
+        receipt["materialization_receipt_sha256"] = materialization["receipt_sha256"]
+        receipt["seal_disclosure"] = xs3.SEAL_DISCLOSURE
+        receipt["routed_bits_decode_histogram"] = dict(
+            sorted(exl3hf.routed_bits_histogram.items())
+        )
     if args.capture_role == "teacher":
         receipt["teacher_provenance"] = {
             "schema": TEACHER_PROVENANCE_SCHEMA,

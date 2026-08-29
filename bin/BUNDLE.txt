@@ -14,6 +14,10 @@
 
 # --- orchestration -------------------------------------------------------
 bin/stage_measure.sh
+# The measurement-only container bootstrap. The recipe used to delegate to
+# k6/stage_k6.sh, which was never uploaded (so `setup` ran a file that did not
+# exist) and gates a decode-only run on an ENCODER closure it never needs.
+bin/bootstrap_measure.sh
 bin/watchdog.sh
 bin/invoke_engine.py
 # The scorer stage: stream_score CAPTURES logits, k6_kld_report turns them into
@@ -46,6 +50,19 @@ k6/tools/stream_score.py
 # which is the only place that check can be made before a paid capture.
 k6/tools/exl3hf_surface.py
 k6/tools/selftest_exl3hf_offline.py
+
+# --- pipeline patch series -------------------------------------------------
+# bootstrap_measure.sh clones the quant pipeline at its pin and applies these.
+# Without them on the instance the clone stays unpatched and the reader bytes
+# differ from the ones every sealed streaming row binds.
+k6/patches-v2/SERIES
+k6/patches-v2/0001-packed-payload-parameterize-stored-bits.patch
+k6/patches-v2/0002-direct-k4-worker-slots-and-choice-bits.patch
+k6/patches-v2/0003-uniform-k4-h200-worker-admission.patch
+k6/patches-v2/0004-uniform-k6-state-receipt-field-fix.patch
+k6/patches-v2/0005-add-glm53-k6-postmtp-receipts-module.patch
+k6/patches-v2/0006-reader-ep-size-env.patch
+k6/patches-v2/0008-v31-allowed-bits-k6-k8.patch
 
 # --- receipt derivation ---------------------------------------------------
 # Uploaded so that comparability.key and scope_digest are computed on the

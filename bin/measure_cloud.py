@@ -41,6 +41,12 @@ from typing import Any, Dict, List, Optional
 SUITE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# The official BF16 release the whole campaign is pinned to.  Every lane binds
+# its config/index sha256 into the capture receipt, so this is an identity, not
+# a convenience default: resolving `main` instead would let the reference move
+# between two measurements of the same artifact.
+OFFICIAL_BF16_REVISION = "a6c167b62691b2bac901344b65cb651a70f53e43"
+
 from fidelity import census as C                       # noqa: E402
 from fidelity.common import (                          # noqa: E402
     Console, human_bytes, human_duration, parse_duration, read_json,
@@ -709,11 +715,24 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     plan["census"] = cen.to_dict()
     plan["requirement"] = req.to_dict()
 
+    # exl3hf artifacts additionally materialize their non-routed function as a
+    # local BF16 tree (~the model's non-routed footprint) before any capture.
+    materialized_bytes = (
+        cen.nonrouted_bytes
+        if plan["target"].get("surface") == "exl3hf" else 0.0
+    )
     need = C.storage_need(artifact_bytes=artifact_bytes, panel_bytes=panel_bytes,
-                          keep_student_logits=args.keep_student_logits)
+                          keep_student_logits=args.keep_student_logits,
+                          cold_runs=args.cold_runs,
+                          extra_bytes=materialized_bytes)
     storage_gb = args.storage or C.round_up_storage_gb(need.total_bytes)
-    con.kv("disk", "%s artifact + %s panel + %s toolchain + 15%% -> %d GB fs"
-           % (human_bytes(artifact_bytes), human_bytes(panel_bytes),
+    con.kv("disk", "%s artifact%s + %s panel + %s transient student logits "
+                   "(%d runs) + %s toolchain + 15%% -> %d GB fs"
+           % (human_bytes(artifact_bytes),
+              (" + %s materialized non-routed" % human_bytes(materialized_bytes))
+              if materialized_bytes else "",
+              human_bytes(panel_bytes),
+              human_bytes(need.transient_student_logits_bytes), args.cold_runs,
               human_bytes(need.toolchain_bytes), storage_gb), indent=4)
     plan["storage_gb"] = storage_gb
     plan["storage_need"] = need.to_dict()
@@ -821,6 +840,13 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     phases = [
         ("bootstrap", 0.42, "apt + cuda13 + torch + exllamav3 build"),
         ("fetch", max(0.05, fetch_gb / 190.0 / 3600.0 * 1000.0), "%.0f GB @ ~190 MB/s" % fetch_gb),
+    ]
+    if plan["target"].get("surface") == "exl3hf":
+        phases.append(
+            ("materialize", 0.35,
+             "dequantize non-routed -> %s BF16 tree (ESTIMATED)"
+             % human_bytes(materialized_bytes)))
+    phases += [
         ("measure", args.cold_runs * descriptor.contexts * per_window / 60.0,
          "%d run(s) x %d windows @ ~%.1f min%s"
          % (args.cold_runs, descriptor.contexts, per_window,
@@ -1018,13 +1044,27 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
     It carries no token -- the HF token travels separately as a 0600 file.
     """
     panel = dict(plan_data["panel"])
+    # The engine profile follows the lane's own profile_map, keyed by the
+    # sniffed surface/bits -- never a constant.  (The former hard-coded "k4"
+    # was not even a stream_score --profile choice; a streaming measure stage
+    # would have died on argparse at hour ~1 of the rental.)
+    target = plan_data.get("target") or {}
+    lane_spec = load_engines().get(args.lane)
+    profile_map = lane_spec.profile_map if lane_spec else {}
+    if target.get("surface") == "native-bf16":
+        profile = profile_map.get("native", "native-bf16")
+    else:
+        bits_key = str(target.get("bits")) if target.get("bits") is not None else ""
+        profile = profile_map.get(bits_key)
+    if not profile:
+        profile = "k6"
     return {
         "recipe": "cloud",
         "job_id": plan_data["job_id"],
         "lane": args.lane,
         "reduce_order": args.reduce_order,
         "cold_runs": args.cold_runs,
-        "profile": "k6" if args.lane == "sealed-ep8" else "k4",
+        "profile": profile,
         "target": plan_data["target"],
         "panel": panel,
         "reference": {
@@ -1040,6 +1080,11 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
             "host": "jarvislabs",
         },
         "keep_student_logits": bool(args.keep_student_logits),
+        # The official BF16 release whose config/index the capture binds and
+        # whose non-routed name set the exl3hf materializer checks against.
+        # PINNED: `main` moving between two measurements of one artifact would
+        # silently change what "complete" means.
+        "official_bf16_revision": OFFICIAL_BF16_REVISION,
         "produced_by": produced_by_block(SUITE_ROOT, "bin/measure_cloud.py",
                                          dependencies={
                                              "lane": args.lane,
@@ -1095,7 +1140,12 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
             % (td.fs_root, int(plan_data["deadline_epoch"]),
                int(args.heartbeat_timeout), td.fs_root, td.fs_root))
 
-    for stage in ("setup", "fetch_target", "fetch_panel", "measure", "seal"):
+    stages = ["setup", "fetch_target", "fetch_panel", "measure", "score", "seal"]
+    if (plan_data.get("target") or {}).get("surface") == "exl3hf":
+        # stock-exllamav3 artifacts must materialize their non-routed BF16
+        # tree from the fetched snapshot before any capture reads --bf16
+        stages.insert(2, "materialize")
+    for stage in stages:
         _run_stage(args, con, jl, td, plan_data, stage)
 
 

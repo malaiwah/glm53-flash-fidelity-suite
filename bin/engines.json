@@ -133,7 +133,10 @@
         "reduce_order": "--reduce-order",
         "capture_role": "--capture-role",
         "store_positions": "--store-positions",
-        "sample_seed": "--sample-seed"
+        "sample_seed": "--sample-seed",
+        "exl3hf_root": "--exl3hf-root",
+        "exl3hf_repo": "--exl3hf-repo",
+        "exl3hf_revision": "--exl3hf-revision"
       },
       "fixed_flags": {
         "--stream-mode": "window-major"
@@ -141,9 +144,11 @@
       "profile_map": {
         "6.0": "k6",
         "8.0": "k8",
-        "native": "native-bf16"
+        "native": "native-bf16",
+        "4.05": "turbo-4.05bpw",
+        "3.05": "turbo-3.05bpw"
       },
-      "profile_map_note": "4.0-bpw has no streaming profile (stream_score --profile choices: k6,k8,k6k8,native-bf16) -- sealed lane only. k6k8 is reachable only by explicit --profile, never by bpw inference (6.68 is not a bpw key).",
+      "profile_map_note": "4.0-bpw (TR3/dione) has no streaming profile yet -- sealed lane only. 4.05/3.05 map to the stock-exllamav3 (exl3hf) profiles turbo-4.05bpw/turbo-3.05bpw (stream_score --profile choices: k6,k8,k6k8,native-bf16,turbo-4.05bpw,turbo-3.05bpw). k6k8 is reachable only by explicit --profile, never by bpw inference (6.68 is not a bpw key).",
       "receipt_class": "submittable",
       "scorer": {
         "entrypoint": "k6/tools/k6_kld_report.py",
@@ -167,7 +172,7 @@
       },
       "timing": {
         "minutes_per_window": 7.35,
-        "provenance": "MEASURED on the K6 streaming panel run (stream-k6/runs/stream-run1, 1x H200 spot, --decode-cache none): capture-receipt elapsed_seconds 11,018.9 for 25 windows = 7.35 min/window; cold run 2 was 10,488.7 s = 6.99 min/window. Two cold runs of a 231 GB payload store therefore cost 5.97 GPU-hours (~$11.89 at $1.99/GPU-h), not the ~$7.50 the earlier estimate implied. The BF16-floor lane (--source native, 609 GB read per window) measured ~8.3 min/window on the same box class.",
+        "provenance": "MEASURED on the K6 streaming panel run (stream-k6/runs/stream-run1, 1x H200 spot, --decode-cache none): capture-receipt elapsed_seconds 11,018.9 for 25 windows = 7.35 min/window; cold run 2 was 10,488.7 s = 6.99 min/window. Two cold runs of a 231 GB payload store therefore cost 5.97 GPU-hours (~$11.89 at $1.99/GPU-h), not the ~$7.50 the earlier estimate implied. The BF16-floor lane (--source native, 609 GB read per window) measured ~8.3 min/window on the same box class. || exl3hf surface (stock exllamav3, mul1): UNMEASURED as of 2026-08-29; the 7.35 min/window figure transfers as an estimate only (same decode ABI, similar payload bytes per window at K4; K3 reads ~25% less). The first turbo run's capture receipts become the measured source.",
         "measured": true
       },
       "notes": [
@@ -186,9 +191,10 @@
       ],
       "surfaces": [
         "packed",
-        "native-bf16"
+        "native-bf16",
+        "exl3hf"
       ],
-      "surfaces_note": "stream_score.py --source {checkpoint,payload-store,native}; --source dione refuses by design. 'packed' needs the payload store published; 'native-bf16' needs only --inventory + --bf16. There is still no 'tr3-published' reader."
+      "surfaces_note": "stream_score.py --source {checkpoint,payload-store,native,exl3hf}; --source dione still refuses by design (CLI front-end unexecuted). 'packed' needs the payload store published; 'native-bf16' needs only --inventory + --bf16; 'exl3hf' reads a stock-exllamav3 HF-sharded release (mul1/mcg codebook, full-scope quant incl. quantized lm_head) and needs --bf16 pointing at the tree exl3hf_surface.py materialize produced from the SAME snapshot. There is still no 'tr3-published' reader."
     },
     "local-mps": {
       "name": "stream_score on Apple Silicon (MPS)",
@@ -233,7 +239,10 @@
         "reduce_order": "--reduce-order",
         "capture_role": "--capture-role",
         "store_positions": "--store-positions",
-        "sample_seed": "--sample-seed"
+        "sample_seed": "--sample-seed",
+        "exl3hf_root": "--exl3hf-root",
+        "exl3hf_repo": "--exl3hf-repo",
+        "exl3hf_revision": "--exl3hf-revision"
       },
       "fixed_flags": {
         "--device": "mps",
@@ -328,7 +337,10 @@
         "reduce_order": "--reduce-order",
         "capture_role": "--capture-role",
         "store_positions": "--store-positions",
-        "sample_seed": "--sample-seed"
+        "sample_seed": "--sample-seed",
+        "exl3hf_root": "--exl3hf-root",
+        "exl3hf_repo": "--exl3hf-repo",
+        "exl3hf_revision": "--exl3hf-revision"
       },
       "fixed_flags": {
         "--device": "cuda",
@@ -411,7 +423,10 @@
         "pipeline_root": "--pipeline-root",
         "vram_budget_gb": "--vram-budget-gb",
         "slab_experts": "--slab-experts",
-        "windows": "--windows"
+        "windows": "--windows",
+        "exl3hf_root": "--exl3hf-root",
+        "exl3hf_repo": "--exl3hf-repo",
+        "exl3hf_revision": "--exl3hf-revision"
       },
       "fixed_flags": {
         "--source": "native",

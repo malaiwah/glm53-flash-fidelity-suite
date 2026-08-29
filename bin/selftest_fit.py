@@ -231,17 +231,27 @@ def main() -> int:
     print("\n[7] STORAGE sizing")
     need = storage_need(
         artifact_bytes=175.79 * GB, panel_bytes=31.71 * GB, keep_student_logits=False)
-    print("      artifact 175.79 + panel 31.71 + toolchain 40 + 15%% slack")
+    print("      artifact 175.79 + panel 31.71 + 2x transient student logits 63.42")
+    print("      + toolchain 40 + 15%% slack")
     print("      -> %.1f GB -> provision %d GB"
           % (gb(need.total_bytes), round_up_storage_gb(need.total_bytes)))
-    check("proof-target storage rounds to 300 GB",
-          round_up_storage_gb(need.total_bytes) == 300,
+    check("proof-target storage rounds to 400 GB (2 cold runs' student logits "
+          "are on disk before the report seals -- lesson 31)",
+          round_up_storage_gb(need.total_bytes) == 400,
           "%d GB" % round_up_storage_gb(need.total_bytes))
     need_keep = storage_need(
         artifact_bytes=175.79 * GB, panel_bytes=31.71 * GB, keep_student_logits=True)
-    check("keeping student logits pushes it to 400 GB",
-          round_up_storage_gb(need_keep.total_bytes) == 400,
+    check("KEEPING the student logits changes nothing: the transient already "
+          "sized for both cold runs",
+          round_up_storage_gb(need_keep.total_bytes) == 400
+          and need_keep.total_bytes == need.total_bytes,
           "%d GB" % round_up_storage_gb(need_keep.total_bytes))
+    need_thin = storage_need(
+        artifact_bytes=175.79 * GB, panel_bytes=31.71 * GB, keep_student_logits=False,
+        cold_runs=1)
+    check("a single cold run needs strictly less than two",
+          need_thin.total_bytes < need.total_bytes,
+          "%.1f GB < %.1f GB" % (gb(need_thin.total_bytes), gb(need.total_bytes)))
 
     print("\n[8] WINDOW-MAJOR COST MODEL (the engine that exists; additive --")
     print("    the 33 checks above are untouched)")
