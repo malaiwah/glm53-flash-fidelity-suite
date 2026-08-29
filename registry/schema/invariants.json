@@ -148,6 +148,46 @@
       "statement": "Two artifacts sharing (repository, revision) with no path selector are reported: if one repository really holds both, huggingface.path should say which is which."
     },
     {
+      "id": "JOINT-001",
+      "severity": "error",
+      "statement": "uncertainty.method=window_block_bootstrap_bca requires bootstrap_b, bootstrap_seed, cluster_unit, interval_kind, both ci95 endpoints and clusters>=2. An interval with no stated resampling unit is not an interval."
+    },
+    {
+      "id": "JOINT-002",
+      "severity": "error",
+      "statement": "uncertainty.se_total requires se_clustered, sigma_run and sigma_run_runs>=2, and must equal hypot(se_clustered, sigma_run) to 1e-9 relative. Publishing a combined SE without its two parts hides which one is moving."
+    },
+    {
+      "id": "JOINT-003",
+      "severity": "error",
+      "statement": "uncertainty.sigma_run requires sigma_run_runs>=2 and must not exceed determinism.run_count. A sigma over two runs is |delta|/sqrt(2) with one degree of freedom and must be read as such."
+    },
+    {
+      "id": "JOINT-004",
+      "severity": "error",
+      "statement": "measurement_scope.scope_name other than 'panel25' requires covers_full_panel=false and a subset_detail. A calibration-clean sub-scope mean is not the panel mean: excluding contaminated windows moves different quants in opposite directions (measured: malaiwah rows fall 12.6-16.2%, brandonmusic's 4bpw rises 1.6%)."
+    },
+    {
+      "id": "JOINT-005",
+      "severity": "error",
+      "statement": "measurement_scope.calibration_overlap_scan requires a scope_name, so the scan result is attached to the scope it produced."
+    },
+    {
+      "id": "JOINT-006",
+      "severity": "error",
+      "statement": "by_domain entries that quote ci95 endpoints must state interval_kind, and their scored_positions must sum to measurement_scope.scored_positions."
+    },
+    {
+      "id": "JOINT-007",
+      "severity": "warn",
+      "statement": "estimator.vocab_masking_policy should be stated for every row. It is NOT a comparability key input: the measured masked-vs-unmasked difference on a real teacher window is about 1e-10 nats (+7.2e-9 relative), 83000x smaller than the tightest real uncertainty in this registry, so it cannot move a comparison. It is recorded because a protocol divergence that is negligible must still be visible."
+    },
+    {
+      "id": "JOINT-008",
+      "severity": "warn",
+      "statement": "A row carrying a protocol block should carry both hashes. Two rows are protocol-comparable when protocol.scoring_sha256 matches; a differing file_sha256 with a matching scoring hash is a provenance note, not an incomparability."
+    },
+    {
       "id": "OFFLINE-001",
       "severity": "error",
       "statement": "Validation performs no network access. Every $ref resolves from the local schema/ directory and every source is checked for shape only, never fetched."

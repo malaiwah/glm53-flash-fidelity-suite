@@ -17,6 +17,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import registry_lib as L  # noqa: E402
+import joint_enrich  # noqa: E402
 
 V = L.SCHEMA_VERSION
 
@@ -2180,9 +2181,21 @@ def main():
     amap = {a["id"]: a for a in ARTIFACTS}
     measurements = (build_measurements(amap) + build_measurements_runtime(amap)
                     + build_measurements_qwen(amap))
+    # Joint fidelity standard (2026-08-29): window-clustered BCa intervals, the
+    # per-domain table, sigma_run in quadrature, the protocol stamp, and the
+    # calibration-clean scope siblings. Implemented in tools/joint_enrich.py so
+    # this generator keeps one job; every value it writes is re-derived from
+    # registry/protocol/per-window/*.json, so `make reseed-check` still proves
+    # the rows are a function of their receipts.
+    measurements = joint_enrich.apply(measurements)
 
-    collections_out = [("models", MODELS), ("artifacts", ARTIFACTS), ("panels", PANELS),
-                       ("references", REFERENCES), ("pipelines", PIPELINES),
+    # The clean17 scope is a derived PANEL with a derived REFERENCE, so it gets
+    # its own comparability key and can never be tabled beside the parent panel.
+    panels_out = PANELS + joint_enrich.panels(PANELS)
+    references_out = REFERENCES + joint_enrich.references(REFERENCES)
+
+    collections_out = [("models", MODELS), ("artifacts", ARTIFACTS), ("panels", panels_out),
+                       ("references", references_out), ("pipelines", PIPELINES),
                        ("measurements", measurements)]
 
     changed = []

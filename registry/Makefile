@@ -4,9 +4,9 @@
 PY ?= python3
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: check validate render render-check selftest reseed reseed-check explain clean
+.PHONY: check validate render render-check selftest joint reseed reseed-check explain clean
 
-check: validate render-check selftest
+check: validate render-check selftest joint
 	@echo
 	@echo "OK: schema + invariants clean, README tables match the data, self-tests pass."
 
@@ -26,6 +26,12 @@ render-check:
 
 selftest:
 	$(PY) tools/registry_selftest.py
+
+# Joint-standard invariants (JOINT-001..008) that JSON Schema cannot express:
+# the quadrature arithmetic, the per-domain partition, and the rule that a row's
+# value must be the equal-weight mean of exactly the windows its scope names.
+joint:
+	$(PY) tools/registry_joint_check.py
 
 # The seeded rows are a function of their receipts; this proves they still are.
 reseed:

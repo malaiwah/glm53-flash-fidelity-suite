@@ -1,0 +1,73 @@
+{
+  "backend": "numpy",
+  "bca_acceleration": 0.051871160534475234,
+  "bca_excludes_zero": true,
+  "bca_z0": 0.051408514696361964,
+  "bootstrap_b": 2000,
+  "ci95_diff_bca": [
+    0.005823013130950891,
+    0.011253055396632681
+  ],
+  "ci95_diff_percentile": [
+    0.005590520585988117,
+    0.010668339688496982
+  ],
+  "ci95_ratio_percentile": [
+    1.4590025822293584,
+    1.7919222367834746
+  ],
+  "emitted_by": "bin/joint_standard.py",
+  "excludes_zero": true,
+  "label_a": "FP8",
+  "label_b": "BF16floor-xstack",
+  "mcnemar": {
+    "available": false,
+    "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+  },
+  "mean_a": 0.020615254540417995,
+  "mean_b": 0.012711599817250709,
+  "mean_diff": 0.007903654723167284,
+  "mean_diff_se": 0.0013514689584912015,
+  "n_windows": 25,
+  "not_submittable": true,
+  "protocol_file": "registry/protocol/glm53-joint-kld-protocol.v1.json",
+  "protocol_file_sha256": "80df521eb46fba68538dd90aa3f2baf22b1e440b8b560555646ff9bbeb35961b",
+  "protocol_schema": "malaiwah.glm53-joint-kld-protocol.v1",
+  "protocol_scoring_sha256": "20ea68c0c730a9d2444148b234a610a5821a50dfa9980e2446c02723317b5e98",
+  "ratio_a_over_b": 1.6217671132504787,
+  "schema": "malaiwah.glm53-joint-standard-paired.v1",
+  "scope": "panel",
+  "seed": 20260829,
+  "sign_test_p": 5.960464477539063e-08,
+  "source_a": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/fp8-crossstack.json",
+  "source_b": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/bf16-floor-crossstack.json",
+  "windows": [
+    "final-0000",
+    "final-0001",
+    "final-0002",
+    "final-0003",
+    "final-0004",
+    "final-0005",
+    "final-0006",
+    "final-0007",
+    "final-0008",
+    "final-0009",
+    "final-0010",
+    "final-0011",
+    "final-0012",
+    "final-0013",
+    "final-0014",
+    "final-0015",
+    "final-0016",
+    "final-0017",
+    "final-0018",
+    "final-0019",
+    "final-0020",
+    "final-0021",
+    "final-0022",
+    "final-0023",
+    "final-0024"
+  ],
+  "windows_a_better": 0,
+  "windows_b_better": 25
+}

@@ -1,0 +1,185 @@
+{
+  "full25_mean_check": 0.020615254540417998,
+  "lane": "cross_stack replay",
+  "note": "Per-window means extracted verbatim from the receipt named in \"source\". This file exists so the joint-standard analysis is reproducible without refetching; it adds no new measurement.",
+  "per_window": [
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "mean": 0.026460706573671965,
+      "window_id": "final-0000"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "mean": 0.037652179759656894,
+      "window_id": "final-0001"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "mean": 0.017395531015211855,
+      "window_id": "final-0002"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "mean": 0.018193718946938015,
+      "window_id": "final-0003"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "mean": 0.04566523369934639,
+      "window_id": "final-0004"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "mean": 0.023967341875560516,
+      "window_id": "final-0005"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "mean": 0.016379377448524104,
+      "window_id": "final-0006"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "mean": 0.009608223954877863,
+      "window_id": "final-0007"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "mean": 0.006807445827378551,
+      "window_id": "final-0008"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "mean": 0.010320592787404262,
+      "window_id": "final-0009"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "mean": 0.02148699878624036,
+      "window_id": "final-0010"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "mean": 0.02156468050412143,
+      "window_id": "final-0011"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "mean": 0.01805254074154777,
+      "window_id": "final-0012"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "mean": 0.019461566468049186,
+      "window_id": "final-0013"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "mean": 0.004703396360565209,
+      "window_id": "final-0014"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "mean": 0.027509465197625965,
+      "window_id": "final-0015"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "mean": 0.006232413919944107,
+      "window_id": "final-0016"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "mean": 0.01196212705649754,
+      "window_id": "final-0017"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "mean": 0.017000086805881776,
+      "window_id": "final-0018"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "mean": 0.012405537299659635,
+      "window_id": "final-0019"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "mean": 0.02766611466888,
+      "window_id": "final-0020"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "mean": 0.04056614935543113,
+      "window_id": "final-0021"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "mean": 0.044074587380166695,
+      "window_id": "final-0022"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "mean": 0.02414844919089152,
+      "window_id": "final-0023"
+    },
+    {
+      "count": 2047,
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "mean": 0.006096897886377086,
+      "window_id": "final-0024"
+    }
+  ],
+  "schema": "malaiwah.glm53-per-window-means.v1",
+  "series": "official FP8 (cross-stack)",
+  "source": "published dataset reports/fp8-on-brandon-panel.json :: per_window[]"
+}

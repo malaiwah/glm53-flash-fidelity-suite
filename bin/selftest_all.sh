@@ -60,6 +60,14 @@ t "fidelity comparator known answers + exact self-compare (T8)" \
                                            0 "$PY" bin/selftest_fidelity_compare.py
 t "fidelity card annotation, 3 axes (T7)" \
                                            0 python3 bin/selftest_fidelity_card.py
+# The joint fidelity standard (protocol hash, R0 canary, 13-gram overlap scan,
+# clustered SE + BCa block bootstrap, sigma_run in quadrature, McNemar,
+# percentile guards, and the registry's JOINT-* invariants). Its known-answer
+# cases reproduce brandonmusic's published endpoints from his per-window means;
+# its ORACLE cases call his own kld_eval when PYTHONPATH points at it and SKIP
+# loudly otherwise; its FIRE cases prove every gate rejects bad input.
+t "joint standard (known answers, canary FIRE cases, registry invariants)" \
+                                           0 "$PY" bin/selftest_joint_standard.py
 t "stream_score ladder rungs g,h,i,j,k (teacher role / preview refusal / \
 sampling / receipt stability / source dispatch)" \
                                            0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k

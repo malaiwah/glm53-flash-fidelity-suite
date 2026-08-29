@@ -8,9 +8,9 @@
     },
     "measurements": {
       "file": "data/measurements.jsonl",
-      "record_count": 60,
+      "record_count": 66,
       "schema": "schema/measurement.schema.json",
-      "sha256": "4fd6ad11564524d96ecf4f83ea27c18f0ca5c17f2c295ee9b8cf2f1b4227880a"
+      "sha256": "9e29ee25ca77784f9220d0f50d95106cc4df7d1645ed4a3d693e9f057046f662"
     },
     "models": {
       "file": "data/models.jsonl",
@@ -20,9 +20,9 @@
     },
     "panels": {
       "file": "data/panels.jsonl",
-      "record_count": 10,
+      "record_count": 11,
       "schema": "schema/panel.schema.json",
-      "sha256": "ce6eef3664d68ac12559b6ee61ff9c6f6ec5b49c58d69d7d7094cf972ecedf40"
+      "sha256": "c9843eeee142167dc8023f6b900159537a44296184b93722f8082e3fa919ede5"
     },
     "pipelines": {
       "file": "data/pipelines.jsonl",
@@ -32,9 +32,9 @@
     },
     "references": {
       "file": "data/references.jsonl",
-      "record_count": 10,
+      "record_count": 11,
       "schema": "schema/reference.schema.json",
-      "sha256": "9e1b4d9787e3b6e19288b74694f3dbf9a1b824a4b169b4c0fdb0c59a14170750"
+      "sha256": "9cca6aa5f1dfc58593f4c3c0a18fa31b6db7e0018281a53c3df1f5c013aed103"
     }
   },
   "comparability_keys": [
@@ -96,6 +96,18 @@
       "metric_name": "mean_of_run_means_tokenwise_kld",
       "panel_id": "panel--glm53.brandonmusic.final25",
       "reference_id": "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+      "stack_relation": "same_stack"
+    },
+    {
+      "accumulation_dtype": "float64",
+      "direction": "reference_to_candidate",
+      "head_policy": "native_head",
+      "key": "cmp--2b9c401d13806d7e",
+      "label": "mean_of_run_means_tokenwise_kld on panel--glm53.brandonmusic.final25-clean17 (same_stack, native_head)",
+      "member_count": 4,
+      "metric_name": "mean_of_run_means_tokenwise_kld",
+      "panel_id": "panel--glm53.brandonmusic.final25-clean17",
+      "reference_id": "reference--brandonmusic.glm53-bf16-fp32-logits.final25-clean17",
       "stack_relation": "same_stack"
     },
     {
@@ -193,22 +205,34 @@
       "panel_id": "panel--glm53.malaiwah.suite-v5-10m.scorefrom1024",
       "reference_id": "reference--malaiwah.glm53-bf16-vllm.suite-v5-10m.scorefrom1024",
       "stack_relation": "same_stack"
+    },
+    {
+      "accumulation_dtype": "float64",
+      "direction": "reference_to_candidate",
+      "head_policy": "native_head",
+      "key": "cmp--eee09298c558ab21",
+      "label": "mean_tokenwise_kld on panel--glm53.brandonmusic.final25-clean17 (cross_stack, native_head)",
+      "member_count": 2,
+      "metric_name": "mean_tokenwise_kld",
+      "panel_id": "panel--glm53.brandonmusic.final25-clean17",
+      "reference_id": "reference--brandonmusic.glm53-bf16-fp32-logits.final25-clean17",
+      "stack_relation": "cross_stack"
     }
   ],
   "comparability_rule": "Two measurement values may be compared IF AND ONLY IF their comparability.key values are equal. A table that mixes keys is malformed.",
   "counts": {
     "artifacts": 32,
-    "measurements": 60,
-    "measurements_advisory": 57,
-    "measurements_author_reported": 14,
+    "measurements": 66,
+    "measurements_advisory": 63,
+    "measurements_author_reported": 15,
     "measurements_independently_verified": 0,
-    "measurements_self_measured": 46,
+    "measurements_self_measured": 51,
     "measurements_strict": 3,
     "measurements_third_party_reported": 0,
     "models": 2,
-    "panels": 10,
+    "panels": 11,
     "pipelines": 13,
-    "references": 10
+    "references": 11
   },
   "cross_refs": {
     "local_ai_registry": {
@@ -218,13 +242,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-08-29T11:34:13+00:00",
+  "generated_at": "2026-08-29T19:13:35+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-08-29T11:34:13+00:00",
+    "last_run_at": "2026-08-29T19:13:35+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }

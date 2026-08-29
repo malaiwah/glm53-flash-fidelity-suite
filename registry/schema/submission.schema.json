@@ -229,6 +229,11 @@
           "description": "Emitted by the runner. DO NOT EDIT: cross_stack carries a mandatory bias block and makes the row advisory, and claiming same_stack when it is not is the single most damaging edit a contributor can make."
         },
         "head_policy": { "enum": ["native_head", "shared_reference_head", "dequantized_head"] },
+        "vocab_masking_policy": {
+          "enum": ["mask_padded_columns", "full_stored_vocab", "unknown"],
+          "description": "Whether the padded lm_head columns were masked out of BOTH sides before the log-softmax. GLM-5.3-Flash stores 154880 columns for a 154856-token vocabulary, so 24 are untrained padding. Measured effect of masking on a real teacher window: about 1e-10 nats (+7.2e-9 relative), stable across shared-head and quantized-head students -- disclosed, never subtracted, and NOT a comparability key input."
+        },
+        "padded_columns_masked": { "type": ["integer", "null"], "minimum": 0 },
         "softmax_note": { "type": "string" },
         "zero_handling": { "type": ["string", "null"] }
       },
@@ -268,6 +273,40 @@
       "additionalProperties": false
     },
 
+    "by_domain": {
+      "description": "Per-domain stratified results from the SAME run. Quantization damage is not uniform: brandonmusic measured NVFP4-over-EXL3 ratios of 1.50x general / 1.97x legal / 1.65x code-agentic, so a single-corpus mean hides where a codec actually hurts. The domains must partition scored_positions.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["domain", "scored_positions", "mean"],
+        "properties": {
+          "domain": { "type": "string", "minLength": 1 },
+          "windows": { "type": ["integer", "null"], "minimum": 1 },
+          "scored_positions": { "type": "integer", "minimum": 1 },
+          "mean": { "type": "number" },
+          "se_clustered": { "type": ["number", "null"], "minimum": 0 },
+          "ci95_low": { "type": ["number", "null"] },
+          "ci95_high": { "type": ["number", "null"] },
+          "interval_kind": { "enum": ["percentile", "bca", "t", "z", "none", "unknown"] },
+          "top1_agreement": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "note": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "protocol": {
+      "description": "The frozen protocol file this submission was produced under. Two hashes: file_sha256 is byte-level provenance, scoring_sha256 hashes only the canonicalised scoring-relevant subset so an identity-block edit does not break comparability.",
+      "type": "object",
+      "required": ["schema", "file_sha256", "scoring_sha256"],
+      "properties": {
+        "schema": { "type": "string", "minLength": 1 },
+        "file": { "type": "string" },
+        "file_sha256": { "$ref": "common.schema.json#/$defs/sha256" },
+        "scoring_sha256": { "$ref": "common.schema.json#/$defs/sha256" },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "measurement_scope": {
       "type": "object",
       "required": ["scored_positions", "covers_full_panel"],
@@ -277,7 +316,30 @@
         "positions_per_context": { "type": ["integer", "null"], "minimum": 1 },
         "covers_full_panel": { "type": "boolean" },
         "subset_detail": { "type": ["string", "null"] },
-        "position_filter": { "type": ["string", "null"] }
+        "position_filter": { "type": ["string", "null"] },
+        "scope_name": { "type": ["string", "null"], "description": "A named sub-scope of the panel, e.g. 'panel25' (all sealed windows) or 'clean17' (the windows surviving the calibration-overlap scan). Two rows on different scope_names are not comparable." },
+        "scope_selection_file": { "type": ["string", "null"] },
+        "scope_selection_sha256": { "oneOf": [{ "$ref": "common.schema.json#/$defs/sha256" }, { "type": "null" }] },
+        "calibration_overlap_scan": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["method", "threshold"],
+              "properties": {
+                "method": { "type": "string", "minLength": 1 },
+                "ngram_n": { "type": ["integer", "null"], "minimum": 1 },
+                "threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+                "windows_scanned": { "type": ["integer", "null"], "minimum": 0 },
+                "windows_excluded": { "type": ["integer", "null"], "minimum": 0 },
+                "max_retained_fraction": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+                "excluded_windows": { "type": "array", "items": { "type": "string" } },
+                "note": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            { "type": "null" }
+          ]
+        }
       },
       "additionalProperties": false
     },

@@ -257,7 +257,7 @@ the validator warns whenever a `strict` row rests on a panel whose `contaminatio
 
 ## How to read the tables below
 
-13 tables follow, one per comparability group, across 2 models. Three things are true of all of them, and each is a mistake somebody has already made with numbers like these:
+15 tables follow, one per comparability group, across 2 models. Three things are true of all of them, and each is a mistake somebody has already made with numbers like these:
 
 1. **A number means nothing outside its own table.** Every table states the seven-part key its rows share. Two numbers under different keys are different quantities that happen to print in the same units.
 2. **The smallest number on this page is not the best quant.** Today it is unsloth Qwen3.8-27B-GGUF BF16 at 0.000507355 nats -- and it is not a quant at all -- those are unquantized weights, read by a second engine, measuring what two engines disagree by. Sorting this file by value and reading off the top is the single easiest way to be wrong with it.
@@ -722,9 +722,9 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 |---|---|---:|---:|---|---:|---|---|---|
 | GLM-5.3-Flash official FP8 | `fp8_e4m3 @8` | 328.4 GB | **0.0281039** | [0.0272053, 0.0289822] | 94.27 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/report-fp8-vs-bf16.json) |
 
-> **The same artifact, measured elsewhere in this file.** One of the artifacts below also carries a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 50%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+> **The same artifact, measured elsewhere in this file.** One of the artifacts below also carries a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 51%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
-> - **GLM-5.3-Flash official FP8** -- 3 values here, from **0.0187943** to **0.0281039** nats (50% apart). Other tables: `cmp--4a8630bdcadab97f`, `cmp--e6cdd07242bdde05`.
+> - **GLM-5.3-Flash official FP8** -- 4 values here, from **0.0186653** to **0.0281039** nats (51% apart). Other tables: `cmp--4a8630bdcadab97f`, `cmp--e6cdd07242bdde05`, `cmp--eee09298c558ab21`.
 
 <details><summary>Disclosures for the rows above (1)</summary>
 
@@ -765,9 +765,9 @@ Derived from `panel--glm53.malaiwah.suite-v5-10m` by **scoring_window_change**: 
 |---|---|---:|---:|---|---:|---|---|---|
 | GLM-5.3-Flash official FP8 | `fp8_e4m3 @8` | 328.4 GB | **0.0187943** | [0.0180739, 0.0194941] | 95.12 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/report-fp8-vs-bf16-scorefrom1024.json) |
 
-> **The same artifact, measured elsewhere in this file.** One of the artifacts below also carries a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 50%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+> **The same artifact, measured elsewhere in this file.** One of the artifacts below also carries a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 51%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
-> - **GLM-5.3-Flash official FP8** -- 3 values here, from **0.0187943** to **0.0281039** nats (50% apart). Other tables: `cmp--4a8630bdcadab97f`, `cmp--9b009314102d9e8b`.
+> - **GLM-5.3-Flash official FP8** -- 4 values here, from **0.0186653** to **0.0281039** nats (51% apart). Other tables: `cmp--4a8630bdcadab97f`, `cmp--9b009314102d9e8b`, `cmp--eee09298c558ab21`.
 
 <details><summary>Disclosures for the rows above (2)</summary>
 
@@ -798,6 +798,7 @@ This panel carries **2 separate comparability groups**. They are different measu
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
 > - `cmp--4a8630bdcadab97f` (2 rows): `metric_name` mean_of_run_means_tokenwise_kld -> mean_tokenwise_kld; `stack_relation` same_stack -> cross_stack
+> - `cmp--2b9c401d13806d7e` (4 rows): `panel_id` panel--glm53.brandonmusic.final25 -> panel--glm53.brandonmusic.final25-clean17; `reference_id` reference--brandonmusic.glm53-bf16-fp32-logits.final25 -> reference--brandonmusic.glm53-bf16-fp32-logits.final25-clean17
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -807,8 +808,8 @@ This panel carries **2 separate comparability groups**. They are different measu
 
 | Artifact | Codec | Size | mean_of_run_means_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
 |---|---|---:|---:|---|---:|---|---|---|
-| malaiwah GLM-5.3-Flash TR3 6bpw (K6) | `exl3-mcg @6` | 253.5 GB | **0.0137234** | -- | -- | 5 runs, bitwise identical | measured by us | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/k6-five-run-kld.json) |
-| brandonmusic GLM-5.3-Flash tr3 4bpw | `exl3-mcg @4` | 175.6 GB | **0.0245546** | -- | -- | 5 runs, bitwise identical | reported by brandonmusic | [receipt](https://raw.githubusercontent.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw/main/results/five-cold-run-kld.json) |
+| malaiwah GLM-5.3-Flash TR3 6bpw (K6) | `exl3-mcg @6` | 253.5 GB | **0.0137234** | [0.0111548, 0.0166267] | -- | 5 runs, bitwise identical | measured by us | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/k6-five-run-kld.json) |
+| brandonmusic GLM-5.3-Flash tr3 4bpw | `exl3-mcg @4` | 175.6 GB | **0.0245546** | [0.019433, 0.035881] | -- | 5 runs, bitwise identical | reported by brandonmusic | [receipt](https://raw.githubusercontent.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw/main/results/five-cold-run-kld.json) |
 | 0xSero GLM-5.3-Flash EXL3 Q4 (Dione, TP4-sliced) | `exl3-mcg @4` | 187.6 GB | **0.0272628** | -- | -- | 5 runs, bitwise identical | measured by us (their artifact) | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/dione-q4-packed-kld.json) |
 
 ##### Lane `streaming` -- 3 of this group's 6 rows
@@ -824,8 +825,8 @@ This panel carries **2 separate comparability groups**. They are different measu
 | Artifact | Codec | Size | mean_of_run_means_tokenwise_kld (nats) | Attributable (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
 |---|---|---:|---:|---:|---|---:|---|---|---|
 | **GLM-5.3-Flash BF16 @a6c167b6** _(measurement floor)_ | `bf16` | -- | **0.0115059** | -- | -- | -- | 2 runs, bitwise identical | measured by us (their artifact) | [receipt](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/receipts/malaiwah/stream-bf16-kld.json) |
-| malaiwah GLM-5.3-Flash TR3 8bpw (K8) | `exl3-mcg @8` | 331.4 GB | **0.0123842** | 0.000878268 | -- | -- | 2 runs, bitwise identical | measured by us | [receipt](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/receipts/malaiwah/stream-k8-kld.json) |
-| malaiwah GLM-5.3-Flash TR3 6bpw (K6) | `exl3-mcg @6` | 253.5 GB | **0.0137149** | 0.00220897 | -- | 96.56 % | 2 runs, bitwise identical | measured by us | [receipt](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/receipts/malaiwah/stream-k6-kld.json) |
+| malaiwah GLM-5.3-Flash TR3 8bpw (K8) | `exl3-mcg @8` | 331.4 GB | **0.0123842** | 0.000878268 | [0.00999057, 0.0152193] | -- | 2 runs, bitwise identical | measured by us | [receipt](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/receipts/malaiwah/stream-k8-kld.json) |
+| malaiwah GLM-5.3-Flash TR3 6bpw (K6) | `exl3-mcg @6` | 253.5 GB | **0.0137149** | 0.00220897 | [0.0111567, 0.01663] | 96.56 % | 2 runs, bitwise identical | measured by us | [receipt](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/receipts/malaiwah/stream-k6-kld.json) |
 
 > **Attributable (nats)** = this row's value minus its named floor's value (`comparability.bias.floor_measurement_ref`) -- the raw number with this lane's own measurement floor netted out. It is an estimate, not an identity: KL is not additive, and the subtraction is only meaningful because both terms are small and share the same reference and the same lane. A row with no floor named shows `--`, not zero: absence of a floor is not evidence the floor is zero. BIAS-002/004/006 guarantee any floor named here shares this row's comparability key, measures unquantized weights, and was measured on this row's own lane -- so this column can never mix a floor from a different panel, a different kind of thing, or a different lane into the subtraction.
 
@@ -835,16 +836,22 @@ This panel carries **2 separate comparability groups**. They are different measu
 
 > **Bias on malaiwah GLM-5.3-Flash TR3 6bpw (K6)** -- other, direction downward. Lane offset, MEASURED not estimated: this 'streaming'-lane run scores 0.013714888822596553 against the sealed-ep8 lane's 0.013723384665701147 on the same panel, a signed delta of -8.495843104593809e-06 nats (|max| 0.00028735280093581186 on any one of 25 windows). The tokenwise KL array does NOT match the sealed one, and the runner's own verdict is publishable_as_reproduction=False, so this number stands beside the sealed one rather than replacing it. This lane's own measurement floor (measurement--glm53.bf16-stream-floor.brandonmusic-final25) is 0.011505922619330299 nats; netting it out gives an estimated quantization-attributable error of 0.0022089662032662542 nats here -- an estimate, not an identity, because KL is not additive, and it is only meaningful because both terms are small and share the same reference and lane.
 
-> **The same artifact, measured elsewhere in this file.** 2 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 10%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+> **The same artifact, measured elsewhere in this file.** 4 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 19%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
-> - **GLM-5.3-Flash BF16 @a6c167b6** -- 2 values here, from **0.0115059** to **0.0127116** nats (10% apart). Other tables: `cmp--4a8630bdcadab97f`.
-> - **brandonmusic GLM-5.3-Flash tr3 4bpw** -- 2 values here, from **0.0227508** to **0.0245546** nats (8% apart). Other tables: `cmp--18990ab191ea7a67`.
+> <details><summary>the 4 artifacts and their ranges</summary>
+>
+> - **GLM-5.3-Flash BF16 @a6c167b6** -- 3 values here, from **0.0106476** to **0.0127116** nats (19% apart). Other tables: `cmp--4a8630bdcadab97f`, `cmp--eee09298c558ab21`.
+> - **brandonmusic GLM-5.3-Flash tr3 4bpw** -- 3 values here, from **0.0227508** to **0.0249488** nats (10% apart). Other tables: `cmp--18990ab191ea7a67`, `cmp--2b9c401d13806d7e`.
+> - **malaiwah GLM-5.3-Flash TR3 6bpw (K6)** -- 6 values here, from **0.011676** to **0.0137234** nats (18% apart). Other tables: `cmp--2b9c401d13806d7e`.
+> - **malaiwah GLM-5.3-Flash TR3 8bpw (K8)** -- 2 values here, from **0.0108294** to **0.0123842** nats (14% apart). Other tables: `cmp--2b9c401d13806d7e`.
+>
+> </details>
 
 <details><summary>Disclosures for the rows above (14)</summary>
 
 - `glm53.bf16-stream-floor.brandonmusic-final25` **reduced_run_count**: cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 (budget; disclosed)
 - `glm53.bf16-stream-floor.brandonmusic-final25` **non_sealed_lane**: Produced by the 'streaming' lane, not the sealed-ep8 lane. The lane's offset against the sealed lane is NOT measured for this artifact: no sealed-lane row for it exists to bridge against. This row is itself the streaming lane's measurement floor -- the zero-point the K6-stream and K8-stream rows in this same table subtract to obtain their own quantization-attributable error (see their bias blocks).
-- `glm53.bf16-stream-floor.brandonmusic-final25` note: CONTROL ROW / STREAMING-LANE MEASUREMENT FLOOR. Not the cross-stack floor (measurement--glm53.bf16-replay-floor.brandonmusic-final25, 0.012712 nats, pipeline--malaiwah.glm53-crosscheck): a different pipeline, a different lane, a different comparability key -- BIAS-002 already keeps the two apart by key, and BIAS-006 additionally forbids naming one as the other's floor even inside a shared key. Provenance of the fields the summary receipt does not carry: metric.direction and estimator.accumulation_dtype are SUPPLIED as reference_to_candidate / float64, matching every other row on this pipeline, because the scorer is the same unmodified tools/k6_kld_report.py. measurement_scope.scored_positions and contexts are SUPPLIED as the panel's own 51,175 positions over 25 contexts (25 x 2047) -- like the K8-stream row, no verdict receipt exists for this profile to read the window count from. determinism.identical_across_runs is RECOMPUTED from run_means and distinct_tokenwise_kld_sha256; the receipt's own bitwise_deterministic flag was checked against that, not copied. cold_run_count (2) was checked against len(run_means) and len(kld_report_sha256), both 2.
+- `glm53.bf16-stream-floor.brandonmusic-final25` note: CONTROL ROW / STREAMING-LANE MEASUREMENT FLOOR. Not the cross-stack floor (measurement--glm53.bf16-replay-floor.brandonmusic-final25, 0.012712 nats, pipeline--malaiwah.glm53-crosscheck): a different pipeline, a different lane, a different comparability key -- BIAS-002 already keeps the two apart by key, and BIAS-006 additionally forbids naming one as the other's floor even inside a shared key. Provenance of the fields the summary receipt does not carry: metric.direction and estimator.accumulation_dtype are SUPPLIED as reference_to_candidate / float64, matching every other row on this pipeline, because the scorer is the same unmodified tools/k6_kld_report.py. measurement_scope.scored_positions and contexts are SUPPLIED as the panel's own 51,175 positions over 25 contexts (25 x 2047) -- like the K8-stream row, no verdict receipt exists for this profile to read the window count from. determinism.identical_across_runs is RECOMPUTED from run_means and distinct_tokenwise_kld_sha256; the receipt's own bitwise_deterministic flag was checked against that, not copied. cold_run_count (2) was checked against len(run_means) and len(kld_report_sha256), both 2. No clean17 sibling: receipt registry/receipts/malaiwah/stream-bf16-kld.json is scalar-only (run_means + a tokenwise digest, no per_window block), so the calibration-clean scope cannot be recomputed without re-running the measurement.
 - `glm53.k8-8bpw-stream.brandonmusic-final25` **reduced_run_count**: cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 (budget; disclosed)
 - `glm53.k8-8bpw-stream.brandonmusic-final25` **non_sealed_lane**: Produced by the 'streaming' lane, not the sealed-ep8 lane. The lane's offset against the sealed lane is NOT measured for this artifact: no sealed-lane row for it exists to bridge against.
 - `glm53.k8-8bpw-stream.brandonmusic-final25` note: This receipt does not name its lane. Its schema string is malaiwah.glm53-k8-packed-kld-summary.v1 and its profile reads 'k8-tp4' -- neither carries the '-stream-' marker the K6 summary's family name does -- so 'streaming' here is OPERATOR-ASSERTED (operator inventory, 2026-08-28) and not read off the file. It is recorded as the more caveated of the two possibilities on purpose: if the assertion is wrong the row is under-claimed, never over-claimed. Also supplied rather than read: metric.direction, estimator.accumulation_dtype, measurement_scope.scored_positions and contexts -- this family is a scalar summary and states none of them, and unlike the K6 row there is no verdict receipt here to read the window count from. No top-1 agreement was produced for this run. determinism.identical_across_runs is RECOMPUTED from run_means and distinct_tokenwise_kld_sha256. comparability.bias.floor_measurement_ref: SUPPLIED by --floor-measurement once the streaming-lane floor row below existed; build_row checked it was measured on this SAME lane before writing the reference (exit 7 otherwise).
@@ -855,7 +862,7 @@ This panel carries **2 separate comparability groups**. They are different measu
 - `glm53.brandonmusic-4bpw.brandonmusic-final25` note: On the single-window sub-panel the same artifact reads 0.022751 -- a 7% swing from 0.024555 over the full 25 windows.
 - `glm53.dione-q4.brandonmusic-final25` **unsealed_source**: The Dione checkpoint ships no upstream receipts or sealed reader ABI. The packed surface was decoded without seal verification; the immutable revision 99cccdf0... and the consumed payload sha256s were recorded instead (dione_shard_hash_verification: full).
 - `glm53.dione-q4.brandonmusic-final25` **artifact_identity_incomplete**: The release's own scope manifest was not parsed into this registry, so the artifact's per-class recipe is recorded as unknown.
-- `glm53.dione-q4.brandonmusic-final25` note: The receipt's cold_run_deviation field reads verbatim '5 cold runs, not 5 (budget; disclosed)' -- a self-contradictory template string. cold_run_count is 5 and run_means has 5 entries, so five runs is what happened; the string is a receipt-generator defect and is recorded here rather than copied into a disclosure.
+- `glm53.dione-q4.brandonmusic-final25` note: The receipt's cold_run_deviation field reads verbatim '5 cold runs, not 5 (budget; disclosed)' -- a self-contradictory template string. cold_run_count is 5 and run_means has 5 entries, so five runs is what happened; the string is a receipt-generator defect and is recorded here rather than copied into a disclosure. No clean17 sibling: receipt reports/dione-q4-packed-kld.json is scalar-only (no per_window block), so the calibration-clean scope cannot be recomputed without re-running the measurement.
 
 </details>
 
@@ -874,6 +881,7 @@ This panel carries **2 separate comparability groups**. They are different measu
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
+> - `cmp--eee09298c558ab21` (2 rows): `panel_id` panel--glm53.brandonmusic.final25 -> panel--glm53.brandonmusic.final25-clean17; `reference_id` reference--brandonmusic.glm53-bf16-fp32-logits.final25 -> reference--brandonmusic.glm53-bf16-fp32-logits.final25-clean17
 > - `cmp--202b717f3219c414` (6 rows): `metric_name` mean_tokenwise_kld -> mean_of_run_means_tokenwise_kld; `stack_relation` cross_stack -> same_stack
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
@@ -882,17 +890,17 @@ This panel carries **2 separate comparability groups**. They are different measu
 
 | Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
 |---|---|---:|---:|---|---:|---|---|---|
-| **GLM-5.3-Flash BF16 @a6c167b6** _(measurement floor)_ | `bf16` | -- | **0.0127116** | -- | 96.65 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/crosscheck-brandonmusic.json) |
-| GLM-5.3-Flash official FP8 | `fp8_e4m3 @8` | 328.4 GB | **0.0206153** | -- | 95.63 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/fp8-on-brandon-panel.json) |
+| **GLM-5.3-Flash BF16 @a6c167b6** _(measurement floor)_ | `bf16` | -- | **0.0127116** | [0.0103287, 0.0153918] | 96.65 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/crosscheck-brandonmusic.json) |
+| GLM-5.3-Flash official FP8 | `fp8_e4m3 @8` | 328.4 GB | **0.0206153** | [0.0164689, 0.0256239] | 95.63 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/fp8-on-brandon-panel.json) |
 
 > **Bias on GLM-5.3-Flash BF16 @a6c167b6** -- cross_stack_capture_replay, direction upward. THIS ROW IS THE FLOOR. It replays the reference's own BF16 weights through our vLLM stack and scores them against brandonmusic's stored fp32 teacher logits. 0.012712 nats is therefore what two stacks disagree by on identical unquantized weights -- not a quantization result. No floor is named because none exists below it.
 
 > **Bias on GLM-5.3-Flash official FP8** -- cross_stack_capture_replay, direction upward. Teacher captured on brandonmusic's transformers/eager stack, candidate replayed on our vLLM stack. The same-stack BF16 replay floor on this exact panel is 0.012712, so this number is an UPPER BOUND on the FP8 release's own divergence. The naive difference is 0.007904 -- an estimate, not an identity, because KL is not additive. Do not subtract and publish.
 
-> **The same artifact, measured elsewhere in this file.** 2 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 50%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+> **The same artifact, measured elsewhere in this file.** 2 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 51%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
-> - **GLM-5.3-Flash BF16 @a6c167b6** -- 2 values here, from **0.0115059** to **0.0127116** nats (10% apart). Other tables: `cmp--202b717f3219c414`.
-> - **GLM-5.3-Flash official FP8** -- 3 values here, from **0.0187943** to **0.0281039** nats (50% apart). Other tables: `cmp--9b009314102d9e8b`, `cmp--e6cdd07242bdde05`.
+> - **GLM-5.3-Flash BF16 @a6c167b6** -- 3 values here, from **0.0106476** to **0.0127116** nats (19% apart). Other tables: `cmp--202b717f3219c414`, `cmp--eee09298c558ab21`.
+> - **GLM-5.3-Flash official FP8** -- 4 values here, from **0.0186653** to **0.0281039** nats (51% apart). Other tables: `cmp--9b009314102d9e8b`, `cmp--e6cdd07242bdde05`, `cmp--eee09298c558ab21`.
 
 <details><summary>Disclosures for the rows above (5)</summary>
 
@@ -901,6 +909,141 @@ This panel carries **2 separate comparability groups**. They are different measu
 - `glm53.bf16-replay-floor.brandonmusic-final25` note: CONTROL ROW / MEASUREMENT FLOOR. Every cross-stack row on this panel contains this term.
 - `glm53.official-fp8.brandonmusic-final25.crossstack` **cross_stack_capture**: This row cannot be ranked against the K6 / Dione / 4bpw rows on the same panel: those are same-stack sealed-capture numbers and this is a cross-stack replay. Their comparability keys differ, and the registry's tables are grouped by that key.
 - `glm53.official-fp8.brandonmusic-final25.crossstack` **single_run**: One pass; determinism not established.
+
+</details>
+
+### Panel: brandonmusic panel v1, calibration-clean subset -- 17 of 25 final windows
+
+Derived from `panel--glm53.brandonmusic.final25` by **shard_subset**: The 17 of 25 sealed windows whose 13-gram overlap with the calibration-role windows is at or below 0.05. Dropped: final-0003, final-0007, final-0011, final-0015, final-0019, final-0021, final-0022, final-0023. Six of the eight are axis4_reasoning_termination at 37-39% overlap, which removes that domain entirely; the other two (final-0021 at 7.1%, final-0022 at 5.8%) are legal and code-agentic, so this is NOT a whole-domain drop and a 19-window axis4-only exclusion is a DIFFERENT scope. The highest overlap among the retained windows is 4.75% (final-0014), so the 5% threshold separates cleanly but not by much -- it is inherited from brandonmusic and is an open joint decision, not a derived constant.
+
+> **Panel disclosure -- `subset_of_panel`:** 17 of the parent panel's 25 windows, 34799 of 51,175 scored positions. Rows on this panel must never be tabled beside rows on the parent panel: excluding the contaminated windows moves different contributors' numbers in OPPOSITE directions (every malaiwah row falls 12.6-16.2%, brandonmusic's own 4bpw row rises 1.6%).
+
+> **Panel disclosure -- `calibration_panel_overlap`:** This panel exists because the parent's contamination guard was role separation only. The n-gram scan that produced it found one whole domain sharing 37-39% of its 13-grams with calibration-role windows despite clean document-level separation -- the finding is brandonmusic's and the reproduction is ours.
+
+This panel carries **2 separate comparability groups**. They are different measurements of different things and are never merged.
+
+#### Group `cmp--2b9c401d13806d7e` -- 4 rows
+
+**Panel** `panel--glm53.brandonmusic.final25-clean17` -- brandonmusic panel v1, calibration-clean subset -- 17 of 25 final windows
+  17 contexts x 2047 scored positions = **34,799 scored positions**, score_from 0
+  sealed: **yes** (token digest `ecfce5997ab9106c...`) -- contamination scan: **yes, 8 hits**
+**Reference (teacher)** `reference--brandonmusic.glm53-bf16-fp32-logits.final25-clean17` -- native_bf16, artifact `artifact--zai-org.glm-5.3-flash-bf16.a6c167b6` @a6c167b62691b2bac901344b65cb651a70f53e43
+**Metric** mean_of_run_means_tokenwise_kld, direction reference_to_candidate, accumulation float64
+**Estimation surface** stack_relation `same_stack`, head_policy `native_head`
+**Comparability key** `cmp--2b9c401d13806d7e`
+
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+>
+> **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
+>
+> **What it is NOT comparable to.** The nearest neighbouring groups differ in:
+> - `cmp--eee09298c558ab21` (2 rows): `metric_name` mean_of_run_means_tokenwise_kld -> mean_tokenwise_kld; `stack_relation` same_stack -> cross_stack
+> - `cmp--202b717f3219c414` (6 rows): `panel_id` panel--glm53.brandonmusic.final25-clean17 -> panel--glm53.brandonmusic.final25; `reference_id` reference--brandonmusic.glm53-bf16-fp32-logits.final25-clean17 -> reference--brandonmusic.glm53-bf16-fp32-logits.final25
+> 
+> Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
+>
+> Also, and always: **every table for a different model.** A KL number is a divergence over one model's own vocabulary against that model's own teacher. It is not a quality score that can be carried between models.
+
+> **2 of this group's 4 rows came off a different measurement lane** (`streaming`) and are tabled on their own below, not mixed into the ordering here. The key does not carry the lane; this file does.
+
+| Artifact | Codec | Size | mean_of_run_means_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
+|---|---|---:|---:|---|---:|---|---|---|
+| malaiwah GLM-5.3-Flash TR3 6bpw (K6) | `exl3-mcg @6` | 253.5 GB | **0.0116773** | [0.00885591, 0.0147851] | -- | 5 runs, bitwise identical | measured by us | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/k6-five-run-kld.json) |
+| brandonmusic GLM-5.3-Flash tr3 4bpw | `exl3-mcg @4` | 175.6 GB | **0.0249488** | [0.0181407, 0.0416622] | -- | 5 runs, bitwise identical | reported by brandonmusic | [receipt](https://raw.githubusercontent.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw/main/results/five-cold-run-kld.json) |
+
+##### Lane `streaming` -- 2 of this group's 4 rows
+
+> **A different lane. Same key, and that is exactly the problem this table solves.** The comparability key is a function of the panel, the teacher, the metric, the direction, the estimator precision, the stack relation and the head policy -- and these rows match the table above on all seven. What they do not share is the machine and the code path that produced the candidate logits, and lanes are not interchangeable. Sorting them into one list would read as a ranking; where the same artifact appears in both, it is one set of weights measured twice, not two quants.
+>
+> **What the lane is** (from `pipeline--malaiwah.glm53-stream-packed-kld`): **1 device**, expert-parallel width **8 emulated in one process**, routed-expert combine order `fp32`.
+>
+> **Bridge to the `sealed-ep8` lane, measured on this panel:** signed delta **-8.4958e-06** nats on the mean against `measurement--glm53.k6-6bpw.brandonmusic-final25`, worst single window **0.00028735**, over 25 windows. Tokenwise KL array matches the sealed run: **no**. The runner's own verdict on whether this may be published as a reproduction of the sealed number: **no** (verdict `LARGER_DELTA_SEE_DISCLOSURE`).
+>
+> That bridge is one artifact's, on one panel. It is not a constant and it is not subtractable: a row in this table whose artifact has no sealed-lane row has no measured offset at all, and says so in its own bias line.
+
+| Artifact | Codec | Size | mean_of_run_means_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
+|---|---|---:|---:|---|---:|---|---|---|
+| malaiwah GLM-5.3-Flash TR3 8bpw (K8) | `exl3-mcg @8` | 331.4 GB | **0.0108294** | [0.0080632, 0.0138378] | -- | 2 runs, bitwise identical | measured by us | [receipt](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/receipts/malaiwah/stream-k8-kld.json) |
+| malaiwah GLM-5.3-Flash TR3 6bpw (K6) | `exl3-mcg @6` | 253.5 GB | **0.011676** | [0.00886271, 0.0147792] | -- | 2 runs, bitwise identical | measured by us | [receipt](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/receipts/malaiwah/stream-k6-kld.json) |
+
+> **Bias on malaiwah GLM-5.3-Flash TR3 8bpw (K8)** -- other, direction unknown. Measured on the 'streaming' lane, whose offset against the sealed-ep8 lane is known to be non-zero but was NOT measured for this artifact: no sealed-lane row for it exists to bridge against. The lane offset measured for a sibling artifact on this panel is not transferable -- it is a property of the routing, not a constant. This lane's own measurement floor (measurement--glm53.bf16-stream-floor.brandonmusic-final25) is 0.011505922619330299 nats; netting it out gives an estimated quantization-attributable error of 0.0008782684041065674 nats here -- an estimate, not an identity, because KL is not additive, and it is only meaningful because both terms are small and share the same reference and lane. NO FLOOR ON THIS SCOPE: the same-lane floor (measurement--glm53.bf16-stream-floor.brandonmusic-final25) has a scalar-only receipt with no per-window array, so it cannot be recomputed on the calibration-clean window set. Rather than borrow the panel25 floor -- a cross-scope subtraction -- this row carries no floor reference at all.
+
+> **Bias on malaiwah GLM-5.3-Flash TR3 6bpw (K6)** -- other, direction downward. Lane offset, MEASURED not estimated: this 'streaming'-lane run scores 0.013714888822596553 against the sealed-ep8 lane's 0.013723384665701147 on the same panel, a signed delta of -8.495843104593809e-06 nats (|max| 0.00028735280093581186 on any one of 25 windows). The tokenwise KL array does NOT match the sealed one, and the runner's own verdict is publishable_as_reproduction=False, so this number stands beside the sealed one rather than replacing it. This lane's own measurement floor (measurement--glm53.bf16-stream-floor.brandonmusic-final25) is 0.011505922619330299 nats; netting it out gives an estimated quantization-attributable error of 0.0022089662032662542 nats here -- an estimate, not an identity, because KL is not additive, and it is only meaningful because both terms are small and share the same reference and lane. NO FLOOR ON THIS SCOPE: the same-lane floor (measurement--glm53.bf16-stream-floor.brandonmusic-final25) has a scalar-only receipt with no per-window array, so it cannot be recomputed on the calibration-clean window set. Rather than borrow the panel25 floor -- a cross-scope subtraction -- this row carries no floor reference at all.
+
+> **The same artifact, measured elsewhere in this file.** 3 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 18%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+>
+> <details><summary>the 3 artifacts and their ranges</summary>
+>
+> - **brandonmusic GLM-5.3-Flash tr3 4bpw** -- 3 values here, from **0.0227508** to **0.0249488** nats (10% apart). Other tables: `cmp--18990ab191ea7a67`, `cmp--202b717f3219c414`.
+> - **malaiwah GLM-5.3-Flash TR3 6bpw (K6)** -- 6 values here, from **0.011676** to **0.0137234** nats (18% apart). Other tables: `cmp--202b717f3219c414`.
+> - **malaiwah GLM-5.3-Flash TR3 8bpw (K8)** -- 2 values here, from **0.0108294** to **0.0123842** nats (14% apart). Other tables: `cmp--202b717f3219c414`.
+>
+> </details>
+
+<details><summary>Disclosures for the rows above (13)</summary>
+
+- `glm53.k8-8bpw-stream.brandonmusic-final25.clean17` **reduced_run_count**: cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 (budget; disclosed)
+- `glm53.k8-8bpw-stream.brandonmusic-final25.clean17` **non_sealed_lane**: Produced by the 'streaming' lane, not the sealed-ep8 lane. The lane's offset against the sealed lane is NOT measured for this artifact: no sealed-lane row for it exists to bridge against.
+- `glm53.k8-8bpw-stream.brandonmusic-final25.clean17` **subset_of_panel**: 17 of the panel's 25 sealed windows (34,799 of 51,175 scored positions). The excluded 8 are the windows the calibration-overlap scan flags; see measurement_scope.calibration_overlap_scan.
+- `glm53.k8-8bpw-stream.brandonmusic-final25.clean17` note: Calibration-clean scope recompute of measurement--glm53.k8-8bpw-stream.brandonmusic-final25. panel25 0.012384191023437 -> clean17 0.010829419869883 (-0.001554771153554, -12.55%). Not a correction and not a supersession: the two scopes answer different questions and move different contributors' rows in opposite directions. Never compare a clean17 value against a panel25 value.
+- `glm53.k6-6bpw-stream.brandonmusic-final25.clean17` **reduced_run_count**: cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 (budget; disclosed)
+- `glm53.k6-6bpw-stream.brandonmusic-final25.clean17` **non_sealed_lane**: Produced by the 'streaming' lane, not the sealed-ep8 lane. On this panel the lane's offset against the sealed lane IS measured: -8.495843104593809e-06 nats on the mean (max 0.00028735280093581186 on any one window over 25 windows), and the tokenwise KL array is NOT the sealed one, so the run is not a reproduction of the sealed number.
+- `glm53.k6-6bpw-stream.brandonmusic-final25.clean17` **subset_of_panel**: 17 of the panel's 25 sealed windows (34,799 of 51,175 scored positions). The excluded 8 are the windows the calibration-overlap scan flags; see measurement_scope.calibration_overlap_scan.
+- `glm53.k6-6bpw-stream.brandonmusic-final25.clean17` note: Calibration-clean scope recompute of measurement--glm53.k6-6bpw-stream.brandonmusic-final25. panel25 0.013714888822597 -> clean17 0.011675992693735 (-0.002038896128862, -14.87%). Not a correction and not a supersession: the two scopes answer different questions and move different contributors' rows in opposite directions. Never compare a clean17 value against a panel25 value.
+- `glm53.k6-6bpw.brandonmusic-final25.clean17` **subset_of_panel**: 17 of the panel's 25 sealed windows (34,799 of 51,175 scored positions). The excluded 8 are the windows the calibration-overlap scan flags; see measurement_scope.calibration_overlap_scan.
+- `glm53.k6-6bpw.brandonmusic-final25.clean17` note: Calibration-clean scope recompute of measurement--glm53.k6-6bpw.brandonmusic-final25. panel25 0.013723384665701 -> clean17 0.011677286368695 (-0.002046098297006, -14.91%). Not a correction and not a supersession: the two scopes answer different questions and move different contributors' rows in opposite directions. Never compare a clean17 value against a panel25 value.
+- `glm53.brandonmusic-4bpw.brandonmusic-final25.clean17` **author_reported_only**: Measured and published by brandonmusic on his own stack. We have not re-run it. It is nonetheless unusually well anchored: his receipt's token_panel_receipt_sha256 (0beec577...) and teacher_receipt_sha256 (2ae08117...) are byte-identical to ours, so the panel and the teacher are provably the same. Only the reader differs (1fb3be87... vs our 1ccce446...).
+- `glm53.brandonmusic-4bpw.brandonmusic-final25.clean17` **subset_of_panel**: 17 of the panel's 25 sealed windows (34,799 of 51,175 scored positions). The excluded 8 are the windows the calibration-overlap scan flags; see measurement_scope.calibration_overlap_scan.
+- `glm53.brandonmusic-4bpw.brandonmusic-final25.clean17` note: Calibration-clean scope recompute of measurement--glm53.brandonmusic-4bpw.brandonmusic-final25. panel25 0.024554564249958 -> clean17 0.024948837055615 (+0.000394272805657, +1.61%). Not a correction and not a supersession: the two scopes answer different questions and move different contributors' rows in opposite directions. Never compare a clean17 value against a panel25 value.
+
+</details>
+
+#### Group `cmp--eee09298c558ab21` -- 2 rows
+
+**Panel** `panel--glm53.brandonmusic.final25-clean17` -- brandonmusic panel v1, calibration-clean subset -- 17 of 25 final windows
+  17 contexts x 2047 scored positions = **34,799 scored positions**, score_from 0
+  sealed: **yes** (token digest `ecfce5997ab9106c...`) -- contamination scan: **yes, 8 hits**
+**Reference (teacher)** `reference--brandonmusic.glm53-bf16-fp32-logits.final25-clean17` -- native_bf16, artifact `artifact--zai-org.glm-5.3-flash-bf16.a6c167b6` @a6c167b62691b2bac901344b65cb651a70f53e43
+**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
+**Estimation surface** stack_relation `cross_stack`, head_policy `native_head`
+**Comparability key** `cmp--eee09298c558ab21`
+
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+>
+> **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
+>
+> **What it is NOT comparable to.** The nearest neighbouring groups differ in:
+> - `cmp--4a8630bdcadab97f` (2 rows): `panel_id` panel--glm53.brandonmusic.final25-clean17 -> panel--glm53.brandonmusic.final25; `reference_id` reference--brandonmusic.glm53-bf16-fp32-logits.final25-clean17 -> reference--brandonmusic.glm53-bf16-fp32-logits.final25
+> - `cmp--2b9c401d13806d7e` (4 rows): `metric_name` mean_tokenwise_kld -> mean_of_run_means_tokenwise_kld; `stack_relation` cross_stack -> same_stack
+> 
+> Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
+>
+> Also, and always: **every table for a different model.** A KL number is a divergence over one model's own vocabulary against that model's own teacher. It is not a quality score that can be carried between models.
+
+| Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
+|---|---|---:|---:|---|---:|---|---|---|
+| **GLM-5.3-Flash BF16 @a6c167b6** _(measurement floor)_ | `bf16` | -- | **0.0106476** | [0.00812433, 0.0134906] | -- | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/crosscheck-brandonmusic.json) |
+| GLM-5.3-Flash official FP8 | `fp8_e4m3 @8` | 328.4 GB | **0.0186653** | [0.0141924, 0.0247936] | -- | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/fp8-on-brandon-panel.json) |
+
+> **Bias on GLM-5.3-Flash BF16 @a6c167b6** -- cross_stack_capture_replay, direction upward. THIS ROW IS THE FLOOR. It replays the reference's own BF16 weights through our vLLM stack and scores them against brandonmusic's stored fp32 teacher logits. 0.012712 nats is therefore what two stacks disagree by on identical unquantized weights -- not a quantization result. No floor is named because none exists below it.
+
+> **Bias on GLM-5.3-Flash official FP8** -- cross_stack_capture_replay, direction upward. Teacher captured on brandonmusic's transformers/eager stack, candidate replayed on our vLLM stack. The same-stack BF16 replay floor on this exact panel is 0.012712, so this number is an UPPER BOUND on the FP8 release's own divergence. The naive difference is 0.007904 -- an estimate, not an identity, because KL is not additive. Do not subtract and publish. Scope-matched: this row's floor reference is the clean17 floor, not the panel25 one. Subtracting a floor measured on a different WINDOW SET is the same class of error as subtracting one measured on a different LANE, and this registry refuses both.
+
+> **The same artifact, measured elsewhere in this file.** 2 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 51%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+>
+> - **GLM-5.3-Flash BF16 @a6c167b6** -- 3 values here, from **0.0106476** to **0.0127116** nats (19% apart). Other tables: `cmp--202b717f3219c414`, `cmp--4a8630bdcadab97f`.
+> - **GLM-5.3-Flash official FP8** -- 4 values here, from **0.0186653** to **0.0281039** nats (51% apart). Other tables: `cmp--4a8630bdcadab97f`, `cmp--9b009314102d9e8b`, `cmp--e6cdd07242bdde05`.
+
+<details><summary>Disclosures for the rows above (8)</summary>
+
+- `glm53.bf16-replay-floor.brandonmusic-final25.clean17` **cross_stack_capture**: Teacher captured on transformers/eager (B200 x4); candidate replayed on our vLLM stack. The offset audit confirms position alignment: top-1 agreement is 0.9665 at offset 0 and 0.0159 / 0.0162 at offsets -1 / +1.
+- `glm53.bf16-replay-floor.brandonmusic-final25.clean17` **single_run**: One pass; determinism not established.
+- `glm53.bf16-replay-floor.brandonmusic-final25.clean17` **subset_of_panel**: 17 of the panel's 25 sealed windows (34,799 of 51,175 scored positions). The excluded 8 are the windows the calibration-overlap scan flags; see measurement_scope.calibration_overlap_scan.
+- `glm53.bf16-replay-floor.brandonmusic-final25.clean17` note: Calibration-clean scope recompute of measurement--glm53.bf16-replay-floor.brandonmusic-final25. panel25 0.012711599817251 -> clean17 0.010647639361035 (-0.002063960456216, -16.24%). Not a correction and not a supersession: the two scopes answer different questions and move different contributors' rows in opposite directions. Never compare a clean17 value against a panel25 value.
+- `glm53.official-fp8.brandonmusic-final25.crossstack.clean17` **cross_stack_capture**: This row cannot be ranked against the K6 / Dione / 4bpw rows on the same panel: those are same-stack sealed-capture numbers and this is a cross-stack replay. Their comparability keys differ, and the registry's tables are grouped by that key.
+- `glm53.official-fp8.brandonmusic-final25.crossstack.clean17` **single_run**: One pass; determinism not established.
+- `glm53.official-fp8.brandonmusic-final25.crossstack.clean17` **subset_of_panel**: 17 of the panel's 25 sealed windows (34,799 of 51,175 scored positions). The excluded 8 are the windows the calibration-overlap scan flags; see measurement_scope.calibration_overlap_scan.
+- `glm53.official-fp8.brandonmusic-final25.crossstack.clean17` note: Calibration-clean scope recompute of measurement--glm53.official-fp8.brandonmusic-final25.crossstack. panel25 0.020615254540418 -> clean17 0.018665326569455 (-0.001949927970963, -9.46%). Not a correction and not a supersession: the two scopes answer different questions and move different contributors' rows in opposite directions. Never compare a clean17 value against a panel25 value.
 
 </details>
 
@@ -995,7 +1138,7 @@ This panel carries **2 separate comparability groups**. They are different measu
 > **The same artifact, measured elsewhere in this file.** 2 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 25%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
 > - **brandonmusic GLM-5.3-Flash NVFP4 runtime build** -- 4 values here, from **0.0547574** to **0.0682296** nats (25% apart). Other tables: `cmp--b55c2d693d127f20`.
-> - **brandonmusic GLM-5.3-Flash tr3 4bpw** -- 2 values here, from **0.0227508** to **0.0245546** nats (8% apart). Other tables: `cmp--202b717f3219c414`.
+> - **brandonmusic GLM-5.3-Flash tr3 4bpw** -- 3 values here, from **0.0227508** to **0.0249488** nats (10% apart). Other tables: `cmp--202b717f3219c414`, `cmp--2b9c401d13806d7e`.
 
 <details><summary>Disclosures for the rows above (6)</summary>
 

@@ -199,9 +199,10 @@
             "context_cluster_bootstrap",
             "run_spread",
             "none",
-            "unknown"
+            "unknown",
+            "window_block_bootstrap_bca"
           ],
-          "description": "'none' means no interval was computed and none is claimed. 'unknown' is only legal for non-self-measured rows."
+          "description": "'none' means no interval was computed and none is claimed. 'unknown' is only legal for non-self-measured rows. 'window_block_bootstrap_bca' is the joint standard's interval: resample WINDOWS with replacement, B=5000, seed 20260829, bias-corrected and accelerated."
         },
         "ci95_low": {
           "type": [
@@ -231,6 +232,88 @@
         },
         "note": {
           "type": "string"
+        },
+        "interval_kind": {
+          "enum": [
+            "percentile",
+            "bca",
+            "t",
+            "z",
+            "none",
+            "unknown"
+          ],
+          "description": "Which interval the ci95_low/high endpoints are. BCa and percentile are different intervals from the same bootstrap; say which."
+        },
+        "cluster_unit": {
+          "enum": [
+            "window",
+            "document",
+            "position",
+            "none",
+            "unknown"
+          ],
+          "description": "The resampling/clustering unit. On this panel the window is the real unit: there are only 3-4 source documents, so a document-clustered interval is indicative at best."
+        },
+        "bootstrap_b": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "bootstrap_seed": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "se_naive": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "SE of the mean ignoring clustering. Published so the design effect is visible, never as the quoted SE."
+        },
+        "se_clustered": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Cluster-robust SE at cluster_unit: sqrt(g/(g-1) * sum_c (T_c - n_c*mean)^2) / N."
+        },
+        "deff": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "(se_clustered / se_naive)^2. On this panel it runs 21-105, i.e. the naive SE understates by 4.6x to 10x."
+        },
+        "sigma_run": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Sample stddev (ddof=1) of per-cold-run means over the COMMON window set. 0.0 is a legitimate value and means the kernel path is deterministic."
+        },
+        "sigma_run_runs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "How many cold runs sigma_run came from. Two runs give |delta|/sqrt(2) with one degree of freedom; the joint protocol asks for at least three."
+        },
+        "se_total": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "hypot(se_clustered, sigma_run). Quote this, with both parts shown, whenever sigma_run/se_clustered > 0.2."
         }
       },
       "additionalProperties": false
@@ -294,6 +377,22 @@
             "string",
             "null"
           ]
+        },
+        "vocab_masking_policy": {
+          "enum": [
+            "mask_padded_columns",
+            "full_stored_vocab",
+            "unknown"
+          ],
+          "description": "Whether the padded lm_head columns were masked out of BOTH sides before the log-softmax. GLM-5.3-Flash stores 154880 columns for a 154856-token vocabulary, so 24 columns are untrained padding. brandonmusic's protocol masks them; every malaiwah number published before 2026-08-29 does not. The measured effect on a real teacher window is +7.2e-9 to +7.4e-9 RELATIVE (about 1e-10 nats), stable across shared-head and quantized-head students and across KLD 4.8e-5 to 1.0 nats, which is why this is a disclosed estimator property and NOT a comparability key input: it cannot move a comparison. Record it honestly; do not subtract anything."
+        },
+        "padded_columns_masked": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "How many stored-vocabulary columns were masked out. 0 or null with vocab_masking_policy=full_stored_vocab; 24 for this model when masking."
         }
       },
       "additionalProperties": false
@@ -518,6 +617,94 @@
             "null"
           ],
           "description": "e.g. 'all', or a named filter applied before averaging."
+        },
+        "scope_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A named sub-scope of the panel, e.g. 'panel25' (all sealed windows) or 'clean17' (the windows surviving the calibration-overlap scan). Two rows on different scope_names are NOT comparable, even on the same panel: excluding contaminated windows moves different quants in different directions."
+        },
+        "scope_selection_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope_selection_sha256": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "calibration_overlap_scan": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "method",
+                "threshold"
+              ],
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "ngram_n": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 1
+                },
+                "threshold": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "windows_scanned": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "windows_excluded": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "max_retained_fraction": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Highest overlap fraction among the RETAINED windows. If this sits just under the threshold the scope is threshold-sensitive and the threshold needs justifying."
+                },
+                "excluded_windows": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -772,6 +959,107 @@
     },
     "disclosures": {
       "$ref": "common.schema.json#/$defs/disclosures"
+    },
+    "by_domain": {
+      "description": "Per-domain stratified results. Quantization damage is NOT uniform across domains -- brandonmusic measured 1.50x / 1.97x / 1.65x NVFP4-over-EXL3 ratios on general / legal / code-agentic, so a single-corpus mean hides where a codec actually hurts. The domains must partition the scored positions of measurement_scope.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "domain",
+          "scored_positions",
+          "mean"
+        ],
+        "properties": {
+          "domain": {
+            "type": "string",
+            "minLength": 1
+          },
+          "windows": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "scored_positions": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "mean": {
+            "type": "number"
+          },
+          "se_clustered": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "ci95_low": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ci95_high": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "interval_kind": {
+            "enum": [
+              "percentile",
+              "bca",
+              "t",
+              "z",
+              "none",
+              "unknown"
+            ]
+          },
+          "top1_agreement": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "protocol": {
+      "description": "The frozen protocol file this row was produced under. Two hashes, deliberately: file_sha256 is byte-level provenance (brandonmusic's rule), scoring_sha256 is the hash of the canonicalised scoring-relevant subset. His own campaign published three different file hashes because the file was hand-edited twice to add identity blocks that changed no scoring rule; the scoring hash is invariant to exactly that, so two rows with equal scoring_sha256 are comparable even when the file hash moved.",
+      "type": "object",
+      "required": [
+        "schema",
+        "file_sha256",
+        "scoring_sha256"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string"
+        },
+        "file_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256"
+        },
+        "scoring_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "allOf": [
@@ -883,7 +1171,8 @@
                 "enum": [
                   "context_cluster_bootstrap",
                   "run_spread",
-                  "none"
+                  "none",
+                  "window_block_bootstrap_bca"
                 ]
               }
             }
@@ -1154,6 +1443,246 @@
               "stack_relation": {
                 "const": "same_stack"
               }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "JOINT-001: a bootstrap interval must say what it resampled, how many times, with what seed, and must carry endpoints.",
+      "if": {
+        "properties": {
+          "uncertainty": {
+            "properties": {
+              "method": {
+                "const": "window_block_bootstrap_bca"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          }
+        },
+        "required": [
+          "uncertainty"
+        ]
+      },
+      "then": {
+        "properties": {
+          "uncertainty": {
+            "required": [
+              "bootstrap_b",
+              "bootstrap_seed",
+              "cluster_unit",
+              "interval_kind",
+              "ci95_low",
+              "ci95_high",
+              "clusters"
+            ],
+            "properties": {
+              "ci95_low": {
+                "type": "number"
+              },
+              "ci95_high": {
+                "type": "number"
+              },
+              "clusters": {
+                "type": "integer",
+                "minimum": 2
+              },
+              "interval_kind": {
+                "enum": [
+                  "percentile",
+                  "bca"
+                ]
+              },
+              "cluster_unit": {
+                "enum": [
+                  "window",
+                  "document"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "JOINT-002: se_total is only meaningful beside its two parts.",
+      "if": {
+        "properties": {
+          "uncertainty": {
+            "required": [
+              "se_total"
+            ],
+            "properties": {
+              "se_total": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "required": [
+          "uncertainty"
+        ]
+      },
+      "then": {
+        "properties": {
+          "uncertainty": {
+            "required": [
+              "se_clustered",
+              "sigma_run",
+              "sigma_run_runs"
+            ],
+            "properties": {
+              "se_clustered": {
+                "type": "number"
+              },
+              "sigma_run": {
+                "type": "number"
+              },
+              "sigma_run_runs": {
+                "type": "integer",
+                "minimum": 2
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "JOINT-003: sigma_run needs at least two cold runs and must agree with determinism.run_count.",
+      "if": {
+        "properties": {
+          "uncertainty": {
+            "required": [
+              "sigma_run"
+            ],
+            "properties": {
+              "sigma_run": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "required": [
+          "uncertainty"
+        ]
+      },
+      "then": {
+        "properties": {
+          "uncertainty": {
+            "required": [
+              "sigma_run_runs"
+            ],
+            "properties": {
+              "sigma_run_runs": {
+                "type": "integer",
+                "minimum": 2
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "JOINT-004: a named sub-scope that is not the full panel must say so in covers_full_panel, so no reader can mistake it for the panel mean.",
+      "if": {
+        "properties": {
+          "measurement_scope": {
+            "required": [
+              "scope_name"
+            ],
+            "properties": {
+              "scope_name": {
+                "type": "string",
+                "not": {
+                  "const": "panel25"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "measurement_scope"
+        ]
+      },
+      "then": {
+        "properties": {
+          "measurement_scope": {
+            "properties": {
+              "covers_full_panel": {
+                "const": false
+              }
+            },
+            "required": [
+              "covers_full_panel",
+              "subset_detail"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "description": "JOINT-005: a calibration-overlap scan result belongs to a named scope.",
+      "if": {
+        "properties": {
+          "measurement_scope": {
+            "required": [
+              "calibration_overlap_scan"
+            ],
+            "properties": {
+              "calibration_overlap_scan": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "required": [
+          "measurement_scope"
+        ]
+      },
+      "then": {
+        "properties": {
+          "measurement_scope": {
+            "required": [
+              "scope_name"
+            ],
+            "properties": {
+              "scope_name": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "JOINT-006: a per-domain table must carry its interval kind wherever it quotes endpoints.",
+      "if": {
+        "required": [
+          "by_domain"
+        ]
+      },
+      "then": {
+        "properties": {
+          "by_domain": {
+            "items": {
+              "anyOf": [
+                {
+                  "not": {
+                    "required": [
+                      "ci95_low"
+                    ]
+                  }
+                },
+                {
+                  "required": [
+                    "interval_kind"
+                  ]
+                }
+              ]
             }
           }
         }

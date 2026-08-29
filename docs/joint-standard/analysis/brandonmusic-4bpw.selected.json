@@ -1,0 +1,198 @@
+{
+  "bootstrap": {
+    "b": 5000,
+    "backend": "numpy",
+    "bca_acceleration": 0.10485495620030913,
+    "bca_z0": 0.09086482514711736,
+    "ci95_bca": [
+      0.018140680375487554,
+      0.04166215976296881
+    ],
+    "ci95_percentile": [
+      0.0168399187674312,
+      0.036569376748791814
+    ],
+    "n_windows": 17,
+    "observed": 0.024948837055614983,
+    "seed": 20260829,
+    "statistic": "mean_kld",
+    "windows": [
+      "final-0000",
+      "final-0001",
+      "final-0002",
+      "final-0004",
+      "final-0005",
+      "final-0006",
+      "final-0008",
+      "final-0009",
+      "final-0010",
+      "final-0012",
+      "final-0013",
+      "final-0014",
+      "final-0016",
+      "final-0017",
+      "final-0018",
+      "final-0020",
+      "final-0024"
+    ]
+  },
+  "bootstrap_oracle_kld_eval": null,
+  "by_domain": [
+    {
+      "bootstrap_b": 1000,
+      "ci95_bca": [
+        0.013086348460342848,
+        0.06324589958688848
+      ],
+      "ci95_percentile": [
+        0.011017285832515853,
+        0.05351016803688095
+      ],
+      "deff_window": 201.6856104986039,
+      "domain": "axis1_general",
+      "mean": 0.02888438570910585,
+      "n": 14329,
+      "n_clusters_window": 7,
+      "pooled_std": 0.10823517119900565,
+      "se_clustered_window": 0.012840972742839154,
+      "se_naive": 0.0009041915978944862,
+      "windows": 7
+    },
+    {
+      "bootstrap_b": 1000,
+      "ci95_bca": [
+        0.01765220028325968,
+        0.03054002779953001
+      ],
+      "ci95_percentile": [
+        0.01765220028325968,
+        0.0302790267791313
+      ],
+      "deff_window": 24.126544559685616,
+      "domain": "axis2_legal",
+      "mean": 0.023508184008518444,
+      "n": 10235,
+      "n_clusters_window": 5,
+      "pooled_std": 0.07586762642133558,
+      "se_clustered_window": 0.003683495440006614,
+      "se_naive": 0.0007499159203030174,
+      "windows": 5
+    },
+    {
+      "bootstrap_b": 1000,
+      "ci95_bca": [
+        0.013138090501507268,
+        0.027413902661521064
+      ],
+      "ci95_percentile": [
+        0.013420030455530163,
+        0.027695842615543965
+      ],
+      "deff_window": 19.426894959434357,
+      "domain": "axis3_code_agentic",
+      "mean": 0.020879721987824302,
+      "n": 10235,
+      "n_clusters_window": 5,
+      "pooled_std": 0.10016014947238273,
+      "se_clustered_window": 0.004363678405651466,
+      "se_naive": 0.000990036122286629,
+      "windows": 5
+    }
+  ],
+  "emitted_by": "bin/joint_standard.py",
+  "label": "brandonmusic-4bpw",
+  "not_submittable": true,
+  "oracle": {
+    "available": false,
+    "modules": {},
+    "reason": "ModuleNotFoundError: No module named 'kld_eval'"
+  },
+  "percentile_guard": {
+    "min_exceedances": 100,
+    "n": 34799,
+    "quantiles": [
+      {
+        "exceedances": 3479.899999999999,
+        "ok": true,
+        "q": 0.9
+      },
+      {
+        "exceedances": 1739.9500000000016,
+        "ok": true,
+        "q": 0.95
+      },
+      {
+        "exceedances": 347.9900000000003,
+        "ok": true,
+        "q": 0.99
+      },
+      {
+        "exceedances": 34.79900000000003,
+        "ok": false,
+        "q": 0.999
+      }
+    ]
+  },
+  "pooled_percentiles": {
+    "available": false,
+    "reason": "pooled token percentiles are not derivable from per-window summaries; a panel p95 is not a function of per-window p95s",
+    "remedy": "publish the per-token KL array (or per-window sufficient statistics: n, sum d, sum d^2, and a quantile sketch)"
+  },
+  "protocol_file": "registry/protocol/glm53-joint-kld-protocol.v1.json",
+  "protocol_file_sha256": "80df521eb46fba68538dd90aa3f2baf22b1e440b8b560555646ff9bbeb35961b",
+  "protocol_schema": "malaiwah.glm53-joint-kld-protocol.v1",
+  "protocol_scoring_sha256": "20ea68c0c730a9d2444148b234a610a5821a50dfa9980e2446c02723317b5e98",
+  "schema": "malaiwah.glm53-joint-standard-analysis.v1",
+  "scope": {
+    "equal_window_sizes": true,
+    "n_windows": 17,
+    "name": "selected",
+    "positions_per_window": 2047,
+    "scope_file": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/window-selection.brandonmusic-final25.json",
+    "scored_positions": 34799,
+    "windows": [
+      "final-0000",
+      "final-0001",
+      "final-0002",
+      "final-0004",
+      "final-0005",
+      "final-0006",
+      "final-0008",
+      "final-0009",
+      "final-0010",
+      "final-0012",
+      "final-0013",
+      "final-0014",
+      "final-0016",
+      "final-0017",
+      "final-0018",
+      "final-0020",
+      "final-0024"
+    ]
+  },
+  "se_quadrature": {
+    "gate": 0.2,
+    "gate_ok": true,
+    "note": "sigma_run not estimable; SE_total = SE_stat",
+    "ratio": null,
+    "se_stat": 0.0053478921956119346,
+    "se_total": 0.0053478921956119346,
+    "sigma_run": null
+  },
+  "sigma_run": {
+    "dof": 0,
+    "note": "no runs",
+    "runs": 0,
+    "sigma_run": null
+  },
+  "source_report": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/brandonmusic-4bpw.json",
+  "summary": {
+    "deff_window": 104.99945042128226,
+    "mean": 0.02494883705561498,
+    "n": 34799,
+    "n_clusters_window": 17,
+    "pooled_std": 0.0973581948938935,
+    "se_clustered_window": 0.0053478921956119346,
+    "se_naive": 0.0005219022042233793
+  }
+}

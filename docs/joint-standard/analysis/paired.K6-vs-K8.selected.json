@@ -1,0 +1,65 @@
+{
+  "backend": "numpy",
+  "bca_acceleration": 0.0196741291039157,
+  "bca_excludes_zero": true,
+  "bca_z0": -0.016293804724859258,
+  "bootstrap_b": 2000,
+  "ci95_diff_bca": [
+    0.00015263386794256493,
+    0.0015726736943635375
+  ],
+  "ci95_diff_percentile": [
+    0.00014080495453142413,
+    0.001543381354877994
+  ],
+  "ci95_ratio_percentile": [
+    1.01302086874327,
+    1.1459499730414509
+  ],
+  "emitted_by": "bin/joint_standard.py",
+  "excludes_zero": true,
+  "label_a": "K6",
+  "label_b": "K8",
+  "mcnemar": {
+    "available": false,
+    "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
+  },
+  "mean_a": 0.011677286368695299,
+  "mean_b": 0.010829419869882874,
+  "mean_diff": 0.0008478664988124246,
+  "mean_diff_se": 0.00037094614244505514,
+  "n_windows": 17,
+  "not_submittable": true,
+  "protocol_file": "registry/protocol/glm53-joint-kld-protocol.v1.json",
+  "protocol_file_sha256": "80df521eb46fba68538dd90aa3f2baf22b1e440b8b560555646ff9bbeb35961b",
+  "protocol_schema": "malaiwah.glm53-joint-kld-protocol.v1",
+  "protocol_scoring_sha256": "20ea68c0c730a9d2444148b234a610a5821a50dfa9980e2446c02723317b5e98",
+  "ratio_a_over_b": 1.0782928826289562,
+  "schema": "malaiwah.glm53-joint-standard-paired.v1",
+  "scope": "selected",
+  "seed": 20260829,
+  "sign_test_p": 0.049041748046875,
+  "source_a": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k6-sealed.json",
+  "source_b": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k8-streaming.json",
+  "windows": [
+    "final-0000",
+    "final-0001",
+    "final-0002",
+    "final-0004",
+    "final-0005",
+    "final-0006",
+    "final-0008",
+    "final-0009",
+    "final-0010",
+    "final-0012",
+    "final-0013",
+    "final-0014",
+    "final-0016",
+    "final-0017",
+    "final-0018",
+    "final-0020",
+    "final-0024"
+  ],
+  "windows_a_better": 4,
+  "windows_b_better": 13
+}

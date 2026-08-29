@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# The adopted rigor from brandonmusic's proposed community standard:
+# R0 canary, n-gram calibration-overlap scan, clustered SE + BCa block
+# bootstrap, sigma_run in quadrature, McNemar, percentile guards, and the
+# frozen protocol hash stamped into every receipt. See joint_standard.py.
+exec "${FIDELITY_PYTHON:-python3}" "$(cd "$(dirname "$0")" && pwd)/joint_standard.py" "$@"

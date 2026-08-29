@@ -1,0 +1,110 @@
+{
+  "schema": "malaiwah.glm53-joint-kld-protocol.v1",
+  "title": "GLM-5.3-Flash quantization-fidelity measurement protocol (joint draft)",
+  "status": "draft-for-joint-adoption",
+  "authored": "2026-08-29",
+  "derived_from": {
+    "party": "brandonmusic",
+    "protocol_file": "eval/kld/protocol/protocol.yaml in huggingface.co/brandonmusic/GLM-5.3-Flash-tr3-4bpw",
+    "protocol_schema": "glm53-flash-kld-fidelity-protocol.v1",
+    "protocol_file_sha256_as_published_2026_08_29": "4d1d91adbd42621824c3df4e7e4d4a1fdfa85dcbd5072411e6289ea453d88106",
+    "governing_report": "github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw :: kld quantization fidelity report.md",
+    "governing_report_sha256": "692ff9e50bc70e716f1a94f1d9a4f3fb2c6d797f639dc8da84b17b069a20b9fc",
+    "note": "Design credit for the scoring, selection and determinism blocks below is brandonmusic's. This file is our independent, dependency-free restatement of it plus the lane/floor block he does not carry. No source code of his is copied into this repository; see docs/PROTOCOL-ALIGNMENT.md section 'Licence'."
+  },
+
+  "scoring": {
+    "direction": "KL(teacher || student)",
+    "units": "nats",
+    "tokenizer_vocab": 154856,
+    "stored_vocab": 154880,
+    "padded_lm_head_columns": 24,
+    "padded_column_ids": [154856, 154879],
+    "padded_column_policy": "mask_both_sides",
+    "log_softmax_dtype": "float64",
+    "accumulation_dtype": "float64",
+    "context_tokens": 2048,
+    "scored_positions_per_window": 2047,
+    "scored_position_policy": "all next-token positions; row r predicts tokens[r+1]; never shift",
+    "batch": "one window per forward, fresh state per window",
+    "teacher_forced": true,
+    "mtp_draft_head": "disabled",
+    "sampling": "none",
+    "prefix_cache": "disabled"
+  },
+
+  "selection": {
+    "panel": "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits :: calibration/panel-v1, role == final",
+    "windows_in_panel": 25,
+    "calibration_overlap_scan": {
+      "document_check": "exclude a final window whose document_id appears in any non-final role",
+      "ngram_n": 13,
+      "ngram_digest": "blake2b, digest_size=12, over int64 little-endian token bytes",
+      "ngram_denominator": "size of the deduplicated n-gram set of the final window",
+      "ngram_scan_scope": "all non-final panel windows (fit, conditional-fit, selection, confirmation)",
+      "ngram_exclusion_threshold": 0.05,
+      "threshold_status": "INHERITED FROM brandonmusic AND NOT YET JOINTLY AGREED. It is a bare literal with no published sensitivity analysis. See docs/PROTOCOL-ALIGNMENT.md for our sensitivity table."
+    },
+    "scopes": {
+      "clean17": "the 17 windows surviving the scan; 34799 scored positions",
+      "panel25": "all 25 final windows; 51175 scored positions",
+      "rule": "publish BOTH; never compare a clean-scope number against a panel-scope number"
+    }
+  },
+
+  "uncertainty": {
+    "primary_cluster": "window",
+    "document_cluster": "reported but not primary (the packed corpus has only 3-4 source documents)",
+    "clustered_se": "se = sqrt(g/(g-1) * sum_c (T_c - n_c*mean)^2) / N",
+    "bootstrap": "window-level block bootstrap, B=5000, seed=20260829, percentile AND BCa",
+    "bca_acceleration": "jackknife leave-one-window-out",
+    "percentile_min_exceedances": 100,
+    "max_statistic_rule": "report max only with its N; never compare max across different N",
+    "sigma_run": "population sample stddev (ddof=1) of per-run means over the COMMON window set",
+    "total_se_rule": "SE_total = hypot(SE_clustered, sigma_run); report both parts",
+    "sigma_run_gate": 0.2,
+    "sigma_run_gate_meaning": "sigma_run / SE_clustered above this means the run-to-run term is not negligible and must be quoted in the headline",
+    "ranking_rule": "rank two students by PAIRED per-token (or per-window) differences with a CI, plus McNemar on top-1; never by eyeballing overlapping marginal CIs"
+  },
+
+  "determinism": {
+    "cold_runs_min": 3,
+    "evidence": "content hashes of the per-token KL array or the student logits; a receipt-file or container hash never counts",
+    "env": {
+      "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+      "NVIDIA_TF32_OVERRIDE": "0",
+      "enforce_eager": true
+    }
+  },
+
+  "canary_r0": {
+    "self_kld": "teacher scored against itself must be EXACTLY 0.0 at every scored position, at session start AND session end",
+    "self_kld_scopes": ["masked", "unmasked"],
+    "shift_explosion": "re-scoring with the student rows shifted by one position must raise mean KLD to entropy scale; the gate is mean_kld_shifted >= shift_ratio_min * teacher_mean_entropy",
+    "shift_ratio_min": 3.0,
+    "teacher_top1_realized_agreement_band": [0.2, 0.995],
+    "on_failure": "abort the session; never shift the alignment to make the canary pass"
+  },
+
+  "lane": {
+    "note": "This block is malaiwah's addition; brandonmusic's protocol has no equivalent and his own data demonstrates the need for it (0.0305 vs 0.0246 for one artifact).",
+    "stack_relation": ["same_stack", "cross_stack"],
+    "definition": "same_stack = teacher reference logits and student logits produced by the same runtime and code path. cross_stack = they were not.",
+    "floor_rule": "every lane must publish its own measured BF16-vs-BF16 floor on the same panel and the same teacher receipt",
+    "attributable_error": "row mean minus the SAME-LANE floor; publishing a subtracted number without the raw row and the floor beside it is forbidden",
+    "cross_lane_subtraction": "REFUSED (registry rule BIAS-006)"
+  },
+
+  "reporting": {
+    "required_tables": ["per-domain", "per-position-bucket", "per-window"],
+    "position_buckets": [[0, 256], [256, 1024], [1024, 4096], [4096, 1073741824]],
+    "protocol_stamp": "every emitted receipt carries protocol_schema, protocol_file_sha256 and protocol_scoring_sha256"
+  },
+
+  "canonical_hash": {
+    "algorithm": "sha256",
+    "file_hash_subject": "the raw bytes of this file",
+    "scoring_hash_subject": "canonical JSON (sort_keys, separators (',',':'), ensure_ascii, UTF-8) of the object {scoring, selection, uncertainty, determinism, canary_r0, lane, reporting}",
+    "why_two": "brandonmusic's rule hashes raw file bytes. His own campaign broke it: three different protocol_sha256 values appear across his published receipts because the file was hand-edited twice AFTER generation to add identity blocks that do not affect scoring. A scoring-subset hash is invariant to those edits, so a comparison across receipts stays valid when only identity metadata changed. We publish BOTH: the file hash for byte-level provenance, the scoring hash for comparability."
+  }
+}
