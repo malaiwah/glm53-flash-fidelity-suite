@@ -18,6 +18,10 @@ qualification; L2/L3/L4 need the real surface and live in
   L1.c  forward plumbing   the streaming build (filtered index + slab-bound experts)
                            produces logits BITWISE equal to stock from_pretrained on
                            the architecturally-complete 0.1B fixture.
+  L1.f  native source     NativeCheckpointSource + fuse_gate_up rebuild the stacked expert
+                           parameters transformers' own loader produces, BITWISE, on the
+                           0.1B fixture.  This is what makes --source native (the BF16
+                           floor) comparable to the packed lanes.  Needs --fixture.
   L1.d  receipt schema     a synthetic capture receipt in stream_score's own shape is
                            accepted by quant_pipeline's load_capture_receipt and by
                            k6_kld_report's per-window field comparison.
@@ -352,6 +356,114 @@ def check_fixture_forward(fixture: Optional[Path], device_spec: str = "cpu") -> 
 
 
 # --------------------------------------------------------------------------
+# L1.f native (BF16 floor) source parity
+# --------------------------------------------------------------------------
+def check_native_source(fixture: Optional[Path], device_spec: str = "cpu") -> None:
+    """``--source native`` reads the SAME expert weights transformers' own loader does.
+
+    The native lane fills the slab from per-expert checkpoint tensors
+    (``...experts.E.{gate,up,down}_proj.weight``) fused with ``fuse_gate_up``.
+    transformers builds its stacked ``experts.gate_up_proj`` / ``down_proj``
+    parameters from those same checkpoint tensors through a completely different
+    code path (its checkpoint-conversion mapping).  This rung asserts the two
+    agree BITWISE on the architecture fixture, which is what makes the floor
+    comparable to the packed lane's numbers rather than a differently-laid-out
+    model that happens to run.
+    """
+
+    if fixture is None or not (fixture / "config.json").is_file():
+        _record("L1.f-native-source", "SKIP", {"reason": "no --fixture with config.json"})
+        return
+    import torch
+    import stream_score
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
+
+    try:
+        device = stream_score.resolve_device(device_spec)
+    except SystemExit as error:
+        _record("L1.f-native-source", "SKIP", {"reason": f"device {device_spec!r}: {error}"})
+        return
+    config = AutoConfig.from_pretrained(fixture, local_files_only=True)
+    text_config = config.get_text_config()
+    first_dense = int(getattr(text_config, "first_k_dense_replace", 0))
+    layers = tuple(range(first_dense, int(text_config.num_hidden_layers)))
+    experts_per_layer = int(getattr(text_config, "n_routed_experts", 0))
+    if not layers or not experts_per_layer:
+        _record("L1.f-native-source", "SKIP", {"reason": "fixture declares no routed experts"})
+        return
+    try:
+        source = stream_score.NativeCheckpointSource(fixture)
+        layout = source.routed_tensor_census(layers, experts_per_layer)
+    except SystemExit as error:
+        _record("L1.f-native-source", "SKIP", {"reason": f"fixture layout: {error}"})
+        return
+    auto = (
+        AutoModelForImageTextToText
+        if config.architectures and "ConditionalGeneration" in config.architectures[0]
+        else AutoModelForCausalLM
+    )
+    reference = auto.from_pretrained(
+        fixture, dtype=torch.bfloat16, local_files_only=True, low_cpu_mem_usage=True,
+        attn_implementation="eager",
+    ).eval().to(device)
+    module_layers = (
+        reference.model.language_model.layers
+        if hasattr(reference.model, "language_model")
+        else reference.model.layers
+    )
+    checked = 0
+    worst_gate_up = 0.0
+    worst_down = 0.0
+    bitwise = True
+    with torch.inference_mode():
+        for layer in layers:
+            experts = module_layers[layer].mlp.experts
+            for expert in range(experts_per_layer):
+                parts = [
+                    source.load(layer=layer, expert=expert, projection=projection)[0].to(device)
+                    for projection in ("gate_proj", "up_proj", "down_proj")
+                ]
+                gate_up = torch.cat((parts[0], parts[1]), dim=0).contiguous()
+                down = parts[2]
+                # transformers stores the stacked parameter in whichever
+                # orientation the module wants; accept the transpose so the rung
+                # tests the VALUES, which is what the slab carries.
+                for name, mine, theirs in (
+                    ("gate_up", gate_up, experts.gate_up_proj[expert]),
+                    ("down", down, experts.down_proj[expert]),
+                ):
+                    candidates = [theirs] if mine.shape == theirs.shape else [theirs.T]
+                    ok = any(torch.equal(mine, candidate) for candidate in candidates)
+                    delta = min(
+                        float((mine.float() - candidate.float()).abs().max())
+                        for candidate in candidates
+                        if candidate.shape == mine.shape
+                    ) if any(candidate.shape == mine.shape for candidate in candidates) else float("inf")
+                    if name == "gate_up":
+                        worst_gate_up = max(worst_gate_up, delta)
+                    else:
+                        worst_down = max(worst_down, delta)
+                    bitwise = bitwise and ok
+                checked += 1
+    del reference
+    _record(
+        "L1.f-native-source",
+        "PASS" if bitwise else "FAIL",
+        {
+            "fixture": str(fixture),
+            "device": str(device),
+            "experts_checked": checked,
+            "routed_layout": layout,
+            "bitwise_equal_to_loader_parameters": bitwise,
+            "max_abs_gate_up_delta": worst_gate_up,
+            "max_abs_down_delta": worst_down,
+            "note": "NativeCheckpointSource + fuse_gate_up reproduces the stacked expert "
+                    "parameters transformers' own checkpoint conversion builds",
+        },
+    )
+
+
+# --------------------------------------------------------------------------
 # L1.d receipt schema conformance
 # --------------------------------------------------------------------------
 def check_receipt_schema() -> None:
@@ -491,7 +603,7 @@ def main() -> int:
     args = parser.parse_args()
 
     have_pipeline = _import_pipeline(args.pipeline_root)
-    wanted = set((args.only or "a,b,c,d,e").replace(" ", "").split(","))
+    wanted = set((args.only or "a,b,c,d,e,f").replace(" ", "").split(","))
     required = set((args.require or "").replace(" ", "").split(",")) - {""}
 
     if "a" in wanted:
@@ -514,6 +626,11 @@ def main() -> int:
             check_fixture_forward(args.fixture.resolve() if args.fixture else None, args.device)
         except ImportError as error:
             _record("L1.c-fixture-forward", "SKIP", {"reason": f"{type(error).__name__}: {error}"})
+    if "f" in wanted:
+        try:
+            check_native_source(args.fixture.resolve() if args.fixture else None, args.device)
+        except ImportError as error:
+            _record("L1.f-native-source", "SKIP", {"reason": f"{type(error).__name__}: {error}"})
     if "d" in wanted:
         if have_pipeline:
             check_receipt_schema()

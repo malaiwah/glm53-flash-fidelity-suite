@@ -185,3 +185,65 @@ most surprises.
     624 MiB), and produced an independent base measurement nobody had. Lead
     with what the other person did well, state your deviations before anyone
     asks, and close the loop when they deliver.
+
+---
+
+# Part 3 — the floor, and what a measurement actually costs (added 2026-08-29)
+
+Parts 1 and 2 are about making and measuring a quant. These came out of
+measuring the thing a quant is measured *against*.
+
+21. **The GPU generation is rarely the gate; the DRIVER is.** The cheapest IN2
+    box that fits the streaming lane's 47.1 GB working set is an A100-80GB spot
+    at `$0.89/h` against `$1.99/h` for an H200 — a 55% saving on a multi-hour
+    run. The worry going in was SM80: `transformers.integrations.moe.
+    _can_use_grouped_mm` might refuse, silently changing the kernel under a
+    measurement whose whole point is a 1e-4-level attribution. It does not —
+    that function has **no compute-capability check at all**, only CPU/dynamo
+    guards. What actually stopped the A100 was its image: NVIDIA driver
+    **12080** against a venv built on `torch 2.11.0+cu130`, so
+    `torch._C._cuda_init()` refuses before any kernel question arises. Probe
+    `nvidia-smi --query-gpu=driver_version` and one `torch.cuda` init in the
+    first five minutes of any new instance type, BEFORE planning a budget
+    around its price. Cost of finding out: ~$0.20 and 28 minutes. Corollary:
+    **a shared-filesystem venv is a hard pin on the driver**, because the venv
+    is what carries the CUDA build; a box that cannot run it is not cheaper.
+
+22. **The account balance is not your bill when someone else is renting.** The
+    balance fell $2.16 in four minutes while our only instance was a single
+    $1.99/h spot GPU. The delta was another session's 4×RTX-PRO6000 VM at
+    ~$8.1/h on the same account. Lesson 10's correction still holds — `jl get
+    <id>.cost` is a running USD **total** — and it is also the only figure that
+    attributes spend to *your* box. Snapshot `jl list --json` (balance + every
+    instance's `cost`) at both ends of the run and subtract the machines that
+    are not yours; report the per-instance total as the headline and the
+    corrected balance delta as the cross-check that also catches filesystem
+    charges. Two practical corollaries: the balance is **lumpy** — it moved
+    $2.16 in a four-minute window in which no instance could have accrued that
+    much — so only trust it across a whole run; and **`jl destroy` erases the
+    cost record**. There is no usage or invoice subcommand, and a destroyed
+    machine leaves `jl list` and `jl get` entirely. Snapshot `jl get <id>
+    --json` in the same breath as the destroy, or that box's spend is an
+    estimate forever.
+
+23. **A panel mean is a floor plus an error, and only one of those is the
+    codec.** K6 and K8 score 0.013715 and 0.012384 nats on the sealed panel —
+    1.11x apart — while K8's shipped store is 13.2x tighter in weight-space
+    NMSE. The reconciliation is that most of both numbers is the cost of
+    comparing OUR stack's forward against the TEACHER's logits at all. Measure
+    that floor by running the identical capture with the routed experts read
+    straight from the BF16 checkpoint (`stream_score.py --source native`) and
+    subtract it. Do this ONCE per lane, early: it costs one more panel run and
+    it changes what every future quant's number means. And keep the floor
+    lane's only difference to *where the expert weights come from* — same
+    panel, same teacher, same estimator, same EP emulation, same reduce order,
+    same box class, same torch build — or the subtraction is not apples to
+    apples.
+
+24. **Refuse work before you allocate for it.** The RAM decode cache asked its
+    budget only in `_cache_store`, i.e. after a 14.5 GB host mirror had already
+    been allocated and filled by a device→host copy of every expert — per
+    layer, per window, for every layer past the budget. Checking the budget in
+    `ensure()` instead turns "cache what fits, waste the rest" into "cache what
+    fits". Any cache that can refuse should refuse at the top of the call, not
+    the bottom.

@@ -732,6 +732,17 @@ class ExpertStreamer:
             self.decode_seconds += time.monotonic() - started
             return
         want_cache = self.cache_mode != "none" and self.slab_experts == 288
+        if (
+            want_cache
+            and self.cache_mode == "ram"
+            and self.ram_cache_bytes + LAYER_SLAB_BYTES > self.ram_cache_budget
+        ):
+            # The budget is already spent (cgroup-aware).  Decide that BEFORE
+            # allocating and filling the 14.5 GB host mirror: _cache_store would
+            # only throw it away, and filling it costs a full device->host copy
+            # of every expert, once per layer, once per window.
+            self.cache_refusals += 1
+            want_cache = False
         cpu_gate_up = cpu_down = None
         if want_cache:
             cpu_gate_up = torch.empty(288, 4096, 4096, dtype=torch.bfloat16, device="cpu")
@@ -1664,12 +1675,13 @@ def main() -> int:
         disclosure["sealed_path_identical"] = [
             item
             for item in disclosure["sealed_path_identical"]
-            if not item.startswith("decode contract:")
+            if not item.startswith(("decode contract:", "expert install algebra:"))
         ]
         disclosure["sealed_path_identical"].insert(
             0,
-            "expert install algebra: fuse_gate_up + torch.equal close, the packed lane's own "
-            "installation code with the decode call removed",
+            "expert install algebra: fuse_gate_up + the single fp32->bf16 rounding (the identity "
+            "here, the inputs are already bf16) + torch.equal close - the packed lane's own "
+            "installation code with only the decode call removed",
         )
         disclosure["sealed_path_differences"] = list(disclosure["sealed_path_differences"]) + [
             "routed surface: the UN-QUANTIZED BF16 experts. No payload store, no contract, no "

@@ -67,6 +67,34 @@ The Hugging Face dataset repo above is the one that exists today and carries
 `schema/`, `tools/` and `data/`. The GitHub mirror named in §3 is **not live
 yet**; until it is, clone the HF repo for this step and submit by discussion.
 
+### What it costs, before you start
+
+Both runners print a dollar estimate before they spend anything, but here is
+the shape of the bill so you can decide whether to bother. All figures are
+**measured**, on JarvisLabs spot GPUs in `IN2`, on the GLM-5.3-Flash sealed
+25-window panel (51,175 positions).
+
+The streaming lane fits on ONE GPU and its bottleneck is reading weights, not
+matmul. What you pay for is therefore (a) pulling the artifact onto the box and
+(b) reading it once per window.
+
+| what | size | why you need it |
+|---|---:|---|
+| the quant you are measuring | 176-331 GB typical | the student |
+| teacher logit panel | 30 GB | fp32 teacher logits for 25 windows |
+| sealed token panel | 13 MB | the exact token ids and masks |
+| BF16 source tree, partial | ~235 GB | **only if your artifact has no non-routed tensors of its own.** The scorer takes the non-routed 1,618 tensors (19.0 GB) from the official tree, and they live in 47 of its 120 shards, so you download 47 shards to use 19 GB of them. An artifact that carries its own non-routed weights skips this entirely. |
+| fp32 student logits you will write | 31.7 GB **per cold run** | kept, because the determinism check compares them |
+
+Disk: budget the artifact + 2 x 31.7 GB and do not size the instance for the
+encode-era numbers. Two of our runs died on "Disk quota exceeded" because a
+ledger written for encoding never accounted for measurement output.
+
+**Keep two cold runs.** `run_count >= 2` is required, and the second run is not
+a formality: it is the determinism evidence.
+
+<!-- CONTRIBUTOR-COST-NUMBERS -->
+
 ### Fields that must be filled
 
 The runner fills all of these. If you are hand-assembling a receipt from an

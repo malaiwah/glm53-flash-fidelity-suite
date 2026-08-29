@@ -53,12 +53,16 @@ do not exist at all.
 
 Fixing the spellings would not be enough, and this is the thing to fix first:
 
-* `--profile` accepts only `k6|k8|k6k8`, and the controller sends `k4` for
-  these lanes.
+* `--profile` accepts only `k6|k8|k6k8|native-bf16`, and the controller sends
+  `k4` for these lanes.
 * **Every source path resolves to a packed root** and requires
   `contract.json`, `inventory.json`, `mtp-adapter-receipt.json` and
   `payload-store/{objects,choices}` — this campaign's own encode output — plus
-  a `--bf16` tree. `--source dione` raises *"not enabled in this build"*.
+  a `--bf16` tree, with ONE exception: `--source native --profile native-bf16`
+  needs no packed root at all — only the `--bf16` tree, a sealed
+  `inventory.json` (`--inventory`) and the panel. That is the BF16-floor lane
+  (see `k6/BF16-FLOOR.md`), and it is also the shape a `tr3-published` reader
+  would need. `--source dione` raises *"not enabled in this build"*.
 
 So no lane can currently read a third-party `tr3-published` artifact, which is
 what a stranger's quant almost always is. Until a `tr3-published` reader

@@ -621,6 +621,149 @@ Everything above reads the shared filesystem read-only and writes only under
 
 ---
 
+## 12. The BF16 floor lane (`--source native`)
+
+### What it is
+
+`--source {checkpoint,payload-store,dione}` all score a **quantized** routed
+surface. `--source native` scores the **un-quantized** one: the 36,288 routed
+expert matrices are read straight out of the official BF16 checkpoint by their
+released tensor names —
+
+```
+model.language_model.layers.<L>.mlp.experts.<E>.{gate,up,down}_proj.weight
+```
+
+— the same names `quant_pipeline.campaign.glm53_direct_k4.tensor_name` builds,
+i.e. the same tensors the ENCODER read to build the payload store. There is no
+codec in the path: no trellis, no MCG codebook, no hash-gated decode. The
+tensors are already bf16, so the packed lane's single `fp32 -> bf16` rounding is
+the identity and the slab carries the released bytes exactly.
+
+Everything else is the packed lane's own code, unmodified: the same panel, the
+same teacher, the same fp64 KLD estimator, the same non-routed view + slab
+build, the same `--ep-emulate 8` partition, the same `--reduce-order fp32`
+combine, the same `grouped_mm` kernel, the same fp32 logit storage, the same
+receipt schema family. **The only difference from a K6/K8 run is where the
+expert weights come from**, which is exactly what makes the number subtractable.
+
+### Why it is worth a rental
+
+A quant's panel mean is not its quantization error:
+
+```
+KLD(teacher || our stack running the quant)  =  floor  +  quantization-attributable error
+```
+
+The floor is what it costs to compare our stack's forward against *someone
+else's* teacher logits with no quantization at all — a different process
+topology, a different expert-combine order, a different box. K6 and K8 sit
+1.11x apart on the raw panel mean while K8's store is 13.2x tighter in
+weight-space NMSE; that is not a contradiction once you know how much of both
+numbers is the floor. See `k6/BF16-FLOOR.md` for the measured value and each
+quant's floor-subtracted error.
+
+### Provenance, without a contract
+
+A native run has no contract, no payload store and no reader ABI to bind, so
+the provenance anchor is the **sealed release inventory**
+(`quant-pipeline.glm-release-inventory.v1`, passed as `--inventory`, or taken
+from `--packed-root/inventory.json`). It must be `seal_mode:
+full-shard-sha256`, its `model_revision` must be an immutable 40-hex commit, and
+its `config_sha256` / `index_sha256` must bind the local `--bf16` tree — the
+same gates the packed lanes apply. Using the K6/K8 encode's own inventory is the
+point: it proves the floor and the quants are stated against the same weights.
+The receipt records `student_label: native-bf16`,
+`capture_role: native_bf16_student`, `bits: null`, `no_decode: true` and a
+`native_routed_layout` census of every routed tensor and shard.
+
+Shard *bytes* are not re-hashed by this tool. Neither are they on the packed
+lane, whose non-routed tensors come from the same shards — the inventory's
+`index_sha256` is what binds them, and `inventory-shards-verified.json` is the
+separate step that hashes them.
+
+### Fail-closed behaviour
+
+* `--source native` and `--profile native-bf16` must be used together; either
+  one alone is a hard error, because the profile is what tells
+  `k6_kld_report.py` which `student_label` to expect.
+* A routed tensor absent from the BF16 index fails before a GPU is touched
+  (`routed_tensor_census`), naming the first missing tensor.
+* The load report still requires `missing_keys 0 / mismatched_keys 0 /
+  error_msgs 0` and refuses if a single NON-routed tensor was left unloaded.
+* `k6_kld_report.py --profile native-bf16` expects `capture_role:
+  native_bf16_student` and refuses a packed receipt (and vice versa).
+
+### Offline validation — rung L1.f
+
+`stream_score_selftest.py` gained a sixth rung, and it is the one that makes the
+floor comparable rather than merely runnable:
+
+> **L1.f native source** — `NativeCheckpointSource` + `fuse_gate_up` rebuild the
+> stacked `experts.gate_up_proj` / `experts.down_proj` parameters that
+> transformers' own checkpoint-conversion path produces, **bitwise**, on the
+> 0.1B architecture fixture.
+
+Measured on the fixture (42→2 routed layers, 8 experts): 16 experts checked,
+`bitwise_equal_to_loader_parameters: true`, `max_abs_gate_up_delta` 0.0,
+`max_abs_down_delta` 0.0. Two independent code paths land on the same bytes, so
+"read the checkpoint experts by name and fuse them" is not a re-interpretation
+of the layout — it is the layout.
+
+```bash
+$PY $ROOT/tools/stream_score_selftest.py     --packed-root $ROOT/out-k6     --fixture $ROOT/fixture/GLM-5.3-Flash-0.1B-A0.1B     --require a,b,c,d,e,f --pipeline-root $ROOT/pipeline --json /tmp/selftest.json
+```
+
+### Running it
+
+```bash
+ROOT=/home/jl_fs/glm53-k6
+PY=$ROOT/venv/bin/python
+# the workspace symlink farm is required: the sealed panel receipt declares
+# /workspace/... paths and the artifact identity check refuses symlinked FILES
+mkdir -p /workspace/artifacts/dataset /workspace/artifacts/evaluation
+ln -sfn $ROOT/calibration    /workspace/artifacts/dataset/calibration
+ln -sfn $ROOT/teacher-final  /workspace/artifacts/evaluation/glm53-teacher-final-ep4
+
+$PY $ROOT/tools/stream_score.py     --source native --profile native-bf16     --inventory $ROOT/out-k6/inventory.json     --bf16 /home/jl_fs/models/bf16 --teacher $ROOT/teacher-final     --token-panel $ROOT/calibration/panel-v1/panel.receipt.json     --out /home/glm53-floor/runs/floor-run1 --cold-run 1     --device cuda:0 --ep-emulate 8 --reduce-order fp32     --decode-cache ram --decode-threads $(nproc)     --work-dir /home/glm53-floor/work --pipeline-root $ROOT/pipeline
+
+$PY $ROOT/tools/k6_kld_report.py --profile native-bf16     --teacher $ROOT/teacher-final --runs <run1> <run2>     --device cuda:0 --out /home/glm53-floor/native-bf16-kld.json
+
+$PY $ROOT/tools/bf16_floor_summary.py     --floor-kld /home/glm53-floor/native-bf16-kld.json     --floor-run <run1> --floor-run <run2>     --quant k6:$ROOT/receipts/stream-k6-kld.json:<k6 run1 kld-report.json>     --quant k8:$ROOT/receipts/stream-k8-kld.json:<k8 run1 kld-report.json>     --out-json k6/BF16-FLOOR.json --out-md k6/BF16-FLOOR.md
+```
+
+### Default behaviour is unchanged — checked, not asserted
+
+Adding this mode touched shared code (`ExpertStreamer._fill_range`, the receipt
+builders). The packed lanes are guarded by `native is None` / `surface is not
+None`, and the check that it worked is a K6 packed-store `--dry-run` on the new
+tool:
+
+```
+checkpoint_identity_sha256 = a8668be3592493035e98a52994e0e3c43548a9757eadb79f7ae939f2f32de1c1   (== sealed)
+contract_sha256            = 82483e4b6357c02f4b290c22fad27b6e7f8b78a3edd57463d5185c6ae5f0398a
+bits 6 | windows 25 | positions 51,175 | main_routed_policy unchanged
+```
+
+What DOES change is `runtime_reader_sha256`, which hashes this file:
+`0582ba57…` (the tool K6/K8 ran) → `c1112843…` (the tool with the native mode).
+That is by construction and is disclosed rather than papered over. The
+identity that binds the *weights* — `checkpoint_identity_sha256` — is
+byte-identical, and the RAM-cache guard added in `ensure()` is unreachable on a
+`--decode-cache none` run, which is what K6 and K8 used.
+
+### Cost shape — it is an IO problem, not a decode problem
+
+The packed lanes are decode-bound; the native lane has no decode at all and is
+purely bound by reading 14.50 GB of routed BF16 per layer, 42 layers per
+window, 25 windows. `--decode-cache ram` is therefore worth more here than on
+the packed lanes, and it is capped by the container's cgroup, not the host's
+RAM. Measured figures are in `k6/BF16-FLOOR.md`.
+
+<!-- FLOOR-NUMBERS -->
+
+---
+
 ## 11. Constraints honoured
 
 * No HF or GitHub token appears in any code path, argument or log.
