@@ -530,6 +530,95 @@ KDA_CONV = re.compile(r"^(model\.language_model\.layers\.\d+\.self_attn)\.conv1d
 VISUAL_QKV = re.compile(r"^(model\.visual\.blocks\.\d+\.attn)\.(q|k|v)_proj$")
 
 
+def _plan_map_for(extra) -> Dict[str, str]:
+    """A name->shard map for an extra source, for the name-level planner.
+
+    extra_maps entries are (grouped, natives, read_fn); the planner only needs
+    the names, and module_groups is what produced grouped/natives in the first
+    place, so reconstruct the flat name list it consumed.
+    """
+    grouped, natives = extra[0], extra[1]
+    names: Dict[str, str] = {n: "extra" for n in natives}
+    for objects in grouped.values():
+        for tensor_name in objects.values():
+            names[tensor_name] = "extra"
+    return names
+
+
+def planned_names(
+    weight_maps: List[Mapping[str, str]],
+) -> List[str]:
+    """The official names `_materialize_stream` will emit, in order, from names alone.
+
+    No tensor is read and nothing is decoded, so this answers in milliseconds
+    what the decode pass answers in twenty minutes of GPU time.  Both the
+    duplicate check and the official-index completeness gate can therefore run
+    BEFORE the expensive pass instead of after it -- which is how the vision
+    tower's 48 colliding names were found: at the END of a materialization, on
+    a rented box, with the whole tree already decoded.
+
+    This is a SECOND implementation of the emission rules, and two
+    implementations can disagree.  `selftest_exl3hf_offline` asserts that this
+    function's output equals the names the stream actually yields on a mini
+    checkpoint that exercises every branch (KDA qkv split, conv1d split,
+    visual fusion, redundant-native skip, bias adoption, routed skip).
+    """
+    out: List[str] = []
+    for weight_map in weight_maps:
+        grouped, natives = module_groups(dict(weight_map))
+        native_set = set(natives)
+        fused_from_quantized = set()
+        for module in grouped:
+            if _ROUTED.search(module):
+                continue
+            m = VISUAL_QKV.match(module)
+            if m:
+                fused_from_quantized.add("%s.qkv.weight" % m.group(1))
+                fused_from_quantized.add("%s.qkv.bias" % m.group(1))
+                continue
+            m = KDA_QKV.match(module)
+            if m:
+                for part in ("q_proj", "k_proj", "v_proj"):
+                    fused_from_quantized.add("%s.%s.weight" % (m.group(1), part))
+        for name in natives:
+            if _ROUTED.search(name):
+                continue
+            stem, _, last = name.rpartition(".")
+            if last == "bias" and stem in grouped:
+                continue
+            if name in fused_from_quantized:
+                continue
+            m = KDA_CONV.match(name)
+            if m:
+                out.extend("%s.%s.weight" % (m.group(1), part)
+                           for part in ("q_conv1d", "k_conv1d", "v_conv1d"))
+                continue
+            out.append(name)
+        visual: Dict[str, set] = {}
+        for module in sorted(grouped):
+            if _ROUTED.search(module):
+                continue
+            m = KDA_QKV.match(module)
+            if m:
+                out.extend("%s.%s.weight" % (m.group(1), part)
+                           for part in ("q_proj", "k_proj", "v_proj"))
+                continue
+            m = VISUAL_QKV.match(module)
+            if m:
+                slot = visual.setdefault(m.group(1), set())
+                slot.add(m.group(2))
+                if len(slot) == 3:
+                    out.append("%s.qkv.weight" % m.group(1))
+                    if all("%s.%s_proj.bias" % (m.group(1), part) in native_set
+                           for part in ("q", "k", "v")):
+                        out.append("%s.qkv.bias" % m.group(1))
+                continue
+            out.append("%s.weight" % module)
+            if "%s.bias" % module in native_set:
+                out.append("%s.bias" % module)
+    return out
+
+
 def _materialize_stream(
     surface: Exl3HfSurface,
     reader: Exl3HfShardReader,
@@ -558,6 +647,38 @@ def _materialize_stream(
 
     for grouped_i, natives_i, read in sources:
         native_set = set(natives_i)
+        # A release may ship BOTH representations of one module.  turboderp's
+        # GLM-5.3-Flash-exl3 does exactly this for the vision tower: every
+        # block carries the EXL3-quantized SPLIT `attn.{q,k,v}_proj` AND the
+        # untouched original fused `attn.qkv.{weight,bias}` that the converter
+        # copied through -- 24 blocks, 48 colliding names.  (Verified against
+        # the official release: the fused copy is bitwise the official BF16
+        # weight cast to fp16, i.e. the original, not a dequantization.)
+        #
+        # POLICY, and it is a choice worth stating: the QUANTIZED module wins,
+        # and the redundant native copy is skipped and counted.  A release that
+        # quantized a module has made that payload the artifact's function; the
+        # split set is complete down to its own per-projection biases, which a
+        # converter that meant to keep the fused original would not have
+        # emitted.  Preferring the native copy would silently measure a
+        # FRIENDLIER model than the artifact is.  (For this panel the choice is
+        # immaterial either way -- the vision tower is never executed by
+        # text-only scoring -- but the rule has to be right for the module
+        # where it is not.)
+        fused_from_quantized = set()
+        for module in grouped_i:
+            if _ROUTED.search(module):
+                continue
+            m = VISUAL_QKV.match(module)
+            if m:
+                fused_from_quantized.add("%s.qkv.weight" % m.group(1))
+                fused_from_quantized.add("%s.qkv.bias" % m.group(1))
+                continue
+            m = KDA_QKV.match(module)
+            if m:
+                for part in ("q_proj", "k_proj", "v_proj"):
+                    fused_from_quantized.add("%s.%s.weight" % (m.group(1), part))
+
         # 1) plain native tensors (skip routed experts entirely; skip biases
         #    that belong to a quantized module -- the quantized pass emits them
         #    next to their dequantized weight, under the official fused name
@@ -567,6 +688,13 @@ def _materialize_stream(
                 continue
             stem, _, last = name.rpartition(".")
             if last == "bias" and stem in grouped_i:
+                continue
+            if name in fused_from_quantized:
+                stats["redundant_native_skipped"] = (
+                    stats.get("redundant_native_skipped", 0) + 1)
+                stats.setdefault("redundant_native_examples", [])
+                if len(stats["redundant_native_examples"]) < 4:
+                    stats["redundant_native_examples"].append(name)
                 continue
             m = KDA_CONV.match(name)
             if m:
@@ -670,7 +798,34 @@ def materialize_nonrouted(
         mtp_grouped, mtp_natives = module_groups({n: "mtp.safetensors" for n in mtp_names})
         extra_maps.append((mtp_grouped, mtp_natives, mtp_handle.get_tensor))
 
-    stats: Dict[str, Any] = {}
+    # ---- name-level pre-flight, before a single payload is decoded --------
+    plan_maps: List[Mapping[str, str]] = [surface.weight_map]
+    for extra in extra_maps:
+        plan_maps.append(_plan_map_for(extra))
+    planned = planned_names(plan_maps)
+    seen: Dict[str, int] = {}
+    for name in planned:
+        seen[name] = seen.get(name, 0) + 1
+    collisions = sorted(n for n, k in seen.items() if k > 1)
+    if collisions:
+        raise _fail(
+            "%d official name(s) would be produced more than once, e.g. %s. "
+            "Two representations of one module are present and the emission "
+            "rules do not choose between them."
+            % (len(collisions), collisions[:3]))
+    if official_index is not None:
+        official_wm = json.loads(
+            Path(official_index).read_text(encoding="utf-8"))["weight_map"]
+        want_pre = {n for n in official_wm if not _ROUTED.search(n)}
+        missing_pre = sorted(want_pre - set(planned))
+        extra_pre = sorted(set(planned) - want_pre)
+        if missing_pre or extra_pre:
+            raise _fail(
+                "planned non-routed name set differs from the official index "
+                "BEFORE any decode: missing %d (first %s), extra %d (first %s)"
+                % (len(missing_pre), missing_pre[:3], len(extra_pre), extra_pre[:3]))
+
+    stats: Dict[str, Any] = {"planned_tensor_count": len(planned)}
     shard_index = 0
     current: Dict[str, Any] = {}
     current_bytes = 0

@@ -163,6 +163,15 @@ with tempfile.TemporaryDirectory() as tmp:
     add_quant("model.visual.blocks.0.attn.k_proj", 128, 128, 6, bias=True)
     add_quant("model.visual.blocks.0.attn.v_proj", 128, 128, 6, bias=True)
     add_quant("lm_head", 256, 128, 6)
+    # The REDUNDANT-NATIVE case, reproduced from the real release: turboderp
+    # ships the EXL3 split q/k/v for every vision block AND the untouched
+    # original fused attn.qkv.{weight,bias} the converter copied through, so
+    # both representations map to the same official name (24 blocks, 48
+    # colliding names). The materializer used to die with "duplicate
+    # materialized tensor" AFTER decoding the whole tree. Sentinel values are
+    # used so the assertion below can tell WHICH copy survived.
+    tensors["model.visual.blocks.0.attn.qkv.weight"] = torch.full((384, 128), 7.0).half()
+    tensors["model.visual.blocks.0.attn.qkv.bias"] = torch.full((384,), 7.0).half()
     add_quant(f"{L}.3.mlp.experts.0.gate_proj", 128, 128, 4)     # routed: must be SKIPPED
     tensors["model.language_model.embed_tokens.weight"] = torch.randn(256, 128, generator=gen).bfloat16()
     tensors[f"{L}.0.self_attn.A_log"] = torch.randn(4, generator=gen).float()
@@ -218,6 +227,34 @@ with tempfile.TemporaryDirectory() as tmp:
     check("materializer: conv k slice", tuple(kc.shape) == (128, 1, 4) and torch.equal(
         kc, tensors[f"{L}.0.self_attn.conv1d.weight"][128:256]))
     check("materializer: visual qkv.bias fused", tuple(vb.shape) == (384,) and vb.dtype == torch.bfloat16)
+    with safe_open(str(out / wm["model.visual.blocks.0.attn.qkv.weight"]),
+                   framework="pt") as h:
+        vqkv = h.get_tensor("model.visual.blocks.0.attn.qkv.weight")
+    # The quantized split must win: the redundant native copy is all 7.0, so a
+    # single 7.0 anywhere means the native copy was emitted instead.
+    check("materializer: quantized split beats the redundant native fused copy",
+          not bool((vqkv.float() == 7.0).any()) and not bool((vb.float() == 7.0).any()),
+          "native sentinel 7.0 present in the materialized visual qkv")
+    check("materializer: the redundant natives are counted, not silently dropped",
+          receipt["stats"].get("redundant_native_skipped") == 2,
+          str(receipt["stats"].get("redundant_native_skipped")))
+    # planned_names is a SECOND implementation of the emission rules, used to
+    # run the duplicate and completeness gates before any decode. Two
+    # implementations can drift, so prove they agree on a checkpoint that
+    # exercises every branch: KDA qkv split, conv1d split, visual fusion,
+    # redundant-native skip, bias adoption, routed skip.
+    index_map = {n: "model-00001-of-00001.safetensors" for n in tensors}
+    planned = xs.planned_names([index_map])
+    surface = xs.load_surface(root)
+    reader = xs.Exl3HfShardReader(surface)
+    streamed = [n for n, _ in xs._materialize_stream(surface, reader, "cpu", {}, [])]
+    check("planner == stream: the pre-flight name plan is what materialization emits",
+          planned == streamed,
+          "planned=%d streamed=%d first_diff=%s"
+          % (len(planned), len(streamed),
+             next((i for i, (a, b) in enumerate(zip(planned, streamed)) if a != b), None)))
+    check("planner: the plan has no duplicate names",
+          len(set(planned)) == len(planned))
     check("materializer: fp32 native kept fp32", alog.dtype == torch.float32)
     check("materializer: lm_head dequantized bf16", tuple(head.shape) == (256, 128) and head.dtype == torch.bfloat16)
     # KDA split slices must equal the decoded fused rows (one bf16 rounding)

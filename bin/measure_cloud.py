@@ -122,6 +122,13 @@ class Teardown:
         # deadline, so a held box is bounded, not leaked.
         self.hold_on_failure = False
         self.held = False
+        # Set to True only when the measurement actually completed. The hold
+        # used to key off the teardown REASON string ("failed: ..."), which
+        # never matched: a stage failure raises a bare RuntimeError, main()
+        # catches only (JLError, HFError, Refusal), and the `finally` then
+        # tears down with reason "normal exit". The box was destroyed with the
+        # fetch on it, which is the exact outcome the flag exists to prevent.
+        self.completed = False
         self._lock = threading.Lock()
 
     def adopt(self, machine_id: Optional[int], fs_id: Optional[int] = None) -> None:
@@ -172,7 +179,7 @@ class Teardown:
                 prev[sig] = signal.signal(sig, signal.SIG_IGN)
             except (ValueError, OSError):
                 pass
-        hold = bool(self.hold_on_failure and reason.startswith("failed"))
+        hold = bool(self.hold_on_failure and not self.completed)
         self.con.say("")
         self.con.step("teardown%s (^C is ignored until this finishes)"
                       % ((" -- " + reason) if reason else ""))
@@ -1633,7 +1640,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     con.rule()
     try:
         cost = execute(args, con, jl, plan_data, td)
-    except (JLError, HFError, Refusal) as exc:
+        td.completed = True
+    except (JLError, HFError, Refusal, RuntimeError) as exc:
         # A stranger should get the sentence that says what broke and whether
         # anything is still billing, not a stack trace ending in our internals.
         # td.run() in the finally has already destroyed whatever existed.
