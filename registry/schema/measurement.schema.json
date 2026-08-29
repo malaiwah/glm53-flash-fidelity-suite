@@ -912,6 +912,13 @@
               "type": "null"
             }
           ]
+        },
+        "usable_as_floor": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Optional. false means this row may never be named as another row's comparability.bias.floor_measurement_ref (BIAS-007). Carried from the submission when the producing tool declared it; null means it was never declared, which is not the same as true."
         }
       },
       "additionalProperties": false

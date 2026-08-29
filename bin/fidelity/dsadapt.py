@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import struct
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import dsformat as F
-from . import dsmanifest, dsvalidate
+from . import dsmanifest, dsvalidate, k3compat
 
 ADAPTER_REPORT_SCHEMA = "malaiwah.fidelity-adapter-report.v1"
 
@@ -88,7 +89,13 @@ def _k3_paths(root: str) -> Dict[str, Optional[str]]:
 
 def adapt_k3(root: str, out_dir: str, source: str = "k3v1",
              tokens_dir: Optional[str] = None,
-             recompute_content_digests: bool = False) -> Dict[str, Any]:
+             recompute_content_digests: bool = False,
+             emit_dataset: bool = False,
+             emit_k3_compat: bool = False,
+             dataset_id: str = "fidelity--adapted.kimi-k3",
+             name: str = "adapted kimi-k3 capture",
+             role: str = "root", lane: str = "other",
+             limit: Optional[int] = None, link: bool = True) -> Dict[str, Any]:
     """Translate a kimi-k3 artifact.  Metadata only unless the tensors are local."""
     paths = _k3_paths(root)
     if not paths["suite"]:
@@ -310,10 +317,10 @@ def adapt_k3(root: str, out_dir: str, source: str = "k3v1",
             "subset_detail": "metadata-only translation: the tensors were not downloaded"
             if present == 0 else None,
         },
-        outstanding=[
+        outstanding=([
             "download the capture tensors (or point --in at a local copy) so "
             "capture_content_digest and checksums.txt can be computed; a sealed dataset "
-            "requires the bytes",
+            "requires the bytes"] if present < declared_records else []) + [
             "the head's quantization status is not recorded anywhere in the source artifact; "
             "until a human establishes it, every comparison is advisory (D-1)",
             "no candidate captures exist in the source artifact -- it publishes compare "
@@ -321,13 +328,450 @@ def adapt_k3(root: str, out_dir: str, source: str = "k3v1",
         ],
     )
     os.makedirs(out_dir, exist_ok=True)
-    F.write_json(os.path.join(out_dir, "%s-translation.json" % source), translation)
+    if emit_dataset and present:
+        # The report travels INSIDE the dataset, added before the seal is
+        # computed. Writing it afterwards would leave a file present but not in
+        # checksums.txt, which is SEAL-1(c) -- the dataset would refuse itself.
+        emitted = _emit_k3_dataset(
+            root, out_dir, translation=translation, suite=suite, top=top,
+            tensor_manifest=tensor_manifest, by_index=by_index, panel_rows=panel_rows,
+            tokens_root=tokens_root, tensor_dir=tensor_dir, head_source=head_source,
+            head_paths=paths, runtime=runtime, form=form, inferred=inferred,
+            dataset_id=dataset_id, name=name, role=role, lane=lane, link=link,
+            limit=limit, report_name="%s-translation.json" % source,
+            emit_k3_compat=emit_k3_compat)
+        translation["emitted"] = emitted
+    elif emit_dataset:
+        F.write_json(os.path.join(out_dir, "%s-translation.json" % source), translation)
+        translation["emitted"] = {
+            "written": False,
+            "reason": "0 of %d declared capture tensors are present locally. A sealed dataset "
+                      "is made of BYTES: checksums.txt and capture_content_digest are computed "
+                      "over the tensors, and the format never fabricates a digest. Point --in "
+                      "at a local copy of the artifact (or fetch reference-hidden/) and re-run."
+                      % declared_records,
+        }
+        F.write_json(os.path.join(out_dir, "%s-translation.json" % source), translation)
+    else:
+        F.write_json(os.path.join(out_dir, "%s-translation.json" % source), translation)
     return translation
+
+
+#: Format tokens that mean "these weights were quantized".  Read out of the
+#: source's OWN `checkpoint.tensor_format` string; the schema wants a boolean
+#: and there is no honest null, so the inference is made explicitly and recorded
+#: in inferred_fields rather than guessed silently.
+QUANTIZED_FORMAT_TOKENS = ("mxfp4", "nvfp4", "fp8", "int8", "int4", "awq", "gptq",
+                           "exl3", "exl2", "gguf", "q4", "q5", "q6", "q8", "bnb")
+
+
+def _k3_weights_quantized(checkpoint: Dict[str, Any],
+                          inferred: List[str]) -> bool:
+    fmt = (checkpoint.get("tensor_format") or "").lower()
+    inferred.append("weights.quantized (read from checkpoint.tensor_format %r)"
+                    % (checkpoint.get("tensor_format") or None))
+    return any(token in fmt for token in QUANTIZED_FORMAT_TOKENS)
+
+
+def _k3_tokenizer(suite: Dict[str, Any], checkpoint: Dict[str, Any],
+                  head_source: Dict[str, Any], inferred: List[str]) -> Dict[str, Any]:
+    """His tokenizer block onto ours, without inventing anything.
+
+    He names the CLASS and the vocabulary size and pins four tokenizer files by
+    digest; he has no notion of `add_special_tokens` or `chat_template_applied`,
+    so those stay null -- and the compare-time tokenizer gate treats a null on
+    either side as unknown, never as agreement.
+    """
+    block = suite.get("tokenizer") or {}
+    identifier = block.get("class") or checkpoint.get("repository")
+    if not block:
+        inferred.append("panel.tokenizer (the source names none; id from "
+                        "checkpoint.repository, vocab_size from the lm_head shape)")
+    vocab = block.get("vocabulary_size") or block.get("vocab_size")
+    if not vocab:
+        vocab = (head_source.get("shape") or [None])[0]
+    return {
+        "id": identifier or "unknown",
+        "repository": checkpoint.get("repository"),
+        "revision": (str(block.get("checkpoint_revision") or checkpoint.get("revision"))
+                     if (block.get("checkpoint_revision") or checkpoint.get("revision"))
+                     else None),
+        "vocab_size": int(vocab or 0) or 1,
+        # PANEL-D6: null is UNKNOWN, not false.  The source records neither.
+        "add_special_tokens": None,
+        "chat_template_applied": (False if (suite.get("chat_rendering") or {})
+                                  .get("add_generation_prompt") is False else None),
+        "source_files": block.get("files"),
+    }
+
+
+def _emit_k3_dataset(root, out_dir, *, translation, suite, top, tensor_manifest, by_index,
+                     panel_rows, tokens_root, tensor_dir, head_source, head_paths, runtime,
+                     form, inferred, dataset_id, name, role, lane, link, limit,
+                     report_name, emit_k3_compat=False):
+    """Turn a translated kimi-k3 artifact into a SEALED v1 dataset.
+
+    The translation report above already resolved every value this needs; what
+    this adds is the bytes -- tokens copied, tensors hardlinked, digests
+    recomputed from content, and one seal over the lot.  Anything the source
+    could not answer stays null and rides in `interop.adapted_from.inferred_fields`,
+    which forces `comparability.class = advisory` at compare time.
+    """
+    checkpoint = (top.get("checkpoint") or runtime.get("checkpoint") or {})
+    if role == "root":
+        # ROOT-1 requires head.quantized == false and weights.quantized == false.
+        # A kimi-k3 artifact records NEITHER (D-1: one artifact-level head, no
+        # quantization status), and its own checkpoint string says the routed
+        # experts are MXFP4. Asserting `root` here would be the format telling a
+        # lie on the source's behalf.
+        raise AdapterError(
+            "--role root is refused for a kimi-k3 translation. ROOT-1 requires "
+            "head.quantized: false and weights.quantized: false; the source artifact records "
+            "no head quantization status at all (D-1) and its checkpoint declares %r. Use "
+            "--role derived (the default), which carries the same numbers without asserting "
+            "something the source never said."
+            % (checkpoint.get("tensor_format") or "an unstated tensor format"))
+    writer = dsmanifest.DatasetWriter(out_dir)
+    indices = sorted(int(row["index"]) for row in panel_rows
+                     if int(row["index"]) in by_index
+                     and by_index[int(row["index"])].get("file")
+                     and tensor_dir
+                     and os.path.isfile(os.path.join(tensor_dir,
+                                                     by_index[int(row["index"])]["file"])))
+    if limit is not None:
+        indices = indices[:limit]
+    if not indices:
+        raise AdapterError("no capture tensor is readable under %s" % tensor_dir)
+
+    panel_by_index = {int(row["index"]): row for row in panel_rows}
+    panel_records, capture_records = [], []
+    for index in indices:
+        source_row = panel_by_index[index]
+        token_rel = source_row.get("token_file")
+        local_tokens = os.path.join(tokens_root, token_rel) if token_rel else None
+        if not (local_tokens and os.path.isfile(local_tokens)):
+            raise AdapterError(
+                "context %d has no local token file (%s). The panel binding is token IDS, not a "
+                "digest carried from a manifest: without the ids the dataset cannot be sealed."
+                % (index, token_rel))
+        ids = F.read_json(local_tokens)
+        written_tokens = writer.add_token_file(index, ids)
+        scored = int(by_index[index].get("shape", [0])[0]
+                     or source_row.get("prediction_positions") or 0)
+        panel_records.append(dsmanifest.panel_record(
+            index=index, token_file=written_tokens, token_ids=ids,
+            prediction_positions=scored,
+            window_id=source_row.get("window_id") or "context-%04d" % index,
+            role="final", domain=source_row.get("domain"),
+            document_id=source_row.get("document_id"),
+            allocation_stratum=source_row.get("allocation_stratum"),
+            semantic_class=source_row.get("semantic_class"),
+            source_cluster_id=source_row.get("source_cluster_id"),
+            partition=source_row.get("partition"),
+            sentinel=bool(source_row.get("sentinel"))))
+
+        src = os.path.join(tensor_dir, by_index[index]["file"])
+        dest_rel = "capture/%s_%04d.safetensors" % (
+            "hidden" if form == "hidden" else "logits", index)
+        dest = os.path.join(out_dir, dest_rel)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        _place(src, dest, link)
+        _, header = F.read_safetensors_header(dest)
+        key = by_index[index].get("key") or tensor_manifest.get("tensor_key")
+        if key not in header:
+            key = sorted(k for k in header if k != "__metadata__")[0]
+        record = dsmanifest.tensor_record(
+            index=index, filename=os.path.basename(dest_rel), abs_path=dest, key=key,
+            dtype=header[key]["dtype"], shape=header[key]["shape"],
+            scored_rows=int(header[key]["shape"][0]),
+            token_ids_json_sha256=F.token_ids_json_sha256(ids),
+            token_ids_sha256_legacy=F.token_ids_json_sha256_legacy(ids),
+            attention_mask_sha256=None,
+            window_id=source_row.get("window_id") or "context-%04d" % index,
+            role="final", domain=source_row.get("domain"),
+            document_id=source_row.get("document_id"),
+            allocation_stratum=source_row.get("allocation_stratum"),
+            semantic_class=source_row.get("semantic_class"),
+            source_cluster_id=source_row.get("source_cluster_id"),
+            elapsed_seconds=by_index[index].get("elapsed_seconds"),
+            request_id=by_index[index].get("request_id"))
+        # His own container digest, carried and cross-checked rather than dropped.
+        record["source_manifest_sha256"] = by_index[index].get("sha256")
+        record["source_manifest_sha256_agrees"] = (
+            by_index[index].get("sha256") == record["sha256"])
+        capture_records.append(record)
+
+    # -- head: copied when the payload is local, else identity only -----------
+    head_rel = head_file_sha = head_content = None
+    head_key = head_source.get("tensor_key") or head_source.get("key") or "weight"
+    head_src = None
+    declared_file = head_source.get("file") or "weight.safetensors"
+    for guess in (os.path.join(root, declared_file),
+                  os.path.join(os.path.dirname(head_paths.get("head") or ""),
+                               os.path.basename(declared_file))
+                  if head_paths.get("head") else None,
+                  os.path.join(root, "lm-head", "weight.safetensors")):
+        if guess and os.path.isfile(guess):
+            head_src = guess
+            break
+    if head_src:
+        head_rel = "head/weight.safetensors"
+        dest = os.path.join(out_dir, head_rel)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        _place(head_src, dest, link)
+        _, header = F.read_safetensors_header(dest)
+        head_key = head_key if head_key in header else sorted(header)[0]
+        head_content = F.tensor_content_sha256(dest, head_key)
+        head_file_sha = F.sha256_file(dest)
+        declared = head_source.get("raw_tensor_sha256")
+        if declared and declared != head_content:
+            raise AdapterError(
+                "the head payload hashes to %s but the source manifest declares "
+                "raw_tensor_sha256 %s" % (head_content[:16], declared[:16]))
+    else:
+        # D-1: identity WITHOUT the payload.  Legal, and the comparator will
+        # refuse to replay through a head it does not have.
+        head_content = head_source.get("raw_tensor_sha256")
+        head_file_sha = head_source.get("file_sha256")
+        inferred.append("head.file (payload not local)")
+
+    head_doc = dsmanifest.head_identity(
+        present=bool(head_rel), tensor_key=head_key,
+        shape=head_source.get("shape") or [0, 0],
+        dtype=head_source.get("dtype") or head_source.get("tensor_dtype") or "BF16",
+        file_sha256=head_file_sha, tensor_content_sha256=head_content,
+        # D-1: kimi-k3 records ONE artifact-level head and never says whether it
+        # was quantized.  null is the honest value; it is NOT false.
+        quantized=None, source="unknown", applied_in_capture=(form == "logit"),
+        file=head_rel, bits=None,
+        note="imported from the kimi-k3 artifact. quantized is null (unknown), so a "
+             "comparison against a non-k3 candidate is advisory (D-1).")
+
+    tokenizer = _k3_tokenizer(suite, checkpoint, head_source, inferred)
+    weights_quantized = _k3_weights_quantized(checkpoint, inferred)
+    panel_doc = dsmanifest.panel_binding(
+        panel_id=None,
+        name="kimi-k3 distribution-fidelity token suite (%d of %d contexts)"
+             % (len(panel_records), translation["coverage"]["declared_records"]),
+        records=panel_records,
+        context_length=int(suite.get("context_length") or 0),
+        tokenizer=tokenizer,
+        repository=None, revision=None,
+        scoring_window=translation["panel"]["scoring_window"],
+        strata=suite.get("strata"))
+
+    coverage = dsmanifest.coverage_block(
+        capture_records, int(translation["coverage"]["declared_records"]),
+        subset_detail=("%d of %d declared contexts have local tensors"
+                       % (len(capture_records),
+                          translation["coverage"]["declared_records"]))
+        if len(capture_records) < translation["coverage"]["declared_records"] else None)
+
+    capture_doc = dsmanifest.capture_manifest(
+        run_name=tensor_manifest.get("run_name") or "kimi-k3 reference",
+        form=form, semantic_point=translation["capture"]["semantic_point"],
+        tensor_key=F.TENSOR_KEY_HIDDEN if form == "hidden" else F.TENSOR_KEY_LOGIT,
+        dtype=translation["capture"]["dtype"], dtype_lossless=True,
+        vocab_size=int(translation["capture"]["vocab_size"] or 0),
+        context_length=int(suite.get("context_length") or 0),
+        records=capture_records,
+        hidden_width=translation["capture"].get("hidden_width"),
+        coverage=coverage)
+
+    fingerprint = {"schema": "malaiwah.stack-fingerprint.v1",
+                   "origin": "kimi-k3-capture-runtime",
+                   "raw": runtime.get("runtime")}
+    runtime_doc = dsmanifest.capture_runtime(
+        lane=lane, lane_inferred=True, stack_fingerprint=fingerprint,
+        stack_fingerprint_sha256=F.sha256_hex(F.canonical_json(fingerprint)),
+        lane_identity_sha256=None,
+        container=(runtime.get("container") or None),
+        runtime_environment=runtime.get("runtime_environment") or {},
+        source_files=runtime.get("source_files") or {},
+        weights={"repository": checkpoint.get("repository"),
+                 "revision": checkpoint.get("revision"),
+                 "model_revision": checkpoint.get("revision"),
+                 "config_sha256": checkpoint.get("config_sha256"),
+                 "index_sha256": checkpoint.get("index_sha256"),
+                 "checkpoint_identity_sha256": None},
+        upstream_receipts=[{"file": "upstream/%s" % os.path.basename(value),
+                            "schema": "kimi-k3/%s" % key,
+                            "sha256": F.sha256_file(value), "stripped_fields": []}
+                           for key, value in sorted(head_paths.items())
+                           if value and os.path.isfile(value)])
+
+    os.makedirs(os.path.join(out_dir, "upstream"), exist_ok=True)
+    upstream = []
+    for key, value in sorted(head_paths.items()):
+        if not (value and os.path.isfile(value) and value.endswith(".json")):
+            continue
+        stripped, names = F.strip_host_paths(F.read_json(value))
+        rel = "upstream/%s" % os.path.basename(value)
+        F.write_json(os.path.join(out_dir, rel), stripped)
+        upstream.append({"file": rel, "schema": "kimi-k3/%s" % key,
+                         "sha256": F.sha256_file(os.path.join(out_dir, rel)),
+                         "stripped_fields": names})
+
+    manifest = dsmanifest.top_manifest(
+        dataset={"id": dataset_id, "name": name, "role": role,
+                 "structural_status": "sealed", "qualification": None,
+                 "author": {"name": "adapted from kimi-k3",
+                            "role": "capture-author", "handle": None,
+                            "url": "https://huggingface.co/datasets/festr2/"
+                                   "kimi-k3-distribution-fidelity-1024x2048-v1",
+                            "is_registry_maintainer": False},
+                 "license": None, "repository": None, "revision": None,
+                 # A translation is `derived`, and a derived dataset must name what
+                 # it derives FROM. There is no v1 dataset upstream of a kimi-k3
+                 # artifact, so the pointer is the source artifact's own manifest
+                 # digest -- honest, checkable, and null-free where it can be.
+                 "base_capture": {
+                     "dataset_sha256": None,
+                     "capture_content_digest": None,
+                     "repository": "festr2/kimi-k3-distribution-fidelity-1024x2048-v1",
+                     "revision": checkpoint.get("revision"),
+                     "note": "translated from a kimi-k3-distribution-fidelity/1 artifact, "
+                             "which predates this format and therefore has no "
+                             "dataset_sha256 of its own. Its manifest.json digest is %s "
+                             "and its suite token hash is %s."
+                             % (F.sha256_file(head_paths["manifest"])[:16]
+                                if head_paths.get("manifest") else "unavailable",
+                                (suite.get("suite_token_hash_sha256") or "unavailable")[:16]),
+                 }},
+        weights={"repository": checkpoint.get("repository"),
+                 "revision": checkpoint.get("revision"),
+                 "model_revision": checkpoint.get("revision"),
+                 "quantized": weights_quantized,
+                 "config_sha256": checkpoint.get("config_sha256"),
+                 "index_sha256": checkpoint.get("index_sha256"),
+                 "checkpoint_identity_sha256": None,
+                 "artifact_ref": None, "model_ref": None, "codec": None,
+                 "declared_bits": None, "declared_head_bits": None},
+        scope=dsmanifest.native_scope(),
+        panel={"panel_id": None, "panel_file": "panel/panel.json",
+               "panel_file_sha256": "0" * 64,
+               "suite_token_hash_sha256": panel_doc["suite_token_hash_sha256"],
+               "panel_token_sha256_legacy": panel_doc["panel_token_sha256_legacy"],
+               "upstream_suite_token_sha256": suite.get("suite_token_hash_sha256"),
+               "panel_receipt_sha256": None, "repository": None, "revision": None,
+               "contexts": len(panel_records),
+               "context_length": int(suite.get("context_length") or 0),
+               "scored_positions_total": panel_doc["scored_positions_total"],
+               "scoring_window": panel_doc["scoring_window"],
+               "tokenizer": panel_doc["tokenizer"], "remap_file": None,
+               "contamination": panel_doc["contamination"]},
+        capture={"manifest_file": "capture/manifest.json",
+                 "manifest_file_sha256": "0" * 64,
+                 "capture_content_digest": capture_doc["capture_content_digest"],
+                 "form": form,
+                 "semantic_point": translation["capture"]["semantic_point"],
+                 "tensor_key": capture_doc["tensor_key"],
+                 "dtype": translation["capture"]["dtype"], "dtype_lossless": True,
+                 "hidden_width": translation["capture"].get("hidden_width"),
+                 "vocab_size": int(translation["capture"]["vocab_size"] or 0),
+                 "head_separable": form == "hidden",
+                 "head_not_separable_reason": None,
+                 "records_count": len(capture_records),
+                 "scored_rows_total": capture_doc["total_scored_rows"],
+                 "total_size_bytes": capture_doc["total_size_bytes"],
+                 "lossy_codec": None},
+        head={"present": bool(head_rel), "file": head_rel, "head_json": "head/head.json",
+              "tensor_key": head_key, "compat_tensor_key": "weight",
+              "shape": head_doc["shape"], "dtype": head_doc["dtype"], "bias": None,
+              "file_sha256": head_file_sha, "raw_tensor_sha256": head_content,
+              "tensor_content_sha256": head_content, "quantized": None, "bits": None,
+              "source": "unknown", "applied_in_capture": (form == "logit"),
+              "final_norm": None, "equality_receipt": None},
+        runtime={"file": "runtime/capture-runtime.json", "file_sha256": "0" * 64,
+                 "lane": lane, "lane_inferred": True, "lane_identity_sha256": None,
+                 "stack_fingerprint_sha256": runtime_doc["stack_fingerprint_sha256"],
+                 "backend_identity_sha256": None, "runtime_reader_sha256": None,
+                 "source": "kimi-k3-capture-runtime"},
+        determinism=dict(translation["determinism"],
+                         evidence_hashes=[capture_doc["capture_content_digest"]],
+                         distinct_evidence_hash_count=1),
+        coverage=coverage,
+        interop=dsmanifest.interop_block(
+            adapted_from={"source_format": translation["source_format"],
+                          "adapter": "bin/fidelity/dsadapt.py::adapt_k3",
+                          "inferred_fields": sorted(set(inferred)),
+                          "source_schema": "kimi-k3-distribution-fidelity/1"},
+            note="translated from a kimi-k3 artifact; every inferred field forces "
+                 "comparability.class = advisory at compare time."),
+        disclosures=[{"code": "subset_of_panel", "severity": "caveat",
+                      "affects_comparability": True,
+                      "detail": coverage["subset_detail"]}]
+        if not coverage["complete"] else
+        [{"code": "no_known_deviations", "severity": "info",
+          "affects_comparability": False, "detail": "full panel"}],
+        upstream_receipts=upstream)
+
+    compat_info = {}
+    if emit_k3_compat:
+        compat_info = k3compat.emit(
+            writer, panel_doc=panel_doc, capture_doc=capture_doc,
+            manifest_capture=manifest["capture"], head_relpath=head_rel,
+            dataset_name=name)
+        manifest["interop"].update(compat_info)
+    writer.add_file(report_name, (F.canonical_json(dict(
+        translation, inferred_fields=sorted(set(inferred)))) + "\n").encode("utf-8"))
+    writer.add_readme(
+        "---\nlicense: other\n---\n\n# %s\n\nTranslated from a kimi-k3 "
+        "distribution-fidelity artifact by `bin/fidelity-dataset adapt --source k3v1 "
+        "--emit-dataset`.\n" % name)
+    report = dsvalidate.Report(out_dir)
+    report.ok("adapter")
+    written = writer.finish(manifest, panel_doc, capture_doc, head_doc, runtime_doc,
+                            validation_report=report.to_dict())
+    return {"written": True, "root": os.path.abspath(out_dir),
+            "dataset_sha256": written[F.SEAL_FIELD],
+            "capture_content_digest": written["capture"]["capture_content_digest"],
+            "records": len(capture_records),
+            "head_payload_present": bool(head_rel)}
+
+
+def _place(src: str, dest: str, link: bool) -> None:
+    if link:
+        try:
+            os.link(src, dest)
+            return
+        except OSError:
+            pass
+    shutil.copy2(src, dest)
 
 
 # ---------------------------------------------------------------------------
 # malaiwah serving v2 -- our own published capture
 # ---------------------------------------------------------------------------
+
+
+_TOKENIZER_SNAPSHOT_RE = re.compile(r"@\s*([0-9a-f]{40})")
+
+
+def _serving_v2_tokenizer(suite: Dict[str, Any]) -> Dict[str, Any]:
+    """The panel's tokenizer identity, out of the suite manifest.
+
+    `suite["model"]` is a string of the form
+    `"<repo> @ <40-hex> (tokenizer snapshot)"`, and `model_identity` carries the
+    digest of the tokenizer files themselves.  Both are properties of the panel:
+    every capture on this panel tokenized with exactly this tokenizer, whatever
+    weights it was running.
+    """
+    label = str(suite.get("model") or "")
+    identity = suite.get("model_identity") or {}
+    repository = label.split("@")[0].strip().split(" ")[0] or None
+    match = _TOKENIZER_SNAPSHOT_RE.search(label)
+    return {
+        "id": "glm-5.3-flash",
+        "repository": repository,
+        "revision": match.group(1) if match else None,
+        "vocab_size": int(suite["vocab_size"]),
+        "add_special_tokens": False,
+        "chat_template_applied": False,
+        # Stronger than a revision: the digest of the tokenizer FILES, which is
+        # what `model_identity` pins and what actually determines the ids.
+        "tokenizer_sha256": identity.get("tokenizer_sha256"),
+    }
 
 
 def adapt_serving_v2(
@@ -342,6 +786,7 @@ def adapt_serving_v2(
     lane: str = "other",
     limit: Optional[int] = None,
     link: bool = True,
+    emit_k3_compat: bool = False,
     weights: Optional[Dict[str, Any]] = None,
     scope: Optional[Dict[str, Any]] = None,
     quantized: bool = False,
@@ -484,11 +929,14 @@ def adapt_serving_v2(
         panel_id="panel--malaiwah.glm53-flash.suite-v1",
         name="GLM-5.3-Flash fidelity suite v1 token panel",
         records=panel_records, context_length=int(suite["context_length"]),
-        tokenizer={"id": "glm-5.3-flash",
-                   "repository": "zai-org/GLM-5.3-Flash-BF16",
-                   "revision": (source.get("candidate_identity") or {}).get("model_revision"),
-                   "vocab_size": int(suite["vocab_size"]),
-                   "add_special_tokens": False, "chat_template_applied": False},
+        # The tokenizer belongs to the PANEL, not to the artifact being captured.
+        # This used to read `candidate_identity.model_revision`, which is the
+        # revision of the weights under test -- so a BF16 capture and an FP8
+        # capture of the SAME panel declared different tokenizers, and PANEL-D6
+        # refused a comparison that is perfectly legitimate. The suite manifest
+        # names the tokenizer snapshot it actually tokenized with; that is the
+        # value, identically on both sides.
+        tokenizer=_serving_v2_tokenizer(suite),
         # NOT the published suite_token_sha256: that is the aggregate over all
         # 5,120 contexts, and this dataset may be a shard.  The upstream value
         # travels as a separate, non-normative field instead of being asserted
@@ -646,6 +1094,11 @@ def adapt_serving_v2(
             "stripped_fields": names,
         }])
 
+    if emit_k3_compat:
+        manifest["interop"].update(k3compat.emit(
+            writer, panel_doc=panel_doc, capture_doc=capture_doc,
+            manifest_capture=manifest["capture"], head_relpath=head_rel,
+            dataset_name=name))
     writer.add_readme(
         "---\nlicense: mit\n---\n\n# %s\n\nAdapted from `glm53flash-fidelity-capture/2` by "
         "`bin/fidelity-dataset adapt --source malaiwah-serving-v2`.\n" % name)

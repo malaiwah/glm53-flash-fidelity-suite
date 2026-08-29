@@ -292,6 +292,13 @@ largely stops existing.
   **refuses** a hidden-form comparison across differing heads (HEAD-1b) unless
   you pass `--disclose-head-substitution`, which forces `class: advisory`, a
   downward bias block, and a **blocking** disclosure — i.e. not publishable.
+  There is one case that override must not reach: a quant that changes **only**
+  the head (stock EXL3 `head_bits` 6–8 does exactly this) produces post-norm
+  hiddens bitwise identical to the reference's, so its capture digest matches
+  and replaying both sides through one head subtracts a quantity from itself —
+  0.0 nats, top-1 1.0, labelled a reproduction. The comparator refuses that
+  outright (HEAD-1c, no override): a head-only quantization cannot be measured
+  by hidden replay and must publish logit form.
 * **Self-compare.** Comparing a capture against itself is a *reproduction
   confirmation* and must yield exactly `0.0`, top-1 exactly `1.0`, and a
   tokenwise array of literal zeros. For our 51,175-position panel that array is
@@ -301,6 +308,31 @@ largely stops existing.
   logits: 419 MB vs 31.70 GB for the 25-window panel, 85.9 GB vs 6.49 TB for
   the 10.48M-position suite. Hidden form is therefore the default; logit form
   stays expressible for stacks whose head is not separable.
+
+### What is runnable today, and what is not
+
+The split is a format plus tooling, not yet a published corpus, and it is worth
+saying plainly which is which:
+
+**Runnable now, on a laptop, with no GPU and no weights.** Step 3 in full:
+`verify`, `validate`, `describe`, `compare` (including the A == B reproduction
+confirmation and every gate refusal), `provenance-template`, `--emit-submission`
+with the registry's own gate run over the output, `adapt` from our published
+serving-lane capture or from a kimi-k3 artifact, `verify-k3-compat`, and the
+whole card generator and validator. The real BF16-vs-FP8 comparison in this
+document — 0.0353 nats over 4,094 positions through the real `[154880, 4096]`
+head — runs in about ten seconds on this Mac.
+
+**Not runnable yet, and both ends are the reason.** No conformant **root
+fidelity dataset** is published, so "download it rather than re-run it" is the
+architecture's promise and not yet its state; and no **token panel** is
+published, so `capture` cannot be started from a clean checkout. Publishing
+suite-scale captures is out of scope for v1 (spec §14) — the 85.9 GB is the easy
+part; deciding what a canonical root *is* is the operator decision. Until then
+the honest description of steps 1 and 2 is: the format is fixed and the wrapper
+is written, and the artifacts they consume have to be produced.
+[`bin/README.md`](bin/README.md#before-you-start--what-exists-today-and-what-does-not)
+states each gap at the point of use.
 
 Format: [`docs/FIDELITY-DATASET-SPEC.md`](docs/FIDELITY-DATASET-SPEC.md).
 Card annotation: [`docs/CARD-ANNOTATION-SPEC.md`](docs/CARD-ANNOTATION-SPEC.md).

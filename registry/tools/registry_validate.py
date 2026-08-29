@@ -359,6 +359,15 @@ def check_comparability(C, rep):
                                          "measured on one lane is not the zero-point for a different "
                                          "lane, even when the two rows share a comparability key."
                             % (mid, row_lane, bias["floor_measurement_ref"], floor_lane), mid)
+                # BIAS-007: the producing tool's own verdict, honoured. A row stamped
+                # usable_as_floor:false was declared unusable as a zero-point by the
+                # code that computed it -- cross-stack, head-substituted, or
+                # cross-lane -- and citing it here is how that stamp gets laundered.
+                if (floor.get("comparability") or {}).get("usable_as_floor") is False:
+                    rep.err("BIAS-007", "%s names %s as its floor, but that row carries "
+                                        "comparability.usable_as_floor: false -- the tool that "
+                                        "produced it declared it unusable as a zero-point."
+                            % (mid, bias["floor_measurement_ref"]), mid)
 
     # CMP-003 / CMP-005
     for key, members in sorted(groups.items()):

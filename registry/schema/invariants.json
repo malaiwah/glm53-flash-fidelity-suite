@@ -36,6 +36,11 @@
       "enforced_by": "tools/registry_add.py build_row (exit 7 at write time)"
     },
     {
+      "id": "BIAS-007",
+      "severity": "error",
+      "statement": "a row whose comparability.usable_as_floor is false may not be named as any other row's comparability.bias.floor_measurement_ref. The producing tool stamped it unusable as a zero-point -- cross-lane (BIAS-006), cross-stack, or head-substituted -- and a downstream row may not launder it by citing it."
+    },
+    {
       "id": "CMP-001",
       "severity": "error",
       "statement": "comparability.key equals 'cmp--' + sha256(join('|', [key_inputs.panel_id, key_inputs.reference_id, key_inputs.metric_name, key_inputs.direction, key_inputs.accumulation_dtype, key_inputs.stack_relation, key_inputs.head_policy]))[:16]. Recomputed, never trusted."
@@ -475,7 +480,9 @@
     "different_reference_kind",
     "estimator_overridden",
     "estimator_unknown",
+    "head_substituted",
     "local_device_reduction_order",
+    "lossy_capture_codec",
     "memory_budget_schedule",
     "no_known_deviations",
     "non_sealed_lane",

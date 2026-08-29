@@ -1875,6 +1875,9 @@ def submission_to_records(sub, path, fsha, registry, strict_new=False):
           "accumulation_dtype": est["accumulation_dtype"],
           "stack_relation": est["stack_relation"], "head_policy": est["head_policy"]}
     key = L.comparability_key(ki)
+    declared_cmp = sub.get("comparability") or {}
+    declared_bias = declared_cmp.get("bias")
+    declared_floor = declared_cmp.get("usable_as_floor")
     disclosures = [dict(d) for d in sub["disclosures"]]
     for d in disclosures:
         d.setdefault("affects_comparability", False)
@@ -1957,11 +1960,18 @@ def submission_to_records(sub, path, fsha, registry, strict_new=False):
                                   and pan.get("sealed")
                                   and not any(d.get("affects_comparability") for d in disclosures))
             else "advisory",
-            "bias": ({"kind": "cross_stack_capture_replay", "direction": "upward",
-                      "floor_measurement_ref": None, "estimated_magnitude": None,
-                      "detail": "Cross-stack capture declared by the submission; a floor measurement "
-                                "on this panel must be named before this row can be published."}
-                     if est["stack_relation"] == "cross_stack" else None)},
+            # A submission MAY declare its own bias and floor usability. When it
+            # does, that wins: the tool that computed the number knows things
+            # stack_relation cannot express -- a head substitution biases the
+            # number DOWNWARD and is not a cross-stack effect at all, so deriving
+            # the bias from stack_relation alone would file it as `bias: null`.
+            "bias": (declared_bias if declared_bias is not None else
+                     ({"kind": "cross_stack_capture_replay", "direction": "upward",
+                       "floor_measurement_ref": None, "estimated_magnitude": None,
+                       "detail": "Cross-stack capture declared by the submission; a floor measurement "
+                                 "on this panel must be named before this row can be published."}
+                      if est["stack_relation"] == "cross_stack" else None)),
+            "usable_as_floor": declared_floor},
         "quality_gate": None,
         "cross_refs": {"local_ai_registry": {"model_id": None, "model_instance_id": None,
                                              "url": None, "match_confidence": "unverified"}},

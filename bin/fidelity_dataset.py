@@ -117,7 +117,9 @@ def cmd_verify(args):
     emit("  head tensor content     %s" % manifest["head"].get("tensor_content_sha256"))
     emit("  panel suite token hash  %s" % manifest["panel"]["suite_token_hash_sha256"])
     emit("  tensors recomputed      %s" % ("yes" if args.verify_tensors else
-                                           "no (pass --verify-tensors)"))
+                                           "NO (--no-verify-tensors was passed: a byte "
+                                           "flipped inside a tensor whose checksums were "
+                                           "refreshed is not caught)"))
     for warning in report.warnings:
         emit("  warning [%s] %s" % (warning["rule"], warning["message"]))
     if args.json:
@@ -187,6 +189,104 @@ def cmd_describe(args):
 # ---------------------------------------------------------------------------
 
 
+PROVENANCE_TEMPLATE = {
+    "_comment": [
+        "Everything a registry submission needs that a fidelity dataset cannot know.",
+        "artifact: the quant on the Hub. revision MUST be the immutable 40-hex commit",
+        "  (IDENT-001). scope says what is quantized and what is native; it is what",
+        "  scope_digest is computed over, so it is identity, not description.",
+        "panel_ref / reference_ref: registry ids that must ALREADY exist -- a",
+        "  measurement may not introduce a panel (CONTRIBUTING.md section 6).",
+        "See registry/schema/submission.schema.json for every field and its meaning.",
+    ],
+    "measurer": {"name": "", "handle": "", "url": None, "is_artifact_author": False},
+    "artifact": {
+        "repository": "owner/repo", "revision": "0" * 40, "url": None,
+        "container": "safetensors", "precision_label": None, "size_bytes": None,
+        "index_sha256": None, "config_sha256": None, "shard_hash_verification": "none",
+        "codec": {"family": "exl3", "bits_per_weight_nominal": None,
+                  "bits_per_weight_effective": None, "group_size": None,
+                  "quantizer_tool": None, "quantizer_version": None},
+        "scope": {"policy": "uniform", "head_policy": "native", "kv_cache_dtype": "bf16",
+                  "assignments": [{"tensor_class": "routed_expert_mlp",
+                                   "treatment": "quantized", "format": "exl3",
+                                   "bits_per_weight": None, "layer_range": None}]},
+        "producer": {"name": "", "handle": None, "url": None},
+    },
+    "panel": {"panel_ref": "panel--", "panel_token_sha256": None,
+              "panel_receipt_sha256": None, "contexts": None,
+              "scored_positions_total": None},
+    "reference": {"reference_ref": "reference--", "teacher_receipt_sha256": None,
+                  "teacher_backend_identity_sha256": None},
+    "environment": {"gpu": None, "gpu_count": None, "host": None,
+                    "wall_clock_hours": None},
+}
+
+
+def _validate_submission(path, handle=None):
+    """Run `registry/tools/registry_validate.py --submission` on our own output.
+
+    The validator also enforces that the file lives in a directory named after
+    the measurer's handle -- a rule about where you COMMIT it in the registry,
+    not about where this tool happened to write it. So the check runs on a copy
+    filed the way a contributor would file it, and the caller is told the path
+    the registry expects.
+    """
+    validator = os.path.join(REPO, "registry", "tools", "registry_validate.py")
+    if not os.path.isfile(validator):
+        return {"accepted": None, "summary": "registry/ not present; not checked",
+                "detail": []}
+    target = path
+    if handle:
+        import shutil
+        import tempfile
+
+        staged = os.path.join(tempfile.mkdtemp(prefix="fidelity-submit-"), handle)
+        os.makedirs(staged, exist_ok=True)
+        target = os.path.join(staged, os.path.basename(path))
+        shutil.copyfile(path, target)
+    proc = subprocess.run([sys.executable, validator, "--submission", target],
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          universal_newlines=True)
+    lines = [line for line in (proc.stdout or "").splitlines() if line.strip()]
+    accepted = proc.returncode == 0
+    return {"accepted": accepted,
+            "summary": ("ACCEPTED by registry_validate.py --submission"
+                        if accepted else
+                        "REJECTED by registry_validate.py --submission (exit %d)"
+                        % proc.returncode),
+            "detail": lines}
+
+
+def cmd_verify_k3_compat(args):
+    from fidelity import k3compat
+
+    problems = k3compat.verify(args.dataset)
+    if problems:
+        for problem in problems:
+            emit("  %s" % problem)
+        return refuse("k3_compat_invalid", "%d problem(s) in compat/" % len(problems),
+                      "regenerate it: the tree is a VIEW, never hand-edited "
+                      "(and it is inside the seal, so an edit refuses the dataset too)")
+    emit("compat/ is faithful to %s" % args.dataset)
+    emit("  the kimi-k3 comparator reads this dataset unmodified:")
+    emit("    --suite-manifest %s/compat/suite-manifest.json" % args.dataset)
+    return OK
+
+
+def cmd_provenance_template(args):
+    text = json.dumps(PROVENANCE_TEMPLATE, indent=2)
+    if args.out:
+        with open(args.out, "w") as handle:
+            handle.write(text + "\n")
+        emit("wrote %s" % args.out)
+        emit("fill it in, then: fidelity-dataset compare ... --emit-submission "
+             "--submission-provenance %s" % args.out)
+        return OK
+    emit(text)
+    return OK
+
+
 def cmd_compare(args):
     from fidelity import dscompare
 
@@ -209,7 +309,8 @@ def cmd_compare(args):
     try:
         receipt = dscompare.compare(reference, candidate, args.out, options)
     except dscompare.Refusal as exc:
-        return refuse(exc.code, "gate %s: %s" % (exc.gate, exc.message), exc.override)
+        return refuse(exc.code, "gate %s: %s" % (exc.gate, exc.message),
+                      exc.override or exc.remedy)
     except F.FormatError as exc:
         return refuse(exc.code, exc.message)
 
@@ -242,19 +343,46 @@ def cmd_compare(args):
         return refuse("schema_invalid", "the emitted receipt does not validate")
 
     if args.emit_submission:
+        provenance = {}
+        if args.submission_provenance:
+            try:
+                provenance = F.read_json(args.submission_provenance)
+            except Exception as exc:
+                return refuse("bad_provenance", "cannot read %s: %s"
+                              % (args.submission_provenance, exc),
+                              "write one with --print-provenance-template")
+        measurer = provenance.get("measurer") or {
+            "name": args.measurer or "unknown", "handle": args.measurer,
+            "url": None, "is_artifact_author": False}
+        submission_path = os.path.join(args.out, "submission-receipt.json")
         try:
             dscompare.emit_submission(
-                receipt, os.path.join(args.out, "submission-receipt.json"),
-                measurer={"name": args.measurer or "unknown", "handle": args.measurer,
-                          "url": None, "is_artifact_author": False},
-                artifact={}, panel={}, reference={})
+                receipt, submission_path, measurer=measurer,
+                artifact=provenance.get("artifact") or {},
+                panel=provenance.get("panel") or {},
+                reference=provenance.get("reference") or {},
+                environment=provenance.get("environment"))
         except dscompare.NotAMeasurement as exc:
+            emit("  submission          %s" % exc)
+            return WARN
+        except dscompare.MissingProvenance as exc:
             emit("  submission          %s" % exc)
             return WARN
         except Exception as exc:  # the builder's own refusals carry their reason
             emit("  submission          REFUSED: %s" % exc)
             return WARN
-        emit("  submission          %s" % os.path.join(args.out, "submission-receipt.json"))
+        emit("  submission          %s" % submission_path)
+        # The registry's OWN gate, on the file we just wrote, before anyone is
+        # told it is submittable. `--emit-submission` used to print a path and
+        # exit 0 for a file that `registry-submit` rejected with twenty errors.
+        verdict = _validate_submission(submission_path, measurer.get("handle"))
+        emit("  submission gate     %s" % verdict["summary"])
+        for line in verdict["detail"][:8]:
+            emit("    %s" % line)
+        if not verdict["accepted"]:
+            return WARN
+        emit("  to submit           copy it to registry/receipts/%s/ and open a PR "
+             "(registry/CONTRIBUTING.md)" % (measurer.get("handle") or "<your-handle>"))
     if receipt["comparability"]["class"] != "strict":
         return WARN
     return OK
@@ -349,11 +477,22 @@ def cmd_capture(args):
 
 
 def cmd_adapt(args):
+    # `--role` defaults to root, which is right for our own capture and WRONG for
+    # a kimi-k3 translation (ROOT-1 asserts a head quantization status that
+    # artifact never records). Distinguish "the default" from "the operator asked
+    # for root", so the refusal only fires on a real request.
+    args.role_explicit = any(item == "--role" or item.startswith("--role=")
+                             for item in sys.argv[1:])
     try:
         if args.source in ("k3v1", "k3v0-window"):
             report = dsadapt.adapt_k3(
                 args.input, args.out, source=args.source, tokens_dir=args.tokens,
-                recompute_content_digests=args.recompute_content_digests)
+                recompute_content_digests=args.recompute_content_digests,
+                emit_dataset=args.emit_dataset, emit_k3_compat=args.emit_k3_compat,
+                dataset_id=args.dataset_id or "fidelity--adapted.kimi-k3",
+                name=args.name or "adapted kimi-k3 capture",
+                role=(args.role if args.role_explicit else "derived"),
+                lane=args.lane, limit=args.limit, link=not args.copy)
             emit("translated %s -> %s" % (args.source, args.out))
             emit("  panel aggregate agrees with the source manifest: %s"
                  % report["panel"]["aggregate_agrees"])
@@ -365,6 +504,23 @@ def cmd_adapt(args):
                 emit("    - %s" % field)
             for item in report.get("outstanding") or []:
                 emit("  outstanding: %s" % item)
+            emitted = report.get("emitted")
+            if emitted and emitted.get("written"):
+                emit("  SEALED DATASET -> %s" % args.out)
+                emit("    dataset_sha256          %s" % emitted["dataset_sha256"])
+                emit("    capture_content_digest  %s" % emitted["capture_content_digest"])
+                emit("    records                 %s" % emitted["records"])
+                emit("    head payload present    %s" % emitted["head_payload_present"])
+                check = dsvalidate.validate_dataset(args.out, verify_tensors=True,
+                                                    allow_partial=True)
+                emit("    validate                %d error(s), %d warning(s)"
+                     % (len(check.errors), len(check.warnings)))
+                _print_report(check, verbose=False)
+                if check.errors:
+                    return REFUSED
+            elif emitted:
+                emit("  NOT SEALED: %s" % emitted["reason"])
+                return WARN
             return WARN if report["coverage"]["present_records"] == 0 else OK
         if args.source == "llamacpp-kld":
             report = dsadapt.adapt_llamacpp_kld(args.input, args.out)
@@ -381,7 +537,8 @@ def cmd_adapt(args):
                 args.input, args.out, suite_dir=args.suite, head_dir=args.head_dir,
                 dataset_id=args.dataset_id or "fidelity--adapted.serving-v2",
                 name=args.name or "adapted serving-v2 capture",
-                role=args.role, lane=args.lane, limit=args.limit, link=not args.copy)
+                role=args.role, lane=args.lane, limit=args.limit, link=not args.copy,
+                emit_k3_compat=args.emit_k3_compat)
             emit("adapted -> %s" % args.out)
             emit("  dataset_sha256          %s" % manifest[F.SEAL_FIELD])
             emit("  capture_content_digest  %s" % manifest["capture"]["capture_content_digest"])
@@ -460,7 +617,12 @@ def build_parser():
 
     p = sub.add_parser("verify", help="seal + digest verification; stops at the first refusal")
     p.add_argument("dataset")
-    p.add_argument("--verify-tensors", action="store_true")
+    p.add_argument("--verify-tensors", dest="verify_tensors", action="store_true",
+                   default=True, help="(default) recompute every tensor_content_sha256")
+    p.add_argument("--no-verify-tensors", dest="verify_tensors", action="store_false",
+                   help="skip re-reading the tensors. The seal and checksums.txt still "
+                        "verify, but a byte flipped inside a tensor whose checksums were "
+                        "refreshed is NOT caught. Only for suites too large to re-read.")
     p.add_argument("--manifest-only", action="store_true")
     p.add_argument("--allow-partial", action="store_true")
     p.add_argument("--json")
@@ -470,7 +632,10 @@ def build_parser():
     p = sub.add_parser("validate", help="report EVERY failure; also validates a receipt")
     p.add_argument("dataset", nargs="?")
     p.add_argument("--receipt", help="validate a comparison receipt instead")
-    p.add_argument("--verify-tensors", action="store_true")
+    p.add_argument("--verify-tensors", dest="verify_tensors", action="store_true",
+                   default=True, help="(default) recompute every tensor_content_sha256")
+    p.add_argument("--no-verify-tensors", dest="verify_tensors", action="store_false",
+                   help="skip re-reading the tensors; see `verify --no-verify-tensors`")
     p.add_argument("--manifest-only", action="store_true")
     p.add_argument("--allow-partial", action="store_true")
     p.add_argument("--strict", action="store_true", help="warnings become errors")
@@ -493,10 +658,19 @@ def build_parser():
                    help="run the math even when the hash proof answers, and assert agreement")
     p.add_argument("--allow-cross-lane", action="store_true")
     p.add_argument("--allow-partial", action="store_true")
-    p.add_argument("--verify-tensors", action="store_true")
+    p.add_argument("--verify-tensors", dest="verify_tensors", action="store_true",
+                   default=True, help="(default) recompute every tensor_content_sha256")
+    p.add_argument("--no-verify-tensors", dest="verify_tensors", action="store_false",
+                   help="skip re-reading the tensors; see `verify --no-verify-tensors`. "
+                        "The receipt records which of the two ran.")
     p.add_argument("--disclose-head-substitution", action="store_true",
                    help="HEAD-1b override: advisory, downward bias, BLOCKING disclosure")
-    p.add_argument("--emit-submission", action="store_true")
+    p.add_argument("--emit-submission", action="store_true",
+                   help="also write a registry submission; needs --submission-provenance")
+    p.add_argument("--submission-provenance", metavar="FILE",
+                   help="JSON with the artifact/panel/reference/measurer blocks a submission "
+                        "needs and a dataset cannot know; skeleton: "
+                        "`fidelity-dataset provenance-template`")
     p.add_argument("--measurer")
     p.add_argument("--reference-label")
     p.add_argument("--candidate-label")
@@ -513,14 +687,35 @@ def build_parser():
     p.add_argument("--head-dir", help="head directory (malaiwah-serving-v2)")
     p.add_argument("--dataset-id")
     p.add_argument("--name")
-    p.add_argument("--role", choices=F.ROLES, default="root")
+    p.add_argument("--role", choices=F.ROLES, default="root",
+                   help="malaiwah-serving-v2 defaults to root; a k3 translation defaults to "
+                        "derived, because ROOT-1 asserts things a k3 artifact never says")
     p.add_argument("--lane", choices=F.LANES, default="other")
     p.add_argument("--limit", type=int, help="adapt only the first N records")
     p.add_argument("--copy", action="store_true", help="copy tensors instead of hardlinking")
     p.add_argument("--allow-partial", action="store_true")
     p.add_argument("--recompute-content-digests", action="store_true",
                    help="read tensors to upgrade container digests to content digests")
+    p.add_argument("--emit-k3-compat", action="store_true",
+                   help="also write compat/, so the kimi-k3 comparator reads this dataset "
+                        "UNMODIFIED. Metadata only -- three JSON files of relative aliases, "
+                        "no tensor is duplicated. Written before the seal, so it is covered "
+                        "by checksums.txt.")
+    p.add_argument("--emit-dataset", action="store_true",
+                   help="k3v1/k3v0-window: also WRITE a sealed v1 dataset, not just the "
+                        "translation report. Needs the capture tensors present locally -- a "
+                        "seal is computed over bytes, never fabricated.")
     p.set_defaults(func=cmd_adapt)
+
+    p = sub.add_parser("verify-k3-compat",
+                       help="check a compat/ tree against the dataset it describes")
+    p.add_argument("dataset")
+    p.set_defaults(func=cmd_verify_k3_compat)
+
+    p = sub.add_parser("provenance-template",
+                       help="skeleton for --submission-provenance")
+    p.add_argument("--out", help="write it here instead of stdout")
+    p.set_defaults(func=cmd_provenance_template)
 
     p = sub.add_parser("describe", help="print the identity card")
     p.add_argument("dataset")
@@ -547,7 +742,19 @@ def main(argv=None):
     if args.command == "validate" and not args.dataset and not args.receipt:
         emit("validate needs a DATASET or --receipt")
         return USAGE
-    return args.func(args)
+    try:
+        return args.func(args)
+    except Exception as exc:                                    # noqa: BLE001
+        # A hub failure is a REFUSAL with a reason, not a traceback. Every
+        # hf:// path -- verify, validate, compare, describe, adapt, publish --
+        # used to exit 1 with twenty lines of stack above the useful line.
+        from fidelity import dshub
+        if not isinstance(exc, dshub.HubError):
+            raise
+        return refuse("hub_error", str(exc),
+                      "a 404 on fidelity-dataset.json means the repo is not a fidelity "
+                      "dataset -- translate it with `adapt` first. A 401/403 means the "
+                      "token is missing or lacks access: pass --token-file.")
 
 
 if __name__ == "__main__":

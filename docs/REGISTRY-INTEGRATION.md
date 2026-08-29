@@ -1,25 +1,10 @@
-# Registry integration — specified, deliberately not applied
+# Registry integration — what was applied, and what is still deferred
 
-The fidelity-dataset comparison receipt needs three small, **additive** changes
-under `registry/` before a step-3 receipt can become a registry row. They are
-specified here rather than applied, for one reason found at implementation
-time and not at design time:
-
-> **`registry/` is held open by a concurrent workflow.** While this work was
-> being built, `registry/data/{measurements,panels,references}.jsonl`,
-> `registry/schema/{invariants,measurement,submission}.schema.json`,
-> `registry/index.json`, `registry/Makefile`, `registry/README.md` and
-> `registry/tools/seed_registry.py` were all modified in the working tree by
-> the sequential measurement workflow, and `make check` passed through an
-> intermediate state of **11 errors** before returning to `62 passed, 0
-> failed`. Editing `schema/invariants.json` — which that workflow is itself
-> editing — would have produced a merge conflict in a file whose correctness
-> is enforced by a 90-invariant validator.
-
-The constraint was to keep `make check` at 0 errors. Not touching the tree is
-the way to honour that while another workflow owns it. **Nothing under
-`registry/` was modified by this work** (`git status registry/` shows only that
-workflow's changes), and `make check` is green at the time of writing:
+The fidelity-dataset comparison receipt needed small, **additive** changes under
+`registry/` before a step-3 receipt could become a registry row. This document
+was originally a specification of changes deliberately *not* applied, because a
+concurrent workflow held `registry/` open. That workflow has landed; the changes
+below are now **applied**, and `make check` is green with them:
 
 ```
 62 passed, 0 failed
@@ -27,19 +12,18 @@ joint-standard checks: 433 run, 0 error(s)
 OK: schema + invariants clean, README tables match the data, self-tests pass.
 ```
 
-Apply the three changes below in a single change, running `cd registry && make
-check` after each, once the concurrent workflow has landed.
+The one piece that is still deferred is named in §4, with the reason.
 
 ---
 
-## 1. Two new disclosure codes
+## 1. Two new disclosure codes — APPLIED
 
-`registry/schema/invariants.json` → `known_disclosure_codes`, which
-**DISC-004** requires any emitted code to appear in:
+`registry/schema/invariants.json` → `known_disclosure_codes`, which **DISC-004**
+requires any emitted code to appear in:
 
 ```json
-"lossy_capture_codec",
-"head_substituted"
+"head_substituted",
+"lossy_capture_codec"
 ```
 
 * **`lossy_capture_codec`** — a capture whose stored values are not the model's
@@ -49,93 +33,120 @@ check` after each, once the concurrent workflow has landed.
 * **`head_substituted`** — a comparison that applied one artifact's head to
   another artifact's hidden states. Emitted **only** under
   `--disclose-head-substitution` at severity `blocking`, which under
-  **DISC-003** forces `status ∈ {pending, retracted}`. A head-substituted number
-  is not publishable as a measurement, and that is the intent.
+  **DISC-003** forces `status ∈ {pending, retracted}`.
 
-Both codes are already emitted by `bin/fidelity/dscompare.py` today, so a
-receipt carrying either is currently unsubmittable — which is the safe
-direction to be wrong in.
+### Correction: the protection is at row-ingest, NOT at submission
 
-## 2. A `registry_add` adapter
+An earlier revision of this document said of those two codes:
 
-`registry/tools/registry_add.py`: add the exact string
-`malaiwah.fidelity-comparison-receipt.v1` to `OWN_SCHEMAS` and an adapter that
-maps a receipt onto a measurement row.
+> *"Both codes are already emitted by `bin/fidelity/dscompare.py` today, so a
+> receipt carrying either is currently unsubmittable — which is the safe
+> direction to be wrong in."*
 
-The one rule that adapter must enforce, which nothing else can:
+**That was false, and it was load-bearing** — it was the justification for
+deferring these changes. DISC-003 and DISC-004 live in
+`registry_validate.py::check_disclosures`, which iterates over the registry
+**collections** (models, artifacts, panels, references, pipelines,
+measurements). The `--submission` path is a separate function,
+`check_submission`, and calls neither. A structurally valid submission carrying
+`head_substituted` at severity `blocking` is **ACCEPTED at exit 0** by the gate
+`bin/registry-submit` runs and `CONTRIBUTING.md` tells a submitter to run. It is
+caught later, at row ingest — which is real protection, but not the protection
+that was claimed, and not at the moment a contributor would find out.
+
+The fix is not to lean harder on a downstream gate.
+`bin/fidelity/dscompare.py::emit_submission` now **refuses outright** when any
+disclosure carries `severity: blocking` (**SC-5**), alongside its existing SC-3
+refusal of a non-measurement `comparison_kind`. The docs already said such a
+number is not publishable as a measurement; the tool that mints it is now the
+one that says no. Case **N15** in `bin/selftest_fidelity_compare.py`.
+
+## 2. `comparability` on a submission — APPLIED
+
+`submission.schema.json` gains an **optional** `comparability` block:
+
+```json
+"comparability": {
+  "bias": { "$ref": "measurement.schema.json#/properties/comparability/properties/bias" },
+  "usable_as_floor": { "type": ["boolean", "null"] }
+}
+```
+
+and `measurement.schema.json`'s `comparability` gains an optional
+`usable_as_floor`. `registry_add.py::submission_to_records` prefers a declared
+bias when the submission carries one, and falls back to the previous derivation
+from `estimator.stack_relation` when it does not.
+
+**Why this was necessary.** `emit_submission` forwarded metric, estimator,
+determinism, scope and disclosures — and dropped `comparability.bias` and
+`usable_as_floor` on the floor. `registry_add` synthesises a bias only for
+`stack_relation == cross_stack`, so a row derived from a **head-substituted**
+comparison arrived with `bias: null` for a comparison whose own receipt said
+`{kind: other, direction: downward, detail: "…the candidate's own
+head-quantization error is erased, biasing the number DOWNWARD…"}`. That is
+exactly what BIAS-001 exists to prevent, arriving through the submission path.
+Cases **N16b**, **N16c**, **N16d**.
+
+## 3. BIAS-007 — APPLIED
+
+```
+BIAS-007 [error] — a row whose comparability.usable_as_floor is false may not be
+named as any other row's comparability.bias.floor_measurement_ref.
+```
+
+Implemented in `registry_validate.py` beside BIAS-006, in the same loop over
+`comparability.bias.floor_measurement_ref`. BIAS-006 refuses a floor from
+another **lane**; BIAS-007 refuses a floor the producing tool itself stamped
+unusable — cross-lane, cross-stack, or head-substituted. It is the registry
+honouring a verdict the comparator already reached, rather than re-deriving it
+from fields that cannot see the reason.
+
+## 4. Still deferred: a `registry_add` adapter for the receipt itself
+
+`malaiwah.fidelity-comparison-receipt.v1` is **not** in `registry_add.py`'s
+`OWN_SCHEMAS`, so `registry_add.py from-receipt` cannot ingest a comparison
+receipt directly. This is deliberate and it costs nothing today, because the
+submission path is the supported one and it now works end to end:
+
+```
+compare --emit-submission --submission-provenance FILE
+  → submission-receipt.json
+  → registry_validate.py --submission   ACCEPTED
+  → copy into registry/receipts/<handle>/ and open a PR
+```
+
+The comparison receipt is the **evidence**; the submission is the **claim**.
+Adding a second ingest path would mean two places that map a number onto a row,
+which is the same "two implementations of one thing" problem the shared
+`registry_lib` import exists to avoid. If it is ever added, the one rule it must
+enforce that nothing else can is SC-3:
 
 ```python
 if receipt.get("comparison_kind") != "measurement":
-    raise Refusal(...)   # SC-3
+    raise Refusal(...)
 ```
 
-`bin/fidelity/dscompare.py::emit_submission` already refuses this bin-side, and
-`bin/fidelity/receipt.py::_scan_for_unsubmittable` is the second independent
-axis. The registry-side check is the third, and it is the one that survives
-somebody hand-editing a receipt.
+Three further invariants remain specified-but-unimplemented, all mechanically
+checkable from data already in the rows, and none of them blocking:
 
-Field mapping (every value is already in the receipt):
-
-| row field | receipt path |
-|---|---|
-| `metric` | `metric` (name/value/units/direction/higher_is_better) |
-| `estimator` | `estimator` |
-| `determinism` | `determinism` |
-| `measurement_scope` | `measurement_scope` |
-| `comparability.key` / `key_inputs` | `comparability.key` / `key_inputs` (computed with `registry_lib.comparability_key`, not recomputed) |
-| `comparability.bias` | `comparability.bias` |
-| `scope_digest` | `candidate.scope_digest` |
-| `disclosures` | `disclosures` |
-| `provenance.sources[]` | `reference.dataset_sha256` and `candidate.dataset_sha256`, kind `fidelity_dataset` |
-
-## 3. Four invariants
-
-All mechanically checkable from data already in the rows. Suggested severities
-in brackets.
-
-* **DS-001** [error] — a row whose `provenance.sources[]` contains a
-  `fidelity_dataset` source carries that dataset's `dataset_sha256` as the
-  source digest. A row derived from a dataset must name the dataset by its
-  seal, not by its repository.
+* **DS-001** [error] — a row whose `provenance.sources[]` names a fidelity
+  dataset carries that dataset's `dataset_sha256` as the source digest. (The
+  emitter already does this; the invariant would recompute it for hand-edited
+  data.)
 * **DS-002** [error] — a `head_substituted` disclosure at severity `blocking`
-  forces `status ∈ {pending, retracted}`. This is a specialization of DISC-003,
-  stated separately so the code cannot be silently downgraded to `caveat` and
-  keep its row published.
-* **DS-003** [error] — a row may not be derived from a receipt whose
-  `comparison_kind` is `reproduction_confirmation` or `run_to_run_floor`.
-  Enforced at write time by the adapter above; this recomputes it for
-  hand-edited data, exactly as BIAS-006 does for the lane check.
-* **DS-004** [warn] — a row citing a fidelity dataset whose `lane` differs from
-  the row's own lane carries a `cross_engine_capture` or `non_sealed_lane`
-  disclosure.
-
-### A fifth, found in live data
-
-**DS-005** [warn] — `comparability.bias.floor_measurement_ref`, when set, points
-at a measurement whose `measurement_scope.scope_name` equals the biased row's
-own `scope_name`.
-
-This is the scope analogue of **BIAS-006**'s lane rule, and it was not
-hypothetical. During this work the registry briefly carried
-`measurement--glm53.k8-8bpw-stream.brandonmusic-final25.clean17` (17 windows,
-34,799 positions) citing
-`measurement--glm53.bf16-stream-floor.brandonmusic-final25` (25 windows, 51,175
-positions) as its floor. A 25-window floor is not a 17-window row's zero-point,
-for exactly the reason a streaming floor is not a sealed-lane row's zero-point.
-The concurrent workflow resolved it independently — the clean17 rows now carry
-`floor_measurement_ref: null` — but nothing in the schema *prevents* it
-recurring.
-
-Until the invariant exists, the guard lives at card level:
-`bin/fidelity/cardmeta.py::attributable_refusal` withholds the
-floor-subtracted number when the floor's lane **or scope** differs from the
-row's, and records why in
-`x_fidelity.measurements[].quantization_attributable_withheld`. It is exercised
-by case **K8b** in `bin/selftest_fidelity_card.py`.
+  forces `status ∈ {pending, retracted}`. A specialization of DISC-003, stated
+  separately so the code cannot be silently downgraded to `caveat` and keep its
+  row published.
+* **DS-005** [warn] — `comparability.bias.floor_measurement_ref`, when set,
+  points at a measurement whose `measurement_scope.scope_name` equals the biased
+  row's own. This is the **scope** analogue of BIAS-006's lane rule, and it was
+  not hypothetical: the registry briefly carried a 17-window row citing a
+  25-window floor. Until the invariant exists the guard lives at card level, in
+  `bin/fidelity/cardmeta.py::attributable_refusal`, exercised by case **K8b**.
 
 ---
 
-## What already exists and needs nothing
+## What already existed and needed nothing
 
 * **`reference.logits_available`** — already in `reference.schema.json`,
   documented as *"false means a number against this reference can never be
@@ -149,3 +160,9 @@ by case **K8b** in `bin/selftest_fidelity_card.py`.
 * **`lane`** — the five-value enum stays as it is. A kimi-k3-adapted dataset
   maps to `other` with `lane_inferred: true`. Adding a `serving` value would
   reclassify existing rows and is an operator decision (spec §14).
+* **`measurement.schema.json` rule 4** — a `cross_stack` row already required
+  both a typed bias block **and** a `cross_stack_capture` /
+  `cross_engine_capture` disclosure at `affects_comparability: true`. The
+  comparator emitted the bias block and not the disclosure, so its rows were
+  schema-invalid on arrival. Fixed in `dscompare.py`, not in the schema —
+  the schema was right.

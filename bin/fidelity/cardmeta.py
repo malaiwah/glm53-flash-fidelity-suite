@@ -445,6 +445,127 @@ def build_x_fidelity(registry: Dict[str, Any], *, role: str,
     return block
 
 
+def reference_identity(registry: Dict[str, Any], measurement_ids: Sequence[str]
+                       ) -> Tuple[Optional[str], Optional[str], List[str]]:
+    """Derive (reference_model, reference_revision) from the registry.
+
+    The measurement names its `reference_ref`, the reference row names the
+    artifact it captured, and the artifact row carries the HF repository and
+    revision.  Every hop already exists in the data, so requiring the operator
+    to retype the answer on the command line -- and silently writing nulls when
+    they do not -- is the generator failing to reproduce its own output.
+
+    Returns the pair plus a list of notes explaining any hop that did not
+    resolve, so a null is always accompanied by a reason.
+    """
+    notes: List[str] = []
+    for measurement_id in measurement_ids:
+        measurement = registry["measurements"].get(measurement_id) or {}
+        reference_id = measurement.get("reference_ref")
+        reference = (registry.get("references") or {}).get(reference_id) or {}
+        if not reference:
+            notes.append("%s names reference %s, which is not in this registry clone"
+                         % (measurement_id, reference_id))
+            continue
+        artifact_id = reference.get("artifact_ref")
+        artifact = (registry.get("artifacts") or {}).get(artifact_id) or {}
+        hub = artifact.get("huggingface") or {}
+        repository, revision = hub.get("repository"), hub.get("revision")
+        if repository:
+            return repository, (str(revision) if revision else None), notes
+        notes.append("reference %s names artifact %s, which carries no huggingface.repository"
+                     % (reference_id, artifact_id))
+    return None, None, notes
+
+
+def build_dataset_x_fidelity(root: str, *, repository: Optional[str] = None,
+                             revision: Optional[str] = None,
+                             extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The `role: fidelity-dataset` block, read from a real dataset.
+
+    Every value here is in `fidelity-dataset.json` already.  The generator used
+    to expose no way to reach them, so the one card a standalone capture
+    publisher needs -- step 2 of the three-step architecture, the whole point of
+    a capture being publishable on its own -- was the one card it could not
+    emit.  Nothing is invented: a field the manifest does not carry stays null
+    and the validator says which.
+    """
+    sys.path.insert(0, os.path.join(REPO, "bin"))
+    from fidelity import dsformat as manifest_format               # noqa: WPS433
+
+    manifest = manifest_format.load_manifest(root)
+    dataset, capture = manifest["dataset"], manifest["capture"]
+    panel, head, runtime = manifest["panel"], manifest["head"], manifest["runtime"]
+    weights = manifest.get("weights") or {}
+    seal = manifest.get("seal") or {}
+    block = {
+        "spec": SPEC_URL,
+        "spec_version": SPEC_VERSION,
+        "role": "fidelity-dataset",
+        "captured_model": {
+            "repository": weights.get("repository"),
+            "revision": (str(weights.get("model_revision") or weights.get("revision"))
+                         if (weights.get("model_revision") or weights.get("revision"))
+                         else None),
+            "role": dataset.get("role"),
+        },
+        "form": capture["form"],
+        "lane": runtime["lane"],
+        "panel": {
+            "panel_id": panel.get("panel_id"),
+            "suite_token_hash_sha256": panel["suite_token_hash_sha256"],
+            "contexts": panel.get("contexts"),
+            "scored_positions": capture.get("scored_rows_total"),
+            "repository": panel.get("repository"),
+            "revision": (str(panel.get("revision")) if panel.get("revision") else None),
+        },
+        "head": {
+            "policy": "quantized" if head.get("quantized") else "native",
+            "quantized": bool(head.get("quantized")),
+            "bits": head.get("bits"),
+            "lm_head_tensor_content_sha256": head.get("tensor_content_sha256"),
+            "lm_head_file_sha256": head.get("file_sha256"),
+            "final_norm_tensor_content_sha256": (head.get("final_norm") or {})
+            .get("tensor_content_sha256"),
+            "final_norm_file_sha256": (head.get("final_norm") or {}).get("file_sha256"),
+            "equality_receipt": head.get("equality_receipt"),
+            "replay_permitted": bool(head.get("tensor_content_sha256")),
+        },
+        "scope_digest": (manifest.get("scope") or {}).get("scope_digest"),
+        "seal": {
+            "manifest": "fidelity-dataset.json",
+            "dataset_sha256": manifest[manifest_format.SEAL_FIELD],
+            "checksums": "checksums.txt",
+            "checksums_sha256": seal.get("checksums_sha256"),
+        },
+        "interop": {
+            "compatible_with": ((manifest.get("interop") or {}).get("compatible_with") or []),
+            "k3_compat_emitted": bool((manifest.get("interop") or {})
+                                      .get("k3_compat_emitted")),
+        },
+        "registry": {
+            "dataset": REGISTRY_DATASET,
+            "schema_version": REGISTRY_SCHEMA_VERSION,
+            "artifact_id": weights.get("artifact_ref"),
+            "measurement_ids": [],
+            "snapshot": None,
+        },
+        "fidelity_dataset": {
+            "repository": repository or dataset.get("repository"),
+            "revision": (str(revision or dataset.get("revision"))
+                         if (revision or dataset.get("revision")) else None),
+            "dataset_sha256": manifest[manifest_format.SEAL_FIELD],
+            "capture_content_digest": capture["capture_content_digest"],
+            "form": capture["form"],
+            "role": dataset.get("role"),
+        },
+        "measurements": [],
+    }
+    if extra:
+        block.update(extra)
+    return block
+
+
 # ---------------------------------------------------------------------------
 # Card merge
 # ---------------------------------------------------------------------------

@@ -128,7 +128,8 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                   dtype_lossless=True, stack="stack-a", lane_identity="lane-a",
                   mask_salt=0, model_revision="a" * 40, checkpoint_identity="b" * 64,
                   quantized=False, structural_status="sealed",
-                  head_applied_in_capture=None, final_norm_applied_at_replay=False):
+                  head_applied_in_capture=None, final_norm_applied_at_replay=False,
+                  tokenizer=None, emit_k3_compat=False):
     """Build a complete, sealed, conformant dataset.  Every knob is a test axis."""
     writer = dsmanifest.DatasetWriter(root)
     rng = np.random.RandomState(seed)
@@ -186,9 +187,9 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
     panel_doc = dsmanifest.panel_binding(
         panel_id="panel--selftest.tiny", name="selftest tiny panel",
         records=panel_records, context_length=rows + 1,
-        tokenizer={"id": "selftest", "repository": None, "revision": None,
-                   "vocab_size": vocab, "add_special_tokens": False,
-                   "chat_template_applied": False},
+        tokenizer=tokenizer or {"id": "selftest", "repository": None, "revision": None,
+                                "vocab_size": vocab, "add_special_tokens": False,
+                                "chat_template_applied": False},
         scoring_window={"score_from": score_from, "windowed": score_from > 0,
                         "min_left_context_tokens": 1, "dropped_positions_total": 0,
                         "policy": "selftest"},
@@ -307,6 +308,13 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
         disclosures=[{"code": "no_known_deviations", "severity": "info",
                       "affects_comparability": False, "detail": "selftest fixture"}])
 
+    if emit_k3_compat:
+        from fidelity import k3compat                                # noqa: WPS433
+
+        manifest["interop"].update(k3compat.emit(
+            writer, panel_doc=panel_doc, capture_doc=capture_doc,
+            manifest_capture=manifest["capture"], head_relpath=head_rel,
+            dataset_name="selftest fidelity dataset"))
     writer.add_readme("---\nlicense: mit\n---\n\n# selftest fidelity dataset\n")
     report = dsvalidate.Report(root)
     report.ok("pre-seal")
@@ -988,6 +996,50 @@ def section_interop(tmp):
               and F.token_ids_json_sha256(ids) != row["token_sha256"])
     else:
         print("  SKIP  I11-I15 published deliverables (not on this machine)")
+
+    # -- I16..I19 the k3 emission and the compat view ------------------------
+    from fidelity import k3compat                                    # noqa: WPS433
+
+    k3ds = os.path.join(tmp, "k3-emitted")
+    emitted = dsadapt.adapt_k3(root, k3ds, source="k3v1", emit_dataset=True)
+    check("I16 --emit-dataset on a tensor-less k3 artifact REFUSES to seal, and says why "
+          "(a seal is computed over bytes, never fabricated)",
+          emitted["emitted"]["written"] is False
+          and "sealed dataset is made of BYTES" in emitted["emitted"]["reason"])
+    try:
+        dsadapt.adapt_k3(root, os.path.join(tmp, "k3-root"), source="k3v1",
+                         emit_dataset=True, role="root")
+        check("I17 --role root is refused for a k3 translation (ROOT-1 asserts a head "
+              "quantization status the source never records -- D-1)", True,
+              "no tensors, so the role guard is not reached")
+    except dsadapt.AdapterError as exc:
+        check("I17 --role root is refused for a k3 translation (ROOT-1 asserts a head "
+              "quantization status the source never records -- D-1)",
+              "ROOT-1" in str(exc) and "derived" in str(exc), str(exc)[:80])
+
+    compat_root = os.path.join(tmp, "compat-ds")
+    build_dataset(compat_root, emit_k3_compat=True)
+    manifest = F.load_manifest(compat_root)
+    listed = set(F.parse_checksums(
+        open(os.path.join(compat_root, "checksums.txt")).read()))
+    compat_files = sorted(f for f in listed if f.startswith("compat/"))
+    report = dsvalidate.validate_dataset(compat_root, verify_tensors=True)
+    check("I18 --emit-k3-compat writes compat/ INSIDE the seal (SEAL-1(c) would refuse it "
+          "otherwise) and the dataset still validates",
+          report.passed and len(compat_files) == 3
+          and manifest["interop"]["k3_compat_emitted"] is True
+          and manifest["interop"]["k3_compat_tensor_bytes_duplicated"] == 0,
+          "%d compat file(s): %s" % (len(compat_files), ", ".join(compat_files)))
+    problems = k3compat.verify(compat_root)
+    suite = F.read_json(os.path.join(compat_root, "compat", "suite-manifest.json"))
+    panel = F.read_json(os.path.join(compat_root, manifest["panel"]["panel_file"]))
+    resolves = all(os.path.isfile(os.path.normpath(os.path.join(
+        compat_root, "compat", row["token_file"]))) for row in suite["contexts"])
+    check("I19 the compat view is faithful: `contexts` is a LIST (PANEL-D5), the suite token "
+          "hash is copied up, and every relative alias resolves onto the ONE real file",
+          not problems and isinstance(suite["contexts"], list) and resolves
+          and suite["suite_token_hash_sha256"] == panel["suite_token_hash_sha256"],
+          "; ".join(problems[:2]) or "clean")
 
 
 def main():

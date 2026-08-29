@@ -151,6 +151,7 @@ def build_submission(
     auxiliary_metrics: Optional[Dict[str, Any]] = None,
     extra_disclosures: Optional[List[Dict[str, Any]]] = None,
     measured_at: Optional[str] = None,
+    comparability: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble a receipt and self-seal it.
 
@@ -207,6 +208,13 @@ def build_submission(
         "evidence": evidence or [],
         "disclosures": disclosures,
     }
+    # How the number may be READ, when the producing tool has a verdict on it.
+    # Optional and additive: a runner that has nothing to say omits it entirely,
+    # and `registry_add` falls back to deriving the bias from stack_relation
+    # exactly as it did before this block existed.
+    if comparability and any(v is not None for v in comparability.values()):
+        doc["comparability"] = {key: value for key, value in comparability.items()
+                                if value is not None}
     return seal(doc)
 
 

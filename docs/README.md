@@ -38,7 +38,7 @@ bin/fidelity/dshub.py        digest-driven fetch, refusing publish
 bin/fidelity/cardmeta.py     the card generator and its three validation axes
 ```
 
-Usage is in [`../bin/README.md`](../bin/README.md). The 96 selftest cases are
+Usage is in [`../bin/README.md`](../bin/README.md). The 110 selftest cases are
 `bin/selftest_fidelity_{dataset,compare,card}.py`, registered in
 `bin/selftest_all.sh`; every case names the spec rule it exercises.
 

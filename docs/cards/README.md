@@ -11,11 +11,10 @@ GLM-5.3-Flash-TR3-6bpw.README.md    malaiwah/GLM-5.3-Flash-TR3-6bpw
 GLM-5.3-Flash-TR3-8bpw.README.md    malaiwah/GLM-5.3-Flash-TR3-8bpw
 ```
 
-## They are not published
+## Verification
 
-Pushing a card to a model repository is a permissioned act and is the Ship
-phase's job. What is done here is everything that can be verified without
-pushing:
+Pushing a card to a model repository is a permissioned act. Everything that can
+be verified without pushing:
 
 | axis | result |
 |---|---|
@@ -41,8 +40,6 @@ bin/fidelity-card annotate \
   --role quant --model-name GLM-5.3-Flash-TR3-6bpw \
   --artifact-id artifact--malaiwah.glm-5.3-flash-tr3-6bpw \
   --base-model zai-org/GLM-5.3-Flash-BF16 \
-  --reference-model zai-org/GLM-5.3-Flash-BF16 \
-  --reference-revision a6c167b62691b2bac901344b65cb651a70f53e43 \
   --head-file-sha256 47eaf729c93346a2394a72a83da2ae4126dadc51155be477d212a3f0fe3085d0 \
   --final-norm-file-sha256 c228a123dee3062c3ad0129094e9d98a264e33087ee88d79c8d6c5a6e60f2fed \
   --equality-receipt "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/head-equality-fp8.json" \
@@ -53,6 +50,21 @@ bin/fidelity-card annotate \
 
 `--artifact-id` resolves every **published** measurement for that artifact, so a
 new row appears in the card automatically and XC-3 keeps the two layers in step.
+
+`--reference-model` and `--reference-revision` are **no longer passed**: the
+generator derives them by walking measurement → `reference_ref` →
+`artifact_ref` → `huggingface.{repository, revision}` (GEN-11). Re-running the
+command above reproduces both committed cards **byte for byte**, which is the
+property that matters: a generator that cannot reproduce its own output from the
+registry alone is asking every other quant author to guess five values.
+
+The one field nothing in the registry supplies —
+`head.lm_head_tensor_content_sha256`, which is a *content* digest and the
+published receipts record only the *file* digest (O-6) — is warned about by
+name, with the flag that would supply it, instead of being written as a silent
+null. It stays null, so `head.replay_permitted` is `false` and a comparator must
+refuse to replay these artifacts' hidden states through anyone else's head
+(HEAD-4).
 
 ## What the annotation actually says
 

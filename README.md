@@ -160,6 +160,41 @@ mirror works too. Both paths, the paste template, and how you are credited:
 > use a venv (`python3 -m venv ~/.venvs/fidelity` and point `FIDELITY_PYTHON`
 > at its `python3`) or add `--break-system-packages` knowingly.
 
+## Capture once, compare many — the three-step path
+
+The recipes above **fuse** capture and comparison: every measurement re-runs the
+reference. `bin/fidelity-dataset` separates them into three steps, so a
+reference capture is produced once, sealed, published, and thereafter
+*downloaded* rather than re-run.
+
+```
+step 1  capture   reference weights + panel  ->  fidelity dataset A   (publish: REQUIRED for a root)
+step 2  capture   quantized weights + panel  ->  fidelity dataset B   (publish: OPTIONAL)
+step 3  compare   A, B  ->  KLD + determinism + a registry receipt
+                  A, A  ->  reproduction confirmation, exactly 0.0
+```
+
+Step 3 needs **neither** set of weights and no GPU — it is fp64 arithmetic over
+two sealed trees. Step 2 is publishable standalone, so a quant author can
+contribute a capture with no access to our infrastructure. And a published
+capture is the only thing that survives losing the machine you measured on —
+which is not hypothetical: the filesystem holding our sealed receipt trees was
+destroyed, and it is why this split exists.
+
+```bash
+bin/fidelity-dataset describe ds-bf16                                  # the identity card
+bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-k6 --out cmp
+bin/fidelity-card       validate --card README.md                      # provenance on an HF card
+```
+
+The format is versioned and stable at v1
+([`docs/FIDELITY-DATASET-SPEC.md`](docs/FIDELITY-DATASET-SPEC.md)); the
+three-step rationale is [WHAT-WE-MEASURE §8](WHAT-WE-MEASURE.md). **Read
+[`bin/README.md`](bin/README.md#before-you-start--what-exists-today-and-what-does-not)
+before planning GPU time** — the tooling is complete, but no root dataset and
+no token panel are published yet, and the registry submission path is specified
+rather than wired.
+
 ## Headline results
 
 | Measurement | Value | Where |
@@ -175,6 +210,7 @@ mirror works too. Both paths, the paste template, and how you are credited:
 |---|---|
 | [`bin/`](bin/) | **The two copy-paste recipes above**: `measure-cloud`, `measure-local`, `registry-submit`, the shared fit estimator (`fidelity/census.py`), the engine pin file (`engines.json`), and two offline selftests |
 | [`registry/`](registry/) | **The fidelity registry**: schemas, seeded rows, submission receipt format, validator, and [CONTRIBUTING.md](registry/CONTRIBUTING.md) |
+| [`docs/`](docs/) | **The fidelity dataset format v1** (the three-step split above): the [spec](docs/FIDELITY-DATASET-SPEC.md), the [HF card annotation standard](docs/CARD-ANNOTATION-SPEC.md), the [registry integration](docs/REGISTRY-INTEGRATION.md) it still needs, worked examples, and the annotation applied to our K6/K8 cards. Tooling: `bin/fidelity-dataset`, `bin/fidelity-card` |
 | [`tools/`](tools/) | The fidelity harness (vLLM hidden-state capture → shared-head replay → exact full-vocab KL), activation capture, cross-stack checker, publishers |
 | [`remote/`](remote/) | The self-driving on-VM pipeline + stage scripts used for the overnight 8×H200 capture campaign |
 | [`k6/`](k6/) | **The K6/K6K8 EXL3 quantization program** (in progress): runbook, stage driver, patch series onto [brandonmusic's pipeline](https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw), driver tools, recipes, and the disclosed [r10 codec reconstruction](k6/fallback/) |

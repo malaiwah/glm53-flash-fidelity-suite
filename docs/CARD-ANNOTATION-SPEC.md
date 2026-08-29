@@ -355,6 +355,22 @@ never rewrite the body.
 **GEN-8** Never invent a head digest. A measurement whose artifact has no published head content
 digest emits `head.lm_head_tensor_content_sha256: null` **and**
 `head.replay_permitted: false` **and** an explanatory `note`.
+**GEN-11** Derive what the registry already knows, and **warn by name** for what it does not.
+`reference_model` and `reference_revision` are resolved by walking
+measurement → `reference_ref` → `artifact_ref` → `huggingface.{repository, revision}`; a hop that
+does not resolve prints why. Any field left null prints the exact flag that would have supplied it.
+Without this the documented command silently produced a *weaker* card than the committed reference
+one — five fields present only because a human passed five extra flags whose correct values were
+not discoverable from the tool.
+**GEN-12** `annotate` **always** validates its own output on the `ours` axis and exits non-zero
+rather than writing an invalid card; `--validate` adds the Hub and round-trip axes. A generator
+that writes an invalid card and exits 0 is worse than one that refuses, because the caller only
+finds out when the Hub — or a reader — does.
+**GEN-13** `--role fidelity-dataset` is built **from the dataset**, not from the registry.
+`--fidelity-dataset-root DIR` reads `captured_model`, `form`, `lane`, `panel`, `head`,
+`scope_digest`, `seal` and `interop` out of that dataset's own sealed manifest. This is the one card
+a standalone capture publisher needs — step 2 of the three-step architecture is publishable before
+any comparison exists — and it is the only role for which no registry measurement is required.
 
 ### 5.2 `bin/fidelity-card validate`
 

@@ -240,6 +240,19 @@
       "additionalProperties": false
     },
 
+    "comparability": {
+      "description": "OPTIONAL. How the producing tool says this number may be READ. Additive: a runner with nothing to say omits the block entirely, and registry_add derives the bias from estimator.stack_relation exactly as it did before this existed. When present it WINS, because the tool that computed the number knows things stack_relation cannot express -- a head substitution biases DOWNWARD and is not a cross-stack effect at all.",
+      "type": "object",
+      "properties": {
+        "bias": { "$ref": "measurement.schema.json#/properties/comparability/properties/bias" },
+        "usable_as_floor": {
+          "type": ["boolean", "null"],
+          "description": "false means this row may never be cited as another row's comparability.bias.floor_measurement_ref. BIAS-006 already forbids that across lanes; this carries the same refusal for cross-stack and head-substituted comparisons, which the lane field cannot see."
+        }
+      },
+      "additionalProperties": false
+    },
+
     "determinism": {
       "description": "Verbatim measurement.schema.json#/properties/determinism. A determinism claim needs a TENSOR-CONTENT hash (tokenwise_kld_sha256), never a receipt-file or archive hash.",
       "type": "object",

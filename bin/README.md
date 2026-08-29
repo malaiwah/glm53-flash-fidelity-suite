@@ -238,6 +238,19 @@ thereafter downloaded rather than re-run. Step 2 is publishable **standalone**,
 before any comparison exists. Step 3 runs with **neither** set of weights
 present.
 
+### Before you start — what exists today, and what does not
+
+The format and the tooling are complete and tested; the **published artifacts
+they consume are not yet in place**. Read this before planning GPU time.
+
+| you will want | state today | what to do |
+|---|---|---|
+| a **root fidelity dataset** to fetch (step 1) | **none is published yet.** No conformant `malaiwah.fidelity-dataset.v1` root exists on the Hub; `hf://malaiwah/some-fidelity-dataset` in the examples below is a **placeholder**, not a resolvable id. Publishing suite-scale captures is out of scope for v1 (spec §14). | Either capture your own root from the reference weights (same `capture` command, `--role root`), or translate our published serving-lane capture with `adapt --source malaiwah-serving-v2` — that repo (`malaiwah/GLM-5.3-Flash-fidelity-suite-v1`) is **not** itself a conformant dataset, so `verify hf://…` on it will fail. |
+| a **token panel** for `--token-panel` (step 1/2) | a **sealed token-panel receipt** produced by the quant pipeline. `capture` hard-requires it — the wrapper needs the mask `.npy` paths, which `capture-receipt.json` does not carry. **No panel receipt is published, and no command in this repo fetches or builds one.** | Obtain or build a panel receipt before booking a GPU. Both sides of a comparison must be on the *same* panel — `compare` refuses `panel_mismatch` with no override, by design (PANEL-D3). Once you have one, note that its `verified_artifacts` are pinned to the **producer's absolute paths** (`/workspace/artifacts/…`); `bin/stage_panel_paths.py --panel <dir>` copies your fetched files into those paths and verifies each by digest. On a cold box, skipping it fails with `artifact identity mismatch` *after* the fetch, the materialize and the model load. |
+| a **cost/time estimate** for a capture | `capture --dry-run` validates inputs, seal and layout only. Unlike `measure-local --estimate-only` and `measure-cloud --dry-run`, **it prints no hours, no VRAM and no dollars.** | Size the run with `measure-local --estimate-only` / `measure-cloud --dry-run` first. As a reference point, a 25-window / 2-cold-run panel is ~8.35 h of GPU. |
+| to **submit a comparison to the registry** (step 3) | **works, and needs one input file.** `compare --emit-submission` requires `--submission-provenance FILE`: the artifact (HF repo at a 40-hex revision, codec, quantization scope), `panel_ref` and `reference_ref` are registry identities a fidelity dataset cannot know, and `panel_ref`/`reference_ref` must already exist because a measurement may not introduce a panel. Without the file the command **refuses** rather than writing empty blocks. | `fidelity-dataset provenance-template --out prov.json`, fill it in, then `compare … --emit-submission --submission-provenance prov.json`. The command then runs `registry_validate.py --submission` **on its own output** and prints ACCEPTED/REJECTED, so you find out now rather than in review. Copy the accepted file into `registry/receipts/<your-handle>/` and open a PR. |
+| to **annotate your card** with the result | `fidelity-card annotate --role quant` resolves its numbers from **published registry measurements**, not from your comparison receipt. With no row yet it refuses, and the refusal names the ordering. | The order is: capture → compare → **get the row into the registry** → then annotate. There is no receipt-to-card path, by design: a card cites registry ids, not local receipts. `--role fidelity-dataset` **is** usable — pass `--fidelity-dataset-root DIR` and every value is read out of that dataset's own manifest. `annotate` always self-validates and exits non-zero rather than writing an invalid card. |
+
 ```bash
 # step 1/2 -- capture (wraps hidden_replay.py / stream_score.py; never edits them)
 bin/fidelity-dataset capture --out ds-bf16 --form hidden --role root \
@@ -247,8 +260,12 @@ bin/fidelity-dataset capture --dry-run --out /tmp/x --role root --lane sealed-ep
         # This is the CI conformance hook.
 
 # verify -- seal + digest chain; stops at the first refusal; there is no --force
-bin/fidelity-dataset verify ds-bf16 --verify-tensors
-bin/fidelity-dataset verify hf://malaiwah/some-fidelity-dataset@<rev> --verify-tensors
+# Tensor content digests are recomputed BY DEFAULT: the seal covers the manifest
+# and checksums.txt, so a byte flipped inside a tensor whose checksums were then
+# refreshed is only caught here. --no-verify-tensors opts out for huge suites,
+# and the receipt records which of the two ran.
+bin/fidelity-dataset verify ds-bf16
+bin/fidelity-dataset verify hf://malaiwah/some-fidelity-dataset@<rev> --no-verify-tensors
 
 # validate -- reports EVERY failure, with the spec rule each one enforces
 bin/fidelity-dataset validate ds-bf16 --verify-tensors --json report.json
@@ -266,11 +283,24 @@ bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-bf16 --out repro
         # answered by hash proof; --force-compute runs the math and asserts
         # bitwise agreement.
 
+# step 3 -- a registry submission (needs identities a dataset cannot know)
+bin/fidelity-dataset provenance-template --out prov.json     # skeleton; fill it in
+bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-k6 --out cmp \
+    --vocab-chunk 9680 --emit-submission --submission-provenance prov.json
+        # refuses rather than writing empty blocks, then runs the registry's own
+        # `registry_validate.py --submission` on the file it just wrote.
+
 # adapt -- foreign artifacts
-bin/fidelity-dataset adapt --source k3v1 --in <kimi-k3 metadata dir> --out k3-translation
+bin/fidelity-dataset adapt --source k3v1 --in <kimi-k3 artifact> --out k3-ds \
+    --emit-dataset --emit-k3-compat        # --emit-dataset needs the tensors present
 bin/fidelity-dataset adapt --source malaiwah-serving-v2 --in <capture dir> \
-    --suite <suite dir> --head-dir <head dir> --out ds --limit 8
+    --suite <suite dir> --head-dir <head dir> --out ds --limit 8 --emit-k3-compat
 bin/fidelity-dataset adapt --source llamacpp-kld --in base.kld --out kld-translation
+
+# interop -- make the kimi-k3 comparator read our dataset, unmodified
+bin/fidelity-dataset verify-k3-compat ds-bf16
+        # compat/ is three JSON files of RELATIVE ALIASES: no tensor is copied,
+        # and the tree is written before the seal so checksums.txt covers it.
 ```
 
 **Exit codes:** `0` ok, `2` warnings only, `3` refused, `4` bad usage.
@@ -281,7 +311,9 @@ bin/fidelity-dataset adapt --source llamacpp-kld --in base.kld --out kld-transla
 |---|---|
 | `head_mismatch` (HEAD-1b) | the two hidden-form captures declare different `lm_head` tensor-content digests. Replaying one artifact's hiddens through the other's head erases its head-quantization error and flatters it. `--disclose-head-substitution` proceeds but forces `advisory`, a downward bias block and a **blocking** disclosure — i.e. not publishable. |
 | `head_mismatch` (HEAD-4) | a hidden-form dataset with a null head content digest. **No override.** |
-| `panel_mismatch` (PANEL-D3) | `scoring_window.score_from` differs. That is a different *panel*, not a comparator flag — which is what makes a llama.cpp-geometry number structurally incomparable rather than silently comparable. |
+| `panel_mismatch` (PANEL-D3) | `scoring_window.score_from` differs. That is a different *panel*, not a comparator flag — which is what makes a llama.cpp-geometry number structurally incomparable rather than silently comparable. There is deliberately no override, so the refusal prints a `remedy:` line saying so. |
+| `panel_mismatch` (PANEL-D6) | the two captures declare different tokenizers. `suite_token_hash_sha256` hashes token **ids** — integers — so it cannot see this; two tokenizers can emit the same ids from different text. A field null on either side is *unknown*, not different. |
+| `head_substitution_vacuous` (HEAD-1c) | the capture content digests are **equal** and the head digests **differ** — a head-only quant (stock EXL3 `head_bits` 6–8). Hidden replay through one head erases the only difference there is and would report an exact reproduction. **No override**: publish logit-form captures, where each side runs its own head. |
 | `lane_mismatch` | different lanes. `--allow-cross-lane` proceeds and stamps `usable_as_floor: false`, so **BIAS-006** cannot be laundered downstream. |
 | `unlisted_file` / `missing_file` | the tree is not exactly what `checksums.txt` covers. `--allow-partial` narrows this to capture tensors and stamps `covers_full_panel: false`. |
 | `bad_vocab_chunk` | `--vocab-chunk` must divide `vocab_size`. For GLM-5.3-Flash use **9680**; kimi-k3's default 10240 does **not** divide 154880. |
@@ -300,6 +332,12 @@ bin/fidelity-card annotate --card README.md --role quant \
     --artifact-id artifact--malaiwah.glm-5.3-flash-tr3-6bpw \
     --base-model zai-org/GLM-5.3-Flash-BF16 --out README.annotated.md --diff --validate
 
+# a capture publisher's own card (step 2 is publishable standalone)
+bin/fidelity-card annotate --card README.md --role fidelity-dataset \
+    --fidelity-dataset-root ds-bf16 --fidelity-dataset malaiwah/my-root@main \
+    --out README.annotated.md
+        # every value is read from that dataset's manifest; nothing is retyped.
+
 bin/fidelity-card validate --card README.md            # three axes
 bin/fidelity-card validate --card README.md --offline  # skips the Hub axis, and SAYS so
 ```
@@ -308,6 +346,13 @@ Three validation axes, all must pass: the live Hub `validate-yaml` endpoint
 (the same push-time gate), a `huggingface_hub` round-trip that must be
 structurally identical, and our own XC-1..XC-5 cross-checks against
 `registry/data/measurements.jsonl`.
+
+`annotate` **always validates its own output** against our XC checks and exits
+non-zero rather than writing an invalid card; `--validate` adds the Hub and
+round-trip axes. It derives `reference_model` / `reference_revision` from the
+registry (measurement → reference → artifact → `huggingface.repository`) instead
+of asking you to retype them, and **warns by name** for any field it had to
+leave null and the flag that would supply it.
 
 `annotate` never rewrites the card **body**, never sets `verified` /
 `verifyToken` (HF-controlled), and never invents a head digest — an artifact

@@ -27,6 +27,7 @@ import math
 import os
 import shutil
 import sys
+import subprocess
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -40,6 +41,39 @@ import selftest_fidelity_dataset as fixtures  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PASS, FAIL = [], []
+
+#: A real registry panel, reference and artifact. N16 is worthless against a made-up
+#: triple: `registry_add.submission_to_records` resolves every id, cross-checks the
+#: panel token digest and the teacher receipt digest against the rows, and refuses a
+#: measurement that would introduce a panel. These three exist in registry/data/.
+SUBMISSION_PROVENANCE = {
+    "measurer": {"name": "selftest", "handle": "selftest", "url": None,
+                 "is_artifact_author": False},
+    "artifact": {
+        "repository": "malaiwah/GLM-5.3-Flash-TR3-6bpw",
+        "revision": "0123456789abcdef0123456789abcdef01234567",
+        "url": None, "container": "exl3", "precision_label": "6bpw",
+        "size_bytes": None, "index_sha256": None, "config_sha256": None,
+        "shard_hash_verification": "none",
+        "codec": {"family": "exl3-mcg", "bits_per_weight_nominal": 6.0,
+                  "bits_per_weight_effective": None, "group_size": None,
+                  "quantizer_tool": "exllamav3", "quantizer_version": None},
+        "scope": {"policy": "mixed", "head_policy": "native", "kv_cache_dtype": "bf16",
+                  "assignments": [{"tensor_class": "moe.experts",
+                                   "treatment": "quantized", "format": "exl3-mcg",
+                                   "bits_per_weight": 6.0, "layer_range": None}]},
+        "producer": {"name": "selftest", "handle": None, "url": None},
+    },
+    "panel": {"panel_ref": "panel--glm53.brandonmusic.final-0000",
+              "panel_token_sha256":
+                  "338027e62f41540f73e38c6f9b4b9a06a50196cbd38cd9c69f11886af9d3cf9f",
+              "panel_receipt_sha256": None, "contexts": None,
+              "scored_positions_total": None},
+    "reference": {"reference_ref": "reference--brandonmusic.glm53-bf16-fp32-logits.final-0000",
+                  "teacher_receipt_sha256":
+                      "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5",
+                  "teacher_backend_identity_sha256": None},
+}
 
 
 def check(name, condition, detail=""):
@@ -147,8 +181,16 @@ def main():
                                model_revision="c" * 40, checkpoint_identity="d" * 64)
         cross = dscompare.compare(a, d, os.path.join(tmp, "cross"),
                                   {"vocab_chunk": 8, "allow_cross_lane": True})
+        # A REAL head substitution needs a different head, not just a different
+        # capture: `d` shares `a`'s head_seed, so HEAD-1a passes and the override
+        # does nothing. This one quantizes its own head, which is the case the
+        # override exists for.
+        e = os.path.join(tmp, "e")
+        fixtures.build_dataset(e, seed=5, head_seed=42, role="quant", quantized=True,
+                               stack="stack-b", lane_identity="lane-b", lane="streaming",
+                               model_revision="9" * 40, checkpoint_identity="8" * 64)
         head_sub = dscompare.compare(
-            a, d, os.path.join(tmp, "cross2"),
+            a, e, os.path.join(tmp, "cross2"),
             {"vocab_chunk": 8, "allow_cross_lane": True,
              "disclose_head_substitution": True})
         problems = []
@@ -235,6 +277,149 @@ def main():
                   "no refusal")
         except dscompare.NotAMeasurement:
             check("N11b a run_to_run_floor receipt is refused a submission too", True)
+
+        # -- N12 HEAD-1c: the head trap, closed -------------------------------
+        # Identical hiddens, different head. A head-only quant (stock EXL3
+        # head_bits 6-8) changes nothing before the final norm, so its capture
+        # content digest MATCHES the reference's -- and replaying both through
+        # one head would erase the only difference there is and report 0.0.
+        head_only = os.path.join(tmp, "head-only")
+        fixtures.build_dataset(head_only, seed=1, head_seed=99, role="quant",
+                               quantized=True, model_revision="e" * 40,
+                               checkpoint_identity="f" * 64)
+        same_content = (dscompare.load_dataset(a).content_digest
+                        == dscompare.load_dataset(head_only).content_digest)
+        try:
+            dscompare.compare(a, head_only, os.path.join(tmp, "headonly"),
+                              {"vocab_chunk": 8, "disclose_head_substitution": True})
+            check("N12 a head-only quant is REFUSED, not scored 0.0 (HEAD-1c)", False,
+                  "no refusal: it would have reported an exact reproduction")
+        except dscompare.Refusal as exc:
+            check("N12 a head-only quant is REFUSED, not scored 0.0 (HEAD-1c)",
+                  same_content and exc.code == "head_substitution_vacuous"
+                  and exc.override is None,
+                  "content_equal=%s code=%s" % (same_content, exc.code))
+
+        # -- N13 PANEL-D6: the tokenizer is panel identity --------------------
+        other_tok = os.path.join(tmp, "other-tokenizer")
+        fixtures.build_dataset(
+            other_tok, seed=3, role="quant", quantized=True,
+            model_revision="c" * 40, checkpoint_identity="d" * 64,
+            tokenizer={"id": "a-completely-different-tokenizer",
+                       "repository": "evil/tok", "revision": "9" * 40,
+                       "vocab_size": fixtures.VOCAB, "add_special_tokens": True,
+                       "chat_template_applied": True})
+        try:
+            dscompare.compare(a, other_tok, os.path.join(tmp, "tok"), {"vocab_chunk": 8})
+            check("N13 a different tokenizer is refused; token ids cannot see it (PANEL-D6)",
+                  False, "no refusal")
+        except dscompare.Refusal as exc:
+            check("N13 a different tokenizer is refused; token ids cannot see it (PANEL-D6)",
+                  exc.code == "panel_mismatch" and "PANEL-D6" in exc.message
+                  and exc.remedy, exc.message[:90])
+
+        # -- N14/N15 the submission's two structural refusals -----------------
+        # A realistic pair: both sides declare a panel far larger than the shard
+        # they captured, so the row is a SUBSET of the registry panel it names --
+        # which is what a quant author scoring a shard actually produces, and what
+        # the registry's own scope check (`covers_full_panel is true but N of M
+        # positions were scored`) exists to police.
+        sa, sd = os.path.join(tmp, "sa"), os.path.join(tmp, "sd")
+        fixtures.build_dataset(sa, seed=1, declared_records=64,
+                               subset_detail="6 of 2047 panel positions (selftest shard)")
+        fixtures.build_dataset(sd, seed=3, role="quant", quantized=True, stack="stack-b",
+                               lane_identity="lane-b", declared_records=64,
+                               subset_detail="6 of 2047 panel positions (selftest shard)",
+                               model_revision="c" * 40, checkpoint_identity="d" * 64)
+        measurement = dscompare.compare(sa, sd, os.path.join(tmp, "meas"),
+                                        {"vocab_chunk": 8, "allow_partial": True})
+        try:
+            dscompare.emit_submission(
+                measurement, os.path.join(tmp, "s-empty.json"),
+                measurer={"name": "selftest", "handle": "selftest", "url": None,
+                          "is_artifact_author": False},
+                artifact={}, panel={}, reference={})
+            check("N14 --emit-submission with empty provenance REFUSES (SC-4)", False,
+                  "wrote a file the registry gate would reject")
+        except dscompare.MissingProvenance as exc:
+            check("N14 --emit-submission with empty provenance REFUSES (SC-4)",
+                  "artifact.repository" in str(exc) and "panel.panel_ref" in str(exc),
+                  str(exc)[:90])
+        try:
+            dscompare.emit_submission(
+                head_sub, os.path.join(tmp, "s-blocking.json"),
+                measurer=SUBMISSION_PROVENANCE["measurer"],
+                artifact=SUBMISSION_PROVENANCE["artifact"],
+                panel=SUBMISSION_PROVENANCE["panel"],
+                reference=SUBMISSION_PROVENANCE["reference"])
+            check("N15 a BLOCKING disclosure refuses a submission bin-side (SC-5)", False,
+                  "the registry's DISC-003 never runs on a submission, so nothing would stop it")
+        except dscompare.NotAMeasurement as exc:
+            check("N15 a BLOCKING disclosure refuses a submission bin-side (SC-5)",
+                  "head_substituted" in str(exc), str(exc)[:90])
+
+        # -- N16 the registry's OWN gate, on our own output -------------------
+        # The registry requires the file to sit in a directory named after the
+        # measurer's handle, so credit cannot be misfiled -- so the selftest
+        # files it the way a contributor would.
+        os.makedirs(os.path.join(tmp, "selftest"), exist_ok=True)
+        submission_path = os.path.join(tmp, "selftest", "submission-receipt.json")
+        submission = dscompare.emit_submission(
+            measurement, submission_path,
+            measurer=SUBMISSION_PROVENANCE["measurer"],
+            artifact=SUBMISSION_PROVENANCE["artifact"],
+            panel=SUBMISSION_PROVENANCE["panel"],
+            reference=SUBMISSION_PROVENANCE["reference"])
+        validator = os.path.join(REPO, "registry", "tools", "registry_validate.py")
+        proc = subprocess.run([sys.executable, validator, "--submission", submission_path],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              universal_newlines=True)
+        check("N16 the emitted submission is ACCEPTED by registry_validate.py --submission",
+              proc.returncode == 0,
+              (proc.stdout or "").strip().splitlines()[0] if proc.stdout else "no output")
+
+        # -- N16b the bias verdict survives the crossing ----------------------
+        bias = (submission.get("comparability") or {}).get("bias")
+        check("N16b comparability.bias and usable_as_floor reach the submission",
+              bias is not None and bias["kind"] == "cross_stack_capture_replay"
+              and (submission["comparability"]["usable_as_floor"] is False),
+              json.dumps(submission.get("comparability"))[:110])
+        check("N16c the submission's determinism block carries no receipt-only keys",
+              not ({"min_run_mean", "max_run_mean", "population_stddev_of_run_means"}
+                   & set(submission["determinism"])),
+              ", ".join(sorted(submission["determinism"])))
+        check("N16d evidence names each dataset by its SEAL, with a legal source kind",
+              all(item["kind"] in ("hf_file", "filesystem_path") and item.get("uri")
+                  and item.get("sha256") for item in submission["evidence"])
+              and {item["sha256"] for item in submission["evidence"]}
+              == {measurement["reference"]["dataset_sha256"],
+                  measurement["candidate"]["dataset_sha256"]},
+              json.dumps(submission["evidence"])[:120])
+
+        # -- N17 a tampered tensor, resealed honestly, is caught by DEFAULT ----
+        tampered = os.path.join(tmp, "tampered")
+        shutil.copytree(a, tampered)
+        victim = os.path.join(tampered, "capture", "hidden_0000.safetensors")
+        with open(victim, "r+b") as handle:
+            handle.seek(os.path.getsize(victim) - 2)
+            byte = handle.read(1)
+            handle.seek(os.path.getsize(victim) - 2)
+            handle.write(bytes([byte[0] ^ 0x01]))
+        F.write_checksums(tampered)                       # refreshed, as an author would
+        manifest = F.load_manifest(tampered)
+        manifest["seal"]["checksums_sha256"] = F.sha256_file(
+            os.path.join(tampered, "checksums.txt"))
+        F.write_json(os.path.join(tampered, "fidelity-dataset.json"),
+                     F.seal_manifest(dict(manifest, dataset_sha256="")))
+        F.write_checksums(tampered)
+        try:
+            dscompare.compare(a, tampered, os.path.join(tmp, "tamper"), {"vocab_chunk": 8})
+            check("N17 a tampered tensor with refreshed checksums is refused by default",
+                  False, "scored it anyway")
+        except dscompare.Refusal as exc:
+            check("N17 a tampered tensor with refreshed checksums is refused by default",
+                  exc.code == "seal_failed" and "tensor" in exc.message.lower(),
+                  exc.message[:100])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

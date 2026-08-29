@@ -60,10 +60,32 @@ def cmd_annotate(args):
              % (len(measurement_ids), args.artifact_id))
     if args.role == "quant" and not measurement_ids:
         emit("REFUSED: a quant card needs at least one registry measurement")
+        emit("  remedy: the three steps run BEFORE the card. capture -> compare "
+             "--emit-submission --submission-provenance FILE -> get the row merged into "
+             "the registry (registry/CONTRIBUTING.md) -> then annotate. There is no "
+             "receipt-to-card path: a card cites REGISTRY ids, not local receipts.")
         return REFUSED
 
     text = _read_card(args.card)
     try:
+        if args.role == "fidelity-dataset":
+            if not args.fidelity_dataset_root:
+                emit("REFUSED: a fidelity-dataset card is built FROM the dataset")
+                emit("  remedy: pass --fidelity-dataset-root DIR (the directory holding "
+                     "fidelity-dataset.json). Every value the card needs -- captured_model, "
+                     "form, panel, head, lane, seal, scope_digest -- is in that manifest, and "
+                     "none of them is derivable from the registry.")
+                return REFUSED
+            repository, _, revision = (args.fidelity_dataset or "").partition("@")
+            x_fidelity = cardmeta.build_dataset_x_fidelity(
+                args.fidelity_dataset_root, repository=repository or None,
+                revision=revision or None)
+            merged = cardmeta.merge_card(
+                text, model_index=None, x_fidelity=x_fidelity,
+                datasets=list(args.dataset or []),
+                metrics=(), tags=("fidelity", "fidelity-provenance", "fidelity-dataset"))
+            return _finish_annotate(args, text, merged, registry, "dataset")
+
         model_index = None
         if args.role in ("quant", "root") and measurement_ids:
             model_index = cardmeta.build_model_index(registry, measurement_ids, args.model_name)
@@ -78,11 +100,34 @@ def cmd_annotate(args):
                 "form": args.form,
                 "role": args.role,
             }
+        # XC/GEN: derive what the registry already knows rather than requiring the
+        # operator to retype it -- and when a hop does not resolve, WARN with the
+        # flag that would supply it instead of writing a silent null.
+        reference_model, reference_revision = args.reference_model, args.reference_revision
+        if not reference_model and measurement_ids:
+            derived_model, derived_revision, notes = cardmeta.reference_identity(
+                registry, measurement_ids)
+            reference_model = derived_model
+            if not args.reference_revision:
+                reference_revision = derived_revision
+            if derived_model:
+                emit("derived reference_model=%s revision=%s from the registry"
+                     % (derived_model, derived_revision))
+            for note in notes:
+                emit("  warn  %s" % note)
+        for label, value, flag in (("reference_model", reference_model, "--reference-model"),
+                                   ("reference_revision", reference_revision,
+                                    "--reference-revision"),
+                                   ("head.lm_head_tensor_content_sha256",
+                                    args.head_content_sha256, "--head-content-sha256")):
+            if not value:
+                emit("  warn  x_fidelity.%s will be null; nothing in the registry supplies it. "
+                     "Pass %s if you have it." % (label, flag))
         x_fidelity = cardmeta.build_x_fidelity(
             registry, role=args.role, measurement_ids=measurement_ids,
             artifact_id=args.artifact_id,
-            reference_model=args.reference_model,
-            reference_revision=args.reference_revision,
+            reference_model=reference_model,
+            reference_revision=reference_revision,
             fidelity_dataset=fidelity_dataset,
             head_content_sha256=args.head_content_sha256,
             head_file_sha256=args.head_file_sha256,
@@ -103,6 +148,10 @@ def cmd_annotate(args):
         emit("REFUSED: %s" % exc)
         return REFUSED
 
+    return _finish_annotate(args, text, merged, registry, "model", measurement_ids)
+
+
+def _finish_annotate(args, text, merged, registry, repo_type, measurement_ids=()):
     if args.diff:
         for line in difflib.unified_diff(text.splitlines(True), merged.splitlines(True),
                                          fromfile=args.card, tofile=(args.out or args.card),
@@ -123,8 +172,24 @@ def cmd_annotate(args):
             yaml.dump(rows, handle, sort_keys=False, allow_unicode=True)
         emit("wrote %s (OFF BY DEFAULT: the format cannot express units or direction, so a "
              "leaderboard would sort KLD backwards)" % path)
+    # GEN-9: annotate ALWAYS checks its own output. A generator that writes an
+    # invalid card and exits 0 is worse than one that refuses -- the caller only
+    # finds out when the Hub, or a reader, does. `--validate` now controls how
+    # LOUD the check is, not whether it runs.
+    our_axis = cardmeta.validate_card(merged, registry, offline=True, repo_type=repo_type)
+    self_errors = [e for axis in our_axis["axes"] if axis["axis"] == "ours"
+                   for e in (axis.get("errors") or [])]
+    if self_errors:
+        emit("REFUSED: the card this run produced does not satisfy its own validator")
+        for error in self_errors:
+            emit("          %s" % error)
+        emit("  remedy: nothing was published. Fix the inputs above and re-run; "
+             "`fidelity-card validate --card %s` re-checks all three axes."
+             % (args.out or args.card))
+        return REFUSED
     if args.validate:
-        return _validate_text(merged, registry, args.offline, "model")
+        return _validate_text(merged, registry, args.offline, repo_type)
+    emit("self-check        PASS (ours; run `validate` for the Hub and round-trip axes)")
     return OK
 
 
@@ -183,6 +248,9 @@ def build_parser():
     p.add_argument("--reference-revision")
     p.add_argument("--dataset", action="append", help="add to top-level datasets:")
     p.add_argument("--fidelity-dataset", help="REPO[@REV] for x_fidelity.fidelity_dataset")
+    p.add_argument("--fidelity-dataset-root", metavar="DIR",
+                   help="a local fidelity dataset directory; REQUIRED for "
+                        "--role fidelity-dataset, which is built entirely from its manifest")
     p.add_argument("--dataset-sha256")
     p.add_argument("--capture-content-digest")
     p.add_argument("--form", choices=("hidden", "logit"))

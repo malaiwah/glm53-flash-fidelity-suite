@@ -32,11 +32,20 @@ _K6_TOOLS = os.path.join(_REPO, "k6", "tools")
 
 
 class Refusal(Exception):
-    def __init__(self, gate: str, code: str, message: str, override: Optional[str] = None):
+    """A gate said no.
+
+    `override` names the flag that would have allowed it; `remedy` is prose for
+    the refusals that have NO override, so a caller can tell "you passed the
+    wrong path" apart from "this is refused by design".
+    """
+
+    def __init__(self, gate: str, code: str, message: str, override: Optional[str] = None,
+                 remedy: Optional[str] = None):
         self.gate = gate
         self.code = code
         self.message = message
         self.override = override
+        self.remedy = remedy
         super().__init__("%s: %s%s" % (code, message,
                                        ("  [override: %s]" % override) if override else ""))
 
@@ -156,8 +165,40 @@ def load_dataset(root: str, verify: bool = True, verify_tensors: bool = False,
 # ---------------------------------------------------------------------------
 
 
+PANEL_REMEDY = (
+    "none by design (PANEL-D3): a comparison is only meaningful between two captures of the "
+    "SAME panel, so there is no override flag. Check you passed the paths you meant; "
+    "otherwise recapture the candidate on the reference's panel.")
+
+
 def _gate(passed: bool, detail: str, overridden_by: Optional[str] = None) -> Dict[str, Any]:
     return {"passed": bool(passed), "detail": detail, "overridden_by": overridden_by}
+
+
+# The tokenizer fields that are panel IDENTITY.  `vocab_size` is here because a
+# different vocabulary is a different distribution; `add_special_tokens` and
+# `chat_template_applied` because either one changes what text the ids stand for.
+TOKENIZER_IDENTITY_FIELDS = ("id", "repository", "revision", "vocab_size",
+                             "add_special_tokens", "chat_template_applied")
+
+
+def _tokenizer_divergence(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]
+                          ) -> Dict[str, Tuple[Any, Any]]:
+    """Which identity fields two tokenizer blocks disagree on.
+
+    A field that is absent or null on EITHER side is unknown, not different: an
+    adapted dataset legitimately cannot name a revision.  Only a genuine
+    disagreement between two stated values is a refusal.
+    """
+    left, right = (a or {}), (b or {})
+    out: Dict[str, Tuple[Any, Any]] = {}
+    for field in TOKENIZER_IDENTITY_FIELDS:
+        av, bv = left.get(field), right.get(field)
+        if av is None or bv is None:
+            continue
+        if av != bv:
+            out[field] = (av, bv)
+    return out
 
 
 def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
@@ -185,13 +226,28 @@ def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
         gates["panel"] = _gate(False, "suite_token_hash_sha256 differs")
         raise Refusal("panel", "panel_mismatch",
                       "different panels: %s vs %s"
-                      % (pa["suite_token_hash_sha256"][:12], pb["suite_token_hash_sha256"][:12]))
+                      % (pa["suite_token_hash_sha256"][:12], pb["suite_token_hash_sha256"][:12]),
+                      remedy=PANEL_REMEDY)
     if pa["scoring_window"] != pb["scoring_window"]:
         gates["panel"] = _gate(False, "scoring_window differs")
         raise Refusal("panel", "panel_mismatch",
                       "scoring_window is part of panel IDENTITY (PANEL-D3): score_from %r vs %r"
                       % (pa["scoring_window"].get("score_from"),
-                         pb["scoring_window"].get("score_from")))
+                         pb["scoring_window"].get("score_from")), remedy=PANEL_REMEDY)
+    # PANEL-D6: the tokenizer is panel identity too, and `suite_token_hash_sha256`
+    # cannot see it -- that digest hashes token IDS, which are integers.  Two
+    # tokenizers can emit the same ids from different text, and one that applies a
+    # chat template or special tokens has scored a different corpus.
+    tok_diff = _tokenizer_divergence(pa.get("tokenizer"), pb.get("tokenizer"))
+    if tok_diff:
+        gates["panel"] = _gate(False, "tokenizer identity differs: %s"
+                               % ", ".join(sorted(tok_diff)))
+        raise Refusal("panel", "panel_mismatch",
+                      "the two captures declare different tokenizers (PANEL-D6); the token id "
+                      "digest cannot see this because it hashes integers. Differing field(s): %s"
+                      % "; ".join("%s %r vs %r" % (field, a, b)
+                                  for field, (a, b) in sorted(tok_diff.items())),
+                      remedy=PANEL_REMEDY)
     ra = {int(r["index"]): r for r in reference.records}
     rb = {int(r["index"]): r for r in candidate.records}
     shared = sorted(set(ra) & set(rb))
@@ -199,17 +255,20 @@ def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
         if ra[index]["token_ids_json_sha256"] != rb[index]["token_ids_json_sha256"]:
             gates["panel"] = _gate(False, "record %d token digest differs" % index)
             raise Refusal("panel", "panel_mismatch",
-                          "record %d has different tokens on the two sides (BIND-2)" % index)
+                          "record %d has different tokens on the two sides (BIND-2)" % index,
+                          remedy=PANEL_REMEDY)
         ma, mb = ra[index].get("attention_mask_sha256"), rb[index].get("attention_mask_sha256")
         if ma is not None and mb is not None and ma != mb:
             gates["panel"] = _gate(False, "record %d attention mask differs" % index)
             raise Refusal("panel", "panel_mismatch",
-                          "record %d attention_mask_sha256 differs (BIND-3)" % index)
+                          "record %d attention_mask_sha256 differs (BIND-3)" % index,
+                          remedy=PANEL_REMEDY)
         if ra[index]["scored_rows"] != rb[index]["scored_rows"]:
             gates["panel"] = _gate(False, "record %d scored_rows differs" % index)
             raise Refusal("panel", "panel_mismatch",
                           "record %d scored_rows %r vs %r"
-                          % (index, ra[index]["scored_rows"], rb[index]["scored_rows"]))
+                          % (index, ra[index]["scored_rows"], rb[index]["scored_rows"]),
+                          remedy=PANEL_REMEDY)
     gates["panel"] = _gate(True, "suite_token_hash_sha256 equal; %d shared records; "
                                  "per-record token and mask digests equal; scoring_window equal"
                            % len(shared))
@@ -261,6 +320,11 @@ def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
                               findings["stack_relation"]))
     if not same_stack:
         findings["class"] = "advisory"
+        # Symmetric with BIAS-006.  The bias block below declares a residual of
+        # the 1e-2 class with direction `unknown`; a number carrying an unknown
+        # bias of that size is not a zero-point for anything, for exactly the
+        # reason a cross-lane number is not.
+        findings["usable_as_floor"] = False
         findings["bias"] = {
             # The registry's own enum value (measurement.schema.json); BIAS-001
             # binds it to estimator.stack_relation == cross_stack.
@@ -270,8 +334,22 @@ def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
             "floor_measurement_ref": None,
             "detail": "the two captures were produced by different stacks; BIAS-001 requires "
                       "this block, and a residual of the 1e-2 class is expected from a "
-                      "different kernel, GPU class or torch build alone.",
+                      "different kernel, GPU class or torch build alone. usable_as_floor is "
+                      "stamped false for the same reason BIAS-006 stamps it false across "
+                      "lanes: an unknown-direction residual of that size is not a zero-point.",
         }
+        # measurement.schema.json rule 4: a cross-stack row needs the bias block
+        # AND a comparability-affecting disclosure naming it. The bias block alone
+        # makes the row schema-invalid the moment it reaches the registry.
+        findings["disclosures"].append({
+            "code": "cross_stack_capture", "severity": "caveat",
+            "affects_comparability": True,
+            "detail": "the two captures were produced by different stacks "
+                      "(lane_identity %s, stack_fingerprint %s); the number carries a "
+                      "cross-stack residual of the 1e-2 class in an unknown direction."
+                      % ("differs" if la != lb else "equal on both sides, or unrecorded",
+                         "differs" if sa != sb else "equal on both sides, or unrecorded"),
+        })
 
     # --- 7. geometry --------------------------------------------------------
     ca, cb = reference.manifest["capture"], candidate.manifest["capture"]
@@ -719,8 +797,32 @@ def classify(reference: Dataset, candidate: Dataset) -> str:
     never called a reproduction: a different grouped-mm kernel, GPU class or
     torch build changes the bf16 forward itself, and that class of difference is
     what produced our 0.011506 cross-topology floor -- 1e-2 class.
+
+    HEAD-1c is checked HERE and not in the head gate, because it is the one head
+    condition that only exists once the capture digests are known to be equal.
     """
     if reference.content_digest == candidate.content_digest:
+        da = reference.head.get("tensor_content_sha256")
+        db = candidate.head.get("tensor_content_sha256")
+        if "hidden" in (reference.form, candidate.form) and da != db:
+            # HEAD-1c: bitwise-equal hiddens under DIFFERENT heads.  A head-only
+            # quant (stock EXL3 head_bits 6-8 is exactly this) changes nothing
+            # before the final norm, so its post-norm hiddens are bitwise
+            # identical to the reference's and the capture content digests
+            # match.  Replaying both sides through ONE head then subtracts a
+            # quantity from itself: the answer is exactly 0.0 and it measures
+            # nothing.  There is no override, because there is no reading of
+            # this comparison under which the number means anything.
+            raise Refusal(
+                "head", "head_substitution_vacuous",
+                "HEAD-1c: the two captures are bitwise identical "
+                "(capture_content_digest %s) but declare DIFFERENT heads (%s vs %s). "
+                "The head is therefore the whole of the difference between these two "
+                "artifacts, and hidden replay through a single head erases exactly that "
+                "-- the result would be 0.0 nats and would read as an exact reproduction. "
+                "A head-only quantization cannot be measured by hidden replay: publish "
+                "logit-form captures, where each side applies its own head (HEAD-2)."
+                % (reference.content_digest[:12], (da or "null")[:12], (db or "null")[:12]))
         return "reproduction_confirmation"
     if reference.weights_identity() == candidate.weights_identity() \
             and all(v is not None for v in reference.weights_identity()):
@@ -825,6 +927,13 @@ def build_receipt(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
             "context_length": panel.get("context_length"),
             "scoring_window": panel["scoring_window"],
             "tokenizer": panel.get("tokenizer"),
+            # Both sides, always.  The gate refuses a genuine disagreement, but a
+            # receipt that prints only ONE side's block is asserting something it
+            # did not check whenever a field is null on the other side.
+            "tokenizer_reference": panel.get("tokenizer"),
+            "tokenizer_candidate": candidate.manifest["panel"].get("tokenizer"),
+            "tokenizer_identity_equal": not _tokenizer_divergence(
+                panel.get("tokenizer"), candidate.manifest["panel"].get("tokenizer")),
         },
         "gates": {name: gates[name] for name in
                   ("seal", "form", "panel", "head", "lane", "stack",
@@ -841,7 +950,12 @@ def build_receipt(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
             "bf16_reduced_precision_reduction": False,
             "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
             "head_applied_tensor_content_sha256": result.get("head_applied"),
-            "source_file_hashes_verified": True,
+            # What was ACTUALLY recomputed, never a constant.  The seal covers the
+            # manifest and checksums.txt on every run; the per-tensor
+            # `tensor_content_sha256` values are only re-derived when the caller
+            # asked, and a receipt has to say which of the two it is.
+            "tensor_content_digests_verified": bool(options.get("verify_tensors")),
+            "source_file_hashes_verified": bool(options.get("verify_tensors")),
             "short_circuited": bool(result.get("short_circuited", False)),
             "estimator_backend": result.get("estimator_backend"),
             "tool": {
@@ -987,13 +1101,19 @@ def compare(reference_root: str, candidate_root: str, out_dir: str,
     options = dict(options or {})
     os.makedirs(out_dir, exist_ok=True)
 
+    # Tensor verification is ON unless the caller says otherwise, in the library
+    # as well as the CLI. Recomputing checksums.txt and the seal does NOT catch a
+    # byte flipped inside a tensor whose checksums were refreshed afterwards --
+    # and refreshing them is what re-running finalize after an edit does. The
+    # receipt records which of the two ran.
+    options["verify_tensors"] = bool(options.get("verify_tensors", True))
     reference = load_dataset(reference_root,
                              verify=not options.get("skip_seal"),
-                             verify_tensors=bool(options.get("verify_tensors")),
+                             verify_tensors=options["verify_tensors"],
                              allow_partial=bool(options.get("allow_partial")))
     candidate = load_dataset(candidate_root,
                              verify=not options.get("skip_seal"),
-                             verify_tensors=bool(options.get("verify_tensors")),
+                             verify_tensors=options["verify_tensors"],
                              allow_partial=bool(options.get("allow_partial")))
     gates, findings = run_gates(reference, candidate, options)
     gates["seal"] = _gate(True, "both manifests self-seal and checksums.txt verified"
@@ -1041,6 +1161,69 @@ class NotAMeasurement(RuntimeError):
     """SC-3: only `comparison_kind == "measurement"` may reach registry_add."""
 
 
+class MissingProvenance(RuntimeError):
+    """SC-4: a submission names a registered artifact, panel and reference.
+
+    None of the three can be derived from a fidelity dataset: `artifact` is the
+    quant's HF repository at a 40-hex revision with its codec and scope,
+    `panel_ref`/`reference_ref` are registry ids that must already exist.  The
+    comparator refuses to write a file with those blocks empty rather than
+    emitting something that fails `registry_validate.py --submission` with
+    twenty schema errors an hour later.
+    """
+
+
+# `submission.schema.json#/properties/determinism` sets additionalProperties:false.
+# The comparison receipt's determinism block is deliberately RICHER -- it carries
+# min/max/stddev of the run means, which the receipt schema wants and the
+# submission schema forbids -- so the crossing is a projection, listed here rather
+# than done by deletion so a new receipt field cannot silently leak through.
+_SUBMISSION_DETERMINISM_FIELDS = (
+    "run_count", "cold_start_per_run", "run_means", "identical_across_runs",
+    "evidence_kind", "evidence_hashes", "distinct_evidence_hash_count",
+    "per_run_report_sha256", "note",
+)
+_SUBMISSION_ESTIMATOR_FIELDS = (
+    "accumulation_dtype", "head_policy", "logits_dtype", "padded_columns_masked",
+    "softmax_note", "stack_relation", "two_pass", "vocab_chunk",
+    "vocab_masking_policy", "zero_handling",
+)
+_SUBMISSION_SCOPE_FIELDS = (
+    "calibration_overlap_scan", "contexts", "covers_full_panel", "position_filter",
+    "positions_per_context", "scope_name", "scope_selection_file",
+    "scope_selection_sha256", "scored_positions", "subset_detail",
+)
+
+
+def _project(block: Optional[Dict[str, Any]], fields: Sequence[str]) -> Dict[str, Any]:
+    block = block or {}
+    return {key: block[key] for key in fields if key in block}
+
+
+def _evidence_source(side: Dict[str, Any], role: str) -> Dict[str, Any]:
+    """A `common.schema.json#/$defs/source` pointing at one fidelity dataset.
+
+    `kind` must come from the registry's enum and `uri` is required; there is no
+    `fidelity_dataset` kind and no `role` property, so the role travels in the
+    note.  The digest is the dataset SEAL, which is what makes the pointer
+    checkable (DS-001).
+    """
+    repository, revision = side.get("repository"), side.get("revision")
+    note = ("%s fidelity dataset %s (malaiwah.fidelity-dataset.v1, form %s, lane %s)"
+            % (role, side.get("dataset_id") or "unnamed", side.get("form"), side.get("lane")))
+    if repository:
+        uri = "https://huggingface.co/datasets/%s/blob/%s/fidelity-dataset.json" % (
+            repository, revision or "main")
+        return {"kind": "hf_file", "uri": uri, "sha256": side["dataset_sha256"], "note": note}
+    # Not published: name it by its own id, never by a path on the measuring box
+    # -- that is the defect (`packed_root: /home/jl_fs/...`) this format exists
+    # to stop shipping.
+    return {"kind": "filesystem_path",
+            "uri": "%s/fidelity-dataset.json" % (side.get("dataset_id") or "fidelity-dataset"),
+            "sha256": side["dataset_sha256"],
+            "note": note + " -- not published; the digest is the only pointer"}
+
+
 def emit_submission(receipt: Dict[str, Any], out_path: str, *,
                     measurer: Dict[str, Any], artifact: Dict[str, Any],
                     panel: Dict[str, Any], reference: Dict[str, Any],
@@ -1068,6 +1251,42 @@ def emit_submission(receipt: Dict[str, Any], out_path: str, *,
             "input; a run_to_run_floor is a lane property. Neither is a quantization result."
             % receipt.get("comparison_kind"))
 
+    # SC-5.  A blocking disclosure means the comparator itself said the number is
+    # not publishable as a measurement.  The registry's DISC-003 says the same,
+    # but ONLY at row-ingest time -- `registry_validate.py --submission` runs
+    # `check_submission`, which never calls `check_disclosures`.  So the tool that
+    # minted the number is the one that has to refuse it.
+    blocking = [d for d in receipt.get("disclosures") or []
+                if d.get("severity") == "blocking"]
+    if blocking:
+        raise NotAMeasurement(
+            "REFUSED: the comparison carries %d blocking disclosure(s) -- %s. A blocking "
+            "disclosure is the comparator saying this number is not publishable as a "
+            "measurement (DISC-003 forces status pending/retracted downstream). The receipt "
+            "stands as a result; it does not become a registry row."
+            % (len(blocking), ", ".join(sorted(d.get("code", "?") for d in blocking))))
+
+    missing = []
+    for label, block, required in (("artifact", artifact,
+                                    ("repository", "revision", "container", "codec",
+                                     "scope", "producer")),
+                                   ("panel", panel, ("panel_ref", "panel_token_sha256")),
+                                   ("reference", reference,
+                                    ("reference_ref", "teacher_receipt_sha256"))):
+        for key in required:
+            if not (block or {}).get(key):
+                missing.append("%s.%s" % (label, key))
+    if missing:
+        raise MissingProvenance(
+            "REFUSED to write a submission: %d required field(s) have no value -- %s.\n"
+            "  These name registry records and cannot be derived from a fidelity dataset: "
+            "the artifact is an HF repository at a 40-hex revision with its codec and "
+            "quantization scope, and panel_ref/reference_ref must already exist in the "
+            "registry (a measurement may not introduce a panel).\n"
+            "  Fix: pass --submission-provenance FILE. `bin/fidelity-dataset compare "
+            "--print-provenance-template` writes a skeleton with every required key."
+            % (len(missing), ", ".join(missing)))
+
     sys.path.insert(0, os.path.join(_REPO, "bin"))
     from fidelity import receipt as receipt_mod  # noqa: WPS433
 
@@ -1084,19 +1303,30 @@ def emit_submission(receipt: Dict[str, Any], out_path: str, *,
             "units": receipt["metric"]["units"],
             "direction": receipt["metric"]["direction"],
         },
-        estimator=receipt["estimator"],
-        determinism=receipt["determinism"],
-        measurement_scope=receipt["measurement_scope"],
+        estimator=_project(receipt["estimator"], _SUBMISSION_ESTIMATOR_FIELDS),
+        determinism=_project(receipt["determinism"], _SUBMISSION_DETERMINISM_FIELDS),
+        measurement_scope=_project(receipt["measurement_scope"], _SUBMISSION_SCOPE_FIELDS),
         produced_by=receipt_mod.produced_by_block(
             Path(_REPO), "bin/fidelity_dataset.py",
             {"comparison_kind": receipt["comparison_kind"]}),
         environment=environment,
         evidence=[
-            {"kind": "fidelity_dataset", "role": "reference",
-             "sha256": receipt["reference"]["dataset_sha256"]},
-            {"kind": "fidelity_dataset", "role": "candidate",
-             "sha256": receipt["candidate"]["dataset_sha256"]},
+            _evidence_source(receipt["reference"], "reference"),
+            _evidence_source(receipt["candidate"], "candidate"),
         ],
+        auxiliary_metrics={"top1_agreement": receipt.get("top1_agreement"),
+                           "median_kld": receipt["kl"].get("median"),
+                           "p95_kld": receipt["kl"].get("p95"),
+                           "p99_kld": receipt["kl"].get("p99"),
+                           "p999_kld": receipt["kl"].get("p99_9"),
+                           "max_kld": receipt["kl"].get("max"),
+                           "context_macro_mean_kld": receipt.get("kl_macro_stratum_mean")},
+        # The bias block and usable_as_floor are the comparator's own verdict on
+        # how the number may be READ.  Dropping them here is how a row ends up
+        # carrying `bias: null` for a comparison its own receipt declared biased.
+        comparability={"bias": (receipt.get("comparability") or {}).get("bias"),
+                       "usable_as_floor": (receipt.get("comparability") or {})
+                       .get("usable_as_floor")},
         extra_disclosures=[d for d in receipt.get("disclosures") or []
                            if d.get("code") != "no_known_deviations"],
     )

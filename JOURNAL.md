@@ -1649,3 +1649,357 @@ lives in `split`; measurement scope now lives in `config`.
   the schema prevents it recurring. The guard exists at card level today
   (`attributable_refusal`, case K8b) and withholds the number rather than
   printing an unverifiable one.
+
+---
+
+## 2026-08-29 ~20:30 — Joint standard with brandonmusic: adopted, quantified, and one lesson we did not want
+
+brandonmusic proposed a **community standard for quantization-fidelity
+measurement** and published the whole harness — protocol, receipts, plots, CLI,
+and the sealed 25-window panel plus BF16 teacher logits our entire campaign is
+measured against. He already cites our K6 number (0.0137) as a reference point.
+The operator asked for alignment, not competition. This entry records what we
+took, what we measured, and the one finding that cost us a number.
+
+### He is ahead of us, and the honest count is eight of eighteen
+
+Element-by-element in [`docs/PROTOCOL-ALIGNMENT.md`](docs/PROTOCOL-ALIGNMENT.md):
+**eight elements adopted from him** (they are the core of the standard), four
+already equivalent, five ours, three genuine divergences. Adopted: the R0 canary
+in both halves, per-domain stratification, the 13-gram calibration-overlap scan,
+`sigma_run` combined with the statistical SE in quadrature, the window-block
+bootstrap with BCa intervals, McNemar on paired top-1, the percentile-exceedance
+guard, and one frozen protocol file whose hash is stamped into every emitted
+receipt. Implemented clean-room in `bin/jointstd/` (his licence is
+source-available with a named exclusion; no `kld_eval` source is vendored), and
+validated against his own published endpoints as the known-answer test — plus,
+where importable, against `kld_eval` itself as an oracle.
+
+Two of his findings we can now confirm rather than take on faith. His
+`sigma_run` is **exactly 0.0** across three cold boots on a deterministic kernel
+path, and **not** zero on the NVFP4 MoE path (0/25 windows bitwise, 94 % of
+tokens changed, single tokens swinging 4.7 nats while the mean barely moves).
+That is the same bitwise-determinism property our reference lane has, measured
+independently on different hardware. **Determinism is a property of the kernel
+path, not of the quant.**
+
+### Divergence 1: the padded lm_head columns — bounded, not argued
+
+He masks the 24 padded columns of the 154,880-wide head on both sides; we never
+have. We downloaded one 1.27 GB teacher window (sha256 verified) and measured
+it. The padded rows are not dead — norm ≈ 0.4795 against 1.209 for a typical
+real row, all 24 mutually cosine-0.999998, one untrained direction repeated —
+but they hold **~1.6e-8 of the teacher's probability mass**. The exact identity
+makes every term proportional to that mass, so the general cap is **order 1e-8**
+and, where teacher and student share the head (every malaiwah row on his panel),
+it collapses to `KLD × mass` = **1.0e-10 nats**. Our published values move at
+their **9th significant figure**. For scale: our own sealed-vs-streaming bridge
+is 8.5e-6 and his window-clustered SE is 3.19e-3 — 83,000× and 31,000,000×
+larger. **No correction and no bias disclosure; a protocol-policy disclosure
+only.** We adopt masking anyway, as a zero-cost convergence.
+
+The first version of that section shipped results with no script and no receipt,
+in a document whose thesis is receipts over assertions. That was caught in
+review and is now fixed: `bin/padded_column_study.py` plus receipts in
+`docs/joint-standard/padded-column/`. The half that carries the conclusion needs
+**only his published window** — no `lm_head`, no reconstruction, seven seconds —
+so anyone can check the teacher side without trusting us.
+
+### Divergence 2 — and this is the lesson: calibration bleed survives document dedup
+
+His 13-gram overlap scan found that **an entire domain of the sealed FINAL
+windows shares 37–39 % of its 13-grams with calibration-role windows**, despite
+the panel being clean at the *document-hash* level. Our panel-building has
+always checked document hashes. **Document-hash dedup is not enough, and we had
+no n-gram check at all.** We had flagged the absence of one as a disclosure; we
+had not run one, and we did not predict what it would find. The credit for the
+finding is entirely his.
+
+Our scan reproduces his selection **17/17 exactly**, 0 mismatches on shared-gram
+count and fraction across all 25 windows. Every number we published on that
+panel used all 25 windows and therefore carries the same contamination.
+Recomputed on his clean scope from our own published per-window arrays — no GPU,
+no re-measurement, pure arithmetic on data already public:
+
+| | panel25 | clean17 | move |
+|---|---:|---:|---:|
+| K6 sealed | 0.013723 | 0.011677 | −14.91 % |
+| K8 | 0.012384 | 0.010829 | −12.55 % |
+| official FP8 | 0.020615 | 0.018665 | −9.46 % |
+| BF16 floor (x-stack) | 0.012712 | 0.010648 | −16.24 % |
+| his 4bpw | 0.024555 | 0.024949 | **+1.61 %** |
+
+**Fifteen percent is not a rounding error.** The conclusions survive: K6 beats
+the official FP8 on 17/17 clean windows and the margin *widens* (1.50× → 1.60×).
+K8-over-K6 survives but weakens — the paired BCa lower bound falls from +0.000695
+to +0.000153, sign test p 0.0041 → 0.049. **We will not restate "K8 is better
+than K6" without naming the scope.** Both model cards now carry a prominent
+scope disclosure; `reports/clean-scope-recompute.json` is published.
+
+The result worth keeping: FP8 falls 9.46 % and the floor falls 16.24 %, but
+**FP8 minus the floor rises 1.44 %**. The subtraction is the stable quantity and
+the raw means are the unstable ones — a measured answer to his §5.3 objection to
+publishing subtracted numbers.
+
+### What we offer back
+
+The measured **BF16 floor** and attributable-error framing; a schema-enforced
+**registry** with mechanical refusals (90 invariants, stock interpreter, no pip
+install); **eight decode surfaces** (checkpoint, payload-store, dione, native,
+exl3hf, mlx, gguf, nvfp4) so one yardstick spans formats; a measured cross-lane
+bridge; and R0-b — the shift half of the canary, which R0-a provably cannot
+replace (a consistently-shifted pair scores exactly 0.0 on R0-a).
+
+### Lessons
+
+23. **Document-hash dedup does not detect calibration bleed.** Overlapping
+    n-grams survive it. Every future panel gets a 13-gram scan against its own
+    calibration material *before* anything is measured on it, not after.
+24. **A scope is part of a number.** A different window set is a different
+    panel: `clean17` now has its own comparability key so a clean17-vs-panel25
+    difference is structurally impossible rather than merely discouraged.
+25. **A document with no mechanical tie to its receipts drifts.** Five wrong
+    numbers reached the alignment documents while `make check` was green,
+    because nothing checked them. `bin/check_doc_numbers.py` now re-derives 201
+    anchored claims from the committed receipts and runs in `selftest_all.sh`.
+    On its first run against the *repaired* documents it found a sixth (a
+    per-domain ratio printed as 1.303× where the receipt says 1.302×).
+26. **Write the receipt for your own side-study too.** The padded-column section
+    argued for receipts while having none.
+
+### What was NOT done, and why
+
+- **The registry mirror was not pushed.** No row data changed (`git diff
+  registry/data/` is empty and `render-check` passes), so the only delta is the
+  JOINT-009 declaration — while a concurrent workflow holds
+  `registry/schema/measurement.schema.json`, `submission.schema.json`,
+  `registry_add.py` and `registry_validate.py` open mid-change. Pushing the
+  mirror now would publish someone else's half-finished work. It goes after that
+  workflow lands.
+- **`uncertainty.ci95_total` was not added to the registry schema.** A live
+  `sigma_run` needs a total-uncertainty interval, because the block bootstrap
+  resamples windows *within* one run and can never contain run-to-run spread.
+  It is implemented in the analysis receipts, but the schema field was not added
+  — same concurrently-held file. Instead **JOINT-009 fails closed**: every
+  `sigma_run` in the registry is exactly 0.0 today, so it passes vacuously, and
+  the first row measured on a nondeterministic path fails until the field
+  exists. An enforced TODO beats a comment.
+- **No LICENSE file was added.** The repo still ships none, so every offer we
+  make him is legally unusable as it stands. Choosing a licence interacts with
+  his SHAPLEYMCG-1.0 terms and its named exclusion, and it is the operator's
+  call, not a supervising session's. §10 lays out the analysis; the reply admits
+  the gap. **This is the one blocking action item before the reply is sent.**
+- **Nothing was posted.** `docs/ALIGNMENT-REPLY.md` is ten paste-ready Discord
+  messages (longest 1,993 of 2,000 characters, checked mechanically). The
+  operator relays personally.
+
+## 2026-08-29 ~16:30 — Three-step architecture shipped: review findings closed, cards published
+
+Three adversarial reviews returned `GO_WITH_FIXES` on the fidelity-dataset work:
+one attacking the comparator with its own fixtures through the real CLI, one
+testing interop against Festr's real artifact and the live Hub, one walking the
+path as a stranger. Six blockers and eight majors. All fixed; the two that could
+not be fixed here are descoped in writing below.
+
+### The head trap was still open — HEAD-1c
+
+The best finding, and the one that most vindicates the format's own premise.
+`classify()` decided `reproduction_confirmation` on `capture_content_digest`
+equality **alone**. A quant that changes only `lm_head` — stock EXL3 `head_bits`
+6–8 does exactly this — changes nothing before the final norm, so its post-norm
+hiddens are *bitwise identical* to the reference's and the content digests
+match. The comparator then replayed both sides through one head, subtracted a
+quantity from itself, and reported **0.0 nats at top-1 1.0, labelled an exact
+reproduction**. `--force-compute` "agreed" vacuously, because `compute()` builds
+one `head32_t` and replays both sides through it: the recomputed array is also
+all zeros.
+
+The fine print stayed honest the whole time (`head_digest_equal: false`,
+`usable_as_floor: false`, a blocking disclosure, SC-3 keeping it out of the
+registry). The headline was wrong, and the headline is what gets quoted. That is
+precisely the flattering erasure §8.1 exists to prevent, arriving through the one
+door HEAD-1b left open — because HEAD-1b's override is right when the two
+captures *differ*, and this is the case where they cannot.
+
+`head_substitution_vacuous` now refuses it with **no override at all**. Bitwise-
+equal hiddens under different heads means the head IS the whole difference, and
+hidden replay erases exactly it; there is no reading under which the number means
+anything. A head-only quantization must publish **logit form**, where each side
+runs its own head (HEAD-2). Case N12.
+
+### The tokenizer was outside panel identity — PANEL-D6
+
+`suite_token_hash_sha256` hashes token **ids**, which are integers. Two
+tokenizers can emit the same ids from different text; one applying a chat
+template has scored a different corpus with the same numbers. A candidate
+declaring `tokenizer.id: "a-completely-different-tokenizer"`, a different
+repository, revision, `add_special_tokens: true` and `chat_template_applied:
+true` — sealed honestly, `validate` 0 errors — sailed through at
+`class: strict`, and the receipt then published the *reference's* tokenizer block
+as if it were the comparison's.
+
+The panel gate now compares tokenizer identity, treats a null on either side as
+*unknown* rather than agreement, records **both** sides in the receipt, and — the
+part worth noting — **found a real defect in our own adapter on its first real
+run**. `adapt_serving_v2` was filling `tokenizer.revision` from the captured
+artifact's *model* revision, so our BF16 root and our FP8 candidate, captured on
+the same panel, declared different tokenizers. The tokenizer belongs to the
+panel; it now comes from the suite manifest's own tokenizer-snapshot pin.
+
+### `--emit-submission` wrote a file the registry rejected, and exited 0
+
+The "registry-submittable proof package" deliverable was not met, for three
+independent reasons inside the new code: `artifact`, `panel` and `reference` were
+hard-coded to `{}` with no flags to fill them; `evidence[]` used a `kind` that is
+not in the source enum, an additional `role` property, and no `uri`; and the
+determinism block carried three keys `submission.schema.json` forbids. The
+author's own selftest validated receipts against the *new* receipt schema and
+never against the registry's submission schema — that was the coverage gap.
+
+Fixed on all three axes, plus `provenance-template` for the identities a dataset
+genuinely cannot know (a 40-hex artifact revision, `panel_ref`/`reference_ref`
+that must already exist), plus **SC-4** refusing to write empty blocks, plus the
+CLI running `registry_validate.py --submission` on its own output before telling
+anyone the file is submittable. Case N16 runs that gate in the selftest: it is
+offline and costs nothing, which is why it should have been there from the start.
+
+`comparability.bias` and `usable_as_floor` were also being dropped on the way
+across. A row derived from a head-substituted comparison arrived with
+`bias: null` for a comparison whose own receipt declared it biased **downward**,
+because `registry_add` synthesises a bias from `stack_relation` alone and
+`stack_relation` cannot see a head substitution. An optional, additive
+`comparability` block on the submission now carries the comparator's verdict, and
+`registry_add` prefers it when present.
+
+### A documented protection that did not exist
+
+`docs/REGISTRY-INTEGRATION.md` said a receipt carrying `head_substituted` was
+"currently unsubmittable — which is the safe direction to be wrong in", and used
+that to justify deferring the registry changes. It was **false**. DISC-003 and
+DISC-004 live in `check_disclosures`, which iterates the registry *collections*;
+`--submission` runs `check_submission`, which calls neither. A structurally valid
+submission carrying a blocking disclosure is ACCEPTED at exit 0 by the gate
+`CONTRIBUTING.md` tells submitters to run.
+
+The response is not to lean harder on a downstream gate: `emit_submission` now
+refuses a blocking disclosure itself (**SC-5**), and the document says what the
+registry-side protection actually is and when it fires. A deferral justified on a
+protection that does not exist is worse than no deferral.
+
+### Tensor verification is the default now
+
+`verify` and `compare` recomputed `checksums.txt` and the manifest seal but not
+per-tensor `tensor_content_sha256` unless asked. A byte flipped inside a tensor,
+with `checksums.txt` and the seal refreshed honestly afterwards — which is what
+re-running finalize after an edit does — was **scored silently**: 2.098 nats
+where the honest answer is 3.688, a 43% error at `class: strict`. Worse, the
+receipt hard-coded `source_file_hashes_verified: true` on every run regardless.
+Verification is on by default in `verify`, `validate` and `compare`
+(`--no-verify-tensors` opts out for 86 GB suites), and the receipt now records
+the boolean that actually ran. Case N17.
+
+### Interop: two claims made true, one number worth keeping
+
+`--emit-k3-compat` was specified in the spec and did not exist; `adapt --source
+k3v1` had exactly one return path and never built a dataset even at 3-of-3
+tensors present. Both now ship, and both were proven against Festr's *unmodified*
+comparator rather than described:
+
+- A kimi-k3 artifact → sealed v1 dataset → self-compare **exactly 0.0 nats**
+  under `--force-compute`. The full round trip, foreign artifact to answer.
+- `compat/` costs **zero duplicated bytes**. The reference shim written during
+  review hardlinked every tensor and token (86 GB → 172 GB); his loader resolves
+  `directory / record["file"]` with pathlib, so relative aliases onto the one
+  real tensor work. Three JSON files at any panel size, written before the seal
+  and listed in `checksums.txt` like anything else.
+
+Two honesty constraints the emission forced, both refusals a reader would not
+predict: **`--role root` is refused for a k3 translation** (ROOT-1 asserts
+`head.quantized: false`, which that artifact never records — that is D-1 — and
+its own checkpoint string says "official MXFP4 routed experts"), and
+`weights.quantized` is read out of that string with the string named in
+`inferred_fields`, because the schema wants a boolean and there is no honest null.
+
+And the number: same bytes, same panel, same head, same direction, two careful
+implementations.
+
+| | mean KL(ref‖cand), nats | top-1 |
+|---|---|---|
+| his comparator, fp32 log-probs, `clamp_min_(0)` | 0.03564599129280951 | 0.925256472887152 |
+| ours, fp64 throughout | 0.03526219355348638 | 0.9257449926722032 |
+| difference | **3.84e-4 (+1.09 %)** | 4.9e-4 |
+
+That gap is **larger than the entire quantization-attributable signal we publish
+for K6** (0.00221 nats). It is the empirical case for D-5:
+`estimator.accumulation_dtype` in the comparability key is not pedantry.
+
+### The card generator could not reproduce its own output
+
+Re-running the documented command regenerated the K6 card with five fields null
+that the committed card carries, because a human had passed five extra flags
+whose correct values were not discoverable from the tool. For an outside quant
+author that is the single largest adoption friction: the documented command
+silently produces a weaker card than ours. `reference_model` and
+`reference_revision` are now derived by walking measurement → `reference_ref` →
+`artifact_ref` → `huggingface.{repository, revision}`, and both cards now
+regenerate **byte for byte** from the registry alone. Fields nothing supplies are
+warned about by name with the flag that would supply them, instead of written as
+silent nulls.
+
+`annotate` also always validates its own output and exits non-zero rather than
+writing an invalid card — it used to write an invalid `--role fidelity-dataset`
+card and exit 0. That role is now built *from the dataset*
+(`--fidelity-dataset-root DIR`), which is the one card a standalone capture
+publisher needs and the one the generator could not emit.
+
+### Registry: applied, not deferred
+
+`registry/` was clean when this ran, so the three changes previously specified
+are now in: two disclosure codes, an optional `comparability` block on the
+submission (plus `usable_as_floor` on the measurement), and **BIAS-007** — a row
+stamped `usable_as_floor: false` may not be named as any other row's
+`floor_measurement_ref`, the registry honouring a verdict the comparator already
+reached. `make check`: 62 passed, 0 failed, 433 joint checks, 0 errors.
+
+One real bug surfaced there too: a `cross_stack` comparison emitted the bias
+block `measurement.schema.json` rule 4 requires but **not** the
+`cross_stack_capture` disclosure it also requires, so every cross-stack row was
+schema-invalid on arrival. Fixed in the comparator, not the schema — the schema
+was right.
+
+### Deferred, and said plainly
+
+- **measure-cloud integration is out of scope and stays out.** The five reserved
+  files (`measure_cloud.py`, `stage_measure.sh`, `hfmeta.py`, `engines.json`,
+  `invoke_engine.py`) and `k6/tools/stream_score.py` were not edited; `git diff`
+  against `origin/main` is empty for all six. Every capture path is wrapped,
+  imported or shelled out to, and the fp64 estimator IS
+  `k6_kld_report._token_kld`, imported and called.
+- **A `registry_add` adapter for the comparison receipt is still deferred**, now
+  with a better reason than a workflow conflict: the submission path works end to
+  end and is the supported one. The receipt is the *evidence*; the submission is
+  the *claim*. A second ingest path would be two places mapping a number onto a
+  row.
+- **No root fidelity dataset and no token panel are published**, so steps 1 and 2
+  cannot be started from a clean checkout. This is the honest state and it is now
+  stated at the point of use (`bin/README.md`) and in `WHAT-WE-MEASURE.md` §8
+  rather than buried in an out-of-scope table. The 85.9 GB is the easy part;
+  deciding what a canonical root *is* is an operator decision.
+
+### Published
+
+The K6 and K8 model cards, with their fidelity annotations, pushed to
+`malaiwah/GLM-5.3-Flash-TR3-6bpw` and `malaiwah/GLM-5.3-Flash-TR3-8bpw`. Both had
+leaked `x_fidelity.registry.snapshot.root: /Users/mbelleau/…` — the same defect
+class as the dead `packed_root: /home/jl_fs/…` that motivated this entire format,
+and the Hub's own `validate-yaml` accepts it, so no external check would ever
+have caught it. `HOSTPATH-1` now walks the entire front matter against an
+anchored host-path regex. No capture was published; nothing large was pushed.
+
+Battery: `selftest_fidelity_dataset` 69/0, `selftest_fidelity_compare` 25/0,
+`selftest_fidelity_card` 16/0, `selftest_all.sh` 42 passed / 0 failed / 3
+skipped, registry `make check` 62 passed / 0 failed + 433 joint checks / 0
+errors. On real data: BF16-vs-FP8 **0.03526219355348638** nats at top-1
+**0.9257449926722032** over 4,094 positions through the real `[154880, 4096]`
+head, tensors verified; self-compare exactly **0.0** with `--force-compute`
+agreeing bitwise (tokenwise sha256 `d54931c81433dc5d…`).

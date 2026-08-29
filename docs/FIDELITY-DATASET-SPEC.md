@@ -757,11 +757,45 @@ Numbered so the implementation and the test matrix can name them.
 |---|---|---|
 | **HEAD-1a** | either side hidden-form, `A.head.tensor_content_sha256 == B.head.tensor_content_sha256`, and that head is the one applied | **ALLOW**. `estimator.head_policy = "shared_reference_head"`. Disclosure `shared_reference_head`, severity `info`. `class` may remain `strict`. This is the zai BF16/FP8 case our head-equality receipt licenses, and the precondition **REFC-003** checks. |
 | **HEAD-1b** | either side hidden-form, head content digests **differ** | **REFUSE**, exit 3. Override `--disclose-head-substitution --head <path>` emits with `head_policy = "shared_reference_head"`, `class = "advisory"`, bias `{kind: "other", direction: "downward"}`, and disclosure `head_substituted` severity **`blocking`** — which under registry **DISC-003** forces `status ∈ {pending, retracted}`. A head-substituted number is not publishable as a measurement. |
+| **HEAD-1c** | either side hidden-form, `capture_content_digest` **equal**, head content digests **differ** | **REFUSE**, exit 3, refusal id `head_substitution_vacuous`, **no override, not even `--disclose-head-substitution`**. See below. |
 | **HEAD-2** | both sides logit-form | **ALLOW**, never refuse: each capture already applied its own head, so head-quantization error is *inside* the measurement, which is correct. `head_policy = "native_head"`. Record both digests. A null digest ⇒ disclosure `estimator_unknown`, `class advisory`. |
 | **HEAD-3** | mixed hidden ↔ logit | **REFUSE** unless the head replayed onto the hidden side has `tensor_content_sha256` equal to the head that produced the logit side. Then ALLOW with `head_policy = "native_head"` and a disclosure naming the replay. |
 | **HEAD-4** | a hidden-form dataset with `head.tensor_content_sha256 == null` | **INVALID for cross-artifact comparison.** Validator: error. Comparator: exit 3, no override. A capture that cannot name its own head cannot be scored through anyone's. |
 | **HEAD-5** | `form == "hidden"` and `head.applied_in_capture == true` | structural error: the declared cut is *before* the head. |
 | **HEAD-6** | `head.present == false` on a `root` dataset | structural error (§3): a root nobody can replay against is not a yardstick. |
+
+#### HEAD-1c — the head-only quant, which HEAD-1b alone does not catch
+
+HEAD-1b refuses a head substitution and lets `--disclose-head-substitution`
+proceed with a blocking disclosure. That is right when the two captures differ:
+the disclosed number is wrong in a stated direction, and DISC-003 keeps it out
+of the registry. It is **not** enough for one case.
+
+Stock EXL3 quantizes its own `lm_head` (`head_bits` 6–8; our TR3 keeps it native
+BF16). A quant that changes *only* the head changes nothing before the final
+norm, so its post-norm hidden states are **bitwise identical** to the
+reference's and `capture_content_digest` matches. Replaying both sides through
+one head then subtracts a quantity from itself:
+
+* `classify()` sees equal content digests and returns `reproduction_confirmation`;
+* the metric is exactly `0.0` nats at top-1 `1.0`;
+* `--force-compute` "agrees", **vacuously** — `compute()` builds one `head32_t`
+  and replays both sides through it, so the recomputed array is also all zeros.
+
+The receipt's fine print stays honest (`self_compare.head_digest_equal: false`,
+`usable_as_floor: false`, a blocking disclosure), but its headline says a
+6-bit-head artifact reproduced the reference exactly. That is the flattering
+erasure §8.1 exists to prevent, arriving through the one door HEAD-1b leaves
+open.
+
+So: **bitwise-equal hiddens under different heads means the head IS the whole
+difference**, and hidden replay erases exactly it. There is no reading of that
+comparison under which the number means anything, so there is no override. A
+head-only quantization must publish **logit-form** captures, where HEAD-2
+applies and each side runs its own head — which is precisely the form §4.2
+reserves for stacks whose head is not separable.
+
+Exercised by case **N12**.
 
 ### 8.4 Why `shared_reference_head` and not a new enum value
 
@@ -915,7 +949,7 @@ manifest.
 |---|---|---|---|
 | 1 | seal: both datasets verify (§5) | `seal_failed` | none |
 | 2 | form: hidden↔hidden, logit↔logit, or HEAD-3 | `form_mismatch` | none |
-| 3 | panel: `suite_token_hash_sha256` equal; index sets equal; per-record `token_ids_json_sha256` equal; `attention_mask_sha256` equal when both present; `scored_rows` equal; `scoring_window` equal | `panel_mismatch` | none |
+| 3 | panel: `suite_token_hash_sha256` equal; index sets equal; per-record `token_ids_json_sha256` equal; `attention_mask_sha256` equal when both present; `scored_rows` equal; `scoring_window` equal; **tokenizer identity equal (PANEL-D6)** | `panel_mismatch` | none — the refusal prints a remedy instead |
 | 4 | head: HEAD-1..7 | `head_mismatch` | `--disclose-head-substitution` (HEAD-1b only) |
 | 5 | lane: `lane` equal ⇒ `same_lane: true` | `lane_mismatch` | `--allow-cross-lane` ⇒ bias block + advisory |
 | 6 | stack: `same_stack` iff `lane_identity_sha256` **and** `stack_fingerprint_sha256` both equal; else `cross_stack` ⇒ bias block REQUIRED (**BIAS-001**) | — | — |
@@ -924,6 +958,42 @@ manifest.
 | 9 | lossy: either `lossy_codec` non-null ⇒ advisory + `lossy_capture_codec` disclosure | — | — |
 | 10 | self-compare short-circuit (§10.4) | — | — |
 | 11 | compute (§10.2) | — | — |
+
+**PANEL-D6 — the tokenizer is panel identity, and the token digest cannot see
+it.** `suite_token_hash_sha256` hashes token **ids**, which are integers. Two
+different tokenizers can emit the same ids from different text; one that applies
+a chat template, or adds special tokens, has scored a different corpus with the
+same numbers. So the panel gate also compares
+`panel.tokenizer.{id, repository, revision, vocab_size, add_special_tokens,
+chat_template_applied}` and refuses a genuine disagreement. A field that is
+**null on either side is unknown, not different** — an adapted dataset
+legitimately cannot name a revision — so only two stated values that disagree
+are a refusal. The receipt records **both** sides' tokenizer blocks
+(`panel.tokenizer_reference`, `panel.tokenizer_candidate`,
+`panel.tokenizer_identity_equal`), because printing one side's block asserts
+something the comparison did not check. Case **N13**.
+
+This gate found a real defect on its first real run: `adapt_serving_v2` was
+filling `tokenizer.revision` from the captured artifact's **model** revision, so
+a BF16 capture and an FP8 capture of the same panel declared different
+tokenizers. The tokenizer belongs to the panel, not to the weights under test;
+it now comes from the suite manifest's own tokenizer-snapshot pin, identically
+on both sides.
+
+**Panel refusals name a remedy, not an override.** There is deliberately no flag
+that lets two panels be compared, so the refusal says so rather than leaving a
+reader unable to tell a typo from a design decision:
+`remedy: none by design (PANEL-D3) — … Check you passed the paths you meant;
+otherwise recapture the candidate on the reference's panel.`
+
+**Cross-stack is not a floor either.** Gate 6 stamps `usable_as_floor: false`
+on a cross-stack comparison, symmetric with BIAS-006's cross-lane rule: the bias
+block's own text declares a residual of the 1e-2 class in an **unknown**
+direction, and a number carrying an unknown bias of that size is not a
+zero-point for anything. Gate 6 also emits a `cross_stack_capture` disclosure at
+`affects_comparability: true` — `measurement.schema.json` rule 4 requires the
+bias block **and** a disclosure naming it, and a bias block alone makes the row
+schema-invalid the moment it reaches the registry.
 
 **Cross-lane is not a floor.** A cross-lane comparison may never be cited as
 `comparability.bias.floor_measurement_ref`: **BIAS-006** requires the floor row to come from a
@@ -1016,11 +1086,13 @@ reference: {dataset_sha256, capture_content_digest, role, form, lane, label, rep
             head: {tensor_content_sha256, quantized, source}, stack_fingerprint_sha256,
             lane_identity_sha256, weights: {...}, scope_digest}
 candidate: {…same shape…}
-panel:     {panel_id, suite_token_hash_sha256, contexts, scored_positions, scoring_window, tokenizer}
+panel:     {panel_id, suite_token_hash_sha256, contexts, scored_positions, scoring_window, tokenizer,
+            tokenizer_reference, tokenizer_candidate, tokenizer_identity_equal}   PANEL-D6
 gates:     {seal, form, panel, head, lane, stack, geometry, coverage, lossy}   each {passed, detail}
 comparator:{device, accumulation_dtype, logits_dtype, two_pass, vocab_chunk, position_block,
             tf32, deterministic_algorithms, bf16_reduced_precision_reduction,
-            cublas_workspace_config, head_applied_tensor_content_sha256, source_file_hashes_verified}
+            cublas_workspace_config, head_applied_tensor_content_sha256,
+            tensor_content_digests_verified, source_file_hashes_verified, estimator_backend}
 metric:    {name, value, units: "nats", direction: "reference_to_candidate",
             direction_label: "KL(reference || candidate)", higher_is_better: false}
 kl:        {mean, median, p95, p99, p99_9, max}
@@ -1038,10 +1110,52 @@ tokenwise: {path, bytes, sha256}
 disclosures[]
 ```
 
+**`tensor_content_digests_verified` says what was actually recomputed.** Seal verification covers
+the manifest and `checksums.txt` on every run. It does **not** catch a byte flipped inside a tensor
+whose `checksums.txt` was refreshed afterwards — and refreshing it is what re-running finalize after
+an edit does. So per-tensor `tensor_content_sha256` recomputation is **on by default** in `verify`,
+`validate` and `compare` (`--no-verify-tensors` opts out, for suites too large to re-read), and the
+receipt records the boolean that actually ran rather than a constant. `source_file_hashes_verified`
+is kept as an alias of the same value, because that is the field name kimi-k3's receipt uses.
+
 **A registry submission is a separate object.** `compare --emit-submission` calls
 `bin/fidelity/receipt.py::build_submission`, which self-seals and computes `scope_digest` **and** the
 comparability key with `registry/tools/registry_lib.py` — the registry's own code, imported, never
 reimplemented. Two implementations of a hash function is two chances to disagree.
+
+Three things the crossing does, none of them optional:
+
+* **it PROJECTS**, it does not copy. `submission.schema.json` sets
+  `additionalProperties: false` on `determinism`, `estimator` and `measurement_scope`, and the
+  comparison receipt's determinism block is deliberately richer (it carries min/max/stddev of the
+  run means, which the receipt schema wants and the submission schema forbids). The allowed keys
+  are listed explicitly in `dscompare.py` so a new receipt field cannot leak through by accident.
+* **it carries the comparator's verdict.** `comparability.bias` and `comparability.usable_as_floor`
+  travel in an optional, additive `comparability` block on the submission. Without it a row derived
+  from a head-substituted or cross-stack comparison arrives with `bias: null` — `registry_add`
+  derives a bias from `estimator.stack_relation` alone, which cannot see that a head substitution
+  biases the number **downward**. When the block is present it wins; when it is absent the old
+  derivation runs unchanged.
+* **it names each dataset by its SEAL.** `evidence[]` entries use a legal
+  `common.schema.json#/$defs/source` kind — `hf_file` with a Hub URL when the dataset is published,
+  `filesystem_path` naming the dataset by its own id when it is not — never a path on the measuring
+  box. The digest is `dataset_sha256`, which is what makes the pointer checkable.
+
+**SC-4 — a submission needs provenance a dataset cannot know.** The artifact (an HF repository at a
+40-hex revision, with its codec and quantization scope), `panel_ref` and `reference_ref` are registry
+identities; `panel_ref` and `reference_ref` must **already exist**, because a measurement may not
+introduce a panel. `emit_submission` refuses outright when any of them is missing rather than
+writing a file with empty blocks. `fidelity-dataset provenance-template` prints a skeleton with
+every required key; `compare --emit-submission --submission-provenance FILE` consumes it, and then
+runs `registry/tools/registry_validate.py --submission` **on its own output** before telling anyone
+the file is submittable. Cases **N14**, **N16**.
+
+**SC-5 — a blocking disclosure refuses a submission bin-side.** A blocking disclosure is the
+comparator saying the number is not publishable as a measurement. The registry's **DISC-003** says
+the same — but only at *row-ingest* time: `registry_validate.py --submission` runs
+`check_submission`, which never calls `check_disclosures`. A structurally valid submission carrying
+`head_substituted/blocking` is therefore ACCEPTED by the submission gate. So the tool that minted the
+number is the one that has to refuse it, alongside SC-3. Case **N15**.
 
 ---
 
@@ -1155,19 +1269,28 @@ to converge would be inventing a difference that does not exist.
 
 ### 12.3 `--emit-k3-compat`
 
-> **STATUS: SPECIFIED, NOT YET IMPLEMENTED.** `bin/fidelity-dataset capture` has no
-> `--emit-k3-compat` flag today and emits no `compat/` tree; `interop.k3_compat_emitted` is
-> therefore `false` in every dataset this repo has produced. The design below has been **proven by
-> a reference shim** against Festr's unmodified comparator (§12.3.2) — but until the flag lands,
-> `interop.compatible_with: ["kimi-k3-distribution-fidelity/1"]` claims only that this format is a
-> deliberate superset of his, **not** that his tools can read a dataset as emitted. Do not cite it
-> as the latter.
+> **STATUS: SHIPPED.** `bin/fidelity-dataset adapt --emit-k3-compat` writes `compat/`;
+> `bin/fidelity/k3compat.py` is the emitter and `verify-k3-compat` is the checker.
+> `interop.k3_compat_emitted` is `true` in a dataset built with the flag and `false` otherwise, and
+> the executed proof in §12.3.2 was re-run against the shipped implementation, not a shim.
 
-Writes `compat/` with the alias keys his comparator reads (`contexts`, `context_index`,
-compact `token_ids_json_sha256`, `allocation_stratum`, `source_cluster_id`) and a
-`compat/lm-head/weight.safetensors` whose single tensor key is `"weight"`. Cost: a few hundred bytes
-of duplicated JSON per dataset plus one optional alias file. Benefit: his comparator runs on our
-data unmodified.
+Writes three JSON files under `compat/` carrying the alias keys his comparator reads (`contexts` as
+a **list**, `context_index`, compact `token_ids_json_sha256`, `allocation_stratum`,
+`source_cluster_id`) and the top-level `suite_token_hash_sha256` he reads from the capture manifest.
+
+**No bytes are duplicated.** The reference shim written during review hardlinked every tensor and
+token file into `compat/`, which is correct but doubles what `checksums.txt` covers and what a
+`publish` uploads — 86 GB becomes 172 GB. His loader resolves `directory / record["file"]` with
+pathlib and calls `.is_file()`, and `validate_suite_tokens` joins `token_file` onto the suite
+manifest's own directory the same way, so a **relative alias** such as
+`../../capture/hidden_0000.safetensors` resolves to the one real tensor. The compat view is
+therefore pure metadata: three small JSON files, at any panel size. The head needs no alias at all —
+v1 already writes `head/weight.safetensors` with tensor key `weight`, which is exactly what
+`--lm-head` wants.
+
+`verify-k3-compat` re-checks the view against the dataset it describes — suite token hash, per-record
+token digests, per-record file digests, and that every relative alias resolves — so the view cannot
+drift into a second, quietly different description of the same bytes.
 
 #### 12.3.1 What his reader requires
 
@@ -1214,12 +1337,13 @@ true, and item 7 is a documented invocation argument.
    **before** the seal and its files must be listed like any other. It must NOT be an exclusion:
    a carve-out in `checksums.txt` would be a hole in the seal aimed squarely at the tensor
    duplicates. The alias tensors should be **hardlinks** to the originals so that listing them costs
-   digests already computed and no extra bytes on disk — but they are still separate paths in the
-   HF repo, so a publisher choosing to omit `compat/` from a push must re-seal, not hand-edit.
+   digests already computed and no extra bytes on disk. **The shipped emitter goes further and
+   duplicates nothing at all** (see above), so `compat/` adds three JSON files to `checksums.txt`
+   and nothing else; a publisher who omits `compat/` from a push must still re-seal, not hand-edit.
 
 #### 12.3.2 Executed proof, and the number it produced
 
-A reference shim emitting `compat/` per the above was run over two real v1 datasets adapted from our
+`--emit-k3-compat` was run over two real v1 datasets adapted from our
 own published capture (BF16 root and as-served FP8, 2 contexts x 2047 rows, vocab 154,880, our real
 `[154880, 4096]` BF16 head). Festr's **unmodified** `compare-kimi-k3-hidden-replay.py` then ran
 end to end:
@@ -1255,25 +1379,35 @@ D-1 exists to refuse, visible in his own output format.
 `bin/fidelity-dataset adapt --source k3v1` is pure metadata translation; **no tensor rewriting** is
 needed, because BF16 `[n, hidden]` safetensors with key `hidden_states` is already our native form.
 
-> **STATUS: TRANSLATES, DOES NOT YET EMIT.** `adapt --source k3v1` has exactly one return path — it
-> writes `k3v1-translation.json` and stops. It never constructs a dataset, **even when every tensor
-> is present locally**; the "download the capture tensors" line in its output is unconditional. So
-> today a kimi-k3 artifact **cannot** be handed to `fidelity-dataset compare`, and the asymmetry is
-> real: `adapt --source malaiwah-serving-v2` on our own published capture *does* emit a sealed
-> dataset that validates with 0 errors.
+> **STATUS: TRANSLATES AND EMITS.** `adapt --source k3v1` writes the translation report as before;
+> `--emit-dataset` additionally builds a **sealed v1 dataset** from it whenever the capture tensors
+> are present locally. Against a structurally faithful miniature artifact (his exact field names,
+> `semantic_point`, tensor keys and manifest chain, 3 contexts x 16 rows), the emitted dataset
+> validates with **0 errors** and self-compares to **exactly 0.0 nats** under `--force-compute` —
+> the full round trip, foreign artifact to comparator answer.
 >
-> What is already proven, against the **real** 1,024-context manifests: the panel translation is
+> Also proven, against the **real** 1,024-context manifests: the panel translation is
 > correct (the aggregate recomputed from his per-record digests under his `"\n".join(...)` preimage
-> equals his declared `suite_token_hash_sha256`), the head identity, coverage truth
+> equals his declared `suite_token_hash_sha256`), and the head identity, coverage truth
 > (`1024 declared / 0 present`), lane inference, stack-fingerprint mapping and the six inferred
-> fields are all resolved. Against a structurally faithful miniature artifact with tensors present,
-> the same translation resolves `3 declared / 3 present`.
+> fields all resolve.
 >
-> What remains is emission, not analysis: instantiate the same `dsmanifest` writer
-> `adapt_serving_v2` uses and call `.finish(manifest, panel_doc, capture_doc, head_doc,
-> runtime_doc)`, copy `tokens/` and hardlink the tensors, and seal. The translation report already
-> carries every value those documents need. Until that lands, the honest description of this
-> section is a **conformance target**, not a shipped capability.
+> **Two honesty constraints the emission forced**, both worth stating because they are refusals a
+> reader would not predict:
+>
+> * **`--role root` is REFUSED for a k3 translation.** ROOT-1 requires `head.quantized: false` and
+>   `weights.quantized: false`. A kimi-k3 artifact records no head quantization status at all
+>   (that is D-1), and its own checkpoint string declares *"official MXFP4 routed experts with BF16
+>   dense tensors"*. Asserting `root` would be this format telling a lie on the source's behalf, so
+>   the default role for a k3 translation is **`derived`**, whose `base_capture` block names the
+>   source artifact and its manifest digest.
+> * **`weights.quantized` is read out of `checkpoint.tensor_format`,** because the schema wants a
+>   boolean and there is no honest null. The inference is explicit and lands in
+>   `inferred_fields` naming the exact string it read, rather than being guessed silently.
+>
+> Emission needs the **bytes**: `capture_content_digest` and `checksums.txt` are computed over
+> tensors, never fabricated. With `0 declared / N present` the command says so and writes the
+> translation report only.
 
 1. **Panel shim.** `suite-manifest.json` `contexts[]` → our `records[]`; `context_index` → `index`;
    `allocation_stratum` kept; `source_cluster_id` kept; `token_file` → `token_file`. Carry
@@ -1438,3 +1572,33 @@ not this row's zero-point, for exactly the reason a floor from another lane is
 not. Implemented as a refusal in the card generator
 (`cardmeta.attributable_refusal`, case K8b) and specified as registry invariant
 **DS-005** in [`REGISTRY-INTEGRATION.md`](REGISTRY-INTEGRATION.md).
+
+**A-5 — HEAD-1c, PANEL-D6 and the cross-stack floor stamp.** Three refusals the
+implementation forced, each specified in place above and listed here so the
+addenda are a complete change record: `head_substitution_vacuous` (§8.3, the
+head-only quant that HEAD-1b alone scores as an exact reproduction), the
+tokenizer clause of the panel gate (§10.1 PANEL-D6, which the token-id digest
+structurally cannot see), and `usable_as_floor: false` on `cross_stack`
+(§10.1), symmetric with BIAS-006. None of the three adds a required key or
+changes a digest preimage.
+
+**A-6 — tensor verification is the default.** §5.4's seal chain is
+self-covering over the manifest and the sub-manifests, and its one blind spot is
+tensor CONTENT: an author who edits a tensor and re-runs finalize gets a clean
+`checksums.txt` and a clean seal. That blind spot used to be opt-in
+(`--verify-tensors`). It is now on by default in `verify`, `validate` and
+`compare`, with `--no-verify-tensors` for suites too large to re-read, and the
+receipt records which of the two ran (§10.5). Case **N17**.
+
+**A-7 — `compat/` costs no bytes.** §12.3's original design hardlinked tensor
+aliases into `compat/`. The shipped emitter writes relative aliases instead, so
+the view is three JSON files at any panel size; it is still written before the
+seal and listed like any other file. `verify-k3-compat` checks the view against
+the dataset so it cannot drift.
+
+**A-8 — a k3 translation is `derived`, not `root`.** ROOT-1 asserts
+`head.quantized: false` and `weights.quantized: false`. A kimi-k3 artifact
+records neither (D-1). `adapt --source k3v1 --emit-dataset` therefore defaults to
+`--role derived` and refuses `--role root` outright, and reads
+`weights.quantized` out of the source's own `checkpoint.tensor_format` string,
+naming that string in `inferred_fields`. See §12.4.
