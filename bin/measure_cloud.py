@@ -213,8 +213,13 @@ class Teardown:
             self.con.say("**  STILL BILLING, so the finished stages survive for a resume.")
             self.con.say("**    inspect:  jl exec %s 'tail -50 %s/logs/*.log'"
                          % (self.machine_id, self.fs_root))
-            self.con.say("**    resume :  bin/measure-cloud adopt --job <id> (stage markers skip"
-                         " what is done)")
+            # There is no `adopt` subcommand; re-running the SAME command is
+            # the resume, because plan() adopts any Running instance whose name
+            # starts with this job's prefix and every finished stage is skipped
+            # by its done-marker. Printing a command that does not exist sent
+            # the reader looking for a feature instead of at the answer.
+            self.con.say("**    resume :  re-run the same measure-cloud command -- it ADOPTS this")
+            self.con.say("**              instance by job id and skips every finished stage")
             self.con.say("**    DESTROY:  jl destroy %s --yes" % self.machine_id)
             self.con.say("**  Its lease is kept, so the reaper still destroys it at the"
                          " deadline.")
@@ -1501,9 +1506,14 @@ def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
             con.ok("stage %s" % stage, human_duration(time.time() - started))
             return
         if outcome == "failed":
+            # Do not assert the teardown's decision here: --hold-on-failure may
+            # keep the instance, and this line used to say "will now be
+            # destroyed" beside a HELD banner saying the opposite. The teardown
+            # prints what it actually did.
             raise RuntimeError(
-                "stage %s failed on the instance; the log was pulled to the "
-                "output directory and the instance will now be destroyed" % stage)
+                "stage %s failed on the instance; its log was pulled to the "
+                "output directory (the teardown block below says what happened "
+                "to the instance)" % stage)
         if outcome == "deadline":
             raise RuntimeError(
                 "--max-runtime reached during stage %s; stopping and tearing "
