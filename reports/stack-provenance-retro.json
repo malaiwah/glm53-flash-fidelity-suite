@@ -27,7 +27,7 @@
     }
   },
   "code_establishment": {
-    "commit_window": "tools/fidelity.py cmd_capture introduced at c24ad7c (2026-08-26); the only later commit touching it before the campaign end (2bc04cf) changes an unrelated qualify guard. remote/stage.sh ENGINE_KW and capture stanzas verified unchanged c24ad7c..HEAD via git log -S and git diff.",
+    "commit_window": "tools/fidelity.py cmd_capture introduced at c24ad7c (2026-08-26); the only later commit touching it before the campaign end (2bc04cf) changes an unrelated qualify guard. remote/stage.sh: ENGINE_KW is byte-identical c24ad7c..HEAD and --attention-backend is never passed at any revision (verified via git log -S and git diff); the capture stanzas' engine-affecting arguments are unchanged, the only later edits to them being a non-engine `|| echo \"capture exited rc=$?\"` tolerance suffix and a manifest-completeness assertion.",
     "facts": [
       "tools/fidelity.py cmd_capture builds enforce_eager = (not args.attention_backend or args.attention_backend == 'TRITON_ATTN') and HARD-REFUSES otherwise: \"capture requires enforce_eager: the final-norm hook does not fire inside compiled/cudagraph forwards\" — a completed capture manifest at these commits PROVES eager mode.",
       "tools/fidelity.py cmd_qualify hardcodes enforce_eager=True.",
@@ -164,7 +164,7 @@
       "receipt": "reports/report-fp8-vs-bf16.json",
       "receipt_sha256": "c1755f773dcd2119d5dba554d93e4cad36ca269eb2f6ff4914d6032e42bbf29e",
       "lane": "serving (cross_stack): official FP8 release vs BF16 reference, hidden-state replay through the shared head",
-      "measured_value_nats": 0.020615254540417995,
+      "measured_value_nats": 0.028103897727130314,
       "evidence": {
         "environment": [
           "environment.json",
@@ -240,7 +240,8 @@
           ]
         }
       },
-      "notes": "The report names its operands by container path (/glm53/captures/{bf16,fp8}), not digest — JOURNAL lesson 20. The manifests above ARE those operands: their identity blocks carry the same model revisions (b1967181/3f1971b7) and contract digests as the report's identity blocks. Future reports embed operand manifest digests directly."
+      "notes": "The report names its operands by container path (/glm53/captures/{bf16,fp8}), not digest — JOURNAL lesson 20. The manifests above ARE those operands: their identity blocks carry the same model revisions (b1967181/3f1971b7) and contract digests as the report's identity blocks. Future reports embed operand manifest digests directly.",
+      "measured_value_field": "token_mean_kld (== context_macro_mean_kld) of reports/report-fp8-vs-bf16.json"
     },
     {
       "receipt": "reports/report-fp8-vs-bf16-scorefrom1024.json",
@@ -574,5 +575,5 @@
     "canonical_json": "json.dumps(obj, sort_keys=True, separators=(',',':'), ensure_ascii=False) encoded UTF-8",
     "note": "the canonicalization the harness uses everywhere (bin/fidelity/common.py canonical_json); re-verified on every run by bin/selftest_stackprint.py check [10]"
   },
-  "receipt_sha256": "f14484bd72412c085988ddf2e9fa389b8257a8ff8a917e17c84e3711b2861ef5"
+  "receipt_sha256": "db7ff227a0ed8f77459104725a19d5bb3577541fa6620c1fc3494db6c8ae6409"
 }
