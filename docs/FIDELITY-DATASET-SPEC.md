@@ -1208,6 +1208,15 @@ what our dataset must satisfy for his tool to read it:
 So the real work is items **1, 2 and 4** — all metadata, all in `compat/`. Items 3, 5, 6 were already
 true, and item 7 is a documented invocation argument.
 
+8. **`compat/` is inside the seal.** `SEAL-1(c)` refuses any file present in the tree but absent from
+   `checksums.txt`, so a `compat/` tree written after sealing turns a clean dataset into
+   `1 error: 6 file(s) present but not in checksums.txt` (observed). `--emit-k3-compat` must run
+   **before** the seal and its files must be listed like any other. It must NOT be an exclusion:
+   a carve-out in `checksums.txt` would be a hole in the seal aimed squarely at the tensor
+   duplicates. The alias tensors should be **hardlinks** to the originals so that listing them costs
+   digests already computed and no extra bytes on disk — but they are still separate paths in the
+   HF repo, so a publisher choosing to omit `compat/` from a push must re-seal, not hand-edit.
+
 #### 12.3.2 Executed proof, and the number it produced
 
 A reference shim emitting `compat/` per the above was run over two real v1 datasets adapted from our
@@ -1245,6 +1254,26 @@ D-1 exists to refuse, visible in his own output format.
 
 `bin/fidelity-dataset adapt --source k3v1` is pure metadata translation; **no tensor rewriting** is
 needed, because BF16 `[n, hidden]` safetensors with key `hidden_states` is already our native form.
+
+> **STATUS: TRANSLATES, DOES NOT YET EMIT.** `adapt --source k3v1` has exactly one return path — it
+> writes `k3v1-translation.json` and stops. It never constructs a dataset, **even when every tensor
+> is present locally**; the "download the capture tensors" line in its output is unconditional. So
+> today a kimi-k3 artifact **cannot** be handed to `fidelity-dataset compare`, and the asymmetry is
+> real: `adapt --source malaiwah-serving-v2` on our own published capture *does* emit a sealed
+> dataset that validates with 0 errors.
+>
+> What is already proven, against the **real** 1,024-context manifests: the panel translation is
+> correct (the aggregate recomputed from his per-record digests under his `"\n".join(...)` preimage
+> equals his declared `suite_token_hash_sha256`), the head identity, coverage truth
+> (`1024 declared / 0 present`), lane inference, stack-fingerprint mapping and the six inferred
+> fields are all resolved. Against a structurally faithful miniature artifact with tensors present,
+> the same translation resolves `3 declared / 3 present`.
+>
+> What remains is emission, not analysis: instantiate the same `dsmanifest` writer
+> `adapt_serving_v2` uses and call `.finish(manifest, panel_doc, capture_doc, head_doc,
+> runtime_doc)`, copy `tokens/` and hardlink the tensors, and seal. The translation report already
+> carries every value those documents need. Until that lands, the honest description of this
+> section is a **conformance target**, not a shipped capability.
 
 1. **Panel shim.** `suite-manifest.json` `contexts[]` → our `records[]`; `context_index` → `index`;
    `allocation_stratum` kept; `source_cluster_id` kept; `token_file` → `token_file`. Carry
