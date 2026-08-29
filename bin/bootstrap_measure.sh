@@ -199,6 +199,11 @@ PY
 # ---- 6. the exl3hf offline selftest, INCLUDING the rungs that need the
 #         pipeline (they self-skip on the laptop; this is the only place the
 #         mcg-parity rung can run before a paid capture) --------------------
+if [ -f "$FS/k6/tools/selftest_tr3_offline.py" ]; then
+  log "running the tr3 offline selftest (seal recompute + mcg decode parity)"
+  ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_tr3_offline.py ) \
+    | tee "$RCPT/selftest-tr3.txt"
+fi
 if [ -f "$FS/k6/tools/selftest_exl3hf_offline.py" ]; then
   log "running the exl3hf offline selftest (mcg-parity rung included)"
   ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_exl3hf_offline.py ) \
