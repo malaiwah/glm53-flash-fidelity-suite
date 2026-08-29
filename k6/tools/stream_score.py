@@ -55,6 +55,20 @@ The sealed run also did not pass ``experts_implementation``, so
 because the fallback ``Glm5NextTextExperts.forward`` accumulates with
 ``index_add_`` in bf16 and is CUDA-nondeterministic.
 
+The BF16 floor (``--source native``)
+------------------------------------
+``--source {checkpoint,payload-store,dione}`` all score a QUANTIZED routed
+surface.  ``--source native`` scores the un-quantized one: the routed experts
+are read straight from the official BF16 checkpoint shards by their own tensor
+names (``glm53_direct_k4.tensor_name``) with NO decode, and everything else --
+panel, teacher, non-routed tensors, slab, EP8 emulation, reduce order,
+grouped_mm kernel, fp32 logit storage, receipt schema -- is byte-for-byte the
+same code path.  The resulting KLD is therefore the FLOOR of this lane: what it
+costs to compare our stack's forward against the teacher's logits with zero
+quantization error.  Subtracting it from a quant's panel mean leaves that
+quant's quantization-ATTRIBUTABLE error.  The receipt is labelled
+``native-bf16`` and its disclosure block records ``no_decode``.
+
 Outputs
 -------
 ``<out>/{plan,reader-identity,backend,capture-receipt}.json`` and
@@ -91,6 +105,11 @@ STREAM_PLAN_SCHEMA = "malaiwah.glm53-streaming-student-logit-capture-plan.v1"
 STREAM_BACKEND_SCHEMA = "malaiwah.glm53-streaming-offline-reader-backend.v1"
 CAPTURE_SCHEMA = "quant-pipeline.glm53-logit-capture.v1"
 DISCLOSURE_SCHEMA = "malaiwah.glm53-streaming-disclosure.v1"
+NATIVE_IDENTITY_SCHEMA = "malaiwah.glm53-native-bf16-source-identity.v1"
+NATIVE_STUDENT_IDENTITY_SCHEMA = "malaiwah.glm53-native-bf16-student-identity.v1"
+NATIVE_STUDENT_LABEL = "native-bf16"
+NATIVE_CAPTURE_ROLE = "native_bf16_student"
+RELEASE_INVENTORY_SCHEMA = "quant-pipeline.glm-release-inventory.v1"
 
 RELEASED_ARCHITECTURE = "Glm5NextForConditionalGeneration"
 RELEASED_MODEL_TYPE = "glm5_next"
@@ -321,6 +340,152 @@ def decode_from_payload(payload_cpu, choice, *, projection: str, device, bits: i
 
 
 # --------------------------------------------------------------------------
+# native (un-quantized) routed surface: the BF16 checkpoint itself
+# --------------------------------------------------------------------------
+def native_tensor_name(layer: int, expert: int, projection: str) -> str:
+    """The official per-expert checkpoint tensor name.
+
+    Identical to ``quant_pipeline.campaign.glm53_direct_k4.tensor_name`` (which
+    is what the ENCODER read to build the packed store), restated here without
+    the GLM-5.3-Flash layer/expert bounds so the same reader also serves the
+    0.1B architecture fixture in the offline ladder.
+    """
+
+    return f"model.language_model.layers.{layer}.mlp.experts.{expert}.{projection}.weight"
+
+
+class NativeCheckpointSource:
+    """Routed experts read straight from the official BF16 shards -- NO decode.
+
+    This is the surface the packed codec approximates.  It deliberately mirrors
+    ``load_payload_cpu``: one call returns the CPU tensor for one
+    (layer, expert, projection) plus a census row, and the CALLER does the
+    device move, ``fuse_gate_up``, the single bf16 rounding, the ``copy_`` into
+    the slab and the ``torch.equal`` close check -- i.e. the packed lane's own
+    installation algebra, unmodified.  The checkpoint tensors are already
+    bfloat16, so that rounding is the identity and the slab holds the released
+    bytes exactly.
+
+    safetensors handles are cached PER THREAD: the streamer reads with a pool
+    and the handles are not documented thread-safe (the Dione adapter serialises
+    for the same reason; here a per-thread handle keeps the parallel IO that a
+    599 GB network tree needs).
+    """
+
+    def __init__(self, root: Path):
+        self.root = Path(root).resolve()
+        index_path = self.root / "model.safetensors.index.json"
+        if index_path.is_file():
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            self.weight_map: Dict[str, str] = dict(index["weight_map"])
+            self.single_file: Optional[str] = None
+        elif (self.root / "model.safetensors").is_file():
+            self.weight_map = {}
+            self.single_file = "model.safetensors"
+        else:
+            raise _fail(
+                f"--source native needs {self.root}/model.safetensors.index.json "
+                "or model.safetensors"
+            )
+        self._local = threading.local()
+        self._lock = threading.Lock()
+        self.shards_read: set = set()
+        self.bytes_read = 0
+
+    # -- layout -----------------------------------------------------------
+    def shard_for(self, name: str) -> str:
+        if self.single_file is not None:
+            return self.single_file
+        shard = self.weight_map.get(name)
+        if shard is None:
+            raise _fail(f"BF16 index has no routed tensor named {name}")
+        return shard
+
+    def routed_tensor_census(self, layers: Tuple[int, ...], num_experts: int) -> Dict[str, Any]:
+        """Prove, from the index alone, that every routed tensor exists."""
+
+        projections = ("gate_proj", "up_proj", "down_proj")
+        expected = [
+            native_tensor_name(layer, expert, projection)
+            for layer in layers
+            for expert in range(num_experts)
+            for projection in projections
+        ]
+        if self.single_file is None:
+            absent = [name for name in expected if name not in self.weight_map]
+            shards = sorted({self.weight_map[name] for name in expected if name in self.weight_map})
+        else:
+            absent = []
+            shards = [self.single_file]
+        if absent:
+            raise _fail(
+                f"BF16 checkpoint is missing {len(absent)} routed expert tensors "
+                f"(first: {absent[0]}) - wrong tree for --source native"
+            )
+        return {
+            "routed_tensor_count": len(expected),
+            "routed_shard_count": len(shards),
+            "routed_shards": shards if len(shards) <= 200 else shards[:200],
+            "layers": [layers[0], layers[-1]] if layers else [],
+            "experts_per_layer": num_experts,
+            "single_file_checkpoint": self.single_file is not None,
+        }
+
+    # -- reads ------------------------------------------------------------
+    def _handle(self, shard: str):
+        cache = getattr(self._local, "handles", None)
+        if cache is None:
+            cache = self._local.handles = {}
+        handle = cache.get(shard)
+        if handle is None:
+            from safetensors import safe_open
+
+            handle = safe_open(str(self.root / shard), framework="pt", device="cpu")
+            enter = getattr(handle, "__enter__", None)
+            if enter is not None:
+                handle = enter()
+            cache[shard] = handle
+        return handle
+
+    def load(self, *, layer: int, expert: int, projection: str):
+        name = native_tensor_name(layer, expert, projection)
+        shard = self.shard_for(name)
+        tensor = self._handle(shard).get_tensor(name)
+        nbytes = int(tensor.numel() * tensor.element_size())
+        with self._lock:
+            self.shards_read.add(shard)
+            self.bytes_read += nbytes
+        return tensor, {"tensor": name, "shard": shard, "bytes": nbytes,
+                        "dtype": str(tensor.dtype).replace("torch.", "")}
+
+
+def native_source_identity(module_path: Path, runner_path: Path) -> Dict[str, Any]:
+    """``reader_identity``'s shape for a run that decodes NOTHING.
+
+    Same two file hashes (the reader module still supplies ``fuse_gate_up`` and
+    ``resolve_main_layers``, and this file is still the runner), so a native
+    receipt and a packed receipt are comparable field by field; the mode string
+    and the absent codebook are what say "no codec ran".
+    """
+
+    from quant_pipeline.core.artifacts import canonical_json, sha256_bytes, sha256_file
+
+    body = {
+        "schema": NATIVE_IDENTITY_SCHEMA,
+        "mode": "official_bf16_checkpoint_routed_experts_no_decode_for_logit_measurement",
+        "serving_kernel": False,
+        "final_tp2_kernel": False,
+        "bits": 16,
+        "codebook": None,
+        "decode_executed": False,
+        "module_sha256": sha256_file(Path(module_path)),
+        "runner_sha256": sha256_file(Path(runner_path)),
+    }
+    body["runtime_reader_sha256"] = sha256_bytes(canonical_json(body))
+    return body
+
+
+# --------------------------------------------------------------------------
 # EP emulation
 # --------------------------------------------------------------------------
 def ep_router_remap(top_k_index, top_k_weights, rank: int, num_local_experts: int):
@@ -449,7 +614,7 @@ class ExpertStreamer:
         *,
         surface,
         device,
-        bits: int,
+        bits: Optional[int],
         layers: Tuple[int, ...],
         slab_experts: int,
         decode_threads: int,
@@ -458,6 +623,7 @@ class ExpertStreamer:
         cache_dir: Optional[Path] = None,
         progress: bool = True,
         dione_shards: Any = None,
+        native_source: Optional[NativeCheckpointSource] = None,
     ):
         import torch
 
@@ -466,6 +632,10 @@ class ExpertStreamer:
         # each matrix is assembled by dione_surface.load_decoded_module (decode
         # per TP slice, then rank-ordered concat) instead of the packed store.
         self.dione_shards = dione_shards
+        # when set, the routed surface is the official BF16 checkpoint itself:
+        # the slab is filled by reading the released per-expert tensors, with no
+        # codec in the path at all (the measurement floor of this lane).
+        self.native_source = native_source
         if 288 % slab_experts:
             raise _fail("--slab-experts must divide 288")
         self.surface = surface
@@ -645,6 +815,19 @@ class ExpertStreamer:
 
         jobs: "queue.Queue[Any]" = queue.Queue(maxsize=max(2, self.decode_threads * 2))
         error: List[BaseException] = []
+        # ONE loop serves both surfaces.  The packed lane submits
+        # load_payload_cpu (IO + the three sealed hash gates) and the consumer
+        # runs decode_from_payload; the native lane submits a checkpoint read and
+        # the consumer only moves the released bf16 tensor to the device.  Every
+        # line after that -- fuse_gate_up, the single bf16 rounding, copy_ into
+        # the slab, the torch.equal close check, the host cache -- is shared.
+        native = self.native_source
+
+        def submit(pool, expert: int, projection: str):
+            if native is not None:
+                return pool.submit(native.load, layer=layer, expert=expert, projection=projection)
+            return pool.submit(load_payload_cpu, self.surface, layer=layer,
+                               expert=expert, projection=projection)
 
         def producer() -> None:
             try:
@@ -657,8 +840,7 @@ class ExpertStreamer:
                                 offset,
                                 expert,
                                 [
-                                    pool.submit(load_payload_cpu, self.surface, layer=layer,
-                                                expert=expert, projection=proj)
+                                    submit(pool, expert, proj)
                                     for proj in ("gate_proj", "up_proj", "down_proj")
                                 ],
                             )
@@ -685,6 +867,12 @@ class ExpertStreamer:
                 for (payload_cpu, choice), projection in zip(
                     payloads, ("gate_proj", "up_proj", "down_proj")
                 ):
+                    if native is not None:
+                        # payload_cpu is the RELEASED bf16 tensor; `choice` is its
+                        # census row.  No codec, no hash gate: the shard bytes are
+                        # what the sealed inventory's index_sha256 binds.
+                        decoded.append(payload_cpu.to(self.device))
+                        continue
                     tensor, _ = decode_from_payload(
                         payload_cpu,
                         choice,
@@ -707,17 +895,30 @@ class ExpertStreamer:
                     cpu_down[expert].copy_(down_bf16.to("cpu"))
                 self.decoded_matrices += 3
                 choices = [row[1] for row in payloads]
-                self.payload_bytes += sum(int(row["logical_payload_bytes"]) for row in choices)
-                if record_census:
-                    self.census.append(
-                        {
-                            "layer": layer,
-                            "global_expert": expert,
-                            "local_expert": offset,
-                            "choice_sha256": [row["choice_sha256"] for row in choices],
-                            "packed_sha256": [row["packed_sha256"] for row in choices],
-                        }
-                    )
+                if native is not None:
+                    self.payload_bytes += sum(int(row["bytes"]) for row in choices)
+                    if record_census:
+                        self.census.append(
+                            {
+                                "layer": layer,
+                                "global_expert": expert,
+                                "local_expert": offset,
+                                "tensors": [row["tensor"] for row in choices],
+                                "shards": [row["shard"] for row in choices],
+                            }
+                        )
+                else:
+                    self.payload_bytes += sum(int(row["logical_payload_bytes"]) for row in choices)
+                    if record_census:
+                        self.census.append(
+                            {
+                                "layer": layer,
+                                "global_expert": expert,
+                                "local_expert": offset,
+                                "choice_sha256": [row["choice_sha256"] for row in choices],
+                                "packed_sha256": [row["packed_sha256"] for row in choices],
+                            }
+                        )
                 del decoded, gate_up_bf16, down_bf16
         thread.join()
         if error:
@@ -1092,10 +1293,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     src = parser.add_argument_group("weight source")
-    src.add_argument("--source", choices=("checkpoint", "payload-store", "dione"), default="payload-store",
+    src.add_argument("--source", choices=("checkpoint", "payload-store", "dione", "native"),
+                     default="payload-store",
                      help="checkpoint = materialized shards (its receipt names the packed root); "
                           "payload-store = the content-addressed store directly (default); "
-                          "dione = a Dione-style selective-EXL3 tree via dione_surface")
+                          "dione = a Dione-style selective-EXL3 tree via dione_surface; "
+                          "native = the official BF16 checkpoint's own routed experts, NO decode "
+                          "(the measurement floor of this lane)")
     src.add_argument("--checkpoint", type=Path, help="--source checkpoint: materialized checkpoint root")
     src.add_argument("--packed-root", type=Path,
                      help="--source payload-store: encode output root (out-k6) carrying "
@@ -1103,6 +1307,11 @@ def main() -> int:
     src.add_argument("--dione-root", type=Path)
     src.add_argument("--dione-repo")
     src.add_argument("--dione-revision")
+    src.add_argument("--inventory", type=Path,
+                     help="--source native: sealed quant-pipeline.glm-release-inventory.v1 that "
+                          "binds the BF16 config/index (defaults to <packed-root>/inventory.json). "
+                          "It is the only provenance anchor a native run has, since there is no "
+                          "contract and no payload store")
     src.add_argument("--bf16", type=Path, required=True, help="official BF16 checkpoint (non-routed source)")
 
     parser.add_argument("--teacher", type=Path, required=True,
@@ -1110,7 +1319,7 @@ def main() -> int:
     parser.add_argument("--token-panel", type=Path, help="explicit sealed token-panel receipt path")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--cold-run", type=int, required=True)
-    parser.add_argument("--profile", default="k6", choices=("k6", "k8", "k6k8"))
+    parser.add_argument("--profile", default="k6", choices=("k6", "k8", "k6k8", "native-bf16"))
     parser.add_argument("--roles", default="final")
     parser.add_argument("--windows", help="comma-separated window ids to score (default: all)")
     parser.add_argument("--pipeline-root")
@@ -1194,9 +1403,42 @@ def main() -> int:
             "k6_student_capture.py --surface dione until this path is validated."
         )
 
+    if (args.source == "native") != (args.profile == "native-bf16"):
+        raise _fail(
+            "--source native and --profile native-bf16 must be used together: the profile "
+            "selects the student label the KLD report expects, and a native run is not a K6/K8 one"
+        )
+
     # ---- resolve and verify the packed surface (fail closed) -------------
     materialization: Optional[Dict[str, Any]] = None
-    if args.source == "checkpoint":
+    packed_root: Optional[Path] = None
+    surface = None
+    contract = None
+    mtp_adapter = None
+    bits: Optional[int] = None
+    if args.source == "native":
+        # There is no contract, no payload store and no codec.  The ONE
+        # provenance anchor is the sealed release inventory, which binds the
+        # BF16 config.json and model.safetensors.index.json this run reads its
+        # routed experts from - the same inventory the K6/K8 contracts target,
+        # so the floor and the quants are stated against the same weights.
+        inventory_path = (
+            args.inventory.resolve()
+            if args.inventory
+            else (args.packed_root.resolve() / "inventory.json" if args.packed_root else None)
+        )
+        if inventory_path is None or not inventory_path.is_file():
+            raise _fail(
+                "--source native requires --inventory <sealed glm-release-inventory.v1> "
+                "(or --packed-root, whose inventory.json is used)"
+            )
+        inventory = _sealed_json(inventory_path, RELEASE_INVENTORY_SCHEMA, "inventory_sha256")
+        model_revision = str(inventory.get("model_revision", ""))
+        if sealed_capture.REVISION.fullmatch(model_revision) is None:
+            raise _fail("inventory model revision is not an immutable 40-hex commit")
+        if inventory.get("seal_mode") != "full-shard-sha256":
+            raise _fail("streaming capture requires the exact full-hash BF16 inventory")
+    elif args.source == "checkpoint":
         if args.checkpoint is None:
             raise _fail("--source checkpoint requires --checkpoint")
         checkpoint_root = args.checkpoint.resolve()
@@ -1211,39 +1453,42 @@ def main() -> int:
         if args.packed_root is None:
             raise _fail("--source payload-store requires --packed-root (the encode output root)")
         packed_root = args.packed_root.resolve()
-    for required in ("contract.json", "inventory.json", "mtp-adapter-receipt.json"):
-        if not (packed_root / required).is_file():
-            raise _fail(f"packed root {packed_root} lacks {required}")
-    for required in ("payload-store/objects", "payload-store/choices"):
-        if not (packed_root / required).is_dir():
-            raise _fail(f"packed root {packed_root} lacks {required}")
+    if packed_root is not None:
+        for required in ("contract.json", "inventory.json", "mtp-adapter-receipt.json"):
+            if not (packed_root / required).is_file():
+                raise _fail(f"packed root {packed_root} lacks {required}")
+        for required in ("payload-store/objects", "payload-store/choices"):
+            if not (packed_root / required).is_dir():
+                raise _fail(f"packed root {packed_root} lacks {required}")
 
-    inventory = _sealed_json(
-        packed_root / "inventory.json", "quant-pipeline.glm-release-inventory.v1", "inventory_sha256"
-    )
-    model_revision = str(inventory.get("model_revision", ""))
-    if sealed_capture.REVISION.fullmatch(model_revision) is None:
-        raise _fail("inventory model revision is not an immutable 40-hex commit")
-    if inventory.get("seal_mode") != "full-shard-sha256":
-        raise _fail("streaming capture requires the exact full-hash BF16 inventory")
-    if materialization is not None and materialization.get("source_inventory_sha256") != inventory[
-        "inventory_sha256"
-    ]:
-        raise _fail("materialized checkpoint binds a different inventory")
+        inventory = _sealed_json(
+            packed_root / "inventory.json", RELEASE_INVENTORY_SCHEMA, "inventory_sha256"
+        )
+        model_revision = str(inventory.get("model_revision", ""))
+        if sealed_capture.REVISION.fullmatch(model_revision) is None:
+            raise _fail("inventory model revision is not an immutable 40-hex commit")
+        if inventory.get("seal_mode") != "full-shard-sha256":
+            raise _fail("streaming capture requires the exact full-hash BF16 inventory")
+        if materialization is not None and materialization.get(
+            "source_inventory_sha256"
+        ) != inventory["inventory_sha256"]:
+            raise _fail("materialized checkpoint binds a different inventory")
 
-    raw_contract = _read_json(packed_root / "contract.json", "direct contract")
-    bits = int(raw_contract.get("rate", {}).get("bits", -1))
-    expected_bits = {"k6": 6, "k8": 8}.get(args.profile)
-    if expected_bits is not None and bits != expected_bits:
-        raise _fail(f"profile {args.profile} expects K{expected_bits}, contract is K{bits}")
-    contract = _sealed_json(packed_root / "contract.json", contract_schema_for_bits(bits), "contract_sha256")
-    if contract_bits(contract) != bits:
-        raise _fail("packed student contract rate differs")
-    if contract.get("inventory_sha256") != inventory["inventory_sha256"]:
-        raise _fail("direct MCG contract targets another BF16 inventory")
-    mtp_adapter = _sealed_json(
-        packed_root / "mtp-adapter-receipt.json", _mtp_adapter_schema(bits), "receipt_sha256"
-    )
+        raw_contract = _read_json(packed_root / "contract.json", "direct contract")
+        bits = int(raw_contract.get("rate", {}).get("bits", -1))
+        expected_bits = {"k6": 6, "k8": 8}.get(args.profile)
+        if expected_bits is not None and bits != expected_bits:
+            raise _fail(f"profile {args.profile} expects K{expected_bits}, contract is K{bits}")
+        contract = _sealed_json(
+            packed_root / "contract.json", contract_schema_for_bits(bits), "contract_sha256"
+        )
+        if contract_bits(contract) != bits:
+            raise _fail("packed student contract rate differs")
+        if contract.get("inventory_sha256") != inventory["inventory_sha256"]:
+            raise _fail("direct MCG contract targets another BF16 inventory")
+        mtp_adapter = _sealed_json(
+            packed_root / "mtp-adapter-receipt.json", _mtp_adapter_schema(bits), "receipt_sha256"
+        )
 
     # ---- official BF16 identity ------------------------------------------
     model_root = args.bf16.resolve()
@@ -1271,7 +1516,17 @@ def main() -> int:
 
     # ---- surface + panel --------------------------------------------------
     surface_started = time.monotonic()
-    surface = load_complete_surface(root=packed_root, contract=contract, mtp_adapter_receipt=mtp_adapter)
+    native_source: Optional[NativeCheckpointSource] = None
+    native_layout: Optional[Dict[str, Any]] = None
+    if args.source == "native":
+        native_source = NativeCheckpointSource(model_root)
+        native_layout = native_source.routed_tensor_census(
+            tuple(MAIN_ROUTED_LAYERS), int(text_config["n_routed_experts"])
+        )
+    else:
+        surface = load_complete_surface(
+            root=packed_root, contract=contract, mtp_adapter_receipt=mtp_adapter
+        )
     surface_seconds = time.monotonic() - surface_started
     roles = tuple(role.strip() for role in args.roles.split(",") if role.strip())
     panel_path = sealed_capture._find_token_panel_receipt(
@@ -1297,25 +1552,45 @@ def main() -> int:
     else:
         selection = list(enumerate(all_windows))
 
-    identity = reader_identity(
-        Path(reader_module.__file__).resolve(), Path(__file__).resolve(), bits=bits
-    )
-    checkpoint_identity = sha256_bytes(
-        canonical_json(
-            {
-                "schema": f"quant-pipeline.glm53-packed-k{bits}-student-identity.v1",
-                "inventory_sha256": inventory["inventory_sha256"],
-                "contract_sha256": surface.contract_sha256,
-                "main_layer_receipt_sha256": list(surface.main_layer_receipt_sha256),
-                "mtp_adapter_receipt_sha256": surface.mtp_adapter_receipt_sha256,
-                "mtp_pack_receipt_sha256": surface.mtp_pack_receipt_sha256,
-                "packed_reader_abi_sha256": surface.packed_reader_abi_sha256,
-                "bits": bits,
-                "codebook": "MCG",
-                "nonrouted_policy": "official_source_native",
-            }
+    if args.source == "native":
+        identity = native_source_identity(
+            Path(reader_module.__file__).resolve(), Path(__file__).resolve()
         )
-    )
+        checkpoint_identity = sha256_bytes(
+            canonical_json(
+                {
+                    "schema": NATIVE_STUDENT_IDENTITY_SCHEMA,
+                    "inventory_sha256": inventory["inventory_sha256"],
+                    "config_sha256": inventory["config_sha256"],
+                    "index_sha256": inventory["index_sha256"],
+                    "bits": 16,
+                    "codebook": None,
+                    "routed_policy": "official_bf16_checkpoint_experts_no_decode",
+                    "routed_tensor_count": native_layout["routed_tensor_count"],
+                    "nonrouted_policy": "official_source_native",
+                }
+            )
+        )
+    else:
+        identity = reader_identity(
+            Path(reader_module.__file__).resolve(), Path(__file__).resolve(), bits=bits
+        )
+        checkpoint_identity = sha256_bytes(
+            canonical_json(
+                {
+                    "schema": f"quant-pipeline.glm53-packed-k{bits}-student-identity.v1",
+                    "inventory_sha256": inventory["inventory_sha256"],
+                    "contract_sha256": surface.contract_sha256,
+                    "main_layer_receipt_sha256": list(surface.main_layer_receipt_sha256),
+                    "mtp_adapter_receipt_sha256": surface.mtp_adapter_receipt_sha256,
+                    "mtp_pack_receipt_sha256": surface.mtp_pack_receipt_sha256,
+                    "packed_reader_abi_sha256": surface.packed_reader_abi_sha256,
+                    "bits": bits,
+                    "codebook": "MCG",
+                    "nonrouted_policy": "official_source_native",
+                }
+            )
+        )
 
     memory = plan_memory(args.vram_budget_gb, args.ep_emulate, args.slab_experts, args.decode_cache)
     disclosure = {
@@ -1370,20 +1645,56 @@ def main() -> int:
         ],
         "mtp_standard_logits_executed": False,
     }
+    if args.source == "native":
+        # The native lane differs from a K6/K8 streaming run in exactly ONE
+        # place: where the routed expert bytes come from.  Everything the
+        # disclosure above asserts about residency, topology, slab binding,
+        # model construction and the expert combine is unchanged and still true.
+        disclosure["no_decode"] = True
+        disclosure["routed_weight_source"] = (
+            "official BF16 checkpoint shards, read per expert by the released tensor names "
+            "(model.language_model.layers.L.mlp.experts.E.{gate,up,down}_proj.weight) - the same "
+            "names the ENCODER read to build the packed store"
+        )
+        disclosure["dtype_policy"] = dict(disclosure["dtype_policy"])
+        disclosure["dtype_policy"]["weights"] = (
+            "bfloat16 released checkpoint bytes, unmodified (no codec; the packed lane's single "
+            "fp32->bf16 rounding is the identity on values that are already bf16)"
+        )
+        disclosure["sealed_path_identical"] = [
+            item
+            for item in disclosure["sealed_path_identical"]
+            if not item.startswith("decode contract:")
+        ]
+        disclosure["sealed_path_identical"].insert(
+            0,
+            "expert install algebra: fuse_gate_up + torch.equal close, the packed lane's own "
+            "installation code with the decode call removed",
+        )
+        disclosure["sealed_path_differences"] = list(disclosure["sealed_path_differences"]) + [
+            "routed surface: the UN-QUANTIZED BF16 experts. No payload store, no contract, no "
+            "MCG codebook and no hash-gated decode are in the path; the provenance anchor is the "
+            "sealed release inventory's config_sha256/index_sha256, which bind the tree these "
+            "tensors are read from. Shard bytes are not re-hashed by this tool (neither are they "
+            "on the packed lane, whose non-routed tensors come from the same shards)",
+        ]
+        disclosure["native_routed_layout"] = native_layout
 
     plan = {
         "schema": STREAM_PLAN_SCHEMA,
         "model": str(model_root),
         "model_revision": model_revision,
         "weight_source": args.source,
-        "packed_root": str(packed_root),
+        "packed_root": str(packed_root) if packed_root is not None else None,
         "checkpoint_root": str(args.checkpoint.resolve()) if args.checkpoint else None,
         "materialization_receipt_sha256": (materialization or {}).get("receipt_sha256"),
         "inventory_sha256": inventory["inventory_sha256"],
-        "contract_sha256": surface.contract_sha256,
+        "contract_sha256": surface.contract_sha256 if surface is not None else None,
         "checkpoint_identity_sha256": checkpoint_identity,
         "runtime_reader_sha256": identity["runtime_reader_sha256"],
-        "packed_reader_abi_sha256": surface.packed_reader_abi_sha256,
+        "packed_reader_abi_sha256": (
+            surface.packed_reader_abi_sha256 if surface is not None else None
+        ),
         "token_panel_receipt_sha256": panel_receipt["receipt_sha256"],
         "roles": list(roles),
         "windows": [window.window_id for _, window in selection],
@@ -1396,9 +1707,16 @@ def main() -> int:
         "cold_run": args.cold_run,
         "bits": bits,
         "main_routed_policy": (
-            f"streamed_decode_hash_verified_packed_k{bits}_mcg_to_bf16_one_layer_resident"
+            "streamed_official_bf16_checkpoint_experts_no_decode_one_layer_resident"
+            if args.source == "native"
+            else f"streamed_decode_hash_verified_packed_k{bits}_mcg_to_bf16_one_layer_resident"
         ),
-        "mtp_policy": "complete_and_receipt_required_but_not_executed_by_standard_logits",
+        "native_routed_layout": native_layout,
+        "mtp_policy": (
+            "mtp_layer_45_present_in_the_checkpoint_but_not_executed_by_standard_logits"
+            if args.source == "native"
+            else "complete_and_receipt_required_but_not_executed_by_standard_logits"
+        ),
         "nonrouted_policy": "untouched_official_checkpoint_parameters",
         "stored_logits_dtype": "float32",
         "surface_load_seconds": surface_seconds,
@@ -1454,6 +1772,7 @@ def main() -> int:
         unpack_device=unpack_device,
         cache_mode=args.decode_cache,
         cache_dir=args.decode_cache_dir.resolve() if args.decode_cache_dir else None,
+        native_source=native_source,
     )
     if decode_device != device:
         raise _fail(
@@ -1471,8 +1790,12 @@ def main() -> int:
         stats=stats,
         runtime=runtime_ep,
     )
-    closure = stored_encoder_closure(
-        surface, layer=layers[0], expert=0, projection="gate_proj", device=device
+    closure = (
+        None
+        if surface is None
+        else stored_encoder_closure(
+            surface, layer=layers[0], expert=0, projection="gate_proj", device=device
+        )
     )
 
     backend = {
@@ -1481,9 +1804,11 @@ def main() -> int:
         "model_revision": model_revision,
         "inventory_sha256": inventory["inventory_sha256"],
         "checkpoint_identity_sha256": checkpoint_identity,
-        "contract_sha256": surface.contract_sha256,
+        "contract_sha256": surface.contract_sha256 if surface is not None else None,
         "runtime_reader_sha256": identity["runtime_reader_sha256"],
-        "packed_reader_abi_sha256": surface.packed_reader_abi_sha256,
+        "packed_reader_abi_sha256": (
+            surface.packed_reader_abi_sha256 if surface is not None else None
+        ),
         "transformers_version": transformers_version,
         "torch_version": torch.__version__,
         "cuda_runtime_version": torch.version.cuda,
@@ -1504,10 +1829,17 @@ def main() -> int:
         "parallelism": disclosure["ep_semantics"],
         "reader_mode": identity["mode"],
         "final_tp2_serving_kernel": False,
-        "main_routed_runtime_dtype": f"bfloat16 streamed-decoded from packed K{bits} payload",
+        "main_routed_runtime_dtype": (
+            "bfloat16 read straight from the official checkpoint shards (no decode)"
+            if args.source == "native"
+            else f"bfloat16 streamed-decoded from packed K{bits} payload"
+        ),
         "nonrouted_runtime_dtype": "official source dtype, untouched",
         "mtp_standard_logits_executed": False,
-        "mtp_pack_receipt_sha256": surface.mtp_pack_receipt_sha256,
+        "mtp_pack_receipt_sha256": (
+            surface.mtp_pack_receipt_sha256 if surface is not None else None
+        ),
+        "native_routed_layout": native_layout,
         "stored_encoder_closure": closure,
         "model_build": build,
         "streaming_wiring": wiring,
@@ -1541,6 +1873,8 @@ def main() -> int:
                     f"--sweep needs --slab-experts 288 to serve ep={sweep_ep} "
                     f"(have {memory['slab_experts']})"
                 )
+    student_label = NATIVE_STUDENT_LABEL if args.source == "native" else f"uniform-k{bits}"
+    capture_role = NATIVE_CAPTURE_ROLE if args.source == "native" else "packed_student"
     capture_started = time.monotonic()
     forward_seconds = 0.0
     for index, window in selection:
@@ -1569,8 +1903,8 @@ def main() -> int:
             {"logits": stored},
             logit_path,
             metadata={
-                "capture_role": "packed_student",
-                "student_label": f"uniform-k{bits}",
+                "capture_role": capture_role,
+                "student_label": student_label,
                 "cold_run": str(args.cold_run),
                 "window_id": window.window_id,
                 "token_ids_sha256": window.token_sha256,
@@ -1664,7 +1998,15 @@ def main() -> int:
             "decoded_matrix_count": streamer.decoded_matrices,
             "distinct_matrix_census": census_matrices,
             "census_closes_main_routed_surface": census_matrices == expected_matrices,
-            "verified_packed_payload_bytes": streamer.payload_bytes,
+            "verified_packed_payload_bytes": (
+                None if args.source == "native" else streamer.payload_bytes
+            ),
+            "native_checkpoint_bytes_read": (
+                int(native_source.bytes_read) if native_source is not None else None
+            ),
+            "native_shards_read": (
+                len(native_source.shards_read) if native_source is not None else None
+            ),
             "installed_choice_census_sha256": sha256_bytes(canonical_json(streamer.census)),
             "decode_cache_hits": streamer.cache_hits,
             "decode_cache_fills": streamer.cache_fills,
@@ -1692,19 +2034,23 @@ def main() -> int:
 
     receipt = {
         "schema": CAPTURE_SCHEMA,
-        "capture_role": "packed_student",
+        "capture_role": capture_role,
         "cold_run": args.cold_run,
         "model_revision": model_revision,
         "checkpoint_identity_sha256": checkpoint_identity,
         "runtime_reader_sha256": identity["runtime_reader_sha256"],
         "token_panel_receipt_sha256": panel_receipt["receipt_sha256"],
         "backend_identity_sha256": backend["backend_identity_sha256"],
-        "weight_dtype": f"EXL3/TR3 uniform-k{bits} streamed offline-decoded to BF16",
+        "weight_dtype": (
+            "official BF16 checkpoint routed experts, streamed, NO decode"
+            if args.source == "native"
+            else f"EXL3/TR3 uniform-k{bits} streamed offline-decoded to BF16"
+        ),
         "logits_dtype": "float32",
         "kld_direction": "teacher_to_student",
         "prediction_positions": sum(window.prediction_positions for _, window in selection),
         "vocab_size": int(text_config["vocab_size"]),
-        "student_label": f"uniform-k{bits}",
+        "student_label": student_label,
         "logit_files": logit_records,
         "elapsed_seconds": time.monotonic() - capture_started,
         "streaming_disclosure": disclosure,

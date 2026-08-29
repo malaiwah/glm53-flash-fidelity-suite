@@ -142,6 +142,7 @@ def _measure_run(
     student_label: str,
     chunk_positions: int,
     device: str,
+    expected_capture_role: str = "packed_student",
 ) -> Path:
     """Compute or resume one sealed per-run KLD report; returns its path."""
 
@@ -164,7 +165,7 @@ def _measure_run(
             )
         return report_path
     student = load_capture_receipt(
-        run_dir / "capture-receipt.json", expected_role="packed_student"
+        run_dir / "capture-receipt.json", expected_role=expected_capture_role
     )
     declared_label = student.get("student_label")
     if declared_label is not None and declared_label != student_label:
@@ -177,7 +178,7 @@ def _measure_run(
     if teacher["vocab_size"] != student["vocab_size"]:
         raise _fail("teacher and student vocabularies differ")
     if not student.get("runtime_reader_sha256"):
-        raise _fail("packed-student capture is not bound to an exact runtime reader")
+        raise _fail("student capture is not bound to an exact runtime reader/source identity")
     teacher_rows = _record_map(teacher)
     student_rows = _record_map(student)
     if set(teacher_rows) != set(student_rows):
@@ -328,7 +329,8 @@ def _comparison_table(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", required=True,
-                        choices=("k6", "k8", "k6k8", "dione-q4", "dione-3.0bpw"))
+                        choices=("k6", "k6-stream", "k8", "k6k8", "dione-q4", "dione-3.0bpw",
+                                 "native-bf16"))
     parser.add_argument("--teacher", type=Path, required=True)
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
     parser.add_argument("--fp8-baseline", type=float, default=0.020615)
@@ -349,9 +351,16 @@ def main() -> int:
     from quant_pipeline.core.artifacts import sha256_file
     from quant_pipeline.evaluation.glm53_logits import load_capture_receipt
 
-    bits = {"k6": 6, "k8": 8}.get(args.profile)
+    bits = {"k6": 6, "k6-stream": 6, "k8": 8}.get(args.profile)
     student_label = {
         "k6": "uniform-k6",
+        # single-device STREAMING capture of the same sealed K6 surface: the
+        # per-run kld-report.json is produced by the identical estimator, so the
+        # numbers are directly comparable to the sealed k6 lane.  It takes the
+        # malaiwah summary branch below because the sealed K6 receipt chain
+        # requires a materialized checkpoint's materialization-receipt.json,
+        # which a payload-store run legitimately does not have.
+        "k6-stream": "uniform-k6",
         "k8": "uniform-k8",
         "k6k8": "mixed-k6k8",
         # third-party Dione (0xSero) selective-EXL3 TP4 snapshots, scored on
@@ -359,7 +368,16 @@ def main() -> int:
         # disclosed in the capture receipt's seal_disclosure)
         "dione-q4": "dione-exl3-k4-tp4",
         "dione-3.0bpw": "dione-exl3-k3-tp4",
+        # the BF16 FLOOR of the streaming lane: the identical capture with the
+        # routed experts read straight from the official checkpoint and no codec
+        # in the path (stream_score.py --source native).  Subtracting this mean
+        # from a quant's mean leaves that quant's quantization-attributable error.
+        "native-bf16": "native-bf16",
     }[args.profile]
+    # a native run is not a packed student and does not claim to be one
+    expected_capture_role = (
+        "native_bf16_student" if args.profile == "native-bf16" else "packed_student"
+    )
     runs = [path.resolve() for path in args.runs]
     campaign_root = runs[0].parent.parent
     checkpoint = (
@@ -383,6 +401,7 @@ def main() -> int:
                 run_dir=run_dir,
                 teacher=teacher,
                 student_label=student_label,
+                expected_capture_role=expected_capture_role,
                 chunk_positions=args.chunk_positions,
                 device=args.device,
             )
@@ -491,7 +510,10 @@ def main() -> int:
         mean = means[0]
         summary = {
             "schema": f"malaiwah.glm53-{args.profile}-packed-kld-summary.v1",
-            "profile": f"{args.profile}-tp4",
+            # the native lane is single-device (EP8-emulated), never TP4
+            "profile": (
+                "native-bf16-stream" if args.profile == "native-bf16" else f"{args.profile}-tp4"
+            ),
             "student_label": student_label,
             "cold_run_count": len(reports),
             "cold_run_deviation": f"{len(reports)} cold runs, not 5 (budget; disclosed)",

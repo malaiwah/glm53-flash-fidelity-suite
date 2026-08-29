@@ -1134,7 +1134,7 @@ PYEOF
   RUN_DIRS=""
   for n in $(seq 1 "$STREAM_RUNS"); do RUN_DIRS="$RUN_DIRS $STREAM_OUT/stream-run$n"; done
   # shellcheck disable=SC2086
-  "$PY" "$TOOLS/k6_kld_report.py" --profile k6-stream \
+  "$PY" "$TOOLS/k6_kld_report.py" --profile "${STREAM_PROFILE}-stream" \
       --teacher "$TEACH" --runs $RUN_DIRS \
       --fp8-baseline 0.020615 --k4-baseline 0.024555 \
       --device "$STREAM_KLD_DEVICE" --chunk-positions 16 \
