@@ -823,3 +823,206 @@ accepts (score them with `bin/kld-preview`); and the streaming/local lanes are
 now pinned in `bin/engines.json` against this file's real CLI. Default
 invocations are byte-identical to the sealed behaviour (ladder rung L1.j
 proves the receipt shape is unchanged).
+
+---
+
+## 13. The GGUF lane (`--source gguf`)
+
+### What it is, and how it differs from every other source
+
+`--source gguf` scores a community **llama.cpp GGUF** of GLM-5.3-Flash
+(unsloth/GLM-5.3-Flash-GGUF and friends) on this same sealed panel, through
+this same single-device capture, so the number lands on the same yardstick as
+K6/K8/Dione/native-BF16.
+
+It differs from every other source in **scope**, and that difference is the
+whole point of reading this section. `--source {checkpoint,payload-store,
+dione,native}` all quantize (or not) the **routed experts only**, and run the
+official BF16 non-routed parameters untouched. A GGUF quantizes everything:
+
+| tensor group | K6 / K8 / Dione / native | GGUF (unsloth UD-Q4_K_XL) |
+|---|---|---|
+| routed experts (42 x 288 x 3) | the artifact | the artifact (Q4_K / Q5_K / Q6_K) |
+| `token_embd`, `output` (lm_head) | official BF16 | **the artifact** (Q8_0) |
+| attention / KDA / DSA / indexer | official BF16 | **the artifact** (Q8_0) |
+| shared experts, dense MLPs (L0-2) | official BF16 | **the artifact** |
+| norms, conv1d, router gates | official BF16 | the artifact, stored F32 |
+| vision tower | official BF16 | **not in the artifact** (separate mmproj) |
+
+So the lane materializes a **decoded non-routed view**: every non-routed
+tensor is dequantized once into safetensors under the official HF names,
+shapes and dtypes, and the sealed `from_pretrained` runs over that directory
+unmodified (`build_streaming_model(nonrouted_view=...)`). The loader
+assertions are the same ones the BF16 view gets: `missing_keys 0 /
+mismatched_keys 0 / error_msgs 0`, and every unexpected key must be a streamed
+routed expert. The view is fingerprinted by the artifact identity plus the
+adapter's own hash and reused across cold runs — it costs a one-time **~19 GB**
+write to `--work-dir` (the same 1,618 tensors the BF16 view symlinks) and a
+decode pass, after which cold runs 2 and 3 reuse it. The receipt records
+`reused`, the per-source counts (decoded / float32-passthrough / MLA-
+reconstructed / vision-copied) and a value spot-check against a fresh decode.
+
+`--bf16` is still required, but its role narrows to config/tokenizer files,
+the release-inventory binding, and the vision tower — which the text-only
+panel never executes. The receipt says so.
+
+### Decode
+
+`k6/tools/gguf_surface.py` implements F32, F16, BF16, Q8_0, Q4_K, Q5_K and
+Q6_K as plain PyTorch (uint8-level unpack, fp32 accumulation, no float64, no
+int64 beyond gather indices — so it runs on CUDA, MPS and CPU under the
+suite's device policy). Every kernel is **bitwise equal to gguf-py 0.19.0's
+reference `dequantize`** on real ranged-fetched bytes of the live artifact,
+and the offline selftest re-proves it from committed fixtures, plus a scalar
+transliteration of llama.cpp's own `get_scale_min_k4` for the Q4_K/Q5_K
+sub-block scales.
+
+Any other ggml type is **refused by name and type at census time**, before a
+byte is decoded. That is a named exclusion, not a silent skip.
+
+Which of unsloth's twelve builds that actually buys, measured from each
+build's own tensor table (`gguf-evidence/unsloth-build-census.json`, all
+1,412 tensors per build, revision `2975ab41`) — **do not read this off the
+directory name**, because unsloth's "Dynamic" recipe mixes IQ types into
+builds whose names say K-quant:
+
+| build | ggml types present | v1 |
+|---|---|---|
+| `BF16` | BF16, F32 | **scores** (and would be this lane's own GGUF floor) |
+| `Q8_0` | Q8_0, F32 | **scores** |
+| `UD-Q4_K_XL` | Q4_K, Q5_K, Q6_K, Q8_0, F32 | **scores** |
+| `UD-Q5_K_XL` | Q5_K, Q6_K, Q8_0, F32 | **scores** |
+| `UD-Q6_K_XL` | Q6_K, Q8_0, F32 | **scores** |
+| `UD-Q3_K_XL` | + IQ3_XXS, IQ4_XS, **Q3_K** | refused |
+| `UD-Q2_K_XL` | + IQ2_XS, IQ3_XXS, IQ4_XS, **Q2_K**, Q3_K | refused |
+| `UD-IQ4_XS`, `UD-IQ3_XXS`, `UD-IQ2_XXS`, `UD-IQ1_S`, `UD-IQ1_M` | IQ1_S/M, IQ2_S/XS/XXS, IQ3_S/XXS, IQ4_XS, Q2_K, Q3_K | refused |
+
+So the IQ kernels — not Q2_K/Q3_K — are the real gate on the low-bpw half of
+the repo: adding Q2_K and Q3_K alone unlocks nothing, because every build that
+needs them needs IQ types too. `ddh0`'s single-file 3.86 bpw build
+(IQ3_S/IQ4_XS) is refused for the same reason, though its *names* all map — its
+convert vintage spells the arch `glm5-next` and the indexer tensors
+`indexer.kpool_*`, and both spellings are covered.
+
+### The name map, and the one genuinely dangerous tensor
+
+llama.cpp's `glm5next` names are mapped back to HF names and the map is
+**bijected against the official BF16 index**, not spot-checked: all 1,412 GGUF
+tensors are consumed (1,259 one-to-one + 129 fused expert tensors + 24 MLA
+halves) and the resulting 1,271 official names exactly equal the official
+38,770 minus the 37,152 routed minus the 347 vision. An unmapped tensor is an
+error naming it.
+
+The dangerous one is `kv_b_proj`. It does not exist in the GGUF: llama.cpp
+stores the MLA projection pre-split as `attn_k_b` (dims `[256,512,64]` —
+per-head **transposed**) and `attn_v_b` (`[512,256,64]`). The reconstruction
+is, per head `h`: rows `[h*512 .. h*512+255]` are `transpose(k_b[h])`, rows
+`[h*512+256 .. h*512+511]` are `v_b[h]`. This was settled numerically, not by
+reading the C: `audit_mla_placement` scores all four candidate arrangements
+against the official BF16 tensor and the shipped one wins with rel-L2
+**0.0054** (the Q8_0 quantization error) against **1.40** for every
+alternative.
+
+Note the audit's pass criterion is **rel-L2, not a cosine margin**: two
+arrangements that share a leading block have a cosine gap that shrinks as
+`1/(2*heads)` — measured 0.013 over the full 64 heads but 0.546 over a 2-head
+window — while rel-L2 does not move with window size.
+
+The routed experts get the same treatment. The fused tensor is
+`[in, out, 288]` and slot `e` is *assumed* to be HF expert `e` — an assumption
+as unproven-by-inspection as the kv_b layout was, and as silently wrong if it
+is off, because a permuted expert order decodes cleanly and closes every
+census. `audit_expert_placement` (CLI: `gguf_surface.py audit-expert`) settles
+it numerically: slot 0 of `blk.3.ffn_gate_exps.weight` reproduces the official
+`layers.3.mlp.experts.0.gate_proj.weight` at rel-L2 **0.0714** (the Q4_K error)
+while every row-shifted control sits at **1.42**. The same test simultaneously
+proves the reversed-dims orientation and the projection mapping — a transposed
+read or the wrong projection fails it.
+
+### Provenance and disclosure
+
+A community GGUF ships no encoder receipts, no reconstruction closures and no
+sealed reader ABI, so the anchors are the immutable repo revision and a
+whole-file sha256 of every consumed `.gguf`:
+
+```bash
+# once per artifact: hash the files, write gguf-files-verified.json
+python3 k6/tools/gguf_surface.py verify-files \
+  --file .../GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf ...   # all six
+```
+
+Without that marker a measurement refuses; `--skip-gguf-hashes` is a
+**disclosed** unverified read that lands in the receipt as
+`gguf_file_hash_verification: skipped` and becomes an `artifact_files_unhashed`
+caveat on the registry row.
+
+The receipt carries `student_label: gguf-llamacpp`, `capture_role:
+gguf_student`, `bits: null`, the file list, the measured ggml type census, the
+quantizer's own metadata (including unsloth's imatrix keys), a
+`seal_disclosure`, and a `scope_policy` block **measured from the artifact's
+own tensor table** — which tensors carry a quantized ggml type — never
+asserted from the format's name. `k6_kld_report.py --profile gguf` lifts all of
+it into `malaiwah.glm53-gguf-packed-kld-summary.v1`, and `registry_add.py`
+turns it into `unsealed_source` + `quantization_scope_whole_model` disclosures.
+A GGUF summary without `gguf_files` or without `scope_policy` is refused, not
+recorded.
+
+### Running it
+
+```bash
+# 0. metadata-only plan against the live repo (no weights; https allowed here)
+python3 k6/tools/gguf_surface.py dry-run \
+  --file https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/<REV>/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf \
+  ...                                                              # all six \
+  --repo unsloth/GLM-5.3-Flash-GGUF --revision <REV> \
+  --bf16-index <bf16>/model.safetensors.index.json
+
+# 1. prove the two layout assumptions on THIS artifact before capturing
+python3 k6/tools/gguf_surface.py audit-mla \
+  --file <part1> ... --bf16 <bf16> --layer 3
+python3 k6/tools/gguf_surface.py audit-expert \
+  --file <part1> ... --bf16 <bf16> --layer 3 --expert 0 --projection gate_proj
+
+# 2. hash the files
+python3 k6/tools/gguf_surface.py verify-files --file <part1> ...
+
+# 3. capture (one cold run)
+python3 k6/tools/stream_score.py --source gguf --profile gguf \
+  --gguf-file <part1> ... \
+  --gguf-repo unsloth/GLM-5.3-Flash-GGUF --gguf-revision <REV> \
+  --bf16 <bf16> --inventory <inventory.json> --teacher <teacher> \
+  --cold-run 1 --out <run1>
+
+# 4. aggregate
+python3 k6/tools/k6_kld_report.py --profile gguf --teacher <teacher> \
+  --runs <run1> <run2> <run3> --out gguf-packed-kld.json
+```
+
+### Fail-closed behaviour
+
+* `--source gguf` and `--profile gguf` must be used together.
+* `--gguf-revision` must be an immutable 40-hex commit; there is no "main".
+* Every part of a llama.cpp split must be passed; `split.count` /
+  `split.tensors.count` are checked against the union tensor table.
+* The geometry gate reads the artifact's OWN `glm5next.*` KVs (46 blocks, 288
+  experts, 8 used, 3 dense, 4096 hidden, 2048 moe, 154880 vocab, 1 nextn).
+  Both observed arch spellings (`glm5next`, `glm5-next`) are accepted and
+  recorded verbatim.
+* An https `--gguf-file` is metadata/audit-only: a real capture refuses it.
+* The view's dtypes are checked against the official tree's ACTUAL safetensors
+  headers wherever those shards are present, so the view stays dtype-identical
+  to a native build rather than trusting a hardcoded suffix list.
+
+### Offline validation
+
+`python3 k6/tools/selftest_gguf_offline.py` — nine rungs, no GPU, no network,
+~2 s, wired into `bin/selftest_all.sh`. It proves reference equality against
+gguf-py, the independent scalar scale unpack, the split container plus eight
+named refusals, the real-metadata census and bijection, the MLA audit and the
+expert-slot audit on real bytes, the expert slice and materialized view, and
+the `dry-run` plan print.
+Pass `--pipeline-root` to add the `stream_score.py --source gguf --dry-run`
+rung. Evidence fixtures live in `k6/tools/gguf-evidence/`.
+
+**Not yet measured.** Everything above is built and validated without a GPU;
+no GGUF panel number exists yet. The first capture is a rental.

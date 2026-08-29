@@ -52,11 +52,15 @@ t "zero-floor identity (T4; SKIPs inside when numpy/torch absent)" \
                                            0 "$PY" bin/selftest_zero_floor.py
 t "stream_score ladder rungs g,h,i,j (teacher role / preview refusal / \
 sampling / receipt stability)"             0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j
-# The MLX surface adapter: dequant vs mlx (replayed from committed real-tensor
-# fixtures, plus a live mlx rung on macOS), the REAL orcarouter census and its
-# refusals, the streaming/decoded-view plumbing, both dry-runs and the registry
-# adapter. Needs torch+numpy+safetensors, so it runs under FIDELITY_PYTHON like
-# the fixture ladder rather than the system python3.
+# The three community-quant weight-decode surfaces.  Each proves its dequant
+# against that ecosystem's own reference implementation on REAL ranged-fetched
+# tensors (replayed here from committed fixtures so the proof runs with no
+# network and on boxes where the reference library cannot be installed),
+# censuses the real artifact's tensor names against the official BF16 set, and
+# exercises every refusal.  No GPU, no rental, no weights.
+#
+# mlx needs torch+safetensors, so it runs under FIDELITY_PYTHON like the
+# fixture ladder; gguf and nvfp4 run under $PY.
 MLXPY="${FIDELITY_PYTHON:-/opt/homebrew/bin/python3.14}"
 [ -x "$MLXPY" ] || MLXPY="$PY"
 if have_module "$MLXPY" torch && have_module "$MLXPY" safetensors; then
@@ -64,6 +68,12 @@ if have_module "$MLXPY" torch && have_module "$MLXPY" safetensors; then
 dry-runs, registry adapter)"               0 "$MLXPY" k6/tools/selftest_mlx_offline.py
 else
   s "mlx surface offline" "torch/safetensors not importable under $MLXPY -- export FIDELITY_PYTHON"
+fi
+if have_module "$PY" torch; then
+  t "gguf surface offline (dequant vs gguf-py, census, MLA audit, refusals)" \
+                                           0 "$PY" k6/tools/selftest_gguf_offline.py
+else
+  s "gguf surface offline" "torch not importable by $PY"
 fi
 
 echo "== cloud planner (NETWORK, ACCOUNT; --dry-run creates nothing) =="

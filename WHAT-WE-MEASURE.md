@@ -33,16 +33,22 @@ KLD is an *output-distribution* metric, so the head's matmul is always part
 of the computation. But distinguish the **computation** from the
 **weights**:
 
-- **The lm_head weights are never quantized** in any artifact measured
-  here. Our TR3 quants keep it bit-exact BF16 (along with the entire
-  KDA/attention path, hyper-connections, routers, norms and embeddings —
-  only routed experts and the MTP layer carry quantized weights). Z.ai's
-  official FP8 release draws the *same* boundary: its
-  `modules_to_not_convert` list keeps the head and the attention path
-  native. Two teams drew the sensitivity split independently in the same
-  place.
-- So a number here is "body-quantization error, observed through the full
-  model including the (native) head" — never "head quantization error".
+- **The lm_head weights are never quantized in OUR artifacts.** Our TR3
+  quants keep it bit-exact BF16 (along with the entire KDA/attention path,
+  hyper-connections, routers, norms and embeddings — only routed experts
+  and the MTP layer carry quantized weights). Z.ai's official FP8 release
+  draws the *same* boundary: its `modules_to_not_convert` list keeps the
+  head and the attention path native. Two teams drew the sensitivity split
+  independently in the same place.
+- **Third-party artifacts may draw it elsewhere, and some do.** The
+  stock-exllamav3 releases quantize the head at 6 bits; a llama.cpp GGUF
+  quantizes `output` and `token_embd` too. For those rows a number is *not*
+  "body-quantization error observed through a native head" — the head is
+  part of what was quantized, and the row's measured `scope_policy` block
+  (§5a) says so. Never read a row's number without it.
+- So a number from a routed-experts-only row is "body-quantization error,
+  observed through the full model including the (native) head" — never
+  "head quantization error".
 - In the cross-stack lane (below), the head is additionally applied
   **outside the serving engine**, identically to both teacher and student
   hidden states in fp32 ("shared-head replay"), so head arithmetic can
@@ -106,19 +112,44 @@ encodes all of this as a comparability key and renders rows from different
 keys in separate tables. If a number you meet in the wild does not pin
 these, it is an anecdote, not a measurement.
 
-**Scope policy is not a formality.** Our own EXL3/TR3 artifacts and the
-third-party Dione trees quantize the routed experts and leave everything
-else at the official BF16 bytes. Community Apple-silicon (MLX) and
-llama.cpp (GGUF) conversions do not: measured from orcarouter's own index,
-its MLX build also quantizes the dense MLPs, the shared experts and four
-DSA attention projections — 186 non-routed modules on top of the 36,288
-routed ones, at a 4/5/6-bit mix — and only 1,432 tensors keep their source
-dtype. A row for such an artifact therefore carries a `scope_policy` block
-**censused from the artifact's own index and shard headers**, never inferred
-from the format family, and the registry renders it as a disclosure. Reading
-"0.0x nats, 4-bit" without it would silently compare a
-quantized-experts-only artifact against one that also quantized its
-attention path.
+### 5a. Scope policy is not a footnote
+
+Our own EXL3/TR3 artifacts and the third-party Dione trees quantize the
+**routed experts only**: they run the reference's untouched embeddings,
+attention/KDA/DSA path, shared experts, routers, norms and `lm_head`. The
+routed experts are ~97% of the parameters, so that is where nearly all the
+loss lives — but it is a *choice*, and it is the choice those rows share.
+
+The community conversions do not all make it, and the differences are not
+predictable from the format name:
+
+| family | what the artifact quantizes | measured how |
+|---|---|---|
+| K6 / K8 / Dione / BF16 floor | routed experts only | contract / index |
+| stock-exllamav3 (turbo) | full scope, **6-bit `lm_head` included** | artifact config |
+| **MLX** (orcarouter) | routed + dense MLPs + shared experts + 4 DSA projections — 186 non-routed modules on top of 36,288 routed, 4/5/6-bit mix; 1,432 tensors keep their source dtype (embeddings, `lm_head` and the whole KDA path among them) | index + all 62 shard headers |
+| **GGUF** (unsloth UD-Q4_K_XL) | everything: `token_embd`, `output` (the lm_head), every attention projection and the shared experts, at Q8_0 | the GGUF tensor table |
+| **NVFP4** (RedHatAI, LibertAI) | routed experts only — same scope as K6, different format | the compressed-tensors index |
+
+Three consequences the tooling enforces rather than documents:
+
+- The receipt's scope block is **measured from the artifact's own index /
+  tensor table**, never inferred from the format family. A summary that
+  arrives without it is refused, not recorded.
+- `stream_score.py --source mlx` and `--source gguf` supply **all** tensors
+  from the artifact: the non-routed ones are decoded into a materialized
+  view and the sealed `from_pretrained` runs over that, so the forward
+  really is the artifact's. The official BF16 tree contributes only
+  config/tokenizer files and (for GGUF) the vision tower, which the main
+  GGUF does not carry and the text-only panel never executes.
+- `registry_add.py` renders the block as a row disclosure, so reading
+  "0.0x nats, 4-bit" without it cannot silently compare a
+  quantized-experts-only artifact against one that also quantized its
+  attention path and its head.
+
+Read the block, not the file extension: MLX and GGUF are both "community
+4-bit", and they quantize different things; NVFP4 and K6 are different
+formats with the *same* scope.
 
 ## 6. What these numbers are NOT
 

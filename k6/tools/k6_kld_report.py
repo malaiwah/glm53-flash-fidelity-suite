@@ -509,7 +509,7 @@ def main() -> int:
     parser.add_argument("--profile", required=True,
                         choices=("k6", "k6-stream", "k8", "k6k8", "dione-q4", "dione-3.0bpw",
                                  "turbo-4.05bpw", "turbo-3.05bpw",
-                                 "native-bf16", "mlx"))
+                                 "native-bf16", "mlx", "gguf"))
     parser.add_argument("--teacher", type=Path, required=True)
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
     parser.add_argument("--fp8-baseline", type=float, default=0.020615)
@@ -563,11 +563,20 @@ def main() -> int:
         # constant here; it is read from the first run's capture receipt below,
         # gated on the family prefix, and then required of every other run.
         "mlx": None,
+        # community llama.cpp GGUF artifacts (unsloth, ...) scored through
+        # stream_score.py --source gguf.  The label is deliberately FORMAT-wide,
+        # not per-file: which quant it was (repo, revision, per-file sha256, the
+        # measured ggml type census and the scope policy) is carried in the
+        # summary's provenance block below, where a registry row reads it.  A
+        # per-file label would put a mutable string in the equality gate.
+        "gguf": "gguf-llamacpp",
     }[args.profile]
-    # a native run is not a packed student and does not claim to be one
-    expected_capture_role = (
-        "native_bf16_student" if args.profile == "native-bf16" else "packed_student"
-    )
+    # a native run is not a packed student and does not claim to be one; nor is
+    # a GGUF run, whose non-routed weights are the artifact's as well
+    expected_capture_role = {
+        "native-bf16": "native_bf16_student",
+        "gguf": "gguf_student",
+    }.get(args.profile, "packed_student")
     runs = [path.resolve() for path in args.runs]
     if args.profile == "mlx":
         first = runs[0] / "capture-receipt.json"
@@ -729,13 +738,16 @@ def main() -> int:
             "schema": f"malaiwah.glm53-{args.profile}-packed-kld-summary.v1",
             # STORAGE layout, not lane: the dione conversions ship TP4-sliced
             # ranks, the stock-exllamav3 (turbo) releases ship canonical HF
-            # shards, the MLX conversions ship per-expert HF-named tensors, and
-            # the native lane is single-device (EP8-emulated).  Suffixing every
-            # profile "-tp4" put a false storage claim in the headline receipt
-            # of an artifact that is not sliced at all.
+            # shards, the MLX conversions ship per-expert HF-named tensors, a
+            # GGUF is a single-file (or split) llama.cpp container with fused
+            # per-layer expert tensors, and the native lane is single-device
+            # (EP8-emulated).  Suffixing every profile "-tp4" put a false
+            # storage claim in the headline receipt of an artifact that is not
+            # sliced at all.
             "profile": (
                 "native-bf16-stream" if args.profile == "native-bf16"
                 else "mlx-stream" if args.profile == "mlx"
+                else "gguf-stream" if args.profile == "gguf"
                 else f"{args.profile}-hf-sharded" if args.profile.startswith("turbo")
                 else f"{args.profile}-tp4"
             ),
@@ -838,6 +850,39 @@ def main() -> int:
                         student_receipt.get("mlx_fetch_ledger") or {}
                     ).get("on_disk_total_bytes"),
                     "nonrouted_policy": "decoded_bf16_view_materialized_from_the_quant_snapshot",
+                    "source_repo": student_receipt.get("source_repo"),
+                    "source_revision": student_receipt.get("source_revision"),
+                    "seal_disclosure": student_receipt.get("seal_disclosure"),
+                }
+            )
+        elif args.profile == "gguf":
+            # Same rule again: a community GGUF quantized EVERYTHING, so the
+            # headline receipt has to carry the artifact identity AND the scope
+            # policy -- a registry row that does not disclose "the embeddings and
+            # lm_head are quantized too" is not comparable to a
+            # routed-experts-only row.  A GGUF repo holds many quants at ONE
+            # revision, so the FILE LIST is part of that identity.
+            from quant_pipeline.evaluation.glm53_logits import (
+                CAPTURE_SCHEMA,
+                sealed_json,
+            )
+
+            student_receipt = sealed_json(
+                runs[0] / "capture-receipt.json", CAPTURE_SCHEMA, "receipt_sha256"
+            )
+            summary.update(
+                {
+                    "student_receipt_sha256": student_receipt["receipt_sha256"],
+                    "gguf_repo": student_receipt.get("gguf_repo"),
+                    "gguf_revision": student_receipt.get("gguf_revision"),
+                    "gguf_files": student_receipt.get("gguf_files"),
+                    "gguf_file_hash_verification": student_receipt.get(
+                        "gguf_file_hash_verification"
+                    ),
+                    "gguf_architecture": student_receipt.get("gguf_architecture"),
+                    "gguf_type_census": student_receipt.get("gguf_type_census"),
+                    "gguf_quant_metadata": student_receipt.get("gguf_quant_metadata"),
+                    "scope_policy": student_receipt.get("scope_policy"),
                     "source_repo": student_receipt.get("source_repo"),
                     "source_revision": student_receipt.get("source_revision"),
                     "seal_disclosure": student_receipt.get("seal_disclosure"),

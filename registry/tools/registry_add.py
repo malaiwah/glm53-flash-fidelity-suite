@@ -99,14 +99,32 @@ FOREIGN_TP2 = "quant-pipeline.glm53-custom-tp2-runtime-window-kld.v1"
 # MLPs, shared experts and attention projections, so the row must not be read as
 # "experts quantized, everything else official".  The receipt states the measured
 # scope policy; this tool copies it onto the row verbatim.
+# The GGUF family is the same shape again, produced by the same aggregator
+# (k6_kld_report.py --profile gguf) over stream_score.py --source gguf. What
+# makes it different from every other row in this lane is SCOPE: a community
+# llama.cpp GGUF quantizes the embeddings, the attention/KDA/DSA path and
+# lm_head as well as the routed experts, and the measured forward therefore runs
+# the artifact's own non-routed weights rather than the reference's. That is not
+# a caveat this tool may infer -- the summary carries a scope_policy block read
+# from the artifact's own tensor table, and the adapter below turns it into a
+# disclosure on the row so a reader never compares a whole-model quant against a
+# routed-experts-only one without being told.
 STREAM_K6_SUMMARY = "malaiwah.glm53-k6-stream-packed-kld-summary.v1"
 K8_SUMMARY = "malaiwah.glm53-k8-packed-kld-summary.v1"
 NATIVE_BF16_SUMMARY = "malaiwah.glm53-native-bf16-packed-kld-summary.v1"
+# The three community-quant weight-decode families.  Each schema string names
+# its FORMAT, so a registry row can never be read as if it came from another
+# one, and none of them carries a "-stream-" marker: the lane is stated with
+# --lane, exactly as for K8, because the lane is a fact about the measurement
+# and the schema is a fact about the artifact.
 MLX_SUMMARY = "malaiwah.glm53-mlx-packed-kld-summary.v1"
+GGUF_SUMMARY = "malaiwah.glm53-gguf-packed-kld-summary.v1"
 STREAM_VERDICT = "malaiwah.glm53-streaming-measurement-verdict.v1"
-STREAM_SUMMARIES = (STREAM_K6_SUMMARY, K8_SUMMARY, NATIVE_BF16_SUMMARY, MLX_SUMMARY)
+STREAM_SUMMARIES = (STREAM_K6_SUMMARY, K8_SUMMARY, NATIVE_BF16_SUMMARY,
+                    MLX_SUMMARY, GGUF_SUMMARY)
 LANE_STATED_BY_SCHEMA = {STREAM_K6_SUMMARY: "streaming", K8_SUMMARY: None,
-                         NATIVE_BF16_SUMMARY: None, MLX_SUMMARY: None}
+                         NATIVE_BF16_SUMMARY: None, MLX_SUMMARY: None,
+                         GGUF_SUMMARY: None}
 
 REPORT_FAMILIES = ("glm53flash-fidelity-report/2", "glm53flash-fidelity-report/3",
                    "qwen38-kld-ladder-cumulative/2", "qwen38-kld-ladder-cumulative/3",
@@ -417,8 +435,14 @@ def adapt_stream_summary(receipts):
             {"code": "reduced_run_count",
              "detail": "cold_run_deviation (verbatim from the receipt): %s"
                        % rec["cold_run_deviation"]})
-    if sch == MLX_SUMMARY:
-        _apply_mlx_provenance(out, rec, path)
+    # One dispatch table for the community-quant families.  Each entry binds the
+    # artifact and states what that FORMAT quantized; none of them may be
+    # inferred from the schema string, and a receipt missing its family's scope
+    # census is refused rather than rowed as an experts-only quant.
+    adapter = {MLX_SUMMARY: _apply_mlx_provenance,
+               GGUF_SUMMARY: _apply_gguf_provenance}.get(sch)
+    if adapter is not None:
+        adapter(out, rec, path)
 
     if verdicts:
         _apply_stream_verdict(out, rec, path, verdicts)
@@ -476,6 +500,68 @@ def _apply_mlx_provenance(out, rec, path):
                        "whole-file sha256 verification against the HF manifest; the pins are the "
                        "repo revision and the config/index sha256 only."})
     out["field_provenance"]["quantization_scope"] = "#/mlx_scope_policy (measured, not declared)"
+
+
+def _apply_gguf_provenance(out, rec, path):
+    """Bind the third-party artifact and disclose WHAT IT QUANTIZED.
+
+    Two things must reach the row and neither may be inferred:
+
+      * identity -- the repo, the immutable 40-hex revision and the per-file
+        sha256 of every .gguf consumed. A GGUF repo holds a dozen different
+        quants under one revision, so the FILE list is the artifact, not the
+        repo id; a summary that names files without hashes is refused rather
+        than recorded as if it were pinned.
+      * scope -- the artifact's own measured scope_policy. Every other row in
+        this lane quantizes the routed experts only and runs the reference's
+        untouched non-routed parameters; this family does not, and a row that
+        omits that is quietly incomparable.
+    """
+    files = rec.get("gguf_files")
+    if not files:
+        raise Refuse(E_MISSING,
+                     "%s carries no /gguf_files: a GGUF repo holds many different quants at one "
+                     "revision, so the file list IS the artifact identity. Re-run the aggregator "
+                     "against a capture receipt that records it." % os.path.basename(path))
+    names = [f.get("name") for f in files]
+    verification = rec.get("gguf_file_hash_verification")
+    if verification == "full" and any(not f.get("sha256") for f in files):
+        raise Refuse(E_INCONSISTENT,
+                     "the summary declares gguf_file_hash_verification='full' but %d of %d entries "
+                     "in /gguf_files carry no sha256"
+                     % (sum(1 for f in files if not f.get("sha256")), len(files)))
+    out["artifact_repo"] = rec.get("gguf_repo")
+    out["artifact_revision"] = rec.get("gguf_revision")
+    if rec.get("seal_disclosure"):
+        # same treatment as the Dione and MLX families: a third-party artifact
+        # with no upstream encoder receipts becomes an `unsealed_source` caveat
+        out["verbatim_disclosure_coded"].append(
+            {"code": "unsealed_source",
+             "detail": "seal_disclosure (verbatim from the receipt): %s" % rec["seal_disclosure"]})
+    out["field_provenance"].update({
+        "artifact_repo": "#/gguf_repo", "artifact_revision": "#/gguf_revision",
+        "artifact_files": "#/gguf_files[] (name + bytes + sha256)",
+    })
+    scope = rec.get("scope_policy") or {}
+    if not scope.get("disclosure"):
+        raise Refuse(E_MISSING,
+                     "%s carries no /scope_policy/disclosure. This family's artifacts quantize the "
+                     "non-routed tensors too; a row without that statement invites comparison "
+                     "against routed-experts-only rows that are not measuring the same weights."
+                     % os.path.basename(path))
+    out["verbatim_disclosure_coded"].append(
+        {"code": "quantization_scope_whole_model",
+         "detail": "scope_policy (verbatim from the receipt): %s | embeddings=%s lm_head=%s "
+                   "attention_quantized=%s routed_expert_types=%s"
+                   % (scope["disclosure"], scope.get("embeddings_type"),
+                      scope.get("lm_head_type"), scope.get("attention_kda_dsa_quantized"),
+                      ",".join(scope.get("routed_expert_types") or []))})
+    if verification != "full":
+        out["verbatim_disclosure_coded"].append(
+            {"code": "artifact_files_unhashed",
+             "detail": "gguf_file_hash_verification is %r: the measured files were NOT whole-file "
+                       "hashed, so this row pins the artifact by repo+revision+name only (%s)"
+                       % (verification, ", ".join(str(n) for n in names))})
 
 
 def _apply_stream_verdict(out, summary, spath, verdicts):

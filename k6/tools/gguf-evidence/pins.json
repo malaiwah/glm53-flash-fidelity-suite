@@ -1,0 +1,30 @@
+{
+ "artifacts": {
+  "ddh0": {
+   "architecture": "glm5-next",
+   "refused_because": "IQ3_S / IQ4_XS expert tensors have no v1 decode kernel",
+   "repo": "ddh0/GLM-5.3-Flash-GGUF",
+   "revision": "be335b19a6fa14553a457e814847ac1cff84af0a",
+   "supported": false
+  },
+  "unsloth-UD-Q4_K_XL": {
+   "architecture": "glm5next",
+   "files": [
+    "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf",
+    "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00002-of-00006.gguf",
+    "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00003-of-00006.gguf",
+    "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00004-of-00006.gguf",
+    "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00005-of-00006.gguf",
+    "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00006-of-00006.gguf"
+   ],
+   "repo": "unsloth/GLM-5.3-Flash-GGUF",
+   "revision": "2975ab414d30340466d8c51533c6e91f0cca64c1",
+   "supported": true
+  }
+ },
+ "note": "Repo facts fetched over HTTP range requests 2026-08-29; no full downloads.",
+ "official_bf16": {
+  "repo": "zai-org/GLM-5.3-Flash-BF16",
+  "revision": "a6c167b62691b2bac901344b65cb651a70f53e43"
+ }
+}

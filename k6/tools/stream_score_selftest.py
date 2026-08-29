@@ -785,6 +785,15 @@ GOLDEN_RECEIPT_KEYS = frozenset({
 #                     two things that family MUST disclose - the measured
 #                     quantization scope (it reaches past the routed experts)
 #                     and the decoded non-routed view the forward was built from
+#   gguf:             the community GGUF artifact pins (source == "gguf") - repo,
+#                     immutable revision, the FILE LIST (a GGUF repo holds many
+#                     quants at one revision, so the file list IS the artifact
+#                     identity), the measured ggml type census, the imatrix
+#                     metadata
+#   scope_policy:     the measured "what did this artifact actually quantize"
+#                     block.  gguf and nvfp4 both emit it under this name; mlx
+#                     spells its own mlx_scope_policy because its census carries
+#                     the passthrough set as well.
 GATED_RECEIPT_KEYS = frozenset({
     "teacher_provenance", "schema", "not_submittable", "sampling_design",
     "exl3hf_repo", "exl3hf_revision", "artifact_config_sha256",
@@ -796,6 +805,9 @@ GATED_RECEIPT_KEYS = frozenset({
     "mlx_index_sha256", "mlx_shard_hash_verification", "mlx_scope_policy",
     "mlx_nonrouted_view", "mlx_nonrouted_passthrough_crosscheck",
     "mlx_fetch_ledger", "official_shape_census_sha256",
+    "gguf_repo", "gguf_revision", "gguf_files", "gguf_file_hash_verification",
+    "gguf_architecture", "gguf_type_census", "gguf_quant_metadata",
+    "scope_policy",
     "source_repo", "source_revision",
 })
 

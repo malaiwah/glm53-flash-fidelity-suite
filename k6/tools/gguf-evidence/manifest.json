@@ -1,0 +1,71 @@
+{
+ "dequant_fixtures": {
+  "Q4_K": {
+   "cols": 4096,
+   "first_row_first_4": [
+    0.0061283111572265625,
+    -0.018137097358703613,
+    -0.026225566864013672,
+    -0.03431403636932373
+   ],
+   "gguf_tensor": "blk.3.ffn_gate_exps.weight",
+   "raw_bytes": 18432,
+   "reference": "gguf-py 0.19.0 gguf.quants.dequantize",
+   "rows": 8
+  },
+  "Q5_K": {
+   "cols": 2048,
+   "first_row_first_4": [
+    0.022647380828857422,
+    -0.021016836166381836,
+    -0.005605936050415039,
+    -0.005605936050415039
+   ],
+   "gguf_tensor": "blk.3.ffn_down_exps.weight",
+   "raw_bytes": 11264,
+   "reference": "gguf-py 0.19.0 gguf.quants.dequantize",
+   "rows": 8
+  },
+  "Q6_K": {
+   "cols": 2048,
+   "first_row_first_4": [
+    -0.01160430908203125,
+    -0.007252693176269531,
+    0.02756023406982422,
+    0.017406463623046875
+   ],
+   "gguf_tensor": "blk.11.ffn_down_exps.weight",
+   "raw_bytes": 13440,
+   "reference": "gguf-py 0.19.0 gguf.quants.dequantize",
+   "rows": 8
+  },
+  "Q8_0": {
+   "cols": 4096,
+   "first_row_first_4": [
+    -0.0018835067749023438,
+    0.0017893314361572266,
+    0.004520416259765625,
+    -0.004708766937255859
+   ],
+   "gguf_tensor": "token_embd.weight",
+   "raw_bytes": 34816,
+   "reference": "gguf-py 0.19.0 gguf.quants.dequantize",
+   "rows": 8
+  }
+ },
+ "mla_fixture": {
+  "full_tensor_audit": "mla-full-audit.json",
+  "ggml_type": "Q8_0",
+  "gguf_tensors": [
+   "blk.3.attn_k_b.weight",
+   "blk.3.attn_v_b.weight"
+  ],
+  "heads_in_fixture": 2,
+  "heads_in_full_tensor": 64,
+  "official_dtype": "bfloat16 (stored as uint16 view)",
+  "official_rows_in_fixture": 1024,
+  "official_tensor": "model.language_model.layers.3.self_attn.kv_b_proj.weight",
+  "per_head_gguf_bytes": 139264
+ },
+ "schema": "malaiwah.glm53-gguf-evidence-manifest.v1"
+}

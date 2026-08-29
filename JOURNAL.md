@@ -1180,3 +1180,123 @@ codec, not an artifact. Two 4-bit GLM-5.3-Flash conversions can differ by
 scalar we publish. Every surface adapter from now on censuses what the
 artifact actually quantized, from the artifact's own metadata, and the receipt
 carries that census verbatim.
+
+---
+
+## 2026-08-29 — GGUF weight-decode surface (`--source gguf`), built and validated without a GPU
+
+Third scoring surface for the streaming lane, after `dione` and `native`:
+community **llama.cpp GGUF** artifacts of GLM-5.3-Flash (unsloth's Q8_0 /
+UD-Q4_K_XL / UD-Q5_K_XL / UD-Q6_K_XL) scored on the sealed panel through the
+same capture, same teacher, same fp64 estimator, same EP8/fp32 lane. New files:
+`k6/tools/gguf_surface.py`, `k6/tools/selftest_gguf_offline.py`,
+`k6/tools/gguf-evidence/`. Receipt family
+`malaiwah.glm53-gguf-packed-kld-summary.v1`. **No number was measured** — the
+first capture is a rental; everything below is what was proven for free.
+
+**The architectural difference that drove the design.** Every other source in
+this tool quantizes the routed experts only and runs the official BF16
+non-routed parameters untouched. A GGUF quantizes `token_embd`, `output`
+(lm_head), every attention/KDA/DSA projection and the shared experts too — at
+Q8_0 in the unsloth builds. Scoring those from the official tree would have
+measured a model that does not exist. So the lane MATERIALIZES a decoded
+non-routed view (every non-routed tensor dequantized once into safetensors
+under the official HF names/shapes/dtypes) and `build_streaming_model` grew a
+`nonrouted_view=` parameter to accept it. The sealed `from_pretrained` call and
+all of its load assertions are unchanged. `--bf16` survives for
+config/tokenizer, the inventory binding, and the vision tower — which the main
+GGUF genuinely does not carry (it ships as a separate mmproj) and which the
+text-only panel never executes.
+
+**Scope is measured, not asserted.** The receipt's `scope_policy` block is read
+from the artifact's own tensor table (which tensors carry a quantized ggml
+type), never inferred from the format's name — because the assumption "GGUF
+quantizes everything, NVFP4 is the same family" is false: the NVFP4 releases of
+this model quantize the routed experts only. `registry_add.py` turns the block
+into a `quantization_scope_whole_model` disclosure and REFUSES a GGUF summary
+that arrives without it, or without `gguf_files`. `WHAT-WE-MEASURE.md` gained
+§5a as the worked example.
+
+**Two layout assumptions were settled numerically, not by reading the C.** Both
+are the same species of hazard: a wrong answer decodes cleanly, closes every
+census, and measures the wrong model.
+
+- `kv_b_proj` does not exist in a GGUF — llama.cpp stores `attn_k_b` (per-head
+  TRANSPOSED) and `attn_v_b`. Four candidate reconstructions were scored
+  against the official BF16 tensor: the shipped one lands at rel-L2 **0.0054**
+  (the Q8_0 error), every other at **>= 1.40**.
+- The fused expert tensor's slot `e` was ASSUMED to be HF expert `e`.
+  `audit_expert_placement` proves it: slot 0 of `blk.3.ffn_gate_exps.weight`
+  reproduces official `experts.0.gate_proj` at rel-L2 **0.0714** (the Q4_K
+  error) against **1.42** for every row-shifted control — which settles the slot
+  ordering, the reversed-dims orientation and the projection mapping at once.
+  This check did not exist before today and cost nothing: the official payload
+  was already committed in `dione-evidence/`.
+
+**LESSON 28 (scale-free audit criteria).** The MLA audit originally passed on a
+cosine MARGIN (`shipped > runner_up + 0.5`). Running it on a 2-head window
+instead of all 64 heads failed it — not because the layout was wrong but
+because two arrangements sharing a leading block have a cosine gap that shrinks
+as `1/(2*heads)`: 0.013 over 64 heads, 0.546 over 2. The criterion was
+window-size dependent, i.e. it would have passed or failed depending on how
+much of the tensor an operator chose to fetch. Replaced with rel-L2, which does
+not move: the right arrangement scores the QUANTIZATION error and every wrong
+one scores O(1), at either size. An audit threshold that depends on the sample
+size is not a threshold.
+
+**LESSON 29 (don't trust your own dtype list).** The view's dtype policy started
+as a hardcoded suffix list of the tensors the official tree stores float32.
+That is a claim about a released checkpoint that can go stale silently and
+would leave the view NOT dtype-identical to a native build. It is now
+cross-checked: `verify_official_dtypes` reads the real dtypes out of the
+official safetensors headers wherever those shards are present and refuses on
+any disagreement, counting (never assuming away) the shards that are absent.
+
+**Validation, all four gates, no GPU and no rental.**
+1. *Reference cross-check.* Q4_K, Q5_K, Q6_K and Q8_0 are BITWISE equal to
+   gguf-py 0.19.0's `dequantize` on real ranged-fetched bytes of the live
+   artifact — and identically so under python3.9/torch2.8 and
+   python3.14/torch2.13. A scalar transliteration of llama.cpp's own
+   `get_scale_min_k4` independently reproduces the Q4_K sub-block scales, which
+   is the check a same-code-twice comparison cannot make.
+2. *Shape/name census.* All 1,412 GGUF tensors consumed (1,259 one-to-one + 129
+   fused + 24 MLA halves); the resulting 1,271 official names EXACTLY biject the
+   real BF16 index (38,770 − 37,152 routed − 347 vision). ddh0's different
+   convert vintage maps 1,412/1,412 names (its `indexer.kpool_*` alias spellings
+   are covered) and is refused only by TYPE.
+3. *Offline selftest.* `selftest_gguf_offline.py`, nine rungs, ~2 s, wired into
+   `bin/selftest_all.sh`. Includes a minimal GGUF WRITER so the refusal rungs
+   can build the malformed artifacts they must refuse — eight of them, each
+   required to name the offending tensor or key.
+4. *Dry-run.* `stream_score.py --source gguf --dry-run` plans the real
+   6-part unsloth UD-Q4_K_XL over HTTP ranges (headers only, no weights):
+   1,412 tensors, 36,288 streamed routed modules, 185.48 GB of routed bytes out
+   of the artifact's 199.71 GB, the imatrix provenance keys, and clean refusals
+   for a partial split, an unpinned revision, a mismatched profile, and an
+   https location without `--dry-run`.
+
+**Named v1 exclusions (refused, not skipped), enumerated from the real repo.**
+A type census of ALL TWELVE unsloth builds (each build's own 1,412-tensor
+table, `gguf-evidence/unsloth-build-census.json`) says the supported set scores
+BF16, Q8_0, UD-Q4_K_XL, UD-Q5_K_XL, UD-Q6_K_XL and refuses the other seven. The
+refusals are NOT predictable from the directory names, which is the finding
+worth keeping: unsloth's "Dynamic" recipe mixes IQ2_XS/IQ3_XXS/IQ4_XS into
+UD-Q2_K_XL and IQ3_XXS/IQ4_XS into UD-Q3_K_XL, so those two are gated on IQ
+kernels, not on the Q2_K/Q3_K ones their names imply — adding Q2_K and Q3_K
+alone would unlock nothing. Any unsupported type is refused BY NAME AND TYPE at
+census time, before a byte is decoded. (Also noted: the repo's own BF16 GGUF is
+in the supported set, so this lane can measure a GGUF of *unquantized* weights
+— its own container floor — without a second surface.)
+
+**Fetch-ledger honesty fix.** `routed_tensor_census` originally reported one
+layer's per-expert byte cost as if it were the artifact's. The unsloth XL builds
+deliberately mix types across layers (Q4_K gate/up with one Q5_K layer each;
+Q5_K down with three Q6_K layers), so that understated the ledger. It now
+reports the distinct sizes per projection plus the exact streamed total.
+
+**Guard that fired, correctly.** Adding provenance fields to the capture receipt
+tripped `stream_score_selftest` rung L1.j, which asserts a default receipt is
+field-identical to the sealed golden shape and that every later assignment is
+flag-gated. The additions were correctly gated; the rung's allowlist of
+*permitted* gated keys was extended deliberately, which is exactly the review
+this guard exists to force.

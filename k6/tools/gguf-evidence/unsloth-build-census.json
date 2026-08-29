@@ -1,0 +1,247 @@
+{
+ "builds": {
+  "BF16": {
+   "census_complete": true,
+   "parts": 14,
+   "tensors_seen": 1412,
+   "types": {
+    "BF16": 774,
+    "F32": 638
+   },
+   "unsupported_types": [],
+   "v1_supported": true
+  },
+  "Q8_0": {
+   "census_complete": true,
+   "parts": 8,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "Q8_0": 774
+   },
+   "unsupported_types": [],
+   "v1_supported": true
+  },
+  "UD-IQ1_M": {
+   "census_complete": true,
+   "parts": 3,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "IQ1_M": 42,
+    "IQ2_XXS": 42,
+    "IQ3_XXS": 39,
+    "IQ4_XS": 3,
+    "Q2_K": 2,
+    "Q3_K": 1,
+    "Q4_K": 2,
+    "Q5_K": 248,
+    "Q6_K": 49,
+    "Q8_0": 346
+   },
+   "unsupported_types": [
+    "IQ1_M",
+    "IQ2_XXS",
+    "IQ3_XXS",
+    "IQ4_XS",
+    "Q2_K",
+    "Q3_K"
+   ],
+   "v1_supported": false
+  },
+  "UD-IQ1_S": {
+   "census_complete": true,
+   "parts": 3,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "IQ1_S": 56,
+    "IQ2_XXS": 28,
+    "IQ3_XXS": 39,
+    "IQ4_XS": 3,
+    "Q2_K": 2,
+    "Q3_K": 1,
+    "Q4_K": 2,
+    "Q5_K": 248,
+    "Q6_K": 49,
+    "Q8_0": 346
+   },
+   "unsupported_types": [
+    "IQ1_S",
+    "IQ2_XXS",
+    "IQ3_XXS",
+    "IQ4_XS",
+    "Q2_K",
+    "Q3_K"
+   ],
+   "v1_supported": false
+  },
+  "UD-IQ2_XXS": {
+   "census_complete": true,
+   "parts": 4,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "IQ2_S": 2,
+    "IQ2_XXS": 82,
+    "IQ3_XXS": 39,
+    "IQ4_XS": 3,
+    "Q2_K": 2,
+    "Q3_K": 1,
+    "Q4_K": 2,
+    "Q5_K": 248,
+    "Q6_K": 49,
+    "Q8_0": 346
+   },
+   "unsupported_types": [
+    "IQ2_S",
+    "IQ2_XXS",
+    "IQ3_XXS",
+    "IQ4_XS",
+    "Q2_K",
+    "Q3_K"
+   ],
+   "v1_supported": false
+  },
+  "UD-IQ3_XXS": {
+   "census_complete": true,
+   "parts": 4,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "IQ2_S": 82,
+    "IQ3_S": 41,
+    "IQ4_XS": 3,
+    "Q2_K": 2,
+    "Q3_K": 1,
+    "Q6_K": 295,
+    "Q8_0": 350
+   },
+   "unsupported_types": [
+    "IQ2_S",
+    "IQ3_S",
+    "IQ4_XS",
+    "Q2_K",
+    "Q3_K"
+   ],
+   "v1_supported": false
+  },
+  "UD-IQ4_XS": {
+   "census_complete": true,
+   "parts": 5,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "IQ3_S": 82,
+    "IQ4_XS": 41,
+    "Q3_K": 2,
+    "Q4_K": 1,
+    "Q6_K": 4,
+    "Q8_0": 644
+   },
+   "unsupported_types": [
+    "IQ3_S",
+    "IQ4_XS",
+    "Q3_K"
+   ],
+   "v1_supported": false
+  },
+  "UD-Q2_K_XL": {
+   "census_complete": true,
+   "parts": 4,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "IQ2_XS": 82,
+    "IQ3_XXS": 41,
+    "IQ4_XS": 3,
+    "Q2_K": 2,
+    "Q3_K": 1,
+    "Q4_K": 1,
+    "Q5_K": 181,
+    "Q6_K": 117,
+    "Q8_0": 346
+   },
+   "unsupported_types": [
+    "IQ2_XS",
+    "IQ3_XXS",
+    "IQ4_XS",
+    "Q2_K",
+    "Q3_K"
+   ],
+   "v1_supported": false
+  },
+  "UD-Q3_K_XL": {
+   "census_complete": true,
+   "parts": 4,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "IQ3_XXS": 82,
+    "IQ4_XS": 41,
+    "Q3_K": 2,
+    "Q4_K": 1,
+    "Q6_K": 4,
+    "Q8_0": 644
+   },
+   "unsupported_types": [
+    "IQ3_XXS",
+    "IQ4_XS",
+    "Q3_K"
+   ],
+   "v1_supported": false
+  },
+  "UD-Q4_K_XL": {
+   "census_complete": true,
+   "parts": 6,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "Q4_K": 84,
+    "Q5_K": 42,
+    "Q6_K": 3,
+    "Q8_0": 645
+   },
+   "unsupported_types": [],
+   "v1_supported": true
+  },
+  "UD-Q5_K_XL": {
+   "census_complete": true,
+   "parts": 6,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "Q5_K": 84,
+    "Q6_K": 42,
+    "Q8_0": 648
+   },
+   "unsupported_types": [],
+   "v1_supported": true
+  },
+  "UD-Q6_K_XL": {
+   "census_complete": true,
+   "parts": 7,
+   "tensors_seen": 1412,
+   "types": {
+    "F32": 638,
+    "Q6_K": 84,
+    "Q8_0": 690
+   },
+   "unsupported_types": [],
+   "v1_supported": true
+  }
+ },
+ "method": "ggml type census read from every part's own tensor table over HTTP range requests; split part 1 carries the tokenizer arrays and ZERO tensors, so the census closes at 1412 from the remaining parts",
+ "repo": "unsloth/GLM-5.3-Flash-GGUF",
+ "revision": "2975ab414d30340466d8c51533c6e91f0cca64c1",
+ "schema": "malaiwah.glm53-gguf-build-census.v1",
+ "v1_supported_types": [
+  "F32",
+  "F16",
+  "BF16",
+  "Q8_0",
+  "Q4_K",
+  "Q5_K",
+  "Q6_K"
+ ]
+}

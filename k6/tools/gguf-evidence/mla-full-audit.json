@@ -1,0 +1,26 @@
+{
+ "candidates": {
+  "all_k_rows_then_all_v_rows": {
+   "cosine": 0.013173008385277489,
+   "rel_l2": 1.4049016086602686
+  },
+  "all_v_rows_then_all_k_rows": {
+   "cosine": 0.00031420310400429827,
+   "rel_l2": 1.4140252375819387
+  },
+  "per_head_rows_kT_then_v": {
+   "cosine": 0.9999855877325818,
+   "rel_l2": 0.0053691953694832
+  },
+  "per_head_rows_v_then_kT": {
+   "cosine": 0.00022334393995691981,
+   "rel_l2": 1.4140894948906755
+  }
+ },
+ "heads_audited": 64,
+ "layer": 3,
+ "note": "measured against the COMPLETE official BF16 kv_b_proj [32768, 512] of zai-org/GLM-5.3-Flash-BF16 @ a6c167b6, layer 3, using the full 64-head blk.3.attn_k_b/attn_v_b (Q8_0) of unsloth/GLM-5.3-Flash-GGUF UD-Q4_K_XL @ 2975ab41; rel_l2 of the winner is the Q8_0 quantization error, not a layout error",
+ "passed": true,
+ "shipped": "per_head_rows_kT_then_v",
+ "winner": "per_head_rows_kT_then_v"
+}
