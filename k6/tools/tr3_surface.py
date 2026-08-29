@@ -618,7 +618,15 @@ def published_scope(surface: Tr3Surface) -> Dict[str, Any]:
     return {
         "policy": "uniform",
         "head_policy": "native",
-        "kv_cache_dtype": "not_applicable",
+        # bf16, not "not_applicable". The release declares no KV dtype -- it is
+        # a weights-only quant and this measurement runs use_cache=False -- but
+        # kv_cache_dtype is a field about the ARTIFACT, and the registry's three
+        # sibling TR3 records (K6, K8 and brandonmusic's 4bpw, which for a
+        # mirror is literally the same bytes) all say bf16. A scope that
+        # disagrees with the registry's existing record for identical weights is
+        # refused at submission (exit 7), which is a check worth passing rather
+        # than arguing with.
+        "kv_cache_dtype": "bf16",
         "mtp_included": True,
         "activation_quantization": None,
         "assignments": assignments,

@@ -358,6 +358,26 @@ try:
     check("no class is recorded as unknown", "unknown" not in digest, digest[:120])
     check("the head is native in the digest", "lm_head=native:bf16@16" in digest
           and "head=native" in digest)
+    # The digest must equal what the registry already holds for these weights.
+    # A mirror's scope that disagrees with its upstream's is refused at
+    # submission with exit 7 -- on the box, at the seal stage, after both cold
+    # runs. Compare against the seeded record instead.
+    seeded = TOOLS.parent.parent / "registry" / "data" / "artifacts.jsonl"
+    if seeded.is_file():
+        rows = {}
+        for line in seeded.read_text().splitlines():
+            if line.strip():
+                r = json.loads(line)
+                rows[r["id"]] = r.get("scope_digest")
+        upstream = rows.get("artifact--brandonmusic.glm-5.3-flash-tr3-4bpw")
+        if upstream:
+            check("scope digest equals the registry's record for the same weights",
+                  digest == upstream,
+                  "ours   %s\n          theirs %s" % (digest, upstream))
+        else:
+            skip("scope digest equals the registry's record", "no upstream row seeded")
+    else:
+        skip("scope digest equals the registry's record", "registry data not present")
     check("the routed experts are the only quantized class",
           sorted(a["tensor_class"] for a in scope["assignments"]
                  if a["treatment"] == "quantized") == ["moe.experts", "mtp"])

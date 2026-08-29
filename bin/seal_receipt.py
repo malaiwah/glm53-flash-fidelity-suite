@@ -335,8 +335,12 @@ def _scope_from_receipts(receipts: Path, con: Console) -> Optional[Dict[str, Any
         con.warn("artifact-scope.json carries no assignments; falling through")
         return None
     con.ok("scope read from the artifact itself",
-           "%d tensor classes, source %s"
-           % (len(scope["assignments"]), scope.get("schema", "?")))
+           "%d tensor classes, %s%s"
+           % (len(scope["assignments"]),
+              doc.get("schema", "unnamed schema"),
+              (", %s" % doc["source"].get("revision"))
+              if isinstance(doc.get("source"), dict)
+              and doc["source"].get("revision") else ""))
     return scope
 
 
