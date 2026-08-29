@@ -2023,3 +2023,175 @@ errors. On real data: BF16-vs-FP8 **0.03526219355348638** nats at top-1
 **0.9257449926722032** over 4,094 positions through the real `[154880, 4096]`
 head, tensors verified; self-compare exactly **0.0** with `--force-compute`
 agreeing bitwise (tokenwise sha256 `d54931c81433dc5d…`).
+
+## 2026-08-29 — measurement 1 on the turnkey runner: turboderp 4.05bpw, and the
+## eleven things that stopped `bin/measure-cloud` from ever reaching a GPU
+
+`bin/measure-cloud` was built, reviewed three times, and had never once been run
+for real. This is the entry where it was, against
+`turboderp/GLM-5.3-Flash-exl3` @ `2a30229e` (branch 4.05bpw) on the sealed
+25-window panel. Everything below is a defect the runner had, found in the order
+a stranger would have found it, and each one is now closed.
+
+**THE RESULT** — turboderp/GLM-5.3-Flash-exl3 @ 2a30229e (branch 4.05bpw), sealed
+25-window / 51,175-position panel, streaming lane, 1x H200 spot, EP8 emulated,
+--reduce-order fp32:
+
+    mean tokenwise KLD (teacher||student, fp64)   0.025526426915472484 nats
+    2 cold runs, run means IDENTICAL, 1 distinct tokenwise_kld_sha256
+    attributable vs the streaming BF16 floor      +0.014020504296142185 nats
+    907,200 K4 expert matrices decoded per run
+
+Same-lane, same-panel, same-teacher company (comparability key
+cmp--202b717f3219c414, byte-identical to K8's):
+
+    BF16 floor      0.011506
+    K8   8bpw       0.012384    attributable 0.000878
+    K6   6bpw       0.013715    attributable 0.002209
+    turbo 4.05bpw   0.025526    attributable 0.014021   <- this row
+
+Its attributable error is 6.3x K6's at two thirds the bit rate -- and it is not
+lineage-comparable with a 4-bpw quant made from BF16, because this one was made
+from the FP8 release (its own config says so) and carries that parent's
+divergence too.
+
+THE SECOND BRANCH WAS REFUSED, FOR $0.00. turboderp's 3.05bpw branch
+(332ab457) omits 22 tensors the official model and its own 4.05bpw sibling both
+carry: `self_attn.indexer.index_kpool_compress_{ape,gate}` on all 11 MLA
+layers. transformers would have randomly initialised the sparse-attention
+indexer's k-pool compression and the number would have described a model nobody
+has. The planner reads it out of two index files in seconds.
+
+**Found before a single instance existed** (dry-run only, $0.00):
+
+1. `sniff_surface` classified a stock-exllamav3 release only inside the
+   `elif "config.json"` arm. turboderp ships BOTH an inline block and a
+   standalone 47.9 MB `quantization_config.json`, so the first arm ran, the
+   codec parsed correctly, and the surface stayed `unknown` — the runner
+   refused an artifact it could read. Where a publisher puts the block is not
+   a format property; classification now happens after parsing, whichever file
+   it came from, and the 86 KB inline block is preferred over the 47.9 MB file.
+2. `invoke_engine` had no `--source` spelling for the exl3hf surface.
+   `build_invocation` drops a flag whose value is empty, so the engine would
+   have run with its default source and died on argparse an hour into the
+   rental. An unmapped surface is now a refusal, not a default.
+3. The same file pointed `--bf16` at the official BF16 metadata skeleton
+   instead of the tree the materialize stage writes, and passed none of the
+   `--exl3hf-*` pins.
+4. `invoke_engine` never prefixed an interpreter. The engine scripts are mode
+   644 with an `env python3` shebang, so the measure stage could not exec at
+   all — and executing, would have used the system python without torch.
+   `measure_local` had this line; the cloud path did not.
+5. There was no scoring stage. `stream_score` CAPTURES logits; the divergence
+   comes from `k6_kld_report` across the cold runs. `seal` looked for
+   `run-*/kld-report.json`, found none, and exits 2 — with the whole rental
+   spent. Added `bin/invoke_scorer.py` and the `score` stage.
+6. `seal_receipt`'s rollup searched flat keys only, and `k6_kld_report` nests
+   the per-run mean at `summary.mean`. It would have sealed a NULL metric.
+7. `setup` delegated to `k6/stage_k6.sh`, which was never in `BUNDLE.txt` — so
+   the stage ran a file that does not exist on a cold box — and whose setup
+   hard-stops on an ENCODER closure gate (ShapleyMCG's r10 codec) that a
+   decode-only measurement has no business depending on.
+8. The bundle shipped neither `exl3hf_surface.py` nor the `patches-v2` series.
+9. `census.storage_need` counted the students' fp32 logits only with
+   `--keep-student-logits`, but two cold runs hold both trees before the report
+   seals. The proof-target sizes to 400 GB, not 300 (lesson 31 again).
+10. `k6_kld_report` suffixed every profile `-tp4`. Stock releases are canonical
+    HF shards, not TP4-sliced — a false storage claim in the headline receipt.
+11. `exl3-mul1` was not in the registry's `numeric_format` vocabulary, so the
+    correct codec string would have been rejected at submission time, after the
+    run.
+
+**Found by spending money** (each one cost a restart, none cost a measurement):
+
+12. `jl run <command> --on <id>` is not how `jl run` takes a command: the first
+    positional is a TARGET (a file to upload), and a bare command goes after
+    `--`. So EVERY stage of every cloud run had always died the instant it was
+    launched — `Target does not exist` — with the instance already billing.
+13. The double-spend guard adopted an existing instance only on an EXACT name
+    match, but the name embeds a deadline computed from "now". A restarted
+    controller therefore created a SECOND instance and a SECOND 400 GB
+    filesystem and left the first billing. It matches the job-id prefix now.
+14. **The done-marker probe was matching its own command text.** The probe is
+    `test -f <marker> && echo DONE || echo PENDING`, and the result was tested
+    with `"DONE" in str(response)` — but `jl exec --json` echoes the command
+    back in its payload. The test searched its own words and could never answer
+    anything but yes. Observed live: `stage setup ok 2m07s` against an empty
+    receipts directory, while setup was still installing torch, and the
+    controller went on to launch `fetch_target` CONCURRENTLY with the setup it
+    depends on. Left alone it would have marched through measure and seal and
+    produced a receipt from a box that had done nothing.
+15. `_await_stage` decided a stage's fate by grepping the last 40 log lines for
+    "Traceback". A stage that exits non-zero quietly looked exactly like one
+    still working, and the controller would wait until `--max-runtime` and pay
+    for the whole window. It reads `jl run status --json` now.
+16. Cheapest-that-fits silently swapped an A100-80GB in for the H200 the
+    streaming lane's rows were all measured on, and only WARNED. Both constants
+    the plan runs on — minutes/window and the observed VRAM peak — are measured
+    on H200, and bf16 kernels differ across architectures, so the row would not
+    have been same-lane either. Caught by eye one minute into a paid run;
+    now a refusal.
+17. The lease named only the instance. On an ADOPTED box the filesystem id was
+    never learned, so the reaper could have stopped the compute bill and not
+    the 400 GB volume behind it, which bills on its own.
+18. The 49-file bundle re-uploaded in full on every adoption — ~10 minutes of a
+    billing H200 for files already byte-identical on the box. One `sha256sum`
+    over the remote paths answers it in a single call.
+
+**Two things that went right and are worth keeping:**
+
+* `--hold-on-failure` (added after defect 12 destroyed a box with a finished
+  bundle on it) turned every later failure into a resume. The setup work,
+  the fetch and the materialized tree survived three controller restarts.
+* The bootstrap probes instead of assuming: exllamav3 was NOT built, because
+  the pipeline imports cleanly without it. Neither `stream_score` nor
+  `k6_kld_report` imports the package. That is ~20 minutes of CUDA toolkit and
+  extension build the measurement never needed — and the probe, not a belief,
+  is what decided.
+
+**The artifact, honestly described.** turboderp's release is FULL-scope: the
+attention, the dense MLPs, the shared experts, the vision tower and the lm_head
+are all EXL3, at per-class rates the release publishes itself
+(experts K4, attention K6, shared experts K6, the three dense MLPs K5, head K6; embed, norms, router and the small KDA projections native). Only `embed_tokens`, the norms, the router and the small KDA
+projections stay native. So the measured function is the ARTIFACT ALONE: the
+materialize stage dequantizes its own non-routed tensors — including that 6-bit
+head — into an official-layout BF16 tree, and no official-release weight enters
+the path. `head_policy` on the measurement stays `native_head` because that
+field says how the head is APPLIED (natively, from the artifact's own weights,
+no shared replay); the artifact record carries `head_policy: quantized` and a
+`quantized_head` disclosure so the two are never confused.
+
+It is also quantized FROM the FP8 release, not from BF16
+(`original_quantization_config.fmt = e4m3`), which the artifact record
+discloses: the number includes whatever the FP8 parent already cost
+(the campaign's own FP8 row is 0.0281 nats on a different panel/lane).
+
+LESSON 36 (probes, not beliefs): a status probe whose OUTPUT can be confused
+with its own COMMAND is not a probe. `jl exec --json` echoes the command it
+ran; any test that stringifies the whole response is reading its own words
+back. Read stdout, compare the last line exactly, and let the thing under test
+be the only thing that can answer.
+
+LESSON 37 (a warning is not a control): the GPU-selection warning was correct,
+prominent, and completely ineffective — the run proceeded on the wrong silicon
+and only a human reading the scroll stopped it. When a choice invalidates the
+numbers the plan is built from, it has to refuse and name the flag that
+overrides it.
+
+LESSON 38 (a bootstrap belongs to the lane that needs it): reusing the
+encoding campaign's setup for a decode-only measurement imported a closure
+gate, two extra clones and a hard stop, none of which have anything to do with
+the number. Copy the proven pins; do not inherit the proven program.
+
+**Cost, four ways.** 1x H200 spot at $1.99/h. The measurement box lived 4.03 h
+(bootstrap 4m13s, artifact fetch 6m22s for 165 GB at ~430 MB/s, materialize
+2m06s, two cold runs 2h38m, score 4m21s, seal) = $8.02, plus $0.86 of earlier
+boxes killed while proving the path and ~$0.3 of filesystem, so ~$9.2 all in
+against a $14.95 point estimate. The estimate was high for one reason worth
+recording: the planner prices with the K6 payload store's MEASURED 7.35
+min/window, and this surface ran at 3.12 -- K4 payloads read straight from the
+artifact's own HF shards. The planner keeps 7.35 until a second exl3hf artifact
+confirms the figure; over-estimating the clock is the safe direction.
+
+**Balance** $175.97 -> $124.41 over the session, of which ours is ~$9.2; the
+rest is other sessions' boxes on the shared account.
