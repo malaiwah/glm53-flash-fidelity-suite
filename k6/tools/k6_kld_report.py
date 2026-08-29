@@ -509,7 +509,7 @@ def main() -> int:
     parser.add_argument("--profile", required=True,
                         choices=("k6", "k6-stream", "k8", "k6k8", "dione-q4", "dione-3.0bpw",
                                  "turbo-4.05bpw", "turbo-3.05bpw",
-                                 "native-bf16", "mlx", "gguf"))
+                                 "native-bf16", "mlx", "gguf", "nvfp4"))
     parser.add_argument("--teacher", type=Path, required=True)
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
     parser.add_argument("--fp8-baseline", type=float, default=0.020615)
@@ -530,7 +530,7 @@ def main() -> int:
     from quant_pipeline.core.artifacts import sha256_file
     from quant_pipeline.evaluation.glm53_logits import load_capture_receipt
 
-    bits = {"k6": 6, "k6-stream": 6, "k8": 8}.get(args.profile)
+    bits = {"k6": 6, "k6-stream": 6, "k8": 8, "nvfp4": 4}.get(args.profile)
     student_label = {
         "k6": "uniform-k6",
         # single-device STREAMING capture of the same sealed K6 surface: the
@@ -570,6 +570,11 @@ def main() -> int:
         # summary's provenance block below, where a registry row reads it.  A
         # per-file label would put a mutable string in the equality gate.
         "gguf": "gguf-llamacpp",
+        # community NVFP4 snapshots (RedHatAI / LibertAIDAI), scored through
+        # stream_score.py --source nvfp4 (exact-fp32 e2m1/gs16 dequant, unsealed
+        # source disclosed in the capture receipt's streaming_disclosure.nvfp4).
+        # One label for both dialects: the summary below carries repo+revision.
+        "nvfp4": "nvfp4-e2m1-gs16",
     }[args.profile]
     # a native run is not a packed student and does not claim to be one; nor is
     # a GGUF run, whose non-routed weights are the artifact's as well
@@ -741,13 +746,14 @@ def main() -> int:
             # shards, the MLX conversions ship per-expert HF-named tensors, a
             # GGUF is a single-file (or split) llama.cpp container with fused
             # per-layer expert tensors, and the native lane is single-device
-            # (EP8-emulated).  Suffixing every profile "-tp4" put a false
-            # storage claim in the headline receipt of an artifact that is not
-            # sliced at all.
+            # (EP8-emulated), and an NVFP4 snapshot ships canonical HF shards.
+            # Suffixing every profile "-tp4" put a false storage claim in the
+            # headline receipt of an artifact that is not sliced at all.
             "profile": (
                 "native-bf16-stream" if args.profile == "native-bf16"
                 else "mlx-stream" if args.profile == "mlx"
                 else "gguf-stream" if args.profile == "gguf"
+                else "nvfp4-stream" if args.profile == "nvfp4"
                 else f"{args.profile}-hf-sharded" if args.profile.startswith("turbo")
                 else f"{args.profile}-tp4"
             ),
@@ -886,6 +892,48 @@ def main() -> int:
                     "source_repo": student_receipt.get("source_repo"),
                     "source_revision": student_receipt.get("source_revision"),
                     "seal_disclosure": student_receipt.get("seal_disclosure"),
+                }
+            )
+        elif args.profile == "nvfp4":
+            # same rule as dione: the headline receipt itself carries the
+            # provenance pins, the MEASURED scope policy (what the artifact
+            # actually quantizes) and the activation caveat, all lifted from
+            # the sealed capture receipt's streaming_disclosure.nvfp4 block -
+            # never re-asserted here.
+            from quant_pipeline.evaluation.glm53_logits import (
+                CAPTURE_SCHEMA,
+                sealed_json,
+            )
+
+            student_receipt = sealed_json(
+                runs[0] / "capture-receipt.json", CAPTURE_SCHEMA, "receipt_sha256"
+            )
+            block = (student_receipt.get("streaming_disclosure") or {}).get("nvfp4")
+            if not isinstance(block, dict):
+                raise _fail(
+                    "run-1 capture receipt carries no streaming_disclosure.nvfp4 block - "
+                    "these runs were not produced by stream_score.py --source nvfp4"
+                )
+            scope = block.get("scope_policy") or {}
+            activations = block.get("activations") or {}
+            summary.update(
+                {
+                    "student_receipt_sha256": student_receipt["receipt_sha256"],
+                    "nvfp4_repo": block.get("nvfp4_repo"),
+                    "nvfp4_revision": block.get("nvfp4_revision"),
+                    "nvfp4_layout": block.get("layout"),
+                    "nvfp4_config_format": block.get("config_format"),
+                    "nvfp4_producer": block.get("producer"),
+                    "nvfp4_quant_weights": block.get("quant_weights"),
+                    "nvfp4_config_sha256": block.get("config_sha256"),
+                    "nvfp4_index_sha256": block.get("index_sha256"),
+                    "nvfp4_shard_hash_verification": block.get("shard_hash_verification"),
+                    "scope_policy": scope,
+                    "scope_policy_note": "%s | %s" % (
+                        scope.get("quantized_scope"), scope.get("nonrouted_policy")),
+                    "activations": activations,
+                    "activations_disclosure": activations.get("disclosure"),
+                    "seal_disclosure": block.get("seal_disclosure"),
                 }
             )
         _atomic_json(args.out.resolve(), summary)

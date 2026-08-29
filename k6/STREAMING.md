@@ -625,7 +625,7 @@ Everything above reads the shared filesystem read-only and writes only under
 
 ### What it is
 
-`--source {checkpoint,payload-store,dione}` all score a **quantized** routed
+`--source {checkpoint,payload-store,dione,nvfp4}` all score a **quantized** routed
 surface. `--source native` scores the **un-quantized** one: the 36,288 routed
 expert matrices are read straight out of the official BF16 checkpoint by their
 released tensor names —
@@ -795,6 +795,248 @@ Two knobs did NOT pay off here and are worth knowing about:
   delivered ~1.05-1.44 GB/s against the ~900 MB/s previously measured for the
   box's own disk, and the routed set (609 GB) does not fit a 200 GB volume
   anyway.
+---
+
+## 13. The NVFP4 community-quant lane (`--source nvfp4`)
+
+### What it is
+
+`--source nvfp4` scores a **third-party NVFP4 snapshot** of GLM-5.3-Flash —
+`RedHatAI/GLM-5.3-Flash-NVFP4` and `LibertAIDAI/GLM-5.3-Flash-NVFP4` today — on
+the SAME sealed 25-window panel, against the SAME teacher, with the SAME fp64
+estimator and the SAME `--ep-emulate 8 --reduce-order fp32` lane as K6/K8/Dione
+and the BF16 floor. The routed expert matrices are decoded from `e2m1` group-16
+NVFP4 in exact fp32 on the read-pool CPU threads; from `fuse_gate_up` onward
+every line is the packed lane's own code, including its single `fp32 -> bf16`
+rounding at slab install. **The only thing that changes is where the expert
+weights come from and how they are decoded**, which is what makes the number
+land on the same yardstick.
+
+Adapter: `k6/tools/nvfp4_surface.py`. Profile: `--profile nvfp4` (required
+together with `--source nvfp4`). Summary family:
+`malaiwah.glm53-nvfp4-packed-kld-summary.v1`, student label `nvfp4-e2m1-gs16`.
+
+### The scope finding — measured from the index, never read off a README
+
+The obvious assumption about community quants is that they quantize
+everything. **For NVFP4 that is false**, and the surface establishes it from
+the artifact's own `model.safetensors.index.json` rather than believing a model
+card:
+
+| | RedHatAI @ `36c184c6` | LibertAIDAI @ `357b45cc` |
+|---|---|---|
+| producer | compressed-tensors 0.17.2.dev32 | modelopt 0.45.0 |
+| index tensors | 148,498 | 150,226 |
+| main routed (L3-44) | 36,288 modules, NVFP4 | 36,288 modules, NVFP4 |
+| MTP layer 45 experts | 864 modules, **FP8 block 128x128** | 864 modules, NVFP4 |
+| non-routed | **1,618 tensors, plain BF16, official names** | same 1,618 |
+| declared activations | nvfp4 dynamic `local` gs16 (**W4A4**) | `null` (a W4A16 label) |
+| activation scales in-repo | `input_global_scale` per module | `input_scale` per module |
+
+Consequences, all enforced rather than assumed:
+
+* The **non-routed view is built from the quant snapshot itself**. Embeddings,
+  lm_head, the whole KDA/DSA/MLA path, shared experts, dense MLPs 0-2, vision
+  and norms are the artifact's own BF16 bytes, so `--bf16` plays no role —
+  passing it is a hard refusal, not a warning.
+* The retained-name set must **exactly equal** the official BF16 non-routed
+  name set (committed as `nvfp4-evidence/official-nonrouted-names.json`,
+  derived from the official index). A single extra or missing name refuses the
+  run and names the offender. `nvfp4_surface.py verify-nonrouted --mode full`
+  additionally byte-compares those tensors against a local official tree.
+* `config.json`'s `quantization_config` is stripped from the *view's* copy of
+  the config (never from the source file) so `from_pretrained` builds the
+  sealed plain-BF16 model instead of engaging a quantized-loading integration.
+* The receipt states this measured scope in `streaming_disclosure.nvfp4.
+  scope_policy`, so a registry row can never imply "everything was quantized"
+  for this family — or, when a future artifact does quantize more, imply the
+  opposite.
+
+### The decode, and how it is proven
+
+The packed stream is one byte per two values, **low nibble first**; bit 3 is
+the sign and bits 0-2 index the e2m1 magnitude table
+`[0, 0.5, 1, 1.5, 2, 3, 4, 6]`. Scales are `float8_e4m3fn`, one per 16 elements
+**along the input (last) axis**. The two producers spell the global scale
+differently and the adapter keeps them apart rather than converting one into
+the other (`1/x` then divide would double-round):
+
+```
+compressed-tensors:  W = e2m1 * (weight_scale.f32 / weight_global_scale)
+modelopt:            W = e2m1 * (weight_scale.f32 * weight_scale_2)
+```
+
+Everything is exact in fp32 — every e2m1 value, every f8e4m3 scale and every
+fp32 global — so the decode is one divide-or-multiply per group scale and one
+multiply per element, with **no float64 anywhere** (that is a hard requirement:
+Apple MPS has none, and the selftest proves CPU==MPS bitwise). The f8e4m3 cast
+goes through a 256-entry LUT rather than a float8 kernel, for the same reason.
+
+Proven, not asserted: on real ranged-fetched tensors (layer 3, expert 0, both
+repos, `gate_proj` and `down_proj`), this decode is **bitwise equal in fp32** to
+`compressed_tensors` 0.18.0's own `unpack_fp4_from_uint8` + dequant. The
+fixtures and their provenance live in `k6/tools/nvfp4-evidence/`; the selftest
+re-derives the reference live whenever the package is importable instead of
+trusting the committed copy. Worked numbers from the RedHat tensor:
+`weight_global_scale = 17280.0`, `W[0,0..5] = [0.0055555557, -0.0166666675,
+-0.0222222228, -0.0333333351, -0.0222222228, -0.0027777778]`.
+
+As a second, independent confirmation the two repos are quantizations of the
+same BF16 weights: their decoded L3/E0 `gate_proj` agree at cosine 0.99973
+(rel-L2 4.26%) — two teams' quantizers landing on the same tensor.
+
+**Disclosed deviation.** `compressed-tensors`' own `decompress()` unpacks to
+bf16 and multiplies in bf16 (max |Δ| 2.8e-4 against exact fp32 on that tensor).
+This lane decodes in exact fp32 and rounds ONCE to bf16 at slab install — the
+suite's own installation algebra, identical to what the packed lanes do. The
+bitwise-equality claim is therefore against the exact math, which is what the
+fixtures pin.
+
+### Provenance, without a seal
+
+An NVFP4 snapshot ships no encoder-side receipts and no reconstruction
+closures: there is nothing to close against. What the lane records instead:
+
+* the repo id and its **immutable 40-hex revision** (a moving ref is refused);
+* `config_sha256` and `index_sha256` of the exact files the run read, re-checked
+  in `stream_score` against the tree it loaded;
+* a `scope_census_sha256` over the measured scope policy;
+* the **per-component sha256** of every packed tensor, scale and global the
+  decode consumed, in the installed-choice census — so
+  `installed_choice_census_sha256` binds the actual bytes that became weights;
+* optionally, whole-shard sha256 verified against the repo's LFS manifest
+  fetched from the public HF tree API (`fetch-manifest` then `verify-shards`).
+  Without that marker the run refuses unless `--nvfp4-skip-shard-hashes` is
+  passed, and the receipt then reads `shard_hash_verification: skipped`.
+
+Every receipt carries `seal_disclosure` stating plainly that the surface was
+decoded **without** seal verification. `registry_add` requires that string, the
+scope block and the activation block to be present before it will build a row.
+
+### The activation caveat — measured per artifact, not per format
+
+This is a **weights-only** lane. RedHatAI's config declares nvfp4 dynamic
+activations (W4A4) and both repos ship per-module activation scale tensors, so
+for those two artifacts the measured KLD does **not** capture activation
+quantization — the same caveat family as the official FP8 release (`§3` of
+[`WHAT-WE-MEASURE.md`](../WHAT-WE-MEASURE.md)). The surface decides which case
+it is from the artifact itself and says so three ways: a declared-activations
+block copied verbatim, a boolean
+`weights_only_decode_captures_artifact_fully`, and a prose `disclosure`. A
+genuine W4A16 artifact — no declared input activations, no activation scales in
+the index — takes the "captures the artifact fully" branch and earns **no**
+caveat it does not deserve. `registry_add` emits the coded disclosure
+`activation_quantization_not_captured` only in the first case.
+
+Note LibertAIDAI's disagreement with itself: its config declares
+`input_activations: null` (a W4A16 label) while the artifact ships
+`input_scale` per module. Both facts are recorded verbatim; the lane does not
+adjudicate.
+
+### MTP layer 45
+
+Present, hashed into the artifact identity, **never executed by standard
+logits** — unchanged `mtp_policy`. RedHatAI ships it as a separate FP8
+block-128x128 group and LibertAIDAI as NVFP4; the census records which, and
+`decode_components()` refuses outright if anything ever asks it to decode
+layer 45.
+
+### Fail-closed behaviour
+
+* `--source nvfp4` and `--profile nvfp4` must be used together (the profile is
+  what tells `k6_kld_report.py` which `student_label` to expect).
+* `--bf16` is refused with an explanation, not ignored.
+* `--nvfp4-revision` must be an immutable 40-hex commit.
+* Every expert tensor in the index must be a KNOWN component of a KNOWN module;
+  an unknown component, a stray layer, an out-of-range expert index, an
+  incomplete module or a layer that mixes formats each refuse **by name**.
+* A main routed layer that is not NVFP4-packed refuses (it is then not an NVFP4
+  routed surface, whatever the repo is called).
+* A `quant_method` that is neither `compressed-tensors` nor `modelopt`, a
+  group size other than 16, non-4-bit or asymmetric/dynamic weights, or a
+  config whose GLM5Next geometry differs from the released one, all refuse.
+* A NaN f8e4m3 scale code or a zero/NaN global refuses rather than propagating.
+* A shard present but missing a tensor fails loudly, naming the tensor; nothing
+  in this path can substitute zeros for a missing expert.
+* The load report still requires `missing_keys 0 / mismatched_keys 0 /
+  error_msgs 0`.
+
+### Offline validation — one command, no GPU, no downloads
+
+`k6/tools/selftest_nvfp4_offline.py` is ten rungs and runs in ~8 s on a laptop;
+`bin/selftest_all.sh` runs it. It proves the f8e4m3 LUT against torch's native
+cast (254 finite codes, bit patterns, -0.0 included), the nibble order against
+compressed-tensors over all 256 byte codes, the dequant known-answers for both
+conventions plus a group-axis probe a transposed-scale regression cannot pass,
+the real-tensor cross-check above, the full name census over BOTH repos' real
+indexes with eight doctored indexes refused by name, surface load and identity
+sensitivity with seven malformed snapshots refused, the streaming source end to
+end on synthetic shards written under the real shard names, both CLIs reaching
+plan-print, and the registry adapter's disclosures and refusals. Two rungs
+degrade to a printed SKIP rather than a failure: the live `compressed-tensors`
+reference (absent on the CUDA boxes) and the `stream_score --dry-run` rung
+(needs a `--pipeline-root` whose `quant_pipeline` imports, i.e. python 3.11+).
+
+```bash
+python3 k6/tools/selftest_nvfp4_offline.py --pipeline-root $ROOT/pipeline
+```
+
+### Running it
+
+```bash
+ROOT=/home/jl_fs/glm53-k6
+PY=$ROOT/venv/bin/python
+SNAP=/home/glm53-nvfp4/RedHatAI-GLM-5.3-Flash-NVFP4
+REV=36c184c6cda000a481711306df5adde42f63321a
+
+# 0. pin the bytes (public repo, no token), then hash what landed
+$PY $ROOT/tools/nvfp4_surface.py fetch-manifest \
+    --repo RedHatAI/GLM-5.3-Flash-NVFP4 --revision $REV --root $SNAP
+$PY $ROOT/tools/nvfp4_surface.py verify-shards --root $SNAP
+
+# 1. layout + scope census from config/index alone, no weights read
+$PY $ROOT/tools/nvfp4_surface.py dry-run --root $SNAP \
+    --repo RedHatAI/GLM-5.3-Flash-NVFP4 --revision $REV
+
+# 2. orientation audit + non-routed byte compare against the official tree
+#    (the only two steps that want the BF16 tree, and neither is part of a run)
+$PY $ROOT/tools/nvfp4_surface.py probe --root $SNAP --bf16 /home/jl_fs/models/bf16
+$PY $ROOT/tools/nvfp4_surface.py verify-nonrouted --root $SNAP \
+    --bf16 /home/jl_fs/models/bf16 --mode sample
+
+# 3. plan the scoring run without touching a GPU
+$PY $ROOT/tools/stream_score.py --source nvfp4 --profile nvfp4 \
+    --nvfp4-root $SNAP --nvfp4-repo RedHatAI/GLM-5.3-Flash-NVFP4 \
+    --nvfp4-revision $REV \
+    --teacher $ROOT/teacher-final \
+    --token-panel $ROOT/calibration/panel-v1/panel.receipt.json \
+    --out /home/glm53-nvfp4/runs/run1 --cold-run 1 \
+    --pipeline-root $ROOT/pipeline --dry-run
+
+# 4. the run itself (drop --dry-run), twice, then the fp64 report
+$PY $ROOT/tools/k6_kld_report.py --profile nvfp4 \
+    --teacher $ROOT/teacher-final --runs <run1> <run2> \
+    --device cuda:0 --out $ROOT/receipts/nvfp4-kld.json
+```
+
+The registry row is then built from that summary with an explicit `--lane`
+(the family name carries no lane marker, so the tool refuses to infer one) and
+`--third-party-artifact` (the weights are not ours).
+
+### Cost shape — expected, not yet measured
+
+**No paid NVFP4 measurement has been run.** What the layout says up front: the
+routed read is **4.08 GB per layer** (14.16 MB per expert x 288) against the
+BF16 floor lane's 14.50 GB, so this lane reads ~3.6x less than the floor and
+~1.5x less than the K6 payload store per layer, and adds a decode that is a LUT
+gather plus one multiply — far cheaper than the trellis decode the packed lanes
+run. Peak device memory is the packed lanes' (the slab shape is unchanged, and
+`NONROUTED_BYTES` still holds because the decoded view is same-shape bf16).
+Whether the lane ends up IO-bound or decode-bound on a given box is a
+measurement, not a prediction, and the receipt records both counters
+(`nvfp4_payload_bytes_read`, `nvfp4_shards_read`) so the first real run answers
+it.
+
 
 
 ---

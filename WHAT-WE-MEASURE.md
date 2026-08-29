@@ -83,6 +83,18 @@ this checkpoint?" is the checkpoint lane. "What do I actually get from this
 release, served?" is the serving lane. The registry keys them apart so they
 cannot be silently ranked against each other.
 
+**A checkpoint-lane row on a W4A4-style artifact is weights-only, and says
+so.** Some community quants (the NVFP4 snapshots, `--source nvfp4`) quantize
+weights *and* declare quantized activations. The checkpoint lane can decode
+and score the weights exactly; the activation half only exists at serve time,
+so it is **not in the number** — the same limitation the official FP8 release
+has, disclosed the same way. The surface reads the artifact's own config and
+index to decide which case it is, rather than assuming one per format family:
+a genuine W4A16 artifact is captured *fully* by a weights-only decode and gets
+no caveat, while an artifact that declares quantized activations or ships
+activation scale tensors carries `activation_quantization_not_captured` on its
+registry row.
+
 ## 4. The floor — why zero quantization still scores above zero
 
 Running the **unquantized BF16 weights** as the student still scores

@@ -1,0 +1,64 @@
+{
+  "fetch": "HTTP range requests against huggingface.co/resolve/<40-hex revision>, no token",
+  "files": {
+    "libertai-config.json": {
+      "sha256": "5db46f44956e4a8a0cc8ed54b6d77bf99dd7c1ec90c58975d1952560768513d5",
+      "source": "LibertAIDAI/GLM-5.3-Flash-NVFP4/config.json @ 357b45cc73a07a541cede88861f7736c9487ebf7",
+      "verbatim": true
+    },
+    "libertai-index.json.gz": {
+      "sha256": "b329b5bad7bc4cba64b930341e92012d421e22267042b9b78fab468ac0ef27ad",
+      "source": "LibertAIDAI/GLM-5.3-Flash-NVFP4/model.safetensors.index.json @ 357b45cc73a07a541cede88861f7736c9487ebf7",
+      "uncompressed_sha256": "0a5cb10ccc9bfdfe7a4e857e69fb6eea229cc98343986db27ca95e4266e1a2d9",
+      "verbatim": "gzip of the verbatim index bytes"
+    },
+    "libertai-l3e0-down_proj-rows0-63.pt": {
+      "expected_fp32": "exact-fp32 decode via ct unpack_fp4_from_uint8(dtype=float32) + the layout's own scale convention (see reference_implementation)",
+      "sha256": "c0832a3f7992dc7efec1af6ed7be457f0b5ed5da2e88f0c62ced4a4d201ace1c",
+      "source": "LibertAIDAI/GLM-5.3-Flash-NVFP4 model.language_model.layers.3.mlp.experts.0.down_proj.* @ 357b45cc73a07a541cede88861f7736c9487ebf7, rows 0..63 (rows are independent: scale groups run along the input axis)"
+    },
+    "libertai-l3e0-gate_proj-rows0-63.pt": {
+      "expected_fp32": "exact-fp32 decode via ct unpack_fp4_from_uint8(dtype=float32) + the layout's own scale convention (see reference_implementation)",
+      "sha256": "28948bcc94af0c90f69a154f32acb9ef85e632cc998eb94eb8a1737f8a24a2cd",
+      "source": "LibertAIDAI/GLM-5.3-Flash-NVFP4 model.language_model.layers.3.mlp.experts.0.gate_proj.* @ 357b45cc73a07a541cede88861f7736c9487ebf7, rows 0..63 (rows are independent: scale groups run along the input axis)"
+    },
+    "official-nonrouted-names.json": {
+      "count": 1618,
+      "sha256": "12ba1d84dd99dc38ec4f14283afaf9309168a8eb627a9a9160875f39ca706815",
+      "source": "derived from dione-evidence/bf16-index.json"
+    },
+    "redhat-config.json": {
+      "sha256": "29c9f4171196910e99b9c069d6b76c56e3cdcd0f436dc1bacbc9513c9a7529ac",
+      "source": "RedHatAI/GLM-5.3-Flash-NVFP4/config.json @ 36c184c6cda000a481711306df5adde42f63321a",
+      "verbatim": true
+    },
+    "redhat-index.json.gz": {
+      "sha256": "fd1f2eeb73c7fb9aa27367dce9130a7b0784258c7512a9fab18d17cf4ebdd140",
+      "source": "RedHatAI/GLM-5.3-Flash-NVFP4/model.safetensors.index.json @ 36c184c6cda000a481711306df5adde42f63321a",
+      "uncompressed_sha256": "015faae91e8189c7553f1d48ec3d0694b8c02b282d7f58af2d7b4064a81ce4c0",
+      "verbatim": "gzip of the verbatim index bytes"
+    },
+    "redhat-l3e0-down_proj-rows0-63.pt": {
+      "expected_fp32": "exact-fp32 decode via ct unpack_fp4_from_uint8(dtype=float32) + the layout's own scale convention (see reference_implementation)",
+      "sha256": "7b38192116f400482168fb2d563b4e25fa1f1ab296d679831abd03814056c698",
+      "source": "RedHatAI/GLM-5.3-Flash-NVFP4 model.language_model.layers.3.mlp.experts.0.down_proj.* @ 36c184c6cda000a481711306df5adde42f63321a, rows 0..63 (rows are independent: scale groups run along the input axis)"
+    },
+    "redhat-l3e0-gate_proj-rows0-63.pt": {
+      "expected_fp32": "exact-fp32 decode via ct unpack_fp4_from_uint8(dtype=float32) + the layout's own scale convention (see reference_implementation)",
+      "sha256": "ab85068c2a03259b4f75459feb6af7aca61a2bb4eaa945b20d8dbfa8dc9328eb",
+      "source": "RedHatAI/GLM-5.3-Flash-NVFP4 model.language_model.layers.3.mlp.experts.0.gate_proj.* @ 36c184c6cda000a481711306df5adde42f63321a, rows 0..63 (rows are independent: scale groups run along the input axis)"
+    }
+  },
+  "generated_unix": 1788013738,
+  "reference_implementation": {
+    "dequant": "exact fp32: unpacked * (weight_scale.to(f32) / weight_global_scale)  [compressed-tensors] | unpacked * (weight_scale.to(f32) * weight_scale_2)  [modelopt]",
+    "note": "compressed-tensors' own decompress() computes in bf16; the committed expected slices are the EXACT-fp32 evaluation of the same LUT/scale math (the adapter's disclosed deviation), produced with ct's unpack at dtype=float32.",
+    "package": "compressed-tensors",
+    "unpack": "compressed_tensors.compressors.nvfp4.helpers.unpack_fp4_from_uint8(dtype=float32)",
+    "version": "0.18.0"
+  },
+  "repos": {
+    "LibertAIDAI/GLM-5.3-Flash-NVFP4": "357b45cc73a07a541cede88861f7736c9487ebf7",
+    "RedHatAI/GLM-5.3-Flash-NVFP4": "36c184c6cda000a481711306df5adde42f63321a"
+  }
+}
