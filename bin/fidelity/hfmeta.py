@@ -329,7 +329,8 @@ class SurfaceInfo:
 # which is exactly where you least want to discover it.
 _CODEC_VOCABULARY = {
     "fp64", "bf16", "fp16", "fp32", "fp8_e4m3", "fp8_e5m2", "nvfp4", "mxfp4",
-    "int8", "int4", "exl3-mcg", "exl3-trellis", "gguf-k-quant", "gguf-i-quant",
+    "int8", "int4", "exl3-mcg", "exl3-mul1", "exl3-trellis", "gguf-k-quant",
+    "gguf-i-quant",
     "awq", "gptq", "mlx-affine", "hqq", "mixed", "unknown",
 }
 

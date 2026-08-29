@@ -1107,6 +1107,9 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
     It carries no token -- the HF token travels separately as a 0600 file.
     """
     panel = dict(plan_data["panel"])
+    scope = None
+    if getattr(args, "scope_json", None):
+        scope = read_json(args.scope_json)
     # The engine profile follows the lane's own profile_map, keyed by the
     # sniffed surface/bits -- never a constant.  (The former hard-coded "k4"
     # was not even a stream_score --profile choice; a streaming measure stage
@@ -1143,6 +1146,9 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
             "host": "jarvislabs",
         },
         "keep_student_logits": bool(args.keep_student_logits),
+        # seal_receipt prefers job["scope"] over the registry's existing record
+        # and over its own unknown-everything default.
+        "scope": scope,
         # The official BF16 release whose config/index the capture binds and
         # whose non-routed name set the exl3hf materializer checks against.
         # PINNED: `main` moving between two measurements of one artifact would
@@ -1453,6 +1459,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--on-preempt", default="resume",
                    choices=("resume", "recreate", "fail"))
     s.add_argument("--i-accept-leak-risk", action="store_true")
+    s.add_argument("--scope-json",
+                   help="JSON file carrying the artifact's quantization SCOPE "
+                        "(policy/head_policy/kv_cache_dtype/assignments), for a "
+                        "release that publishes its own per-tensor-class recipe. "
+                        "Without it the sealed receipt records the honest default: "
+                        "routed experts quantized, everything else 'unknown'. The "
+                        "file's content is copied verbatim into job.json and into "
+                        "the artifact record -- so it must be READ off the release, "
+                        "never assumed.")
     s.add_argument("--hold-on-failure", action="store_true",
                         help="on a FAILED stage, keep the instance alive (receipts "
                              "pulled, secrets shredded, lease kept so the reaper "

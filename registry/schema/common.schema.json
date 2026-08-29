@@ -414,6 +414,7 @@
         "int8",
         "int4",
         "exl3-mcg",
+        "exl3-mul1",
         "exl3-trellis",
         "gguf-k-quant",
         "gguf-i-quant",
