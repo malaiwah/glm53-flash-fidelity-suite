@@ -998,3 +998,82 @@ concurrently found one bias the author's own synthetic test could not (its
 population had exchangeable positions — no positional trend, no bias to see).
 Selftest populations must contain the structure the estimator is allowed to
 get wrong.
+
+## 2026-08-29 (late night) — the stack fingerprint: Phaelon's kernel question becomes a receipt field
+
+A Discord reviewer (Phaelon) put it plainly: "What vLLM runner is used, do
+you record what specific kernels are used? Do you enable enforce-eager
+(which disables CUDA graphs)? This automation pipeline is nice, but
+obfuscates way too much" — and, fairly, "if you capture all of that, totally
+rad." The audit that followed confirmed the sting: the facts EXISTED
+(environment.json with the exact vllm dev sha and full pip freeze, the image
+digest, the determinism receipt family that fed vLLM PR #53906), but the
+measurement summary receipts linked none of it by digest, and
+enforce_eager/attention-backend were established only by code defaults at a
+pinned commit plus per-boot engine logs sitting in the PRIVATE scratch
+dataset.
+
+**Shipped tonight:**
+
+- `bin/fidelity/stackprint.py` (`malaiwah.stack-fingerprint.v1`): stdlib-only
+  at import, probes lazily, NEVER guesses — engine build+git sha,
+  enforce_eager/compilation/cudagraph state queried from the live
+  `vllm_config`, attention backend requested AND selected (each with its
+  source), kernel-config echo, the determinism-relevant env pins, container
+  image digest, GPU inventory, pip-freeze sha256 (freeze written alongside).
+  Canonical hash excludes timestamps/paths, so identical stacks hash
+  identically (the lane-identity trick). Unqueryable facts record the reason.
+  `python3 bin/selftest_stackprint.py` (T9, wired into selftest_all) proves
+  determinism, engine-absent handling, and MPS/CUDA-absent handling.
+- Serving lane wired: `fidelity.py capture` embeds the fingerprint verbatim
+  in the capture manifest (NOT in the capture contract — reuse gating is
+  unchanged) and refuses to run without the module; `qualify` embeds its own
+  fingerprint + the operand's; `replay` and `cross_check compare` now name
+  their operand manifests BY DIGEST (lesson 20 closed) and fingerprint the
+  comparator host with engine kind "none"; `gen_check` and
+  `activation_capture` fingerprint too. `make_bundle.sh` + `bin/BUNDLE.txt`
+  ship the module to both kinds of instance.
+- Registry: `registry_add.py --stack-fingerprint-sha256` (+ optional
+  `--stack-fingerprint-uri`) records it under provenance
+  (schema: optional nullable property + a receipt_file source row).
+  Provenance-only for now — it does NOT enter the comparability key; whether
+  two rows with different fingerprints stay comparable needs real thought,
+  not a flag. `make check` 0 errors; negative controls verified (typo
+  property and bad hex are refused by the mini validator).
+- `WHAT-WE-MEASURE.md` section 7 + checklist item 8: what each lane records,
+  where the sealed rows' evidence lives, and the rule that a fingerprint-less
+  future receipt is refusable.
+- RETRO-DISCLOSURE published: `reports/stack-provenance-retro.json` in the
+  suite dataset (and mirrored here) maps every sealed row BY RECEIPT DIGEST
+  to its environment evidence BY FILE DIGEST plus the established
+  enforce_eager=True / CUDAGraphMode.NONE / FLASH_ATTN_MLA_SPARSE /
+  TritonExperts-vs-FlashInferFp8DeepGEMM facts — each fact labeled
+  receipt_field | code_default_at_pinned_commit | log_evidence (six launch
+  logs pinned by sha256), and what cannot be established is listed as
+  unknown, plainly (Triton autotune winners of the sealed launches — bounded
+  by the measured 8.7e-4 noise floor; DeepGEMM mHC JIT identity; the full
+  40-char vllm commit). Self-sealed; seal verifies.
+
+**TODO (checkpoint lane, deliberately NOT done tonight):** wiring the
+fingerprint into `k6/tools/stream_score.py` waits for the in-flight
+format-adapters merge that owns that file — landing it now would manufacture
+a conflict. The adapter is ready (`stackprint.from_backend_json(backend)`,
+selftested against the published teacher backend.json shape): after their
+merge lands on origin/main and a rebase, call it right after `backend` is
+assembled and store `backend["stack_fingerprint"]` +
+`backend["stack_fingerprint_sha256"]`; same call in `k6_student_capture.py`.
+
+**URGENT (data preservation, for the operator):** the per-run checkpoint-lane
+preimages (kld-report.json, backend.json, reader-identity.json, plan.json,
+student capture receipts for the three streaming rows and the sealed EP8
+student) exist ONLY on JarvisLabs fs 3394, which is slated for destruction
+after the K6 session. The retro receipt marks every such digest
+"private-fs-only, at risk". Freeze them into the suite dataset (and ideally
+the six cited launch logs, ~2 MB) BEFORE the fs goes away, or those chain
+links become permanently digest-only.
+
+LESSON 30 (transparency): "we could reconstruct it if asked" is not
+disclosure. The reviewer was right — a pipeline that records everything but
+links nothing has the epistemics of a pipeline that records nothing. The fix
+was not more capture; it was making every receipt NAME its stack by digest,
+and publishing the retroactive map for the rows that predate the rule.

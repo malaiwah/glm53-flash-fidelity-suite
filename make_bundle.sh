@@ -7,6 +7,10 @@ IMAGE_REF="${IMAGE_REF:-vllm/vllm-openai@sha256:2c6da6c6f16ed15c91e412d896dba137
 rm -rf bundle_stage bundle.tar.gz
 mkdir -p bundle_stage/bundle
 cp -r tools suite calsuite remote cal_data bundle_stage/bundle/
+# tools/*.py load the stack-fingerprint module from ../bin/fidelity/ (capture
+# receipts refuse to seal without it), so it ships in the bundle too.
+mkdir -p bundle_stage/bundle/bin/fidelity
+cp bin/fidelity/__init__.py bin/fidelity/stackprint.py bundle_stage/bundle/bin/fidelity/
 sed -i '' "s|__IMAGE_REF__|${IMAGE_REF}|" bundle_stage/bundle/remote/vm_setup.sh bundle_stage/bundle/remote/stage.sh
 rm -f bundle_stage/bundle/remote/setup_env.sh bundle_stage/bundle/remote/download_model.sh
 find bundle_stage \( -name '__pycache__' -o -name '._*' -o -name '.DS_Store' \) -exec rm -rf {} + 2>/dev/null || true

@@ -46,6 +46,8 @@ t "registry client/viewer/matcher (T1)"    0 python3 bin/selftest_registry_view.
 t "floor-aware stats known answers (T2)"   0 python3 bin/selftest_stats.py
 t "preview estimator coverage (T3)"        0 python3 bin/selftest_preview_stats.py
 t "submission refusability (T5)"           0 python3 bin/selftest_submission_refusal.py
+t "stack fingerprint (T9: deterministic, engine-absent, MPS/CUDA-absent)" \
+                                           0 python3 bin/selftest_stackprint.py
 t "zero-floor identity (T4; SKIPs inside when numpy/torch absent)" \
                                            0 "$PY" bin/selftest_zero_floor.py
 t "stream_score ladder rungs g,h,i,j (teacher role / preview refusal / \

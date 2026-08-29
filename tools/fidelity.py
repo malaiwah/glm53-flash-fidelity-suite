@@ -174,6 +174,32 @@ def canonical_sha256(payload: object) -> str:
     )
 
 
+def load_stackprint():
+    """Load bin/fidelity/stackprint.py by path (works in the repo checkout AND
+    inside the VM bundle, where this file runs as /glm53/bundle/tools/...).
+
+    Loaded by file path because `tools/fidelity.py` (this module) and the
+    `bin/fidelity` package collide on the name `fidelity` the moment tools/ is
+    on sys.path.  Failure is a refusal, not a silent omission: a capture
+    receipt without a stack fingerprint is exactly the by-convention gap this
+    module closes (WHAT-WE-MEASURE.md section 7 makes such receipts refusable).
+    """
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "bin" / "fidelity" / "stackprint.py"
+    try:
+        spec = importlib.util.spec_from_file_location("glm53_stackprint", str(path))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception as exc:
+        raise SystemExit(
+            f"stack fingerprint module unavailable ({exc}) at {path}; receipts "
+            "without a stack fingerprint are refusable -- re-run make_bundle.sh "
+            "so bin/fidelity/stackprint.py ships next to tools/"
+        )
+
+
 def git_head(repo: Path) -> str | None:
     """HEAD commit of a checkout, without shelling out to git.
 
@@ -573,6 +599,29 @@ def cmd_capture(args) -> int:
         )
     llm = LLM(**kwargs)
 
+    # The stack fingerprint answers "what ran": engine build, enforce_eager /
+    # cudagraph state, attention backend, kernel knobs, env pins, image digest,
+    # pip freeze -- queried from the LIVE engine, embedded verbatim in the
+    # manifest below and written alongside the captures with its freeze
+    # preimage.  Facts the engine will not expose are recorded as unknown with
+    # the reason, never defaulted (WHAT-WE-MEASURE.md section 7).
+    stackprint = load_stackprint()
+    stack_fp, stack_fp_sha = stackprint.write(
+        stackprint.collect(
+            "vllm", llm=llm, model=args.model,
+            declared={"enforce_eager": bool(kwargs.get("enforce_eager")),
+                      "attention_backend_requested": args.attention_backend}),
+        out)
+    print("stack_fingerprint " + json.dumps({
+        "sha256": stack_fp_sha,
+        "engine": stack_fp["engine"]["version"],
+        "enforce_eager": stack_fp["execution"]["enforce_eager"],
+        "enforce_eager_source": stack_fp["execution"]["enforce_eager_source"],
+        "cudagraph_mode": stack_fp["execution"]["cudagraph_mode"].get("value"),
+        "attention_backend_selected":
+            stack_fp["execution"]["attention_backend"]["selected"],
+    }), flush=True)
+
     identity = model_identity(args.model, args.hash_shards)
     resolved, resolved_source = resolved_kv_cache_dtype(llm)
     identity.update({"quantization": args.quantization,
@@ -661,6 +710,13 @@ def cmd_capture(args) -> int:
             "expected_indices": sorted(expected_indices),
             "capture_contract": contract,
             "capture_contract_sha256": contract_digest,
+            # NOT part of the capture contract: the contract gates capture-file
+            # REUSE (same tokens, same weights, same requested runtime), while
+            # the fingerprint records the stack of the process that produced
+            # them.  A resumed capture re-fingerprints and overwrites -- the
+            # manifest always describes the run that completed it.
+            "stack_fingerprint": stack_fp,
+            "stack_fingerprint_sha256": stack_fp_sha,
             "contexts": len(records),
             "captures": records,
             "complete": complete,
@@ -958,6 +1014,13 @@ def cmd_replay(args) -> int:
         Path(args.candidate), suite["suite_token_sha256"], selected_indices
     )
 
+    # Replay launches no engine; its own fingerprint records the comparator
+    # host (torch build, GPU, env pins) with engine kind "none".  The operand
+    # captures' serving stacks travel via the manifest digests in the report.
+    stackprint = load_stackprint()
+    replay_stack_fp = stackprint.public_dict(stackprint.collect("none"))
+    replay_stack_fp_sha = stackprint.fingerprint_sha256(replay_stack_fp)
+
     for ctx in chosen:
         i = ctx["index"]
         rp = Path(args.reference, f"hidden_{i:04d}.safetensors")
@@ -1029,6 +1092,21 @@ def cmd_replay(args) -> int:
         "reference": str(args.reference), "candidate": str(args.candidate),
         "reference_identity": capture_identity(args.reference, args.hash_shards),
         "candidate_identity": capture_identity(args.candidate, args.hash_shards),
+        # Operands named by DIGEST, not path (JOURNAL lesson 20): the manifest
+        # digests pin exactly which captures -- and, through the fingerprints
+        # they embed, which serving stack -- this report compares.
+        "reference_capture_manifest_sha256": sha256_file(
+            Path(args.reference, "capture-manifest.json")),
+        "candidate_capture_manifest_sha256": sha256_file(
+            Path(args.candidate, "capture-manifest.json")),
+        "reference_stack_fingerprint_sha256": json.loads(
+            Path(args.reference, "capture-manifest.json").read_text()
+        ).get("stack_fingerprint_sha256"),
+        "candidate_stack_fingerprint_sha256": json.loads(
+            Path(args.candidate, "capture-manifest.json").read_text()
+        ).get("stack_fingerprint_sha256"),
+        "stack_fingerprint": replay_stack_fp,
+        "stack_fingerprint_sha256": replay_stack_fp_sha,
         "head": str(args.head), "head_sha256": sha256_file(Path(args.head)),
         "candidate_head": str(args.candidate_head) if args.candidate_head else None,
         "candidate_head_sha256": sha256_file(Path(args.candidate_head)) if args.candidate_head else None,
@@ -1179,6 +1257,17 @@ def cmd_qualify(args) -> int:
         kwargs.update(extra)
         print("engine_kwargs " + json.dumps(extra), flush=True)
     llm = LLM(**kwargs)
+    stackprint = load_stackprint()
+    stack_fp, stack_fp_sha = stackprint.write(
+        stackprint.collect("vllm", llm=llm, model=args.model,
+                           declared={"enforce_eager": True,
+                                     "attention_backend_requested": None}),
+        Path(args.out).resolve().parent)
+    print("stack_fingerprint " + json.dumps({
+        "sha256": stack_fp_sha,
+        "enforce_eager": stack_fp["execution"]["enforce_eager"],
+        "enforce_eager_source": stack_fp["execution"]["enforce_eager_source"],
+    }), flush=True)
     params = SamplingParams(prompt_logprobs=-1, flat_logprobs=True, max_tokens=1,
                             detokenize=False)
 
@@ -1212,6 +1301,12 @@ def cmd_qualify(args) -> int:
         "candidate_identity": live_identity,
         "hidden": str(args.hidden),
         "capture_manifest_sha256": sha256_file(Path(args.hidden, "capture-manifest.json")),
+        # The operand's own stack fingerprint (present on manifests written
+        # after 2026-08-29; null on the sealed-era ones, whose stack is
+        # established retroactively in reports/stack-provenance-retro.json).
+        "capture_stack_fingerprint_sha256": hidden_manifest.get("stack_fingerprint_sha256"),
+        "stack_fingerprint": stack_fp,
+        "stack_fingerprint_sha256": stack_fp_sha,
         "head": str(args.head),
         "head_sha256": sha256_file(Path(args.head)),
         "suite_token_sha256": suite["suite_token_sha256"],

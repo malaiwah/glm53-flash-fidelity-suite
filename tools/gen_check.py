@@ -12,6 +12,24 @@ import json
 from pathlib import Path
 
 
+def load_stackprint():
+    """bin/fidelity/stackprint.py by path (repo checkout or VM bundle); a
+    receipt without a stack fingerprint is refusable, so failure refuses."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "bin" / "fidelity" / "stackprint.py"
+    try:
+        spec = importlib.util.spec_from_file_location("glm53_stackprint", str(path))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception as exc:
+        raise SystemExit(
+            f"stack fingerprint module unavailable ({exc}) at {path}; "
+            "re-run make_bundle.sh so bin/fidelity/stackprint.py ships next to tools/"
+        )
+
+
 def degenerate(text: str) -> bool:
     words = text.split()
     if len(text.strip()) < 20 or len(words) < 8:
@@ -40,6 +58,17 @@ def main() -> int:
     if args.engine_kwargs:
         kwargs.update(json.loads(args.engine_kwargs))
     llm = LLM(**kwargs)
+    stackprint = load_stackprint()
+    stack_fp, stack_fp_sha = stackprint.write(
+        stackprint.collect("vllm", llm=llm, model=args.model,
+                           declared={"enforce_eager": bool(kwargs.get("enforce_eager")),
+                                     "attention_backend_requested": None}),
+        Path(args.out).resolve().parent)
+    print("stack_fingerprint " + json.dumps({
+        "sha256": stack_fp_sha,
+        "enforce_eager": stack_fp["execution"]["enforce_eager"],
+        "enforce_eager_source": stack_fp["execution"]["enforce_eager_source"],
+    }), flush=True)
     tok = llm.get_tokenizer()
 
     raw_prompts = [
@@ -81,6 +110,8 @@ def main() -> int:
     receipt = {
         "schema": "glm53flash-gen-check/1",
         "model": args.model,
+        "stack_fingerprint": stack_fp,
+        "stack_fingerprint_sha256": stack_fp_sha,
         "chat_template_used": chat_rendered is not None,
         "results": results,
         "pass": all(not r["degenerate"] for r in results),

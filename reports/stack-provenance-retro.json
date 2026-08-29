@@ -1,0 +1,578 @@
+{
+  "schema": "malaiwah.glm53-stack-provenance-retro.v1",
+  "generated_utc": "2026-08-29T00:00:00Z",
+  "purpose": "Retroactive stack disclosure for the sealed GLM-5.3-Flash fidelity rows, answering a community reviewer's questions ('What vLLM runner is used, do you record what specific kernels are used? Do you enable enforce-eager?') with per-row, per-fact, source-attributed evidence — by digest. Rows measured AFTER 2026-08-29 embed a live stack fingerprint (malaiwah.stack-fingerprint.v1) instead; this file exists because the sealed rows predate it. Method and refusability rule: WHAT-WE-MEASURE.md section 7 in the harness repo (github.com/malaiwah/glm53-flash-fidelity-suite).",
+  "source_legend": {
+    "receipt_field": "the value is a field of a published receipt, named by that receipt's digest",
+    "code_default_at_pinned_commit": "the value follows necessarily from the harness code at the named commit (including hard refusal gates), which is invariant over the capture window",
+    "log_evidence": "the value is printed in the engine launch log of that exact run, named by the log file's sha256 (private scratch dataset)",
+    "published_file_digest": "the value is the content of a published file, named by its sha256",
+    "unknown": "no surviving artifact establishes the value; it is listed, not guessed"
+  },
+  "environment_evidence": {
+    "environment.json": {
+      "sha256": "1c5eada9d5ff5c8aaee0591b0a43be3d40749a478bd466ea4f6bd0abce3698c3",
+      "where": "reports/environment.json (this dataset)",
+      "contains": "torch 2.13.0+cu130, cuda 13.0, vllm 0.1.dev20051+g487ecf187, 8x NVIDIA H200, full 264-line pip freeze"
+    },
+    "image-pin.txt": {
+      "sha256": "1dea43d79c18060d5f7ae8cf2295ea44ace8cb941fe53f90cc8e8c214eb68ab0",
+      "where": "reports/image-pin.txt (this dataset)",
+      "contains": "container image digest sha256:2c6da6c6f16ed15c91e412d896dba13701f25fe1861eaec9ddaa4db34d1d21c4 (tag list empty: docker save/load strips tags)"
+    },
+    "nvidia-smi.txt": {
+      "sha256": "9c65bbaa10fa5bbcb39d70ce1c2ba40f16549bf2fd0dc81bd888c5190bfd87b1",
+      "where": "reports/nvidia-smi.txt (this dataset)",
+      "contains": "8x NVIDIA H200 143771 MiB, driver 580.126.20"
+    }
+  },
+  "code_establishment": {
+    "commit_window": "tools/fidelity.py cmd_capture introduced at c24ad7c (2026-08-26); the only later commit touching it before the campaign end (2bc04cf) changes an unrelated qualify guard. remote/stage.sh ENGINE_KW and capture stanzas verified unchanged c24ad7c..HEAD via git log -S and git diff.",
+    "facts": [
+      "tools/fidelity.py cmd_capture builds enforce_eager = (not args.attention_backend or args.attention_backend == 'TRITON_ATTN') and HARD-REFUSES otherwise: \"capture requires enforce_eager: the final-norm hook does not fire inside compiled/cudagraph forwards\" — a completed capture manifest at these commits PROVES eager mode.",
+      "tools/fidelity.py cmd_qualify hardcodes enforce_eager=True.",
+      "tools/activation_capture.py: enforce_eager=True default plus the same refusal gate.",
+      "tools/gen_check.py: enforce_eager=True.",
+      "remote/stage.sh never passes --attention-backend; ENGINE_KW={\"enable_flashinfer_autotune\": false, \"limit_mm_per_prompt\": {\"image\": 0, \"video\": 0}} contains no enforce_eager override; drun env pins NVIDIA_TF32_OVERRIDE=0, VLLM_WORKER_MULTIPROC_METHOD=spawn, HF_HUB_OFFLINE=1."
+    ]
+  },
+  "engine_launch_logs": {
+    "visibility": "private-scratch: HF dataset malaiwah/glm53-session-scratch, jl-run-logs/ (16,466-file session archive; the six logs cited here are pinned below by sha256 and quoted facts are verbatim)",
+    "engine_line_in_every_boot": "vLLM 0.1.dev20051+g487ecf187 — matches environment.json",
+    "logs": {
+      "r_b31d1e22.log": {
+        "sha256": "11867ba981a2e3761b1a256af717a6a2f870efcaba7cba89afcc157e024220bf",
+        "run": "sealed BF16 reference capture (boot 2026-08-27 01:38:20Z, capture_done 5120 contexts, then sentinel + DETERMINISM 20/32 matching the published determinism-bf16.json)"
+      },
+      "r_d592c1bc.log": {
+        "sha256": "77d1e50847887dd1e805b72273654cee21a08049847aa0f4d6ff17fe4215869e",
+        "run": "sealed FP8 as-served capture (fp8 boot 2026-08-27 03:48:35Z, capture_done 5120 contexts)"
+      },
+      "r_8838f16e.log": {
+        "sha256": "b25ea8230bd62024f50e2454a87d6779eca3f55f2c4ad382923e133582eb75e5",
+        "run": "crosscheck-brandonmusic run (crosscheck_done mean_kld 0.01271159981725071 — the receipt's exact value)"
+      },
+      "r_77fe65dd.log": {
+        "sha256": "7a004837831a4f72013d64a2108bd89df2a6c72081d1c6573738a54ab7c5c41a",
+        "run": "fp8-on-brandon-panel run (fp8 boot 2026-08-27 ~11:14Z; crosscheck_done mean_kld 0.020615254540417995 — the receipt's exact value)"
+      },
+      "r_1c79deff.log": {
+        "sha256": "ab3b36f47cee36c02d729b6e72fd47a22b573bc4a7616f5b2bde90e327063958",
+        "run": "qualify-fp8 run (live-vs-replay qualification of the FP8 capture)"
+      },
+      "r_d976057b.log": {
+        "sha256": "cadc8430b61ca4bfd9a9e2e9adce577bfeb417ddd52ba1c39afd2d078cad210c",
+        "run": "calibration activation capture (companion activations dataset; same engine stanza)"
+      }
+    },
+    "recommendation": "republish these six logs into this dataset under reports/launch-logs/ so the serving-lane chain is public end to end (~2 MB)"
+  },
+  "serving_stack_established": {
+    "engine": {
+      "value": "vLLM 0.1.dev20051+g487ecf187 (dev build; truncated git sha g487ecf187), torch 2.13.0+cu130, CUDA 13.0, triton 3.7.1, flashinfer 0.6.17 (+cu130 jit-cache), transformers 5.15.1, deep_ep 2.0.0+local, nvidia-nccl-cu13 2.30.7",
+      "source": [
+        "published_file_digest:environment.json",
+        "log_evidence:every-engine-boot-line"
+      ]
+    },
+    "container_image_digest": {
+      "value": "sha256:2c6da6c6f16ed15c91e412d896dba13701f25fe1861eaec9ddaa4db34d1d21c4",
+      "source": [
+        "published_file_digest:image-pin.txt"
+      ]
+    },
+    "hardware": {
+      "value": "8x NVIDIA H200 143771 MiB, driver 580.126.20, TP8",
+      "source": [
+        "published_file_digest:nvidia-smi.txt"
+      ]
+    },
+    "enforce_eager": {
+      "value": true,
+      "source": [
+        "code_default_at_pinned_commit",
+        "receipt_field:capture_contract.runtime.attention_backend=null",
+        "log_evidence:'Enforce eager set, disabling torch.compile and CUDAGraphs' + config dump enforce_eager=True in every boot"
+      ]
+    },
+    "torch_compile": {
+      "value": "disabled (CompilationMode.NONE)",
+      "source": [
+        "log_evidence:compilation_config={'mode': CompilationMode.NONE, ...} in every boot's config dump"
+      ]
+    },
+    "cuda_graphs": {
+      "value": "disabled (CUDAGraphMode.NONE, cudagraph_capture_sizes=[], max_cudagraph_capture_size=0; 'Cudagraph is disabled under eager mode')",
+      "source": [
+        "log_evidence"
+      ]
+    },
+    "attention_backend": {
+      "value": "FLASH_ATTN_MLA_SPARSE — engine-selected, NOT pinned (receipts record attention_backend=null = engine default selection)",
+      "source": [
+        "log_evidence:'Using FLASH_ATTN_MLA_SPARSE attention backend out of potential backends: [FLASH_ATTN_MLA_SPARSE, FLASHMLA_SPARSE]'",
+        "receipt_field:capture_contract.runtime.attention_backend=null"
+      ],
+      "note": "every relevant boot also prints: 'No MLA prefill backend supports this model; sparse MLA will use the top-k MQA path only (no dense-MHA prefill)'"
+    },
+    "kernels_bf16_boots": {
+      "value": "MoE: 'Using TRITON Unquantized MoE backend' + 'Using TritonExperts MoE backend'; DeepGEMM E8M0 enabled, vendored vllm.third_party.deep_gemm, DeepGEMM PDL enabled; all-reduce dispatch ['CUSTOM','SYMM_MEM','PYNCCL'] (tp) / ['PYNCCL'] (ep); 'Using default MoE config' (untuned)",
+      "source": [
+        "log_evidence"
+      ]
+    },
+    "kernels_fp8_boots": {
+      "value": "'Selected FlashInferFp8DeepGEMMDynamicBlockScaledKernel for Fp8LinearMethod' + 'Using TRITON Fp8 MoE backend out of potential backends: [TRITON, AITER, FLASHINFER_TRTLLM, FLASHINFER_CUTLASS, DEEPGEMM, MARLIN, ...]'; DeepGEMM warmup 376 kernels; TileLang JIT",
+      "source": [
+        "log_evidence"
+      ]
+    },
+    "kernel_config": {
+      "value": "enable_flashinfer_autotune=False, moe_backend='auto', linear_backend='auto', ir_op_priority: rms_norm=['vllm_c','native'], fused_add_rms_norm=['vllm_c','native']",
+      "source": [
+        "log_evidence:config dump",
+        "receipt_field:capture_contract.runtime.engine_kwargs.enable_flashinfer_autotune=false"
+      ]
+    },
+    "numeric_env": {
+      "value": "NVIDIA_TF32_OVERRIDE=0 (TF32 off), BF16 KV cache (kv_cache_dtype_resolved='bfloat16', source model_config.dtype), quantization='auto', trust_remote_code=false",
+      "source": [
+        "code_default_at_pinned_commit:remote/stage.sh",
+        "receipt_field:capture_contract.runtime"
+      ]
+    },
+    "kernel_determinism_control": {
+      "value": "run-to-run kernel behavior characterized at kernel granularity in the published determinism receipt family (Triton autotune winner instability on vendored FLA/KDA chunk kernels + DSA index_topk flips; single-config autotune shim; symm-mem/NCCL/cuBLAS stack pins; deepgemm on/off) — fed vLLM PR #53906",
+      "source": [
+        "published_file_digest:determinism receipt family (digests below)"
+      ]
+    }
+  },
+  "determinism_receipt_family_sha256": {
+    "determinism-bf16.json": "20a997b7a33afa9a6e88cc35f766a8fd5b1e9450923a36de30020089dcb80725",
+    "determinism-fp8.json": "a5807944747ca8a00353bf2c8f27446c364c5473b391c95ed1de7cce29f83ad7",
+    "determinism-noise-bf16.json": "f3b735d2281560d719297415d2dc03bb355a668117b34202cc10366b9ef31d31",
+    "determinism-noise-fp8.json": "257a77dd4f04f81a4a422cfc05459851ae2ec7fd39150ce05997ac635da87f98",
+    "determinism-kernelpin-bf16.json": "778929f3aebdcf9c1c9b1eaed825dfad35bff9be74b7a3326355dc62ed23d79e",
+    "determinism-stackpin-bf16.json": "a8b55cbc0b1da0974c065410c33c9b0a21c925f0db7dffc700a5de0376e71b75",
+    "determinism-stackpin-nodeepgemm-bf16.json": "264379c64169ab26969fa73a76a2892aa6a8b270d85fd94c6bfae38dee9c8fb3",
+    "determinism-guarded-bf16.json": "8e4aec250c4348594ae4f8d62c5db6873d4a5c23ab114bd80e938d0c0c6c2c28",
+    "drift-guarded-vs-reference.json": "18e43d3a9de9ecdfb60fc3a50b4be071f92dbb1fc457bcfec2e4b1b6e055867a"
+  },
+  "measurements": [
+    {
+      "receipt": "reports/report-fp8-vs-bf16.json",
+      "receipt_sha256": "c1755f773dcd2119d5dba554d93e4cad36ca269eb2f6ff4914d6032e42bbf29e",
+      "lane": "serving (cross_stack): official FP8 release vs BF16 reference, hidden-state replay through the shared head",
+      "measured_value_nats": 0.020615254540417995,
+      "evidence": {
+        "environment": [
+          "environment.json",
+          "image-pin.txt",
+          "nvidia-smi.txt"
+        ],
+        "operand_captures": {
+          "reference_bf16_manifest": {
+            "path": "reference-bf16-shard0/capture-manifest-full.json",
+            "sha256": "70ec553c6b401e92b19006b9a3fa0c51dce252f3312f322bc1280f35d81b9264",
+            "capture_contract_runtime": {
+              "attention_backend": null,
+              "tensor_parallel": 8,
+              "kv_cache_dtype_resolved": "bfloat16",
+              "quantization": "auto",
+              "engine_kwargs": {
+                "enable_flashinfer_autotune": false,
+                "limit_mm_per_prompt": {
+                  "image": 0,
+                  "video": 0
+                }
+              },
+              "source": "receipt_field"
+            },
+            "launch_log": "r_b31d1e22.log"
+          },
+          "candidate_fp8_manifest": {
+            "path": "as-served-fp8-shard0/capture-manifest-full.json",
+            "sha256": "f83ffdf92046cad3903bf6938e294bfff8c6a2fd07f80c76f96aa162f25653ca",
+            "capture_contract_runtime": {
+              "attention_backend": null,
+              "tensor_parallel": 8,
+              "kv_cache_dtype_resolved": "bfloat16",
+              "quantization": "auto",
+              "engine_kwargs": {
+                "enable_flashinfer_autotune": false,
+                "limit_mm_per_prompt": {
+                  "image": 0,
+                  "video": 0
+                }
+              },
+              "source": "receipt_field"
+            },
+            "launch_log": "r_d592c1bc.log"
+          }
+        },
+        "enforce_eager": {
+          "value": true,
+          "source": [
+            "code_default_at_pinned_commit:c24ad7c",
+            "receipt_field:attention_backend=null in both operand contracts",
+            "log_evidence:r_b31d1e22.log",
+            "log_evidence:r_d592c1bc.log"
+          ]
+        },
+        "cuda_graphs": {
+          "value": "disabled",
+          "source": [
+            "log_evidence:r_b31d1e22.log",
+            "log_evidence:r_d592c1bc.log"
+          ]
+        },
+        "attention_backend": {
+          "value": "FLASH_ATTN_MLA_SPARSE (engine-selected)",
+          "source": [
+            "log_evidence"
+          ]
+        },
+        "kernels": {
+          "value": "BF16 operand: TritonExperts MoE; FP8 operand: TRITON Fp8 MoE + FlashInferFp8DeepGEMMDynamicBlockScaledKernel",
+          "source": [
+            "log_evidence"
+          ]
+        }
+      },
+      "notes": "The report names its operands by container path (/glm53/captures/{bf16,fp8}), not digest — JOURNAL lesson 20. The manifests above ARE those operands: their identity blocks carry the same model revisions (b1967181/3f1971b7) and contract digests as the report's identity blocks. Future reports embed operand manifest digests directly."
+    },
+    {
+      "receipt": "reports/report-fp8-vs-bf16-scorefrom1024.json",
+      "receipt_sha256": "62b4fe08b72ac2756354b144d92384029cc77afce1e6dade74613b89265f0590",
+      "lane": "serving (cross_stack): same operand captures, scored positions 1024.. (llama.cpp geometry bridge)",
+      "measured_value_nats": 0.018794284895435484,
+      "evidence": {
+        "environment": [
+          "environment.json",
+          "image-pin.txt",
+          "nvidia-smi.txt"
+        ],
+        "operand_captures": "identical to reports/report-fp8-vs-bf16.json (same reference/candidate paths and identity blocks; verified)",
+        "enforce_eager": {
+          "value": true,
+          "source": [
+            "code_default_at_pinned_commit:c24ad7c",
+            "log_evidence:r_b31d1e22.log",
+            "log_evidence:r_d592c1bc.log"
+          ]
+        }
+      }
+    },
+    {
+      "receipt": "reports/fp8-on-brandon-panel.json",
+      "receipt_sha256": "f13df1eb8900164d4786b7433c6326d6d94079df0efe82ddec747b0fd6721cca",
+      "lane": "serving (cross_stack): fresh FP8 as-served capture scored on brandonmusic's independent 25-window teacher panel",
+      "measured_value_nats": 0.020615254540417995,
+      "evidence": {
+        "environment": [
+          "environment.json",
+          "image-pin.txt",
+          "nvidia-smi.txt"
+        ],
+        "operand_captures": {
+          "fp8_on_panel_manifest": {
+            "path": null,
+            "sha256": null,
+            "source": "unknown",
+            "note": "this ad-hoc capture's manifest was never published (~11:14-11:30Z 2026-08-27); its runtime facts rest on the code gate and the launch log below"
+          }
+        },
+        "enforce_eager": {
+          "value": true,
+          "source": [
+            "code_default_at_pinned_commit:c24ad7c",
+            "log_evidence:r_77fe65dd.log (config dump: enforce_eager=True, quantization=fp8, kv_cache_dtype=auto, TP8)"
+          ]
+        },
+        "cuda_graphs": {
+          "value": "disabled",
+          "source": [
+            "log_evidence:r_77fe65dd.log"
+          ]
+        },
+        "attention_backend": {
+          "value": "FLASH_ATTN_MLA_SPARSE (engine-selected)",
+          "source": [
+            "log_evidence:r_77fe65dd.log"
+          ]
+        },
+        "kernels": {
+          "value": "TRITON Fp8 MoE + FlashInferFp8DeepGEMMDynamicBlockScaledKernel",
+          "source": [
+            "log_evidence:r_77fe65dd.log"
+          ]
+        },
+        "value_crosslink": "the log's crosscheck_done mean_kld equals the receipt's mean to full float precision (0.020615254540417995)"
+      }
+    },
+    {
+      "receipt": "reports/crosscheck-brandonmusic.json",
+      "receipt_sha256": "30bcb58625f79f6e37ac19b04d20193f728386adc22d8fac4be490cff340f303",
+      "lane": "serving (cross_stack): BF16 replay floor vs brandonmusic's independent fp32 teacher logits",
+      "measured_value_nats": 0.01271159981725071,
+      "evidence": {
+        "environment": [
+          "environment.json",
+          "image-pin.txt",
+          "nvidia-smi.txt"
+        ],
+        "operand_captures": {
+          "bf16_on_panel": {
+            "path": null,
+            "sha256": null,
+            "source": "unknown",
+            "note": "capture over the crosscheck suite ran in the same pipeline session; per-capture manifest not published"
+          }
+        },
+        "enforce_eager": {
+          "value": true,
+          "source": [
+            "code_default_at_pinned_commit:c24ad7c",
+            "log_evidence:r_8838f16e.log"
+          ]
+        },
+        "cuda_graphs": {
+          "value": "disabled",
+          "source": [
+            "log_evidence:r_8838f16e.log"
+          ]
+        },
+        "value_crosslink": "the log's crosscheck_done mean_kld equals the receipt's mean to full float precision (0.01271159981725071)"
+      }
+    },
+    {
+      "receipt": "reports/qualify-fp8.json",
+      "receipt_sha256": "644bc8d58d35ffa4071571fea3667119176f2c837232d9ef426c34ce48638336",
+      "lane": "serving: live-vs-replay qualification of the FP8 capture",
+      "measured_value_nats": null,
+      "evidence": {
+        "environment": [
+          "environment.json",
+          "image-pin.txt",
+          "nvidia-smi.txt"
+        ],
+        "operand_captures": {
+          "fp8_manifest": {
+            "path": "as-served-fp8-shard0/capture-manifest-full.json",
+            "sha256": "f83ffdf92046cad3903bf6938e294bfff8c6a2fd07f80c76f96aa162f25653ca",
+            "source": "receipt_field:qualify-fp8.json embeds capture_manifest_sha256 == this digest — the one receipt-to-operand digest link that existed before this disclosure"
+          }
+        },
+        "enforce_eager": {
+          "value": true,
+          "source": [
+            "code_default_at_pinned_commit:c24ad7c (cmd_qualify hardcodes enforce_eager=True)",
+            "log_evidence:r_1c79deff.log"
+          ]
+        }
+      }
+    },
+    {
+      "receipt": "reports/k6-packed-kld.json (+ reports/k6-five-run-kld.json)",
+      "receipt_sha256": "19766e5e9643dbe940c05deaee7c3085f9ee339553da35ead973c825adddfef2",
+      "lane": "checkpoint (sealed-ep8): K6 = TR3-6bpw packed student vs BF16 teacher",
+      "measured_value_nats": 0.013723,
+      "evidence": {
+        "five_run_receipt_sha256": "1611800a1ff37cbae5e8e46a0024fb49d62955efc682c4e609e5a6e43aa714da",
+        "lane_facts": {
+          "enforce_eager": {
+            "value": null,
+            "reason": "not applicable: the checkpoint lane is a transformers reference forward — never vLLM, never torch.compile, never CUDA graphs",
+            "source": [
+              "code_default_at_pinned_commit:6a04873 (k6/tools/k6_student_capture.py, k6/tools/stream_score.py contain no torch.compile call sites and construct no vLLM engine)"
+            ]
+          },
+          "attention_backend": {
+            "value": "eager",
+            "source": [
+              "receipt_field:k6/tools/k6_student_capture.py argparse default 'eager' (recorded in student receipts)",
+              "receipt_field:k6/tools/stream_score.py default 'eager' (recorded in plan.json/backend.json/lane_identity)",
+              "published_file_digest:teacher backend.json 43dd699a... records attention_backend='eager'"
+            ]
+          },
+          "numeric_policy": {
+            "value": "TF32 off, float32_matmul_precision='highest', grouped_mm forced and runtime-PROBED (backend.json records the dispatched kernel), fp32 reduce order",
+            "source": [
+              "code_default_at_pinned_commit:6a04873",
+              "receipt_field:backend.json numeric_policy + grouped_mm_kernel probe"
+            ]
+          },
+          "teacher_chain_public": {
+            "teacher_receipt_sha256": "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5",
+            "teacher_receipt_file": {
+              "path": "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits::capture-receipt.json",
+              "sha256": "af682a8e9f7afd38172565614804f68d570199eed427a5ee25ba151752cab7ab"
+            },
+            "teacher_backend_identity_sha256": "85b11599c6b36a83fa8099a09a298a386a0c603d1f18d3702e7fb1c470962ce4",
+            "teacher_backend_file": {
+              "path": "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits::backend.json",
+              "sha256": "43dd699afc05792ac8cfa9202c5917d90113c92c99ecebaf800f6dd2cd5d411d",
+              "contains": "torch 2.11.0+cu130, cuda 13.0, transformers 5.16.1, attention_backend eager, EP4 world_size 4, nccl 2.28.9, allow_tf32 recorded, config/index/inventory sha256s"
+            },
+            "token_panel_receipt_sha256": "0beec5770e5107547731b084f1bc5f9fb8ba79d67af56ddb70d919da367737d5",
+            "token_panel_file": {
+              "path": "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits::token-panel-receipt.json",
+              "sha256": "31c45eb0f1b86ce2c2d53306ae1a1336a83740ba48ce080de867728343aa76b6"
+            },
+            "teacher_plan_file": {
+              "path": "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits::plan.json",
+              "sha256": "b7f20be1cb52b940018d8a7f47f00250fe22dcde30c6e635f0d20afca0420e37"
+            }
+          }
+        },
+        "digest_chain": {
+          "runtime_reader_sha256": "1ccce44602d4ccf41abe594ede448bf726516ac44f67a54dcd65cc0b5bf9dd14",
+          "packed_reader_abi_sha256": "3d659542e5acbf1e3436b4b01d04f7f4edbe8def1c3029fbd3a6a1976b573dee",
+          "student_checkpoint_identity_sha256": "a8668be3592493035e98a52994e0e3c43548a9757eadb79f7ae939f2f32de1c1",
+          "checkpoint_receipt_sha256": {
+            "value": "3cb08d4d526322694aa2c9c238ebc728c2a35a76745b70407c523c17ced5f417",
+            "preimage": "public: the materialization receipt chain in the model repo (malaiwah/GLM-5.3-Flash-TR3-6bpw receipts/)"
+          },
+          "teacher_capture_receipt_sha256": {
+            "value": "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5",
+            "preimage": "public (brandonmusic dataset)"
+          },
+          "token_panel_receipt_sha256": {
+            "value": "0beec5770e5107547731b084f1bc5f9fb8ba79d67af56ddb70d919da367737d5",
+            "preimage": "public (brandonmusic dataset)"
+          },
+          "student_backend_identity_sha256": {
+            "value": "d19c049f0ce497d1cf23c80f2f54f372c452f94f9af7b1c3ff47b1017ffb0e6a",
+            "preimage": "private-fs-only (JarvisLabs shared fs 3394), at risk: fs slated for destruction"
+          },
+          "student_capture_receipt_sha256": {
+            "value": "524f017f68664ffc5f251298739fae6c0144eda5ccb1b308c57dcd4932e8f535",
+            "preimage": "private-fs-only (fs 3394), at risk"
+          },
+          "reader_audit_receipt_sha256": {
+            "value": "c986a0a98d6c34d8a311401f90be24ee87e01d20602583fef5bb37d1ff504cc7",
+            "preimage": "private-fs-only (fs 3394), at risk"
+          }
+        },
+        "determinism": "five cold runs, population stddev of run means exactly 0.0 (receipt-recorded)"
+      }
+    },
+    {
+      "receipt": "registry/receipts/malaiwah/stream-k6-kld.json",
+      "receipt_sha256": "7ee0de697d050ff1aca9b85981a158f57304a46c020408b39742f5f85a0ff969",
+      "lane": "checkpoint (streaming): K6 streaming lane",
+      "measured_value_nats": 0.013715,
+      "evidence": {
+        "verdict_receipt": {
+          "path": "registry/receipts/malaiwah/stream-k6-verdict.json",
+          "sha256": "e205c14f5700417b32f4cb4a2d6724f3bf416ffc9d4cca3f129c18b0a0e7b005"
+        },
+        "lane_facts": "same as k6-packed-kld row (CKPT_COMMON above); code defaults at 6a04873",
+        "per_run_reports": {
+          "kld_report_sha256": [
+            "136574c2d3359fc9d73bfab58ec46ada9c4c421c2a33ed6cca73407b53fa5963",
+            "dc1549bf14a15c2066835da88c501ed7fc6b4f2976ad4f069ad0e0af68b4a180"
+          ],
+          "preimage": "private-fs-only (fs 3394), at risk — each embeds student backend/lane identity, reader identity, plan digests"
+        },
+        "tokenwise_evidence": {
+          "distinct_tokenwise_kld_sha256": [
+            "9657ede36b9f4b09a2c74916239c6d9a3baebce5f3fa64af7af388b0686aa284"
+          ]
+        },
+        "teacher_chain": "public (see k6 row)"
+      }
+    },
+    {
+      "receipt": "registry/receipts/malaiwah/stream-k8-kld.json",
+      "receipt_sha256": "8eab14b0ef3ba042e49735973d91dcc47e470b9331f9e65151635b2862bb05d1",
+      "lane": "checkpoint (streaming): K8 = TR3-8bpw streaming lane",
+      "measured_value_nats": 0.012384,
+      "evidence": {
+        "lane_facts": "same as k6-packed-kld row (CKPT_COMMON above); code defaults at 6a04873",
+        "per_run_reports": {
+          "kld_report_sha256": [
+            "965566f1d62e75051612045ff88424e50c46a6d1abfecfb92b04af78e8bf3798",
+            "d223567460e4c22cccc432b082cf74bfbc7339628b13db823fd0e0590f2f20bb"
+          ],
+          "preimage": "private-fs-only (fs 3394), at risk"
+        },
+        "tokenwise_evidence": {
+          "distinct_tokenwise_kld_sha256": [
+            "763bc4a56a371e11a0f96469885b920deb6acb2c7c576d1268fb0907577f0942"
+          ]
+        },
+        "teacher_chain": "public (see k6 row)"
+      }
+    },
+    {
+      "receipt": "registry/receipts/malaiwah/stream-bf16-kld.json",
+      "receipt_sha256": "8abee678d26fc4be92f3b6327419da25c505de2021043dc2719c1e355290090b",
+      "lane": "checkpoint (streaming): BF16 floor — unquantized weights as the student",
+      "measured_value_nats": 0.011506,
+      "evidence": {
+        "lane_facts": "same as k6-packed-kld row (CKPT_COMMON above); code defaults at 6a04873",
+        "per_run_reports": {
+          "kld_report_sha256": [
+            "d97b8694470eedefcdbf7979833bcf400818f529942ab40b8d46538a78a7651a",
+            "67e46ec42870411ea9f0440c39f17ba6404c3f5561e19395b522e0a94dd46b59"
+          ],
+          "preimage": "private-fs-only (fs 3394), at risk"
+        },
+        "tokenwise_evidence": {
+          "distinct_tokenwise_kld_sha256": [
+            "c033bcd30f0a67c1be972619f46bf18d598a8f6861df384cdf81add9bdc36546"
+          ]
+        },
+        "teacher_chain": "public (see k6 row)"
+      }
+    }
+  ],
+  "unknowns": [
+    {
+      "what": "full 40-character vLLM commit behind the truncated g487ecf187",
+      "why": "the dev-build version string truncates it and no surviving artifact carries the full sha",
+      "bound": "the container image digest (image-pin.txt) pins the exact binaries regardless"
+    },
+    {
+      "what": "Triton autotune winner configs of the sealed launches themselves",
+      "why": "TRITON_PRINT_AUTOTUNING was only set for the later determinism-pinning intervention runs, not the sealed captures",
+      "bound": "their effect is bounded by the measured launch-noise floor: mean KLD 8.7e-4 (determinism-noise-bf16.json)"
+    },
+    {
+      "what": "DeepGEMM mHC JIT kernel identity",
+      "why": "the model calls deep_gemm directly, ungated by VLLM_USE_DEEP_GEMM; surviving suspect for the residual 1/32 sentinel flip (JOURNAL 08-27)",
+      "bound": "same launch-noise floor as above"
+    },
+    {
+      "what": "streaming-box GPU driver version (checkpoint lane)",
+      "why": "backend.json does not record the driver and the box was destroyed on completion",
+      "bound": "torch/cuda/transformers versions, device name and kernel dispatch ARE recorded in backend identities"
+    },
+    {
+      "what": "encode-extension binary hash (exllamav3/quant_pipeline encoder)",
+      "why": "prep receipts carrying it live only on fs 3394 (encode-side)",
+      "bound": "encoder correctness proven instead by the published 120/120 byte-identical sealed-core comparison (e523918)"
+    }
+  ],
+  "not_covered": [
+    {
+      "receipt": "reports/dione-q4-packed-kld.json",
+      "receipt_sha256": "d18b37d8ed1ba90ed837d1fb2adca0b90999b2d702613f6730ef87fe23d9f9b7",
+      "reason": "same checkpoint-lane code paths, but its runs were not part of this retro audit's log review; its own receipts carry the lane facts"
+    }
+  ],
+  "box_lifecycle": {
+    "serving_capture_vm_8xh200": "PAUSED 2026-08-27 ~13:55Z; full capture trees + launch logs recoverable in the private scratch dataset",
+    "sealed_ep8_k6_vm_8xh200": "DESTROYED 2026-08-28 ~09:20Z; sealed student receipts survive only on fs 3394",
+    "streaming_h200_box": "DESTROYED 2026-08-29 ~00:15Z; per-run stream artifacts only on fs 3394",
+    "fs_3394": "PRIVATE JarvisLabs shared fs (2 TB), slated for destruction after the K6 session — every digest above marked 'private-fs-only' loses its preimage unless frozen into a published location first"
+  },
+  "seal": {
+    "method": "sha256 over the canonical JSON of this object with the single key 'receipt_sha256' removed (the 'seal' block itself IS covered, so this method statement is tamper-evident)",
+    "canonical_json": "json.dumps(obj, sort_keys=True, separators=(',',':'), ensure_ascii=False) encoded UTF-8",
+    "note": "the canonicalization the harness uses everywhere (bin/fidelity/common.py canonical_json); re-verified on every run by bin/selftest_stackprint.py check [10]"
+  },
+  "receipt_sha256": "f14484bd72412c085988ddf2e9fa389b8257a8ff8a917e17c84e3711b2861ef5"
+}

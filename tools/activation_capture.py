@@ -32,6 +32,24 @@ import time
 from pathlib import Path
 
 
+def load_stackprint():
+    """bin/fidelity/stackprint.py by path (repo checkout or VM bundle); a
+    receipt without a stack fingerprint is refusable, so failure refuses."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "bin" / "fidelity" / "stackprint.py"
+    try:
+        spec = importlib.util.spec_from_file_location("glm53_stackprint", str(path))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception as exc:
+        raise SystemExit(
+            f"stack fingerprint module unavailable ({exc}) at {path}; "
+            "re-run make_bundle.sh so bin/fidelity/stackprint.py ships next to tools/"
+        )
+
+
 def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
@@ -190,6 +208,17 @@ def main() -> int:
     if not kwargs.get("enforce_eager"):
         raise SystemExit("activation capture requires enforce_eager")
     llm = LLM(**kwargs)
+    stackprint = load_stackprint()
+    stack_fp, stack_fp_sha = stackprint.write(
+        stackprint.collect("vllm", llm=llm, model=args.model,
+                           declared={"enforce_eager": bool(kwargs.get("enforce_eager")),
+                                     "attention_backend_requested": None}),
+        out)
+    print("stack_fingerprint " + json.dumps({
+        "sha256": stack_fp_sha,
+        "enforce_eager": stack_fp["execution"]["enforce_eager"],
+        "enforce_eager_source": stack_fp["execution"]["enforce_eager_source"],
+    }), flush=True)
 
     hooked = llm.collective_rpc(_rpc_install_act_hooks)[0]
     print(f"hooked {len(hooked)} modules; first/last: {hooked[0]} .. {hooked[-1]}", flush=True)
@@ -211,6 +240,8 @@ def main() -> int:
             "model_revision": rev.read_text().strip() if rev.is_file() else None,
             "suite_token_sha256": manifest_suite["suite_token_sha256"],
             "context_length": ctx_len,
+            "stack_fingerprint": stack_fp,
+            "stack_fingerprint_sha256": stack_fp_sha,
             "hooked_modules": hooked,
             "dtype": "bfloat16",
             "semantics": {

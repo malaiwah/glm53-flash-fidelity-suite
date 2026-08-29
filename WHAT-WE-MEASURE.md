@@ -118,6 +118,54 @@ these, it is an anecdote, not a measurement.
   the K6-vs-K8 effect (1.2e-3), which is also why **a single window can
   never compare two quants** (campaign lessons 28/29).
 
+## 7. The stack fingerprint — answering the kernel question
+
+"Which vLLM build? Which kernels? Was enforce-eager on?" A number whose
+receipt cannot answer those is a number you are trusting, not checking. As
+of 2026-08-29 every capture receipt embeds a **stack fingerprint**
+(`malaiwah.stack-fingerprint.v1`, hashed canonically with timestamps
+excluded, so identical stacks hash identically) and the answer is a field,
+not folklore.
+
+- **Serving lane** — the fingerprint is queried from the *live engine*:
+  exact vLLM build (version + git sha), torch/CUDA, `enforce_eager` and the
+  compilation/cudagraph modes read out of `vllm_config`, the attention
+  backend (requested *and* selected, each with its source), the kernel-config
+  knobs, the determinism-relevant env pins (Triton autotune, NCCL shape,
+  symm-mem, cuBLAS workspace), the container image digest, GPU inventory,
+  and the sha256 of the full pip freeze (freeze written alongside). A fact
+  the engine will not expose is recorded as **unknown with the reason** —
+  never defaulted. Capture manifests embed it verbatim; qualify/replay/
+  cross-check receipts additionally name their capture operands **by
+  manifest digest**, so the chain from summary number to serving stack is
+  hashes end to end.
+- **Checkpoint lane** — a reference `transformers` forward has no vLLM, no
+  `torch.compile`, no CUDA graphs; its fingerprint says
+  *not-applicable-with-reason* instead of a hollow "false". The lane already
+  records more than the serving lane ever did: `backend.json` **probes** the
+  dispatched grouped-MM kernel with real dtypes, and `lane_identity_sha256`
+  hashes exactly the lane-naming fields. The teacher's half of that chain is
+  public in brandonmusic's dataset down to `backend.json`
+  (`attention_backend: eager`, torch 2.11.0+cu130, EP4). Wiring the
+  fingerprint into `stream_score.py` itself waits for an in-flight merge of
+  that file; the adapter (`stackprint.from_backend_json`) ships now.
+- **The sealed rows** predate the fingerprint. Their evidence is assembled
+  retroactively in `reports/stack-provenance-retro.json` (in the suite
+  dataset): each sealed summary receipt, *by its digest*, mapped to its
+  environment evidence files *by theirs*, plus the established
+  `enforce_eager=True` / CUDA-graphs-off / `FLASH_ATTN_MLA_SPARSE` facts —
+  each fact labeled with **how** it was established (receipt field, code
+  default at the pinned commit — the capture harness *hard-refuses* to run
+  without eager mode — or per-boot engine log, by log digest). What could
+  not be established is listed as **unknown**, plainly: the sealed launches'
+  Triton autotune winner configs (bounded instead by the measured 8.7e-4
+  launch-noise floor), the DeepGEMM mHC JIT identity, the full 40-char vLLM
+  commit behind `g487ecf187`.
+- **The rule going forward:** a receipt without a stack fingerprint — or a
+  summary that does not cite its operands' fingerprints by digest — is
+  **refusable**, exactly like an unpinned panel. If a tool in this repo
+  produced it after 2026-08-29, that absence is a bug report.
+
 ## The measurers' checklist
 
 1. State the direction, estimator precision, and scored-position count.
@@ -130,3 +178,6 @@ these, it is an anecdote, not a measurement.
 5. Measure and publish **your lane's floor**; report attributable error.
 6. Disclose every deviation before anyone asks.
 7. Never quote a single window as a rate comparison.
+8. Fingerprint the stack — engine build, eager/graph state, attention
+   backend, kernels, env pins, image digest — and cite that fingerprint by
+   digest from every receipt that used it.

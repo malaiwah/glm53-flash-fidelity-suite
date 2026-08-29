@@ -605,6 +605,10 @@
             "null"
           ],
           "description": "The receipt family the row was derived from, e.g. quant-pipeline.glm53-packed-student-kld-five-cold-run.v1."
+        },
+        "stack_fingerprint_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256_or_null",
+          "description": "sha256 of the run's stack-fingerprint.json (malaiwah.stack-fingerprint.v1): engine build + git sha, enforce_eager/cudagraph state, attention backend, kernel knobs, env pins, container image digest, pip-freeze digest. OPTIONAL and provenance-only: rows predating 2026-08-29 lack it, and it does not enter the comparability key or any invariant yet."
         }
       },
       "additionalProperties": false

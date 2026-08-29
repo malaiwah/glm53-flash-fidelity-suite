@@ -24,6 +24,32 @@ def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+def sha256_file(p: Path) -> str:
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        while chunk := f.read(8 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def load_stackprint():
+    """bin/fidelity/stackprint.py by path (repo checkout or VM bundle); a
+    receipt without a stack fingerprint is refusable, so failure refuses."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "bin" / "fidelity" / "stackprint.py"
+    try:
+        spec = importlib.util.spec_from_file_location("glm53_stackprint", str(path))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception as exc:
+        raise SystemExit(
+            f"stack fingerprint module unavailable ({exc}) at {path}; "
+            "re-run make_bundle.sh so bin/fidelity/stackprint.py ships next to tools/"
+        )
+
+
 def load_manifest(logits_dir: Path) -> list[dict]:
     man = json.loads((logits_dir / "dataset-manifest.json").read_text())
     return man["logit_files"]
@@ -147,9 +173,25 @@ def cmd_compare(args) -> int:
     if not per:
         raise SystemExit("no windows compared")
     total = sum(p["positions"] for p in per)
+    # The 2026-08-28 review found these receipts carried ZERO digests -- no
+    # link from the number to the capture, the head, or the stack that made
+    # it.  Operands are now named by digest, and the comparator host records
+    # its own fingerprint (engine kind "none": this process serves nothing).
+    manifest_path = cap / "capture-manifest.json"
+    capture_manifest = (json.loads(manifest_path.read_text())
+                        if manifest_path.is_file() else {})
+    stackprint = load_stackprint()
+    own_fp = stackprint.public_dict(stackprint.collect("none"))
     receipt = {
         "schema": "glm53flash-crosscheck/2",
         "direction": "KLD(brandonmusic_teacher || our_replay), nats",
+        "capture_manifest_sha256": (sha256_file(manifest_path)
+                                    if manifest_path.is_file() else None),
+        "capture_stack_fingerprint_sha256":
+            capture_manifest.get("stack_fingerprint_sha256"),
+        "head_sha256": sha256_file(Path(args.head)),
+        "stack_fingerprint": own_fp,
+        "stack_fingerprint_sha256": stackprint.fingerprint_sha256(own_fp),
         "their_model_revision_note": "his metadata records an earlier repo revision; "
                                      "weights were never modified post-upload (config/template churn only)",
         "windows": len(per),

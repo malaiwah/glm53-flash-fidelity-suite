@@ -901,6 +901,28 @@ def build_row(args, adapted, receipt_sources, registry):
         sources.append({"kind": "url", "uri": args.reference_revision_evidence,
                         "note": "operator-supplied evidence for --reference-revision"})
 
+    # Stack fingerprint (malaiwah.stack-fingerprint.v1): the digest of the
+    # stack-fingerprint.json the run's harness wrote -- engine build,
+    # enforce_eager/cudagraph state, attention backend, kernel knobs, env pins,
+    # image digest, pip freeze.  Provenance-recorded ONLY for now: it does not
+    # enter the comparability key or any invariant (whether two rows with
+    # different fingerprints stay comparable needs more thought than a flag).
+    fingerprint_sha = getattr(args, "stack_fingerprint_sha256", None)
+    fingerprint_uri = getattr(args, "stack_fingerprint_uri", None)
+    if fingerprint_sha is not None:
+        fingerprint_sha = fingerprint_sha.strip().lower()
+        if len(fingerprint_sha) != 64 or any(c not in "0123456789abcdef"
+                                             for c in fingerprint_sha):
+            raise Refuse(E_SCHEMA, "--stack-fingerprint-sha256 must be 64 lowercase hex "
+                                   "chars, got %r" % args.stack_fingerprint_sha256)
+        if fingerprint_uri:
+            sources.append({"kind": "receipt_file", "uri": fingerprint_uri,
+                            "sha256": fingerprint_sha, "note": "stack_fingerprint"})
+    elif fingerprint_uri:
+        raise Refuse(E_MISSING, "--stack-fingerprint-uri names a fingerprint file but no "
+                                "--stack-fingerprint-sha256 pins its content; a pointer "
+                                "without a digest is an anecdote.")
+
     ci = adapted.get("ci")
     lane_bias = _stream_bias(adapted, lane, is_floor=is_floor,
                              floor_ref=args.floor_measurement, floor_value=floor_value)
@@ -935,7 +957,11 @@ def build_row(args, adapted, receipt_sources, registry):
                          {"name": args.reported_by, "role": "measurer", "handle": args.reported_by,
                           "url": None, "is_registry_maintainer": False}),
             "independently_verified": False, "verification": None,
-            "sources": sources, "receipt_schema": schema},
+            "sources": sources, "receipt_schema": schema,
+            # Present only when supplied: rows predating the fingerprint (and
+            # reseeded historical rows) keep their exact shape.
+            **({"stack_fingerprint_sha256": fingerprint_sha}
+               if fingerprint_sha is not None else {})},
         "comparability": {"key": key, "key_inputs": ki,
                           "class": "strict" if (args.attribution == "self-measured"
                                                 and stack == "same_stack"
@@ -960,6 +986,11 @@ def build_row(args, adapted, receipt_sources, registry):
     fp = dict(adapted.get("field_provenance") or {})
     for key_name, _stated, flag_val in overridden:
         fp[key_name] = "OVERRIDDEN by flag (%r); receipt pointer no longer applies" % flag_val
+    if fingerprint_sha is not None:
+        fp["stack_fingerprint_sha256"] = ("SUPPLIED by --stack-fingerprint-sha256"
+                                          + ("; file named by --stack-fingerprint-uri"
+                                             if fingerprint_uri else
+                                             "; no file pointer supplied"))
     row["notes"] = "field_provenance: " + json.dumps(fp, sort_keys=True)
     return row
 
@@ -1011,6 +1042,16 @@ def add_common(p):
     p.add_argument("--reference-revision", default=None)
     p.add_argument("--reference-revision-evidence", default=None)
     p.add_argument("--position-selector", default=None)
+    p.add_argument("--stack-fingerprint-sha256", default=None,
+                   help="sha256 of the run's stack-fingerprint.json "
+                        "(malaiwah.stack-fingerprint.v1: engine build, enforce_eager/"
+                        "cudagraph state, attention backend, kernel knobs, env pins, "
+                        "image digest, pip freeze). Recorded in provenance; NOT part "
+                        "of the comparability key yet.")
+    p.add_argument("--stack-fingerprint-uri", default=None,
+                   help="where that stack-fingerprint.json lives (recorded as a "
+                        "receipt_file source with the digest above; requires "
+                        "--stack-fingerprint-sha256)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--json", action="store_true")
 
