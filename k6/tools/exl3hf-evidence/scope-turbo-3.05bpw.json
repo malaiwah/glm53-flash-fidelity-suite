@@ -1,0 +1,121 @@
+{
+  "activation_quantization": null,
+  "assignments": [
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "embed_tokens",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 5,
+      "format": "exl3-mul1",
+      "layer_range": "all",
+      "note": "KDA layers ship a FUSED qkv_proj (rows q|k|v); MLA layers ship q_a/q_b/kv_a_with_mqa/wq_b. All K5. read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "attn.qkv",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 5,
+      "format": "exl3-mul1",
+      "layer_range": "all",
+      "note": "read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "attn.o",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "fp16",
+      "layer_range": "all",
+      "note": "b_proj, f_a/f_b_proj, g_a/g_b_proj, weights_proj, wk, conv1d and the attention norms ship as plain fp16/bf16 tensors. read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "attn.other",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 4,
+      "format": "exl3-mul1",
+      "layer_range": "0-2",
+      "note": "only the three DENSE layers have an mlp.*; layers 3-44 are MoE. read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "mlp.gate",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 4,
+      "format": "exl3-mul1",
+      "layer_range": "0-2",
+      "note": "read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "mlp.up",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 4,
+      "format": "exl3-mul1",
+      "layer_range": "0-2",
+      "note": "read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "mlp.down",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 32,
+      "format": "fp32",
+      "layer_range": "3-44",
+      "note": "the routing gate ships fp16/fp32, unquantized. read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "moe.router",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 3,
+      "format": "exl3-mul1",
+      "layer_range": "3-44",
+      "note": "12,096 modules = 42 layers x 288 experts x 3 projections, all K3. read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "moe.experts",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 5,
+      "format": "exl3-mul1",
+      "layer_range": "3-44",
+      "note": "read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "moe.shared_expert",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "norm",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 3,
+      "format": "exl3-mul1",
+      "layer_range": "45",
+      "note": "layer 45 ships in a separate mtp.safetensors and is NOT executed by standard-logits scoring. read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "mtp",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 6,
+      "format": "exl3-mul1",
+      "layer_range": "all",
+      "note": "head_bits 6 -- the SAME head rate as the 4.05bpw branch, so the head is not scaled with the body. read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "lm_head",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 5,
+      "format": "exl3-mul1",
+      "layer_range": "all",
+      "note": "vision tower (model.visual.*); never executed by text-only scoring. read from the artifact's OWN published quantization_config.json @ 332ab457b709b7ba30dd9a448be5de03b80a7ac9 (one tensor_storage entry per module): bits = trellis.shape[-1]//16 per module, verified identical within each class",
+      "tensor_class": "other",
+      "treatment": "quantized"
+    }
+  ],
+  "head_policy": "quantized",
+  "kv_cache_dtype": "not_applicable",
+  "mtp_included": true,
+  "policy": "mixed"
+}
