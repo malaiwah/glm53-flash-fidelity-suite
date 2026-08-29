@@ -125,14 +125,14 @@
         "34-47 GB on one H200 as currently scheduled."
       ],
       "timing": {
-        "minutes_per_window": 9.05,
-        "provenance": "MEASURED: the streaming validation reported ~$0.30/window on one H200 at $1.99/GPU-h, which is 0.1508 h = 9.05 min/window, and ~$7.50 for a 25-window panel.",
+        "minutes_per_window": 7.35,
+        "provenance": "MEASURED on the K6 streaming panel run (stream-k6/runs/stream-run1, 1x H200 spot, --decode-cache none): capture-receipt elapsed_seconds 11,018.9 for 25 windows = 7.35 min/window; cold run 2 was 10,488.7 s = 6.99 min/window. Two cold runs of a 231 GB payload store therefore cost 5.97 GPU-hours (~$11.89 at $1.99/GPU-h), not the ~$7.50 the earlier estimate implied. The BF16-floor lane (--source native, 609 GB read per window) measured ~8.3 min/window on the same box class.",
         "measured": true
       },
       "surfaces": [
         "packed"
       ],
-      "surfaces_note": "stream_score.py --source {checkpoint,payload-store,dione}; all three resolve to a packed root with contract.json + inventory.json + mtp-adapter-receipt.json + payload-store/{objects,choices}, and --source dione raises 'not enabled in this build'. No 'tr3-published' reader."
+      "surfaces_note": "stream_score.py --source {checkpoint,payload-store,dione,native}. The first three all resolve to a packed root with contract.json + inventory.json + mtp-adapter-receipt.json + payload-store/{objects,choices}, and --source dione raises 'not enabled in this build'. --source native (added 2026-08-29) is the exception: it needs NO packed root, only a --bf16 tree and a sealed release inventory (--inventory), because it scores the un-quantized BF16 experts themselves -- the measurement FLOOR of this lane, see k6/BF16-FLOOR.md. It is not a reader for a stranger's artifact; there is still no 'tr3-published' reader."
     },
     "local-mps": {
       "name": "stream_score on Apple Silicon (MPS)",
@@ -220,6 +220,97 @@
         "packed"
       ],
       "surfaces_note": "same engine, same packed-root requirement as the streaming lane."
+    },
+    "bf16-floor": {
+      "name": "stream_score --source native (the lane's BF16 measurement floor)",
+      "entrypoint": "k6/tools/stream_score.py",
+      "pinned": true,
+      "launcher": [],
+      "required_flags": [
+        "--source",
+        "--profile",
+        "--inventory",
+        "--bf16",
+        "--teacher",
+        "--out",
+        "--cold-run",
+        "--reduce-order",
+        "--ep-emulate",
+        "--dry-run"
+      ],
+      "flag_map": {
+        "bf16": "--bf16",
+        "inventory": "--inventory",
+        "panel": "--teacher",
+        "token_panel": "--token-panel",
+        "profile": "--profile",
+        "cold_run": "--cold-run",
+        "out": "--out",
+        "source": "--source",
+        "roles": "--roles",
+        "device": "--device",
+        "ep_emulate": "--ep-emulate",
+        "reduce_order": "--reduce-order",
+        "decode_cache": "--decode-cache",
+        "decode_threads": "--decode-threads",
+        "work_dir": "--work-dir",
+        "pipeline_root": "--pipeline-root",
+        "vram_budget_gb": "--vram-budget-gb",
+        "slab_experts": "--slab-experts",
+        "windows": "--windows"
+      },
+      "fixed_flags": {
+        "--source": "native",
+        "--profile": "native-bf16"
+      },
+      "scorer": {
+        "entrypoint": "k6/tools/k6_kld_report.py",
+        "flag_map": {
+          "profile": "--profile",
+          "panel": "--teacher",
+          "runs": "--runs",
+          "out": "--out",
+          "pipeline_root": "--pipeline-root",
+          "chunk_positions": "--chunk-positions",
+          "device": "--device"
+        },
+        "required_flags": [
+          "--profile",
+          "--teacher",
+          "--runs",
+          "--out",
+          "--device"
+        ],
+        "fixed_flags": {
+          "--profile": "native-bf16"
+        }
+      },
+      "timing": {
+        "minutes_per_window": 8.3,
+        "provenance": "MEASURED on 1x H200 spot (IN2, 28 vCPU, 300 GiB cgroup) reading the 599 GB BF16 tree off a CephFS filesystem at ~1.05 GB/s with 28 reader threads: window 1 (cold, all 42 layers filled) 678 s; steady-state windows 483-549 s with --decode-cache ram holding 17 of 42 layers. See k6/BF16-FLOOR.md.",
+        "measured": true
+      },
+      "notes": [
+        "This lane does not score a quant. It scores the UN-QUANTIZED BF16 experts through the",
+        "identical capture, so its panel mean is the FLOOR every quant measured on this lane",
+        "sits on top of. Subtract it (k6/tools/bf16_floor_summary.py) to state a quant's",
+        "quantization-attributable error.",
+        "It is the only stream_score source that needs NO packed root: --inventory (a sealed",
+        "quant-pipeline.glm-release-inventory.v1) plus the --bf16 tree is the whole input.",
+        "It is IO-bound, not decode-bound: 14.50 GB of routed BF16 per layer, 42 layers per",
+        "window. Size the box by filesystem read bandwidth and by 47.1 GB of VRAM, not by",
+        "matmul throughput.",
+        "Requires SM90-class or newer ONLY in the sense that the venv is pinned to torch",
+        "2.11.0+cu130; an instance whose driver predates CUDA 13 cannot run it at all",
+        "(observed on an A100-80GB image shipping driver 12080).",
+        "The workspace symlink farm (/workspace/artifacts/...) must exist before the run: the",
+        "sealed panel receipt declares those paths and the artifact identity check refuses",
+        "symlinked FILES while requiring the directories to resolve."
+      ],
+      "surfaces": [
+        "native-bf16"
+      ],
+      "surfaces_note": "The official BF16 release tree itself (config.json + model.safetensors.index.json + shards). Not a reader for a third-party quant."
     }
   }
 }

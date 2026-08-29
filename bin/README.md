@@ -39,7 +39,15 @@ It does not guess flags. A plausible-looking wrong flag is how you spend an hour
 of H200 time discovering that `--reduce-order` was spelled `--reduce_order`.
 
 Today `sealed-ep8` is pinned and flag-verified against
-`k6/tools/k6_student_capture.py`. The `streaming`, `local-mps` and
+`k6/tools/k6_student_capture.py`, and **`bf16-floor` is pinned and
+flag-verified** against `k6/tools/stream_score.py` — all ten of its required
+flags are found by `--probe-engines` in the real file. That lane does not score
+a quant: it scores the un-quantized BF16 experts through the identical capture,
+which is the FLOOR every quant measured on the streaming lane sits on top of
+(`k6/BF16-FLOOR.md`). It is the only `stream_score` source that needs no packed
+root — a sealed release inventory plus the BF16 tree is the whole input — and it
+is IO-bound rather than decode-bound, so size the box by filesystem read
+bandwidth and 47.1 GB of VRAM. The `streaming`, `local-mps` and
 `local-cuda-budget` lanes point at `k6/tools/stream_score.py`, which **is now
 in this checkout** (recovered 2026-08-28 from the validation box's shared
 filesystem, sha256 `b7411804…60acae`) and stays `pinned: false` on purpose.
