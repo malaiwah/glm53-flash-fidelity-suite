@@ -58,6 +58,15 @@ class Refuse(Exception):
 PACKED_RECEIPT = "quant-pipeline.glm53-packed-kld-receipt.v1"
 FIVE_COLD_RUN = "quant-pipeline.glm53-packed-student-kld-five-cold-run.v1"
 DIONE_SUMMARY = "malaiwah.glm53-dione-q4-packed-kld-summary.v1"
+# Stock-exllamav3 (turboderp) releases scored through the SAME streaming
+# harness, via stream_score.py --source exl3hf.  Shape-identical to the Dione
+# summary; what differs is where the artifact pins live (artifact_repo /
+# artifact_revision rather than dione_repo / dione_revision) and that these
+# artifacts quantize their own lm_head, which the row must disclose.
+TURBO_SUMMARIES = (
+    "malaiwah.glm53-turbo-4.05bpw-packed-kld-summary.v1",
+    "malaiwah.glm53-turbo-3.05bpw-packed-kld-summary.v1",
+)
 FOREIGN_REPEATED = "glm53-r19-runtime-kld-repeated.v1"
 FOREIGN_WINDOW = "glm53-r19-runtime-window-kld.v1"
 FOREIGN_TP2 = "quant-pipeline.glm53-custom-tp2-runtime-window-kld.v1"
@@ -92,8 +101,8 @@ REPORT_FAMILIES = ("glm53flash-fidelity-report/2", "glm53flash-fidelity-report/3
                    "qwen38-fidelity-report/2", "qwen38-fidelity-report/3")
 CROSSCHECK_FAMILIES = ("glm53flash-crosscheck/2",)
 OWN_SCHEMAS = set([PACKED_RECEIPT, FIVE_COLD_RUN, DIONE_SUMMARY, STREAM_VERDICT]
-                  + list(STREAM_SUMMARIES) + list(REPORT_FAMILIES)
-                  + list(CROSSCHECK_FAMILIES))
+                  + list(STREAM_SUMMARIES) + list(TURBO_SUMMARIES)
+                  + list(REPORT_FAMILIES) + list(CROSSCHECK_FAMILIES))
 FOREIGN_SCHEMAS = {FOREIGN_REPEATED, FOREIGN_WINDOW, FOREIGN_TP2}
 KNOWN = OWN_SCHEMAS | FOREIGN_SCHEMAS
 
@@ -225,6 +234,75 @@ def adapt_dione(receipt, path):
         "field_provenance": {"value": "#/measured_mean_kld", "run_means": "#/run_means",
                              "evidence_hashes": "#/distinct_tokenwise_kld_sha256"},
         "receipt_schema": DIONE_SUMMARY,
+        "stack_relation": "same_stack", "head_policy": "native_head",
+    }
+
+
+def adapt_turbo(receipt, path):
+    """F7: a stock-exllamav3 release on the streaming lane (--source exl3hf).
+
+    Recomputed exactly like the Dione summary -- the asserted mean is re-derived
+    from run_means and the asserted bitwise_deterministic flag from the per-run
+    means and the distinct tokenwise digests; a disagreement is exit 5, never a
+    warning.
+
+    Two things this family states that the Dione one does not, and that the row
+    must therefore carry rather than lose:
+
+      * declared_head_bits.  These artifacts quantize their own lm_head (stock
+        exllamav3 does; TR3 does not).  head_policy stays "native_head" because
+        that field describes how the head is APPLIED -- natively, from the
+        artifact's own weights, with no shared replay -- and the fact that
+        those weights are themselves quantized is ARTIFACT identity. It is
+        disclosed here so no reader has to infer it from a bit count.
+      * the codebook (mul1, not mcg) and the exllamav3 version that wrote it.
+
+    The lane is not read from the schema string: like K8 and native-BF16, this
+    family's name carries no lane marker, so --lane supplies it.
+    """
+    value = _need(receipt, "/measured_mean_kld", path)
+    means = _need(receipt, "/run_means", path)
+    digests = _need(receipt, "/distinct_tokenwise_kld_sha256", path)
+    recomputed = len(set(digests)) == 1 and len(set(means)) == 1
+    declared = receipt.get("bitwise_deterministic")
+    if declared is not None and bool(declared) != recomputed:
+        raise Refuse(E_INCONSISTENT,
+                     "the receipt declares bitwise_deterministic=%r but recomputing from run_means "
+                     "(%d distinct) and distinct_tokenwise_kld_sha256 (%d entries) gives %r"
+                     % (declared, len(set(means)), len(set(digests)), recomputed))
+    if not L.close(value, sum(means) / len(means)):
+        raise Refuse(E_INCONSISTENT, "measured_mean_kld != mean(run_means)")
+    disclosure = []
+    for f in ("seal_disclosure", "cold_run_deviation"):
+        if receipt.get(f):
+            disclosure.append("%s (verbatim from the receipt): %s" % (f, receipt[f]))
+    head_bits = receipt.get("declared_head_bits")
+    if head_bits is not None and float(head_bits) < 16:
+        disclosure.append(
+            "quantized_head (from the receipt's declared_head_bits): this artifact's "
+            "lm_head is itself quantized at %s bits by the producer; it is APPLIED "
+            "natively from the artifact's own weights (no shared or replayed head), "
+            "so head_policy is native_head and the quantization is artifact identity"
+            % head_bits)
+    if receipt.get("codebook"):
+        disclosure.append("codebook (verbatim from the receipt): %s (exllamav3 %s)"
+                          % (receipt["codebook"], receipt.get("exllamav3_version", "unknown")))
+    return {
+        "value": value, "metric_name": "mean_of_run_means_tokenwise_kld",
+        "direction": "reference_to_candidate", "accumulation": "float64",
+        "runs": len(means), "run_means": list(means), "cold": True,
+        "identical": recomputed and len(means) >= 2,
+        "evidence_kind": "tokenwise_kld_sha256", "evidence_hashes": list(digests),
+        "scored_positions": None, "gate": _gate(receipt),
+        "artifact_repo": receipt.get("artifact_repo"),
+        "artifact_revision": receipt.get("artifact_revision"),
+        "teacher_digest": receipt.get("teacher_receipt_sha256"),
+        "verbatim_disclosure": disclosure,
+        "field_provenance": {"value": "#/measured_mean_kld", "run_means": "#/run_means",
+                             "evidence_hashes": "#/distinct_tokenwise_kld_sha256",
+                             "artifact_repo": "#/artifact_repo",
+                             "artifact_revision": "#/artifact_revision"},
+        "receipt_schema": receipt.get("schema"),
         "stack_relation": "same_stack", "head_policy": "native_head",
     }
 
@@ -1228,6 +1306,8 @@ def main():
                 adapted = adapt_stream_summary(loaded)
             elif DIONE_SUMMARY in schemas:
                 adapted = adapt_dione(loaded[0][0], loaded[0][1])
+            elif schemas & set(TURBO_SUMMARIES):
+                adapted = adapt_turbo(loaded[0][0], loaded[0][1])
             elif STREAM_VERDICT in schemas:
                 raise Refuse(E_MISSING,
                              "a %s receipt describes a summary; it carries no measurement of its "
