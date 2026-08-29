@@ -1022,11 +1022,22 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
 
     # Adopt an existing instance for this exact job rather than creating a
     # duplicate (a controller that died and was restarted must not double-spend).
+    # Match on the JOB PREFIX, not the whole name.  The name is
+    # `fidcloud-<job>-x<base36 deadline>` and the deadline is computed from
+    # "now", so an exact-name compare never matched on a restart: the very
+    # mechanism meant to stop a double-spend created a SECOND instance and a
+    # SECOND filesystem while the first was still billing.  The job id is the
+    # identity; the suffix is only the L3 expiry stamp.
+    job_prefix = "fidcloud-%s-" % plan_data["job_id"]
     for inst in jl.list_instances():
-        if inst.name == plan_data["instance_name"] and inst.status == "Running":
-            con.step("adopting existing instance %d for this job" % inst.machine_id)
+        if (inst.name or "").startswith(job_prefix) and inst.status == "Running":
+            con.step("adopting existing instance %d for this job (name %s)"
+                     % (inst.machine_id, inst.name))
             td.adopt(inst.machine_id)
             td.fs_id = inst.fs_id
+            # The lease and the plan must now speak about the instance that
+            # EXISTS, or teardown's L3 sweep looks for a name nobody wears.
+            plan_data["instance_name"] = inst.name
             break
 
     if td.machine_id is None:
@@ -1257,7 +1268,17 @@ def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
 
 
 def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
-    """Poll until the stage ends. Returns done | failed | preempted | deadline."""
+    """Poll until the stage ends. Returns done | failed | preempted | deadline.
+
+    The verdict comes from the run's own STATE and exit code, not from a grep
+    over the last 40 log lines.  Text-matching "Traceback" cannot see a stage
+    that exits non-zero quietly -- a refusal printed in a shape we did not
+    anticipate, a `set -e` abort, an OOM kill -- and such a stage looked exactly
+    like one still working, so the controller waited on it until --max-runtime
+    and paid for the whole window.  The done MARKER is still consulted first,
+    because a stage that finished and wrote its marker is done no matter what
+    the run wrapper reports.
+    """
     quiet = 0
     while True:
         if time.time() > deadline:
@@ -1274,18 +1295,46 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
                 return "preempted"
             continue
         quiet = 0
+
+        # 1. the stage's own marker: authoritative for success.
+        try:
+            marker = jl.exec(td.machine_id,
+                             "test -f %s/receipts/done/%s.done && echo DONE || echo PENDING"
+                             % (td.fs_root, stage), timeout=120)
+            if "DONE" in str(marker):
+                return "done"
+        except JLError:
+            pass
+
+        # 2. the managed run's state.
+        state, code = "", None
+        if run_id:
+            try:
+                st = jl.run_status(run_id)
+                if isinstance(st, dict):
+                    state = str(st.get("state") or "").lower()
+                    code = st.get("exit_code")
+            except JLError:
+                state = ""
+        if state in ("failed", "error", "cancelled", "canceled", "stopped"):
+            con.warn("stage %s: run %s state=%s exit_code=%s"
+                     % (stage, run_id, state, code))
+            return "failed"
+        if state == "succeeded":
+            # Succeeded WITHOUT the marker means the script returned 0 without
+            # finishing its stage -- report it rather than looping forever.
+            if code in (0, None):
+                con.warn("stage %s: the run exited 0 but wrote no done marker"
+                         % stage)
+            return "failed"
+
+        # 3. still running: surface an early diagnosis from the log if there is
+        #    one, but never conclude success from text.
         try:
             logs = jl.run_logs(run_id, tail=40) if run_id else ""
         except JLError:
             continue
         text = logs if isinstance(logs, str) else json.dumps(logs)
-        if "stage_measure/%s: done" % stage in text or "$DONE/%s.done" % stage in text:
-            return "done"
-        marker = jl.exec(td.machine_id,
-                         "test -f %s/receipts/done/%s.done && echo DONE || echo PENDING"
-                         % (td.fs_root, stage), timeout=120)
-        if "DONE" in str(marker):
-            return "done"
         if "Traceback" in text or "REFUSED" in text or "stage_measure: error" in text:
             return "failed"
 

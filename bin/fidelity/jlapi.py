@@ -323,8 +323,35 @@ class JL:
         return self._call(argv, mutating=True, timeout=timeout)
 
     def run_job(self, machine_id: int, command: str) -> Any:
-        return self._call(["run", command, "--on", str(machine_id)],
+        """Start a managed run of a SHELL COMMAND on an existing instance.
+
+        `jl run` takes a TARGET first -- a .py/.sh file to upload, or a
+        directory -- and a bare command only after `--`:
+
+            jl run <command-string> --on <id>   -> "Target does not exist: ..."
+            jl run --on <id> -- sh -lc '<cmd>'  -> runs it
+
+        The first spelling is what this method used to emit, so EVERY stage of
+        every cloud run died the moment it was launched, with the instance
+        already created and billing. `--yes` keeps it non-interactive and
+        `--no-follow` keeps the CLI from attaching (the controller polls
+        `jl run status` / `jl run logs` itself, and an attached CLI can pause
+        or destroy the instance when the run ends).
+        """
+        return self._call(["run", "--on", str(machine_id), "--yes", "--no-follow",
+                           "--", "sh", "-lc", command],
                           mutating=True, timeout=600)
+
+    def run_status(self, run_id: str) -> Any:
+        """The managed run's own STATE and exit code.
+
+        `jl run status --json` answers {state, exit_code, instance_status, ...}
+        with state in {running, succeeded, failed, ...}.  Deciding a stage's
+        fate from log TEXT instead -- greping the tail for "Traceback" -- lets a
+        stage that exits non-zero quietly look identical to a stage still
+        working, and the controller then waits for it until --max-runtime.
+        """
+        return self._call(["run", "status", str(run_id)], timeout=120, check=False)
 
     def run_logs(self, run_id: str, *, tail: int = 50) -> Any:
         return self._call(["run", "logs", str(run_id), "--tail", str(tail)],
