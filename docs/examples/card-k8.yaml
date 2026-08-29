@@ -1,0 +1,145 @@
+# Reference implementation of fidelity-provenance/v1 on a QUANT model card.
+# YAML frontmatter of https://huggingface.co/malaiwah/GLM-5.3-Flash-TR3-8bpw
+#
+# NOTE the difference from card-k6.yaml: K8 has NO sealed-ep8 row in the registry,
+# so this card carries exactly ONE model-index result, at split: streaming.
+# Cross-check XC-3 forbids a card from claiming a lane the registry does not have.
+license: mit
+library_name: transformers
+pipeline_tag: image-text-to-text
+base_model: zai-org/GLM-5.3-Flash-BF16
+base_model_relation: quantized
+datasets:
+  - brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits
+  - malaiwah/GLM-5.3-Flash-fidelity-suite-v1
+metrics:
+  - kl_divergence
+tags:
+  - glm
+  - glm-5
+  - glm5_next
+  - tr3
+  - trellis
+  - mcg
+  - quantized
+  - 8-bit
+  - moe
+  - reasoning
+  - text-generation
+  - exllamav3
+  - fidelity
+  - kl-divergence
+  - fidelity-provenance
+model-index:
+  - name: GLM-5.3-Flash-TR3-8bpw
+    results:
+      - task:
+          type: text-generation
+          name: Distribution fidelity (KL divergence vs BF16 reference)
+        dataset:
+          type: brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits
+          name: GLM-5.3-Flash sealed qualification panel v1 (25 final windows)
+          config: final25
+          split: streaming
+          revision: '95f4fdd94bf29989db2e0d1054e4931f55edb6aa'
+          args:
+            panel_id: panel--glm53.brandonmusic.final25
+            panel_token_sha256: '6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff'
+            contexts: 25
+            scored_positions: 51175
+            context_length: 2048
+            tokenizer: zai-org/GLM-5.3-Flash-BF16@a6c167b62691b2bac901344b65cb651a70f53e43
+            vocab_size: 154880
+            reference_id: reference--brandonmusic.glm53-bf16-fp32-logits.final25
+        metrics:
+          - type: kl_divergence
+            name: Mean tokenwise KLD (reference || candidate), nats
+            value: 0.012384191023436866
+            args:
+              units: nats
+              higher_is_better: false
+              direction: reference_to_candidate
+              estimator: full_vocabulary_fp64
+              accumulation_dtype: float64
+              logits_dtype: fp32
+              head_policy: native_head
+              stack_relation: same_stack
+              lane: streaming
+              run_count: 2
+              population_stddev_of_run_means: 0.0
+              determinism: bitwise_identical_across_runs
+              measurement_id: measurement--glm53.k8-8bpw-stream.brandonmusic-final25
+              comparability_key: cmp--202b717f3219c414
+          - type: kl_divergence_quantization_attributable
+            name: KLD attributable to quantization (same-lane floor removed), nats
+            value: 0.0008782684041065674
+            args:
+              units: nats
+              higher_is_better: false
+              derived: true
+              derivation: candidate_minus_same_lane_floor
+              floor_value: 0.011505922619330299
+              floor_measurement_id: measurement--glm53.bf16-stream-floor.brandonmusic-final25
+              floor_lane: streaming
+              caveat: KL is not additive; this is an estimate, valid only against a floor
+                measured on the same lane, same panel and same reference. At 8 bits the
+                floor is 93% of the raw number, which is exactly why the raw number alone
+                is not a quantization result.
+        source:
+          name: quant-fidelity-registry
+          url: https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/viewer/measurements?q=measurement--glm53.k8-8bpw-stream.brandonmusic-final25
+x_fidelity:
+  spec: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
+  spec_version: fidelity-provenance/v1
+  role: quant
+  reference_model: zai-org/GLM-5.3-Flash-BF16
+  reference_revision: 'a6c167b62691b2bac901344b65cb651a70f53e43'
+  fidelity_dataset: null
+  registry:
+    dataset: malaiwah/quant-fidelity-registry
+    schema_version: quant-fidelity-registry/v1
+    artifact_id: artifact--malaiwah.glm-5.3-flash-tr3-8bpw
+    measurement_ids:
+      - measurement--glm53.k8-8bpw-stream.brandonmusic-final25
+  scope_digest: attn.o=quantized:exl3-mcg@8|attn.qkv=quantized:exl3-mcg@8|embed_tokens=native:bf16|lm_head=native:bf16|mlp.down=quantized:exl3-mcg@8|mlp.gate=quantized:exl3-mcg@8|mlp.up=quantized:exl3-mcg@8|moe.experts=quantized:exl3-mcg@8|norm=native:bf16|head=native|kv=bf16
+  head:
+    policy: native
+    quantized: false
+    bits: 16
+    lm_head_tensor_content_sha256: null
+    lm_head_file_sha256: '47eaf729c93346a2394a72a83da2ae4126dadc51155be477d212a3f0fe3085d0'
+    final_norm_tensor_content_sha256: null
+    final_norm_file_sha256: 'c228a123dee3062c3ad0129094e9d98a264e33087ee88d79c8d6c5a6e60f2fed'
+    equality_receipt: https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/head-equality-fp8.json
+    replay_permitted: false
+    note: >-
+      Same as K6: head_bits is 16 and lm_head.weight is a plain BF16 tensor, but only
+      FILE digests have been published, not TENSOR CONTENT digests. Until a capture
+      publishes the content digest, cross-artifact hidden replay against this card is
+      refused (FIDELITY-DATASET-SPEC HEAD-4).
+  measurements:
+    - id: measurement--glm53.k8-8bpw-stream.brandonmusic-final25
+      lane: streaming
+      status: published
+      comparability_key: cmp--202b717f3219c414
+      panel_id: panel--glm53.brandonmusic.final25
+      reference_id: reference--brandonmusic.glm53-bf16-fp32-logits.final25
+      pipeline_id: pipeline--malaiwah.glm53-stream-packed-kld
+      metric_name: mean_of_run_means_tokenwise_kld
+      value: 0.012384191023436866
+      units: nats
+      direction: reference_to_candidate
+      run_count: 2
+      determinism:
+        evidence_kind: tokenwise_kld_sha256
+        distinct_evidence_hash_count: 1
+        identical_across_runs: true
+        evidence_hashes:
+          - '763bc4a56a371e11a0f96469885b920deb6acb2c7c576d1268fb0907577f0942'
+      floor_measurement_id: measurement--glm53.bf16-stream-floor.brandonmusic-final25
+      floor_lane: streaming
+      quantization_attributable: 0.0008782684041065674
+      measured_by: self-measured
+      disclosures:
+        - reduced_run_count
+        - non_sealed_lane

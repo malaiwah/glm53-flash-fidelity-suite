@@ -1,0 +1,102 @@
+# Reference implementation of fidelity-provenance/v1 on a ROOT model card.
+# Hypothetical frontmatter for zai-org/GLM-5.3-Flash-BF16 annotated as a fidelity ROOT.
+#
+# A root's REQUIRED field is x_fidelity.fidelity_dataset: the capture is the public good.
+# Its model-index result, if present at all, is the SELF-COMPARE reproduction confirmation
+# (value exactly 0.0), never a quantization measurement.
+license: mit
+library_name: transformers
+pipeline_tag: image-text-to-text
+datasets:
+  - brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits
+  - malaiwah/GLM-5.3-Flash-BF16-fidelity-root-final25
+metrics:
+  - kl_divergence
+tags:
+  - glm
+  - glm-5
+  - moe
+  - fidelity
+  - kl-divergence
+  - fidelity-provenance
+  - fidelity-root
+model-index:
+  - name: GLM-5.3-Flash-BF16
+    results:
+      - task:
+          type: text-generation
+          name: Distribution fidelity reproduction confirmation (self-compare)
+        dataset:
+          type: malaiwah/GLM-5.3-Flash-BF16-fidelity-root-final25
+          name: GLM-5.3-Flash BF16 root fidelity dataset (final25, hidden form)
+          config: final25
+          split: sealed-ep8
+          revision: 'fb9594c6b3646726d0fb637c26833e8c6a3bb078c8fee1463df3ebdcce8021f2'
+          args:
+            panel_id: panel--glm53.brandonmusic.final25
+            panel_token_sha256: '6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff'
+            contexts: 25
+            scored_positions: 51175
+            context_length: 2048
+            tokenizer: zai-org/GLM-5.3-Flash-BF16@a6c167b62691b2bac901344b65cb651a70f53e43
+            vocab_size: 154880
+        metrics:
+          - type: kl_divergence
+            name: Mean tokenwise KLD, self-compare (reproduction confirmation), nats
+            value: 0.0
+            args:
+              units: nats
+              higher_is_better: false
+              direction: reference_to_candidate
+              estimator: full_vocabulary_fp64
+              accumulation_dtype: float64
+              head_policy: shared_reference_head
+              stack_relation: same_stack
+              lane: sealed-ep8
+              comparison_kind: self_compare
+              exact_zero_asserted: true
+              tokenwise_bytes: 409528
+              tokenwise_sha256: '3ffddc61af8350782afd24c7a69de1f37c260bf5489c4e0f6e3ad89b0ab9be17'
+              note: A self-compare of a capture against itself. Exactly 0.0 by construction;
+                anything else means the estimator or the reader is broken. This is a
+                reproduction confirmation, not a measurement, and it is never ranked.
+        source:
+          name: fidelity-dataset-spec
+          url: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
+x_fidelity:
+  spec: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
+  spec_version: fidelity-provenance/v1
+  role: root
+  reference_model: zai-org/GLM-5.3-Flash-BF16
+  reference_revision: 'a6c167b62691b2bac901344b65cb651a70f53e43'
+  fidelity_dataset:
+    repository: malaiwah/GLM-5.3-Flash-BF16-fidelity-root-final25
+    revision: null
+    dataset_sha256: 'fb9594c6b3646726d0fb637c26833e8c6a3bb078c8fee1463df3ebdcce8021f2'
+    capture_content_digest: '5c57d0e94abb1b848e7d02b8202b466333b0bc011e982e935e4458c2eac22132'
+    form: hidden
+    role: root
+    manifest_path: fidelity-dataset.json
+  registry:
+    dataset: malaiwah/quant-fidelity-registry
+    schema_version: quant-fidelity-registry/v1
+    artifact_id: artifact--zai-org.glm-5.3-flash-bf16.a6c167b6
+    measurement_ids: []
+  scope_digest: attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16
+  head:
+    policy: native
+    quantized: false
+    bits: 16
+    lm_head_tensor_content_sha256: 'aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4'
+    lm_head_file_sha256: '47eaf729c93346a2394a72a83da2ae4126dadc51155be477d212a3f0fe3085d0'
+    final_norm_tensor_content_sha256: null
+    final_norm_file_sha256: 'c228a123dee3062c3ad0129094e9d98a264e33087ee88d79c8d6c5a6e60f2fed'
+    equality_receipt: https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/head-equality-fp8.json
+    replay_permitted: true
+    note: >-
+      The reference head. Its TENSOR CONTENT digest is published, which is what permits
+      a comparator to replay another artifact's hidden states through it -- and only
+      when that artifact's own head content digest is equal. The zai BF16 and FP8
+      releases ship a bitwise-identical lm_head and final_norm; that equality receipt
+      is the precondition, not a licence to substitute heads generally.
+  measurements: []

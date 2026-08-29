@@ -1,0 +1,59 @@
+# Reference implementation of fidelity-provenance/v1 on a FIDELITY DATASET card.
+# Frontmatter for the capture repository itself.
+#
+# A dataset card has no model-index and no base_model rendering, so x_fidelity carries
+# everything: which model was captured, at which revision, in which form, on which panel,
+# on which lane, with which head, and the seal.
+license: mit
+pretty_name: GLM-5.3-Flash BF16 root fidelity dataset (final25, hidden form)
+task_categories:
+  - text-generation
+language:
+  - en
+size_categories:
+  - n<1K
+tags:
+  - fidelity
+  - kl-divergence
+  - fidelity-provenance
+  - fidelity-dataset
+  - hidden-states
+  - glm
+x_fidelity:
+  spec: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
+  spec_version: fidelity-provenance/v1
+  role: fidelity-dataset
+  captured_model:
+    repository: zai-org/GLM-5.3-Flash-BF16
+    revision: 'a6c167b62691b2bac901344b65cb651a70f53e43'
+    role: root
+  form: hidden
+  lane: sealed-ep8
+  panel:
+    panel_id: panel--glm53.brandonmusic.final25
+    suite_token_hash_sha256: '66cc7026a9a0cb9dbe192b4ff76c42abfe66a594c35c447779bf1b134b9569ac'
+    contexts: 25
+    scored_positions: 51175
+    repository: brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits
+    revision: '95f4fdd94bf29989db2e0d1054e4931f55edb6aa'
+  head:
+    policy: native
+    quantized: false
+    bits: 16
+    lm_head_tensor_content_sha256: 'aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4'
+    lm_head_file_sha256: '47eaf729c93346a2394a72a83da2ae4126dadc51155be477d212a3f0fe3085d0'
+    final_norm_tensor_content_sha256: null
+    final_norm_file_sha256: 'c228a123dee3062c3ad0129094e9d98a264e33087ee88d79c8d6c5a6e60f2fed'
+    equality_receipt: null
+    replay_permitted: true
+  scope_digest: attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16
+  seal:
+    manifest: fidelity-dataset.json
+    dataset_sha256: 'fb9594c6b3646726d0fb637c26833e8c6a3bb078c8fee1463df3ebdcce8021f2'
+    checksums: checksums.txt
+    checksums_sha256: '57097646ce891277c765f462f1985a4543d2ae694513eebf87a1e2a3f3c0f40b'
+  interop:
+    compatible_with:
+      - kimi-k3-distribution-fidelity/1
+    k3_compat_emitted: true
+  measurements: []

@@ -1,0 +1,757 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fidelity-dataset.schema.json",
+  "title": "malaiwah.fidelity-dataset.v1 -- fidelity dataset manifest",
+  "description": "The manifest of a fidelity dataset: one capture of ONE artifact over ONE panel, publishable standalone. Written to <root>/fidelity-dataset.json. Self-sealed via dataset_sha256 (sha256 over the canonical JSON with dataset_sha256 blanked to the empty string), which is the same four-line recipe registry/tools/registry_lib.py, bin/fidelity/common.py::seal and reports/stack-provenance-retro.json use. Keyword subset is deliberately the one registry/tools/_minischema.py implements, so the offline vendored validator can check this file with no pip install.",
+  "type": "object",
+  "required": [
+    "schema",
+    "format_version",
+    "dataset_sha256",
+    "created_utc",
+    "dataset",
+    "weights",
+    "scope",
+    "panel",
+    "capture",
+    "head",
+    "runtime",
+    "determinism",
+    "seal",
+    "coverage",
+    "interop",
+    "disclosures"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema": { "const": "malaiwah.fidelity-dataset.v1" },
+    "format_version": { "const": 1 },
+    "dataset_sha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "Self-blanked seal over this whole document. The ONE value that must be published outside the dataset (model card x_fidelity.fidelity_dataset.dataset_sha256, registry row) so the artifact has an external anchor."
+    },
+    "created_utc": { "type": "string" },
+
+    "dataset": {
+      "type": "object",
+      "required": ["id", "name", "role", "structural_status"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable local identity, e.g. 'fidelity--malaiwah.glm53-bf16.final25.hidden'."
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "role": {
+          "enum": ["root", "quant", "derived"],
+          "description": "root = capture of reference (unquantized/vendor) weights, the shared yardstick. quant = capture of quantized weights. derived = produced by replaying/transforming another capture rather than by running weights; always advisory."
+        },
+        "structural_status": {
+          "enum": ["draft", "structural", "sealed"],
+          "description": "The VALIDATOR's verdict, deliberately separate from scientific acceptance. kimi-k3's single status:'qualified' gate conflates the two and makes a partial capture unrepresentable."
+        },
+        "qualification": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["claimed", "receipt", "receipt_sha256"],
+              "additionalProperties": false,
+              "properties": {
+                "claimed": { "enum": ["replay_fidelity", "determinism", "both"] },
+                "receipt": { "$ref": "#/$defs/relpath" },
+                "receipt_sha256": { "$ref": "#/$defs/sha256" }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "author": { "$ref": "#/$defs/attribution" },
+        "license": { "type": ["string", "null"] },
+        "repository": { "type": ["string", "null"], "description": "HF dataset repo id when published." },
+        "revision": { "type": ["string", "null"] },
+        "base_capture": {
+          "description": "Which ROOT dataset this capture is intended to be compared against. REQUIRED null for role=root. Optional for role=quant: a capture must be publishable before its comparison partner exists.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["dataset_sha256"],
+              "additionalProperties": false,
+              "properties": {
+                "dataset_sha256": { "$ref": "#/$defs/sha256_or_null" },
+                "capture_content_digest": { "$ref": "#/$defs/sha256_or_null" },
+                "repository": { "type": ["string", "null"] },
+                "revision": { "type": ["string", "null"] },
+                "note": { "type": "string" }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+
+    "weights": {
+      "type": "object",
+      "required": ["repository", "revision", "model_revision", "quantized"],
+      "additionalProperties": true,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "revision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$" },
+        "model_revision": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{7,64}$",
+          "description": "Revision of the SOURCE model the artifact derives from. Equal to `revision` for a root that is itself the source."
+        },
+        "quantized": { "type": "boolean" },
+        "config_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "index_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "checkpoint_identity_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "artifact_ref": { "type": ["string", "null"], "pattern": "^artifact--" },
+        "model_ref": { "type": ["string", "null"], "pattern": "^model--" },
+        "codec": { "type": ["string", "null"] },
+        "declared_bits": { "type": ["number", "null"] },
+        "declared_head_bits": { "type": ["integer", "null"] }
+      }
+    },
+
+    "scope": {
+      "type": "object",
+      "description": "What is quantized and what is native, in the registry's own vocabulary. scope_digest is recomputed by registry/tools/registry_lib.py::scope_digest -- never reimplemented.",
+      "required": ["policy", "scope_digest", "assignments", "head_policy", "kv_cache_dtype"],
+      "additionalProperties": false,
+      "properties": {
+        "policy": { "enum": ["native", "uniform", "mixed", "unknown"] },
+        "scope_digest": { "type": "string", "minLength": 1 },
+        "head_policy": { "enum": ["native", "quantized", "unknown"] },
+        "kv_cache_dtype": { "type": "string", "minLength": 1 },
+        "assignments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["tensor_class", "treatment", "format"],
+            "additionalProperties": true,
+            "properties": {
+              "tensor_class": { "type": "string", "minLength": 1 },
+              "treatment": { "enum": ["native", "quantized", "unknown"] },
+              "format": { "type": "string", "minLength": 1 },
+              "bits_per_weight": { "type": ["number", "null"] },
+              "layer_range": { "type": ["string", "null"] },
+              "note": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "panel": {
+      "type": "object",
+      "required": [
+        "panel_file",
+        "panel_file_sha256",
+        "suite_token_hash_sha256",
+        "contexts",
+        "context_length",
+        "scored_positions_total",
+        "scoring_window",
+        "tokenizer"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "panel_id": { "type": ["string", "null"], "pattern": "^panel--" },
+        "panel_file": { "$ref": "#/$defs/relpath" },
+        "panel_file_sha256": { "$ref": "#/$defs/sha256" },
+        "suite_token_hash_sha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "sha256('\\n'.join(per_record token_ids_json_sha256 hex), ascii). kimi-k3 preimage, ADOPTED."
+        },
+        "panel_token_sha256_legacy": {
+          "$ref": "#/$defs/sha256_or_null",
+          "description": "Our historical aggregate (''.join). Carried so sealed pre-v1 receipts still cross-check."
+        },
+        "panel_receipt_sha256": {
+          "$ref": "#/$defs/sha256_or_null",
+          "description": "TRACEABILITY ONLY. Never a token identity, never determinism evidence (registry PANEL-002)."
+        },
+        "repository": { "type": ["string", "null"] },
+        "revision": { "type": ["string", "null"] },
+        "contexts": { "type": "integer", "minimum": 1 },
+        "context_length": { "type": "integer", "minimum": 1 },
+        "scored_positions_total": { "type": "integer", "minimum": 1 },
+        "scoring_window": {
+          "type": "object",
+          "description": "Part of PANEL IDENTITY, not a comparator flag. Changing score_from makes a different panel with derived_from (registry PANEL-005/PANEL-009).",
+          "required": ["score_from", "windowed", "min_left_context_tokens", "policy"],
+          "additionalProperties": false,
+          "properties": {
+            "score_from": { "type": "integer", "minimum": 0 },
+            "windowed": { "type": "boolean" },
+            "min_left_context_tokens": { "type": "integer", "minimum": 0 },
+            "dropped_positions_total": { "type": ["integer", "null"], "minimum": 0 },
+            "policy": { "type": "string", "minLength": 1 }
+          }
+        },
+        "tokenizer": {
+          "type": "object",
+          "required": ["id", "vocab_size"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "repository": { "type": ["string", "null"] },
+            "revision": { "type": ["string", "null"] },
+            "vocab_size": { "type": "integer", "minimum": 1 },
+            "add_special_tokens": { "type": ["boolean", "null"] },
+            "chat_template_applied": { "type": ["boolean", "null"] }
+          }
+        },
+        "remap_file": {
+          "oneOf": [{ "$ref": "#/$defs/relpath" }, { "type": "null" }],
+          "description": "REQUIRED (non-null) when a sealed upstream panel receipt carrying absolute paths is shipped. Resolution is by digest, never by path."
+        },
+        "contamination": {
+          "type": "object",
+          "required": ["checked"],
+          "additionalProperties": true,
+          "properties": {
+            "checked": { "type": "boolean" },
+            "method": { "type": ["string", "null"] },
+            "hits": { "type": ["integer", "null"], "minimum": 0 },
+            "receipt": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+
+    "capture": {
+      "type": "object",
+      "required": [
+        "manifest_file",
+        "manifest_file_sha256",
+        "capture_content_digest",
+        "form",
+        "semantic_point",
+        "tensor_key",
+        "dtype",
+        "dtype_lossless",
+        "vocab_size",
+        "head_separable",
+        "records_count",
+        "total_size_bytes",
+        "lossy_codec"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "manifest_file": { "$ref": "#/$defs/relpath" },
+        "manifest_file_sha256": { "$ref": "#/$defs/sha256" },
+        "capture_content_digest": {
+          "$ref": "#/$defs/sha256",
+          "description": "sha256('\\n'.join('%d:%s' % (index, tensor_content_sha256) for records sorted by index), ascii). The manifest-INDEPENDENT identity of what was captured; the value compared for the A==B self-compare short-circuit and the value that appears in determinism.evidence_hashes."
+        },
+        "form": { "enum": ["hidden", "logit"] },
+        "semantic_point": {
+          "enum": [
+            "after_final_rmsnorm_before_lm_head",
+            "lm_head_output_before_sampling",
+            "live_lm_head_output_before_sampling"
+          ],
+          "description": "'after_final_rmsnorm_before_lm_head' is adopted verbatim from kimi-k3 and is exactly our cut."
+        },
+        "tensor_key": { "enum": ["hidden_states", "logits"] },
+        "dtype": { "enum": ["BF16", "F16", "F32", "F64"] },
+        "dtype_lossless": {
+          "type": "boolean",
+          "description": "true only when the stored dtype is not narrower than the dtype the value had in the forward pass. false forces comparability.class=advisory at compare time."
+        },
+        "hidden_width": { "type": ["integer", "null"], "minimum": 1 },
+        "vocab_size": { "type": "integer", "minimum": 1 },
+        "head_separable": { "type": "boolean" },
+        "head_not_separable_reason": { "type": ["string", "null"] },
+        "records_count": { "type": "integer", "minimum": 0 },
+        "scored_rows_total": { "type": ["integer", "null"], "minimum": 0 },
+        "total_size_bytes": { "type": "integer", "minimum": 0 },
+        "lossy_codec": {
+          "description": "Non-null means the stored values are NOT the model's values. Needed to ingest llama.cpp .kld (uint16 log-probs, max_logit-16 clamp) without laundering a lossy capture as exact. Non-null forces an advisory receipt with a lossy_capture_codec disclosure.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind", "bits", "description"],
+              "additionalProperties": true,
+              "properties": {
+                "kind": { "type": "string", "minLength": 1 },
+                "bits": { "type": ["integer", "null"], "minimum": 1 },
+                "clamp": { "type": ["string", "null"] },
+                "description": { "type": "string", "minLength": 1 }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+
+    "head": {
+      "type": "object",
+      "description": "THE HEAD TRAP GUARD. 'Shared head' means shared APPLICATION, not shared WEIGHTS: replaying a quant's hiddens through the reference head erases its head-quantization error. Every capture declares the head ITS OWN forward held. Normative identity is tensor_content_sha256; raw_tensor_sha256 is the required kimi-k3-compatible alias and MUST carry the identical value; file_sha256 is a container digest and is NEVER the identity.",
+      "required": [
+        "present",
+        "tensor_key",
+        "shape",
+        "dtype",
+        "file_sha256",
+        "raw_tensor_sha256",
+        "tensor_content_sha256",
+        "quantized",
+        "source",
+        "applied_in_capture"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "present": { "type": "boolean", "description": "Whether the head payload is shipped inside this dataset." },
+        "file": { "oneOf": [{ "$ref": "#/$defs/relpath" }, { "type": "null" }] },
+        "head_json": { "oneOf": [{ "$ref": "#/$defs/relpath" }, { "type": "null" }] },
+        "tensor_key": { "type": "string", "minLength": 1 },
+        "compat_tensor_key": { "type": ["string", "null"], "description": "kimi-k3's comparator hard-codes handle.get_tensor('weight')." },
+        "shape": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer", "minimum": 1 } },
+        "dtype": { "enum": ["BF16", "F16", "F32"] },
+        "bias": { "type": "null", "description": "A head with a bias is not expressible in v1; a non-null value is a hard error." },
+        "file_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "raw_tensor_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "tensor_content_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "quantized": { "type": ["boolean", "null"] },
+        "bits": { "type": ["integer", "null"], "minimum": 1 },
+        "source": {
+          "enum": ["native", "artifact_dequantized", "shared_reference_head", "unknown"],
+          "description": "native = artifact ships the head unquantized. artifact_dequantized = the artifact's head IS quantized and was dequantized into the materialized view the forward loaded (stock EXL3 head_bits 6-8, GGUF output.weight, MLX). shared_reference_head = no head of its own; a named external head was applied. unknown forces advisory."
+        },
+        "applied_in_capture": {
+          "type": "boolean",
+          "description": "hidden form: MUST be false (the cut is before the head). logit form: MUST be true."
+        },
+        "final_norm": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["applied_in_capture", "applied_at_replay"],
+              "additionalProperties": true,
+              "properties": {
+                "file": { "oneOf": [{ "$ref": "#/$defs/relpath" }, { "type": "null" }] },
+                "tensor_key": { "type": ["string", "null"] },
+                "shape": { "type": ["array", "null"], "items": { "type": "integer" } },
+                "dtype": { "type": ["string", "null"] },
+                "file_sha256": { "$ref": "#/$defs/sha256_or_null" },
+                "tensor_content_sha256": { "$ref": "#/$defs/sha256_or_null" },
+                "applied_in_capture": { "type": "boolean" },
+                "applied_at_replay": {
+                  "type": "boolean",
+                  "description": "MUST be false when semantic_point is after_final_rmsnorm_before_lm_head: replay applies the head ONLY."
+                }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "equality_receipt": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["claim"],
+              "additionalProperties": true,
+              "properties": {
+                "schema": { "type": ["string", "null"] },
+                "file": { "type": ["string", "null"] },
+                "sha256": { "$ref": "#/$defs/sha256_or_null" },
+                "claim": { "type": "string", "minLength": 1 }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+
+    "runtime": {
+      "type": "object",
+      "required": ["file", "file_sha256", "lane", "stack_fingerprint_sha256"],
+      "additionalProperties": true,
+      "properties": {
+        "file": { "$ref": "#/$defs/relpath" },
+        "file_sha256": { "$ref": "#/$defs/sha256" },
+        "lane": {
+          "enum": ["sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other"],
+          "description": "The registry's own submission.schema.json lane enum, unchanged. Lanes are NOT interchangeable; a cross-lane comparison may never be cited as a floor (registry BIAS-006)."
+        },
+        "lane_inferred": { "type": ["boolean", "null"] },
+        "lane_identity_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "stack_fingerprint_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "backend_identity_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "runtime_reader_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "source": {
+          "type": ["string", "null"],
+          "description": "The stream_score --source surface, when applicable: checkpoint, payload-store, dione, native, exl3hf, mlx, gguf, nvfp4."
+        }
+      }
+    },
+
+    "determinism": {
+      "type": "object",
+      "required": ["run_count", "evidence_kind", "identical_across_runs"],
+      "additionalProperties": true,
+      "properties": {
+        "run_count": { "type": "integer", "minimum": 1 },
+        "cold_start_per_run": { "type": ["boolean", "null"] },
+        "evidence_kind": {
+          "enum": [
+            "hidden_state_tensor_sha256",
+            "logits_tensor_sha256",
+            "tokenwise_kld_sha256",
+            "sealed_tokenwise_digest",
+            "run_mean_equality_only",
+            "none"
+          ],
+          "description": "Container/file digests are deliberately ABSENT from this enum. stream_score writes cold_run into the safetensors __metadata__, so a whole-file digest differs between bitwise-identical runs (hidden_replay_selftest rung f-payload-sha)."
+        },
+        "evidence_hashes": { "type": "array", "items": { "$ref": "#/$defs/sha256" } },
+        "distinct_evidence_hash_count": { "type": ["integer", "null"], "minimum": 0 },
+        "identical_across_runs": { "type": ["boolean", "null"] },
+        "repeats": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "dir", "capture_content_digest"],
+            "additionalProperties": true,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "dir": { "$ref": "#/$defs/relpath" },
+              "capture_content_digest": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        "repeat_noise": {
+          "description": "A self-declared, machine-readable noise floor with a human-readable interpretation string. Adopted from festr2/kimi-k3-full-mxfp4-kld-reference-32x2048 ref/manifest.json.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["interpretation"],
+              "additionalProperties": true,
+              "properties": {
+                "kl_canonical_to_repeat_mean": { "type": ["number", "null"] },
+                "kl_repeat_to_canonical_mean": { "type": ["number", "null"] },
+                "js_mean": { "type": ["number", "null"] },
+                "interpretation": { "type": "string", "minLength": 1 }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "note": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "description": "DET-D1: a determinism claim needs content-level evidence, at least two runs, and exactly one distinct content digest.",
+          "if": {
+            "properties": { "identical_across_runs": { "const": true } },
+            "required": ["identical_across_runs"]
+          },
+          "then": {
+            "properties": {
+              "evidence_kind": {
+                "enum": [
+                  "hidden_state_tensor_sha256",
+                  "logits_tensor_sha256",
+                  "tokenwise_kld_sha256",
+                  "sealed_tokenwise_digest"
+                ]
+              },
+              "run_count": { "type": "integer", "minimum": 2 },
+              "distinct_evidence_hash_count": { "const": 1 }
+            },
+            "required": ["distinct_evidence_hash_count"]
+          }
+        }
+      ]
+    },
+
+    "coverage": {
+      "type": "object",
+      "required": ["declared_records", "present_records", "complete", "index_range"],
+      "additionalProperties": true,
+      "properties": {
+        "declared_records": { "type": "integer", "minimum": 1 },
+        "present_records": { "type": "integer", "minimum": 0 },
+        "complete": {
+          "type": "boolean",
+          "description": "COV-1: true iff present_records == declared_records AND the present index set is exactly range(declared_records)."
+        },
+        "index_range": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "shard_of": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["index", "total"],
+              "additionalProperties": true,
+              "properties": {
+                "index": { "type": "integer", "minimum": 0 },
+                "total": { "type": "integer", "minimum": 1 },
+                "stride": { "type": ["integer", "null"], "minimum": 1 }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "subset_detail": { "type": ["string", "null"] },
+        "missing_indices_sample": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+      }
+    },
+
+    "seal": {
+      "type": "object",
+      "required": ["method", "checksums_file", "checksums_sha256", "covers", "excludes"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "const": "self_blanked_canonical_json_sha256",
+          "description": "sha256(json.dumps({**doc, seal_field: ''}, sort_keys=True, separators=(',',':'), ensure_ascii=False).encode('utf-8'))"
+        },
+        "seal_field": { "const": "dataset_sha256" },
+        "checksums_file": { "const": "checksums.txt" },
+        "checksums_sha256": { "$ref": "#/$defs/sha256" },
+        "checksums_format": {
+          "const": "sha256sum",
+          "description": "One line per file: 64-hex, two spaces, root-relative path; sorted by path; LF; sha256sum --check compatible. kimi-k3 convention, ADOPTED."
+        },
+        "covers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "Human-readable statement of what the chain covers, e.g. ['every published file except checksums.txt and fidelity-dataset.json (via checksums.txt)', 'fidelity-dataset.json itself (via the self-blanked seal)']."
+        },
+        "excludes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Exactly the two files that cannot be covered by checksums.txt without a cycle."
+        },
+        "external_anchor": {
+          "type": ["string", "null"],
+          "description": "Where dataset_sha256 is published outside the dataset."
+        }
+      }
+    },
+
+    "interop": {
+      "type": "object",
+      "required": ["compatible_with", "divergences"],
+      "additionalProperties": true,
+      "properties": {
+        "compatible_with": { "type": "array", "items": { "type": "string" } },
+        "k3_compat_emitted": { "type": ["boolean", "null"] },
+        "adapted_from": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["source_format", "adapter", "inferred_fields"],
+              "additionalProperties": true,
+              "properties": {
+                "source_format": { "enum": ["k3v1", "k3v0-window", "llamacpp-kld", "malaiwah-serving-v2", "other"] },
+                "adapter": { "type": "string", "minLength": 1 },
+                "inferred_fields": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Fields the adapter had to SYNTHESIZE because the source format does not record them. Every entry forces comparability.class=advisory."
+                }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "divergences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "field", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^D-[0-9]+$" },
+              "field": { "type": "string", "minLength": 1 },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+
+    "upstream_receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "schema", "sha256", "stripped_fields"],
+        "additionalProperties": true,
+        "properties": {
+          "file": { "$ref": "#/$defs/relpath" },
+          "schema": { "type": "string", "minLength": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "stripped_fields": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "PATH-2: fields carrying host-local directories that were removed on the way in. Naming them is what makes 'absent' mean 'stripped' instead of 'never existed'."
+          }
+        }
+      }
+    },
+
+    "disclosures": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Non-empty everywhere, like every registry record. A dataset with nothing to disclose carries exactly one entry with code=no_known_deviations.",
+      "items": {
+        "type": "object",
+        "required": ["code", "severity", "detail"],
+        "additionalProperties": true,
+        "properties": {
+          "code": { "type": "string", "minLength": 1 },
+          "severity": { "enum": ["info", "caveat", "blocking"] },
+          "affects_comparability": { "type": ["boolean", "null"] },
+          "detail": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "description": "ROOT-1: a root dataset captures unquantized reference weights, ships a head, and has no base_capture.",
+      "if": {
+        "properties": { "dataset": { "properties": { "role": { "const": "root" } }, "required": ["role"] } },
+        "required": ["dataset"]
+      },
+      "then": {
+        "properties": {
+          "weights": { "properties": { "quantized": { "const": false } }, "required": ["quantized"] },
+          "scope": { "properties": { "policy": { "const": "native" }, "head_policy": { "const": "native" } } },
+          "head": { "properties": { "present": { "const": true }, "quantized": { "const": false } } },
+          "dataset": { "properties": { "base_capture": { "type": "null" } } },
+          "capture": { "properties": { "lossy_codec": { "type": "null" } } }
+        }
+      }
+    },
+    {
+      "description": "hidden form: the cut is BEFORE the head, so the head is not applied and hidden_width is required.",
+      "if": {
+        "properties": { "capture": { "properties": { "form": { "const": "hidden" } }, "required": ["form"] } },
+        "required": ["capture"]
+      },
+      "then": {
+        "properties": {
+          "capture": {
+            "properties": {
+              "semantic_point": { "const": "after_final_rmsnorm_before_lm_head" },
+              "tensor_key": { "const": "hidden_states" },
+              "hidden_width": { "type": "integer", "minimum": 1 },
+              "head_separable": { "const": true }
+            },
+            "required": ["hidden_width"]
+          },
+          "head": {
+            "properties": {
+              "applied_in_capture": { "const": false },
+              "tensor_content_sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "logit form: the head was applied inside the capture, so hidden_width is meaningless.",
+      "if": {
+        "properties": { "capture": { "properties": { "form": { "const": "logit" } }, "required": ["form"] } },
+        "required": ["capture"]
+      },
+      "then": {
+        "properties": {
+          "capture": {
+            "properties": {
+              "tensor_key": { "const": "logits" },
+              "hidden_width": { "type": "null" }
+            }
+          },
+          "head": { "properties": { "applied_in_capture": { "const": true } } }
+        }
+      }
+    },
+    {
+      "description": "head_separable=false requires the reason to be stated.",
+      "if": {
+        "properties": { "capture": { "properties": { "head_separable": { "const": false } }, "required": ["head_separable"] } },
+        "required": ["capture"]
+      },
+      "then": {
+        "properties": {
+          "capture": {
+            "properties": { "head_not_separable_reason": { "type": "string", "minLength": 1 } },
+            "required": ["head_not_separable_reason"]
+          }
+        }
+      }
+    },
+    {
+      "description": "COV-2: an incomplete capture that is not a declared shard must say what subset it is.",
+      "if": {
+        "properties": {
+          "coverage": {
+            "properties": { "complete": { "const": false }, "shard_of": { "type": "null" } },
+            "required": ["complete"]
+          }
+        },
+        "required": ["coverage"]
+      },
+      "then": {
+        "properties": {
+          "coverage": {
+            "properties": { "subset_detail": { "type": "string", "minLength": 1 } },
+            "required": ["subset_detail"]
+          }
+        }
+      }
+    },
+    {
+      "description": "A sealed panel receipt carrying absolute paths must ship a digest-keyed remap; rewriting the receipt would break its seal.",
+      "if": {
+        "properties": { "panel": { "properties": { "panel_receipt_sha256": { "$ref": "#/$defs/sha256" } }, "required": ["panel_receipt_sha256"] } },
+        "required": ["panel"]
+      },
+      "then": {
+        "properties": { "panel": { "required": ["remap_file"] } }
+      }
+    }
+  ],
+
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha256_or_null": {
+      "oneOf": [{ "type": "string", "pattern": "^[0-9a-f]{64}$" }, { "type": "null" }]
+    },
+    "relpath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*://)[^\\u0000]+$",
+      "description": "PATH-1: relative, resolves inside the dataset root after normpath. Absolute paths and URIs are a hard error. The '..' allowance inside compat/ is enforced by the validator, not by this pattern."
+    },
+    "attribution": {
+      "type": "object",
+      "required": ["name", "role"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 },
+        "handle": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"] },
+        "is_registry_maintainer": { "type": ["boolean", "null"] }
+      }
+    }
+  }
+}

@@ -1,0 +1,370 @@
+{
+  "_example_note": {
+    "purpose": "Worked example: a hypothetical step-1 ROOT fidelity dataset for GLM-5.3-Flash BF16 on the sealed 25-window final25 panel, hidden form.",
+    "real_values": "panel ids/digests/revisions, head file+content digests, final_norm file digest, tokenizer pins, capture-code digests, and the scope_digest (recomputed with registry/tools/registry_lib.py) are REAL.",
+    "seal_is_real": "dataset_sha256 is the genuine self-blanked canonical-JSON seal of this document; `bin/fidelity-dataset verify --manifest-only` passes on this file as-is.",
+    "synthetic_digests": "see the map below; every entry is sha256('synthetic:<label>') and exists only so the document is schema-valid and self-sealing."
+  },
+  "capture": {
+    "capture_content_digest": "5c57d0e94abb1b848e7d02b8202b466333b0bc011e982e935e4458c2eac22132",
+    "dtype": "BF16",
+    "dtype_lossless": true,
+    "form": "hidden",
+    "head_not_separable_reason": null,
+    "head_separable": true,
+    "hidden_width": 4096,
+    "lossy_codec": null,
+    "manifest_file": "capture/manifest.json",
+    "manifest_file_sha256": "b80d0d8bacc69cb28bd30a86a10aabca8e993bf8202a8a6c6f2b595c3e4d35bb",
+    "note": "51,175 positions x 4,096 x 2 B = 419 MB. The same panel in fp32 logits is 31.70 GB (154,880 x 4 B per position): a 75.6x difference, which is why hidden form is the default.",
+    "records_count": 25,
+    "scored_rows_total": 51175,
+    "semantic_point": "after_final_rmsnorm_before_lm_head",
+    "tensor_key": "hidden_states",
+    "total_size_bytes": 419228000,
+    "vocab_size": 154880
+  },
+  "coverage": {
+    "complete": true,
+    "declared_records": 25,
+    "index_range": [
+      0,
+      24
+    ],
+    "missing_indices_sample": [],
+    "present_records": 25,
+    "shard_of": null,
+    "subset_detail": null
+  },
+  "created_utc": "2026-08-29T00:00:00Z",
+  "dataset": {
+    "author": {
+      "handle": "malaiwah",
+      "is_registry_maintainer": true,
+      "name": "malaiwah",
+      "role": "capture-author",
+      "url": "https://huggingface.co/malaiwah"
+    },
+    "base_capture": null,
+    "id": "fidelity--malaiwah.glm53-flash-bf16.final25.hidden",
+    "license": "mit",
+    "name": "GLM-5.3-Flash BF16 reference fidelity dataset -- final25, hidden form",
+    "qualification": {
+      "claimed": "both",
+      "receipt": "validation/replay-qualification.json",
+      "receipt_sha256": "c7c4dcb68471dc9a75ccc7bdfcbbad21b0a377b5e4209eb2d47e8affce986b12"
+    },
+    "repository": "malaiwah/GLM-5.3-Flash-BF16-fidelity-root-final25",
+    "revision": null,
+    "role": "root",
+    "structural_status": "sealed"
+  },
+  "dataset_sha256": "fb9594c6b3646726d0fb637c26833e8c6a3bb078c8fee1463df3ebdcce8021f2",
+  "determinism": {
+    "cold_start_per_run": true,
+    "distinct_evidence_hash_count": 1,
+    "evidence_hashes": [
+      "5c57d0e94abb1b848e7d02b8202b466333b0bc011e982e935e4458c2eac22132"
+    ],
+    "evidence_kind": "hidden_state_tensor_sha256",
+    "identical_across_runs": true,
+    "note": "Five cold processes; the evidence is the derived capture_content_digest over tensor CONTENT. Whole-file digests are excluded on purpose: stream_score writes cold_run into the safetensors __metadata__, so file digests differ between bitwise-identical runs.",
+    "repeat_noise": {
+      "interpretation": "This lane reproduces its own capture bitwise, so its self-noise floor is exactly zero and any residual against another capture is attributable, not noise. A serving-lane capture would NOT report this: reports/determinism-bf16.json shows 20 of 32 sentinels byte-identical under vLLM.",
+      "js_mean": 0.0,
+      "kl_canonical_to_repeat_mean": 0.0,
+      "kl_repeat_to_canonical_mean": 0.0
+    },
+    "repeats": [
+      {
+        "capture_content_digest": "5c57d0e94abb1b848e7d02b8202b466333b0bc011e982e935e4458c2eac22132",
+        "dir": "determinism/repeat-01",
+        "name": "repeat-01"
+      },
+      {
+        "capture_content_digest": "5c57d0e94abb1b848e7d02b8202b466333b0bc011e982e935e4458c2eac22132",
+        "dir": "determinism/repeat-02",
+        "name": "repeat-02"
+      }
+    ],
+    "run_count": 5
+  },
+  "disclosures": [
+    {
+      "affects_comparability": false,
+      "code": "weak_contamination_guard",
+      "detail": "The final25 panel's only contamination guard is role separation; no lexical or n-gram scan is published. It applies equally to every capture on this panel, so it does not disturb comparisons within it.",
+      "severity": "caveat"
+    }
+  ],
+  "format_version": 1,
+  "head": {
+    "applied_in_capture": false,
+    "bias": null,
+    "bits": 16,
+    "compat_tensor_key": "weight",
+    "dtype": "BF16",
+    "equality_receipt": {
+      "claim": "head_equal and final_norm_equal between the zai BF16 and FP8 releases; both file digests are 47eaf729... and c228a123...",
+      "file": "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/head-equality-fp8.json",
+      "schema": "glm53flash-head-equality/1",
+      "sha256": null
+    },
+    "file": "head/weight.safetensors",
+    "file_sha256": "47eaf729c93346a2394a72a83da2ae4126dadc51155be477d212a3f0fe3085d0",
+    "final_norm": {
+      "applied_at_replay": false,
+      "applied_in_capture": true,
+      "dtype": "BF16",
+      "file": "head/final_norm.safetensors",
+      "file_sha256": "c228a123dee3062c3ad0129094e9d98a264e33087ee88d79c8d6c5a6e60f2fed",
+      "shape": [
+        4096
+      ],
+      "tensor_content_sha256": "796f0954c878021f5f83a9f4ff5543278fd9162da82b640beff475e1aad9a6dc",
+      "tensor_key": "model.language_model.norm.weight"
+    },
+    "head_json": "head/head.json",
+    "note": "The reference head. zai's BF16 and FP8 releases ship a bitwise-identical lm_head and final_norm (head-equality receipt), which is the precondition that licenses a shared-head replay between those two -- and nothing else.",
+    "present": true,
+    "quantized": false,
+    "raw_tensor_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4",
+    "shape": [
+      154880,
+      4096
+    ],
+    "source": "native",
+    "tensor_content_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4",
+    "tensor_key": "lm_head.weight"
+  },
+  "interop": {
+    "adapted_from": null,
+    "compatible_with": [
+      "kimi-k3-distribution-fidelity/1"
+    ],
+    "divergences": [
+      {
+        "field": "head",
+        "id": "D-1",
+        "reason": "every capture declares its OWN head identity by tensor content digest; the comparator refuses a hidden-form comparison across differing heads. kimi-k3 applies one --lm-head to both sides and records no per-capture head."
+      },
+      {
+        "field": "runtime.lane",
+        "id": "D-2",
+        "reason": "lane is required and gated at compare time so registry BIAS-006 is checked before a number exists, not at submission."
+      },
+      {
+        "field": "panel.scoring_window",
+        "id": "D-3",
+        "reason": "scoring_window is part of panel identity, not a comparator flag: a score_from=1024 number is a different panel, not a variant."
+      },
+      {
+        "field": "comparison_kind",
+        "id": "D-4",
+        "reason": "self-compare is a first-class mode asserting exactly 0.0; nobody else has one."
+      },
+      {
+        "field": "estimator.accumulation_dtype",
+        "id": "D-5",
+        "reason": "required, fp64 default; an fp32 estimator lands in a different comparability class on the same data and that must be visible."
+      },
+      {
+        "field": "coverage",
+        "id": "D-6",
+        "reason": "declared vs present record counts with shard_of; fixes our own manifest that claimed 5,120 captures in a 512-file repository."
+      },
+      {
+        "field": "panel",
+        "id": "D-7",
+        "reason": "the panel is a separately referenceable object, which is what makes a candidate capture publishable standalone."
+      },
+      {
+        "field": "capture.lossy_codec",
+        "id": "D-8",
+        "reason": "lets a llama.cpp .kld (uint16 log-probs, max_logit-16 clamp) be ingested without laundering a lossy capture as exact."
+      },
+      {
+        "field": "capture.records[].attention_mask_sha256",
+        "id": "D-9",
+        "reason": "our packed and streaming lanes vary mask construction; a single-request-per-context capture path makes it invariant and has no equivalent field."
+      },
+      {
+        "field": "capture.head_separable",
+        "id": "D-10",
+        "reason": "hidden form is the default; logit form must declare head_separable:false with a reason. 31.7 GB vs 419 MB on this panel."
+      }
+    ],
+    "k3_compat_emitted": true,
+    "note": "A root capture is what makes reference.logits_available true. Without it a number against this reference can never be re-derived, only re-run -- which is exactly what the JarvisLabs loss cost us."
+  },
+  "panel": {
+    "contamination": {
+      "checked": false,
+      "hits": null,
+      "method": "role separation only; no lexical or n-gram scan published",
+      "receipt": null
+    },
+    "context_length": 2048,
+    "contexts": 25,
+    "panel_file": "panel/panel.json",
+    "panel_file_sha256": "980c41fef0c5aec4be2beaf43b42f774300de0076ac3a68b399fe36b38fd708d",
+    "panel_id": "panel--glm53.brandonmusic.final25",
+    "panel_receipt_sha256": "0beec5770e5107547731b084f1bc5f9fb8ba79d67af56ddb70d919da367737d5",
+    "panel_token_sha256_legacy": "6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff",
+    "remap_file": "panel/panel-remap.json",
+    "repository": "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits",
+    "revision": "95f4fdd94bf29989db2e0d1054e4931f55edb6aa",
+    "scored_positions_total": 51175,
+    "scoring_window": {
+      "dropped_positions_total": 0,
+      "min_left_context_tokens": 1,
+      "policy": "every prediction position of every window is scored; nothing is dropped",
+      "score_from": 0,
+      "windowed": false
+    },
+    "suite_token_hash_sha256": "66cc7026a9a0cb9dbe192b4ff76c42abfe66a594c35c447779bf1b134b9569ac",
+    "tokenizer": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "glm-5.3-flash",
+      "repository": "zai-org/GLM-5.3-Flash-BF16",
+      "revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+      "vocab_size": 154880
+    }
+  },
+  "runtime": {
+    "backend_identity_sha256": "0592871a558423243cf8034ca167ff268a2a21561468aa89249ff05566961513",
+    "capture_code": {
+      "k6/tools/hidden_replay.py": "87940124b445d9df3fa2556705ceec96e4c0ebbaf5c693fe5d00f71b3c834012",
+      "k6/tools/k6_kld_report.py": "bbcc2fb18421db6c551b16938cc4c601a544dc76f20a019730d8cf6b2afe49aa",
+      "k6/tools/stream_score.py": "022a167e77a7a9b9df28cf8251b8973a7e03b4e4c25bd4e46e0dd89f6b0e9e91"
+    },
+    "file": "runtime/capture-runtime.json",
+    "file_sha256": "2bfd0dc30f44e5135ac765ded5a2506e017d435634915421d8e83734a1ec2f4f",
+    "lane": "sealed-ep8",
+    "lane_identity_sha256": "c8c8f354bfe5fed0cafcf119dab386407e6cdddbc5fef2da6802addef1c7d9bf",
+    "lane_inferred": false,
+    "runtime_reader_sha256": "b53072c325095e4381a85ec5b67397a7fb033fee66e8439f9e40e844b4823809",
+    "source": "native",
+    "stack_fingerprint_sha256": "8b1c2b9df2c606b4730d0503a61c965f77ae778c2cb3ea480b6782d9251a3a0e"
+  },
+  "schema": "malaiwah.fidelity-dataset.v1",
+  "scope": {
+    "assignments": [
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": null,
+        "tensor_class": "embed_tokens",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": null,
+        "tensor_class": "attn.qkv",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": null,
+        "tensor_class": "attn.o",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": null,
+        "tensor_class": "mlp.gate",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": null,
+        "tensor_class": "mlp.up",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": null,
+        "tensor_class": "mlp.down",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": null,
+        "tensor_class": "moe.experts",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": null,
+        "tensor_class": "norm",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": null,
+        "tensor_class": "lm_head",
+        "treatment": "native"
+      }
+    ],
+    "head_policy": "native",
+    "kv_cache_dtype": "bf16",
+    "policy": "native",
+    "scope_digest": "attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16"
+  },
+  "seal": {
+    "checksums_file": "checksums.txt",
+    "checksums_format": "sha256sum",
+    "checksums_sha256": "57097646ce891277c765f462f1985a4543d2ae694513eebf87a1e2a3f3c0f40b",
+    "covers": [
+      "every published file except checksums.txt and fidelity-dataset.json, via checksums.txt",
+      "fidelity-dataset.json itself, via the self-blanked seal",
+      "every capture tensor a second time by CONTENT, via capture.capture_content_digest"
+    ],
+    "excludes": [
+      "checksums.txt",
+      "fidelity-dataset.json"
+    ],
+    "external_anchor": "model card x_fidelity.fidelity_dataset.dataset_sha256 on zai-org/GLM-5.3-Flash-BF16 (proposed) and registry reference--malaiwah.glm53-bf16-root.final25",
+    "method": "self_blanked_canonical_json_sha256",
+    "seal_field": "dataset_sha256"
+  },
+  "upstream_receipts": [
+    {
+      "file": "upstream/capture-receipt.json",
+      "schema": "quant-pipeline.glm53-logit-capture.v1",
+      "sha256": "57fc8014c344bd59cd6e91807c7a36f5e3156b466fbceebd37923d5d3d97e3ab",
+      "stripped_fields": [
+        "logit_files[].path"
+      ]
+    },
+    {
+      "file": "upstream/backend.json",
+      "schema": "malaiwah.glm53-streaming-offline-reader-backend.v1",
+      "sha256": "381e30926386f3cdca09997f9e0a2e341d9594e9fad355dbab36a73461d8a114",
+      "stripped_fields": []
+    }
+  ],
+  "weights": {
+    "artifact_ref": "artifact--zai-org.glm-5.3-flash-bf16.a6c167b6",
+    "checkpoint_identity_sha256": "2eda2845a93b247685e060c5b366561e9aad94b315523c8920fcac297dfdc90f",
+    "codec": null,
+    "config_sha256": "4672cecc91e47bb76d6040f06307347d8caed0844e74eac0b84f698d46bc41e2",
+    "declared_bits": null,
+    "declared_head_bits": null,
+    "index_sha256": "b72513ac00dbf16a197d4f6d2100143cd2b78499b6832f01d06a55cf0a9e29b1",
+    "model_ref": "model--zai-org.glm-5.3-flash",
+    "model_revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+    "quantized": false,
+    "repository": "zai-org/GLM-5.3-Flash-BF16",
+    "revision": "a6c167b62691b2bac901344b65cb651a70f53e43"
+  }
+}

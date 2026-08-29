@@ -1,0 +1,527 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fidelity-comparison-receipt.schema.json",
+  "title": "malaiwah.fidelity-comparison-receipt.v1 -- step-3 output",
+  "description": "The output of comparing two fidelity datasets. Self-sealed by the same self-blanked canonical-JSON method as the dataset manifest. THREE KINDS, and only one of them is a measurement: comparison_kind=measurement may be handed to registry_add; reproduction_confirmation (A==B, exactly 0.0) and run_to_run_floor (same weights, different capture) may NOT. bin/fidelity/receipt.py::_scan_for_unsubmittable is the second, independent axis of that refusal.",
+  "type": "object",
+  "required": [
+    "schema",
+    "format_version",
+    "receipt_sha256",
+    "created_utc",
+    "comparison_kind",
+    "reference",
+    "candidate",
+    "panel",
+    "gates",
+    "comparator",
+    "metric",
+    "kl",
+    "estimator",
+    "determinism",
+    "measurement_scope",
+    "comparability",
+    "disclosures"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema": { "const": "malaiwah.fidelity-comparison-receipt.v1" },
+    "format_version": { "const": 1 },
+    "receipt_sha256": { "$ref": "#/$defs/sha256" },
+    "created_utc": { "type": "string" },
+
+    "comparison_kind": {
+      "enum": ["measurement", "reproduction_confirmation", "run_to_run_floor"],
+      "description": "measurement = two different artifacts. reproduction_confirmation = A and B are the SAME capture content (capture_content_digest equal) -> exactly 0.0. run_to_run_floor = same weights identity, different capture content -> a floor, never a quantization result."
+    },
+
+    "reference": { "$ref": "#/$defs/side" },
+    "candidate": { "$ref": "#/$defs/side" },
+
+    "panel": {
+      "type": "object",
+      "required": ["suite_token_hash_sha256", "contexts", "scored_positions", "scoring_window"],
+      "additionalProperties": true,
+      "properties": {
+        "panel_id": { "type": ["string", "null"], "pattern": "^panel--" },
+        "suite_token_hash_sha256": { "$ref": "#/$defs/sha256" },
+        "panel_token_sha256_legacy": { "$ref": "#/$defs/sha256_or_null" },
+        "contexts": { "type": "integer", "minimum": 1 },
+        "scored_positions": { "type": "integer", "minimum": 1 },
+        "context_length": { "type": ["integer", "null"], "minimum": 1 },
+        "scoring_window": {
+          "type": "object",
+          "required": ["score_from", "windowed", "min_left_context_tokens", "policy"],
+          "additionalProperties": true,
+          "properties": {
+            "score_from": { "type": "integer", "minimum": 0 },
+            "windowed": { "type": "boolean" },
+            "min_left_context_tokens": { "type": "integer", "minimum": 0 },
+            "policy": { "type": "string", "minLength": 1 }
+          }
+        },
+        "tokenizer": { "type": ["object", "null"] }
+      }
+    },
+
+    "gates": {
+      "type": "object",
+      "description": "The ordered gate ladder, each recorded with its verdict. A receipt exists only if every gate either passed or was explicitly overridden, and an override is always visible here.",
+      "required": ["seal", "form", "panel", "head", "lane", "stack", "geometry", "coverage", "lossy"],
+      "additionalProperties": false,
+      "properties": {
+        "seal": { "$ref": "#/$defs/gate" },
+        "form": { "$ref": "#/$defs/gate" },
+        "panel": { "$ref": "#/$defs/gate" },
+        "head": { "$ref": "#/$defs/gate" },
+        "lane": { "$ref": "#/$defs/gate" },
+        "stack": { "$ref": "#/$defs/gate" },
+        "geometry": { "$ref": "#/$defs/gate" },
+        "coverage": { "$ref": "#/$defs/gate" },
+        "lossy": { "$ref": "#/$defs/gate" }
+      }
+    },
+
+    "comparator": {
+      "type": "object",
+      "required": ["device", "accumulation_dtype", "two_pass", "vocab_chunk", "position_block"],
+      "additionalProperties": true,
+      "properties": {
+        "device": {
+          "type": "string",
+          "minLength": 1,
+          "description": "REQUIRED. Replay error is a property of the replay device and kernel, not of the artifact: kimi-k3's headline 1.229325e-6 replay figure is a CPU number while his GPU replay is bitwise exact. A receipt without its device is unreadable."
+        },
+        "accumulation_dtype": { "enum": ["float64", "float32", "mixed"] },
+        "logprob_dtype": { "type": ["string", "null"] },
+        "two_pass": { "type": ["boolean", "null"] },
+        "vocab_chunk": { "type": ["integer", "null"], "minimum": 1 },
+        "position_block": { "type": ["integer", "null"], "minimum": 1 },
+        "tf32": { "type": ["boolean", "null"] },
+        "deterministic_algorithms": { "type": ["boolean", "null"] },
+        "bf16_reduced_precision_reduction": { "type": ["boolean", "null"] },
+        "cublas_workspace_config": { "type": ["string", "null"] },
+        "head_applied_tensor_content_sha256": {
+          "$ref": "#/$defs/sha256_or_null",
+          "description": "WHICH head was actually applied. Null only when both sides are logit-form."
+        },
+        "source_file_hashes_verified": { "type": ["boolean", "null"] },
+        "short_circuited": {
+          "type": ["boolean", "null"],
+          "description": "true when the A==B hash proof produced the answer without running the matmul."
+        },
+        "tool": { "type": ["object", "null"] }
+      }
+    },
+
+    "metric": {
+      "type": "object",
+      "required": ["name", "value", "units", "direction", "direction_label", "higher_is_better"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "value": { "type": "number", "minimum": -1e-9 },
+        "units": { "const": "nats" },
+        "direction": { "const": "reference_to_candidate" },
+        "direction_label": {
+          "const": "KL(reference || candidate)",
+          "description": "kimi-k3's literal string, ADOPTED. His receipt comparator refuses to read anything else in its place."
+        },
+        "higher_is_better": { "const": false }
+      }
+    },
+
+    "kl": { "$ref": "#/$defs/stats" },
+    "js": { "oneOf": [{ "$ref": "#/$defs/stats" }, { "type": "null" }] },
+    "top1_agreement": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "logit_absolute_error_mean": { "type": ["number", "null"] },
+    "logit_absolute_error_max": { "type": ["number", "null"] },
+
+    "kl_micro_token_mean": { "type": ["number", "null"] },
+    "kl_macro_stratum_mean": { "type": ["number", "null"] },
+    "per_stratum": { "type": ["object", "null"] },
+    "per_domain": { "type": ["object", "null"] },
+    "context_depth_buckets": {
+      "type": ["object", "null"],
+      "description": "kimi-k3's exact bucket edges 0000-0255 / 0256-0511 / 0512-1023 / 1024-1535 / 1536-2046. Lets a llama.cpp-geometry number be read off a full-panel capture without recapturing."
+    },
+    "per_context": { "type": ["array", "null"] },
+    "high_kld_contexts": { "type": ["array", "null"] },
+    "top1_discordant_contexts": { "type": ["array", "null"] },
+
+    "uncertainty": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["method"],
+          "additionalProperties": true,
+          "properties": {
+            "method": { "type": "string", "minLength": 1 },
+            "ci95_low": { "type": ["number", "null"] },
+            "ci95_high": { "type": ["number", "null"] },
+            "clusters": { "type": ["integer", "null"], "minimum": 1 },
+            "samples": { "type": ["integer", "null"], "minimum": 1 },
+            "cluster_unit": { "type": ["string", "null"] },
+            "seed": { "type": ["integer", "null"] }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+
+    "estimator": {
+      "type": "object",
+      "required": ["accumulation_dtype", "stack_relation", "head_policy"],
+      "additionalProperties": true,
+      "properties": {
+        "accumulation_dtype": { "enum": ["float64", "float32", "mixed", "unknown"] },
+        "logits_dtype": { "type": ["string", "null"] },
+        "two_pass": { "type": ["boolean", "null"] },
+        "vocab_chunk": { "type": ["integer", "null"], "minimum": 1 },
+        "stack_relation": {
+          "enum": ["same_stack", "cross_stack", "unknown"],
+          "description": "same_stack iff lane_identity_sha256 AND stack_fingerprint_sha256 are equal on both sides. cross_stack REQUIRES comparability.bias (registry BIAS-001)."
+        },
+        "head_policy": { "enum": ["native_head", "shared_reference_head", "dequantized_head", "unknown"] },
+        "softmax_note": { "type": ["string", "null"] },
+        "zero_handling": { "type": ["string", "null"] }
+      }
+    },
+
+    "determinism": {
+      "type": "object",
+      "required": ["run_count", "identical_across_runs", "evidence_kind"],
+      "additionalProperties": true,
+      "properties": {
+        "run_count": { "type": "integer", "minimum": 0 },
+        "cold_start_per_run": { "type": ["boolean", "null"] },
+        "run_means": { "type": "array", "items": { "type": "number" } },
+        "population_stddev_of_run_means": { "type": ["number", "null"], "minimum": 0 },
+        "min_run_mean": { "type": ["number", "null"] },
+        "max_run_mean": { "type": ["number", "null"] },
+        "identical_across_runs": { "type": ["boolean", "null"] },
+        "evidence_kind": {
+          "enum": [
+            "tokenwise_kld_sha256",
+            "logits_tensor_sha256",
+            "hidden_state_tensor_sha256",
+            "sealed_tokenwise_digest",
+            "run_mean_equality_only",
+            "none"
+          ]
+        },
+        "evidence_hashes": { "type": "array", "items": { "$ref": "#/$defs/sha256" } },
+        "distinct_evidence_hash_count": { "type": ["integer", "null"], "minimum": 0 },
+        "note": { "type": "string" }
+      }
+    },
+
+    "measurement_scope": {
+      "type": "object",
+      "required": ["scored_positions", "covers_full_panel"],
+      "additionalProperties": true,
+      "properties": {
+        "scored_positions": { "type": "integer", "minimum": 1 },
+        "contexts": { "type": ["integer", "null"], "minimum": 1 },
+        "positions_per_context": { "type": ["integer", "null"], "minimum": 1 },
+        "covers_full_panel": { "type": "boolean" },
+        "subset_detail": { "type": ["string", "null"] },
+        "position_filter": { "type": ["string", "null"] }
+      }
+    },
+
+    "comparability": {
+      "type": "object",
+      "required": ["class", "usable_as_floor", "bias"],
+      "additionalProperties": true,
+      "properties": {
+        "class": { "enum": ["strict", "advisory"] },
+        "usable_as_floor": {
+          "type": "boolean",
+          "description": "false on every cross-lane receipt. registry BIAS-006 requires a floor row to come from a pipeline declaring the SAME lane; stamping this here stops a downstream tool laundering a cross-lane residual into a subtraction."
+        },
+        "same_lane": { "type": ["boolean", "null"] },
+        "key": { "type": ["string", "null"], "pattern": "^cmp--[0-9a-f]{16}$" },
+        "key_inputs": { "type": ["object", "null"] },
+        "bias": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind", "direction", "detail"],
+              "additionalProperties": true,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "cross_stack_capture_replay",
+                    "dequantized_reference",
+                    "reduced_run_count",
+                    "subset_of_panel",
+                    "undisclosed_protocol",
+                    "other"
+                  ]
+                },
+                "direction": { "enum": ["upward", "downward", "unknown"] },
+                "floor_measurement_ref": { "type": ["string", "null"] },
+                "estimated_magnitude": { "type": ["number", "null"] },
+                "detail": { "type": "string", "minLength": 1 }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+
+    "tokenwise": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["path", "bytes", "sha256"],
+          "additionalProperties": false,
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "bytes": { "type": "integer", "minimum": 0 },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+
+    "self_compare": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["capture_content_digest_equal", "asserted_exact_zero"],
+          "additionalProperties": true,
+          "properties": {
+            "capture_content_digest_equal": { "type": "boolean" },
+            "weights_identity_equal": { "type": ["boolean", "null"] },
+            "asserted_exact_zero": { "type": "boolean" },
+            "expected_tokenwise_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "expected_tokenwise_sha256": { "$ref": "#/$defs/sha256_or_null" },
+            "head_digest_equal": { "type": ["boolean", "null"] },
+            "force_compute_agreed": { "type": ["boolean", "null"] }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+
+    "submission": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["emitted", "path"],
+          "additionalProperties": true,
+          "properties": {
+            "emitted": { "type": "boolean" },
+            "path": { "type": ["string", "null"] },
+            "submission_schema": { "type": ["string", "null"] },
+            "receipt_sha256": { "$ref": "#/$defs/sha256_or_null" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+
+    "disclosures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["code", "severity", "detail"],
+        "additionalProperties": true,
+        "properties": {
+          "code": { "type": "string", "minLength": 1 },
+          "severity": { "enum": ["info", "caveat", "blocking"] },
+          "affects_comparability": { "type": ["boolean", "null"] },
+          "detail": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "description": "SC-1: a reproduction confirmation asserts EXACTLY 0.0 and top-1 exactly 1.0, and is never a measurement row.",
+      "if": {
+        "properties": { "comparison_kind": { "const": "reproduction_confirmation" } },
+        "required": ["comparison_kind"]
+      },
+      "then": {
+        "properties": {
+          "metric": { "properties": { "value": { "const": 0.0 } }, "required": ["value"] },
+          "top1_agreement": { "const": 1.0 },
+          "kl": {
+            "properties": { "mean": { "const": 0.0 }, "median": { "const": 0.0 }, "max": { "const": 0.0 } }
+          },
+          "self_compare": {
+            "type": "object",
+            "properties": {
+              "capture_content_digest_equal": { "const": true },
+              "asserted_exact_zero": { "const": true }
+            },
+            "required": ["capture_content_digest_equal", "asserted_exact_zero"]
+          }
+        },
+        "required": ["self_compare"]
+      }
+    },
+    {
+      "description": "SC-2: a run-to-run floor is same-weights, different-capture; it is never presented as a reproduction.",
+      "if": {
+        "properties": { "comparison_kind": { "const": "run_to_run_floor" } },
+        "required": ["comparison_kind"]
+      },
+      "then": {
+        "properties": {
+          "self_compare": {
+            "type": "object",
+            "properties": {
+              "capture_content_digest_equal": { "const": false },
+              "weights_identity_equal": { "const": true }
+            },
+            "required": ["capture_content_digest_equal", "weights_identity_equal"]
+          }
+        },
+        "required": ["self_compare"]
+      }
+    },
+    {
+      "description": "BIAS-001: a cross_stack estimator requires a bias block.",
+      "if": {
+        "properties": {
+          "estimator": { "properties": { "stack_relation": { "const": "cross_stack" } }, "required": ["stack_relation"] }
+        },
+        "required": ["estimator"]
+      },
+      "then": {
+        "properties": {
+          "comparability": {
+            "properties": {
+              "bias": { "type": "object" },
+              "class": { "const": "advisory" }
+            },
+            "required": ["bias"]
+          }
+        }
+      }
+    },
+    {
+      "description": "A cross-lane comparison may never be cited as a floor.",
+      "if": {
+        "properties": {
+          "comparability": { "properties": { "same_lane": { "const": false } }, "required": ["same_lane"] }
+        },
+        "required": ["comparability"]
+      },
+      "then": {
+        "properties": {
+          "comparability": {
+            "properties": { "usable_as_floor": { "const": false }, "class": { "const": "advisory" } }
+          }
+        }
+      }
+    },
+    {
+      "description": "HEAD-1b: a substituted head is head_policy=shared_reference_head, advisory, and blocking-disclosed.",
+      "if": {
+        "properties": {
+          "estimator": { "properties": { "head_policy": { "const": "shared_reference_head" } }, "required": ["head_policy"] }
+        },
+        "required": ["estimator"]
+      },
+      "then": {
+        "properties": {
+          "comparator": {
+            "properties": { "head_applied_tensor_content_sha256": { "$ref": "#/$defs/sha256" } },
+            "required": ["head_applied_tensor_content_sha256"]
+          }
+        }
+      }
+    }
+  ],
+
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha256_or_null": {
+      "oneOf": [{ "type": "string", "pattern": "^[0-9a-f]{64}$" }, { "type": "null" }]
+    },
+    "stats": {
+      "type": "object",
+      "required": ["mean", "median", "p95", "p99", "p99_9", "max"],
+      "additionalProperties": false,
+      "description": "The statistic block shape kimi-k3 uses and k6_kld_report.py already emits, so numbers line up field-for-field.",
+      "properties": {
+        "mean": { "type": "number" },
+        "median": { "type": "number" },
+        "p95": { "type": "number" },
+        "p99": { "type": "number" },
+        "p99_9": { "type": "number" },
+        "max": { "type": "number" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": ["passed"],
+      "additionalProperties": true,
+      "properties": {
+        "passed": { "type": "boolean" },
+        "overridden_by": { "type": ["string", "null"] },
+        "detail": { "type": ["string", "null"] }
+      }
+    },
+    "side": {
+      "type": "object",
+      "required": [
+        "dataset_sha256",
+        "capture_content_digest",
+        "role",
+        "form",
+        "lane",
+        "head",
+        "weights"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "label": { "type": ["string", "null"] },
+        "dataset_id": { "type": ["string", "null"] },
+        "dataset_sha256": { "$ref": "#/$defs/sha256" },
+        "capture_content_digest": { "$ref": "#/$defs/sha256" },
+        "role": { "enum": ["root", "quant", "derived"] },
+        "form": { "enum": ["hidden", "logit"] },
+        "lane": { "enum": ["sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other"] },
+        "repository": { "type": ["string", "null"] },
+        "revision": { "type": ["string", "null"] },
+        "lane_identity_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "stack_fingerprint_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "scope_digest": { "type": ["string", "null"] },
+        "head": {
+          "type": "object",
+          "required": ["tensor_content_sha256", "quantized", "source"],
+          "additionalProperties": true,
+          "properties": {
+            "tensor_content_sha256": { "$ref": "#/$defs/sha256_or_null" },
+            "raw_tensor_sha256": { "$ref": "#/$defs/sha256_or_null" },
+            "quantized": { "type": ["boolean", "null"] },
+            "bits": { "type": ["integer", "null"] },
+            "source": { "enum": ["native", "artifact_dequantized", "shared_reference_head", "unknown"] }
+          }
+        },
+        "weights": {
+          "type": "object",
+          "required": ["repository", "model_revision", "quantized"],
+          "additionalProperties": true,
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "revision": { "type": ["string", "null"] },
+            "model_revision": { "type": ["string", "null"] },
+            "quantized": { "type": "boolean" },
+            "checkpoint_identity_sha256": { "$ref": "#/$defs/sha256_or_null" }
+          }
+        }
+      }
+    }
+  }
+}

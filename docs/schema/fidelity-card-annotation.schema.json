@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fidelity-card-annotation.schema.json",
+  "title": "fidelity-provenance/v1 -- the x_fidelity card block",
+  "description": "Validates the `x_fidelity:` top-level block of a HuggingFace model or dataset card, after YAML parsing. Layer 2 of the annotation; Layer 1 is a conformant model-index result validated by the Hub's own endpoint and by huggingface_hub's round-trip. The cross-layer invariants XC-1..XC-5 are NOT expressible in JSON Schema and are enforced by bin/fidelity-card validate.",
+  "type": "object",
+  "required": ["spec_version", "role", "head"],
+  "additionalProperties": true,
+  "properties": {
+    "spec": { "type": ["string", "null"] },
+    "spec_version": { "const": "fidelity-provenance/v1" },
+    "role": {
+      "enum": ["root", "quant", "fidelity-dataset"],
+      "description": "root/quant = a MODEL card. fidelity-dataset = a DATASET card for a capture."
+    },
+    "reference_model": { "type": ["string", "null"] },
+    "reference_revision": { "$ref": "#/$defs/revision_or_null" },
+
+    "fidelity_dataset": {
+      "description": "REQUIRED non-null for role=root. Optional (commonly null) for role=quant: most quant authors discard their own capture.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["repository", "revision", "dataset_sha256", "form", "role"],
+          "additionalProperties": true,
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "revision": { "$ref": "#/$defs/revision_or_null" },
+            "dataset_sha256": { "$ref": "#/$defs/sha256" },
+            "capture_content_digest": { "$ref": "#/$defs/sha256_or_null" },
+            "form": { "enum": ["hidden", "logit"] },
+            "role": { "enum": ["root", "quant", "derived"] },
+            "manifest_path": { "type": ["string", "null"] }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+
+    "registry": {
+      "type": "object",
+      "required": ["dataset", "schema_version"],
+      "additionalProperties": true,
+      "properties": {
+        "dataset": { "type": "string", "minLength": 1 },
+        "schema_version": { "const": "quant-fidelity-registry/v1" },
+        "artifact_id": { "type": ["string", "null"], "pattern": "^artifact--" },
+        "measurement_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^measurement--" }
+        }
+      }
+    },
+
+    "scope_digest": { "type": ["string", "null"] },
+
+    "head": {
+      "type": "object",
+      "description": "THE HEAD TRAP GUARD at card level. lm_head_tensor_content_sha256 is the NORMATIVE identity; lm_head_file_sha256 is a container digest and must never be compared to it.",
+      "required": ["policy", "quantized", "lm_head_tensor_content_sha256", "replay_permitted"],
+      "additionalProperties": true,
+      "properties": {
+        "policy": { "enum": ["native", "quantized", "shared_reference", "unknown"] },
+        "quantized": { "type": ["boolean", "null"] },
+        "bits": { "type": ["integer", "null"], "minimum": 1 },
+        "lm_head_tensor_content_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "lm_head_file_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "final_norm_tensor_content_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "final_norm_file_sha256": { "$ref": "#/$defs/sha256_or_null" },
+        "equality_receipt": { "type": ["string", "null"] },
+        "replay_permitted": {
+          "type": "boolean",
+          "description": "XC-5: true requires lm_head_tensor_content_sha256 non-null. A null content digest FORBIDS cross-artifact hidden replay (spec HEAD-4)."
+        },
+        "note": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "replay_permitted": { "const": true } }, "required": ["replay_permitted"] },
+          "then": { "properties": { "lm_head_tensor_content_sha256": { "$ref": "#/$defs/sha256" } } }
+        }
+      ]
+    },
+
+    "measurements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "lane", "status", "metric_name", "value", "units", "direction", "run_count", "determinism", "measured_by"],
+        "additionalProperties": true,
+        "properties": {
+          "id": { "type": "string", "pattern": "^measurement--" },
+          "lane": { "enum": ["sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other"] },
+          "status": { "enum": ["published", "pending", "superseded", "retracted"] },
+          "comparability_key": { "type": ["string", "null"], "pattern": "^cmp--[0-9a-f]{16}$" },
+          "panel_id": { "type": ["string", "null"], "pattern": "^panel--" },
+          "reference_id": { "type": ["string", "null"], "pattern": "^reference--" },
+          "pipeline_id": { "type": ["string", "null"], "pattern": "^pipeline--" },
+          "metric_name": { "type": "string", "minLength": 1 },
+          "value": { "type": "number" },
+          "units": { "const": "nats" },
+          "direction": { "const": "reference_to_candidate" },
+          "run_count": { "type": "integer", "minimum": 0 },
+          "determinism": {
+            "type": "object",
+            "required": ["evidence_kind", "identical_across_runs"],
+            "additionalProperties": true,
+            "properties": {
+              "evidence_kind": {
+                "enum": [
+                  "tokenwise_kld_sha256",
+                  "logits_tensor_sha256",
+                  "hidden_state_tensor_sha256",
+                  "sealed_tokenwise_digest",
+                  "run_mean_equality_only",
+                  "receipt_file_sha256",
+                  "container_or_archive_sha256",
+                  "none"
+                ]
+              },
+              "distinct_evidence_hash_count": { "type": ["integer", "null"], "minimum": 0 },
+              "identical_across_runs": { "type": ["boolean", "null"] },
+              "evidence_hashes": { "type": "array", "items": { "$ref": "#/$defs/sha256" } }
+            },
+            "allOf": [
+              {
+                "description": "registry DET-001 restated at card level.",
+                "if": { "properties": { "identical_across_runs": { "const": true } }, "required": ["identical_across_runs"] },
+                "then": {
+                  "properties": {
+                    "evidence_kind": {
+                      "enum": ["tokenwise_kld_sha256", "logits_tensor_sha256", "hidden_state_tensor_sha256", "sealed_tokenwise_digest"]
+                    },
+                    "distinct_evidence_hash_count": { "const": 1 }
+                  }
+                }
+              }
+            ]
+          },
+          "floor_measurement_id": { "type": ["string", "null"], "pattern": "^measurement--" },
+          "floor_lane": { "enum": ["sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other", null] },
+          "quantization_attributable": { "type": ["number", "null"] },
+          "measured_by": { "enum": ["self-measured", "author-reported", "third-party-reported"] },
+          "disclosures": { "type": "array", "items": { "type": "string" } }
+        },
+        "allOf": [
+          {
+            "description": "XC-4 / BIAS-006 at card level: a subtracted floor must come from the SAME lane.",
+            "if": {
+              "properties": { "quantization_attributable": { "type": "number" } },
+              "required": ["quantization_attributable"]
+            },
+            "then": {
+              "required": ["floor_measurement_id", "floor_lane"],
+              "properties": { "floor_measurement_id": { "type": "string", "pattern": "^measurement--" } }
+            }
+          }
+        ]
+      }
+    },
+
+    "captured_model": {
+      "description": "REQUIRED for role=fidelity-dataset: which model this capture is OF.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["repository", "revision", "role"],
+          "additionalProperties": true,
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "revision": { "$ref": "#/$defs/revision_or_null" },
+            "role": { "enum": ["root", "quant", "derived"] }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "form": { "enum": ["hidden", "logit", null] },
+    "lane": { "enum": ["sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other", null] },
+    "panel": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["panel_id", "suite_token_hash_sha256", "contexts", "scored_positions"],
+          "additionalProperties": true,
+          "properties": {
+            "panel_id": { "type": ["string", "null"] },
+            "suite_token_hash_sha256": { "$ref": "#/$defs/sha256" },
+            "contexts": { "type": "integer", "minimum": 1 },
+            "scored_positions": { "type": "integer", "minimum": 1 },
+            "repository": { "type": ["string", "null"] },
+            "revision": { "$ref": "#/$defs/revision_or_null" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "seal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["manifest", "dataset_sha256", "checksums"],
+          "additionalProperties": true,
+          "properties": {
+            "manifest": { "type": "string", "minLength": 1 },
+            "dataset_sha256": { "$ref": "#/$defs/sha256" },
+            "checksums": { "type": "string", "minLength": 1 },
+            "checksums_sha256": { "$ref": "#/$defs/sha256_or_null" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "interop": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "compatible_with": { "type": "array", "items": { "type": "string" } },
+        "k3_compat_emitted": { "type": ["boolean", "null"] }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "description": "A root MODEL card must name its fidelity dataset. That is the whole point of being a root.",
+      "if": { "properties": { "role": { "const": "root" } }, "required": ["role"] },
+      "then": { "properties": { "fidelity_dataset": { "type": "object" } }, "required": ["fidelity_dataset"] }
+    },
+    {
+      "description": "A quant MODEL card must cite at least one registry measurement.",
+      "if": { "properties": { "role": { "const": "quant" } }, "required": ["role"] },
+      "then": {
+        "required": ["registry", "measurements"],
+        "properties": {
+          "registry": {
+            "properties": { "measurement_ids": { "type": "array", "minItems": 1 } },
+            "required": ["measurement_ids"]
+          },
+          "measurements": { "type": "array", "minItems": 1 }
+        }
+      }
+    },
+    {
+      "description": "A DATASET card carries everything itself: there is no model-index and no base_model rendering to lean on.",
+      "if": { "properties": { "role": { "const": "fidelity-dataset" } }, "required": ["role"] },
+      "then": {
+        "required": ["captured_model", "form", "panel", "lane", "seal"],
+        "properties": {
+          "captured_model": { "type": "object" },
+          "form": { "enum": ["hidden", "logit"] },
+          "lane": { "enum": ["sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other"] },
+          "panel": { "type": "object" },
+          "seal": { "type": "object" }
+        }
+      }
+    }
+  ],
+
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha256_or_null": {
+      "oneOf": [{ "type": "string", "pattern": "^[0-9a-f]{64}$" }, { "type": "null" }]
+    },
+    "revision_or_null": {
+      "oneOf": [{ "type": "string", "pattern": "^[0-9a-f]{7,64}$" }, { "type": "null" }]
+    }
+  }
+}

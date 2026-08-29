@@ -1,0 +1,294 @@
+{
+  "_example_note": {
+    "purpose": "Worked example: step-3 comparison of the K6 quant capture against the BF16 root capture, both hidden form, both on the sealed 25-window final25 panel.",
+    "the_point": "Both captures are on the SAME lane, so stack_relation is same_stack and no cross-stack floor has to be subtracted. Compare this with the published cross-stack replay floor of 0.012712 nats -- comparable in magnitude to K6's entire 0.013723 -- which is comparison overhead, not quantization.",
+    "value_provenance": "metric.value, top1_agreement, the streaming floor and the attributable delta are the REAL published numbers from registry/data/measurements.jsonl (measurement--glm53.k6-6bpw-stream.brandonmusic-final25, measurement--glm53.bf16-stream-floor.brandonmusic-final25). The distribution tail statistics are illustrative."
+  },
+  "candidate": {
+    "capture_content_digest": "29e5e0ed2004e2d83fa561a590bef42dfceba301b4ff1ea94c9593c394cbdde0",
+    "dataset_id": "fidelity--malaiwah.glm53-flash-tr3-6bpw.final25.hidden",
+    "dataset_sha256": "eb32a3b6b574cb98ac0b40b710099ebf313ce92c7ed2f54a634281ae76154f26",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4",
+      "source": "native",
+      "tensor_content_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4"
+    },
+    "label": "GLM-5.3-Flash-TR3-6bpw (K6)",
+    "lane": "streaming",
+    "lane_identity_sha256": "124595429ed3406efa6d889ae7242a57fd594264414f5c091f5ca102950e4a13",
+    "repository": "malaiwah/GLM-5.3-Flash-TR3-6bpw-fidelity-final25",
+    "revision": null,
+    "role": "quant",
+    "scope_digest": "attn.o=quantized:exl3-mcg@6|attn.qkv=quantized:exl3-mcg@6|embed_tokens=native:bf16|lm_head=native:bf16|mlp.down=quantized:exl3-mcg@6|mlp.gate=quantized:exl3-mcg@6|mlp.up=quantized:exl3-mcg@6|moe.experts=quantized:exl3-mcg@6|norm=native:bf16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "0ddc78e6ec7fae403019b2e87c7ded31d3f10271bbb5c7b73a1513798bcdac00",
+    "weights": {
+      "checkpoint_identity_sha256": "fb8540afe31f193c211d2d66aafd30b62ecd6e7882308834c3c00f0840a25b43",
+      "model_revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+      "quantized": true,
+      "repository": "malaiwah/GLM-5.3-Flash-TR3-6bpw",
+      "revision": "90dd7d6c86db8015f66566a9fffe4eaa43e3644f"
+    }
+  },
+  "comparability": {
+    "bias": null,
+    "class": "strict",
+    "key": "cmp--202b717f3219c414",
+    "key_inputs": {
+      "accumulation_dtype": "float64",
+      "direction": "reference_to_candidate",
+      "head_policy": "native_head",
+      "metric_name": "mean_of_run_means_tokenwise_kld",
+      "panel_id": "panel--glm53.brandonmusic.final25",
+      "reference_id": "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+      "stack_relation": "same_stack"
+    },
+    "note": "key and key_inputs are recomputed by registry/tools/registry_lib.py, the registry's OWN code, never reimplemented here. NOTE the deliberate divergence: key_inputs.head_policy carries native_head because the LIVE registry row does, while estimator.head_policy is shared_reference_head because this receipt replayed both sides through one (bitwise-identical) head. A generator emitting a registry submission MUST reconcile these two, and REFC-003 will reject the row if it does not.",
+    "same_lane": true,
+    "usable_as_floor": true
+  },
+  "comparator": {
+    "accumulation_dtype": "float64",
+    "bf16_reduced_precision_reduction": false,
+    "cublas_workspace_config": ":4096:8",
+    "deterministic_algorithms": true,
+    "device": "cuda:0",
+    "head_applied_tensor_content_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4",
+    "logprob_dtype": "float64",
+    "position_block": 128,
+    "short_circuited": false,
+    "source_file_hashes_verified": true,
+    "tf32": false,
+    "tool": {
+      "entrypoint": "bin/fidelity-dataset compare",
+      "note": "vocab_chunk 9680 = 154880/16. kimi-k3's default 10240 does NOT divide 154880 and his parser errors out; 9680 is the value to ship in a k3-compat README.",
+      "wraps": [
+        "k6/tools/k6_kld_report.py::_token_kld",
+        "k6/tools/hidden_replay.py::_replay_logits"
+      ]
+    },
+    "two_pass": true,
+    "vocab_chunk": 9680
+  },
+  "comparison_kind": "measurement",
+  "context_depth_buckets": {
+    "0000-0255": null,
+    "0256-0511": null,
+    "0512-1023": null,
+    "1024-1535": null,
+    "1536-2046": null
+  },
+  "created_utc": "2026-08-29T00:00:00Z",
+  "determinism": {
+    "cold_start_per_run": true,
+    "distinct_evidence_hash_count": 1,
+    "evidence_hashes": [
+      "9657ede36b9f4b09a2c74916239c6d9a3baebce5f3fa64af7af388b0686aa284"
+    ],
+    "evidence_kind": "tokenwise_kld_sha256",
+    "identical_across_runs": true,
+    "max_run_mean": 0.013714888822596553,
+    "min_run_mean": 0.013714888822596553,
+    "note": "Content-level evidence over the tokenwise KL array. Whole-file digests of the capture tensors are NOT usable: stream_score writes cold_run into the safetensors __metadata__, so bitwise-identical runs produce different file digests (hidden_replay_selftest rung f-payload-sha).",
+    "population_stddev_of_run_means": 0.0,
+    "run_count": 2,
+    "run_means": [
+      0.013714888822596553,
+      0.013714888822596553
+    ]
+  },
+  "disclosures": [
+    {
+      "affects_comparability": true,
+      "code": "streaming_lane_offset",
+      "detail": "Both captures are on the streaming lane. Within the lane the comparison is clean and same_stack; against a sealed-ep8 number it carries the measured bridge offset (delta_mean_kld -8.4958e-06, max_abs_per_window_delta 2.8735e-04, tokenwise digest does NOT match the sealed lane).",
+      "severity": "caveat"
+    },
+    {
+      "affects_comparability": false,
+      "code": "shared_reference_head",
+      "detail": "HEAD-1a: both artifacts' head content digests are equal (TR3 keeps head_bits 16), so applying one head to both sides' hidden states erases nothing. This is a disclosure, not a caveat, precisely because the digests were checked.",
+      "severity": "info"
+    },
+    {
+      "affects_comparability": false,
+      "code": "reduced_run_count",
+      "detail": "Two cold runs, not five (registry DET-006).",
+      "severity": "caveat"
+    }
+  ],
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "head_policy": "shared_reference_head",
+    "logits_dtype": "bf16",
+    "softmax_note": "torch.log_softmax in float64 over the full 154,880-entry vocabulary; no truncation, no top-k, no clamp. A non-finite intermediate is a hard refusal, never a clamp.",
+    "stack_relation": "same_stack",
+    "two_pass": true,
+    "vocab_chunk": 9680,
+    "zero_handling": "not applicable: both sides are dense log-softmax outputs"
+  },
+  "format_version": 1,
+  "gates": {
+    "coverage": {
+      "detail": "25 of 25 declared records present on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "form": {
+      "detail": "hidden vs hidden",
+      "overridden_by": null,
+      "passed": true
+    },
+    "geometry": {
+      "detail": "vocab_size 154880 equal; hidden_width 4096 equal",
+      "overridden_by": null,
+      "passed": true
+    },
+    "head": {
+      "detail": "HEAD-1a: both sides declare head.tensor_content_sha256 aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4 and that same head was applied at replay. TR3 keeps the head native (head_bits 16), so no head-quantization error is erased. A stock-EXL3 artifact with head_bits 6 would carry a different digest and this gate would REFUSE.",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lane": {
+      "detail": "both captures declare lane=streaming; same_lane is true, so this receipt is a legal floor target under registry BIAS-006",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lossy": {
+      "detail": "lossy_codec null on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "panel": {
+      "detail": "suite_token_hash_sha256 equal; 25/25 index sets equal; per-record token and mask digests equal; scoring_window equal",
+      "overridden_by": null,
+      "passed": true
+    },
+    "seal": {
+      "detail": "both manifests self-seal, checksums.txt verified, every tensor_content_sha256 recomputed",
+      "overridden_by": null,
+      "passed": true
+    },
+    "stack": {
+      "detail": "lane_identity_sha256 and stack_fingerprint_sha256 equal on both sides -> stack_relation=same_stack; no bias block required",
+      "overridden_by": null,
+      "passed": true
+    }
+  },
+  "high_kld_contexts": null,
+  "js": null,
+  "kl": {
+    "max": 3.9014,
+    "mean": 0.013714888822596553,
+    "median": 0.0041,
+    "p95": 0.0562,
+    "p99": 0.1483,
+    "p99_9": 0.4127
+  },
+  "kl_macro_stratum_mean": null,
+  "kl_micro_token_mean": 0.013714888822596553,
+  "logit_absolute_error_max": null,
+  "logit_absolute_error_mean": null,
+  "measurement_scope": {
+    "contexts": 25,
+    "covers_full_panel": true,
+    "position_filter": "all",
+    "positions_per_context": 2047,
+    "scored_positions": 51175,
+    "subset_detail": null
+  },
+  "metric": {
+    "direction": "reference_to_candidate",
+    "direction_label": "KL(reference || candidate)",
+    "higher_is_better": false,
+    "name": "mean_of_run_means_tokenwise_kld",
+    "units": "nats",
+    "value": 0.013714888822596553
+  },
+  "panel": {
+    "context_length": 2048,
+    "contexts": 25,
+    "panel_id": "panel--glm53.brandonmusic.final25",
+    "panel_token_sha256_legacy": "6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff",
+    "scored_positions": 51175,
+    "scoring_window": {
+      "dropped_positions_total": 0,
+      "min_left_context_tokens": 1,
+      "policy": "every prediction position of every window is scored; nothing is dropped",
+      "score_from": 0,
+      "windowed": false
+    },
+    "suite_token_hash_sha256": "66cc7026a9a0cb9dbe192b4ff76c42abfe66a594c35c447779bf1b134b9569ac",
+    "tokenizer": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "glm-5.3-flash",
+      "repository": "zai-org/GLM-5.3-Flash-BF16",
+      "revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+      "vocab_size": 154880
+    }
+  },
+  "per_context": null,
+  "per_domain": {
+    "axis1_general": null,
+    "axis2_legal": null,
+    "axis3_code_agentic": null,
+    "axis4_reasoning_termination": null
+  },
+  "per_stratum": null,
+  "receipt_sha256": "10d2cdd215466ae716bd63978158f2ee91b9a9101ace836af861416ca679539a",
+  "reference": {
+    "capture_content_digest": "5c57d0e94abb1b848e7d02b8202b466333b0bc011e982e935e4458c2eac22132",
+    "dataset_id": "fidelity--malaiwah.glm53-flash-bf16.final25.hidden",
+    "dataset_sha256": "fb9594c6b3646726d0fb637c26833e8c6a3bb078c8fee1463df3ebdcce8021f2",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4",
+      "source": "native",
+      "tensor_content_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4"
+    },
+    "label": "GLM-5.3-Flash BF16 reference (root)",
+    "lane": "sealed-ep8",
+    "lane_identity_sha256": "c8c8f354bfe5fed0cafcf119dab386407e6cdddbc5fef2da6802addef1c7d9bf",
+    "repository": "malaiwah/GLM-5.3-Flash-BF16-fidelity-root-final25",
+    "revision": null,
+    "role": "root",
+    "scope_digest": "attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "8b1c2b9df2c606b4730d0503a61c965f77ae778c2cb3ea480b6782d9251a3a0e",
+    "weights": {
+      "checkpoint_identity_sha256": "2eda2845a93b247685e060c5b366561e9aad94b315523c8920fcac297dfdc90f",
+      "model_revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+      "quantized": false,
+      "repository": "zai-org/GLM-5.3-Flash-BF16",
+      "revision": "a6c167b62691b2bac901344b65cb651a70f53e43"
+    }
+  },
+  "schema": "malaiwah.fidelity-comparison-receipt.v1",
+  "self_compare": null,
+  "submission": {
+    "emitted": true,
+    "path": "submission-receipt.json",
+    "receipt_sha256": null,
+    "submission_schema": "quant-fidelity-registry/submission-receipt.v1"
+  },
+  "tokenwise": {
+    "bytes": 409528,
+    "path": "tokenwise-kld.npy",
+    "sha256": "9657ede36b9f4b09a2c74916239c6d9a3baebce5f3fa64af7af388b0686aa284"
+  },
+  "top1_agreement": 0.9656277479237909,
+  "top1_discordant_contexts": null,
+  "uncertainty": {
+    "ci95_high": null,
+    "ci95_low": null,
+    "cluster_unit": null,
+    "clusters": null,
+    "method": "none",
+    "samples": null,
+    "seed": null
+  }
+}

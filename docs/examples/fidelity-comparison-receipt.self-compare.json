@@ -1,0 +1,274 @@
+{
+  "_example_note": {
+    "constant_is_real": "expected_tokenwise_bytes 409528 and expected_tokenwise_sha256 3ffddc61...be17 are the genuine np.save of 51,175 float64 zeros, independently reproduced. bin/selftest_zero_floor.py already asserts this shape (PASS 8/0/0 on this Mac).",
+    "purpose": "Worked example: the A==B REPRODUCTION CONFIRMATION. The BF16 root capture compared against itself.",
+    "the_point": "Not a smoke test. Our checkpoint lane is bitwise deterministic, so a self-compare that yields anything other than exactly 0.0 means the estimator or the reader is broken. The comparator reaches this answer by the T1 HASH PROOF -- capture_content_digest equality -- without running the matmul; --force-compute runs the math and asserts the result is bitwise identical."
+  },
+  "candidate": {
+    "capture_content_digest": "5c57d0e94abb1b848e7d02b8202b466333b0bc011e982e935e4458c2eac22132",
+    "dataset_id": "fidelity--malaiwah.glm53-flash-bf16.final25.hidden",
+    "dataset_sha256": "fb9594c6b3646726d0fb637c26833e8c6a3bb078c8fee1463df3ebdcce8021f2",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4",
+      "source": "native",
+      "tensor_content_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4"
+    },
+    "label": "GLM-5.3-Flash BF16 reference (root), capture A -- same bytes",
+    "lane": "sealed-ep8",
+    "lane_identity_sha256": "c8c8f354bfe5fed0cafcf119dab386407e6cdddbc5fef2da6802addef1c7d9bf",
+    "repository": "malaiwah/GLM-5.3-Flash-BF16-fidelity-root-final25",
+    "revision": null,
+    "role": "root",
+    "scope_digest": "attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "8b1c2b9df2c606b4730d0503a61c965f77ae778c2cb3ea480b6782d9251a3a0e",
+    "weights": {
+      "checkpoint_identity_sha256": "2eda2845a93b247685e060c5b366561e9aad94b315523c8920fcac297dfdc90f",
+      "model_revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+      "quantized": false,
+      "repository": "zai-org/GLM-5.3-Flash-BF16",
+      "revision": "a6c167b62691b2bac901344b65cb651a70f53e43"
+    }
+  },
+  "comparability": {
+    "bias": null,
+    "class": "strict",
+    "key": null,
+    "key_inputs": null,
+    "note": "No comparability key: a reproduction confirmation is not a measurement and is never ranked in a table.",
+    "same_lane": true,
+    "usable_as_floor": true
+  },
+  "comparator": {
+    "accumulation_dtype": "float64",
+    "bf16_reduced_precision_reduction": false,
+    "cublas_workspace_config": ":4096:8",
+    "deterministic_algorithms": true,
+    "device": "cpu",
+    "head_applied_tensor_content_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4",
+    "logprob_dtype": "float64",
+    "position_block": 128,
+    "short_circuited": true,
+    "source_file_hashes_verified": true,
+    "tf32": false,
+    "tool": {
+      "entrypoint": "bin/fidelity-dataset compare --self-compare",
+      "note": "short_circuited=true means the answer came from the hash proof. The receipt still records device because --force-compute would need it and because a reader must never have to guess where a number was computed."
+    },
+    "two_pass": true,
+    "vocab_chunk": 9680
+  },
+  "comparison_kind": "reproduction_confirmation",
+  "context_depth_buckets": null,
+  "created_utc": "2026-08-29T00:00:00Z",
+  "determinism": {
+    "cold_start_per_run": null,
+    "distinct_evidence_hash_count": 1,
+    "evidence_hashes": [
+      "5c57d0e94abb1b848e7d02b8202b466333b0bc011e982e935e4458c2eac22132"
+    ],
+    "evidence_kind": "hidden_state_tensor_sha256",
+    "identical_across_runs": null,
+    "max_run_mean": 0.0,
+    "min_run_mean": 0.0,
+    "note": "identical_across_runs is null, not true: a single self-compare establishes that the ESTIMATOR is exact on identical input, not that two independent CAPTURES agree. That claim needs run_count >= 2 with two independently produced capture_content_digest values (SC-2).",
+    "population_stddev_of_run_means": 0.0,
+    "run_count": 1,
+    "run_means": [
+      0.0
+    ]
+  },
+  "disclosures": [
+    {
+      "affects_comparability": false,
+      "code": "no_known_deviations",
+      "detail": "Self-compare of one capture against itself; exact zero asserted by hash proof and confirmed by --force-compute.",
+      "severity": "info"
+    }
+  ],
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "head_policy": "shared_reference_head",
+    "logits_dtype": "bf16",
+    "softmax_note": "fp64 log_softmax of bitwise-equal inputs is deterministic, and t_logp - s_logp is a subtraction of equal doubles: every per-token value is exactly +0.0, never -0.0 and never an epsilon.",
+    "stack_relation": "same_stack",
+    "two_pass": true,
+    "vocab_chunk": 9680,
+    "zero_handling": "exact zero asserted, not rounded"
+  },
+  "format_version": 1,
+  "gates": {
+    "coverage": {
+      "detail": "25 of 25 declared records present on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "form": {
+      "detail": "hidden vs hidden",
+      "overridden_by": null,
+      "passed": true
+    },
+    "geometry": {
+      "detail": "vocab_size 154880 equal; hidden_width 4096 equal",
+      "overridden_by": null,
+      "passed": true
+    },
+    "head": {
+      "detail": "HEAD-1a: identical head content digest on both sides. For hidden form this check is mandatory even in a self-compare: identical hiddens say nothing about identical logits if the heads differ.",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lane": {
+      "detail": "lane=sealed-ep8 on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lossy": {
+      "detail": "lossy_codec null on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "panel": {
+      "detail": "suite_token_hash_sha256 equal; 25/25 index sets equal; per-record token and mask digests equal; scoring_window equal",
+      "overridden_by": null,
+      "passed": true
+    },
+    "seal": {
+      "detail": "both manifests self-seal, checksums.txt verified, every tensor_content_sha256 recomputed",
+      "overridden_by": null,
+      "passed": true
+    },
+    "stack": {
+      "detail": "identical lane_identity_sha256 and stack_fingerprint_sha256 -> same_stack",
+      "overridden_by": null,
+      "passed": true
+    }
+  },
+  "high_kld_contexts": [],
+  "js": {
+    "max": 0.0,
+    "mean": 0.0,
+    "median": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "p99_9": 0.0
+  },
+  "kl": {
+    "max": 0.0,
+    "mean": 0.0,
+    "median": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "p99_9": 0.0
+  },
+  "kl_macro_stratum_mean": 0.0,
+  "kl_micro_token_mean": 0.0,
+  "logit_absolute_error_max": 0.0,
+  "logit_absolute_error_mean": 0.0,
+  "measurement_scope": {
+    "contexts": 25,
+    "covers_full_panel": true,
+    "position_filter": "all",
+    "positions_per_context": 2047,
+    "scored_positions": 51175,
+    "subset_detail": null
+  },
+  "metric": {
+    "direction": "reference_to_candidate",
+    "direction_label": "KL(reference || candidate)",
+    "higher_is_better": false,
+    "name": "mean_tokenwise_kld",
+    "units": "nats",
+    "value": 0.0
+  },
+  "panel": {
+    "context_length": 2048,
+    "contexts": 25,
+    "panel_id": "panel--glm53.brandonmusic.final25",
+    "panel_token_sha256_legacy": "6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff",
+    "scored_positions": 51175,
+    "scoring_window": {
+      "dropped_positions_total": 0,
+      "min_left_context_tokens": 1,
+      "policy": "every prediction position of every window is scored; nothing is dropped",
+      "score_from": 0,
+      "windowed": false
+    },
+    "suite_token_hash_sha256": "66cc7026a9a0cb9dbe192b4ff76c42abfe66a594c35c447779bf1b134b9569ac",
+    "tokenizer": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "glm-5.3-flash",
+      "repository": "zai-org/GLM-5.3-Flash-BF16",
+      "revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+      "vocab_size": 154880
+    }
+  },
+  "per_context": null,
+  "per_domain": null,
+  "per_stratum": null,
+  "receipt_sha256": "6a286460f5026b6a63188995a959ca5dfc5d77a73190b48d5d360b71fd52949f",
+  "reference": {
+    "capture_content_digest": "5c57d0e94abb1b848e7d02b8202b466333b0bc011e982e935e4458c2eac22132",
+    "dataset_id": "fidelity--malaiwah.glm53-flash-bf16.final25.hidden",
+    "dataset_sha256": "fb9594c6b3646726d0fb637c26833e8c6a3bb078c8fee1463df3ebdcce8021f2",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4",
+      "source": "native",
+      "tensor_content_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4"
+    },
+    "label": "GLM-5.3-Flash BF16 reference (root), capture A",
+    "lane": "sealed-ep8",
+    "lane_identity_sha256": "c8c8f354bfe5fed0cafcf119dab386407e6cdddbc5fef2da6802addef1c7d9bf",
+    "repository": "malaiwah/GLM-5.3-Flash-BF16-fidelity-root-final25",
+    "revision": null,
+    "role": "root",
+    "scope_digest": "attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "8b1c2b9df2c606b4730d0503a61c965f77ae778c2cb3ea480b6782d9251a3a0e",
+    "weights": {
+      "checkpoint_identity_sha256": "2eda2845a93b247685e060c5b366561e9aad94b315523c8920fcac297dfdc90f",
+      "model_revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+      "quantized": false,
+      "repository": "zai-org/GLM-5.3-Flash-BF16",
+      "revision": "a6c167b62691b2bac901344b65cb651a70f53e43"
+    }
+  },
+  "schema": "malaiwah.fidelity-comparison-receipt.v1",
+  "self_compare": {
+    "asserted_exact_zero": true,
+    "capture_content_digest_equal": true,
+    "expected_tokenwise_bytes": 409528,
+    "expected_tokenwise_sha256": "3ffddc61af8350782afd24c7a69de1f37c260bf5489c4e0f6e3ad89b0ab9be17",
+    "force_compute_agreed": true,
+    "head_digest_equal": true,
+    "weights_identity_equal": true
+  },
+  "submission": {
+    "emitted": false,
+    "path": null,
+    "receipt_sha256": null,
+    "refusal": "comparison_kind is reproduction_confirmation, not measurement. bin/fidelity/receipt.py::_scan_for_unsubmittable is the second, independent refusal axis.",
+    "submission_schema": null
+  },
+  "tokenwise": {
+    "bytes": 409528,
+    "path": "tokenwise-kld.npy",
+    "sha256": "3ffddc61af8350782afd24c7a69de1f37c260bf5489c4e0f6e3ad89b0ab9be17"
+  },
+  "top1_agreement": 1.0,
+  "top1_discordant_contexts": [],
+  "uncertainty": {
+    "ci95_high": null,
+    "ci95_low": null,
+    "cluster_unit": null,
+    "clusters": null,
+    "method": "none",
+    "samples": null,
+    "seed": null
+  }
+}
