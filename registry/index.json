@@ -4,13 +4,13 @@
       "file": "data/artifacts.jsonl",
       "record_count": 33,
       "schema": "schema/artifact.schema.json",
-      "sha256": "ed13eb1ea423acf4c1267c5273ce1293ac798cc50c869603b994a24d6894206b"
+      "sha256": "b0bd0080b2be53c8902e944e4cd0631282e7256ca767be3e5fc0feb200486a79"
     },
     "measurements": {
       "file": "data/measurements.jsonl",
       "record_count": 67,
       "schema": "schema/measurement.schema.json",
-      "sha256": "656796e806555b6cfbdf10cf8f22328852ce14692d13d82119f7f83fb9de4a39"
+      "sha256": "aec24b6fd04f7b6bf114b1a0bea86fa53531deeb663cbf853826be74bc2c50f0"
     },
     "models": {
       "file": "data/models.jsonl",
@@ -242,13 +242,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-08-29T21:21:53+00:00",
+  "generated_at": "2026-08-29T21:58:31+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-08-29T21:21:53+00:00",
+    "last_run_at": "2026-08-29T21:58:31+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }

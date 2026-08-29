@@ -67,6 +67,18 @@ TURBO_SUMMARIES = (
     "malaiwah.glm53-turbo-4.05bpw-packed-kld-summary.v1",
     "malaiwah.glm53-turbo-3.05bpw-packed-kld-summary.v1",
 )
+# TR3-published releases (brandonmusic's EXL3/MCG layout and its byte-identical
+# mirrors) scored through the SAME streaming harness, via stream_score.py
+# --source tr3.  Shape-identical to the turbo summary, and different from every
+# other third-party family here in one way that must NOT be flattened: these
+# releases SEAL themselves, and the summary carries the VERIFICATION of that
+# seal (which claims were recomputed from the published bytes, and how the shard
+# bytes were bound) rather than an unsealed-source caveat.  Coding that as
+# `unsealed_source` -- which is what reusing the turbo adapter would do -- would
+# put the opposite of the truth on the row.
+TR3_SUMMARIES = (
+    "malaiwah.glm53-tr3-4bpw-packed-kld-summary.v1",
+)
 FOREIGN_REPEATED = "glm53-r19-runtime-kld-repeated.v1"
 FOREIGN_WINDOW = "glm53-r19-runtime-window-kld.v1"
 FOREIGN_TP2 = "quant-pipeline.glm53-custom-tp2-runtime-window-kld.v1"
@@ -148,6 +160,7 @@ REPORT_FAMILIES = ("glm53flash-fidelity-report/2", "glm53flash-fidelity-report/3
 CROSSCHECK_FAMILIES = ("glm53flash-crosscheck/2",)
 OWN_SCHEMAS = set([PACKED_RECEIPT, FIVE_COLD_RUN, DIONE_SUMMARY, STREAM_VERDICT]
                   + list(STREAM_SUMMARIES) + list(TURBO_SUMMARIES)
+                  + list(TR3_SUMMARIES)
                   + list(REPORT_FAMILIES) + list(CROSSCHECK_FAMILIES))
 FOREIGN_SCHEMAS = {FOREIGN_REPEATED, FOREIGN_WINDOW, FOREIGN_TP2}
 KNOWN = OWN_SCHEMAS | FOREIGN_SCHEMAS
@@ -361,6 +374,126 @@ def adapt_turbo(receipt, path):
                                              "(natively, from the artifact's own "
                                              "weights). #/declared_head_bits says "
                                              "what the artifact's head IS.")},
+        "receipt_schema": receipt.get("schema"),
+        "stack_relation": "same_stack", "head_policy": "native_head",
+    }
+
+
+def adapt_tr3(receipt, path):
+    """F8: a SEALED TR3-published release on the streaming lane (--source tr3).
+
+    The arithmetic is the turbo adapter's, recomputed the same way: the asserted
+    mean is re-derived from run_means and the asserted bitwise_deterministic
+    flag from the per-run means and the distinct tokenwise digests; a
+    disagreement is exit 5, never a warning.
+
+    What this family states that no other third-party family does, and what the
+    row must therefore carry:
+
+      * A PUBLISHER SEAL, and its verification.  exl3-mcg-storage-abi.json and
+        materialization-receipt.json state digests over the emitted name set,
+        the materialization plan, the config and the index; the measurement
+        recomputed every one of them from the published bytes before decoding.
+        This adapter REQUIRES seal_verified to be true and refuses a summary
+        that merely claims a seal without saying what was checked -- an
+        unverified seal is a word, and the whole point of coding it is that a
+        reader can tell the two apart.
+      * SCOPE.  scope=glm53_routed_experts_only with head_bits 16: the routed
+        experts are quantized and every other tensor -- lm_head included -- is
+        the OFFICIAL one.  That is the opposite end of the scope axis from the
+        stock-exllamav3 rows on this same panel, and a reader must not have to
+        infer it from a bit count.
+
+    The lane is not read from the schema string: like K8, native-BF16 and the
+    turbo families, this name carries no lane marker, so --lane supplies it.
+    """
+    value = _need(receipt, "/measured_mean_kld", path)
+    means = _need(receipt, "/run_means", path)
+    digests = _need(receipt, "/distinct_tokenwise_kld_sha256", path)
+    recomputed = len(set(digests)) == 1 and len(set(means)) == 1
+    declared = receipt.get("bitwise_deterministic")
+    if declared is not None and bool(declared) != recomputed:
+        raise Refuse(E_INCONSISTENT,
+                     "the receipt declares bitwise_deterministic=%r but recomputing from run_means "
+                     "(%d distinct) and distinct_tokenwise_kld_sha256 (%d entries) gives %r"
+                     % (declared, len(set(means)), len(set(digests)), recomputed))
+    if not L.close(value, sum(means) / len(means)):
+        raise Refuse(E_INCONSISTENT, "measured_mean_kld != mean(run_means)")
+    if receipt.get("seal_verified") is not True:
+        raise Refuse(E_INCONSISTENT,
+                     "a %s receipt must carry seal_verified=true: this family exists "
+                     "because the release seals itself and the measurement recomputed "
+                     "that seal. The receipt says seal_verified=%r."
+                     % (receipt.get("schema"), receipt.get("seal_verified")),
+                     "re-run the measurement with a stream_score build that verifies "
+                     "the seal, or submit it through a family that claims no seal")
+    checks = receipt.get("seal_check_names") or []
+    passed = receipt.get("seal_checks_passed")
+    if not checks or passed != len(checks):
+        raise Refuse(E_INCONSISTENT,
+                     "seal_verified is true but the receipt names %d checks and reports "
+                     "%r passed. A seal is only evidence when the row can say WHICH "
+                     "claims were recomputed." % (len(checks), passed))
+    coded = [{
+        "code": "sealed_source_verified",
+        "detail": ("The release publishes its own storage ABI and materialization "
+                   "receipt, and this measurement RECOMPUTED all %d of their claims "
+                   "from the published bytes before decoding (%s). Shard bytes: %s. "
+                   "seal_disclosure (verbatim from the receipt): %s"
+                   % (len(checks), ", ".join(checks),
+                      receipt.get("shard_verification") or "not stated",
+                      receipt.get("seal_disclosure") or "not stated")),
+        "severity": "info", "affects_comparability": False,
+    }]
+    if receipt.get("cold_run_deviation"):
+        coded.append({"code": "reduced_run_count",
+                      "detail": "cold_run_deviation (verbatim from the receipt): %s"
+                                % receipt["cold_run_deviation"]})
+    head_bits = receipt.get("declared_head_bits")
+    if head_bits is not None and float(head_bits) < 16:
+        raise Refuse(E_INCONSISTENT,
+                     "this family is the routed-experts-only TR3 scope, whose head is "
+                     "native BF16; the receipt declares head_bits=%r. A quantized head "
+                     "changes the measured function and belongs on a family that says "
+                     "so." % head_bits)
+    scope_policy = receipt.get("scope_policy")
+    if scope_policy:
+        coded.append({
+            "code": "routed_experts_only_scope",
+            "detail": ("scope_policy (verbatim from the release's own config): %s, "
+                       "non_routed_dtype_policy %s, head_bits %s. Only the routed "
+                       "experts are quantized; every other tensor including lm_head "
+                       "is the OFFICIAL source tensor, verified name-set-equal to the "
+                       "official release's 1,618 non-routed names. Rows from "
+                       "full-scope artifacts on this same panel are measuring a "
+                       "different amount of model."
+                       % (scope_policy,
+                          receipt.get("nonrouted_policy_declared") or "not stated",
+                          head_bits)),
+            "severity": "info", "affects_comparability": True})
+    return {
+        "value": value, "metric_name": "mean_of_run_means_tokenwise_kld",
+        "direction": "reference_to_candidate", "accumulation": "float64",
+        "runs": len(means), "run_means": list(means), "cold": True,
+        "identical": recomputed and len(means) >= 2,
+        "evidence_kind": "tokenwise_kld_sha256", "evidence_hashes": list(digests),
+        "scored_positions": None, "gate": _gate(receipt),
+        "top1": receipt.get("top1_agreement"),
+        "artifact_repo": receipt.get("artifact_repo"),
+        "artifact_revision": receipt.get("artifact_revision"),
+        "teacher_digest": receipt.get("teacher_receipt_sha256"),
+        "verbatim_disclosure_coded": coded,
+        "field_provenance": {"value": "#/measured_mean_kld", "run_means": "#/run_means",
+                             "evidence_hashes": "#/distinct_tokenwise_kld_sha256",
+                             "artifact_repo": "#/artifact_repo",
+                             "artifact_revision": "#/artifact_revision",
+                             "seal": "#/seal_verified + #/seal_check_names",
+                             "scope": "#/scope_policy + #/declared_head_bits",
+                             "head_policy": ("SUPPLIED: how the head is APPLIED "
+                                             "(natively, from the artifact's own "
+                                             "weights). #/declared_head_bits says "
+                                             "what the artifact's head IS -- here, "
+                                             "16, i.e. unquantized.")},
         "receipt_schema": receipt.get("schema"),
         "stack_relation": "same_stack", "head_policy": "native_head",
     }
@@ -1165,8 +1298,18 @@ def build_row(args, adapted, receipt_sources, registry):
     # A receipt that discloses its own deviation in its own words: the code says which
     # deviation, the detail keeps the receipt's wording rather than a paraphrase of it.
     for d in (adapted.get("verbatim_disclosure_coded") or []):
-        disclosures.append({"code": d["code"], "severity": "caveat", "detail": d["detail"],
-                            "affects_comparability": True})
+        # The severity was hard-coded "caveat" and affects_comparability
+        # hard-coded True, which is the right DEFAULT (an adapter that says
+        # nothing is saying "this is a caveat") but wrong as a law: the TR3
+        # family's `sealed_source_verified` is the good news -- the publisher
+        # sealed the release and the measurement recomputed the seal -- and
+        # stamping it a comparability-affecting caveat would put the opposite
+        # of the truth on the row. An adapter that states either field wins.
+        disclosures.append({
+            "code": d["code"],
+            "severity": d.get("severity", "caveat"),
+            "detail": d["detail"],
+            "affects_comparability": bool(d.get("affects_comparability", True))})
     if lane and lane != "sealed-ep8":
         bridge = adapted.get("stream_bridge") or {}
         measured = ("On this panel the lane's offset against the sealed lane IS measured: "
@@ -1565,6 +1708,8 @@ def main():
                 adapted = adapt_dione(loaded[0][0], loaded[0][1])
             elif schemas & set(TURBO_SUMMARIES):
                 adapted = adapt_turbo(loaded[0][0], loaded[0][1])
+            elif schemas & set(TR3_SUMMARIES):
+                adapted = adapt_tr3(loaded[0][0], loaded[0][1])
             elif STREAM_VERDICT in schemas:
                 raise Refuse(E_MISSING,
                              "a %s receipt describes a summary; it carries no measurement of its "

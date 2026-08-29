@@ -592,13 +592,83 @@ REV_UNPINNED = lambda what: disc(
     "revision_unpinned", "caveat",
     "No measurement receipt for this artifact records a Hub revision. %s" % what, True)
 
+# CORRECTED 2026-08-29 (M2). This helper used to say attn.qkv / attn.o /
+# mlp.{gate,up,down} were quantized at the nominal rate.  They are not.  Every
+# TR3 artifact it describes -- our K6 and K8, and brandonmusic's 4bpw -- is
+# ROUTED-EXPERTS-ONLY, and the evidence is the artifacts' own published
+# metadata, which nobody had read into the seed:
+#
+#   * brandonmusic/GLM-5.3-Flash-tr3-4bpw @ 5ab363a8 (and its byte-identical
+#     mirror Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw @ 024db9f7) declares, in its
+#     own config.json, scope="glm53_routed_experts_only",
+#     non_routed_dtype_policy="official_source_native", head_bits=16; and in
+#     quantization/recipe.json, tensor_policy="uniform-routed-experts",
+#     nonrouted_policy="native".
+#   * Its materialization-receipt.json (self-seal 092be1ff..., recomputed)
+#     states native_tensor_count 1618, packed_tensor_count 148608,
+#     routed_choice_count 37152, nonrouted_native_exact true -- i.e. 43 layers
+#     x 288 experts x 3 projections of payloads and NOTHING else, with all
+#     1,618 non-routed tensors byte-exact official.  Its
+#     model.safetensors.index.json carries {trellis,suh,svh,mcg} objects under
+#     `.mlp.experts.<n>.` names only; lm_head.weight is a plain BF16
+#     [154880, 4096] tensor.
+#   * Our own K6/K8 checkpoints have the identical census, recorded in
+#     k6/K8-ANOMALY.json test_6_scope: native_tensor_count 1618,
+#     output_tensor_count 150226, routed_choice_count 37152,
+#     packed_tensor_count 148608, nonrouted_native_exact true.
+#
+# The old digest mattered: it made these rows look scope-comparable with the
+# stock-exllamav3 rows on the same panel, which really do quantize attention
+# (at K6) and the head (at K6).  They are at opposite ends of the scope axis.
 EXL3_SCOPE_UNIFORM = lambda bpw: scope("uniform", [
-    asg("embed_tokens", "native", "bf16"), asg("attn.qkv", "quantized", "exl3-mcg", bpw),
-    asg("attn.o", "quantized", "exl3-mcg", bpw), asg("mlp.gate", "quantized", "exl3-mcg", bpw),
-    asg("mlp.up", "quantized", "exl3-mcg", bpw), asg("mlp.down", "quantized", "exl3-mcg", bpw),
-    asg("moe.experts", "quantized", "exl3-mcg", bpw), asg("norm", "native", "bf16"),
-    asg("lm_head", "native", "bf16"),
-], "native", kv="bf16")
+    asg("embed_tokens", "native", "bf16", 16,
+        note="routed-experts-only scope: not quantized"),
+    asg("attn.qkv", "native", "bf16", 16,
+        note="NOT quantized. KDA layers ship the official split q/k/v_proj, MLA "
+             "layers the official q_a/q_b/kv_a_with_mqa/wq_b, all byte-exact "
+             "official (nonrouted_native_exact)"),
+    asg("attn.o", "native", "bf16", 16, note="NOT quantized"),
+    asg("attn.other", "native", "mixed", None,
+        note="b_proj / f_a_proj / f_b_proj / g_a_proj / g_b_proj / conv1d / the "
+             "DSA indexer and the attention norms ship as the official tensors; "
+             "A_log, dt_bias and e_score_correction_bias are fp32 there and here"),
+    asg("mlp.gate", "native", "bf16", 16, layer_range="0-2",
+        note="only the three DENSE layers have an mlp.*; NOT quantized"),
+    asg("mlp.up", "native", "bf16", 16, layer_range="0-2", note="NOT quantized"),
+    asg("mlp.down", "native", "bf16", 16, layer_range="0-2", note="NOT quantized"),
+    asg("moe.router", "native", "fp32", 32,
+        note="the routing gate and e_score_correction_bias are native"),
+    asg("moe.shared_expert", "native", "bf16", 16,
+        note="the shared expert is not routed and is NOT quantized"),
+    asg("moe.experts", "quantized", "exl3-mcg", bpw, layer_range="3-44",
+        note="36,288 modules = 42 executed layers x 288 experts x 3 projections. "
+             "The ONLY quantized class."),
+    asg("mtp", "quantized", "exl3-mcg", bpw, layer_range="45",
+        note="layer 45's routed experts are quantized and present in the release "
+             "(routed_choice_count 37152 = 43 layers), and are NOT executed by "
+             "standard-logits scoring"),
+    asg("norm", "native", "bf16", 16),
+    asg("lm_head", "native", "bf16", 16,
+        note="head_bits 16: TR3 keeps the head native BF16, unlike stock "
+             "exllamav3 which quantizes it"),
+    asg("other", "native", "bf16", 16,
+        note="the vision tower ships the official fused attn.qkv and is never "
+             "executed by text-only scoring"),
+], "native", kv="bf16", mtp=True)
+
+SCOPE_CORRECTED = disc(
+    "scope_record_corrected", "info",
+    "Superseded record: this artifact's scope previously read attn.qkv / attn.o / "
+    "mlp.{gate,up,down} as quantized:exl3-mcg at the nominal rate. That was wrong. "
+    "The release is routed-experts-only: its own config.json declares "
+    "scope=glm53_routed_experts_only, non_routed_dtype_policy=official_source_native "
+    "and head_bits=16, and its materialization receipt states native_tensor_count "
+    "1618 / packed_tensor_count 148608 / routed_choice_count 37152 / "
+    "nonrouted_native_exact true -- expert payloads and nothing else. Corrected "
+    "2026-08-29 from the artifacts' own published metadata (and, for the K6/K8 "
+    "checkpoints, k6/K8-ANOMALY.json test_6_scope, which records the identical "
+    "census). scope_digest changed accordingly; the measured VALUES are unaffected, "
+    "since the measurement always ran the artifact as published.")
 
 ARTIFACTS = [
     artifact(A_BF16_A6, GLM, "GLM-5.3-Flash BF16 @a6c167b6", "base",
@@ -669,7 +739,8 @@ ARTIFACTS = [
               src("hf_file", "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/k6-packed-kld.json",
                   "19766e5e9643dbe940c05deaee7c3085f9ee339553da35ead973c825adddfef2",
                   "student_checkpoint_identity_sha256 a8668be3...")],
-             [REV_UNPINNED("Identity rests on student_checkpoint_identity_sha256 a8668be3... and the "
+             [SCOPE_CORRECTED,
+              REV_UNPINNED("Identity rests on student_checkpoint_identity_sha256 a8668be3... and the "
                            "materialization receipt's 120 shard digests."),
               disc("size_unverified", "info",
                    "253,536,370,680 is the materialization receipt's tensor payload. The Hub safetensors sum is "
@@ -700,7 +771,8 @@ ARTIFACTS = [
              # own arithmetic, 19,339,524,984 native + 37,152 x 8,400,900 routed = 331,449,761,784,
              # which is a check the number either passes or fails. What is still missing is an
              # independent look at the repository, and that is what size_unverified now says.
-             [REV_UNPINNED("The repository returns HTTP 401 unauthenticated, so no commit sha could "
+             [SCOPE_CORRECTED,
+              REV_UNPINNED("The repository returns HTTP 401 unauthenticated, so no commit sha could "
                            "be read; identity rests on the materialization receipt's bits=8, 37,152 "
                            "routed choices and 1,618 native tensors, and on the scope below."),
               disc("size_unverified", "caveat",
@@ -848,7 +920,8 @@ ARTIFACTS = [
              [src("github_file", "https://raw.githubusercontent.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw/main/results/five-cold-run-kld.json",
                   "d955bfaedad36ad9841c30808c67fc36b72017f87b720fb460d8e1c13fe75e57",
                   "student_checkpoint_identity_sha256 598ce08d..., student_label uniform-k4, profile k4-tp2")],
-             [REV_UNPINNED("His receipt pins the checkpoint by student_checkpoint_identity_sha256 598ce08d... "
+             [SCOPE_CORRECTED,
+              REV_UNPINNED("His receipt pins the checkpoint by student_checkpoint_identity_sha256 598ce08d... "
                            "Our own crosscheck notes his metadata records an earlier repo revision and that the "
                            "weights were never modified post-upload (config/template churn only)."),
               disc("size_unverified", "info",
