@@ -93,131 +93,285 @@
     "streaming": {
       "name": "stream_score (single-GPU streaming lane)",
       "entrypoint": "k6/tools/stream_score.py",
-      "pinned": false,
-      "unpinned_reason": "VERIFIED 2026-08-28 against the real file (sha256 b74118042e7f221d536f98a0de5a28f094422bc96cdd49cb54b5ac905260acae, recovered from /home/jl_fs/glm53-k6/tools/). The engine EXISTS, and the contract below was wrong: it takes --teacher, not --panel, and --source {checkpoint,payload-store,dione}, not --surface. Two deeper blocks, neither of which a flag_map can fix: (1) --profile choices are k6|k8|k6k8 and the controller sends 'k4' for this lane, which argparse rejects outright; (2) every source path resolves to a PACKED ROOT and hard-requires contract.json + inventory.json + mtp-adapter-receipt.json + payload-store/{objects,choices} plus a --bf16 tree, i.e. this campaign's own encode output. A third-party HF repo (surface 'tr3-published', payloads inline in the shards) has none of those, and --source dione is disabled in this build. So the streaming lane cannot score a stranger's quant until a tr3-published reader exists. Pinning the flags would only move the failure to after the rental.",
+      "pinned": true,
+      "pinned_note": "reconciled 2026-08-29 against the probed real CLI (stream_score.py argparse; verified by AST scrape + `bin/measure-local --probe-engines`): the engine takes --teacher not --panel, --source not --surface, --vram-budget-gb not --vram-budget, --slab-experts not --expert-chunk, --stream-mode window-major (its only mode) not --window-batch, and has no --kld-device (the SCORER takes --device). Planner-only knobs (--window-batch, --nonrouted-residency, --decode-batch-matrices, --prefetch-depth) are no longer forwarded to any engine. The full 2026-08-28 divergence findings are preserved in bin/README.md under 'History: the 2026-08 flag reconciliation' and in the JOURNAL entry.",
       "launcher": [],
+      "launcher_note": "launched under FIDELITY_PYTHON by the runner (the engine needs torch + transformers>=5.16 + quant_pipeline; preflight refuses with remedies when any is missing)",
       "required_flags": [
-        "--checkpoint",
+        "--source",
+        "--bf16",
         "--teacher",
         "--out",
-        "--reduce-order",
-        "--source"
+        "--cold-run",
+        "--profile",
+        "--device",
+        "--reduce-order"
       ],
-      "flag_map": {},
-      "contract": [
-        "--checkpoint PATH        the artifact to score",
-        "--panel PATH             the fetched teacher/panel directory",
-        "--out PATH               receipts + tokenwise-kld output root",
-        "--surface NAME           packed | dione | tr3-published",
-        "--reduce-order {fp32,native}   fp32 is the validated setting: the",
-        "                         window-0 KLD delta vs the sealed EP8 lane is",
-        "                         +1.5076e-5 at 99.80% argmax agreement",
-        "--cold-run N             labels the capture receipt",
-        "--roles final            which panel roles to score",
-        "it must emit a tokenwise-KLD tensor whose sha256 is the determinism",
-        "evidence (NOT a receipt-file hash -- see registry DET-001)"
-      ],
-      "notes": [
-        "Known properties from the validation run, which the receipt must",
-        "disclose: bitwise cross-topology parity is impossible (routed-expert",
-        "combine order moves logits rms 0.26-0.28); streaming runs ARE bitwise",
-        "identical to each other, so determinism holds WITHIN the lane; peak",
-        "34-47 GB on one H200 as currently scheduled."
-      ],
+      "flag_map": {
+        "source": "--source",
+        "checkpoint": "--checkpoint",
+        "packed_root": "--packed-root",
+        "inventory": "--inventory",
+        "bf16": "--bf16",
+        "panel": "--teacher",
+        "token_panel": "--token-panel",
+        "out": "--out",
+        "cold_run": "--cold-run",
+        "profile": "--profile",
+        "roles": "--roles",
+        "windows": "--windows",
+        "pipeline_root": "--pipeline-root",
+        "device": "--device",
+        "unpack_device": "--unpack-device",
+        "decode_cache": "--decode-cache",
+        "decode_cache_dir": "--decode-cache-dir",
+        "work_dir": "--work-dir",
+        "vram_budget_gb": "--vram-budget-gb",
+        "slab_experts": "--slab-experts",
+        "decode_threads": "--decode-threads",
+        "ep_emulate": "--ep-emulate",
+        "reduce_order": "--reduce-order",
+        "capture_role": "--capture-role",
+        "store_positions": "--store-positions",
+        "sample_seed": "--sample-seed"
+      },
+      "fixed_flags": {
+        "--stream-mode": "window-major"
+      },
+      "profile_map": {
+        "6.0": "k6",
+        "8.0": "k8",
+        "native": "native-bf16"
+      },
+      "profile_map_note": "4.0-bpw has no streaming profile (stream_score --profile choices: k6,k8,k6k8,native-bf16) -- sealed lane only. k6k8 is reachable only by explicit --profile, never by bpw inference (6.68 is not a bpw key).",
+      "receipt_class": "submittable",
+      "scorer": {
+        "entrypoint": "k6/tools/k6_kld_report.py",
+        "flag_map": {
+          "profile": "--profile",
+          "panel": "--teacher",
+          "runs": "--runs",
+          "out": "--out",
+          "pipeline_root": "--pipeline-root",
+          "chunk_positions": "--chunk-positions",
+          "device": "--device"
+        },
+        "required_flags": [
+          "--profile",
+          "--teacher",
+          "--runs",
+          "--out",
+          "--device"
+        ],
+        "device_policy": "cpu-or-cuda; mps refused (fp64 accumulation cannot run on MPS -- torch TypeError)"
+      },
       "timing": {
         "minutes_per_window": 7.35,
         "provenance": "MEASURED on the K6 streaming panel run (stream-k6/runs/stream-run1, 1x H200 spot, --decode-cache none): capture-receipt elapsed_seconds 11,018.9 for 25 windows = 7.35 min/window; cold run 2 was 10,488.7 s = 6.99 min/window. Two cold runs of a 231 GB payload store therefore cost 5.97 GPU-hours (~$11.89 at $1.99/GPU-h), not the ~$7.50 the earlier estimate implied. The BF16-floor lane (--source native, 609 GB read per window) measured ~8.3 min/window on the same box class.",
         "measured": true
       },
-      "surfaces": [
-        "packed"
+      "notes": [
+        "Known properties from the validation run, which the receipt must disclose: bitwise",
+        "cross-topology parity is impossible (routed-expert combine order moves logits rms",
+        "0.26-0.28); streaming runs ARE bitwise identical to each other, so determinism holds",
+        "WITHIN the lane; peak 34-47 GB on one H200 as currently scheduled.",
+        "Inputs are THIS CAMPAIGN'S encode output (packed root with contract.json +",
+        "inventory.json + mtp-adapter-receipt.json + payload-store/{objects,choices}) plus a",
+        "--bf16 tree -- with the ONE exception of --source native (--inventory + --bf16 only).",
+        "A third-party 'tr3-published' repo still has NO reader; the surface check refuses it",
+        "at plan time, for $0.00 (see surfaces below).",
+        "NEW 2026-08-29: --capture-role teacher turns a native run into a SAME-LANE teacher",
+        "(k6/SAME-LANE-TEACHER.md); --store-positions per-window:<m> produces a PREVIEW",
+        "capture no sealed consumer accepts."
       ],
-      "surfaces_note": "stream_score.py --source {checkpoint,payload-store,dione,native}. The first three all resolve to a packed root with contract.json + inventory.json + mtp-adapter-receipt.json + payload-store/{objects,choices}, and --source dione raises 'not enabled in this build'. --source native (added 2026-08-29) is the exception: it needs NO packed root, only a --bf16 tree and a sealed release inventory (--inventory), because it scores the un-quantized BF16 experts themselves -- the measurement FLOOR of this lane, see k6/BF16-FLOOR.md. It is not a reader for a stranger's artifact; there is still no 'tr3-published' reader."
+      "surfaces": [
+        "packed",
+        "native-bf16"
+      ],
+      "surfaces_note": "stream_score.py --source {checkpoint,payload-store,native}; --source dione refuses by design. 'packed' needs the payload store published; 'native-bf16' needs only --inventory + --bf16. There is still no 'tr3-published' reader."
     },
     "local-mps": {
       "name": "stream_score on Apple Silicon (MPS)",
       "entrypoint": "k6/tools/stream_score.py",
-      "pinned": false,
-      "unpinned_reason": "VERIFIED 2026-08-28 against the real file: same packed-root and --profile blocks as the streaming lane, and NONE of the memory knobs this contract names exist. The engine has --vram-budget-gb (not --vram-budget), --slab-experts (not --expert-chunk), --stream-mode window-major (not --window-batch), and no --kld-device at all. Plus two Apple-Silicon constraints that must be honoured by whatever lands: MPS cannot do float64 AT ALL (not slowly -- torch raises TypeError), so the KLD accumulation must run on CPU; and 34 of 45 layers are Kimi-Delta linear attention whose only known fast paths are Triton/CUDA or a fused MLX kernel, so the torch/MPS forward is UNVERIFIED.",
+      "pinned": true,
+      "pinned_note": "reconciled 2026-08-29 against the probed real CLI (stream_score.py argparse; verified by AST scrape + `bin/measure-local --probe-engines`): the engine takes --teacher not --panel, --source not --surface, --vram-budget-gb not --vram-budget, --slab-experts not --expert-chunk, --stream-mode window-major (its only mode) not --window-batch, and has no --kld-device (the SCORER takes --device). Planner-only knobs (--window-batch, --nonrouted-residency, --decode-batch-matrices, --prefetch-depth) are no longer forwarded to any engine. The full 2026-08-28 divergence findings are preserved in bin/README.md under 'History: the 2026-08 flag reconciliation' and in the JOURNAL entry.",
       "launcher": [],
+      "launcher_note": "launched under FIDELITY_PYTHON by the runner (the engine needs torch + transformers>=5.16 + quant_pipeline; preflight refuses with remedies when any is missing)",
       "required_flags": [
-        "--checkpoint",
-        "--panel",
+        "--source",
+        "--bf16",
+        "--teacher",
         "--out",
-        "--reduce-order",
-        "--device"
+        "--cold-run",
+        "--profile",
+        "--device",
+        "--reduce-order"
       ],
-      "flag_map": {},
-      "contract": [
-        "everything the streaming lane requires, plus:",
-        "--device {auto,mps,cuda,cpu}",
-        "--kld-device cpu         MANDATORY on MPS. estimator.accumulation_dtype",
-        "                         is a comparability key input, so silently",
-        "                         degrading fp64 to fp32 would move the row into",
-        "                         a different comparability group. Refuse, do",
-        "                         not degrade.",
-        "--expert-chunk N         numerics-invariant memory knob",
-        "--window-batch N         numerics-invariant memory knob",
-        "--vram-budget GB         honoured as a hard bound"
-      ],
-      "notes": [
-        "Measured on a 128 GB M4 Max: the EXL3/TR3 decode is pure PyTorch (no",
-        "custom kernel, no exllamav3 build) and is BITWISE IDENTICAL on MPS and",
-        "CPU at both 4 and 6 bits, over full-size 8,388,608-element matrices.",
-        "So the local lanes carry NO device offset from weight decode; any",
-        "local-vs-sealed offset comes from the forward pass alone.",
-        "Consequence for the recipe: `pip install torch safetensors numpy",
-        "huggingface_hub` is sufficient locally. None of stage_k6.sh's",
-        "bootstrap (deadsnakes, CUDA 13, flash-attn, exllamav3) is needed."
-      ],
-      "timing": {
-        "minutes_per_window": 0.6,
-        "provenance": "DERIVED from measured per-matrix decode on a 128 GB M4 Max (16.7 ms/matrix at 6 bits, 14.0 ms at 4 bits, MPS, int32 unpack) under the panel-batched layer-outer schedule, where the 36,288-matrix routed pass happens ONCE for the whole panel rather than once per window. That makes per-window time an amortisation, not a measurement: ~15 min for the whole 25-window panel. The forward pass itself (KDA/DSA/mHC on MPS) is UNVERIFIED and is not in this figure.",
-        "measured": false
+      "flag_map": {
+        "source": "--source",
+        "checkpoint": "--checkpoint",
+        "packed_root": "--packed-root",
+        "inventory": "--inventory",
+        "bf16": "--bf16",
+        "panel": "--teacher",
+        "token_panel": "--token-panel",
+        "out": "--out",
+        "cold_run": "--cold-run",
+        "profile": "--profile",
+        "roles": "--roles",
+        "windows": "--windows",
+        "pipeline_root": "--pipeline-root",
+        "device": "--device",
+        "unpack_device": "--unpack-device",
+        "decode_cache": "--decode-cache",
+        "decode_cache_dir": "--decode-cache-dir",
+        "work_dir": "--work-dir",
+        "vram_budget_gb": "--vram-budget-gb",
+        "slab_experts": "--slab-experts",
+        "decode_threads": "--decode-threads",
+        "ep_emulate": "--ep-emulate",
+        "reduce_order": "--reduce-order",
+        "capture_role": "--capture-role",
+        "store_positions": "--store-positions",
+        "sample_seed": "--sample-seed"
       },
-      "surfaces": [
-        "packed"
+      "fixed_flags": {
+        "--device": "mps",
+        "--unpack-device": "cpu",
+        "--stream-mode": "window-major"
+      },
+      "profile_map": {
+        "6.0": "k6",
+        "8.0": "k8",
+        "native": "native-bf16"
+      },
+      "profile_map_note": "4.0-bpw has no streaming profile (stream_score --profile choices: k6,k8,k6k8,native-bf16) -- sealed lane only. k6k8 is reachable only by explicit --profile, never by bpw inference (6.68 is not a bpw key).",
+      "receipt_class": "preview",
+      "scorer": {
+        "entrypoint": "bin/kld_preview.py",
+        "flag_map": {
+          "panel": "--teacher",
+          "student": "--student",
+          "out": "--out",
+          "chunk_positions": "--chunk-positions",
+          "seed": "--seed"
+        },
+        "required_flags": [
+          "--teacher",
+          "--student",
+          "--out"
+        ],
+        "device_policy": "fp64 accumulation pinned to cpu (MPS cannot hold float64); needs torch+safetensors under FIDELITY_PYTHON, no quant_pipeline"
+      },
+      "timing": {
+        "minutes_per_window": null,
+        "measured": false,
+        "provenance": "decode 16-20 ms/matrix at 6/4 bpw MPS MEASURED (bin/selftest_decode_parity.py on a 128 GB M4 Max) -> 9.7-12.1 min per full 36,288-matrix decode pass; the KDA/DSA/mHC trunk forward on MPS is UNMEASURED (34 of 45 layers are Kimi-Delta linear attention whose fast paths are Triton/CUDA) -- run `bin/measure-local --fixture fetch` for the fixture-scale datum, then one real window. No number is invented here: minutes_per_window stays null until one is measured."
+      },
+      "notes": [
+        "--unpack-device cpu is a FIXED flag: the MPS int64 unpack escape, decode still",
+        "bitwise identical to CPU (selftest_decode_parity).  fp64 KLD accumulation cannot",
+        "run on MPS at all; the scorer (bin/kld_preview.py) pins it to CPU and says so.",
+        "Receipts from this lane are PREVIEWS: the lane differs from the teacher's and its",
+        "floor against the sealed teacher is unmeasured; kld_preview labels them",
+        "structurally unsubmittable.",
+        "Perf levers that are real today: --decode-cache disk (Apple internal NVMe ~5-6 GB/s",
+        "vs the floor box's 0.9; needs 609 GB free -- measure before assuming), --chunk-positions",
+        "512 for the scorer.  --window-batch/--expert-chunk are NOT engine flags."
       ],
-      "surfaces_note": "same engine, same packed-root requirement as the streaming lane."
+      "surfaces": [
+        "packed",
+        "native-bf16"
+      ],
+      "surfaces_note": "same engine, same packed-root requirement as the streaming lane; native needs --inventory + --bf16 (~630 GB locally)."
     },
     "local-cuda-budget": {
       "name": "stream_score under a VRAM budget (consumer CUDA)",
       "entrypoint": "k6/tools/stream_score.py",
-      "pinned": false,
-      "unpinned_reason": "VERIFIED 2026-08-28 against the real file: same packed-root and --profile blocks as the streaming lane. The budget knob is --vram-budget-gb, not --vram-budget; --expert-chunk, --window-batch and --nonrouted-residency do not exist (the engine has --slab-experts and a single --stream-mode window-major).",
+      "pinned": true,
+      "pinned_note": "reconciled 2026-08-29 against the probed real CLI (stream_score.py argparse; verified by AST scrape + `bin/measure-local --probe-engines`): the engine takes --teacher not --panel, --source not --surface, --vram-budget-gb not --vram-budget, --slab-experts not --expert-chunk, --stream-mode window-major (its only mode) not --window-batch, and has no --kld-device (the SCORER takes --device). Planner-only knobs (--window-batch, --nonrouted-residency, --decode-batch-matrices, --prefetch-depth) are no longer forwarded to any engine. The full 2026-08-28 divergence findings are preserved in bin/README.md under 'History: the 2026-08 flag reconciliation' and in the JOURNAL entry.",
       "launcher": [],
+      "launcher_note": "launched under FIDELITY_PYTHON by the runner (the engine needs torch + transformers>=5.16 + quant_pipeline; preflight refuses with remedies when any is missing)",
       "required_flags": [
-        "--checkpoint",
-        "--panel",
+        "--source",
+        "--bf16",
+        "--teacher",
         "--out",
-        "--reduce-order",
-        "--vram-budget"
+        "--cold-run",
+        "--profile",
+        "--device",
+        "--reduce-order"
       ],
-      "flag_map": {},
-      "contract": [
-        "everything the streaming lane requires, plus:",
-        "--vram-budget GB         hard bound, honoured not approximated",
-        "--expert-chunk N         numerics-invariant",
-        "--window-batch N         numerics-invariant",
-        "--nonrouted-residency {pinned,mmap,gpu}",
-        "the scatter-add over experts MUST be sequential in ascending expert",
-        "order. An atomicAdd-based scatter would make the result depend on the",
-        "memory knobs, which destroys the invariance the recipe promises."
-      ],
-      "notes": [
-        "Peak for the panel-batched layer-outer schedule on GLM-5.3-Flash at",
-        "4bpw: 23.5 GB whole-layer, 25.5 GB at the solver's default fill for a",
-        "30 GB budget. The floor for ANY schedule is 4.6 GB, set by the lm_head",
-        "weight plus one window of fp32 logits -- neither shrinks with the",
-        "memory knobs."
-      ],
-      "timing": {
-        "minutes_per_window": 0.25,
-        "provenance": "PROJECTED. No Blackwell hardware was available. Scales the measured Apple-Silicon decode by memory bandwidth (1.79 TB/s vs ~410-546 GB/s) and treats the run as I/O-bound on reading 176-254 GB once. Treat as an order-of-magnitude figure until someone runs it.",
-        "measured": false
+      "flag_map": {
+        "source": "--source",
+        "checkpoint": "--checkpoint",
+        "packed_root": "--packed-root",
+        "inventory": "--inventory",
+        "bf16": "--bf16",
+        "panel": "--teacher",
+        "token_panel": "--token-panel",
+        "out": "--out",
+        "cold_run": "--cold-run",
+        "profile": "--profile",
+        "roles": "--roles",
+        "windows": "--windows",
+        "pipeline_root": "--pipeline-root",
+        "device": "--device",
+        "unpack_device": "--unpack-device",
+        "decode_cache": "--decode-cache",
+        "decode_cache_dir": "--decode-cache-dir",
+        "work_dir": "--work-dir",
+        "vram_budget_gb": "--vram-budget-gb",
+        "slab_experts": "--slab-experts",
+        "decode_threads": "--decode-threads",
+        "ep_emulate": "--ep-emulate",
+        "reduce_order": "--reduce-order",
+        "capture_role": "--capture-role",
+        "store_positions": "--store-positions",
+        "sample_seed": "--sample-seed"
       },
+      "fixed_flags": {
+        "--device": "cuda",
+        "--stream-mode": "window-major"
+      },
+      "profile_map": {
+        "6.0": "k6",
+        "8.0": "k8",
+        "native": "native-bf16"
+      },
+      "profile_map_note": "4.0-bpw has no streaming profile (stream_score --profile choices: k6,k8,k6k8,native-bf16) -- sealed lane only. k6k8 is reachable only by explicit --profile, never by bpw inference (6.68 is not a bpw key).",
+      "receipt_class": "preview",
+      "scorer": {
+        "entrypoint": "bin/kld_preview.py",
+        "flag_map": {
+          "panel": "--teacher",
+          "student": "--student",
+          "out": "--out",
+          "chunk_positions": "--chunk-positions",
+          "seed": "--seed"
+        },
+        "required_flags": [
+          "--teacher",
+          "--student",
+          "--out"
+        ],
+        "device_policy": "fp64 accumulation pinned to cpu (MPS cannot hold float64); needs torch+safetensors under FIDELITY_PYTHON, no quant_pipeline"
+      },
+      "timing": {
+        "minutes_per_window": null,
+        "measured": false,
+        "provenance": "no Blackwell/consumer-CUDA hardware has run this lane; the earlier 0.25 min/window figure was a projection of a layer-outer schedule NO engine implements and is withdrawn. minutes_per_window stays null until someone measures a real window; the H200 streaming lane's measured 7.35 min/window is the nearest real datum."
+      },
+      "notes": [
+        "--vram-budget-gb is the engine's budget knob (honoured, not approximated).",
+        "Receipts from this lane are PREVIEWS until sealed-lane parity is demonstrated on",
+        "consumer CUDA; kld_preview labels them structurally unsubmittable.",
+        "The scatter-add over experts is sequential in ascending expert order by",
+        "construction (slab fill), which is what keeps --slab-experts numerics-invariant."
+      ],
       "surfaces": [
-        "packed"
+        "packed",
+        "native-bf16"
       ],
       "surfaces_note": "same engine, same packed-root requirement as the streaming lane."
     },

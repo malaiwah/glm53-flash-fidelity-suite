@@ -7,6 +7,47 @@ hyper-connections). Everything here was produced within ~48h of the model's
 release and is receipt-driven: every published number links to a JSON receipt
 with pinned revisions and sha256s.
 
+## Measure a quant from an HF link — one command
+
+```bash
+bin/measure malaiwah/GLM-5.3-Flash-TR3-6bpw
+bin/measure https://huggingface.co/orcarouter/GLM-5.3-Flash-MLX/tree/main/4-bit
+```
+
+(Both are already measured, so both answer from the registry for $0.00 —
+the honest common case. A repo whose live head has moved since it was
+measured — `zai-org/GLM-5.3-Flash-BF16` today — refuses with the drift
+remedies instead of silently answering about different bytes.)
+
+It resolves the revision (live head by default), **asks the public registry
+first** — an already-measured artifact gets its rows and receipt links printed
+and exit 0, nothing spent — then walks `base_model` lineage to the registry's
+model, picks the panel/teacher prior measurements used (alternatives printed
+with override flags), sniffs the repo's packing surface, picks the lane for
+your machine, and hands off to `measure-local --execute`. Refusals name their
+arithmetic or remedy: revision drift needs `--force` or
+`--accept-measured-revision`; a surface no lane can read (most third-party
+repos today) is refused for $0.00 with the missing reader named; missing
+torch/transformers/quant_pipeline/teacher/disk are all listed at once with
+their install commands. `--plan-only` stops at the plan.
+
+## Browse the registry
+
+```bash
+bin/registry-view check malaiwah/GLM-5.3-Flash-TR3-6bpw   # already measured? (tiers + rows + receipts)
+bin/registry-view rows --model glm --lane streaming        # filtered, never-merged tables
+bin/registry-view lineage 0xSero/GLM-5.3-Flash-EXL3-Q4     # base-model walk + panel/teacher pick
+```
+
+Works offline against the local clone and online against the public dataset
+(`--registry auto|hf|local[:PATH]`; the footer names the snapshot that
+answered). Rows are grouped by recomputed comparability key and split by lane
+— filters can hide groups but never merge them, so cross-reference ranking is
+structurally impossible. Floor-aware analysis lives in `bin/fidelity-stats`
+(the streaming lane's floor and the cross-lane refusal arithmetic), local
+preview scoring in `bin/kld-preview`; the same-lane-teacher plan that drives
+the floor to zero is [`k6/SAME-LANE-TEACHER.md`](k6/SAME-LANE-TEACHER.md).
+
 ## Measure a quant yourself — two copy-paste recipes
 
 Every number in this repo was produced by a recipe you can run on someone
@@ -17,6 +58,7 @@ against each other.
 
 Both refuse *before* spending anything when the run will not fit, and both say
 what they need — dollars, disk, memory, hours — with each figure's provenance.
+Both now run the same registry front gate as `bin/measure` before planning.
 
 ### Recipe 1 — cloud: rent, measure, tear down
 
@@ -113,7 +155,10 @@ mirror works too. Both paths, the paste template, and how you are credited:
 > (`uv tool install jarvislabs`). The local recipe needs only
 > `pip install torch safetensors numpy huggingface_hub` — the EXL3/TR3 decode
 > is pure PyTorch, so none of the CUDA-13/flash-attn/exllamav3 bootstrap the
-> cloud lane uses is required on your own machine.
+> cloud lane uses is required on your own machine. On a Homebrew or distro
+> Python that install is blocked by PEP 668 ("externally-managed-environment");
+> use a venv (`python3 -m venv ~/.venvs/fidelity` and point `FIDELITY_PYTHON`
+> at its `python3`) or add `--break-system-packages` knowingly.
 
 ## Headline results
 

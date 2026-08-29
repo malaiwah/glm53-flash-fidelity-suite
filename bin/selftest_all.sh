@@ -16,7 +16,7 @@ VPY="$ROOT/.venv/bin/python"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-pass=0; fail=0
+pass=0; fail=0; skip=0
 t() {  # t <name> <expected_rc> <cmd...>
   local name="$1" exp="$2"; shift 2
   "$@" >"$TMP/out.log" 2>&1; local rc=$?
@@ -28,13 +28,28 @@ t() {  # t <name> <expected_rc> <cmd...>
     fail=$((fail+1))
   fi
 }
+s() {  # s <name> <reason> -- a prerequisite is absent; SKIP is a verdict,
+       # printed with the missing thing, never silently dropped
+  printf '  SKIP  %s (%s)\n' "$1" "$2"; skip=$((skip+1))
+}
+have_module() {  # have_module <python> <module>
+  "$1" -c "import $2" >/dev/null 2>&1
+}
 
 MODEL=brandonmusic/GLM-5.3-Flash-tr3-4bpw
 PANEL=brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits
 
 echo "== selftests (offline) =="
-t "fit estimator, 33 known-answer checks"  0 "$PY" bin/selftest_fit.py
+t "fit estimator, 41 known-answer checks"  0 "$PY" bin/selftest_fit.py
 t "decode parity + timing (needs torch)"   0 "$PY" bin/selftest_decode_parity.py
+t "registry client/viewer/matcher (T1)"    0 python3 bin/selftest_registry_view.py
+t "floor-aware stats known answers (T2)"   0 python3 bin/selftest_stats.py
+t "preview estimator coverage (T3)"        0 python3 bin/selftest_preview_stats.py
+t "submission refusability (T5)"           0 python3 bin/selftest_submission_refusal.py
+t "zero-floor identity (T4; SKIPs inside when numpy/torch absent)" \
+                                           0 "$PY" bin/selftest_zero_floor.py
+t "stream_score ladder rungs g,h,i,j (teacher role / preview refusal / \
+sampling / receipt stability)"             0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j
 
 echo "== cloud planner (NETWORK, ACCOUNT; --dry-run creates nothing) =="
 # This target is 'tr3-published' and NO lane has a reader for it: both engines
@@ -45,33 +60,77 @@ echo "== cloud planner (NETWORK, ACCOUNT; --dry-run creates nothing) =="
 # exl3-mcg-storage-abi.json, so it classifies as tr3-published and routes
 # around the trap. Asserting rc=0 here asserted that a rental which cannot
 # possibly succeed would be approved.
+# --skip-registry-check everywhere below: these cases test the PLANNER's own
+# refusals; the registry front gate (tested separately) would otherwise answer
+# "already measured" first, because this target has published rows.
 t "sealed-ep8 refuses: no reader for tr3-published" 3 \
   "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
     --lane sealed-ep8 --spot --max-runtime 30h --i-accept-leak-risk \
-    --dry-run --out "$TMP/c1"
-t "streaming refuses: engine unpinned" 3 \
+    --skip-registry-check --dry-run --out "$TMP/c1"
+t "streaming refuses: no reader for tr3-published (lane now PINNED)" 3 \
   "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
     --lane streaming --spot --max-runtime 12h --i-accept-leak-risk \
-    --dry-run --out "$TMP/c2"
+    --skip-registry-check --dry-run --out "$TMP/c2"
 t "refuses without a teardown backstop" 3 \
   "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
-    --lane sealed-ep8 --spot --max-runtime 30h --dry-run --out "$TMP/c3"
+    --lane sealed-ep8 --spot --max-runtime 30h --skip-registry-check \
+    --dry-run --out "$TMP/c3"
 t "refuses a max-runtime shorter than the work" 3 \
   "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
     --lane sealed-ep8 --spot --max-runtime 2h --i-accept-leak-risk \
-    --dry-run --out "$TMP/c4"
+    --skip-registry-check --dry-run --out "$TMP/c4"
+t "cloud front gate: already-measured artifact answers for \$0.00" 0 \
+  "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
+    --lane sealed-ep8 --spot --max-runtime 30h --i-accept-leak-risk \
+    --dry-run --out "$TMP/c5"
 
 echo "== local planner (NETWORK) =="
-t "this machine, auto device"        3 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --estimate-only --out "$TMP/l1"
-t "RTX 5090 32GB honours a 30GB budget" 3 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --simulate-device "RTX 5090:32" --vram-budget 30 --estimate-only --out "$TMP/l2"
-t "128GB Mac fits"                   3 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --simulate-device "Mac Studio:128::unified" --estimate-only --out "$TMP/l3"
-t "4GB card is REFUSED"              3 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --simulate-device "GTX 1650:4" --out "$TMP/l4"
+# rc expectations CHANGED 2026-08-29: the streaming/local lanes are now PINNED,
+# so a clean --estimate-only plan exits 0 (it used to exit 3 on "engine
+# unpinned"). --skip-registry-check isolates the planner from the front gate.
+t "this machine, auto device (clean plan now exits 0)" 0 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --estimate-only --skip-registry-check --out "$TMP/l1"
+t "RTX 5090 32GB honours a 30GB budget" 0 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --simulate-device "RTX 5090:32" --vram-budget 30 --estimate-only --skip-registry-check --out "$TMP/l2"
+t "128GB Mac fits"                   0 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --simulate-device "Mac Studio:128::unified" --estimate-only --skip-registry-check --out "$TMP/l3"
+t "4GB card is REFUSED"              3 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --simulate-device "GTX 1650:4" --skip-registry-check --out "$TMP/l4"
 t "--kld-device mps is refused (no fp64 on MPS)" 3 "$PY" bin/measure_local.py --artifact x/y --panel z --kld-device mps
-t "engine probe"                     0 "$PY" bin/measure_local.py --probe-engines
+t "engine probe (all five lanes pinned, flags found)" 0 "$PY" bin/measure_local.py --probe-engines
+t "--execute preflight-refuses with remedies (no traceback)" 3 \
+  "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" \
+    --skip-registry-check --execute --work "$TMP/lw" --out "$TMP/l7"
+
+echo "== registry front gate + one-command (NETWORK) =="
+t "measure-local gate: already-measured exits 0" 0 \
+  "$PY" bin/measure_local.py --artifact malaiwah/GLM-5.3-Flash-TR3-6bpw \
+    --panel "$PANEL" --estimate-only --out "$TMP/g1"
+t "registry-view check (live TR3-6bpw: sealed + streaming rows)" 0 \
+  bin/registry-view check malaiwah/GLM-5.3-Flash-TR3-6bpw
+t "registry-view rows (local clone, streaming lane)" 0 \
+  bin/registry-view rows --model glm --lane streaming --registry local
+t "bin/measure: already-measured report, exit 0" 0 \
+  bin/measure malaiwah/GLM-5.3-Flash-TR3-6bpw
+t "registry live selftest (T8: snapshot, keys, tripwire)" 0 \
+  bin/registry-view --selftest-live
 
 echo "== teardown backstop (ACCOUNT, read-only) =="
-t "reaper --list"  0 "$PY" bin/measure_cloud.py reaper --list
-t "reaper --sweep" 0 "$PY" bin/measure_cloud.py reaper --sweep
+# `reaper --list` is lease-file-driven and safe anywhere. The sweep runs
+# with --dry-run here: it reports what WOULD be destroyed and destroys
+# nothing -- destruction must never be a side effect of "run the selftests"
+# (JOURNAL lesson 22; usability review 2026-08-28). A real sweep is
+# `bin/measure-cloud reaper --sweep`, run deliberately. Machines without
+# the jl CLI (any Mac that has never rented) SKIP the sweep instead of
+# failing. SELFTEST_SKIP_ACCOUNT=1 still skips the whole section.
+if [ -n "${SELFTEST_SKIP_ACCOUNT:-}" ]; then
+  s "reaper --list" "SELFTEST_SKIP_ACCOUNT set (concurrent rental on this account)"
+  s "reaper --sweep (dry-run)" "SELFTEST_SKIP_ACCOUNT set"
+else
+  t "reaper --list"  0 "$PY" bin/measure_cloud.py reaper --list
+  if command -v jl >/dev/null 2>&1; then
+    t "reaper --sweep (dry-run: reports, destroys nothing)" 0 \
+      "$PY" bin/measure_cloud.py reaper --sweep --dry-run
+  else
+    s "reaper --sweep (dry-run)" "the jl CLI is not on PATH (this machine has never rented) -- uv tool install jarvislabs, or ignore: cloud teardown is irrelevant locally"
+  fi
+fi
 
 echo "== registry =="
 t "offline selftest"        0 "$VPY" registry/tools/registry_validate.py --root registry --offline-selftest
@@ -157,6 +216,24 @@ else
   echo "  FAIL  bundle-only seal"; tail -8 "$TMP/seal.log" | sed 's/^/         /'; fail=$((fail+1))
 fi
 
+echo "== fixture (NETWORK first time; torch+transformers) =="
+FIXPY="${FIDELITY_PYTHON:-/opt/homebrew/bin/python3.14}"
+[ -x "$FIXPY" ] || FIXPY=python3
+if ! have_module "$FIXPY" torch; then
+  s "fixture ladder" "torch not importable under $FIXPY -- export FIDELITY_PYTHON"
+elif ! have_module "$FIXPY" transformers; then
+  s "fixture ladder" "transformers not importable under $FIXPY -- \"$FIXPY\" -m pip install 'transformers>=5.16' (on Homebrew/distro Python add --break-system-packages, or use a venv and export FIDELITY_PYTHON=/path/to/venv/bin/python)"
+else
+  if FIXTURE_PATH="$(python3 bin/fixture_fetch.py --print 2>/dev/null)" || \
+     FIXTURE_PATH="$(python3 bin/fixture_fetch.py 2>/dev/null | tail -1)"; then
+    t "fixture ladder b,c,f,g,h,i,j (0.1B, whole chain)" 0 \
+      "$FIXPY" k6/tools/stream_score_selftest.py --fixture "$FIXTURE_PATH" \
+        --only b,c,f,g,h,i,j
+  else
+    s "fixture ladder" "fixture fetch failed (network?) -- run bin/fixture manually"
+  fi
+fi
+
 echo
-echo "selftest_all: $pass passed, $fail failed"
+echo "selftest_all: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

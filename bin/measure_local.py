@@ -49,10 +49,11 @@ SUITE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fidelity import census as C                       # noqa: E402
+from fidelity import engines as E                      # noqa: E402
 from fidelity.common import (                          # noqa: E402
     Console, human_bytes, human_duration, read_json, write_json,
 )
-from fidelity.engines import EngineUnpinned, load_engines  # noqa: E402
+from fidelity.engines import EngineUnpinned, build_invocation, load_engines  # noqa: E402
 from fidelity.hfmeta import (                          # noqa: E402
     HFError, hf_token, load_panel_descriptor, repo_meta, sniff_surface,
 )
@@ -265,6 +266,34 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
                      "memory_bytes": device.memory_bytes, "unified": device.unified}
     out["lane"] = lane
 
+    # -- registry front gate (BEFORE anything is planned or spent) ---------
+    if args.skip_registry_check:
+        con.say("")
+        con.warn("--skip-registry-check: not asking the registry whether this "
+                 "artifact is already measured")
+        out["registry_check"] = "skipped"
+    else:
+        from fidelity.registry_client import front_gate
+
+        con.say("")
+        gate = front_gate(
+            repo=args.artifact, revision=args.revision,
+            path_hint=getattr(args, "path", None), source=args.registry,
+            force=args.force,
+            accept_measured_revision=args.accept_measured_revision, con=con)
+        out["registry_check"] = gate["status"]
+        if gate["status"] == "already-measured":
+            out["status"] = "already-measured"
+            return out
+        if gate["status"] == "stale-refused":
+            problem(
+                "this repo was measured at a pinned revision that is not the "
+                "one you asked about (rows printed above)",
+                ["pass --accept-measured-revision to target the measured commit",
+                 "pass --force to measure the new commit as a NEW artifact record"])
+        if gate.get("status") == "proceed-stale-accepted" and gate.get("measured_revision"):
+            args.revision = gate["measured_revision"]
+
     # -- target ------------------------------------------------------------
     con.say("")
     con.say("TARGET")
@@ -353,7 +382,11 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
             v = memplan.breakdown.get(key, 0.0)
             if v:
                 con.say("      %-24s %s" % (key, human_bytes(v)))
-        out["memory_plan"] = memplan.to_dict()
+        out["memory_plan"] = dict(
+            memplan.to_dict(),
+            note="hypothetical schedule; no engine implements layer-outer "
+                 "today -- the real engine is window-major (see "
+                 "window_major_cost)")
 
     # -- disk and RAM ------------------------------------------------------
     con.say("")
@@ -437,6 +470,45 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
     else:
         con.kv("estimate", "unavailable (no micro-benchmark could be run)")
 
+    # -- the REAL engine's cost (window-major; the schedule above is a
+    #    layer-outer hypothesis no engine implements) -----------------------
+    if bench:
+        wm = C.window_major_cost(
+            cen, ms_per_matrix=bench["seconds_per_matrix"] * 1000.0,
+            windows=descriptor.contexts,
+            positions_per_window=descriptor.positions_per_context,
+            decode_cache=args.decode_cache,
+            budget_bytes=budget if args.decode_cache == "ram" else None)
+        out["window_major_cost"] = wm
+        con.say("")
+        con.say("WINDOW-MAJOR COST (the engine that exists: stream_score "
+                "--stream-mode window-major)")
+        con.kv("decode/pass", "%s  (%s matrices x %.1f ms)"
+               % (human_duration(wm["decode_seconds_per_pass"]),
+                  "{:,}".format(wm["matrices_per_pass"]), wm["ms_per_matrix"]))
+        con.kv("decode total", "%s  (--decode-cache %s -> %.1f pass-equivalents%s)"
+               % (human_duration(wm["decode_seconds_total"]), wm["decode_cache"],
+                  wm["decode_pass_equivalents"],
+                  ", %d/42 layers cached" % wm["cached_layers"]
+                  if wm["decode_cache"] == "ram" else ""))
+        if wm["disk_reread_seconds_total"]:
+            con.kv("disk rereads", "%s at %.1f GB/s ASSUMED -- measure yours"
+                   % (human_duration(wm["disk_reread_seconds_total"]),
+                      wm["disk_gb_per_s_assumed"]))
+        con.kv("trunk forward", wm["trunk_note"])
+        con.kv("fp64 scoring", "%s on CPU (measured 0.15 ms/position; never a "
+                               "reason to sample)"
+               % human_duration(wm["scoring_seconds_total"]))
+        con.kv("known total", "%s%s" % (
+            human_duration(wm["total_known_seconds"]),
+            "  (LOWER BOUND: trunk term missing)" if wm["total_is_lower_bound"]
+            else ""))
+    else:
+        out["window_major_cost"] = {
+            "unavailable": "no micro-benchmark ran (--no-bench or simulated "
+                           "device); the window-major cost model needs a "
+                           "MEASURED ms_per_matrix and will not invent one"}
+
     if args.runs < 2:
         con.warn("--runs %d produces a receipt the registry will REJECT: a "
                  "published row needs run_count >= 2, because one run cannot "
@@ -484,11 +556,25 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--artifact", help="HF repo id of the quant to measure")
     p.add_argument("--revision")
+    p.add_argument("--path", help="subpath hint for multi-artifact repos "
+                                  "(e.g. 4-bit/ in an MLX repo)")
     p.add_argument("--panel", help="HF dataset id of the panel/teacher")
     p.add_argument("--panel-revision")
     p.add_argument("--panel-descriptor")
     p.add_argument("--bf16", help="optional: base BF16 repo, for full inventory "
                                   "verification only (weights are NOT needed)")
+
+    g = p.add_argument_group("registry gate (runs FIRST, before planning)")
+    g.add_argument("--registry", default="auto",
+                   help="auto | hf | local[:PATH] -- where the already-measured "
+                        "check reads from (auto tries the public HF dataset "
+                        "first, local clone as fallback)")
+    g.add_argument("--skip-registry-check", action="store_true")
+    g.add_argument("--force", action="store_true",
+                   help="measure even though published rows exist (reproduction)")
+    g.add_argument("--accept-measured-revision", action="store_true",
+                   help="on revision drift, target the registry's measured "
+                        "commit instead of the live one")
 
     d = p.add_argument_group("device and memory")
     d.add_argument("--device", default="auto", choices=("auto", "mps", "cuda", "cpu"))
@@ -496,14 +582,29 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--vram-budget", type=float, metavar="GB",
                    help="HARD bound on accelerator memory. Honoured, not approximated.")
     d.add_argument("--expert-chunk", default="auto",
-                   help="experts decoded at once (numerics-invariant)")
+                   help="(planner cost model only; NOT an engine flag -- the "
+                        "engine's slab is set per-lane via --slab-experts in "
+                        "engines.json fixed/extra flags)")
     d.add_argument("--window-batch", type=int, default=None,
-                   help="windows carried together (numerics-invariant)")
-    d.add_argument("--decode-batch-matrices", type=int, default=4)
-    d.add_argument("--prefetch-depth", type=int, default=2)
+                   help="(planner cost model only; not an engine flag: the "
+                        "engine's only --stream-mode is window-major)")
+    d.add_argument("--decode-batch-matrices", type=int, default=4,
+                   help="(planner cost model only; not an engine flag)")
+    d.add_argument("--prefetch-depth", type=int, default=2,
+                   help="(planner cost model only; not an engine flag)")
     d.add_argument("--nonrouted-residency", default="auto",
-                   choices=("auto", "pinned", "mmap", "gpu"))
-    d.add_argument("--kld-device", default="cpu", choices=("cpu", "cuda", "mps"))
+                   choices=("auto", "pinned", "mmap", "gpu"),
+                   help="(planner cost model only; not an engine flag)")
+    d.add_argument("--decode-cache", default="none",
+                   choices=("none", "ram", "disk"),
+                   help="forwarded to the engine's --decode-cache; locally, "
+                        "disk usually beats ram (5-6 GB/s NVMe) IF 609 GB is "
+                        "free -- measure before assuming")
+    d.add_argument("--decode-cache-dir",
+                   help="forwarded to the engine's --decode-cache-dir")
+    d.add_argument("--kld-device", default="cpu", choices=("cpu", "cuda", "mps"),
+                   help="device for the SCORER (k6_kld_report/kld_preview); "
+                        "mps is refused: fp64 accumulation cannot run on MPS")
     d.add_argument("--simulate-device", metavar="NAME:VRAM_GB[:count][:unified]",
                    help="plan for hardware you do not have in front of you, e.g. "
                         "'RTX 5090:32' or 'Mac Studio:128::unified'. Refuses "
@@ -513,12 +614,36 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--runs", type=int, default=2,
                    help="cold runs (2 is the registry minimum for a "
                         "submittable row; 1 measures but cannot be submitted)")
-    r.add_argument("--reduce-order", default="fp32", choices=("fp32", "native"))
+    r.add_argument("--reduce-order", default="fp32", choices=("fp32", "native"),
+                   help="'native' is a sealed-lane concept and is refused at "
+                        "invocation build (engine reduce orders are "
+                        "fp32|sequential|reverse|pairwise|rotate:N); use fp32")
     r.add_argument("--keep-student-logits", action="store_true")
     r.add_argument("--work", help="working directory (default ./fidelity-local)")
     r.add_argument("--out", help="receipt output directory")
     r.add_argument("--max-runtime", default=None)
-    r.add_argument("--fixture", help="smoke on a tiny model before the real one")
+    r.add_argument("--execute", action="store_true",
+                   help="actually run the pinned engine after a clean plan "
+                        "(default off: measure-local stays plan-only; "
+                        "bin/measure turns this on). Preflight verifies the "
+                        "interpreter, torch, transformers>=5.16, "
+                        "quant_pipeline, the teacher tree and disk FIRST, and "
+                        "refuses with remedies, never a stack trace")
+    r.add_argument("--pipeline-root",
+                   help="patched quant_pipeline tree for --execute preflight "
+                        "(clone PIPE_REPO per k6/stage_k6.sh + patches-v2)")
+    r.add_argument("--teacher-tree",
+                   help="LOCAL teacher logits tree for --execute (default "
+                        "<work>/teacher)")
+    r.add_argument("--artifact-path",
+                   help="LOCAL artifact tree for --execute (the packed root / "
+                        "checkpoint; measure-local does not download weights)")
+    r.add_argument("--fixture",
+                   help="PATH to the 0.1B fixture, or 'fetch' to download it "
+                        "via bin/fixture; runs the stream_score_selftest "
+                        "fixture rungs (b,c,f + g,h,i,j) under "
+                        "FIDELITY_PYTHON and prints the per-window fixture "
+                        "forward timing -- the cheap KDA-on-MPS datum")
 
     m = p.add_argument_group("modes")
     m.add_argument("--estimate-only", action="store_true",
@@ -572,18 +697,23 @@ def main(argv: Optional[List[str]] = None) -> int:
             rc = rc or proc.returncode
         return rc
 
+    if args.fixture:
+        return fixture_smoke(args, con)
+
     if not args.artifact or not args.panel:
         con.err("--artifact and --panel are required "
-                "(or use --probe-engines / --selftest)")
+                "(or use --probe-engines / --selftest / --fixture)")
         return EXIT_REFUSED
 
     if args.kld_device == "mps":
         con.err(
-            "--kld-device mps is refused. MPS cannot represent float64 at all, "
-            "and estimator.accumulation_dtype is a comparability key input: "
-            "silently scoring in fp32 would move your row into a different "
-            "comparability group without anyone noticing. Score on CPU "
-            "(--kld-device cpu); for this panel that costs about 10 seconds.")
+            "--kld-device mps is refused: fp64 accumulation cannot run on MPS "
+            "(torch raises TypeError -- float64 does not exist there), so the "
+            "SCORER is pinned to cpu. estimator.accumulation_dtype is also a "
+            "comparability key input: silently scoring in fp32 would move "
+            "your row into a different comparability group without anyone "
+            "noticing. Score on CPU (--kld-device cpu); for this panel that "
+            "costs about 10 seconds.")
         return EXIT_REFUSED
 
     con.say("fidelity-local %s" % VERSION)
@@ -609,6 +739,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     write_json(str(outdir / "local-plan.json"), result)
 
+    if result.get("status") == "already-measured":
+        con.say("")
+        con.rule()
+        con.say("ALREADY MEASURED -- the registry rows above answer this "
+                "request; nothing was planned or spent. Pass --force to "
+                "measure anyway (e.g. to reproduce).")
+        return EXIT_OK
+
     con.say("")
     con.rule()
     blockers = result.get("would_refuse") or []
@@ -630,10 +768,210 @@ def main(argv: Optional[List[str]] = None) -> int:
             con.say("  - %s" % b)
         return EXIT_REFUSED
 
-    con.say("Plan accepted, but the measurement engine for this lane is not "
-            "pinned in this checkout, so there is nothing to execute yet.")
-    con.say("See bin/engines.json and `bin/measure-local --probe-engines`.")
+    if args.execute:
+        try:
+            return execute(args, result, con, outdir)
+        except Refusal as exc:
+            con.say("")
+            con.say("REFUSE: %s" % exc.reason)
+            for line in exc.advice:
+                if line:
+                    con.say("        %s" % line)
+            return EXIT_REFUSED
+        except EngineUnpinned as exc:
+            con.say("")
+            con.say("REFUSE: %s" % exc)
+            return EXIT_REFUSED
+
+    con.say("Plan accepted. Nothing was executed: measure-local is plan-only "
+            "by default; pass --execute to run the pinned engine (preflight "
+            "verifies FIDELITY_PYTHON, torch, transformers>=5.16, "
+            "quant_pipeline, the teacher tree and disk first, and refuses "
+            "with remedies). The one-command front-end `bin/measure` turns "
+            "--execute on for you.")
     return EXIT_REFUSED
+
+
+# ==========================================================================
+# Execution (--execute): preflight-gated, refusals with remedies
+# ==========================================================================
+
+
+def fixture_smoke(args: argparse.Namespace, con: Console) -> int:
+    """--fixture PATH|fetch: the stream_score_selftest ladder on the 0.1B
+    fixture -- the cheap KDA-forward-speed datum and the whole-chain check."""
+    from fidelity.common import run as _run
+
+    fixture = args.fixture
+    if fixture == "fetch":
+        con.say("fetching the 0.1B fixture via bin/fixture_fetch.py (NETWORK)")
+        proc = _run([sys.executable, str(SUITE_ROOT / "bin" / "fixture_fetch.py")],
+                    check=False, timeout=3600)
+        sys.stdout.write(proc.stdout)
+        if proc.returncode != 0:
+            con.err("fixture fetch failed:\n" + (proc.stderr or ""))
+            return EXIT_REFUSED
+        fixture = proc.stdout.strip().splitlines()[-1]
+    fixture_path = Path(fixture).expanduser().resolve()
+    if not (fixture_path / "config.json").is_file():
+        con.err("no config.json under %s -- not a model tree (pass --fixture "
+                "fetch to download inference-optimization/"
+                "GLM-5.3-Flash-0.1B-A0.1B)" % fixture_path)
+        return EXIT_REFUSED
+    python = E.fidelity_python()
+    con.say("running stream_score_selftest rungs b,c,f,g,h,i,j on the fixture "
+            "under %s" % python)
+    # HF_HUB_DISABLE_PROGRESS_BARS: the ladder's captured output is replayed
+    # below, and raw tqdm "Loading weights" bars replayed after the fact read
+    # like garbage (usability review, 2026-08-28).
+    env = dict(os.environ, HF_HUB_DISABLE_PROGRESS_BARS="1")
+    proc = _run([python, str(SUITE_ROOT / "k6" / "tools" / "stream_score_selftest.py"),
+                 "--fixture", str(fixture_path), "--only", "b,c,f,g,h,i,j",
+                 "--device", ("mps" if platform.machine() == "arm64" else "cpu")],
+                check=False, timeout=3600, env=env)
+    sys.stdout.write(proc.stdout)
+    if proc.stderr:
+        sys.stdout.write(proc.stderr)
+    for line in proc.stdout.splitlines():
+        if "forward_seconds" in line or "L1.c" in line:
+            con.say("  fixture timing datum: %s" % line.strip())
+    if proc.returncode != 0:
+        con.warn("fixture ladder did not fully pass (SKIPs are fine; FAILs "
+                 "are not) -- see above")
+    return proc.returncode
+
+
+def execute(args: argparse.Namespace, result: Dict[str, Any], con: Console,
+            outdir: Path) -> int:
+    lane = result["lane"]
+    engines = load_engines()
+    engine = engines.get(lane)
+    if engine is None or not engine.pinned:
+        raise EngineUnpinned(engine)
+
+    if args.reduce_order == "native":
+        raise Refusal(
+            "engine reduce orders are fp32|sequential|reverse|pairwise|"
+            "rotate:N; 'native' is a sealed-lane concept -- use fp32.",
+            ["--reduce-order fp32 is the validated setting: window-0 KLD "
+             "delta vs the sealed lane +1.5076e-5 at 99.80% argmax agreement"])
+
+    workdir = Path(args.work or "./fidelity-local").resolve()
+    teacher_dir = Path(args.teacher_tree) if args.teacher_tree else workdir / "teacher"
+    need = (result.get("storage_need") or {}).get("total_bytes")
+    problems = E.preflight(
+        engine, suite_root=SUITE_ROOT, pipeline_root=args.pipeline_root,
+        teacher_dir=teacher_dir, need_disk_bytes=need, workdir=workdir)
+    surface = (result.get("artifact") or {}).get("surface")
+    if surface == "native-bf16":
+        problems.append({
+            "missing": "a native-bf16 run driver in measure-local",
+            "remedy": "the BF16 base is measured by the bf16-floor lane "
+                      "(stream_score.py --source native --inventory <sealed> "
+                      "--bf16 <tree>; k6/BF16-FLOOR.md, and --capture-role "
+                      "teacher per k6/SAME-LANE-TEACHER.md) -- measure-local "
+                      "--execute drives packed quant sources today"})
+    elif surface and engine.surfaces and surface not in engine.surfaces:
+        problems.append({
+            "missing": "a reader for surface %r (lane %s reads: %s)"
+                       % (surface, lane, ", ".join(engine.surfaces)),
+            "remedy": "no lane can read '%s' today (a tr3-published reader is "
+                      "engine work, tracked in JOURNAL.md). This tool can "
+                      "still (a) report existing registry rows for the repo, "
+                      "(b) plan its cost -- it will not rent or run against "
+                      "bytes nothing can open" % surface})
+    if not args.artifact_path:
+        problems.append({
+            "missing": "local artifact tree (--artifact-path)",
+            "remedy": "download the quant's repo (hf download %s) and pass "
+                      "--artifact-path; measure-local does not download "
+                      "weights itself" % args.artifact})
+    elif not Path(args.artifact_path).is_dir():
+        problems.append({
+            "missing": "--artifact-path %s is not a directory" % args.artifact_path,
+            "remedy": "point it at the packed root / checkpoint tree"})
+    if problems:
+        raise Refusal(
+            "cannot --execute: %d prerequisite(s) missing (all listed; fix "
+            "them in any order)" % len(problems),
+            ["%s\n            fix: %s" % (p["missing"], p["remedy"])
+             for p in problems])
+
+    # ---- all prerequisites present: run the engine, then the scorer -------
+    python = E.fidelity_python()
+    bits = (result.get("artifact") or {}).get("bits")
+    if surface == "native-bf16":
+        profile = engine.profile_map.get("native")
+    else:
+        profile = engine.profile_map.get(str(bits)) if bits is not None else None
+    if profile is None:
+        raise Refusal(
+            "%s-bpw has no streaming profile (stream_score --profile choices: "
+            "k6,k8,k6k8,native-bf16) -- sealed lane only" % bits,
+            ["engines.json profile_map covers 6.0 -> k6, 8.0 -> k8, "
+             "native -> native-bf16"])
+    run_dirs: List[Path] = []
+    from fidelity.common import run as _run
+    for cold in range(1, args.runs + 1):
+        run_dir = outdir / ("run%d" % cold)
+        run_dirs.append(run_dir)
+        argv = build_invocation(
+            engine, suite_root=SUITE_ROOT, checkpoint=args.artifact_path,
+            panel_dir=str(teacher_dir), out_dir=str(run_dir),
+            surface="packed", profile=profile, cold_run=cold,
+            reduce_order=args.reduce_order, roles="final",
+            extra={
+                "source": "checkpoint",
+                "pipeline_root": args.pipeline_root or "",
+                "vram_budget_gb": str(args.vram_budget) if args.vram_budget else "",
+                "decode_cache": args.decode_cache,
+                "decode_cache_dir": args.decode_cache_dir or "",
+            })
+        for flag, value in engine.fixed_flags.items():
+            if flag not in argv:
+                argv.extend([flag, value])
+        argv = [python] + argv
+        con.say("engine cold run %d: %s" % (cold, " ".join(argv)))
+        proc = _run(argv, check=False, timeout=24 * 3600)
+        sys.stdout.write(proc.stdout[-4000:])
+        if proc.returncode != 0:
+            raise Refusal(
+                "engine cold run %d failed (rc %d); its last lines are above "
+                "-- the engine's own message is the diagnosis, not this "
+                "wrapper's" % (cold, proc.returncode),
+                [(proc.stderr or "").strip().splitlines()[-1]
+                 if proc.stderr else ""])
+    scorer = engine.scorer or {}
+    if engine.receipt_class == "submittable":
+        if args.runs < 2:
+            raise Refusal(
+                "a submittable receipt needs run_count >= 2 (one run cannot "
+                "show determinism); you ran %d" % args.runs,
+                ["re-run with --runs 2"])
+        argv = [python, str(SUITE_ROOT / scorer["entrypoint"]),
+                "--profile", profile, "--teacher", str(teacher_dir),
+                "--runs"] + [str(d) for d in run_dirs] + [
+                "--out", str(outdir / ("%s-packed-kld.json" % profile)),
+                "--device", args.kld_device,
+                "--chunk-positions", "512"]
+        if args.pipeline_root:
+            argv += ["--pipeline-root", args.pipeline_root]
+    else:
+        argv = [python, str(SUITE_ROOT / "bin" / "kld_preview.py"),
+                "--teacher", str(teacher_dir), "--student", str(run_dirs[0]),
+                "--out", str(outdir / "census-preview.json")]
+    con.say("scorer: %s" % " ".join(argv))
+    proc = _run(argv, check=False, timeout=6 * 3600)
+    sys.stdout.write(proc.stdout[-4000:])
+    if proc.returncode != 0:
+        raise Refusal("scorer failed (rc %d); its message is above"
+                      % proc.returncode, [])
+    if engine.receipt_class != "submittable":
+        con.say("")
+        con.say("PREVIEW: lane %s differs from the teacher's; the receipt is "
+                "structurally unsubmittable (schema contains '-preview.', no "
+                "measured_mean_kld, not_submittable: true)." % lane)
+    return EXIT_OK
 
 
 if __name__ == "__main__":

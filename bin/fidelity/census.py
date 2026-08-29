@@ -741,3 +741,92 @@ def storage_need(
 def round_up_storage_gb(n_bytes: float, granularity_gb: int = 100) -> int:
     need = gb(n_bytes)
     return int(math.ceil(need / granularity_gb) * granularity_gb)
+
+
+# --------------------------------------------------------------------------
+# Window-major cost model (the REAL engine's schedule)
+# --------------------------------------------------------------------------
+# stream_score.py has exactly one --stream-mode: window-major.  The layer-outer
+# schedule the solver above prices is a HYPOTHESIS no engine implements today,
+# so the planner must also price the engine that exists.  Everything here is
+# arithmetic over measured constants; anything unmeasured is emitted as null
+# with the instruction for measuring it, never as a guess.
+
+SCORING_MS_PER_POSITION_CPU = 0.15   # MEASURED on the M4 Max (0.144-0.164 ms)
+LM_HEAD_TFLOP_PER_WINDOW = 2.60      # 2 * 2047 * hidden(4096) * vocab(154880) / 1e12
+
+
+def window_major_cost(
+    census: Census,
+    *,
+    windows: int = 25,
+    positions_per_window: int = 2047,
+    ms_per_matrix: float,
+    decode_cache: str = "none",
+    budget_bytes: Optional[float] = None,
+    disk_gb_per_s: float = 5.5,
+    trunk_seconds_per_window: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Price a full panel pass of the REAL window-major engine.
+
+    ms_per_matrix comes from the caller's micro-benchmark (16-20 MPS / 53-57
+    CPU on the M4 Max); trunk_seconds_per_window is None unless someone has
+    MEASURED it on this device class -- the KDA/MPS forward speed is the open
+    question, and this function refuses to invent it.
+    disk_gb_per_s defaults to 5.5 (Apple internal NVMe class) and is a
+    parameter precisely because 'measure before assuming' applies to disks
+    too (the floor box's CephFS did 0.9-1.05).
+    """
+    if decode_cache not in ("none", "ram", "disk"):
+        raise ValueError("decode_cache must be none|ram|disk")
+    matrices = census.routed_matrices_per_pass          # 42*288*3 = 36,288
+    decode_pass_s = matrices * ms_per_matrix / 1000.0
+    layer_slab = census.per_routed_layer_bytes          # ~14.50 GB
+    cached_layers = 0
+    if decode_cache == "ram":
+        if budget_bytes is None:
+            raise ValueError("decode_cache=ram needs budget_bytes")
+        cached_layers = min(census.routed_layers,
+                            int((0.8 * budget_bytes) // layer_slab))
+    if decode_cache == "none":
+        decode_pass_equivalents = float(windows)
+        disk_reread_s = 0.0
+    elif decode_cache == "ram":
+        fraction_uncached = 1.0 - cached_layers / float(census.routed_layers)
+        decode_pass_equivalents = 1.0 + (windows - 1) * fraction_uncached
+        disk_reread_s = 0.0
+    else:  # disk: decode once, re-read the decoded bf16 surface per window
+        decode_pass_equivalents = 1.0
+        disk_reread_s = windows * census.routed_main_bytes / (disk_gb_per_s * GB)
+    decode_total_s = decode_pass_equivalents * decode_pass_s
+    scoring_s = windows * positions_per_window * SCORING_MS_PER_POSITION_CPU / 1000.0
+    trunk_total_s = (None if trunk_seconds_per_window is None
+                     else trunk_seconds_per_window * windows)
+    total_known_s = decode_total_s + disk_reread_s + scoring_s + (trunk_total_s or 0.0)
+    return {
+        "stream_mode": "window-major (the engine's only mode)",
+        "matrices_per_pass": matrices,
+        "ms_per_matrix": ms_per_matrix,
+        "decode_seconds_per_pass": decode_pass_s,
+        "decode_cache": decode_cache,
+        "cached_layers": cached_layers,
+        "decode_pass_equivalents": decode_pass_equivalents,
+        "decode_seconds_total": decode_total_s,
+        "disk_reread_seconds_total": disk_reread_s,
+        "disk_gb_per_s_assumed": (disk_gb_per_s if decode_cache == "disk" else None),
+        "trunk_seconds_per_window": trunk_seconds_per_window,
+        "trunk_seconds_total": trunk_total_s,
+        "trunk_note": (None if trunk_seconds_per_window is not None else
+                       "UNMEASURED on this device class: 34 of 45 layers are "
+                       "Kimi-Delta linear attention with Triton/CUDA-only fast "
+                       "paths. Measure via `bin/measure-local --fixture fetch` "
+                       "(fixture-scale L1.c timing), then one real window; "
+                       "never assume."),
+        "lm_head_tflop_per_window": LM_HEAD_TFLOP_PER_WINDOW,
+        "scoring_seconds_total": scoring_s,
+        "scoring_note": "fp64 KLD scoring is 0.15 ms/position on CPU (measured) "
+                        "-- ~8 s/panel: scoring never motivates sampling; "
+                        "position sampling is a storage/teacher-bandwidth knob",
+        "total_known_seconds": total_known_s,
+        "total_is_lower_bound": trunk_seconds_per_window is None,
+    }

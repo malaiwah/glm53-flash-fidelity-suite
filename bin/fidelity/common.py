@@ -243,3 +243,36 @@ def parse_duration(text: str) -> float:
 
 def utcnow() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+# --------------------------------------------------------------------------
+# Registry library loader (READ-ONLY import of the registry's own code)
+# --------------------------------------------------------------------------
+
+
+def load_registry_lib(suite_root) -> Any:
+    """Load registry/tools/registry_lib.py READ-ONLY, by file path.
+
+    The derived values the registry's comparability guarantee rests on
+    (comparability.key, scope_digest) must be computed by the registry's OWN
+    code, imported, never reimplemented: two implementations of a hash function
+    is two chances to disagree, and the disagreement would surface as a
+    rejected submission months later.  Nothing else under registry/tools may be
+    imported from bin/ -- registry_add/registry_validate are heavyweight and
+    may be edited concurrently.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(suite_root) / "registry" / "tools" / "registry_lib.py"
+    if not path.is_file():
+        raise RuntimeError(
+            "registry/tools/registry_lib.py not found under %s; the derived "
+            "fields (scope_digest, comparability key) must be computed by the "
+            "registry's own code, not reimplemented here" % suite_root
+        )
+    spec = importlib.util.spec_from_file_location("_registry_lib", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module

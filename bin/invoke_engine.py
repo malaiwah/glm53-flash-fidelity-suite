@@ -45,6 +45,13 @@ def main() -> int:
         return 3
 
     fs = os.environ.get("FIDELITY_FS_ROOT", "/home/jl_fs/fidelity")
+    surface = job.get("target", {}).get("surface", "packed")
+    # The streaming-family engines spell the input mode --source (vocabulary:
+    # checkpoint | payload-store | native), not --surface.  measure_local's
+    # own execute path sets source="checkpoint" for a materialized target
+    # tree; mirror that here so the backstop composes the same argv.  Lanes
+    # whose flag_map has no "source" key (sealed-ep8) ignore it.
+    source = {"packed": "checkpoint", "native-bf16": "native"}.get(surface, "")
     try:
         argv = build_invocation(
             engine,
@@ -52,17 +59,23 @@ def main() -> int:
             checkpoint="%s/models/target" % fs,
             panel_dir="%s/panel" % fs,
             out_dir=args.out,
-            surface=job.get("target", {}).get("surface", "packed"),
+            surface=surface,
             profile=job.get("profile", "k6"),
             cold_run=args.cold_run,
             reduce_order=job.get("reduce_order", "fp32"),
             roles=job.get("panel", {}).get("roles", "final"),
             extra={
+                "source": source,
                 "bf16": os.environ.get("BF16", "/home/jl_fs/models/bf16"),
                 "pipeline_root": os.environ.get(
                     "QP_PIPELINE_ROOT", "/home/jl_fs/glm53-k6/pipeline"),
             },
         )
+        # Same rule as measure_local's execute path: a lane's fixed_flags are
+        # part of its pinned contract and must be on every composed argv.
+        for flag, value in (engine.fixed_flags or {}).items():
+            if flag not in argv:
+                argv.extend([flag, str(value)])
     except EngineUnpinned as exc:
         con.err(str(exc))
         return 3

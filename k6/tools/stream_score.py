@@ -87,6 +87,7 @@ import json
 import os
 import platform
 import queue
+import random
 import re
 import sys
 import threading
@@ -103,12 +104,27 @@ if str(_TOOLS) not in sys.path:
 
 STREAM_PLAN_SCHEMA = "malaiwah.glm53-streaming-student-logit-capture-plan.v1"
 STREAM_BACKEND_SCHEMA = "malaiwah.glm53-streaming-offline-reader-backend.v1"
+# Lane-ONLY identity: a sha256 over just the fields that name the lane
+# (torch/device/kernel/numeric policy/parallelism/reduce order) and NOTHING
+# artifact-specific.  backend_identity_sha256 hashes checkpoint identity and
+# per-quant dtypes alongside the lane, so it differs between two quants on
+# the SAME lane and cannot answer "same lane?" -- this hash can (statistical
+# review, 2026-08-28).  Emitted in backend.json; k6_kld_report copies it
+# into future reports so fidelity-stats can gate on its equality.
+STREAM_LANE_IDENTITY_SCHEMA = "malaiwah.glm53-streaming-lane-identity.v1"
 CAPTURE_SCHEMA = "quant-pipeline.glm53-logit-capture.v1"
+# A position-sampled capture is a PREVIEW: a different schema string on
+# purpose, so the sealed teacher discovery (which matches CAPTURE_SCHEMA
+# exactly) and the sealed scorer both refuse it structurally.
+PREVIEW_CAPTURE_SCHEMA = "malaiwah.glm53-logit-capture-preview.v1"
 DISCLOSURE_SCHEMA = "malaiwah.glm53-streaming-disclosure.v1"
 NATIVE_IDENTITY_SCHEMA = "malaiwah.glm53-native-bf16-source-identity.v1"
 NATIVE_STUDENT_IDENTITY_SCHEMA = "malaiwah.glm53-native-bf16-student-identity.v1"
 NATIVE_STUDENT_LABEL = "native-bf16"
 NATIVE_CAPTURE_ROLE = "native_bf16_student"
+TEACHER_CAPTURE_ROLE = "bf16_teacher"
+TEACHER_PROVENANCE_SCHEMA = "malaiwah.glm53-same-lane-teacher-provenance.v1"
+TEACHER_LABEL = "native-bf16-streaming-v1"
 RELEASE_INVENTORY_SCHEMA = "quant-pipeline.glm-release-inventory.v1"
 
 RELEASED_ARCHITECTURE = "Glm5NextForConditionalGeneration"
@@ -122,6 +138,30 @@ ROUTED_SUFFIXES = ("mlp.experts.gate_up_proj", "mlp.experts.down_proj")
 def _fail(message: str, code: int = 1) -> "SystemExit":
     print(f"stream_score: ERROR: {message}", file=sys.stderr, flush=True)
     return SystemExit(code)
+
+
+def preview_position_indices(seed: int, window_id: str, n_positions: int,
+                             per_window: int) -> List[int]:
+    """Systematic per-window position sample with a seeded random start.
+
+    FRACTIONAL step = n_positions / per_window; start u ~ U[0, step) seeded
+    by (seed, window_id) so every window gets its own start, the whole design
+    is reproducible from one integer, and two artifacts sampled with the same
+    seed share positions exactly (which is what makes paired preview deltas
+    possible).  The step must be fractional, not floor(N/m): an integer step
+    k makes positions >= k*m unreachable at ANY seed (12.5% of every window
+    at m=256, 50% at m=1024), biasing the estimate whenever KLD trends with
+    context depth.  Fractional step gives every position inclusion
+    probability exactly m/N; indices are distinct and strictly increasing
+    because step > 1 whenever m < N.  MUST stay identical to
+    bin/fidelity/previewstats.systematic_indices (cross-checked by
+    selftest_preview_stats.py).
+    """
+    if per_window >= n_positions:
+        return list(range(n_positions))
+    step = n_positions / float(per_window)
+    u = random.Random(f"{seed}:{window_id}").random() * step
+    return [min(n_positions - 1, int(u + i * step)) for i in range(per_window)]
 
 
 # --------------------------------------------------------------------------
@@ -1234,7 +1274,13 @@ def build_streaming_model(*, bf16_root: Path, work_dir: Path, device, attn_imple
         "load_report": {
             "missing_keys": len(missing),
             "unexpected_keys": len(unexpected),
-            "unexpected_keys_are_exactly_the_streamed_routed_experts": unexpected_is_exactly_routed,
+            # Emitted only when the loader actually reported unexpected keys:
+            # on the single-file rewrite path unexpected == [] and an
+            # assertion-named field reading "false" inside an [ok] rung looks
+            # like a failed check when it is merely vacuous (usability
+            # review, 2026-08-28).  `stray` above stays the load-bearing gate.
+            **({"unexpected_keys_are_exactly_the_streamed_routed_experts":
+                unexpected_is_exactly_routed} if unexpected else {}),
             "mismatched_keys": len(mismatched),
             "error_msgs": len(errors),
         },
@@ -1371,6 +1417,26 @@ def main() -> int:
                              "e.g. 'ep1:none,ep8:fp32,ep8:pairwise,ep8:rotate:3' - measures how "
                              "much of any delta vs the sealed run is EP combine ORDER "
                              "(needs --slab-experts 288; cheap with --decode-cache ram)")
+    stream.add_argument("--capture-role", choices=("student", "teacher"),
+                        default="student",
+                        help="teacher: emit this run's capture as a SAME-LANE bf16 teacher "
+                             "(capture_role bf16_teacher + a sealed teacher_provenance block). "
+                             "Legal only with --source native, full census. The output tree is "
+                             "then a valid --teacher for k6_kld_report.py, and the lane's floor "
+                             "against it is exactly 0 once T1 hash evidence exists "
+                             "(k6/SAME-LANE-TEACHER.md)")
+    stream.add_argument("--store-positions", default="all",
+                        help="all (default, sealed) | per-window:<m> -- store only m "
+                             "systematically-sampled positions per window. PREVIEW ONLY: the "
+                             "receipt schema switches to %s and no sealed consumer accepts it. "
+                             "NOTE: this saves logit STORAGE/teacher bandwidth only -- the trunk "
+                             "forward still runs every position of every window (causality); "
+                             "the lm_head saving (m/2047) is real but modest"
+                             % PREVIEW_CAPTURE_SCHEMA)
+    stream.add_argument("--sample-seed", type=int,
+                        help="REQUIRED with --store-positions per-window:<m>; one integer "
+                             "reproduces the whole design, and two artifacts sampled with the "
+                             "same seed share positions (paired preview deltas need that)")
     stream.add_argument("--dry-run", action="store_true",
                         help="validate every input, seal and layout, print the plan, and exit "
                              "without touching weights or a GPU")
@@ -1419,6 +1485,49 @@ def main() -> int:
             "--source native and --profile native-bf16 must be used together: the profile "
             "selects the student label the KLD report expects, and a native run is not a K6/K8 one"
         )
+
+    # ---- teacher role and preview sampling (both flag-gated; defaults are
+    # byte-identical to the sealed behaviour) ------------------------------
+    if args.capture_role == "teacher":
+        if args.source != "native":
+            raise _fail(
+                "REFUSED: --capture-role teacher requires --source native. The teacher is the "
+                f"lane's own bf16 forward; a packed student (profile {args.profile}) cannot be "
+                "a teacher."
+            )
+        if args.windows or args.store_positions != "all":
+            got = f"--windows {args.windows!r}" if args.windows else \
+                f"--store-positions {args.store_positions!r}"
+            raise _fail(
+                "REFUSED: a teacher must be a full-census capture of all 25 windows / all "
+                f"positions (got {got}). A subset teacher would silently redefine the panel "
+                "every student is scored against."
+            )
+    preview_positions: Optional[int] = None
+    if args.store_positions != "all":
+        match = re.fullmatch(r"per-window:(\d+)", args.store_positions)
+        if match is None:
+            raise _fail(
+                f"--store-positions must be 'all' or 'per-window:<m>' (got {args.store_positions!r})"
+            )
+        preview_positions = int(match.group(1))
+        if args.sample_seed is None:
+            raise _fail(
+                "--store-positions per-window:<m> requires --sample-seed: the seed is the whole "
+                "reproducibility story of a sampled preview, and paired previews of two "
+                "artifacts only work when both used the same seed"
+            )
+        if preview_positions < 8:
+            raise _fail(
+                f"per-window:{preview_positions} is below the minimum of 8: with fewer than 8 "
+                "positions per window the within-window variance estimate s_j is meaningless "
+                "and no honest CI can be quoted"
+            )
+        if preview_positions >= 2047:
+            raise _fail(
+                f"sampling {preview_positions} of 2047 positions is not a preview, run "
+                "--store-positions all"
+            )
 
     # ---- resolve and verify the packed surface (fail closed) -------------
     materialization: Optional[Dict[str, Any]] = None
@@ -1861,6 +1970,25 @@ def main() -> int:
         "streaming_disclosure": disclosure,
         "load_seconds": time.monotonic() - load_started,
     }
+    # Lane-only identity (see STREAM_LANE_IDENTITY_SCHEMA above): exactly the
+    # fields that name the lane, none that name the artifact.  Two quants
+    # measured on the same machine/config hash IDENTICALLY here even though
+    # their backend_identity_sha256 values differ.
+    lane_fields = {
+        "schema": STREAM_LANE_IDENTITY_SCHEMA,
+        "torch_version": backend["torch_version"],
+        "cuda_runtime_version": backend["cuda_runtime_version"],
+        "device_name": backend["device_name"],
+        "grouped_mm_kernel": backend["grouped_mm_kernel"],
+        "numeric_policy": backend["numeric_policy"],
+        "attention_backend": backend["attention_backend"],
+        "experts_implementation": backend["experts_implementation"],
+        "parallelism": backend["parallelism"],
+        "ep_emulate": args.ep_emulate,
+        "reduce_order": args.reduce_order,
+    }
+    backend["lane_identity"] = lane_fields
+    backend["lane_identity_sha256"] = sha256_bytes(canonical_json(lane_fields))
 
     # ---- capture ----------------------------------------------------------
     logit_records: List[Dict[str, Any]] = []
@@ -1887,8 +2015,13 @@ def main() -> int:
                 )
     student_label = NATIVE_STUDENT_LABEL if args.source == "native" else f"uniform-k{bits}"
     capture_role = NATIVE_CAPTURE_ROLE if args.source == "native" else "packed_student"
+    if args.capture_role == "teacher":
+        # the label stays native-bf16 (it IS the native forward); only the ROLE
+        # flips, which is exactly what k6_kld_report's teacher discovery keys on
+        capture_role = TEACHER_CAPTURE_ROLE
     capture_started = time.monotonic()
     forward_seconds = 0.0
+    stored_positions_total = 0
     for index, window in selection:
         tokens = np.load(window.token_path, allow_pickle=False)
         mask = np.load(window.attention_mask_path, allow_pickle=False)
@@ -1911,22 +2044,43 @@ def main() -> int:
             raise _fail("streamed student logits differ from sealed panel geometry")
         stored = selected.float().cpu().contiguous()
         logit_path = (output_root / "logits" / f"window-{index:04d}.safetensors").resolve()
+        save_tensors = {"logits": stored}
+        save_metadata = {
+            "capture_role": capture_role,
+            "student_label": student_label,
+            "cold_run": str(args.cold_run),
+            "window_id": window.window_id,
+            "token_ids_sha256": window.token_sha256,
+            "attention_mask_sha256": window.attention_mask_sha256,
+            "checkpoint_identity_sha256": checkpoint_identity,
+            "runtime_reader_sha256": identity["runtime_reader_sha256"],
+            "streaming_mode": args.stream_mode,
+            "ep_emulate": str(args.ep_emulate),
+            "reduce_order": args.reduce_order,
+        }
+        if preview_positions is not None:
+            # PREVIEW: keep only the sampled rows.  Note the compute has
+            # already happened -- position sampling is a storage/bandwidth
+            # knob, never a compute knob (the causal trunk needed every
+            # prefix token regardless).
+            indices = preview_position_indices(
+                args.sample_seed, window.window_id,
+                int(window.prediction_positions), preview_positions,
+            )
+            index_tensor = torch.tensor(indices, dtype=torch.int64)
+            save_tensors = {
+                "logits": stored.index_select(0, index_tensor).contiguous(),
+                "position_indices": index_tensor,
+            }
+            save_metadata["store_positions"] = args.store_positions
+            save_metadata["sample_seed"] = str(args.sample_seed)
+            stored_positions_total += len(indices)
+        else:
+            stored_positions_total += int(window.prediction_positions)
         save_file(
-            {"logits": stored},
+            save_tensors,
             logit_path,
-            metadata={
-                "capture_role": capture_role,
-                "student_label": student_label,
-                "cold_run": str(args.cold_run),
-                "window_id": window.window_id,
-                "token_ids_sha256": window.token_sha256,
-                "attention_mask_sha256": window.attention_mask_sha256,
-                "checkpoint_identity_sha256": checkpoint_identity,
-                "runtime_reader_sha256": identity["runtime_reader_sha256"],
-                "streaming_mode": args.stream_mode,
-                "ep_emulate": str(args.ep_emulate),
-                "reduce_order": args.reduce_order,
-            },
+            metadata=save_metadata,
         )
         # ---- combine-order sweep (L5): the ONLY residual between this run and
         # the sealed EP8 one is the order in which the 8 bf16 per-rank partials
@@ -2067,6 +2221,40 @@ def main() -> int:
         "elapsed_seconds": time.monotonic() - capture_started,
         "streaming_disclosure": disclosure,
     }
+    # Both blocks below are added BEFORE receipt_sha256 is computed, so the
+    # seal covers them.  Neither appears in a default invocation, which keeps
+    # default receipts field-identical to the sealed layout (asserted by
+    # stream_score_selftest rung L1.j).
+    if args.capture_role == "teacher":
+        receipt["teacher_provenance"] = {
+            "schema": TEACHER_PROVENANCE_SCHEMA,
+            "teacher_label": TEACHER_LABEL,
+            "lane": "streaming-single-device",
+            "source": "native-bf16",
+            "ep_emulate": args.ep_emulate,
+            "reduce_order": args.reduce_order,
+            "stream_mode": args.stream_mode,
+            "grouped_mm_kernel": backend.get("grouped_mm_kernel"),
+            "device_name": backend.get("device_name"),
+            "torch_version": backend.get("torch_version"),
+            "transformers_version": backend.get("transformers_version"),
+            "cold_run": args.cold_run,
+        }
+    if preview_positions is not None:
+        receipt["schema"] = PREVIEW_CAPTURE_SCHEMA
+        receipt["not_submittable"] = True
+        receipt["sampling_design"] = {
+            "scheme": "stratified-systematic",
+            "windows_used": len(logit_records),
+            "windows_total": len(all_windows),
+            "positions_per_window": preview_positions,
+            "total_positions": stored_positions_total,
+            "seed": args.sample_seed,
+            "fpc_applied": True,
+            "note": "position sampling saves logit storage/teacher bandwidth "
+                    "only; the trunk forward still ran all positions of every "
+                    "selected window (causality). Score with bin/kld-preview.",
+        }
     receipt["receipt_sha256"] = sha256_bytes(canonical_json(receipt))
     write_json(output_root / "capture-receipt.json", receipt)
     print(

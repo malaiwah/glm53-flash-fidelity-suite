@@ -28,6 +28,18 @@ qualification; L2/L3/L4 need the real surface and live in
   L1.e  KLD estimator      k6_kld_report._token_kld against a closed-form KL between
                            two categorical distributions, fp64, plus the sealed
                            tokenwise vector's reshape identity when it is available.
+  L1.g  teacher role       a --capture-role teacher receipt (sealed schema, role
+                           bf16_teacher, teacher_provenance block) satisfies the
+                           teacher-discovery predicate (schema+role, reimplemented
+                           here so the rung runs without quant_pipeline).
+  L1.h  preview refusal    a --store-positions preview capture is refused BOTH as a
+                           teacher (predicate) and by k6_kld_report's pre-check.
+  L1.i  sampling indices   preview_position_indices is deterministic per seed,
+                           per-window randomized, in-bounds and evenly spread.
+  L1.j  receipt stability  the receipt dict stream_score builds for a DEFAULT
+                           invocation is field-identical to the sealed golden key
+                           set (static AST proof that the new blocks are add-only
+                           and flag-gated).
 
 Usage:
     stream_score_selftest.py [--packed-root DIR] [--fixture DIR] [--pipeline-root DIR]
@@ -583,6 +595,244 @@ def check_kld_estimator(sealed_tokenwise: Optional[Path], sealed_report: Optiona
     _record("L1.e-kld-estimator", "PASS" if ok else "FAIL", detail)
 
 
+# --------------------------------------------------------------------------
+# L1.g / L1.h teacher-role acceptance and preview refusal
+# --------------------------------------------------------------------------
+SEALED_CAPTURE_SCHEMA = "quant-pipeline.glm53-logit-capture.v1"
+
+
+def _teacher_discovery_predicate(doc: Any) -> bool:
+    """Reimplementation of k6_kld_report._find_teacher_receipt's acceptance
+    test (schema equality + role), so this rung runs without quant_pipeline.
+    The real function's behaviour is asserted by L1.d when the pipeline is
+    present; this predicate is the laptop-side guard against drift."""
+    return (
+        isinstance(doc, dict)
+        and doc.get("schema") == SEALED_CAPTURE_SCHEMA
+        and doc.get("capture_role") == "bf16_teacher"
+    )
+
+
+def _teacher_receipt_fixture() -> Dict[str, Any]:
+    import stream_score
+
+    return {
+        "schema": stream_score.CAPTURE_SCHEMA,
+        "capture_role": stream_score.TEACHER_CAPTURE_ROLE,
+        "cold_run": 1,
+        "model_revision": "0" * 40,
+        "checkpoint_identity_sha256": "c" * 64,
+        "runtime_reader_sha256": "d" * 64,
+        "token_panel_receipt_sha256": "e" * 64,
+        "backend_identity_sha256": "f" * 64,
+        "weight_dtype": "official BF16 checkpoint routed experts, streamed, NO decode",
+        "logits_dtype": "float32",
+        "kld_direction": "teacher_to_student",
+        "prediction_positions": 51175,
+        "vocab_size": 154880,
+        "student_label": stream_score.NATIVE_STUDENT_LABEL,
+        "logit_files": [],
+        "elapsed_seconds": 1.0,
+        "streaming_disclosure": {"schema": "malaiwah.glm53-streaming-disclosure.v1"},
+        "teacher_provenance": {
+            "schema": stream_score.TEACHER_PROVENANCE_SCHEMA,
+            "teacher_label": stream_score.TEACHER_LABEL,
+            "lane": "streaming-single-device",
+            "source": "native-bf16",
+            "ep_emulate": 8,
+            "reduce_order": "fp32",
+            "stream_mode": "window-major",
+        },
+    }
+
+
+def check_teacher_role() -> None:
+    import stream_score
+
+    receipt = _teacher_receipt_fixture()
+    accepted = _teacher_discovery_predicate(receipt)
+    provenance = receipt["teacher_provenance"]
+    provenance_ok = (
+        provenance["schema"] == "malaiwah.glm53-same-lane-teacher-provenance.v1"
+        and provenance["teacher_label"] == "native-bf16-streaming-v1"
+    )
+    student = dict(receipt, capture_role=stream_score.NATIVE_CAPTURE_ROLE)
+    student.pop("teacher_provenance")
+    _record(
+        "L1.g-teacher-role",
+        "PASS" if (accepted and provenance_ok
+                   and not _teacher_discovery_predicate(student)) else "FAIL",
+        {
+            "teacher_accepted_by_predicate": accepted,
+            "provenance_block_sealed_shape": provenance_ok,
+            "native_student_role_NOT_a_teacher": not _teacher_discovery_predicate(student),
+            "note": "schema stays quant-pipeline.glm53-logit-capture.v1 -- only the "
+                    "ROLE flips, which is exactly what discovery keys on",
+        },
+    )
+
+
+def check_preview_refusal() -> None:
+    import stream_score
+    import k6_kld_report
+
+    preview = _teacher_receipt_fixture()
+    preview["schema"] = stream_score.PREVIEW_CAPTURE_SCHEMA
+    preview["capture_role"] = stream_score.NATIVE_CAPTURE_ROLE
+    preview.pop("teacher_provenance")
+    preview["not_submittable"] = True
+    preview["sampling_design"] = {"scheme": "stratified-systematic",
+                                  "positions_per_window": 256, "seed": 0}
+    not_a_teacher = not _teacher_discovery_predicate(preview)
+    # The refusal being demonstrated here is EXPECTED: capture its stderr so
+    # a raw "k6_kld_report: ERROR: REFUSED" line never leaks unprefixed into
+    # a passing run's output (a stranger reads that as a failure of THEIR
+    # run -- usability review, 2026-08-28).  The captured text is re-emitted
+    # inside this rung's [ok] record instead.
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as work:
+        run_dir = Path(work)
+        (run_dir / "capture-receipt.json").write_text(
+            json.dumps(preview, sort_keys=True), encoding="utf-8")
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(captured):
+                k6_kld_report._refuse_preview_capture(run_dir)
+            refused, message = False, None
+        except SystemExit:
+            refused = True
+            message = ("expected refusal (captured): "
+                       + " ".join(captured.getvalue().split()))
+        sealed_dir_ok = True
+        (run_dir / "capture-receipt.json").write_text(
+            json.dumps(dict(preview, schema=SEALED_CAPTURE_SCHEMA),
+                       sort_keys=True), encoding="utf-8")
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                k6_kld_report._refuse_preview_capture(run_dir)
+        except SystemExit:
+            sealed_dir_ok = False
+    _record(
+        "L1.h-preview-refusal",
+        "PASS" if (not_a_teacher and refused and sealed_dir_ok) else "FAIL",
+        {
+            "preview_refused_as_teacher": not_a_teacher,
+            "preview_refused_by_kld_report_precheck": refused,
+            "sealed_schema_passes_precheck": sealed_dir_ok,
+            "detail": message,
+        },
+    )
+
+
+def check_sampling_indices() -> None:
+    # The design is FRACTIONAL-step systematic (step = N/m with a seeded
+    # start), NOT integer-step: an integer step k = floor(N/m) makes every
+    # position >= k*m unreachable at any seed, biasing the estimate whenever
+    # KLD trends with context depth.  Consecutive gaps therefore alternate
+    # between floor(step) and ceil(step), and the tail beyond k*m MUST be
+    # reachable.  (Kept identical to bin/fidelity/previewstats.
+    # systematic_indices; selftest_preview_stats cross-checks equality.)
+    import stream_score
+
+    a = stream_score.preview_position_indices(7, "final-0003", 2047, 256)
+    b = stream_score.preview_position_indices(7, "final-0003", 2047, 256)
+    starts = {stream_score.preview_position_indices(7, f"final-{i:04d}", 2047, 256)[0]
+              for i in range(25)}
+    k = 2047 // 256
+    gaps = {y - x for x, y in zip(a, a[1:])}
+    steps_ok = gaps <= {k, k + 1} and min(gaps) >= 1     # strictly increasing
+    tail_ok = a[-1] >= k * 256                            # old unreachable zone
+    bounds_ok = all(0 <= x < 2047 for x in a) and len(a) == 256
+    tiny = stream_score.preview_position_indices(3, "w", 10, 8)
+    ok = (a == b and steps_ok and tail_ok and bounds_ok and len(starts) > 1
+          and all(x < 10 for x in tiny))
+    _record(
+        "L1.i-sampling-indices",
+        "PASS" if ok else "FAIL",
+        {
+            "same_seed_same_indices": a == b,
+            "fractional_step": 2047 / 256.0,
+            "gaps_in_floor_ceil": sorted(gaps),
+            "steps_floor_or_ceil": steps_ok,
+            "tail_beyond_integer_step_reachable": tail_ok,
+            "in_bounds": bounds_ok,
+            "distinct_window_starts_of_25": len(starts),
+            "clipping_respected": all(x < 10 for x in tiny),
+        },
+    )
+
+
+# The sealed capture-receipt field set (the golden shape every consumer of
+# quant-pipeline.glm53-logit-capture.v1 relies on).  receipt_sha256 is added
+# after assembly and is not part of the dict literal.
+GOLDEN_RECEIPT_KEYS = frozenset({
+    "schema", "capture_role", "cold_run", "model_revision",
+    "checkpoint_identity_sha256", "runtime_reader_sha256",
+    "token_panel_receipt_sha256", "backend_identity_sha256", "weight_dtype",
+    "logits_dtype", "kld_direction", "prediction_positions", "vocab_size",
+    "student_label", "logit_files", "elapsed_seconds", "streaming_disclosure",
+})
+
+
+def check_receipt_stability() -> None:
+    """Static AST proof that default invocations build the SEALED receipt shape.
+
+    The receipt dict literal must carry exactly the golden keys, and every
+    later receipt[...] assignment except receipt_sha256 must sit inside an
+    `if` (i.e. be flag-gated) -- which is what makes the teacher/preview
+    additions invisible to a default run.
+    """
+    import ast
+
+    source = (_TOOLS / "stream_score.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    parents: Dict[Any, Any] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    literal_keys: Optional[set] = None
+    ungated: List[str] = []
+    gated: List[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if (isinstance(target, ast.Name) and target.id == "receipt"
+                and isinstance(node.value, ast.Dict)):
+            literal_keys = {k.value for k in node.value.keys
+                            if isinstance(k, ast.Constant)}
+        if (isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "receipt"
+                and isinstance(target.slice, ast.Constant)):
+            key = target.slice.value
+            inside_if = False
+            cursor = node
+            while cursor in parents:
+                cursor = parents[cursor]
+                if isinstance(cursor, ast.If):
+                    inside_if = True
+                    break
+            if key == "receipt_sha256":
+                continue
+            (gated if inside_if else ungated).append(key)
+    ok = (literal_keys == GOLDEN_RECEIPT_KEYS and not ungated
+          and set(gated) <= {"teacher_provenance", "schema",
+                             "not_submittable", "sampling_design"})
+    _record(
+        "L1.j-receipt-stability",
+        "PASS" if ok else "FAIL",
+        {
+            "literal_keys_equal_golden": literal_keys == GOLDEN_RECEIPT_KEYS,
+            "missing": sorted(GOLDEN_RECEIPT_KEYS - (literal_keys or set())),
+            "unexpected": sorted((literal_keys or set()) - GOLDEN_RECEIPT_KEYS),
+            "ungated_receipt_assignments": ungated,
+            "flag_gated_assignments": sorted(set(gated)),
+        },
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -603,7 +853,7 @@ def main() -> int:
     args = parser.parse_args()
 
     have_pipeline = _import_pipeline(args.pipeline_root)
-    wanted = set((args.only or "a,b,c,d,e,f").replace(" ", "").split(","))
+    wanted = set((args.only or "a,b,c,d,e,f,g,h,i,j").replace(" ", "").split(","))
     required = set((args.require or "").replace(" ", "").split(",")) - {""}
 
     if "a" in wanted:
@@ -640,6 +890,16 @@ def main() -> int:
         # the estimator half needs only torch + numpy, so this rung runs on a
         # laptop with no pipeline checkout
         check_kld_estimator(args.sealed_tokenwise, args.sealed_report)
+    # g/h/i/j need no pipeline, no torch and no fixtures -- pure json/ast --
+    # so they run on any laptop; SKIP only if an import surprises us.
+    for rung, fn in (("g", check_teacher_role), ("h", check_preview_refusal),
+                     ("i", check_sampling_indices), ("j", check_receipt_stability)):
+        if rung in wanted:
+            try:
+                fn()
+            except ImportError as error:
+                _record(f"L1.{rung}", "SKIP",
+                        {"reason": f"{type(error).__name__}: {error}"})
 
     failed = [row["check"] for row in RESULTS if row["status"] == "FAIL"]
     skipped = [row["check"] for row in RESULTS if row["status"] == "SKIP"]

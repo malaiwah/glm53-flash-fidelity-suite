@@ -487,6 +487,38 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
         raise Refusal("no engine configured for lane %r" % args.lane,
                       ["known lanes: " + ", ".join(sorted(engines))])
 
+    # -- registry front gate: is this artifact already measured? -----------
+    # BEFORE any preflight, because "the answer already exists" is the
+    # cheapest possible outcome of a cloud run.
+    if getattr(args, "skip_registry_check", False):
+        con.warn("--skip-registry-check: not asking the registry first")
+        plan["registry_check"] = "skipped"
+    else:
+        from fidelity.registry_client import front_gate
+
+        gate = front_gate(
+            repo=args.model, revision=args.revision, path_hint=None,
+            source=getattr(args, "registry", "auto"),
+            force=getattr(args, "force", False),
+            accept_measured_revision=getattr(args, "accept_measured_revision",
+                                             False),
+            con=con)
+        plan["registry_check"] = gate["status"]
+        if gate["status"] == "already-measured":
+            plan["status"] = "already-measured"
+            return plan
+        if gate["status"] == "stale-refused":
+            raise Refusal(
+                "this repo was measured at a pinned revision that is not the "
+                "one you asked about (rows printed above)",
+                ["pass --accept-measured-revision to target the measured commit",
+                 "pass --force to measure the new commit as a NEW artifact "
+                 "record"])
+        if gate.get("status") == "proceed-stale-accepted" and \
+                gate.get("measured_revision"):
+            args.revision = gate["measured_revision"]
+        con.say("")
+
     con.say("PREFLIGHT%s" % (" " * 54 + "(no spend yet)"))
 
     # -- tooling -----------------------------------------------------------
@@ -1231,6 +1263,14 @@ def build_parser() -> argparse.ArgumentParser:
     t = p.add_argument_group("target")
     t.add_argument("--model", help="HF repo id of the artifact to measure")
     t.add_argument("--revision", help="40-hex pin (default: resolve main and show it)")
+    t.add_argument("--registry", default="auto",
+                   help="auto | hf | local[:PATH] -- where the already-measured "
+                        "front gate reads from")
+    t.add_argument("--skip-registry-check", action="store_true")
+    t.add_argument("--force", action="store_true",
+                   help="measure even though published rows exist")
+    t.add_argument("--accept-measured-revision", action="store_true",
+                   help="on revision drift, target the registry's measured commit")
 
     pl = p.add_argument_group("panel (a parameter, never a constant)")
     pl.add_argument("--panel", help="HF dataset id of the panel/teacher")
@@ -1282,7 +1322,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.install:
             return reaper_install(con)
         if args.sweep:
-            return reaper_sweep(con)
+            # --dry-run: report what WOULD be destroyed, destroy nothing.
+            # Selftests use this so that destruction is never a side effect
+            # of "run the selftests" (usability review, 2026-08-28).
+            return reaper_sweep(con, dry=args.dry_run)
         return reaper_list(con)
 
     if not args.model or not args.panel:
@@ -1331,6 +1374,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     except (HFError, JLError) as exc:
         con.err(str(exc))
         return 1
+
+    if plan_data.get("status") == "already-measured":
+        con.say("")
+        con.rule()
+        con.say("ALREADY MEASURED -- the registry rows above answer this "
+                "request; nothing was rented, $0.00 spent. Pass --force to "
+                "measure anyway (e.g. to reproduce).")
+        return EXIT_OK
 
     if args.dry_run:
         con.say("")

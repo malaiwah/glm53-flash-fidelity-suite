@@ -810,3 +810,16 @@ Two knobs did NOT pay off here and are worth knowing about:
   `logs/stage-stream.state` (via `QP_STAGE_STATE`) so the K8 supervisor's
   `logs/stage.state` is never clobbered.
 * Bulk output goes to container-local disk, never to the shared `/home/jl_fs`.
+
+---
+
+**2026-08-29 addendum.** The tooling grew around this sealed doc without
+changing the lane: `stream_score.py --capture-role teacher` can now emit this
+lane's own SAME-LANE teacher (which drives the lane's 0.011506 floor to an
+exact, hash-evidenced zero — recipe and ladder in
+[`SAME-LANE-TEACHER.md`](SAME-LANE-TEACHER.md)); `--store-positions
+per-window:<m>` produces position-sampled PREVIEW captures no sealed consumer
+accepts (score them with `bin/kld-preview`); and the streaming/local lanes are
+now pinned in `bin/engines.json` against this file's real CLI. Default
+invocations are byte-identical to the sealed behaviour (ladder rung L1.j
+proves the receipt shape is unchanged).

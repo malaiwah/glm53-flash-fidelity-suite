@@ -14,28 +14,13 @@ submission months later.
 
 from __future__ import annotations
 
-import importlib.util
 import platform
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .common import canonical_json, sha256_hex, seal, utcnow
-
-
-def _load_registry_lib(suite_root: Path):
-    path = suite_root / "registry" / "tools" / "registry_lib.py"
-    if not path.is_file():
-        raise RuntimeError(
-            "registry/tools/registry_lib.py not found under %s; the receipt's "
-            "scope_digest must be computed by the registry's own code, not "
-            "reimplemented here" % suite_root
-        )
-    spec = importlib.util.spec_from_file_location("_registry_lib", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+from .common import load_registry_lib as _load_registry_lib  # moved; kept for back-compat
 
 
 LANE_DISCLOSURES: Dict[str, Dict[str, Any]] = {
@@ -93,6 +78,60 @@ BUDGET_DISCLOSURE = {
 }
 
 
+class NotSubmittable(RuntimeError):
+    """A receipt that is structurally barred from becoming a registry row."""
+
+
+def _scan_for_unsubmittable(node: Any, path: str = "$") -> Optional[str]:
+    """Depth-first scan of any input block for preview/teacher markers.
+
+    Returns the reason string, or None when the subtree is clean.  This is the
+    bin-side refusal axis for preview receipts; the registry's own const gate
+    (submission_schema must equal quant-fidelity-registry/submission-receipt.v1)
+    is the independent second axis, enforced by code this repo may not edit.
+    """
+    if isinstance(node, dict):
+        schema = node.get("schema")
+        if isinstance(schema, str) and "-preview." in schema:
+            return ("%s carries schema %r -- a PREVIEW receipt. Preview receipts "
+                    "are structurally unsubmittable: they are labeled estimates "
+                    "(sampled, or measured on an unpinned local lane), not sealed "
+                    "measurements. Run the sealed lane (engines.json lane "
+                    "'streaming') to produce a submittable row." % (path, schema))
+        if node.get("not_submittable") is True:
+            return ("%s declares not_submittable: true. The tool that wrote it "
+                    "said so on purpose; nothing downstream may launder it into "
+                    "a registry row." % path)
+        if node.get("capture_role") == "bf16_teacher":
+            return ("%s is a bf16_teacher CAPTURE receipt, not a measurement. A "
+                    "teacher becomes a registry REFERENCE record (see "
+                    "k6/SAME-LANE-TEACHER.md), never a measurement row: it has "
+                    "no measured_mean_kld because it IS the thing students are "
+                    "measured against." % path)
+        for key, value in node.items():
+            reason = _scan_for_unsubmittable(value, "%s.%s" % (path, key))
+            if reason:
+                return reason
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            reason = _scan_for_unsubmittable(value, "%s[%d]" % (path, i))
+            if reason:
+                return reason
+    return None
+
+
+def assert_submittable(blocks: Dict[str, Any]) -> None:
+    """Refuse to build a submission from preview/teacher material.
+
+    `blocks` is a {label: block} dict of everything about to enter a
+    submission receipt.  Raises NotSubmittable with the full reason.
+    """
+    for label, block in blocks.items():
+        reason = _scan_for_unsubmittable(block, label)
+        if reason:
+            raise NotSubmittable("REFUSED to build a submission receipt: " + reason)
+
+
 def build_submission(
     *,
     suite_root: Path,
@@ -118,6 +157,12 @@ def build_submission(
     `artifact["scope"]` must already be populated; its digest is computed here
     with the registry's own function so the validator's recomputation agrees.
     """
+    assert_submittable({
+        "artifact": artifact, "panel": panel, "reference": reference,
+        "metric": metric, "estimator": estimator, "determinism": determinism,
+        "measurement_scope": measurement_scope, "environment": environment,
+        "evidence": evidence, "auxiliary_metrics": auxiliary_metrics,
+    })
     lib = _load_registry_lib(suite_root)
 
     artifact = dict(artifact)

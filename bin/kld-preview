@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Local preview scorer (census or sampled). Needs torch+safetensors: run under
+# FIDELITY_PYTHON. See kld_preview.py --help for the statistics and the gates.
+exec "${FIDELITY_PYTHON:-python3}" "$(cd "$(dirname "$0")" && pwd)/kld_preview.py" "$@"

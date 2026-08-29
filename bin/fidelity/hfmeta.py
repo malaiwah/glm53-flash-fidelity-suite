@@ -120,6 +120,110 @@ def _api_path(repo_id: str, repo_type: str) -> str:
     return "%s/api/%s/%s" % (HF_ENDPOINT, kind, repo_id)
 
 
+def hf_unavailable_text(repo_id: str, exc: Exception) -> str:
+    """The three-way-honest failure text for an unauthenticated repo lookup.
+
+    HF returns 401 ("Invalid username or password.") for a NONEXISTENT repo on
+    unauthenticated requests, and errors for gated/private repos the same way,
+    so "gone", "private" and "gated" are indistinguishable without auth.  Say
+    exactly that instead of guessing one of the three.
+    """
+    return (
+        "HF returned an error for %s (%s): the repo does not exist, or is "
+        "private/gated (unauthenticated requests cannot distinguish these). "
+        "The registry lookup continues by repo string regardless -- the "
+        "registry records artifacts whose repos have since vanished."
+        % (repo_id, exc)
+    )
+
+
+# --------------------------------------------------------------------------
+# Lineage metadata (base_model chains)
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class ModelLineageMeta:
+    """The slice of /api/models/<repo> that lineage resolution needs.
+
+    `base_models` is a list of (relation_or_None, base_repo) pairs.  Tags of
+    the form "base_model:<relation>:<repo>" are preferred over
+    cardData.base_model because the relation lives in the tag and cardData's
+    base_model_relation is unreliably present (verified live: 0xSero publishes
+    the list form with no relation field; malaiwah the string form with one).
+    """
+
+    repo_id: str                      # canonical case, from the API's own `id`
+    sha: Optional[str]                # current main commit
+    last_modified: Optional[str]
+    tags: List[str] = field(default_factory=list)
+    base_models: List[Tuple[Optional[str], str]] = field(default_factory=list)
+    gated: Any = None
+    private: bool = False
+
+
+def model_lineage_meta(repo_id: str) -> ModelLineageMeta:
+    """GET /api/models/<repo> and extract lineage-relevant fields.
+
+    Follows redirects (a wrong-cased repo 307s to the canonical one); the
+    returned `id` is adopted as the canonical spelling.  Raises HFError on
+    401/404/network -- callers wrap it with hf_unavailable_text().
+    """
+    data = _get(_api_path(repo_id, "model"))
+    tags = [t for t in (data.get("tags") or []) if isinstance(t, str)]
+    bases: List[Tuple[Optional[str], str]] = []
+    for tag in tags:
+        if not tag.startswith("base_model:"):
+            continue
+        parts = tag.split(":", 2)
+        if len(parts) == 3:
+            bases.append((parts[1] or None, parts[2]))
+        elif len(parts) == 2 and "/" in parts[1]:
+            bases.append((None, parts[1]))
+    if not bases:
+        card = data.get("cardData") or {}
+        raw = card.get("base_model")
+        listed = raw if isinstance(raw, list) else ([raw] if raw else [])
+        relation = card.get("base_model_relation")
+        for base in listed:
+            if isinstance(base, str) and "/" in base:
+                bases.append((relation, base))
+    # dedupe, preserving first-seen order
+    seen = set()
+    unique: List[Tuple[Optional[str], str]] = []
+    for rel, repo in bases:
+        key = (rel, repo.lower())
+        if key not in seen:
+            seen.add(key)
+            unique.append((rel, repo))
+    return ModelLineageMeta(
+        repo_id=data.get("id") or repo_id,
+        sha=data.get("sha"),
+        last_modified=data.get("lastModified"),
+        tags=tags,
+        base_models=unique,
+        gated=data.get("gated"),
+        private=bool(data.get("private")),
+    )
+
+
+def resolve_commit(repo_id: str, revision: str, repo_type: str = "model") -> str:
+    """Resolve a branch / tag / short sha to the full 40-hex commit.
+
+    Uses /api/<kind>/<repo>/revision/<rev>, which answers for all three forms;
+    a full 40-hex revision is still round-tripped through the API so a typo'd
+    hash fails HERE, not after a download.
+    """
+    url = "%s/revision/%s" % (_api_path(repo_id, repo_type),
+                              urllib.parse.quote(revision, safe=""))
+    data = _get(url)
+    sha = data.get("sha")
+    if not (isinstance(sha, str) and SHA40.match(sha)):
+        raise HFError("revision %r of %s did not resolve to a 40-hex commit"
+                      % (revision, repo_id))
+    return sha
+
+
 def resolve_revision(repo_id: str, repo_type: str = "model",
                      revision: str = "main") -> str:
     """Turn a branch name into an immutable 40-hex commit, on the caller's machine.
@@ -319,9 +423,36 @@ def sniff_surface(meta: RepoMeta) -> SurfaceInfo:
         except HFError:
             pass
 
+    if info.surface == "unknown" and "config.json" in names and \
+            info.shard_count > 0 and "quantization_config.json" not in names:
+        # A plain full-precision release tree: config + safetensors shards and
+        # no quant markers anywhere.  This is the `native-bf16` surface the
+        # bf16-floor lane reads (--source native needs only this tree + a
+        # sealed inventory), so classify it rather than shrugging "unknown".
+        try:
+            cfg = fetch_json(meta.repo_id, "config.json", revision=meta.revision)
+            # dtype location probed against the real release: GLM-5.3-Flash
+            # nests it as text_config.dtype; older HF configs use top-level
+            # torch_dtype.  Check both, never guess a third.
+            nested = cfg.get("text_config") or {}
+            dtype = str(cfg.get("torch_dtype") or nested.get("dtype")
+                        or nested.get("torch_dtype") or "").lower()
+            if "quantization_config" not in cfg and \
+                    "quantization_config" not in nested and dtype in (
+                    "bfloat16", "float16", "float32"):
+                info.surface = "native-bf16"
+                info.codec_family = {"bfloat16": "bf16", "float16": "fp16",
+                                     "float32": "fp32"}[dtype]
+                info.bits = 16.0 if dtype in ("bfloat16", "float16") else 32.0
+                info.evidence["torch_dtype"] = dtype
+        except HFError:
+            pass
+
     if info.surface == "unknown":
         info.problems.append(
-            "no recognised surface marker in %s (looked for %s)"
+            "no recognised surface marker in %s (looked for %s, or a plain "
+            "full-precision tree: config.json + shards with no "
+            "quantization_config)"
             % (meta.repo_id,
                ", ".join(sorted({n for group in SURFACE_MARKERS.values() for n in group})))
         )

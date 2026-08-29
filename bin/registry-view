@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Browse the quant-fidelity registry: already-measured checks, filtered row
+# tables, lineage resolution. See registry_view.py for the subcommands.
+exec "${FIDELITY_PYTHON:-python3}" "$(cd "$(dirname "$0")" && pwd)/registry_view.py" "$@"

@@ -87,10 +87,14 @@ def _find_teacher_receipt(teacher_root: Path) -> Path:
 
     direct = teacher_root / "capture-receipt.json"
     candidates = [direct] if direct.is_file() else sorted(teacher_root.glob("**/*.json"))
+    previews = 0
     for path in candidates:
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict) and "-preview." in str(value.get("schema", "")):
+            previews += 1
             continue
         if (
             isinstance(value, dict)
@@ -98,10 +102,95 @@ def _find_teacher_receipt(teacher_root: Path) -> Path:
             and value.get("capture_role") == "bf16_teacher"
         ):
             return path
+    hint = ""
+    if previews:
+        hint = (
+            f" ({previews} PREVIEW capture receipt(s) were seen and refused: a "
+            "preview is position-sampled and can never be a teacher; capture a "
+            "teacher with stream_score.py --capture-role teacher --store-positions all)"
+        )
     raise _fail(
         f"no sealed bf16_teacher capture receipt found under {teacher_root} "
-        "(expected the downloaded teacher final-window tree)"
+        f"(expected the downloaded teacher final-window tree){hint}"
     )
+
+
+def _refuse_preview_capture(run_dir: Path) -> None:
+    """Friendly pre-check: a preview capture must never reach the sealed scorer.
+
+    Deliberately needs only json+pathlib (no quant_pipeline), so selftests can
+    exercise it on a laptop.
+    """
+    capture = run_dir / "capture-receipt.json"
+    if not capture.is_file():
+        return
+    try:
+        schema = str(json.loads(capture.read_text(encoding="utf-8")).get("schema", ""))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return
+    if "-preview." in schema:
+        raise _fail(
+            f"REFUSED: {run_dir} is a PREVIEW capture (schema {schema}). The "
+            "sealed scorer only accepts full-census captures "
+            "(quant-pipeline.glm53-logit-capture.v1). Score previews with "
+            "bin/kld-preview."
+        )
+
+
+def _teacher_source_of(teacher: Dict[str, Any]) -> "tuple[str, str]":
+    """(teacher_source, teacher_label) from the teacher receipt.
+
+    A same-lane teacher carries the additive teacher_provenance block; the
+    sealed EP8 teacher predates it and carries none -- backward compatible by
+    construction.
+    """
+    provenance = teacher.get("teacher_provenance")
+    if isinstance(provenance, dict):
+        return "same_lane_native_bf16", str(provenance.get("teacher_label")
+                                            or "same-lane-native-bf16")
+    return "sealed_ep8_bf16_teacher", "sealed-ep8"
+
+
+def _resolve_teacher_paths(
+    teacher_rows: Dict[str, Dict[str, Any]], teacher_root: Optional[Path],
+    sha256_file,
+) -> Dict[str, Path]:
+    """Sealed fast path: the recorded absolute path exists and is used as-is
+    (byte-identical behaviour to before this function existed).  Portability
+    fallback: a teacher tree moved to another machine keeps its receipt's
+    absolute paths from the capture box; remap to <teacher_root>/logits/<name>
+    and, in the fallback path ONLY, verify the file's sha256 against the
+    receipt row before use -- hash content, not containers."""
+    resolved: Dict[str, Path] = {}
+    for window_id in sorted(teacher_rows):
+        row = teacher_rows[window_id]
+        recorded = Path(row["path"])
+        if recorded.is_file():
+            resolved[window_id] = recorded
+            continue
+        if teacher_root is None:
+            raise _fail(f"teacher logits missing: {recorded}")
+        fallback = teacher_root / "logits" / recorded.name
+        if not fallback.is_file():
+            raise _fail(
+                f"teacher logits for {window_id} not found at the sealed path "
+                f"{recorded} nor at the portable fallback {fallback}"
+            )
+        digest = sha256_file(fallback)
+        if digest != row["sha256"]:
+            raise _fail(
+                f"teacher fallback {fallback} has sha256 {digest[:12]}..., but "
+                f"the sealed receipt row says {str(row['sha256'])[:12]}... -- "
+                "the remapped file is NOT the sealed teacher row (content "
+                "hash rules identity, never the filename)"
+            )
+        print(
+            f"teacher path remapped: {window_id}: {recorded} -> {fallback} "
+            "(sha256 verified)",
+            flush=True,
+        )
+        resolved[window_id] = fallback
+    return resolved
 
 
 def _record_map(receipt: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -143,6 +232,7 @@ def _measure_run(
     chunk_positions: int,
     device: str,
     expected_capture_role: str = "packed_student",
+    teacher_root: Optional[Path] = None,
 ) -> Path:
     """Compute or resume one sealed per-run KLD report; returns its path."""
 
@@ -164,6 +254,7 @@ def _measure_run(
                 f"not the profile's expected {student_label!r} - wrong --runs/--profile pair"
             )
         return report_path
+    _refuse_preview_capture(run_dir)
     student = load_capture_receipt(
         run_dir / "capture-receipt.json", expected_role=expected_capture_role
     )
@@ -212,6 +303,8 @@ def _measure_run(
             "CUDA device requested but unavailable; pass --device cpu for the "
             "(slow) exact fp64 CPU path"
         )
+    teacher_paths = _resolve_teacher_paths(teacher_rows, teacher_root, sha256_file)
+    teacher_source, teacher_label = _teacher_source_of(teacher)
     token_values: List[np.ndarray] = []
     top1_matches = 0
     per_window: List[Dict[str, Any]] = []
@@ -222,7 +315,7 @@ def _measure_run(
         values = np.empty(count, dtype=np.float64)
         for start in range(0, count, chunk_positions):
             stop = min(start + chunk_positions, count)
-            teacher_logits = _load_slice(Path(teacher_row["path"]), start, stop)
+            teacher_logits = _load_slice(teacher_paths[window_id], start, stop)
             student_logits = _load_slice(Path(student_row["path"]), start, stop)
             if teacher_logits.shape != (stop - start, int(teacher["vocab_size"])) or (
                 student_logits.shape != teacher_logits.shape
@@ -254,6 +347,21 @@ def _measure_run(
             np.concatenate([token_values[index] for index in indices])
         )
     overall = summarize(all_values)
+    # Lane-ONLY identity (additive, forward-looking): copied from the run's
+    # backend.json when the capture emitted one.  backend_identity_sha256
+    # pins artifact+lane together and cannot answer "same lane?"; this hash
+    # can, so fidelity-stats gates paired deltas and attributables on its
+    # equality when both sides carry it.  Absent for captures made before
+    # 2026-08-29, so historical reports reproduce byte-identically.
+    student_lane_identity = None
+    try:
+        backend_json = run_dir / "backend.json"
+        if backend_json.is_file():
+            student_lane_identity = json.loads(
+                backend_json.read_text(encoding="utf-8")
+            ).get("lane_identity_sha256")
+    except (OSError, ValueError):
+        student_lane_identity = None
     report = {
         "schema": "quant-pipeline.glm53-packed-student-kld.v1",
         "teacher_receipt_sha256": teacher["receipt_sha256"],
@@ -263,6 +371,8 @@ def _measure_run(
         "runtime_reader_sha256": student["runtime_reader_sha256"],
         "token_panel_receipt_sha256": teacher["token_panel_receipt_sha256"],
         "teacher_backend_identity_sha256": teacher["backend_identity_sha256"],
+        "teacher_source": teacher_source,
+        "teacher_label": teacher_label,
         "student_backend_identity_sha256": student["backend_identity_sha256"],
         "qualification_panel_final_only": True,
         "qualification_window_count": len(per_window),
@@ -280,9 +390,25 @@ def _measure_run(
         "tokenwise_kld_sha256": sha256_file(token_path),
         "elapsed_seconds": time.monotonic() - started,
     }
+    if student_lane_identity:
+        report["student_lane_identity_sha256"] = student_lane_identity
     report["report_sha256"] = sha256_bytes(canonical_json(report))
     write_json(report_path, report)
     return report_path
+
+
+# The teacher every historical baseline in the comparison table was measured
+# against (brandonmusic's sealed EP8 fp32-logits capture).  Receipts naming a
+# DIFFERENT teacher_receipt_sha256 are tabled apart and never ranked against
+# these rows.
+SEALED_EP8_TEACHER_SHA = (
+    "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5"
+)
+
+_TABLE_HEADER = (
+    "| model | routed bpw | size | mean tokenwise KLD vs BF16 teacher "
+    "(25 sealed windows, 51,175 pos, fp64) | provenance |"
+)
 
 
 def _comparison_table(
@@ -291,15 +417,21 @@ def _comparison_table(
     k4_baseline: float,
     receipts_dir: Path,
 ) -> None:
-    rows = [
-        "| model | routed bpw | size | mean tokenwise KLD vs BF16 teacher "
-        "(25 sealed windows, 51,175 pos, fp64) | provenance |",
-        "|---|---|---|---|---|",
+    """One ranked table PER TEACHER.  Rows measured against different
+    teacher_receipt_sha256 values are different estimands; putting them in one
+    ranked list would be exactly the cross-reference conflation the registry's
+    comparability key exists to prevent."""
+    baseline_rows = [
         f"| zai-org FP8 (as served) | 8 | 328 GB | {fp8_baseline:.6f} "
         "| our fidelity-suite baseline |",
         f"| brandonmusic K4 (EXL3/TR3-MCG) | 4.01 | 163.6 GiB | {k4_baseline:.6f} "
         "(five-run mean, stddev 0) | his sealed receipts |",
     ]
+    groups: "Dict[str, Dict[str, Any]]" = {}
+
+    def _group(sha: str, label: str) -> Dict[str, Any]:
+        return groups.setdefault(sha, {"label": label, "rows": []})
+
     for profile, bpw, size in (
         ("k6", "6.01", "236.1 GiB"),
         ("k8", "8.01", "308.7 GiB"),
@@ -319,11 +451,35 @@ def _comparison_table(
                 "dione-q4": "0xSero Dione Q4 (EXL3 K4, unsealed source)",
                 "dione-3.0bpw": "0xSero Dione 3.0bpw (EXL3 K3, unsealed source)",
             }[profile]
-            rows.append(
+            teacher_sha = str(
+                receipt.get("teacher_receipt_sha256") or SEALED_EP8_TEACHER_SHA
+            )
+            teacher_label = str(receipt.get("teacher_label") or "sealed-ep8")
+            _group(teacher_sha, teacher_label)["rows"].append(
                 f"| **{label}** | {bpw} | {size} | **{mean:.6f}** (gate < 0.06 {gate}) "
                 "| this campaign |"
             )
-    out_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    # the historical baselines belong to the sealed EP8 teacher's table
+    _group(SEALED_EP8_TEACHER_SHA, "sealed-ep8")["rows"] = (
+        baseline_rows + _group(SEALED_EP8_TEACHER_SHA, "sealed-ep8")["rows"]
+    )
+    ordered = sorted(groups, key=lambda sha: (sha != SEALED_EP8_TEACHER_SHA, sha))
+    lines: List[str] = []
+    for sha in ordered:
+        group = groups[sha]
+        lines.append(f"#### teacher: {group['label']} ({sha[:12]}...)")
+        lines.append("")
+        lines.append(_TABLE_HEADER)
+        lines.append("|---|---|---|---|---|")
+        lines.extend(group["rows"])
+        lines.append("")
+    if len(ordered) > 1:
+        pairs = " vs ".join(sha[:12] + "..." for sha in ordered)
+        lines.append(
+            "rows above and below are NOT comparable: different reference "
+            f"(teacher_receipt_sha256 {pairs})"
+        )
+    out_path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
 
 
 def main() -> int:
@@ -393,6 +549,18 @@ def main() -> int:
 
     teacher_path = _find_teacher_receipt(args.teacher.resolve())
     teacher = load_capture_receipt(teacher_path, expected_role="bf16_teacher")
+    teacher_source, teacher_label = _teacher_source_of(teacher)
+    print(
+        json.dumps(
+            {
+                "teacher_source": teacher_source,
+                "teacher_label": teacher_label,
+                "teacher_receipt_sha256": teacher["receipt_sha256"],
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
     report_paths: List[Path] = []
     for run_dir in runs:
@@ -404,6 +572,7 @@ def main() -> int:
                 expected_capture_role=expected_capture_role,
                 chunk_positions=args.chunk_positions,
                 device=args.device,
+                teacher_root=teacher_path.parent,
             )
         )
     reports = [
@@ -525,6 +694,8 @@ def main() -> int:
             "quality_gate_passed": bool(mean < 0.06),
             "kld_report_sha256": [sha for _, sha in reports],
             "teacher_receipt_sha256": teacher["receipt_sha256"],
+            "teacher_source": teacher_source,
+            "teacher_label": teacher_label,
         }
         if args.profile.startswith("dione"):
             # the headline number's own receipt must carry the unsealed-source

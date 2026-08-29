@@ -792,3 +792,209 @@ renting on the same account — and `jl destroy` erases the cost record.
 LESSON 23: a panel mean is a floor plus an error, and only one of those is the
 codec. Measure the floor once per lane, early.
 LESSON 24: a cache that can refuse should refuse before it allocates.
+
+## 2026-08-29 (evening) — four asks landed: accuracy, portability, performance, one command
+
+All four operator asks shipped as working tools, selftested green on the M4
+Max (`bin/selftest_all.sh`: 30 passed, 0 failed, 3 skipped — two reaper tests
+guarded by `SELFTEST_SKIP_ACCOUNT` because another session is renting on the
+account, one fixture test pending `transformers` under FIDELITY_PYTHON).
+
+**A. Accuracy.** `stream_score.py --capture-role teacher` emits a SAME-LANE
+teacher (role flips to `bf16_teacher`, schema unchanged — exactly what
+`_find_teacher_receipt` keys on — plus a sealed `teacher_provenance` block,
+`malaiwah.glm53-same-lane-teacher-provenance.v1`). Against such a teacher the
+lane's floor is exactly 0 with T1 hash evidence (per-window logit sha256
+identity; the all-zeros tokenwise npy has the fixed sha256 3ffddc61…be17,
+asserted by `bin/selftest_zero_floor.py`); the $6 recipe, the T1/T2 ladder and
+the paste-ready reference row live in `k6/SAME-LANE-TEACHER.md` (the GPU run
+itself deliberately not executed — no renting in this change).
+`bin/fidelity-stats attributable` reproduces the sealed attributables from
+receipts (K6 0.013715−0.011506=+0.002209; K8 0.012384−0.011506=+0.000878,
+verified live via `--from-registry` against the public dataset) and REFUSES
+cross-lane floors with the arithmetic in the message (0.012384−0.012712=
+−0.000328, a negative attributable for an 8-bit quant); `paired-delta` gives
+the honest CI (paired t via incomplete beta + BCa over windows + sign test +
+Wilcoxon; on the committed K8-ANOMALY 11 windows: d̄=−1.2177e-3, s_d=1.7335e-3,
+t=−2.33 — the file's own numbers, reproduced). `k6_kld_report.py` now
+propagates teacher_source/teacher_label into reports and summaries, groups
+comparison tables per teacher (never mixing them), remaps moved teacher trees
+with sha256 verification in the fallback path only, and pre-refuses preview
+captures.
+
+**B. Portability.** `bin/registry-view` (stock py3.9, stdlib): `check` tiers
+artifacts EXACT/UNPINNED/STALE/PINNED-UNVERIFIED against the live head and
+prints rows + receipt links (zai FP8 is a STALE hit by default — correct: main
+moved past the measured 3f1971b7); `rows` filters by
+model/artifact/panel/lane/measured-by/metric/codec/bpw/class and NEVER merges
+comparability groups (grouping is by RECOMPUTED key via registry_lib,
+anti-tamper); `lineage` walks base_model tags (more complete than cardData —
+verified live) to the registry's model — both zai roots land on
+model--zai-org.glm-5.3-flash — and picks the panel/teacher precedent with
+printed alternatives. Local clone and public HF dataset give identical group
+output (verified; snapshots printed in the footer). The live tripwire
+(`--selftest-live`) asserts the two published streaming values never move.
+
+**C. Performance.** Honesty first: position sampling is a STORAGE/teacher-
+bandwidth knob, not a compute knob (the causal trunk runs all positions
+regardless; fp64 scoring is 0.15 ms/position CPU measured — 8 s/panel).
+`--store-positions per-window:<m>` + `--sample-seed` produce PREVIEW captures
+(schema `malaiwah.glm53-logit-capture-preview.v1`); `bin/kld-preview` scores
+them with the stratified estimator + FPC (`fidelity/previewstats.py`, pure
+stdlib, T3-certified: unbiased, z-coverage 93.5% where its assumptions hold,
+and the measured KNOWN failure — 77.5% coverage on the extreme tail at m=64,
+improving to 89% at m=512 — is printed as a tail-dominance warning, since the
+estimate and its SE are positively correlated on heavy tails). The 25-window
+gate is structural (sd 1.73e-3 > effect 1.22e-3, lessons 28/29). CENSUS mode
+(exact, ~8 s/panel once logits exist) is the default local path. The planner
+now prices the REAL engine (`window_major_cost`: 36,288×18 ms = 10.9 min/pass;
+×25 uncached ≈ 4.5 h; ram caches 7/42 layers on 128 GB; disk = one decode +
+46 min of re-reads at 5.5 GB/s assumed-and-labeled) and marks the legacy
+layer-outer schedule as a hypothesis no engine implements. The KDA/MPS trunk
+time stays null-with-instructions (fixture: `bin/measure-local --fixture
+fetch`). MLX stays out of scope: zero MLX code exists in the stack; MPS is the
+Apple lane.
+
+**D. One command.** `bin/measure <hf-link>`: parse → registry (published truth
+first) → live revision → already-measured gate (rows + receipts, exit 0) →
+lineage → panel/teacher pick → surface sniff (tr3-published/MLX refused for
+$0.00 with the missing reader named) → lane pick → `measure-local --execute`,
+whose preflight lists ALL missing prerequisites with remedies at once
+(demonstrated on this Mac: transformers, quant_pipeline, teacher tree,
+artifact path, tr3 reader — rc 3, zero tracebacks). measure-local and
+measure-cloud grew the same front gate (`--force` /
+`--accept-measured-revision` / `--skip-registry-check`).
+
+**Pinning reconciliation.** streaming/local-mps/local-cuda-budget are now
+`pinned: true` in `bin/engines.json`, every flag verified against the probed
+CLI (AST scrape + `--probe-engines`, all five lanes green). Planner-only knobs
+demoted to "(planner cost model only; not an engine flag)"; `--vram-budget`
+maps to `--vram-budget-gb`; `--reduce-order native` refused at invocation
+build; local lanes are `receipt_class: preview`; the old divergence findings
+moved verbatim to bin/README.md "History". The local lanes' minutes_per_window
+is now null — the old 0.6/0.25 figures priced a schedule no engine implements
+and are withdrawn.
+
+**Schema strings introduced** (all structurally unsubmittable, refused on two
+independent axes — bin-side denylist in `fidelity/receipt.build_submission`
+AND the registry's const/adapter gates, the latter demonstrated live:
+`registry_add.py` exits 3 naming the string):
+`malaiwah.glm53-logit-capture-preview.v1`,
+`malaiwah.glm53-census-kld-preview.v1`,
+`malaiwah.glm53-sampled-kld-preview.v1`,
+`malaiwah.glm53-same-lane-teacher-provenance.v1` (teacher: a REFERENCE, never
+a measurement), `malaiwah.glm53-floor-attributable-report.v1`,
+`malaiwah.glm53-paired-window-delta.v1`.
+
+Open items: the $6 same-lane teacher pair-run (T1 verification + publishing);
+the KDA/MPS trunk per-window time (fixture datum after `pip install
+transformers` under FIDELITY_PYTHON; then one real window); the local lane's
+floor (needs a local native pass over ~630 GB); σ_w/σ_dpos re-anchoring from
+the first full local census pass (the 0.05/0.028 design numbers are estimates
+— sealed tokenwise arrays died with the box); `load_capture_receipt`'s exact
+validation set (L1.g's reimplemented predicate is the guard until
+quant_pipeline is cloned); layer-major preview scheduling (gated on
+fixture-proven bitwise equivalence + ≥1 real window).
+
+LESSON 25: a lane's floor is a property of (panel, teacher, lane) — the
+tooling now refuses the subtraction instead of documenting that you shouldn't.
+LESSON 26: on heavy-tailed data the estimate and its own SE are positively
+correlated, so a z-interval that "has the right SE on average" still
+under-covers — quote the wider interval, disclose the tail, and fix it with
+more positions, not more runs.
+
+## 2026-08-29 (night) — three-review closeout: every blocker/major fixed, suite 33/0/0
+
+Three independent reviews ran against the evening's work (adversarial
+correctness, statistical validity, stranger usability). All three returned
+GO_WITH_FIXES; this entry closes them out. Final battery after every fix:
+`bash bin/selftest_all.sh` — **33 passed, 0 failed, 0 skipped, rc 0**,
+including the 0.1B fixture ladder (b,c,f,g,h,i,j all ok on MPS, bitwise_equal
+true) and the reaper tests now safe-by-default.
+
+**Fixed during the reviews themselves** (files were left in the tree by the
+reviewers; shipped with this commit): the front gate no longer silently
+replaces an unresolvable explicit revision with live main (warns, tiers
+PINNED-UNVERIFIED — same rule as `check`); renamed HF repos (307-redirects)
+are canonicalized before registry matching so an old name cannot false-negative
+into a duplicate paid measurement; `invoke_engine.py` composes the streaming
+argv with `--source` + the lane's fixed_flags (parses clean through
+stream_score's real argparse); `measure` tiers only against a resolved 40-hex
+sha; the preview position sampler is FRACTIONAL-step systematic in both copies
+(the integer-step design gave every position ≥ k·m inclusion probability ZERO
+— +6.5% to +16.4% measured bias; new design: inclusion exactly m/N, bias
+−0.03%, coverage at default m=256 96.8% on the observed tail shape); census
+PanelGateError degrades to diagnostics instead of a traceback; windows_total
+pins to ≥25 whenever the sealed EP8 teacher sha is claimed; paired window-set
+equality is checked with clean messages; README's first example now answers
+for $0.00 and the pip lines carry the PEP 668 escape.
+
+**Fixed in this closeout session:**
+- `bin/measure --accept-measured-revision` on a STALE artifact now re-runs the
+  tier match at the measured commit and takes the ALREADY-MEASURED exit-0
+  branch (rows printed at the accepted revision; verified live on
+  zai-org/GLM-5.3-Flash-BF16). Measuring anyway stays behind `--force`. The
+  old behavior dead-ended a stranger in a 4-prerequisite preflight refusal.
+- `selftest_all.sh` teardown: `reaper --sweep` runs with `--dry-run` (new
+  plumbed flag on the reaper subcommand — reports, destroys NOTHING;
+  destruction is never a side effect of "run the selftests"), and machines
+  without the `jl` CLI SKIP with the install remedy instead of failing.
+  `SELFTEST_SKIP_ACCOUNT=1` still skips the section entirely.
+- The viewer's "(single row — nothing to rank against)" note now counts the
+  group against the WHOLE snapshot: filtered/artifact-scoped views print
+  "(1 of N rows in this comparability group shown …)" — verified on 0xSero
+  (1 of 6) and the BF16 check (1 of 6 / 1 of 2).
+- UNDISCLOSED panels get an explicit CAVEAT line (sibling of the subset
+  caveat; keyed on the `undisclosed_panel` disclosure code) — the orcarouter
+  0.0063 row can no longer be scanning-read as the best number on the page.
+  The no-declared-lane sub-table is annotated "(sealed rows land here: class
+  strict is the sealed number)" when it holds strict-class rows.
+- `registry-view lineage --lane L` now prefers the floor row whose PIPELINE
+  declares lane L (verified: streaming intent names
+  measurement--glm53.bf16-stream-floor…, and explicitly flags the reference's
+  self_consistency floor as a DIFFERENT lane's). The data-side fix (per-lane
+  floor in reference self_consistency) stays with the registry agent.
+- Same-teacher floor forgery hardening: `attributable` gate 2b requires the
+  floor summary to carry a `profile` naming its lane, and any floor claiming
+  the sealed streaming teacher must be profile `native-bf16-stream` (the
+  cross-stack 0.012712 value exists in no receipt carrying that profile).
+  New selftest case [9b]; sealed attributables still reproduce to the last
+  digit (+0.00220896620326625423 / +0.00087826840410656741, live via
+  `--from-registry`). A forgery of the profile field TOO remains out of scope
+  — receipts are unsigned.
+- LANE-ONLY identity (the stats review's follow-up, implemented forward-
+  looking): stream_score's backend.json now carries `lane_identity` +
+  `lane_identity_sha256` (schema malaiwah.glm53-streaming-lane-identity.v1 —
+  sha256 over torch/cuda/device/kernel/numeric-policy/attention/experts-impl/
+  parallelism/ep/reduce-order and NOTHING artifact-specific), k6_kld_report
+  copies it into reports as `student_lane_identity_sha256` when present (
+  conditionally — historical reports reproduce byte-identically), and
+  fidelity-stats gates paired-delta and attributable on ITS equality when
+  both sides carry it (equality VERIFIES the lane; inequality refuses with
+  both hashes). Receipts predating today lack the field and keep the
+  disclosure-warning behavior. The capture receipt's top-level key set is
+  UNCHANGED (L1.j golden keys still pass) — the sealed layout is not touched.
+- Expected-refusal output hygiene: the h-rung captures the sealed scorer's
+  intentional refusal stderr and re-emits it inside its [ok] record; the
+  fixture driver disables HF progress bars in the replayed subprocess; the
+  vacuous `unexpected_keys_are_exactly…: false` field is emitted only when
+  unexpected_keys > 0 (`stray` stays the load-bearing gate). Sha-pair
+  refusal displays print FULL hashes when truncations would collide.
+- PEP 668: every printed pip remedy (engines preflight, selftest skip text)
+  carries the --break-system-packages / venv+FIDELITY_PYTHON escape.
+
+**Residuals, documented not fixed:** a renamed repo queried WITH an explicit
+40-hex sha now gets ONE tolerant canonicalization attempt when the alias
+matches nothing (silent on failure — pinned-sha flows stay network-optional);
+a hand-built unsigned 1-window teacher+student pair still yields a
+windows_used=1/windows_total=1 preview (legitimate for fixture panels; full
+closure needs receipt-seal verification, unsafe while quant_pipeline's exact
+canonical_json cannot be probed locally); sampled CIs on comparisons where
+any sampled value exceeds ~5 nats should be treated as suspect and m raised
+(coverage sim: 91% in that unobserved regime, 96.8% on the real tail).
+
+LESSON 27b (reviews as instruments): three reviewers attacking the same tree
+concurrently found one bias the author's own synthetic test could not (its
+population had exchangeable positions — no positional trend, no bias to see).
+Selftest populations must contain the structure the estimator is allowed to
+get wrong.

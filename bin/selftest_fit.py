@@ -243,6 +243,38 @@ def main() -> int:
           round_up_storage_gb(need_keep.total_bytes) == 400,
           "%d GB" % round_up_storage_gb(need_keep.total_bytes))
 
+    print("\n[8] WINDOW-MAJOR COST MODEL (the engine that exists; additive --")
+    print("    the 33 checks above are untouched)")
+    from fidelity.census import window_major_cost
+    wm = window_major_cost(c, ms_per_matrix=18.0)
+    # 36,288 matrices x 18 ms = 653.184 s = 10.886 min per pass
+    check("decode pass at 18 ms/matrix == 653.184 s (10.9 min), exact",
+          near(wm["decode_seconds_per_pass"], 653.184, 1e-9),
+          "%.3f s" % wm["decode_seconds_per_pass"])
+    check("--decode-cache none -> 25 pass-equivalents (the engine re-decodes "
+          "per window)", wm["decode_pass_equivalents"] == 25.0)
+    wm_ram = window_major_cost(c, ms_per_matrix=18.0, decode_cache="ram",
+                               budget_bytes=128 * GB)
+    check("ram cache on 128 GB -> floor(0.8*128GB/14.5GB) == 7 cached layers",
+          wm_ram["cached_layers"] == 7, str(wm_ram["cached_layers"]))
+    check("ram cache -> 1 + 24*(35/42) == 21.0 pass-equivalents",
+          near(wm_ram["decode_pass_equivalents"], 21.0, 1e-9),
+          "%.3f" % wm_ram["decode_pass_equivalents"])
+    wm_disk = window_major_cost(c, ms_per_matrix=18.0, decode_cache="disk",
+                                disk_gb_per_s=5.5)
+    check("disk cache decodes ONCE", wm_disk["decode_pass_equivalents"] == 1.0)
+    check("disk rereads at 5.5 GB/s == 25 x 608.81/5.5 s (~46.1 min)",
+          near(wm_disk["disk_reread_seconds_total"],
+               25 * gb(c.routed_main_bytes) / 5.5, 1e-6),
+          "%.1f s" % wm_disk["disk_reread_seconds_total"])
+    check("trunk term is null (UNMEASURED on Apple) -- never invented",
+          wm["trunk_seconds_per_window"] is None and
+          wm["total_is_lower_bound"] is True and
+          "Measure via" in (wm["trunk_note"] or ""))
+    check("fp64 scoring 25x2047 positions at 0.15 ms == 7.68 s (never a "
+          "reason to sample)", near(wm["scoring_seconds_total"], 7.676, 0.01),
+          "%.2f s" % wm["scoring_seconds_total"])
+
     print("\n" + "-" * 72)
     print("selftest_fit: %d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:

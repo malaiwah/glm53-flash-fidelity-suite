@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Fetch the 0.1B CI fixture (idempotent; prints the local path last).
+exec "${FIDELITY_PYTHON:-python3}" "$(cd "$(dirname "$0")" && pwd)/fixture_fetch.py" "$@"

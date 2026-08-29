@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .common import run
+from .common import run, which
 
 ENGINES_FILE = Path(__file__).resolve().parent.parent / "engines.json"
 
@@ -52,6 +52,10 @@ class Engine:
     surfaces_note: str = ""
     timing: Dict[str, Any] = field(default_factory=dict)
     env: Dict[str, str] = field(default_factory=dict)
+    fixed_flags: Dict[str, str] = field(default_factory=dict)
+    profile_map: Dict[str, str] = field(default_factory=dict)
+    receipt_class: str = ""
+    pinned_note: str = ""
 
     def resolve(self, suite_root: Path) -> Optional[Path]:
         p = (suite_root / self.entrypoint).resolve()
@@ -121,6 +125,10 @@ def load_engines(path: Optional[Path] = None) -> Dict[str, Engine]:
             surfaces_note=spec.get("surfaces_note", ""),
             timing=dict(spec.get("timing") or {}),
             env=dict(spec.get("env") or {}),
+            fixed_flags=dict(spec.get("fixed_flags") or {}),
+            profile_map=dict(spec.get("profile_map") or {}),
+            receipt_class=spec.get("receipt_class", ""),
+            pinned_note=spec.get("pinned_note", ""),
         )
     return out
 
@@ -189,3 +197,141 @@ def build_invocation(
         else:
             argv.extend([flag, str(value)])
     return argv
+
+
+# --------------------------------------------------------------------------
+# Preflight: everything --execute needs, checked BEFORE anything is spent
+# --------------------------------------------------------------------------
+
+FIDELITY_PYTHON_DEFAULT = "/opt/homebrew/bin/python3.14"
+
+
+def fidelity_python() -> str:
+    """The torch-capable interpreter engines run under.
+
+    FIDELITY_PYTHON env wins; the documented default is the homebrew 3.14
+    (torch 2.13) on the operator's Mac; plain python3 is the last resort so a
+    box with system-wide torch still works."""
+    import shutil
+
+    env = os.environ.get("FIDELITY_PYTHON")
+    if env:
+        return env
+    if Path(FIDELITY_PYTHON_DEFAULT).exists():
+        return FIDELITY_PYTHON_DEFAULT
+    return shutil.which("python3") or "python3"
+
+
+def _can_import(python: str, module: str, version_attr: str = "__version__"):
+    proc = run([python, "-c",
+                "import %s; print(getattr(%s, %r, 'unknown'))"
+                % (module, module, version_attr)], check=False, timeout=120)
+    if proc.returncode != 0:
+        return None
+    return (proc.stdout or "").strip() or "unknown"
+
+
+def preflight(engine: Engine, *, suite_root: Path,
+              pipeline_root: Optional[str] = None,
+              teacher_dir: Optional[Path] = None,
+              need_disk_bytes: Optional[float] = None,
+              workdir: Optional[Path] = None) -> List[Dict[str, str]]:
+    """Return [] when an --execute could actually start, else every missing
+    prerequisite WITH its remedy.  Never raises for a missing dependency --
+    the caller turns the list into one refusal naming all of them, because
+    discovering prerequisites one at a time is five refusals where one would
+    do."""
+    # PEP 668: Homebrew/distro Pythons refuse bare `pip install` -- every
+    # printed pip remedy must carry the escape or it fails verbatim
+    # (usability review, 2026-08-28).
+    PEP668_NOTE = (" (on a Homebrew/distro Python add --break-system-packages,"
+                   " or use a venv and export FIDELITY_PYTHON to its python)")
+    problems: List[Dict[str, str]] = []
+    python = fidelity_python()
+    if not Path(python).exists() and not which(python):
+        problems.append({
+            "missing": "FIDELITY_PYTHON interpreter (%s)" % python,
+            "remedy": "export FIDELITY_PYTHON=/path/to/python3.1x with torch "
+                      "installed (the documented default is %s)"
+                      % FIDELITY_PYTHON_DEFAULT})
+        return problems                      # nothing else is checkable
+    torch_version = _can_import(python, "torch")
+    if torch_version is None:
+        problems.append({
+            "missing": "torch under %s" % python,
+            "remedy": '"%s" -m pip install torch' % python + PEP668_NOTE})
+    tf_version = _can_import(python, "transformers")
+    if tf_version is None:
+        problems.append({
+            "missing": "transformers under %s (engine needs >= 5.16)" % python,
+            "remedy": '"%s" -m pip install "transformers>=5.16"' % python + PEP668_NOTE})
+    else:
+        try:
+            major, minor = (int(x) for x in tf_version.split(".")[:2])
+            if (major, minor) < (5, 16):
+                problems.append({
+                    "missing": "transformers>=5.16 (found %s)" % tf_version,
+                    "remedy": '"%s" -m pip install -U "transformers>=5.16"' % python + PEP668_NOTE})
+        except ValueError:
+            pass
+    qp_env = {"QP_PIPELINE_ROOT": pipeline_root} if pipeline_root else None
+    if pipeline_root:
+        src_ok = any((Path(pipeline_root) / c / "quant_pipeline" / "__init__.py").is_file()
+                     for c in ("runtime/src", "src", "."))
+        if not src_ok:
+            problems.append({
+                "missing": "quant_pipeline package under --pipeline-root %s" % pipeline_root,
+                "remedy": "point --pipeline-root at the patched tree (clone "
+                          "PIPE_REPO per k6/stage_k6.sh + apply patches-v2)"})
+    elif _can_import(python, "quant_pipeline") is None:
+        problems.append({
+            "missing": "quant_pipeline (the engine's reader package)",
+            "remedy": "clone PIPE_REPO per k6/stage_k6.sh + apply patches-v2, "
+                      "then pass --pipeline-root PATH (or pip-install it into "
+                      "FIDELITY_PYTHON)"})
+    _ = qp_env
+    if teacher_dir is not None:
+        receipt = Path(teacher_dir) / "capture-receipt.json"
+        found = None
+        if receipt.is_file():
+            found = receipt
+        elif Path(teacher_dir).is_dir():
+            for candidate in sorted(Path(teacher_dir).glob("**/capture-receipt.json")):
+                found = candidate
+                break
+        if found is None:
+            problems.append({
+                "missing": "teacher tree with a sealed capture receipt at %s" % teacher_dir,
+                "remedy": "fetch the panel's teacher logits (the default panel's "
+                          "include globs pull logits/window-*.safetensors + *.json, "
+                          "31.7 GB) into that directory"})
+        else:
+            try:
+                doc = json.loads(found.read_text(encoding="utf-8"))
+                if doc.get("capture_role") != "bf16_teacher" or \
+                        "-preview." in str(doc.get("schema", "")):
+                    problems.append({
+                        "missing": "a bf16_teacher capture receipt (found role %r, "
+                                   "schema %r)" % (doc.get("capture_role"),
+                                                   doc.get("schema")),
+                        "remedy": "point --teacher-tree at a real teacher (previews "
+                                  "and student captures cannot be teachers)"})
+            except (OSError, ValueError):
+                problems.append({
+                    "missing": "readable capture-receipt.json under %s" % teacher_dir,
+                    "remedy": "re-fetch the teacher tree; the receipt is corrupt"})
+    if need_disk_bytes and workdir is not None:
+        import shutil as _shutil
+
+        probe = workdir if workdir.exists() else workdir.parent
+        try:
+            free = _shutil.disk_usage(probe).free
+        except OSError:
+            free = 0
+        if free < need_disk_bytes:
+            problems.append({
+                "missing": "disk: need %.0f GB free at %s, have %.0f GB"
+                           % (need_disk_bytes / 1e9, workdir, free / 1e9),
+                "remedy": "free %.0f GB or pass --work on a bigger volume"
+                          % ((need_disk_bytes - free) / 1e9)})
+    return problems

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# One command: measure KLD on a quant given only an HF repo link.
+# Resolves revision, registry precedent, lineage, panel, surface and lane,
+# then runs (or reports "already measured"). See measure_one.py --help.
+exec "${FIDELITY_PYTHON:-python3}" "$(cd "$(dirname "$0")" && pwd)/measure_one.py" "$@"
