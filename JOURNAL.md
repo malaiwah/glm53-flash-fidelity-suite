@@ -1077,3 +1077,24 @@ disclosure. The reviewer was right — a pipeline that records everything but
 links nothing has the epistemics of a pipeline that records nothing. The fix
 was not more capture; it was making every receipt NAME its stack by digest,
 and publishing the retroactive map for the rows that predate the rule.
+
+## 2026-08-29 — Lesson 33: a dependency guard that does not list every dependency
+`bin/bootstrap_measure.sh` installed `hf_transfer` in its wheel block, and both
+fetch stages export `HF_HUB_ENABLE_HF_TRANSFER=1`. Correct in isolation — but
+the whole block was guarded by
+`import torch, transformers, safetensors, huggingface_hub`, and the JarvisLabs
+pytorch template already ships all four. On a template box the guard
+short-circuits, the block never runs, and `hf_transfer` alone is missing while
+the fetch stages still request it. Modern huggingface_hub errors when the flag
+is set without the package; older versions fall back silently to a much slower
+path. Caught on the M1 turboderp box by an operator question ("did you give them
+the token so downloads are efficient?") — the answer was that the token was not
+the issue, the accelerator was simply absent. Measured contrast on the two live
+boxes at that moment: the A/B box, fetching with a custom 64-way parallel range
+fetcher, sustained 111 MB/s; the M1 box had no accelerated path at all.
+RULE: an import guard must name EVERY package the block installs, or it silently
+becomes a partial install on any host that pre-ships a subset. Fixed three ways:
+`hf_transfer` added to the guard, an idempotent single-package ensure step after
+it, and a hard fail-closed check (the fetch stages demand the flag, so a box
+without the package must not proceed). It now also prints into
+`wheel-versions.txt`, so the receipt shows whether the accelerated path existed.

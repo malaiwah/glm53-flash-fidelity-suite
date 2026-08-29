@@ -87,7 +87,7 @@ if [ ! -x "$PY" ]; then
 fi
 "$PY" -c 'import sys; assert sys.version_info[:2] == (3, 12)' || {
   echo "existing venv at $VENV is not py3.12 - delete it and re-run setup" >&2; exit 1; }
-if ! "$PY" -c "import torch, transformers, safetensors, huggingface_hub" 2>/dev/null; then
+if ! "$PY" -c "import torch, transformers, safetensors, huggingface_hub, hf_transfer" 2>/dev/null; then
   log "installing the pinned wheel set (torch 2.11.0+cu130, transformers 5.16.1)"
   "$VENV/bin/pip" -q install --upgrade pip
   "$VENV/bin/pip" -q install setuptools wheel ninja packaging
@@ -96,11 +96,27 @@ if ! "$PY" -c "import torch, transformers, safetensors, huggingface_hub" 2>/dev/
       huggingface_hub hf_transfer accelerate rich tokenizers pillow \
       "pydantic==2.5.3" "formatron==0.5.0" kbnf
 fi
+# hf_transfer is REQUIRED, not optional: every fetch stage exports
+# HF_HUB_ENABLE_HF_TRANSFER=1, and huggingface_hub errors out when that flag is
+# set without the package.  The guard above skips the whole wheel block when the
+# template already ships torch/transformers/huggingface_hub -- which is the
+# normal case on the pytorch template -- so hf_transfer alone can be missing on
+# an otherwise complete box.  That cost a real measurement a slow fetch before
+# it was caught (JOURNAL, lesson 33).  Ensure it separately and idempotently.
+if ! "$PY" -c "import hf_transfer" 2>/dev/null; then
+  log "hf_transfer absent (template supplied the rest) - installing it alone"
+  "$VENV/bin/pip" -q install hf_transfer
+fi
+"$PY" -c "import hf_transfer" 2>/dev/null || {
+  echo "hf_transfer still not importable; fetch stages set HF_HUB_ENABLE_HF_TRANSFER=1 and would fail" >&2
+  exit 1; }
+
 "$PY" - <<'PY' | tee "$RCPT/wheel-versions.txt"
-import torch, transformers, safetensors, numpy
+import torch, transformers, safetensors, numpy, hf_transfer
 print("torch", torch.__version__, "cuda", torch.version.cuda,
       "| transformers", transformers.__version__,
-      "| safetensors", safetensors.__version__, "| numpy", numpy.__version__)
+      "| safetensors", safetensors.__version__, "| numpy", numpy.__version__,
+      "| hf_transfer", getattr(hf_transfer, "__version__", "present"))
 PY
 
 # ---- 3. the pipeline at its pin, with the measurement patch series --------
