@@ -1986,15 +1986,35 @@ was right.
   rather than buried in an out-of-scope table. The 85.9 GB is the easy part;
   deciding what a canonical root *is* is an operator decision.
 
-### Published
+### Cards: verified and staged, NOT pushed
 
-The K6 and K8 model cards, with their fidelity annotations, pushed to
-`malaiwah/GLM-5.3-Flash-TR3-6bpw` and `malaiwah/GLM-5.3-Flash-TR3-8bpw`. Both had
-leaked `x_fidelity.registry.snapshot.root: /Users/mbelleau/…` — the same defect
-class as the dead `packed_root: /home/jl_fs/…` that motivated this entire format,
-and the Hub's own `validate-yaml` accepts it, so no external check would ever
-have caught it. `HOSTPATH-1` now walks the entire front matter against an
-anchored host-path regex. No capture was published; nothing large was pushed.
+The K6 and K8 cards are ready to publish and everything that can be checked
+without pushing has been:
+
+```
+body byte-identical to the LIVE card ..... yes, both (only the YAML changes)
+live Hub POST /api/validate-yaml ......... PASS, both
+huggingface_hub 1.29.0 round-trip ........ PASS, both (6 and 3 eval results)
+our XC-1..XC-5 against the registry ...... PASS, both
+HOSTPATH-1 scan .......................... clean, both
+GLM-5.3-Flash-TR3-6bpw.README.md ......... sha256 6a4a0f2f46d1edc1…
+GLM-5.3-Flash-TR3-8bpw.README.md ......... sha256 08abe1de095f91d8…
+```
+
+**The push itself was not performed.** Publishing to a public repository is a
+permissioned act and the permission has to come from the operator, not from the
+workflow that scheduled the work — so this session prepared the exact bytes,
+verified them against the live Hub, and stopped. One command finishes it:
+`python3 <scratchpad>/ship/publish/publish_cards.py --push`, which re-checks
+each file against the digest above, refuses if the bytes are not the ones that
+were validated, and re-fetches both cards afterwards to confirm.
+
+Both cards had leaked `x_fidelity.registry.snapshot.root: /Users/mbelleau/…` —
+the same defect class as the dead `packed_root: /home/jl_fs/…` that motivated
+this entire format, and the Hub's own `validate-yaml` accepts it, so no external
+check would ever have caught it. `HOSTPATH-1` now walks the entire front matter
+against an anchored host-path regex. No capture was published; nothing large was
+pushed anywhere.
 
 Battery: `selftest_fidelity_dataset` 69/0, `selftest_fidelity_compare` 25/0,
 `selftest_fidelity_card` 16/0, `selftest_all.sh` 42 passed / 0 failed / 3
