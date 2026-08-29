@@ -677,9 +677,24 @@ def _verify_tensors(root, capture, capture_manifest, head, report):
         try:
             content = F.tensor_content_sha256(full, record["key"])
             payload = F.payload_sha256(full)
+            _, header = F.read_safetensors_header(full)
         except F.FormatError as exc:
             report.error(exc.code, "SEAL-1(d)", exc.message, rel)
             continue
+        # The declared dtype/shape are what a consumer reads instead of opening
+        # the tensor; hashing the bytes does not check that the DECLARATION
+        # matches them.  A manifest that says F32 over BF16 bytes hashes clean.
+        meta = header.get(record["key"]) or {}
+        if record.get("dtype") and meta.get("dtype") \
+                and str(meta["dtype"]).upper() != str(record["dtype"]).upper():
+            report.error("tensor_mismatch", "SEAL-1(d)",
+                         "%s declares dtype %r but the safetensors header says %r"
+                         % (rel, record["dtype"], meta["dtype"]), rel)
+        if record.get("shape") and meta.get("shape") \
+                and [int(d) for d in meta["shape"]] != [int(d) for d in record["shape"]]:
+            report.error("tensor_mismatch", "SEAL-1(d)",
+                         "%s declares shape %s but the safetensors header says %s"
+                         % (rel, list(record["shape"]), list(meta["shape"])), rel)
         if content != record.get("tensor_content_sha256"):
             report.error("tensor_mismatch", "SEAL-1(d)",
                          "%s tensor content %s != manifest %s"

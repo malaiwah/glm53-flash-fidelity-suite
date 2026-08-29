@@ -245,7 +245,14 @@ def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
     lb = candidate.manifest["runtime"].get("lane_identity_sha256")
     sa = reference.manifest["runtime"].get("stack_fingerprint_sha256")
     sb = candidate.manifest["runtime"].get("stack_fingerprint_sha256")
-    same_stack = bool(la and lb and la == lb and sa and sb and sa == sb)
+    # A dataset compared with ITSELF is the same stack by construction, whether
+    # or not `lane_identity_sha256` happens to be recorded.  Without this the
+    # flagship self-compare emits a bias block asserting "the two captures were
+    # produced by different stacks" about one capture.
+    same_dataset = bool(reference.manifest.get(F.SEAL_FIELD)
+                        and reference.manifest.get(F.SEAL_FIELD)
+                        == candidate.manifest.get(F.SEAL_FIELD))
+    same_stack = same_dataset or bool(la and lb and la == lb and sa and sb and sa == sb)
     findings["stack_relation"] = "same_stack" if same_stack else "cross_stack"
     gates["stack"] = _gate(True,
                            "lane_identity %s / stack_fingerprint %s -> %s"
@@ -483,7 +490,20 @@ def load_tensor(path: str, key: str):
         array = np.frombuffer(buf, dtype="<f8")
     else:
         raise Refusal("compute", "bad_tensor_file", "unsupported tensor dtype %r" % dtype)
-    return array.reshape(tuple(meta["shape"]))
+    shape = tuple(int(dim) for dim in meta["shape"])
+    want = 1
+    for dim in shape:
+        want *= dim
+    if array.size != want:
+        # A truncated or over-long payload must be a refusal with a gate, not a
+        # numpy ValueError escaping as an exit-1 traceback: the CLI's contract is
+        # 0 ok / 2 warnings / 3 refused / 4 bad usage.
+        raise Refusal("compute", "bad_tensor_file",
+                      "%s: tensor %r holds %d values but its header declares shape %s "
+                      "(%d values); the file is truncated or its header lies. Run "
+                      "`fidelity-dataset verify --verify-tensors` on it."
+                      % (path, key, array.size, list(shape), want))
+    return array.reshape(shape)
 
 
 def _torch_available() -> bool:
