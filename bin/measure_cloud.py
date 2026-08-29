@@ -817,16 +817,41 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
         # same claim, and the receipt has to be able to tell them apart.
         validated_on = {"streaming": "H200", "sealed-ep8": "H200"}.get(args.lane)
         if validated_on and offer.gpu_type.upper() != validated_on:
-            con.warn(
-                "chose %s ($%.2f/h) because it is the cheapest row that fits, but "
-                "lane %s was validated on %s. The VRAM arithmetic holds; the "
-                "observed-peak figure it is sized against does not transfer "
-                "automatically to another architecture. Pass --gpu %s to match "
-                "the validation hardware."
-                % (offer.gpu_type, offer.price, args.lane, validated_on, validated_on))
             plan["chosen"]["validated_hardware"] = validated_on
             plan["chosen"]["on_validated_hardware"] = False
+            # A WARNING was not enough.  Cheapest-that-fits silently swapped an
+            # A100-80GB in for the H200 the streaming lane's rows were all
+            # measured on, and TWO measured numbers travel with the GPU:
+            #   * minutes/window, which prices the run AND sets --max-runtime.
+            #     H200's 7.35 min/window on slower silicon means the deadline
+            #     lands mid-run-2 and the rental buys nothing.
+            #   * observed_peak VRAM, from which the headroom is computed.
+            # And the row itself is no longer same-lane in the sense the
+            # registry's comparability key means: bf16 kernels differ across
+            # architectures, so the student logits differ. Refuse by default,
+            # and make asking for it explicit and disclosed.
+            if not args.gpu:
+                raise Refusal(
+                    "cheapest-that-fits picked %s ($%.2f/h), but lane %s was "
+                    "validated on %s, and both constants this plan runs on "
+                    "-- minutes/window and the observed VRAM peak -- were "
+                    "MEASURED there"
+                    % (offer.gpu_type, offer.price, args.lane, validated_on),
+                    ["--gpu %s              measure on the validated hardware "
+                     "(the comparable choice)" % validated_on,
+                     "--gpu %s   deliberately measure on this one; the plan "
+                     "records on_validated_hardware=false and the timing "
+                     "estimate is NOT transferable" % offer.gpu_type,
+                     "Nothing was created. $0.00 spent."])
+            con.warn(
+                "measuring on %s ($%.2f/h) although lane %s was validated on %s "
+                "-- explicitly requested with --gpu. The VRAM arithmetic holds; "
+                "the observed-peak and minutes/window figures do NOT transfer "
+                "across architectures, so the cost estimate and the deadline "
+                "are unbacked here."
+                % (offer.gpu_type, offer.price, args.lane, validated_on))
         elif validated_on:
+            plan["chosen"]["validated_hardware"] = validated_on
             plan["chosen"]["on_validated_hardware"] = True
 
     # -- engine ------------------------------------------------------------
