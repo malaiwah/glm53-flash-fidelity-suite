@@ -348,6 +348,7 @@ def adapt_turbo(receipt, path):
         "identical": recomputed and len(means) >= 2,
         "evidence_kind": "tokenwise_kld_sha256", "evidence_hashes": list(digests),
         "scored_positions": None, "gate": _gate(receipt),
+        "top1": receipt.get("top1_agreement"),
         "artifact_repo": receipt.get("artifact_repo"),
         "artifact_revision": receipt.get("artifact_revision"),
         "teacher_digest": receipt.get("teacher_receipt_sha256"),

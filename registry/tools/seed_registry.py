@@ -1778,6 +1778,8 @@ def build_measurements(artifacts_map):
     out.append(M("measurement--glm53.turbo-4.05bpw-stream.brandonmusic-final25", GLM,
                  A_TURBO405, P_B25, R_B25, PL_STREAM, STURBO405,
                  metric_name="mean_of_run_means_tokenwise_kld",
+                 # identical in both cold runs, read from run-N/kld-report.json
+                 top1=0.9509916951636541,
                  scored_positions=51175, contexts=25, runs=2, cold=True,
                  run_means=[STURBO405] * 2,
                  identical=True, evidence_kind="tokenwise_kld_sha256",
@@ -1839,8 +1841,10 @@ def build_measurements(artifacts_map):
                        "the ARTIFACT's own, dequantized from its shards -- including its 6-bit head -- "
                        "so no official-release weight is in the measured function; the materialization "
                        "receipt is 3653c55f0dc729c3fccc6bbe5d8949b55e27517ade5d8c546fec79de03dd1c81. "
-                       "907,200 K4 expert matrices were decoded per cold run. No top-1 agreement was "
-                       "produced for this run."))
+                       "907,200 K4 expert matrices were decoded per cold run. Top-1 agreement "
+                       "0.9509916951636541, identical across both cold runs, read from the "
+                       "per-run kld-report.json (the scalar summary family did not carry it "
+                       "at the time this row was written; k6_kld_report now emits it)."))
     out.append(M(M_BF16_FLOOR, GLM, A_BF16_A6, P_B25, R_B25, PL_STREAM, BF16_FLOOR,
                  metric_name="mean_of_run_means_tokenwise_kld",
                  scored_positions=51175, contexts=25, runs=2, cold=True, run_means=[BF16_FLOOR] * 2,

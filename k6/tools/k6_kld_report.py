@@ -739,6 +739,7 @@ def main() -> int:
         # K6-specific; these profiles get a transparent malaiwah summary (3
         # cold runs, disclosed) that satisfies the stage gate fields.
         mean = means[0]
+        report_top1 = [report.get("top1_agreement") for report, _ in reports]
         summary = {
             "schema": f"malaiwah.glm53-{args.profile}-packed-kld-summary.v1",
             # STORAGE layout, not lane: the dione conversions ship TP4-sliced
@@ -767,6 +768,14 @@ def main() -> int:
             "quality_gate": {"metric": "mean_tokenwise_kld", "threshold_lt": 0.06},
             "quality_gate_passed": bool(mean < 0.06),
             "kld_report_sha256": [sha for _, sha in reports],
+            # Every per-run report computes top-1 agreement; the scalar summary
+            # was dropping it, and a KL number with no top-1 leaves the reader
+            # unable to tell WHICH kind of divergence it is (the registry warns
+            # STAT-005 about exactly that). Carried when the runs agree on it,
+            # and left null rather than averaged when they do not.
+            "top1_agreement": (
+                report_top1[0] if len(set(report_top1)) == 1 else None),
+            "per_run_top1_agreement": report_top1,
             "teacher_receipt_sha256": teacher["receipt_sha256"],
             "teacher_source": teacher_source,
             "teacher_label": teacher_label,
