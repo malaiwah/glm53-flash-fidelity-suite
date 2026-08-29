@@ -893,6 +893,88 @@ def check_receipt_stability() -> None:
     )
 
 
+def check_source_dispatch() -> None:
+    """Static AST proof that a weight SOURCE cannot be served by two branches.
+
+    ``stream_score.main`` picks the routed source object, the checkpoint
+    identity and the student label with if/elif chains keyed on
+    ``args.source``, each ending in a catch-all ``else`` for the packed lane.
+    A chain that ends in ``else:`` is a TRAP for a new surface: append a bare
+    ``if args.source == "<new>":`` after it instead of an ``elif`` and every
+    earlier source now runs its own branch AND falls through into the
+    catch-all.
+
+    That is not hypothetical.  It happened while the mlx surface was rebased
+    onto the exl3hf one: the identity block became ``if exl3hf: ...`` followed
+    by a fresh ``if mlx: ... elif native: ... else: ...``, so a
+    ``--source exl3hf`` run built its identity and then re-entered the packed
+    branch, dereferencing ``surface.contract_sha256`` with ``surface`` still
+    None.  Nothing caught it, because no rung looked at the SHAPE of the
+    dispatch.
+
+    The rule: for each variable below, all of its ``args.source`` branches live
+    in exactly ONE chain, and that chain ends in a catch-all.  Two chains
+    assigning the same variable is the failure.
+    """
+    import ast
+
+    source = (_TOOLS / "stream_score.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    main = next(node for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == "main")
+
+    choices: List[str] = []
+    for node in ast.walk(main):
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"
+                and node.args and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "--source"):
+            for kw in node.keywords:
+                if kw.arg == "choices":
+                    choices = [elt.value for elt in kw.value.elts]
+
+    def assigns(stmt, name) -> bool:
+        return any(isinstance(x, ast.Assign)
+                   and any(isinstance(t, ast.Name) and t.id == name for t in x.targets)
+                   for x in ast.walk(stmt))
+
+    def tests_source(stmt) -> bool:
+        return any(isinstance(n, ast.Attribute) and n.attr == "source"
+                   for n in ast.walk(stmt.test))
+
+    def chain(stmt):
+        named, node = set(), stmt
+        while True:
+            for cmp_node in ast.walk(node.test):
+                if (isinstance(cmp_node, ast.Compare)
+                        and isinstance(cmp_node.left, ast.Attribute)
+                        and cmp_node.left.attr == "source"):
+                    for comparator in cmp_node.comparators:
+                        if isinstance(comparator, ast.Constant):
+                            named.add(comparator.value)
+                        elif isinstance(comparator, (ast.Tuple, ast.List)):
+                            named.update(e.value for e in comparator.elts
+                                         if isinstance(e, ast.Constant))
+            if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
+                node = node.orelse[0]
+                continue
+            return sorted(named), bool(node.orelse)
+
+    detail = {"source_choices": choices}
+    ok = bool(choices)
+    for var in ("checkpoint_identity", "student_label"):
+        chains = [chain(stmt) for stmt in main.body
+                  if isinstance(stmt, ast.If) and tests_source(stmt) and assigns(stmt, var)]
+        detail[var] = {"chains": len(chains),
+                       "named": chains[0][0] if len(chains) == 1 else
+                                [c[0] for c in chains],
+                       "ends_in_catch_all": chains[0][1] if len(chains) == 1 else None}
+        if len(chains) != 1 or not chains[0][1]:
+            ok = False
+    _record("L1.k-source-dispatch", "PASS" if ok else "FAIL", detail)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -950,10 +1032,11 @@ def main() -> int:
         # the estimator half needs only torch + numpy, so this rung runs on a
         # laptop with no pipeline checkout
         check_kld_estimator(args.sealed_tokenwise, args.sealed_report)
-    # g/h/i/j need no pipeline, no torch and no fixtures -- pure json/ast --
+    # g/h/i/j/k need no pipeline, no torch and no fixtures -- pure json/ast --
     # so they run on any laptop; SKIP only if an import surprises us.
     for rung, fn in (("g", check_teacher_role), ("h", check_preview_refusal),
-                     ("i", check_sampling_indices), ("j", check_receipt_stability)):
+                     ("i", check_sampling_indices), ("j", check_receipt_stability),
+                     ("k", check_source_dispatch)):
         if rung in wanted:
             try:
                 fn()

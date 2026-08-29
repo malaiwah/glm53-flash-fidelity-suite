@@ -1041,34 +1041,7 @@ it.
 
 ---
 
-## 11. Constraints honoured
-
-* No HF or GitHub token appears in any code path, argument or log.
-* Nothing is published; `measure_stream` has no upload step and writes no
-  done-marker.
-* Sealed receipts are opened read-only; comparisons hash in place.
-* `out-k8` is never read or written; machines 485565 / 485586 / 485016 are
-  untouched. The streaming stage writes its state to
-  `logs/stage-stream.state` (via `QP_STAGE_STATE`) so the K8 supervisor's
-  `logs/stage.state` is never clobbered.
-* Bulk output goes to container-local disk, never to the shared `/home/jl_fs`.
-
----
-
-**2026-08-29 addendum.** The tooling grew around this sealed doc without
-changing the lane: `stream_score.py --capture-role teacher` can now emit this
-lane's own SAME-LANE teacher (which drives the lane's 0.011506 floor to an
-exact, hash-evidenced zero — recipe and ladder in
-[`SAME-LANE-TEACHER.md`](SAME-LANE-TEACHER.md)); `--store-positions
-per-window:<m>` produces position-sampled PREVIEW captures no sealed consumer
-accepts (score them with `bin/kld-preview`); and the streaming/local lanes are
-now pinned in `bin/engines.json` against this file's real CLI. Default
-invocations are byte-identical to the sealed behaviour (ladder rung L1.j
-proves the receipt shape is unchanged).
-
----
-
-## 13. The GGUF lane (`--source gguf`)
+## 14. The GGUF community-quant lane (`--source gguf`)
 
 ### What it is, and how it differs from every other source
 
@@ -1268,3 +1241,47 @@ rung. Evidence fixtures live in `k6/tools/gguf-evidence/`.
 
 **Not yet measured.** Everything above is built and validated without a GPU;
 no GGUF panel number exists yet. The first capture is a rental.
+## 15. The MLX community-quant lane (`--source mlx`)
+
+Documented in full in [tools/MLX-SURFACE.md](tools/MLX-SURFACE.md) rather than
+here, because the MLX lane's distinguishing facts are all about the ARTIFACT
+(what an Apple-silicon conversion quantizes and what it leaves at source dtype)
+rather than about the streaming lane, which it uses unchanged.
+
+The one thing worth repeating here: **scope is censused per artifact, never
+inferred from the format.** The three community lanes do not share a scope.
+`--source nvfp4` (section 13) quantizes the routed experts only, exactly like
+K6/K8. `--source gguf` (section 14) quantizes everything including `token_embd`
+and `output`. `--source mlx` sits between them: routed experts, dense MLPs,
+shared experts and four DSA attention projections are quantized, while
+embeddings, `lm_head`, the whole KDA attention path and the vision tower pass
+through at source dtype. Each receipt carries its own measured census, and
+`registry_add.py` refuses a summary that arrives without one.
+
+## 16. Constraints honoured
+
+* No HF or GitHub token appears in any code path, argument or log.
+* Nothing is published; `measure_stream` has no upload step and writes no
+  done-marker.
+* Sealed receipts are opened read-only; comparisons hash in place.
+* `out-k8` is never read or written; machines 485565 / 485586 / 485016 are
+  untouched. The streaming stage writes its state to
+  `logs/stage-stream.state` (via `QP_STAGE_STATE`) so the K8 supervisor's
+  `logs/stage.state` is never clobbered.
+* Bulk output goes to container-local disk, never to the shared `/home/jl_fs`.
+
+---
+
+**2026-08-29 addendum.** The tooling grew around this sealed doc without
+changing the lane: `stream_score.py --capture-role teacher` can now emit this
+lane's own SAME-LANE teacher (which drives the lane's 0.011506 floor to an
+exact, hash-evidenced zero — recipe and ladder in
+[`SAME-LANE-TEACHER.md`](SAME-LANE-TEACHER.md)); `--store-positions
+per-window:<m>` produces position-sampled PREVIEW captures no sealed consumer
+accepts (score them with `bin/kld-preview`); and the streaming/local lanes are
+now pinned in `bin/engines.json` against this file's real CLI. Default
+invocations are byte-identical to the sealed behaviour (ladder rung L1.j
+proves the receipt shape is unchanged).
+
+---
+

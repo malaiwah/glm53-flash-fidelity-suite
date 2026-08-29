@@ -232,7 +232,7 @@ python3 bin/selftest_stats.py              # T2: K8-ANOMALY known answers, refus
 python3 bin/selftest_preview_stats.py      # T3: unbiasedness, coverage, FPC, panel gate
 python3 bin/selftest_zero_floor.py         # T4: the exact-0.0 identity (+ fixed npy sha)
 python3 bin/selftest_submission_refusal.py # T5: previews/teachers cannot become rows
-python3 k6/tools/stream_score_selftest.py --only g,h,i,j   # T6: engine-edit rungs
+python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k # T6: engine-edit rungs
 bin/registry-view --selftest-live          # T8: live dataset, keys, value tripwire
 ```
 

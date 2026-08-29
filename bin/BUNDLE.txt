@@ -56,6 +56,22 @@ k6/tools/selftest_exl3hf_offline.py
 # to load without it.
 k6/tools/mlx_surface.py
 k6/tools/mlx-evidence/bf16-shape-census.json.gz
+# Community llama.cpp GGUF artifacts (stream_score.py --source gguf). The
+# adapter is self-contained at capture time: the llama.cpp->HF name map is
+# built from the GGUF's own metadata and the official side comes from --bf16,
+# so no evidence file travels with it. Its offline selftest ships so the
+# refusals and the two layout audits can be re-run on the instance before a
+# paid capture (they are the checks that would otherwise decode cleanly while
+# measuring the wrong model).
+k6/tools/gguf_surface.py
+k6/tools/selftest_gguf_offline.py
+# Community NVFP4 snapshots (stream_score.py --source nvfp4). The evidence dir
+# travels with it: official-nonrouted-names.json is what turns the non-routed
+# census from a COUNT into a name BIJECTION. Without it the adapter still runs
+# (structural census) and records the weaker gate in the receipt -- so shipping
+# it is the difference between a strong claim and a disclosed weak one.
+k6/tools/nvfp4_surface.py
+k6/tools/nvfp4-evidence/official-nonrouted-names.json
 
 # --- pipeline patch series -------------------------------------------------
 # bootstrap_measure.sh clones the quant pipeline at its pin and applies these.

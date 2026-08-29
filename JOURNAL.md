@@ -1300,3 +1300,160 @@ field-identical to the sealed golden shape and that every later assignment is
 flag-gated. The additions were correctly gated; the rung's allowlist of
 *permitted* gated keys was extended deliberately, which is exactly the review
 this guard exists to force.
+
+---
+
+## 2026-08-29 — three community-quant surfaces merged into one tree, reviewed adversarially
+
+MLX, GGUF and NVFP4 were built in three separate worktrees against three
+different bases. This entry is the INTEGRATION: one `--source` dispatch, one
+selftest list, one registry adapter table — and an adversarial pass that
+re-derived every claim rather than reading the three reports.
+
+### What the three lanes are
+
+| lane | artifact family | reference implementation the decode is proven against | measured scope |
+|---|---|---|---|
+| `--source mlx` | Apple-silicon MLX affine (u32-packed codes + per-group scale/bias) | `mlx.core.dequantize` 0.32.2 | routed experts + dense MLPs + shared experts + 4 DSA projections; embeddings, `lm_head`, the whole KDA path and the vision tower PASS THROUGH |
+| `--source gguf` | llama.cpp GGUF K-quants (Q4_K/Q5_K/Q6_K/Q8_0) | `gguf-py` 0.19.0 `dequantize()` | everything — `token_embd` and `output` are Q8_0 |
+| `--source nvfp4` | compressed-tensors NVFP4 (e2m1 + per-16 f8e4m3 scale + fp32 global) | `compressed-tensors` 0.18.0 | routed experts ONLY — same scope as K6/K8 |
+
+**The scope column is the point.** The brief assumed all three quantize
+everything. Only GGUF does. Three "community 4-bit" artifacts of the same model
+draw three different sensitivity boundaries, and none of it is predictable from
+the format name — so scope is CENSUSED from each artifact's own index/tensor
+table, carried in the receipt, and `registry_add.py` refuses a summary of any of
+these families that arrives without its census.
+
+### Validation evidence, re-derived here rather than trusted
+
+Every number below was reproduced in this session, on this Mac, no GPU rented,
+no HF token, no full download.
+
+- **Reference cross-check, live, over HTTP ranges, with an independent fetcher
+  and an independent GGUF header parser** (neither borrowed from the adapters):
+  - MLX `layers.3.mlp.experts.0.gate_proj` @ `c80f6810` — bitwise equal at
+    mlx's own output dtype, max |fp32 Δ| 3.05e-05 (one f16 ulp; mlx fuses the
+    multiply-add, we do not). Worked value `[0.007671356201171875,
+    -0.01534271240234375, -0.0306854248046875, -0.0306854248046875]`.
+  - GGUF `blk.3.ffn_gate_exps` (Q4_K), `blk.3.ffn_down_exps` (Q5_K),
+    `blk.11.ffn_down_exps` (Q6_K), `token_embd` (Q8_0) @ `2975ab41` — BITWISE
+    equal to `gguf-py`, max |Δ| exactly 0, on 72 KB of fetched payload.
+  - NVFP4 `layers.3.mlp.experts.0.gate_proj` from BOTH dialects (RedHatAI
+    @`36c184c6` compressed-tensors, LibertAIDAI @`357b45cc` modelopt) — bit
+    pattern equal, signed zeros included, max |Δ| 0.0.
+- **Every selftest re-run**: `bin/selftest_all.sh` 37 passed / 0 failed / 0
+  skipped; `make check` in `registry/` 62 passed / 0 failed.
+- **The `stream_score --dry-run` leg that all three agents had to SKIP is now
+  closed**: a real `quant_pipeline` tree exists on this machine, so
+  `selftest_{mlx,gguf,nvfp4}_offline.py --pipeline-root` runs it for real. MLX
+  goes 8/8 with 0 skips; GGUF 9/9; NVFP4 10/10.
+- **Cross-format refusals**: each surface fed each other's artifact refuses by
+  name — MLX on an NVFP4 index names the extra/absent tensors, NVFP4 on an MLX
+  config names `config_groups/group_0`, GGUF on a safetensors file named `.gguf`
+  says "not a GGUF file (magic differs)". All exit non-zero.
+- **`--source` × `--profile` matrix**: all 30 combinations exercised; the
+  pairing gate is exactly diagonal.
+- **No float64 on any decode path**: a `Tensor.to` tripwire over 42 kernel cells
+  (6 bit-widths × 3 group sizes for MLX, 4 ggml types × 4 trials, 2 NVFP4
+  conventions × 4) created ZERO float64 tensors, and every cell is bit-pattern
+  identical on MPS and CPU. The only `float64` in the three adapters lives in
+  `gguf_surface`'s two CLI-only placement audits, which `stream_score` never
+  calls.
+- **Receipt families are distinct** (`…-mlx-…` / `…-gguf-…` / `…-nvfp4-…`), all
+  three carry `lane: None` + `requires_lane: True` (the K8 contract: `--lane`
+  must state it), and a well-formed synthetic summary of each adapts to a row
+  while **ten** provenance-violating variants refuse with the right exit codes
+  (4 missing, 5 inconsistent, 7 identity clash).
+
+### The bug the merge caught
+
+Rebasing the mlx surface onto the concurrently-shipped exl3hf one had turned
+the checkpoint-identity dispatch from one chain into two:
+
+```
+if  args.source == "exl3hf":   ...          # sets identity
+if  args.source == "mlx":      ...          # a NEW chain
+elif args.source == "native":  ...
+else:                          ...          # surface.contract_sha256
+```
+
+`surface` is `None` on the exl3hf path, so **every `--source exl3hf` capture
+would have died with an `AttributeError` after building its identity** — a lane
+shipped by the other workflow, broken by a merge nobody had reason to re-read.
+Merged into one chain (`exl3hf | mlx | gguf | native | nvfp4 | else`), and a new
+static rung **L1.k** now proves there is exactly ONE `args.source` chain per
+dispatched variable and that it ends in a catch-all. Verified by mutation:
+re-splitting the chain turns L1.k red and names both halves.
+
+LESSON 34 (dispatch shape is a testable property). A chain ending in `else:` is
+a trap for the next surface: appending `if args.source == "<new>":` instead of
+`elif` is invisible in review, passes every existing test, and silently runs the
+catch-all for every earlier source. Three agents each appended a branch; two
+appended safely and one did not. What caught it was reading the merged AST, not
+reading the diff — so the AST reading is now a rung.
+
+LESSON 35 (a cross-check is only as good as its operation order). The first
+independent NVFP4 check reported a 7.45e-09 mismatch, and the tempting reading
+was "the adapter is 1 ulp off". It was the reference that was wrong: the adapter
+does `scale/global` first and then multiplies, which is exactly what
+`compressed_tensors._dequantize` does; the naive `values * scale / global` is a
+different rounding. Reproduce the reference's ORDER, not just its formula —
+otherwise an adversarial check manufactures the defect it claims to find.
+
+### Merge decisions worth knowing
+
+- The streamer gained named `gguf_source` / `nvfp4_source` parameters on the
+  shared producer/consumer loop. The gguf branch had ridden in through
+  `native_source` and the nvfp4 branch through a generic `decoded_source`; both
+  would have made the "cannot serve two routed sources at once" refusal name the
+  wrong source. All five are now named.
+- `build_streaming_model` carries BOTH ways a non-official non-routed set
+  reaches the forward, documented together: `nonrouted_view` (mlx/gguf hand it a
+  MATERIALIZED decoded view) and `view_name`/`config_strip_keys` (nvfp4 points
+  the ordinary symlink view at the quant snapshot with `quantization_config`
+  stripped from the VIEW's config copy).
+- The GGUF summary's `profile` field said `gguf-tp4`. A single-file llama.cpp
+  container is not TP4-sliced; it now says `gguf-stream`, like the mlx and
+  nvfp4 lanes.
+- `registry_add.py` gained ONE adapter table keyed on the schema string instead
+  of three sequential `if sch == …` blocks, and the gguf seal disclosure moved
+  onto the coded channel the mlx/dione families already use.
+- `WHAT-WE-MEASURE.md` §2 claimed "the lm_head weights are never quantized in
+  any artifact measured here". That was already false when the stock-exllamav3
+  (turbo) lane landed — it quantizes the head at 6 bits — and GGUF makes it
+  emphatically false. Corrected, with the scope table moved into a new §5a.
+- `bin/BUNDLE.txt` did not list `gguf_surface.py`, `nvfp4_surface.py` or the
+  nvfp4 official-name evidence. On the instance that is a crash after the
+  receipt is sealed. Added; the bundle-only seal now stages 55 files and still
+  validates.
+- `k6/STREAMING.md` had two sections numbered 13 and a stranded 11: three agents
+  appended lanes blind to each other. Renumbered 12–16 with the MLX lane
+  pointing at its own `MLX-SURFACE.md`.
+
+### What a paid measurement of each will cost
+
+Nothing here has been measured yet — no capture has run against real weights on
+any of the three lanes. The shapes, stated as expectation and not as
+measurement:
+
+- **NVFP4** is the cheapest: routed-only scope means NO decoded non-routed view
+  is materialized, the snapshot's own BF16 tensors are symlinked, and the read
+  is ~4.08 GB/layer against the BF16 floor lane's measured 14.50 GB/layer. The
+  decode is a LUT gather plus one multiply. Two cold runs on the streaming lane
+  is the unit of work; whether the lane is IO- or decode-bound is itself a
+  measurement, which is why the receipt records `nvfp4_payload_bytes_read` and
+  `nvfp4_shards_read`.
+- **GGUF** adds a one-time ~19 GB write of the materialized non-routed view plus
+  a full decode pass on cold run 1 (reused after, via a fingerprint stamp), on
+  top of streaming 185,478,414,336 B of routed payload out of a
+  199,707,321,347 B artifact. Budget the disk and the first-run wall clock.
+- **MLX** has the same ~19 GB decoded-view cost as GGUF and streams a
+  203,992,076,296 B artifact whose ledger reconciles exactly with the index's
+  declared total.
+
+Before the first paid capture on any NEW artifact of these families, run that
+family's preflight: `gguf_surface.py audit-mla` and `audit-expert`,
+`nvfp4_surface.py probe` and `verify-nonrouted`, `mlx_surface.py crosscheck`.
+They are cheap, they are offline, and each one guards a layout assumption that
+would decode cleanly while measuring the wrong model.

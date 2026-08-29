@@ -1580,4 +1580,15 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # A refusal is an ANSWER, not a crash: these tools are run by hand before a
+    # paid capture, so `_fail`'s named message prints on one line instead of
+    # under a traceback -- the same handler gguf_surface uses, and the same exit
+    # code (2), so a caller can tell "this artifact is refused" from "the tool
+    # broke".
+    import sys
+
+    try:
+        raise SystemExit(main())
+    except ValueError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        raise SystemExit(2)

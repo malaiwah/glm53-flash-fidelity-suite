@@ -50,8 +50,9 @@ t "stack fingerprint (T9: deterministic, engine-absent, MPS/CUDA-absent)" \
                                            0 python3 bin/selftest_stackprint.py
 t "zero-floor identity (T4; SKIPs inside when numpy/torch absent)" \
                                            0 "$PY" bin/selftest_zero_floor.py
-t "stream_score ladder rungs g,h,i,j (teacher role / preview refusal / \
-sampling / receipt stability)"             0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j
+t "stream_score ladder rungs g,h,i,j,k (teacher role / preview refusal / \
+sampling / receipt stability / source dispatch)" \
+                                           0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k
 # The three community-quant weight-decode surfaces.  Each proves its dequant
 # against that ecosystem's own reference implementation on REAL ranged-fetched
 # tensors (replayed here from committed fixtures so the proof runs with no
