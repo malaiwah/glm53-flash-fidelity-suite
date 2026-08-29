@@ -483,6 +483,29 @@ def reaper_sweep(con: Console, *, dry: bool = False) -> int:
     except JLError as exc:
         con.warn("could not list instances: %s" % redact(str(exc)))
 
+    # A lease whose instance no longer exists is a phantom: `reaper --list`
+    # keeps reporting a job that is already destroyed, which is exactly the
+    # noise that makes an operator stop reading the list. It happens whenever a
+    # box is torn down by hand -- the case --hold-on-failure creates on purpose,
+    # since holding KEEPS the lease. Retire those here, where we already have
+    # the live instance list, and say which.
+    if not dry:
+        try:
+            alive = {i.machine_id for i in jl.list_instances()}
+        except JLError:
+            alive = None
+        if alive is not None:
+            for path in sorted(LEASE_DIR.glob("*.json")) if LEASE_DIR.is_dir() else []:
+                try:
+                    lease = read_json(str(path))
+                except (OSError, ValueError):
+                    continue
+                mid = lease.get("machine_id")
+                if mid and int(mid) not in alive and int(mid) not in targets:
+                    con.say("reaper: retiring lease %s (machine %s is gone)"
+                            % (path.name, mid))
+                    path.unlink(missing_ok=True)
+
     if not targets:
         con.say("reaper: nothing expired")
         return EXIT_OK
