@@ -1457,3 +1457,195 @@ family's preflight: `gguf_surface.py audit-mla` and `audit-expert`,
 `nvfp4_surface.py probe` and `verify-nonrouted`, `mlx_surface.py crosscheck`.
 They are cheap, they are offline, and each one guards a layout assumption that
 would decode cleanly while measuring the wrong model.
+
+## 2026-08-29 — the operator architecture: capture and comparison split into two steps
+
+The measuring stack has always fused two different jobs. `stream_score.py` runs
+a model over a panel; `k6_kld_report.py` scores that run against a teacher. The
+only durable output was a number plus receipts pointing at filesystem paths.
+Today that becomes three separable steps behind one tool — `bin/fidelity-dataset
+capture | verify | compare` — with a versioned on-disk format
+(`malaiwah.fidelity-dataset.v1`), a comparison receipt, an HF card annotation,
+and 94 selftest cases.
+
+### The lesson that forced it: we lost a filesystem, and with it a capability
+
+A JarvisLabs filesystem holding our sealed `layers/*.json` and `experts/*.json`
+receipt trees was destroyed after being wrongly declared redundant. What that
+cost is precise and worth stating without softening:
+
+- The published K6/K8 checkpoints are still self-contained **for serving** —
+  `exl3-mcg-storage-abi.json` present, payloads inline, readable through
+  `stream_score --source exl3hf`, and `lm_head.weight` still a plain BF16
+  tensor in the index.
+- But `stream_score --source checkpoint` does
+  `packed_root = Path(materialization["packed_root"]).resolve()` and fails if it
+  is not a directory, **with no override flag**. That value is
+  `/home/jl_fs/glm53-k6/out-k6`. `--source payload-store` needs `contract.json`,
+  `inventory.json`, `mtp-adapter-receipt.json` and the `payload-store/` trees,
+  none of which are published. Both packed reading paths are therefore
+  unreachable from public artifacts, and the published materialization receipt
+  still names the dead path.
+
+The registry already had the field for this condition:
+`reference.logits_available`, documented as *"false means a number against this
+reference can never be re-derived, only re-run."* We had been running with it
+false and calling that fine.
+
+**A fidelity dataset would have made the loss irrelevant.** A sealed capture of
+the reference is a downloadable public good; losing the machine that produced it
+costs nothing, because the thing anyone needs is the capture, not the box. That
+is the whole argument for the refactor, and it is an argument from damage
+already taken rather than from principle.
+
+### What the split buys, concretely
+
+- **A root capture is paid for once.** Every measurement used to re-pay for
+  capture — scoring quant *N* re-ran the reference or depended on a teacher tree
+  somebody was still holding.
+- **A quant author can contribute a capture with no access to our
+  infrastructure**, and publish it *before* any comparison exists. That is a
+  hard requirement on the format, and it is the thing the only serious prior art
+  (Festr's kimi-k3 artifact) cannot do: he embeds the panel inside the reference
+  artifact, so his candidate captures have nowhere to live and only the compare
+  receipts survive.
+- **The same-lane floor largely stops existing.** Our published cross-stack
+  floor is 0.012712 nats — comparable in magnitude to K6's entire 0.013723. That
+  is comparison overhead, not quantization. Two captures on one lane compared
+  offline in fp64 remove it structurally instead of by subtraction, which
+  BIAS-006 forbids across lanes anyway.
+
+### Lesson 34: a container digest is not an identity, and we had both conventions live
+
+The single most load-bearing rule in the format is that head identity is the
+**tensor content** digest, never the file digest. We were carrying both
+conventions in published receipts without noticing:
+`head-extraction.json` and `head-equality-fp8.json` record `47eaf729…` (the
+file), while `k6/hidden-replay-evidence/nonrouted-sparse-fetch.json` records
+`aa21c427…` (the tensor). The adapter recomputes the second from the published
+`head/head.safetensors` with a 20-line pure-stdlib reader and gets `aa21c427…`
+exactly, confirming both values are right and that they answer different
+questions. v1 requires both, names content normative, and makes comparing one
+convention to the other a hard error (case H11).
+
+The same distinction is why `determinism.evidence_hashes` may never contain a
+file digest: `stream_score` writes `cold_run` into the safetensors
+`__metadata__`, so **bitwise-identical runs produce different file digests**.
+Case F15 proves it on constructed bytes; `reports/k6-five-run-kld.json` proves
+it on real ones — five different receipt digests, one tokenwise digest,
+population stddev exactly 0.0.
+
+### Lesson 35: "shared head" means shared APPLICATION, not shared WEIGHTS
+
+If a quant quantizes its own `lm_head` — stock EXL3 at `head_bits` 6–8, GGUF's
+`output.weight`, MLX — then replaying its hidden states through the **reference**
+head erases its head-quantization error and flatters it. kimi-k3's comparator
+takes one `--lm-head` and applies it to both sides; nothing refuses, warns, or
+records a mismatch. **Our own code has the same default live**:
+`tools/fidelity.py cmd_replay` takes a required `--head` and an *optional*
+`--candidate-head` that defaults to `None`.
+
+The comparator now refuses that condition outright (HEAD-1b, exit 3). The
+override exists but is expensive on purpose: `--disclose-head-substitution`
+forces `class: advisory`, a bias block with `direction: downward`, and a
+**blocking** disclosure, which under DISC-003 forces `status: pending`. A
+head-substituted number is not publishable, which is the correct price.
+
+### Validated without a GPU, and against real bytes where they exist
+
+94 cases across three selftests, all offline, all on the system python3:
+
+- `bin/selftest_fidelity_dataset.py` — **66 passed, 0 failed**. F1–F15 format
+  and seal, P1–P9 panel binding, H1–H11 head identity, L1–L5 lane/stack,
+  C1–C4 coverage, X1–X2 lossy, I1–I15 interop, R1/R4 real artifacts.
+- `bin/selftest_fidelity_compare.py` — **14 passed, 0 failed**. Known-answer KLD
+  against an independent plain-python oracle (agrees to fp64 epsilon), the
+  self-compare exactness assertions, and the T1 constant.
+- `bin/selftest_fidelity_card.py` — **14 passed, 0 failed**, including the live
+  Hub `validate-yaml` axis on six cards.
+
+Three of those deserve naming because they used real data, not fixtures:
+
+1. **The superset proof.** `adapt --source malaiwah-serving-v2` turns our own
+   published `glm53flash-fidelity-capture/2` into a conformant v1 dataset that
+   passes `validate --verify-tensors` with 0 errors, and fixes rather than
+   copies its three defects: the undeclared cut point (it now declares
+   `after_final_rmsnorm_before_lm_head`, which is what the code actually
+   implements), the manifest claiming `complete: true` over 5,120 captures in a
+   512-file repository (honest coverage plus `shard_of`), and records of
+   `{index, sha256, shape}` (full records with payload and content digests).
+2. **A real self-compare.** The adapted BF16 root compared against itself, with
+   `--force-compute` so the 2 × 2047 × 154,880 fp64 matmul and softmax actually
+   ran through the real 154,880 × 4,096 head: **exactly 0.0**, top-1 exactly
+   1.0, and the computed array bitwise identical to the hash proof.
+3. **A real measurement.** The same two adapted captures — BF16 reference and
+   the FP8 as-served capture — scored **0.035262 nats**, top-1 0.9257, on two
+   contexts. The published full-suite headline over all 5,120 is 0.028104 /
+   0.9427, and the context-depth buckets reproduce the known shape (0.147 at
+   depth 0–255 falling to 0.0146 at 1536–2046, against the published
+   positions-1024+ figure of 0.018794). The comparator's own gates put it at
+   `class: advisory` because neither adapted capture carries a
+   `lane_identity_sha256` — correct, and the kind of thing that used to be a
+   footnote.
+
+### Lesson 36: our adopted digest preimages are Festr's, and we can prove it
+
+The spec adopts kimi-k3's two token preimages verbatim — compact
+`separators=(",",":")` per record, `"\n".join(...)` for the aggregate. That
+claim is now checked, not asserted: `adapt --source k3v1` reads his real
+published `suite-manifest.json`, recomputes the aggregate from his own
+per-record digests under our adopted rule, and gets his declared
+`70cd72175fcb…` exactly. The window-form predecessor reproduces `a6856e1d…` the
+same way.
+
+And the divergence is equally real: our historical preimage (`json.dumps`
+defaults) reproduces our published `token_sha256` `f26a50ad…` exactly, while the
+adopted compact preimage gives `9f2fa28a…` for the same token array. Same
+tokens, different hashes — a preimage divergence, not a naming one, which is why
+v1 ends it by adopting his and carrying ours as `*_legacy`.
+
+### Lesson 37: `huggingface_hub` silently drops nulls inside `args`
+
+Found by the round-trip axis on a card we generated, not by reading docs. A
+`metrics[].args` entry with a `null` value survives the Hub's validator but is
+**dropped** by `EvalResult` on any library round-trip, so the card that ships is
+not the card the Hub re-serves. The generator now omits null keys entirely
+(GEN-9) and the validator refuses them.
+
+The second card-level find was scope collision: the registry carries `panel25`
+and `clean17` rows for the same artifact, panel and lane, which share
+`huggingface_hub`'s five-tuple merge key `(task.type, dataset.type,
+dataset.config, dataset.split, dataset.revision)`. Merging them would silently
+discard one row's args — the same failure mode BIAS-006 forbids for lanes. Lane
+lives in `split`; measurement scope now lives in `config`.
+
+### What was NOT done, and why
+
+- **`registry/` was not touched.** The three additive changes a step-3 receipt
+  needs — two disclosure codes, a `registry_add` adapter, four invariants — are
+  specified in [`docs/REGISTRY-INTEGRATION.md`](docs/REGISTRY-INTEGRATION.md)
+  and deliberately not applied: the sequential measurement workflow holds
+  `registry/schema/invariants.json`, `registry/data/*.jsonl` and
+  `registry/tools/seed_registry.py` open in the working tree, and `make check`
+  passed through an intermediate 11-error state while this was being built
+  before returning to 62 passed / 0 failed. Editing a 90-invariant file another
+  workflow is editing is how you get a merge conflict in the one place
+  correctness is enforced. `git status registry/` shows none of this work.
+- **The five reserved files and `stream_score.py` were not edited.** Every
+  capture path is wrapped, imported or shelled out to, following the precedent
+  `k6/tools/hidden_replay.py` set. The fp64 estimator in the comparator IS
+  `k6_kld_report._token_kld`, imported and called, so a number here equals a
+  number from the sealed pipeline.
+- **Nothing was published.** The tooling can `--publish`, and it refuses to
+  unless `verify --verify-tensors` passes first, the dataset is not `draft`, and
+  the fetched copy re-verifies. Publishing the annotated K6/K8 cards is the Ship
+  phase's job, and it should be preceded by one push to a private scratch model
+  repo — live *rendering* of the eval widget is the one axis we cannot check
+  from here.
+- **A fifth invariant, DS-005, is specified but not applied.** A floor from a
+  different measurement SCOPE is not this row's zero-point, for the same reason
+  a floor from a different lane is not. This was live in the registry while the
+  work was in flight and the other workflow has since resolved it; nothing in
+  the schema prevents it recurring. The guard exists at card level today
+  (`attributable_refusal`, case K8b) and withholds the number rather than
+  printing an unverifiable one.

@@ -50,6 +50,16 @@ t "stack fingerprint (T9: deterministic, engine-absent, MPS/CUDA-absent)" \
                                            0 python3 bin/selftest_stackprint.py
 t "zero-floor identity (T4; SKIPs inside when numpy/torch absent)" \
                                            0 "$PY" bin/selftest_zero_floor.py
+# The three-step fidelity dataset tool: format+seals+refusals, the comparator's
+# numerics, and the HF card annotation. All three run offline on the system
+# python3; the card case's live-Hub axis is the one networked check and it
+# SKIPs (loudly) under --offline.
+t "fidelity dataset format, seals and refusals (T6)" \
+                                           0 python3 bin/selftest_fidelity_dataset.py
+t "fidelity comparator known answers + exact self-compare (T8)" \
+                                           0 "$PY" bin/selftest_fidelity_compare.py
+t "fidelity card annotation, 3 axes (T7)" \
+                                           0 python3 bin/selftest_fidelity_card.py
 t "stream_score ladder rungs g,h,i,j,k (teacher role / preview refusal / \
 sampling / receipt stability / source dispatch)" \
                                            0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k

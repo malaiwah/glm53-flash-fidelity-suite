@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Capture, verify and compare fidelity datasets. See fidelity_dataset.py --help.
+exec "${FIDELITY_PYTHON:-python3}" "$(cd "$(dirname "$0")" && pwd)/fidelity_dataset.py" "$@"

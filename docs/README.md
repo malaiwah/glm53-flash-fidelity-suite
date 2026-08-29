@@ -19,6 +19,28 @@ infrastructure, and largely dissolves the same-lane floor problem.
 | [`FIDELITY-DATASET-SPEC.md`](FIDELITY-DATASET-SPEC.md) | the format: layout, manifest schema, seal, root-vs-quant matrix, hidden-vs-logit form, head identity and the comparator refusal rules, panel binding, stack fingerprint, determinism evidence, kimi-k3 interop, our own defects it fixes, and what is out of scope |
 | [`CARD-ANNOTATION-SPEC.md`](CARD-ANNOTATION-SPEC.md) | machine-readable fidelity provenance on a HuggingFace card: a conformant `model-index` result plus a small additive `x_fidelity` block, with the Hub's real validation behaviour measured rather than assumed |
 | [`FIDELITY-DATASET-BUILD-PLAN.md`](FIDELITY-DATASET-BUILD-PLAN.md) | exact new file names, CLI signatures, what each command validates and refuses, which existing code each wraps (never edits), the synthetic test matrix, registry changes, and open items |
+| [`REGISTRY-INTEGRATION.md`](REGISTRY-INTEGRATION.md) | the three additive `registry/` changes a step-3 receipt needs — specified, and deliberately not applied while a concurrent workflow holds those files open |
+| [`cards/`](cards/) | the annotation applied to our own K6 and K8 cards: the reference implementation, generated and validated, not published |
+
+## The tooling
+
+Built to this spec, all new files, nothing existing edited:
+
+```
+bin/fidelity-dataset      capture | verify | validate | compare | adapt | describe | publish
+bin/fidelity-card         annotate | validate
+bin/fidelity/dsformat.py     the five digest preimages, the seal, checksums.txt, path rules
+bin/fidelity/dsmanifest.py   builders + the DatasetWriter that lays out the tree in seal order
+bin/fidelity/dsvalidate.py   JSON Schema (via the registry's vendored _minischema) + ~40 rules
+bin/fidelity/dscompare.py    the gate ladder + the fp64 estimator (k6_kld_report._token_kld)
+bin/fidelity/dsadapt.py      k3v1 | k3v0-window | malaiwah-serving-v2 | llamacpp-kld
+bin/fidelity/dshub.py        digest-driven fetch, refusing publish
+bin/fidelity/cardmeta.py     the card generator and its three validation axes
+```
+
+Usage is in [`../bin/README.md`](../bin/README.md). The 94 selftest cases are
+`bin/selftest_fidelity_{dataset,compare,card}.py`, registered in
+`bin/selftest_all.sh`; every case names the spec rule it exercises.
 
 ## Schemas
 

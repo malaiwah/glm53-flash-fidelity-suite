@@ -223,6 +223,88 @@ not folklore.
   **refusable**, exactly like an unpinned panel. If a tool in this repo
   produced it after 2026-08-29, that absence is a bug report.
 
+## 8. Capture and comparison are two steps, not one
+
+Everything above describes what a *number* must pin. This section is about
+*when the work is done*, and it is the one structural change of 2026-08-29.
+
+Until now, capture and comparison were **fused**: `k6/tools/stream_score.py`
+ran a model over the panel and `k6/tools/k6_kld_report.py` scored it against a
+teacher, and the only durable output was a number plus receipts pointing at
+filesystem paths. Three consequences, all of which bit us:
+
+1. **Every measurement re-paid for capture.** Scoring quant *N* against the
+   BF16 reference re-ran the reference, or depended on a teacher tree somebody
+   was still holding.
+2. **Teachers were not portable.** `capture-receipt.json`'s
+   `logit_files[].path` are absolute paths on the capture box.
+3. **A lost capture killed reproducibility.** The JarvisLabs filesystem holding
+   our sealed `layers/*.json` and `experts/*.json` receipt trees was destroyed
+   after being wrongly declared redundant. The published K6/K8 checkpoints are
+   still self-contained *for serving* — payloads inline, readable through
+   `stream_score --source exl3hf` — but the `--source checkpoint` and
+   `--source payload-store` reading paths are now **unreachable from public
+   artifacts**, and the published materialization receipt still names the dead
+   path `/home/jl_fs/glm53-k6/out-k6`. The registry already had a field for
+   exactly this condition: `reference.logits_available`, documented as *"false
+   means a number against this reference can never be re-derived, only
+   re-run."*
+
+### The three steps
+
+```
+step 1  capture   reference (root) weights + panel  ->  fidelity dataset A
+step 2  capture   quantized weights + panel         ->  fidelity dataset B
+step 3  compare   A, B  ->  KLD + determinism + a registry-submittable receipt
+                  A, A  ->  reproduction confirmation, exactly 0.0
+```
+
+One tool, three modes: `bin/fidelity-dataset capture | verify | compare`.
+
+* **A root capture is a public good.** It is produced once when weights drop —
+  or after the fact — sealed, published, and thereafter downloaded rather than
+  re-run. Publishing it is what flips `logits_available` to true.
+* **Step 2 is publishable standalone.** A quant author can publish their own
+  capture with no access to our infrastructure and before any comparison
+  exists. Most users discard it; the format does not care.
+* **Step 3 runs with neither set of weights present.** It needs two datasets
+  and fp64 arithmetic.
+
+### Why this shrinks the floor
+
+Section 4 explains the floor: zero quantization still scores above zero,
+because the two sides of a comparison were produced by different stacks. Our
+published cross-stack floor is **0.012712 nats** — comparable in magnitude to
+K6's entire 0.013723. That number is comparison overhead, not quantization.
+
+When A and B are captured **on the same lane** and compared offline in fp64,
+that overhead is removed *structurally* rather than by subtraction — which the
+registry forbids across lanes anyway (**BIAS-006**). What remains is
+quantization error. The same-lane floor problem does not get corrected; it
+largely stops existing.
+
+### The three things the format makes checkable that prose could not
+
+* **Head identity.** "Shared head" means shared *application*, not shared
+  *weights*. Replaying a candidate's hidden states through the **reference**
+  head erases its head-quantization error and flatters it. Every capture now
+  declares its own `lm_head` by **tensor content** digest, and the comparator
+  **refuses** a hidden-form comparison across differing heads (HEAD-1b) unless
+  you pass `--disclose-head-substitution`, which forces `class: advisory`, a
+  downward bias block, and a **blocking** disclosure — i.e. not publishable.
+* **Self-compare.** Comparing a capture against itself is a *reproduction
+  confirmation* and must yield exactly `0.0`, top-1 exactly `1.0`, and a
+  tokenwise array of literal zeros. For our 51,175-position panel that array is
+  a fixed constant: 409,528 bytes, sha256 `3ffddc61…be17`. Anything else means
+  the estimator or the reader is broken.
+* **Storage.** Post-final-norm BF16 hiddens are **75.6x** smaller than fp32
+  logits: 419 MB vs 31.70 GB for the 25-window panel, 85.9 GB vs 6.49 TB for
+  the 10.48M-position suite. Hidden form is therefore the default; logit form
+  stays expressible for stacks whose head is not separable.
+
+Format: [`docs/FIDELITY-DATASET-SPEC.md`](docs/FIDELITY-DATASET-SPEC.md).
+Card annotation: [`docs/CARD-ANNOTATION-SPEC.md`](docs/CARD-ANNOTATION-SPEC.md).
+
 ## The measurers' checklist
 
 1. State the direction, estimator precision, and scored-position count.
@@ -238,3 +320,6 @@ not folklore.
 8. Fingerprint the stack — engine build, eager/graph state, attention
    backend, kernels, env pins, image digest — and cite that fingerprint by
    digest from every receipt that used it.
+9. **Publish the capture, not just the number** (section 8). A sealed fidelity
+   dataset is what lets anyone re-derive your result instead of re-running it,
+   and it is the only thing that survives losing the machine you measured on.

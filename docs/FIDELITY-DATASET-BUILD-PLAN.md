@@ -523,3 +523,40 @@ Beyond spec §14, which lists the format-level exclusions:
 | 5 | kimi-k3's per-file `sha256` is a **container** hash, so imported sentinel determinism evidence cannot reach our required strength without reading tensors. | Downgrade to `run_mean_equality_only` and say so; `--recompute-content-digests` is the paid upgrade path. |
 | 6 | `bin/selftest_all.sh` may be claimed by the measurement workflow. | If it is, ship the three registration lines as a JOURNAL patch note instead of editing the file. |
 | 7 | Live Hub *rendering* of the annotated card is unverified. | Ask the operator for one private scratch-repo push before annotating K6/K8 for real. |
+
+---
+
+## 10. As built (2026-08-29) — deviations from this plan
+
+Everything in §1 was built. Five deviations, each because reality contradicted
+the plan:
+
+| # | planned | built | why |
+|---|---|---|---|
+| 1 | `registry/` gains a `registry_add` adapter, two disclosure codes and four invariants | **nothing under `registry/` was touched**; the changes are specified in [`REGISTRY-INTEGRATION.md`](REGISTRY-INTEGRATION.md) | the sequential measurement workflow holds `registry/schema/invariants.json`, `registry/data/*.jsonl`, `registry/index.json`, `registry/Makefile` and `registry/tools/seed_registry.py` open in the working tree, and `make check` passed through an intermediate 11-error state during this work. Editing a 90-invariant file another workflow is editing is how you get a conflict in the one place correctness is enforced. `make check` ends at 62 passed / 0 failed with none of this work in it. |
+| 2 | `bin/fidelity/dscompare.py` is a torch module | the **gate ladder is stdlib + numpy** and torch is imported lazily inside the estimator | every refusal (head, panel, lane, coverage, lossy) is then testable on the system python3 with no GPU, which is where the whole synthetic matrix runs. `k6_kld_report._token_kld` is still imported and called whenever torch is present, and `comparator.estimator_backend` records which path ran (addendum A-3). |
+| 3 | `adapt` always emits a conformant dataset | `adapt --source k3v1 / k3v0-window / llamacpp-kld` emits a **translation report** when the tensors are not local | a sealed dataset requires the bytes: `capture_content_digest` and `checksums.txt` cannot be computed from metadata. Saying so is better than inventing a digest. `adapt --source malaiwah-serving-v2` emits a full sealed dataset, because those tensors ARE local. |
+| 4 | `capture` builds the dataset from a live capture tree | `capture` runs the pre-flight refusals, execs the wrapped scorer, and `--dry-run` works end to end; **assembling from a live tree is the one path this machine cannot exercise** | no GPU. The builders (`dsmanifest.DatasetWriter`) and the tree reader (`dsadapt.adapt_serving_v2`) are both exercised against real published tensors, so the untested seam is narrow and named. |
+| 5 | `validate` writes `validation/structural-validation.json` into the dataset | it is written by `capture`/`adapt` **before** the seal; `validate` writes to `--json OUT` | a post-seal write is an `unlisted_file` refusal, and resealing would change `dataset_sha256` and break the external anchor (addendum A-2). |
+
+### Test counts, as run
+
+```
+bin/selftest_fidelity_dataset.py   66 passed, 0 failed   F1-F15 P1-P9 H1-H11 L1-L5 C1-C4 X1-X2 I1-I15 R1 R4
+bin/selftest_fidelity_compare.py   14 passed, 0 failed   N1-N11 (+N3b, N8b, N11b)
+bin/selftest_fidelity_card.py      14 passed, 0 failed   K1-K13 (+K8b), live Hub axis included
+bin/selftest_all.sh                38 passed, 0 failed, 3 skipped
+cd registry && make check          62 passed, 0 failed
+```
+
+### The open items in §9, resolved
+
+| # | resolution |
+|---|---|
+| 1 | `quant_pipeline` is still not installed; nothing built here imports `glm53_logits`. The comparator reads safetensors directly with a 30-line stdlib reader, so `--pipeline-root` was not needed. |
+| 2 | Synthetic panels for every fixture, as planned. The remap path (REMAP-1..3) is exercised with a synthetic sealed receipt whose `artifacts[]` carry `/workspace/...` absolute paths (case P9). |
+| 3 | Content is normative; both digests are carried; H11 makes cross-convention comparison a refusal. The adapter recomputes `aa21c427…` from the published head and cross-checks `47eaf729…` against `head-extraction.json` (case I12). |
+| 4 | `hidden_states` is normative; the serving-v2 adapter accepts `hidden` and rewrites it, recording the rewrite in `inferred_fields`. |
+| 5 | Downgraded to `run_mean_equality_only` and said so, as planned (case I5). `--recompute-content-digests` is the documented paid upgrade. |
+| 6 | `bin/selftest_all.sh` was **not** claimed exclusively — the measurement workflow added a `joint standard` block to it during this work and the three new lines were applied on top without conflict. |
+| 7 | Still open, and the only thing blocking the Ship phase: live Hub *rendering* needs one push to a private scratch model repo. Push-time validation and the library round-trip are both proven clean. |

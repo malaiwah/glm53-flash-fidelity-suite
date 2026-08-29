@@ -411,3 +411,41 @@ alongside the Festr conversation.
   as part of a sealed dataset. Until it is, the generator emits `replay_permitted: false` (GEN-8) and
   the comparator refuses cross-artifact hidden replay against those cards (HEAD-4). This is the
   intended behaviour, not a workaround.
+
+---
+
+## 8. Implementation addenda (v1, 2026-08-29)
+
+**GEN-9 — never emit a `null` inside `args`; omit the key.** Measured, not
+assumed: `huggingface_hub`'s `EvalResult` **drops** null-valued keys inside
+`dataset.args` and `metrics[].args` on a round-trip. A card emitting
+`population_stddev_of_run_means: null` therefore passes the Hub validator but is
+not the card the Hub re-serves, and the round-trip axis flags it as `changed`. A
+missing key and a null key mean the same thing here, and only the missing form
+survives. The generator strips nulls; the validator refuses them.
+
+**GEN-10 — measurement SCOPE lives in `dataset.config`.** §2.1 puts lane in
+`dataset.split` because the merge key would otherwise discard it. The same
+argument applies one axis over, and live registry data proves it: the registry
+carries `panel25` (25 windows, 51,175 positions) and `clean17` (the 17 that
+survive a 13-gram calibration-overlap scan, 34,799 positions) rows for the same
+artifact, panel and lane. They share
+`(task.type, dataset.type, dataset.config, dataset.split, dataset.revision)`
+exactly, so `huggingface_hub` would merge them and silently drop one result's
+args. `config` becomes `<panel-config>[-<scope_name>]`, the scope detail goes in
+`dataset.args`, and `dataset.name` says which subset it is. The generator
+refuses any two results that still collide (GEN-4), which is how this was found.
+
+**XC-6 — a floor must match on scope as well as lane.** XC-4 checks
+`floor_lane == lane`. The generator additionally withholds the
+`kl_divergence_quantization_attributable` metric — and records the reason in
+`x_fidelity.measurements[].quantization_attributable_withheld` — when the floor
+row does not resolve, was measured on another lane, or was measured over another
+**scope**. Withholding an unverifiable number is the correct behaviour; printing
+it is not. Case K8b.
+
+**A registry snapshot travels with the annotation.**
+`x_fidelity.registry.snapshot.data_sha256` records the digest of each
+`registry/data/*.jsonl` file the card was generated from. A registry clone is a
+moving target; without this, a card and the rows it cites can drift with nothing
+on either side to say so.

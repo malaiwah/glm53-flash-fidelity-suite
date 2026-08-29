@@ -221,6 +221,100 @@ block says so in its own `note`.
 | `stage_measure.sh`, `watchdog.sh`, `invoke_engine.py` | the on-instance side |
 | `BUNDLE.txt` | exactly what gets uploaded to rented hardware |
 
+## Fidelity datasets — capture, verify, compare (`bin/fidelity-dataset`)
+
+Scoring is **three separable steps**, one tool, three modes
+([`docs/FIDELITY-DATASET-SPEC.md`](../docs/FIDELITY-DATASET-SPEC.md)):
+
+```
+step 1  capture   reference (root) weights + panel  ->  fidelity dataset A
+step 2  capture   quantized weights + panel         ->  fidelity dataset B
+step 3  compare   A, B  ->  KLD + determinism + a registry-submittable receipt
+                  A, A  ->  reproduction confirmation, exactly 0.0
+```
+
+A root capture is a public good: produced once, sealed, published, and
+thereafter downloaded rather than re-run. Step 2 is publishable **standalone**,
+before any comparison exists. Step 3 runs with **neither** set of weights
+present.
+
+```bash
+# step 1/2 -- capture (wraps hidden_replay.py / stream_score.py; never edits them)
+bin/fidelity-dataset capture --out ds-bf16 --form hidden --role root \
+    --lane sealed-ep8 -- --source native --token-panel <panel> --store-positions all ...
+bin/fidelity-dataset capture --dry-run --out /tmp/x --role root --lane sealed-ep8 -- ...
+        # --dry-run validates every input, seal and layout and exits 0 WITHOUT a GPU.
+        # This is the CI conformance hook.
+
+# verify -- seal + digest chain; stops at the first refusal; there is no --force
+bin/fidelity-dataset verify ds-bf16 --verify-tensors
+bin/fidelity-dataset verify hf://malaiwah/some-fidelity-dataset@<rev> --verify-tensors
+
+# validate -- reports EVERY failure, with the spec rule each one enforces
+bin/fidelity-dataset validate ds-bf16 --verify-tensors --json report.json
+bin/fidelity-dataset validate --receipt out/comparison-receipt.json
+
+# describe -- the identity card
+bin/fidelity-dataset describe ds-bf16
+
+# step 3 -- compare
+bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-k6 --out cmp \
+    --vocab-chunk 9680            # must divide vocab_size exactly (154880 / 16)
+bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-bf16 --out repro \
+    --self-compare --force-compute
+        # A == B is a REPRODUCTION CONFIRMATION: exactly 0.0, top-1 exactly 1.0,
+        # answered by hash proof; --force-compute runs the math and asserts
+        # bitwise agreement.
+
+# adapt -- foreign artifacts
+bin/fidelity-dataset adapt --source k3v1 --in <kimi-k3 metadata dir> --out k3-translation
+bin/fidelity-dataset adapt --source malaiwah-serving-v2 --in <capture dir> \
+    --suite <suite dir> --head-dir <head dir> --out ds --limit 8
+bin/fidelity-dataset adapt --source llamacpp-kld --in base.kld --out kld-translation
+```
+
+**Exit codes:** `0` ok, `2` warnings only, `3` refused, `4` bad usage.
+
+**The refusals worth knowing** (each names its spec rule):
+
+| you will hit | because |
+|---|---|
+| `head_mismatch` (HEAD-1b) | the two hidden-form captures declare different `lm_head` tensor-content digests. Replaying one artifact's hiddens through the other's head erases its head-quantization error and flatters it. `--disclose-head-substitution` proceeds but forces `advisory`, a downward bias block and a **blocking** disclosure — i.e. not publishable. |
+| `head_mismatch` (HEAD-4) | a hidden-form dataset with a null head content digest. **No override.** |
+| `panel_mismatch` (PANEL-D3) | `scoring_window.score_from` differs. That is a different *panel*, not a comparator flag — which is what makes a llama.cpp-geometry number structurally incomparable rather than silently comparable. |
+| `lane_mismatch` | different lanes. `--allow-cross-lane` proceeds and stamps `usable_as_floor: false`, so **BIAS-006** cannot be laundered downstream. |
+| `unlisted_file` / `missing_file` | the tree is not exactly what `checksums.txt` covers. `--allow-partial` narrows this to capture tensors and stamps `covers_full_panel: false`. |
+| `bad_vocab_chunk` | `--vocab-chunk` must divide `vocab_size`. For GLM-5.3-Flash use **9680**; kimi-k3's default 10240 does **not** divide 154880. |
+
+`checksums.txt` is `sha256sum --check`-compatible, so a reviewer with none of
+our tooling verifies the payload with one coreutils command.
+
+## Card annotation (`bin/fidelity-card`)
+
+Machine-readable fidelity provenance on an HF model or dataset card
+([`docs/CARD-ANNOTATION-SPEC.md`](../docs/CARD-ANNOTATION-SPEC.md)): one
+conformant `model-index` entry plus one additive `x_fidelity:` block.
+
+```bash
+bin/fidelity-card annotate --card README.md --role quant \
+    --artifact-id artifact--malaiwah.glm-5.3-flash-tr3-6bpw \
+    --base-model zai-org/GLM-5.3-Flash-BF16 --out README.annotated.md --diff --validate
+
+bin/fidelity-card validate --card README.md            # three axes
+bin/fidelity-card validate --card README.md --offline  # skips the Hub axis, and SAYS so
+```
+
+Three validation axes, all must pass: the live Hub `validate-yaml` endpoint
+(the same push-time gate), a `huggingface_hub` round-trip that must be
+structurally identical, and our own XC-1..XC-5 cross-checks against
+`registry/data/measurements.jsonl`.
+
+`annotate` never rewrites the card **body**, never sets `verified` /
+`verifyToken` (HF-controlled), and never invents a head digest — an artifact
+with no published head *content* digest gets `replay_permitted: false` and an
+explanatory note. Generated cards for K6 and K8 live in
+[`docs/cards/`](../docs/cards/); publishing them is a separate, permissioned act.
+
 ## Selftests
 
 ```bash
@@ -232,8 +326,11 @@ python3 bin/selftest_stats.py              # T2: K8-ANOMALY known answers, refus
 python3 bin/selftest_preview_stats.py      # T3: unbiasedness, coverage, FPC, panel gate
 python3 bin/selftest_zero_floor.py         # T4: the exact-0.0 identity (+ fixed npy sha)
 python3 bin/selftest_submission_refusal.py # T5: previews/teachers cannot become rows
-python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k # T6: engine-edit rungs
-bin/registry-view --selftest-live          # T8: live dataset, keys, value tripwire
+python3 bin/selftest_fidelity_dataset.py   # T6: format, seals, panel/head/lane/coverage refusals
+python3 bin/selftest_fidelity_compare.py   # T8: known-answer KLD, exact self-compare, SC-3
+python3 bin/selftest_fidelity_card.py      # T7: card annotation, 3 axes (--offline skips the Hub axis)
+python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k # engine-edit rungs
+bin/registry-view --selftest-live          # live dataset, keys, value tripwire
 ```
 
 The reaper section is safe by default: the selftest runs `reaper --sweep

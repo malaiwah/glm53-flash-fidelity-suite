@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Generate and validate the HF card fidelity-provenance annotation. See fidelity_card.py --help.
+exec "${FIDELITY_PYTHON:-python3}" "$(cd "$(dirname "$0")" && pwd)/fidelity_card.py" "$@"

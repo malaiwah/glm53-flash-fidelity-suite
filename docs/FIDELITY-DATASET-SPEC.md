@@ -1281,3 +1281,48 @@ Stated plainly, because a spec that only names other people's gaps is marketing.
 Every digest in the examples that is marked `<synthetic>` is a placeholder. Every digest **not** so
 marked is a real value read from a published artifact or a registry row, so the examples double as
 fixtures.
+
+---
+
+## 16. Implementation addenda (v1, 2026-08-29)
+
+Four clarifications the implementation forced. All are compatible with v1's
+additive-only rule: none adds a required key, changes a type, or changes a
+digest preimage.
+
+**A-1 — `runtime_manifest` may carry `..`.** PATH-3 says `..` is permitted only
+inside `compat/`, but §6.1's own example gives
+`"runtime_manifest": "../runtime/capture-runtime.json"` inside
+`capture/manifest.json` — because that field is adopted verbatim from kimi-k3,
+whose `reference-hidden/manifest.json` names `../capture-runtime.json` and whose
+validator refuses only an ABSOLUTE path. The rule as implemented: a path is
+resolved relative to the directory of the file that carries it and must resolve
+**inside the dataset root**; `..` is accepted under `compat/` and on the
+`runtime_manifest` field, and refused everywhere else. Containment — what PATH-3
+actually protects — is enforced in every case. Cases F8, F9, F11.
+
+**A-2 — a `validation/structural-validation.json` is written BEFORE the seal.**
+§3 requires the file and §5.4 requires `checksums.txt` to cover every published
+byte, so a `validate` run that wrote its report *into* a sealed dataset would
+make it `unlisted_file`. `capture` and `adapt` therefore write the report before
+`checksums.txt`; a third party validating a downloaded dataset writes theirs
+outside it (`validate --json OUT`). Resealing after validation would change
+`dataset_sha256` and break the external anchor, which is worse.
+
+**A-3 — `estimator_backend` is recorded.** §10.2 fixes the estimator as
+`torch.log_softmax` in float64. The implementation calls
+`k6_kld_report._token_kld` — imported, not copied — whenever torch is
+importable, and falls back to the identical fp64 formula in numpy when it is
+not. Which path ran is recorded in `comparator.estimator_backend`, because a
+silent backend swap is exactly the class of undeclared difference this format
+exists to surface. Both paths are asserted against the same analytic oracle
+(case N1).
+
+**A-4 — a floor must match on SCOPE as well as LANE.** §10.1 and registry
+**BIAS-006** require a floor to come from the same lane. Live registry data
+showed the same failure one axis over: a 17-window `clean17` row citing a
+25-window `panel25` floor. A floor over a different set of scored positions is
+not this row's zero-point, for exactly the reason a floor from another lane is
+not. Implemented as a refusal in the card generator
+(`cardmeta.attributable_refusal`, case K8b) and specified as registry invariant
+**DS-005** in [`REGISTRY-INTEGRATION.md`](REGISTRY-INTEGRATION.md).
