@@ -12,6 +12,14 @@ Nothing in this file is speculative. Every claim below was reproduced. Where a p
 was tested and found to be wrong, that is said explicitly, because a patch that looks right
 and regresses something is worse than no patch.
 
+This file now covers two different reasons to hold a fix back:
+
+1. **A live workflow owns the file.** Editing it races another process.
+2. **The fix would change a number that is already published.** Those need an operator
+   decision and a disclosure, not a quiet edit. They are in
+   [Published-number changes](#published-number-changes-operator-decision-required),
+   each with the delta measured rather than estimated.
+
 ## The files this covers
 
 | File | Owner while the review ran |
@@ -841,3 +849,121 @@ get wrong — prefer it to `mkdtemp`, whose `finally: rmtree` can itself leak on
 it leaks whenever `subprocess.run` or the later `json.loads` raises. Wrap in try/finally.
 
 Do NOT justify this as closing a privilege-escalation hole — that claim is unproven.
+
+
+---
+
+# PUBLISHED-NUMBER CHANGES (operator decision required)
+
+These are not blocked by a file lock. They are blocked because applying them rewrites
+numbers that are already public — in `registry/data/measurements.jsonl`, mirrored to the
+`quant-fidelity-registry` HF dataset. The code fix is written out; the reseed is not run.
+
+Deltas below were measured by running the fix and diffing the regenerated rows against the
+committed ones, not estimated.
+
+---
+
+## STAT-01 + STAT-17 — the 42 per-domain intervals claim 95% and deliver 78-83%
+
+**Files:** `registry/tools/joint_enrich.py` (`DOMAIN_BOOTSTRAP_B`, `_by_domain`),
+`bin/jointstd/stats.py` (`domain_table`).
+
+**What is wrong.** Two coupled defects in the same block of numbers.
+
+*STAT-01.* 54 published intervals are emitted as `ci95_low`/`ci95_high` with
+`interval_kind: "bca"` and schema text calling them "the joint standard's interval …
+B=5000", but their measured coverage is not 95%. Simulating each published cell at its own
+`g` and `B` against a lognormal fitted to that cell's own windows, 4000 reps each:
+
+| block | cells | measured coverage |
+|---|---|---|
+| panel (`g`=25 / 17, B=5000) | 12 | mean **90.4%** (89.1–91.6) |
+| per-domain (`g`=5..7, B=1000) | 42 | mean **81.4%** (78.3–84.7) |
+
+The implementation is not at fault — it reproduces `scipy.stats.bootstrap(method='BCa')`
+coverage to within Monte-Carlo error and reproduces brandonmusic's published endpoints
+bit-for-bit. Small-`g` BCa simply does not deliver nominal coverage, and it undercovers in
+the *bad* direction: truth falls **above** the interval 12–18% of the time and below it
+2–4%, so the per-domain intervals systematically understate divergence. A normal
+population undercovers too (g=7 → 87.2%), so this is not a skew artifact that a different
+population shape would rescue.
+
+*STAT-17.* Inside `domain_table`, every domain is bootstrapped with the **same** seed, so
+at equal window counts the resample index streams are identical across domains and these
+intervals share their Monte-Carlo error. Measured on the real panel, the replicate-mean
+correlation reaches |r| = 0.57 — and it is arbitrary, because it pairs domain A's k-th
+window with domain B's k-th, which are unrelated windows.
+
+**Why they are one decision.** Fixing STAT-17 alone moves **79 published `by_domain` CI
+endpoints by up to 24.15%** (worst:
+`measurement--glm53.k6-6bpw-stream.brandonmusic-final25.clean17` / `axis3_code_agentic` /
+`ci95_low`). That movement is *not* the seed — it is the raw MC instability of a BCa
+bootstrap at B=1000 over 5–7 windows, i.e. the same instability that produces STAT-01's
+undercoverage. Re-rolling the dice with a better seed would replace one wrong interval with
+a differently wrong one. Measured seed noise on the worst cell: **11.5%** relative sd of
+the low endpoint at B=1000 across 40 seeds.
+
+**Measured blast radius of the seed fix alone** (`seed_registry.py --out` vs committed):
+
+```
+headline metric.value changed : 0
+top-level uncertainty changed : 0
+by_domain CI endpoints changed: 79
+worst relative move           : 24.1519%
+```
+
+No headline KLD, no `se_clustered`, no `deff`, no domain mean moves. Only the per-domain
+interval endpoints.
+
+**Recommended fix, as one reseed.**
+
+1. Raise `DOMAIN_BOOTSTRAP_B` from 1000 to **20000**, not 5000. Measured seed noise on the
+   worst cell: 6.10% at B=1000, 3.71% at B=5000, 1.19% at B=20000. It is 42 cells over
+   ≤7 values; the cost is trivial.
+2. Derive the per-domain seed so the intervals stop sharing MC error, and record it so the
+   value stays reproducible. In `bin/jointstd/stats.py::domain_table`, inside
+   `if len(ws) >= 2:`:
+
+   ```python
+   dseed = seed ^ (int.from_bytes(hashlib.sha256(dom.encode("utf-8")).digest()[:8],
+                                  "big") & 0x7FFFFFFF)
+   row["bootstrap_seed_derived"] = dseed
+   bs = window_block_bootstrap(..., b=b, seed=dseed, backend=backend)
+   ```
+
+   (`import hashlib` at the top. This was written, measured and then backed out — the
+   comment at that line records why.)
+3. Decide what the per-domain block *claims*. Two honest options:
+   - **Refuse.** Drop `ci95_low`/`ci95_high` from `by_domain` at `g < 10` and put the
+     window count and the measured coverage in `note`, keeping `se_clustered` so a reader
+     can build their own. Verified schema-legal as-is: `by_domain`'s `anyOf` does not
+     require the endpoints, and `JOINT-006` / `invariants.json:183` are both conditional on
+     `ci95_low` being present.
+   - **Re-label.** Switch to bootstrap-t on **log(mean)** (studentize the log of the
+     resampled mean with the delta-method SE, exponentiate). Measured coverage recovers to
+     90.7/92.4/91.3/93.8% on the four k6 domains and 95.5% on the panel, and it is
+     non-negative by construction. Use `interval_kind: "t"`, which the schema enum already
+     permits. **Do not** use bootstrap-t on the raw mean: it produces a **negative** lower
+     endpoint on 5 of the 42 cells (e.g. `fp8-crossstack`/`clean17`/`axis3_code_agentic` =
+     −0.009475). A negative lower bound on a KL divergence is a worse publication defect
+     than the one being fixed.
+4. Whichever is chosen, the panel block should keep its BCa endpoints unchanged — they are
+   the joint standard's interop surface and
+   `bin/jointstd/fixtures/brandonmusic-known-answer.json` pins four external panels'
+   endpoints as a known-answer test. Add the measured coverage as a stated caveat
+   (`uncertainty.coverage_measured` plus a sentence in `note`) rather than switching the
+   method. Note `uncertainty` and `by_domain.items` are both
+   `"additionalProperties": false`, so a new field needs edits to
+   `registry/schema/measurement.schema.json` **and** `registry/schema/submission.schema.json`.
+5. `bin/joint_standard.py:419` calls the same `domain_table`, so whatever guard or caveat
+   lands must land in `bin/jointstd/stats.py` too, or every future contributor running the
+   public CLI gets the same uncalibrated intervals.
+6. Add the assertion to `bin/selftest_joint_standard.py`: either the committed
+   `coverage_measured` values reproduce from a seeded simulation, or no `by_domain` entry
+   with `windows < 10` carries `ci95_low`.
+
+**Do not** repeat the framing "readers will accept overlaps that are not really overlaps".
+Undercoverage makes these intervals too narrow and biased low, so the errors are false
+**separations** (measured 4.2–5.1% at domain level against the ~0.5–1% a reader infers) and
+systematic **understatement** of per-domain divergence.
