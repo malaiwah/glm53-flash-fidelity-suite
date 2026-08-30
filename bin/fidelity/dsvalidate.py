@@ -392,6 +392,9 @@ def validate_dataset(
     # Role matrix (spec section 3).
     _validate_role(root, manifest, dataset, scope, head, capture, report)
 
+    # Scope vocabulary: the dataset and the registry must speak the same one.
+    _validate_scope_vocabulary(scope, report)
+
     # Runtime.
     if runtime.get("lane") not in F.LANES:
         report.error("schema_invalid", "9.3", "lane %r is not a registry lane" % runtime.get("lane"))
@@ -576,9 +579,17 @@ def _validate_determinism(manifest, determinism, panel, capture, report):
         report.error("schema_invalid", "DET-D3",
                      "panel_receipt_sha256 may never be determinism evidence")
     if int(determinism.get("run_count") or 0) < 5:
-        report.warn("reduced_run_count", "DET-D4",
-                    "run_count %r < 5; a published dataset carries a reduced_run_count disclosure"
-                    % determinism.get("run_count"))
+        # DET-D4 asks for a disclosure; it used to warn even when the dataset
+        # carried one, so the warning could never be cleared and every honest
+        # single-run capture verified at exit 2 forever.  Warn only when the
+        # disclosure is actually absent.
+        declared = any((d or {}).get("code") == "reduced_run_count"
+                       for d in (manifest.get("disclosures") or []))
+        if not declared:
+            report.warn("reduced_run_count", "DET-D4",
+                        "run_count %r < 5 and no reduced_run_count disclosure is present; "
+                        "a published dataset carries one"
+                        % determinism.get("run_count"))
     report.ok("determinism")
 
 
@@ -593,6 +604,57 @@ def _collect_container_digests(node, out, key_hint=""):
         for item in node:
             _collect_container_digests(item, out, key_hint)
 
+
+
+_NUMERIC_FORMATS = None
+
+
+def registry_numeric_formats():
+    """The registry's `numeric_format` enum, READ from its schema, never copied.
+
+    Returns None when the registry tree is not next to us, in which case the
+    check is skipped rather than guessed at.
+    """
+    global _NUMERIC_FORMATS
+    if _NUMERIC_FORMATS is None:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "registry", "schema", "common.schema.json")
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                schema = json.load(handle)
+            defs = schema.get("$defs") or schema.get("definitions") or {}
+            _NUMERIC_FORMATS = frozenset(defs["numeric_format"]["enum"])
+        except Exception:
+            _NUMERIC_FORMATS = frozenset()
+    return _NUMERIC_FORMATS or None
+
+
+def _validate_scope_vocabulary(scope, report):
+    """SCOPE-VOCAB: a scope the registry will reject, caught at capture time.
+
+    `scope.assignments[].format` is checked against the registry's own
+    `numeric_format` enum.  Without this a capture can be run, sealed and
+    published with a format string of the author's invention, and the first
+    thing that notices is `registry_validate.py --submission` -- after the GPU
+    time has been spent and the artifact is on the Hub.  A warning, not an
+    error, because the dataset itself is still internally consistent and
+    already-published datasets must keep verifying.
+    """
+    allowed = registry_numeric_formats()
+    if not allowed:
+        return
+    for assignment in scope.get("assignments") or []:
+        value = assignment.get("format")
+        if value is None or value in allowed:
+            continue
+        report.warn("scope_format_unknown", "SCOPE-VOCAB",
+                    "scope assignment %r declares format %r, which is not in the registry's "
+                    "numeric_format enum; a submission carrying this scope is REJECTED by "
+                    "registry_validate.py --submission. Use one of: %s (put the exact "
+                    "scheme in a disclosure instead)."
+                    % (assignment.get("tensor_class"), value,
+                       ", ".join(sorted(allowed))))
+    report.ok("scope_vocabulary")
 
 def _validate_role(root, manifest, dataset, scope, head, capture, report):
     role = dataset.get("role")

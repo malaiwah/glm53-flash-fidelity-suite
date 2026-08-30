@@ -420,6 +420,40 @@ def main():
             check("N17 a tampered tensor with refreshed checksums is refused by default",
                   exc.code == "seal_failed" and "tensor" in exc.message.lower(),
                   exc.message[:100])
+        # -- N18/N19 the cache collision that returned a silent, wrong 0.0 ----
+        # `compare --reference hf://A --candidate hf://B --cache DIR` fetched A
+        # into DIR, fetched B on top of it, and compared B with B: exit 0,
+        # "REPRODUCTION CONFIRMATION", 0.0 nats, class=strict,
+        # usable_as_floor=true, both sides of the receipt naming ONE
+        # dataset_sha256. Found on the first two real published datasets.
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import fidelity_dataset                                     # noqa: WPS433
+
+        left = fidelity_dataset.cache_path("/tmp/cache", "owner/root-v1", "main")
+        right = fidelity_dataset.cache_path("/tmp/cache", "owner/quant-v1", "main")
+        same_repo_other_rev = fidelity_dataset.cache_path("/tmp/cache", "owner/root-v1", "abc")
+        check("N18 an explicit --cache still nests per repo AND revision",
+              left != right and left != same_repo_other_rev
+              and left.startswith("/tmp/cache" + os.sep),
+              "%s vs %s vs %s" % (left, right, same_repo_other_rev))
+
+        class _Args(object):
+            reference = candidate = out = None
+            allow_partial = self_compare = force_compute = False
+            allow_cross_lane = disclose_head_substitution = False
+            verify_tensors = True
+            device = "cpu"
+            vocab_chunk = chunk_positions = None
+            head = json = cache = token_file = None
+            emit_submission = False
+            submission_provenance = measurer = None
+            reference_label = candidate_label = None
+
+        args = _Args()
+        args.reference = args.candidate = a
+        args.out = os.path.join(tmp, "same-root")
+        check("N19 one directory passed as BOTH sides is refused, not scored as 0.0",
+              fidelity_dataset.cmd_compare(args) == 3)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

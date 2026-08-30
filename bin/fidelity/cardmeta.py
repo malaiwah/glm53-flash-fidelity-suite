@@ -478,9 +478,10 @@ def reference_identity(registry: Dict[str, Any], measurement_ids: Sequence[str]
     return None, None, notes
 
 
-def build_dataset_x_fidelity(root: str, *, repository: Optional[str] = None,
+def build_dataset_x_fidelity(root: Optional[str], *, repository: Optional[str] = None,
                              revision: Optional[str] = None,
-                             extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                             extra: Optional[Dict[str, Any]] = None,
+                             manifest: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """The `role: fidelity-dataset` block, read from a real dataset.
 
     Every value here is in `fidelity-dataset.json` already.  The generator used
@@ -489,11 +490,22 @@ def build_dataset_x_fidelity(root: str, *, repository: Optional[str] = None,
     a capture being publishable on its own -- was the one card it could not
     emit.  Nothing is invented: a field the manifest does not carry stays null
     and the validator says which.
+
+    `manifest` lets a CAPTURE TOOL build the block before the seal exists.
+    README.md is required, is covered by `checksums.txt`, and therefore has to
+    be written before `DatasetWriter.finish`; but the block quotes
+    `dataset_sha256`, which is a digest OF the tree the README is in.  That is a
+    fixed point with no solution, so a pre-seal call leaves the two
+    self-referential digests null and says so in `seal.note`.  Everything else
+    -- including `capture_content_digest`, which is a digest of tensor CONTENT
+    and so is knowable before the tree is sealed -- is real.
     """
     sys.path.insert(0, os.path.join(REPO, "bin"))
     from fidelity import dsformat as manifest_format               # noqa: WPS433
 
-    manifest = manifest_format.load_manifest(root)
+    presealed = manifest is None
+    if presealed:
+        manifest = manifest_format.load_manifest(root)
     dataset, capture = manifest["dataset"], manifest["capture"]
     panel, head, runtime = manifest["panel"], manifest["head"], manifest["runtime"]
     weights = manifest.get("weights") or {}
@@ -534,9 +546,13 @@ def build_dataset_x_fidelity(root: str, *, repository: Optional[str] = None,
         "scope_digest": (manifest.get("scope") or {}).get("scope_digest"),
         "seal": {
             "manifest": "fidelity-dataset.json",
-            "dataset_sha256": manifest[manifest_format.SEAL_FIELD],
+            "dataset_sha256": manifest[manifest_format.SEAL_FIELD] or None,
             "checksums": "checksums.txt",
-            "checksums_sha256": seal.get("checksums_sha256"),
+            "checksums_sha256": seal.get("checksums_sha256") or None,
+            "note": None if presealed else
+            "written before the seal: dataset_sha256 and checksums_sha256 are digests of "
+            "the tree this file is inside, so they cannot appear in it. Read them from "
+            "fidelity-dataset.json.",
         },
         "interop": {
             "compatible_with": ((manifest.get("interop") or {}).get("compatible_with") or []),
@@ -554,7 +570,7 @@ def build_dataset_x_fidelity(root: str, *, repository: Optional[str] = None,
             "repository": repository or dataset.get("repository"),
             "revision": (str(revision or dataset.get("revision"))
                          if (revision or dataset.get("revision")) else None),
-            "dataset_sha256": manifest[manifest_format.SEAL_FIELD],
+            "dataset_sha256": manifest[manifest_format.SEAL_FIELD] or None,
             "capture_content_digest": capture["capture_content_digest"],
             "form": capture["form"],
             "role": dataset.get("role"),

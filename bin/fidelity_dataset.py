@@ -47,16 +47,32 @@ def refuse(code, message, remedy=None):
     return REFUSED
 
 
+def cache_path(base, repo, revision):
+    """Where an `hf://repo@rev` fetch lands.  One directory per repo AND revision,
+    ALWAYS, including under an explicit --cache."""
+    root = base or os.path.join(REPO, "fidelity-runs", "datasets")
+    return os.path.join(root, repo.replace("/", "__"), revision or "main")
+
+
 def _resolve(ref, args, allow_partial=False, manifest_only=False):
-    """Local dir, or `hf://repo[@rev]` fetched into --cache."""
+    """Local dir, or `hf://repo[@rev]` fetched into a per-repo dir under --cache.
+
+    The nesting is NOT cosmetic.  `--cache DIR` used to be the fetch
+    destination itself, so `compare --reference hf://A --candidate hf://B
+    --cache DIR` downloaded A into DIR, then downloaded B on top of it, and
+    compared B against B: exit 0, "REPRODUCTION CONFIRMATION", 0.0 nats,
+    class=strict, usable_as_floor=true, with BOTH sides of the receipt naming
+    the same dataset_sha256.  Observed on the first two real published
+    datasets.  A cache is a cache of many things; it is never one dataset's
+    directory.
+    """
     if not ref.startswith("hf://"):
         return ref
     from fidelity import dshub
 
     token = dshub.read_token(getattr(args, "token_file", None))
     repo, revision = dshub.parse_ref(ref)
-    cache = getattr(args, "cache", None) or os.path.join(
-        REPO, "fidelity-runs", "datasets", repo.replace("/", "__"), revision)
+    cache = cache_path(getattr(args, "cache", None), repo, revision)
     emit("fetching %s@%s -> %s" % (repo, revision, cache))
     return dshub.fetch_dataset(ref, cache, token=token, allow_partial=allow_partial,
                                manifest_only=manifest_only)
@@ -292,6 +308,20 @@ def cmd_compare(args):
 
     reference = _resolve(args.reference, args, allow_partial=args.allow_partial)
     candidate = _resolve(args.candidate, args, allow_partial=args.allow_partial)
+    # Defence in depth behind the cache-nesting fix in _resolve(): if the two
+    # sides ever resolve to ONE directory again -- a symlink, a typo, a future
+    # caching change -- the comparison is a directory against itself and every
+    # gate passes. That is the one wrong answer this tool must never return
+    # quietly, so it is a refusal even under --self-compare, where the operator
+    # is asking to compare two SEPARATE captures of the same weights.
+    if os.path.realpath(reference) == os.path.realpath(candidate):
+        return refuse("same_root",
+                      "reference and candidate resolve to the same directory (%s); the "
+                      "comparison would be that directory against itself and would report "
+                      "0.0 nats through every gate"
+                      % os.path.realpath(reference),
+                      "point --reference and --candidate at two different roots; a "
+                      "self-compare needs two SEPARATE cold captures, not one path twice")
     options = {
         "device": args.device,
         "vocab_chunk": args.vocab_chunk,
@@ -417,10 +447,68 @@ def _preflight(passthrough):
     return problems
 
 
+def _postcondition(out):
+    """`capture --out X` must leave a dataset at X.  It used to exit 0 having left
+    a capture WORK TREE and no dataset at all, which is the worst possible
+    failure: a green exit code over a missing artifact."""
+    manifest = os.path.join(out, F.MANIFEST_NAME)
+    if not os.path.isfile(manifest):
+        return refuse("dataset_not_assembled",
+                      "the capture finished but %s does not exist, so --out %s holds no "
+                      "dataset" % (manifest, out),
+                      "the sealed-lane engine writes a capture WORK TREE, not a dataset; "
+                      "either assemble it (bin/fidelity/dsmanifest.py, bin/fidelity/"
+                      "dsadapt.py) or use --engine hf-transformers, which writes the "
+                      "dataset itself")
+    report = dsvalidate.validate_dataset(out, verify_tensors=False)
+    if report.errors:
+        first = report.errors[0]
+        _print_report(report, verbose=False)
+        return refuse("dataset_invalid",
+                      "the capture wrote %s but it does not validate: %s (%s)"
+                      % (out, first["message"], first["rule"]))
+    emit("SEALED DATASET -> %s" % out)
+    manifest_doc = F.load_manifest(out)
+    emit("  dataset_sha256          %s" % manifest_doc[F.SEAL_FIELD])
+    emit("  capture_content_digest  %s" % manifest_doc["capture"]["capture_content_digest"])
+    emit("  records / scored rows   %s / %s" % (manifest_doc["capture"]["records_count"],
+                                                manifest_doc["capture"]["scored_rows_total"]))
+    return WARN if report.warnings else OK
+
+
 def cmd_capture(args):
     passthrough = list(args.passthrough or [])
     if passthrough and passthrough[0] == "--":
         passthrough = passthrough[1:]
+
+    if args.engine == "hf-transformers":
+        if args.form != "hidden":
+            return refuse("bad_capture_argv",
+                          "--engine hf-transformers captures hidden form only "
+                          "(a logit-form capture of a 154,880-token vocabulary is ~1,200x "
+                          "the bytes; use the streaming lane if you really want it)")
+        if os.path.exists(args.out) and not args.force:
+            return refuse("destination_exists", "%s exists" % args.out, "pass --force")
+        tool = os.path.join(REPO, "k6", "tools", "hf_capture.py")
+        python = os.environ.get("FIDELITY_PYTHON", sys.executable)
+        command = ([python, tool, "--out", args.out, "--role", args.role,
+                    "--lane", args.lane] + (["--force"] if args.force else [])
+                   + passthrough)
+        emit("capture plan")
+        emit("  engine          hf-transformers (k6/tools/hf_capture.py)")
+        emit("  form / role     %s / %s   lane %s" % (args.form, args.role, args.lane))
+        emit("  dataset root    %s" % args.out)
+        emit("  command         %s" % " ".join(command))
+        if args.dry_run:
+            emit("--dry-run is not supported by this engine: it has no plan phase "
+                 "separate from the forward pass. Run it on a small --windows instead.")
+            return USAGE
+        result = subprocess.call(command)
+        if result != 0:
+            return refuse("capture_failed",
+                          "the capture exited %d; no dataset written" % result)
+        return _postcondition(args.out)
+
     problems = _preflight(passthrough)
     if problems:
         for problem in problems:
@@ -433,6 +521,12 @@ def cmd_capture(args):
 
     tool = os.path.join(REPO, "k6", "tools",
                         "hidden_replay.py" if args.form == "hidden" else "stream_score.py")
+    if not os.path.isfile(tool):
+        return refuse("engine_missing",
+                      "%s does not exist in this checkout" % os.path.relpath(tool, REPO),
+                      "k6/tools/hidden_replay.py is campaign-internal and is not part of the "
+                      "published repository; from a public clone use "
+                      "`--engine hf-transformers`")
     python = os.environ.get("FIDELITY_PYTHON", sys.executable)
     work = args.work or (args.out + ".capture")
     if args.form == "hidden":
@@ -443,6 +537,7 @@ def cmd_capture(args):
         command.append("--dry-run")
 
     emit("capture plan")
+    emit("  engine          %s" % args.engine)
     emit("  form            %s" % args.form)
     emit("  role / lane     %s / %s" % (args.role, args.lane))
     emit("  wraps           %s (never edited; stream_score's own path is byte-identical "
@@ -463,12 +558,8 @@ def cmd_capture(args):
     result = subprocess.call(command)
     if result != 0:
         return refuse("capture_failed", "the capture exited %d; no dataset written" % result)
-    emit("capture finished; building the dataset from %s" % work)
-    emit("NOTE: assembling a dataset from a live capture tree is the one path this "
-         "machine cannot exercise (no GPU). The builders are "
-         "bin/fidelity/dsmanifest.py; the adapter that reads a finished capture tree "
-         "is bin/fidelity/dsadapt.py.")
-    return OK
+    emit("capture finished; assembling the dataset from %s" % work)
+    return _postcondition(args.out)
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +698,13 @@ def build_parser():
     p.add_argument("--form", choices=F.FORMS, default="hidden")
     p.add_argument("--role", choices=F.ROLES, required=True)
     p.add_argument("--lane", choices=F.LANES, required=True)
+    p.add_argument("--engine", choices=["sealed-lane", "hf-transformers"],
+                   default="sealed-lane",
+                   help="sealed-lane wraps k6/tools/hidden_replay.py + stream_score.py "
+                        "(campaign-internal, GLM-5.3-Flash geometry only, and it writes a "
+                        "capture work tree that something else must assemble); "
+                        "hf-transformers wraps k6/tools/hf_capture.py, which runs any HF "
+                        "causal LM and writes the SEALED DATASET at --out itself")
     p.add_argument("--work", help="capture working directory (default: <out>.capture)")
     p.add_argument("--dry-run", action="store_true",
                    help="validate every input and the plan, exit 0 without a GPU")
