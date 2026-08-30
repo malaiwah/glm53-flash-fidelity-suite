@@ -127,9 +127,32 @@ fi
 git -C "$PIPE" fetch -q origin "$PIPE_PIN" 2>/dev/null || true
 if ! grep -q "_STORED_BITS" "$PIPE/src/quant_pipeline/checkpoint/packed_payload.py"; then
   git -C "$PIPE" checkout -q "$PIPE_PIN"
-  git -C "$PIPE" diff --quiet && git -C "$PIPE" diff --cached --quiet
+  # SH-03. `A && B` is an AND-OR list, which bash EXEMPTS from set -e, so this asserted
+  # nothing: a dirty pipeline tree was silently accepted and the series applied on top of
+  # it, producing a different reader with no error. Reproduced end to end -- a dirty file
+  # plus a patch touching a different region of it gives `patch` exit 0, no .rej, and a
+  # decoder that hashes differently from the clean pin+series build. 0006 patches the
+  # reader the measurement decodes with, and reader_abi_sha256 is only RECORDED, never
+  # compared against an expected value, so that divergence is invisible downstream.
+  git -C "$PIPE" diff --quiet && git -C "$PIPE" diff --cached --quiet || {
+    echo "$PIPE working tree is dirty - refusing to patch onto it" >&2
+    git -C "$PIPE" status --porcelain | head -20 >&2
+    exit 1; }
   test -d "$PATCHES" || { echo "patches-v2 missing at $PATCHES - the bundle did not upload it" >&2; exit 1; }
   log "applying patches 0001-0006"
+  _want=$(grep -cE '^000[1-6]-.*\.patch$' "$PATCHES/SERIES" || echo 0)
+  _have=$(ls -1 "$PATCHES"/000[1-6]-*.patch 2>/dev/null | wc -l | tr -d ' ')
+  [ "$_want" -gt 0 ] && [ "$_have" = "$_want" ] || {
+    echo "patch series incomplete: SERIES names $_want of 0001-0006, $PATCHES holds $_have" >&2
+    ls -1 "$PATCHES" >&2
+    exit 1; }
+  # SH-23. The glob was applied with no cardinality check, so a bundle that dropped a
+  # patch produced a differently-patched tree, exit 0, and a receipt quietly listing one
+  # fewer line. BUNDLE.txt's own policy is "missing files are skipped (the controller
+  # logs which)", and measure_cloud implements that as a WARNING -- so the upstream half
+  # is fail-open by design and this is the consumer that has to notice.
+  # Asserted against SERIES rather than a magic 6: SERIES is uploaded, is already hashed
+  # into the receipt, and this also catches an unexpected EXTRA file matching the glob.
   ( cd "$PIPE" && for p in "$PATCHES"/000[1-6]-*.patch; do patch -p1 -s < "$p"; done )
   ( cd "$PATCHES" && sha256sum 000[1-6]-*.patch SERIES ) | tee "$RCPT/patches-v2-applied.txt"
 else

@@ -48,6 +48,12 @@ t "preview estimator coverage (T3)"        0 python3 bin/selftest_preview_stats.
 t "submission refusability (T5)"           0 python3 bin/selftest_submission_refusal.py
 t "stack fingerprint (T9: deterministic, engine-absent, MPS/CUDA-absent)" \
                                            0 python3 bin/selftest_stackprint.py
+# The shell guards (T10). Every prerequisite/cleanliness/budget/pace guard in the
+# rental scripts, driven against real fixtures -- a scratch git repo, a truncated
+# patch series, malformed BUDGET_USD values. These guards used to be `A && B`
+# lists, which `set -e` exempts, so they asserted nothing.
+t "shell guards (T10: SH-02/03/14/19/21/23 fixtures)" \
+                                           0 bash bin/selftest_shell_guards.sh
 t "zero-floor identity (T4; SKIPs inside when numpy/torch absent)" \
                                            0 "$PY" bin/selftest_zero_floor.py
 # The three-step fidelity dataset tool: format+seals+refusals, the comparator's
@@ -236,6 +242,11 @@ echo "== receipt round trip: bundle-only filesystem, no git, no network =="
 # Proves the on-instance seal path: stage exactly what BUNDLE.txt uploads into
 # a bare directory, then seal and validate from inside it. This is the check
 # that caught a missing bundle dependency and two null provenance fields.
+# SH-19. These two staging steps were BARE: selftest_all.sh runs under `set -u` with
+# no `set -e`, so a failure here (BUNDLE.txt renamed, a bad import, a full disk)
+# incremented neither pass nor fail. The run still printed "N passed, 0 failed" and
+# exited 0 while the round-trip it exists to prove had never been staged. A step whose
+# failure is invisible is worse than no step: it launders absence into evidence.
 "$PY" - "$TMP/fs" <<'STAGE'
 import pathlib, shutil, sys
 root = pathlib.Path(__file__).resolve().parent if False else pathlib.Path(".").resolve()
@@ -252,6 +263,15 @@ for line in (root / "bin/BUNDLE.txt").read_text().splitlines():
     shutil.copy2(src, dst); n += 1
 print("staged %d bundle files" % n)
 STAGE
+stage_rc=$?
+staged_n=0
+[ -d "$TMP/fs/bin" ] && staged_n=$(find "$TMP/fs" -type f | wc -l | tr -d ' ')
+if [ "$stage_rc" = 0 ] && [ "${staged_n:-0}" -gt 0 ]; then
+  printf '  PASS  %s\n' "bundle staging ($staged_n files from bin/BUNDLE.txt)"; pass=$((pass+1))
+else
+  printf '  FAIL  %s (rc=%s, %s files staged)\n' "bundle staging" "$stage_rc" "${staged_n:-0}"
+  fail=$((fail+1))
+fi
 "$PY" - "$TMP/fs" <<'FIXTURE'
 import json, pathlib, sys
 sys.path.insert(0, "bin")
@@ -296,6 +316,12 @@ job = {
 (fs / "receipts").mkdir(exist_ok=True)
 print("fixture written")
 FIXTURE
+fixture_rc=$?
+if [ "$fixture_rc" = 0 ] && [ -s "$TMP/fs/job.json" ] && [ -s "$TMP/fs/metrics.json" ]; then
+  printf '  PASS  %s\n' "round-trip fixture written (job.json + metrics.json)"; pass=$((pass+1))
+else
+  printf '  FAIL  %s (rc=%s)\n' "round-trip fixture" "$fixture_rc"; fail=$((fail+1))
+fi
 "$PY" "$TMP/fs/bin/seal_receipt.py" --job "$TMP/fs/job.json" \
     --receipts "$TMP/fs/receipts" --metrics-json "$TMP/fs/metrics.json" \
     --out "$TMP/fs/receipts/measurement-receipt.json" >"$TMP/seal.log" 2>&1

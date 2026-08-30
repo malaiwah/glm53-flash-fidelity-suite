@@ -238,7 +238,14 @@ setup)
     git clone https://github.com/turboderp-org/exllamav3 "$EXL3"
   fi
   git -C "$EXL3" checkout c5d9c657966ffeeaa9353f0cc899f18629da4a13
-  git -C "$EXL3" diff --quiet && git -C "$EXL3" diff --cached --quiet
+  # SH-03. Same dead AND-OR guard. Scoped to TRACKED sources: `pip install -e .` builds
+  # in this tree, and the comment above already says the extension binary is untracked
+  # and therefore allowed -- an unscoped hard failure here would turn every legitimate
+  # setup re-run (which happens on every fresh container) into a stage failure.
+  git -C "$EXL3" diff --quiet && git -C "$EXL3" diff --cached --quiet || {
+    echo "$EXL3 has MODIFIED TRACKED FILES - refusing to build a reader from it" >&2
+    git -C "$EXL3" status --porcelain --untracked-files=no | head -20 >&2
+    exit 1; }
   # DISCLOSED DEVIATION: arch list includes 10.0 (SM100) alongside 9.0 (SM90)
   # so the extension genuinely carries SM100 code objects; the sealed contract
   # requires "10.0" in compute_capabilities evidence.  We RUN on SM90 H200.
@@ -406,7 +413,13 @@ shared_vector_ab)
   # (shared-per-layer vs upstream expert-private) BEFORE any fleet encode.
   # Quantize 2-3 representative layers both ways, replay captured block
   # inputs, compare output divergence.  Adopt shared only if delta ~nil.
-  test -f "$DONE/setup.done" && test -f "$DONE/fixture_rehearsal.done"
+  # SH-03. `test -f A && test -f B` under set -e is wrong in two of its four states:
+  # with NEITHER file present it returns 0 and PASSES, and with only the second present
+  # it also passes with setup unverified. Assert each, and name the one that is missing.
+  for _d in setup fixture_rehearsal; do
+    test -f "$DONE/$_d.done" || {
+      echo "prerequisite $_d.done is missing - run that stage first" >&2; exit 1; }
+  done
   test -d "$CAL/main-ep4-full" || { echo "calibration/main-ep4-full missing at $CAL - download it before shared_vector_ab" >&2; exit 1; }
   # --output-root "$OUT_K6": the A/B mints/reuses the CAMPAIGN transform seed
   # (out-k6/transform-seed.json) so its verdict is measured under the exact
@@ -428,7 +441,13 @@ PYEOF
   ;;
 
 convert_k6)
-  test -f "$DONE/setup.done" && test -f "$DONE/fixture_rehearsal.done"
+  # SH-03. `test -f A && test -f B` under set -e is wrong in two of its four states:
+  # with NEITHER file present it returns 0 and PASSES, and with only the second present
+  # it also passes with setup unverified. Assert each, and name the one that is missing.
+  for _d in setup fixture_rehearsal; do
+    test -f "$DONE/$_d.done" || {
+      echo "prerequisite $_d.done is missing - run that stage first" >&2; exit 1; }
+  done
   test -f "$DONE/shared_vector_ab.done"
   ensure_0008   # GSS preparation refuses bits=6 without the ALLOWED_BITS widening
   # Inputs the control session downloads out-of-band (no automated fetch here):
