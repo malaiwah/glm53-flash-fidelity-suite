@@ -2864,6 +2864,9 @@ FRUIT_ROOT_CAPTURE_SHA = "b417acc22b8aa7f3294b8e62c4b619bc5051aef9fd8a073602572a
 FRUIT_QUANT_DATASET_SHA = "135776882d1ad3b4a1bdd0401035e61905351ad296b90b42396b45412ea270a0"
 FRUIT_QUANT_CAPTURE_SHA = "8875fe45cffdb958f39d0e39a3e26a885b26dc48b2509cb4c13276ecdcb9d49e"
 FRUIT_HEAD_SHA = "8d0f7d6e35c48a3f6b97f5f5ebc24657a3fd32e1e6c22adc710a9b317b5b5440"
+# The exporter commit these line citations were read against. Pinned, because a
+# line number against a moving branch is not provenance.
+PROXY_FRUIT_PIN = "75b0840fe2ff42181945fab94bd4a81286114422"
 
 MODELS += [
     {"schema_version": V, "id": FRUIT, "name": "GLM-5.2-SIQ-Fruit", "family": "glm5.2",
@@ -2999,9 +3002,13 @@ ARTIFACTS += [
              MAL("model-publisher"),
              [src("model_card", "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit-bf16"),
               src("github_file",
-                  "https://github.com/malaiwah/proxy-fruit/blob/main/export_fruit.py", None,
-                  "the FRUIT_BF16=1 branch (lines 317-333) and the unconditional bf16() helper "
-                  "(lines 262-266)")],
+                  "https://github.com/malaiwah/proxy-fruit/blob/%s/export_fruit.py" % PROXY_FRUIT_PIN,
+                  None,
+                  "pinned to the commit so the line numbers cannot drift: the unconditional "
+                  "bf16() helper at 262-266 (`sd[key].to(torch.bfloat16)`), the FRUIT_BF16=1 "
+                  "routed-expert branch at 317-333 whose `continue` on 333 skips the trellis "
+                  "encoder that resumes on 334, and the config path at 373-378 where "
+                  "quantization_config is popped ONLY in BF16 mode")],
              [disc("record_note", "info",
                    "Every tensor is bf16 and comes from the trained checkpoint by a direct "
                    "cast: export_fruit.py FRUIT_BF16=1 reads the annealed state dict and "
@@ -3024,8 +3031,24 @@ ARTIFACTS += [
              _FRUIT_SIQ_SCOPE, MAL("quantizer"),
              [src("model_card", "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit"),
               src("hf_file",
-                  "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit/blob/main/tier_bitmap.json",
-                  None, "per-expert K allocation and the encoder's own expert_rel_rt_mse")],
+                  "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit/blob/"
+                  "c1798e3676fa16b4a874381171adab1e3033fbd5/tier_bitmap.json",
+                  None, "per-expert K allocation and the encoder's own expert_rel_rt_mse; "
+                        "keep_nvfp4 is an empty list for every layer"),
+              src("github_file",
+                  "https://github.com/malaiwah/proxy-fruit/blob/%s/export_fruit.py" % PROXY_FRUIT_PIN,
+                  None,
+                  "lines 373-378: `src_cfg = json.loads((SRC/'config.json').read_text())`, then "
+                  "`src_cfg.pop('quantization_config', None)` ONLY when FRUIT_BF16=1, then "
+                  "`cfg = dict(src_cfg)`. The non-BF16 path never pops it, which is how the "
+                  "parent GLM-5.2 NVFP4/modelopt block reaches this artifact unchanged."),
+              src("github_file",
+                  "https://github.com/malaiwah/proxy-fruit/blob/%s/EXLLAMAV3_SIQ_REVIEW.md" % PROXY_FRUIT_PIN,
+                  None,
+                  "the producer's own review reaches the same conclusion independently: line "
+                  "210 `quant_method=modelopt / quant_algo=NVFP4 does not describe the actual "
+                  "routed-expert storage`, line 230 `No experts remain NVFP4: "
+                  "nvfp4_keep_per_layer = 0`")],
              [disc("declared_scheme_mismatch", "caveat",
                    "config.json declares quantization_config quant_method=modelopt, "
                    "quant_algo=NVFP4, group_size 16, W4A4, producer "
@@ -3033,8 +3056,10 @@ ARTIFACTS += [
                    "bytes: zero tensors are NVFP4 (tier_bitmap.json's keep_nvfp4 is empty for "
                    "every layer) and the routed experts are exl3-trellis K3/K4. The exporter "
                    "copies the block from the parent GLM-5.2 config rather than authoring it "
-                   "-- its ignore list still names model.layers.78.eh_proj, and this model has "
-                   "13 layers. The scope on this row describes the bytes."),
+                   "(export_fruit.py 373-378 pops quantization_config ONLY under FRUIT_BF16, "
+                   "then does cfg = dict(src_cfg)) -- which is why its ignore list still names "
+                   "model.layers.78.eh_proj, a layer this 13-layer model does not have. The "
+                   "scope on this row describes the bytes."),
               disc("unreadable_by_stock_loader", "caveat",
                    "The routed experts are stored as .rank0.{trellis,suh,svh,mcg} atoms. Stock "
                    "transformers 5.16.1 does not fail on them: it reports "
