@@ -213,10 +213,10 @@ does suggest the disclosure field was pointed at the right thing.
   check perfectly and is still broken. ~200 lines, stdlib + numpy, no dependency
   on the rest of our stack. Yours if you want it.
 
-Caveat on all of it: our repo ships **no LICENSE file** right now, so none of
-these offers is legally usable as it stands. That's on us, fixing it this week.
-Say what works for you — you clearly thought harder about your licence than we
-did about ours.
+All of it is MIT as of today (we had no LICENSE file at all until this reply
+forced the question — you clearly thought harder about your licence than we did
+about ours). Our THIRD_PARTY_NOTICES states plainly that we vendor no one's
+code, yours included.
 
 ## Message 7 — small corrections both ways
 
