@@ -212,10 +212,17 @@ def main():
                 if sr.get("sigma_run") is not None:
                     entry["sigma_run"] = sr["sigma_run"]
                     entry["sigma_run_runs"] = sr["runs"]
+                # The stratum interval stopped being BCa on 2026-08-30 (STAT-01: BCa
+                # measures 81.3% coverage at the 5-7 windows a domain has). Emit
+                # whichever interval the table actually produced, and NAME it --
+                # a key called ci95_bca holding a Student-t interval would be the
+                # same class of mislabel the reseed was done to remove.
                 entry["by_domain"] = [
                     {"domain": d["domain"], "windows": d["n_clusters_window"],
                      "scored_positions": d["n"], "mean_kld_nats": d["mean"],
                      "se_clustered_window": d.get("se_clustered_window"),
+                     "interval_method": d.get("interval_method"),
+                     "ci95": (d.get("ci95_t_log") or d.get("ci95_bca")),
                      "ci95_bca": d.get("ci95_bca")}
                     for d in a.get("by_domain", [])]
             row["scopes"][scope] = entry

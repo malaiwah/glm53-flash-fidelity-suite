@@ -195,9 +195,17 @@ def m_unknown_disclosure_code(C):
 
 
 def m_no_known_deviations_plus_caveat(C):
+    # Both entries are set here rather than appended to whatever the row happens
+    # to carry: this case tests DISC-002, not the current disclosure population,
+    # and it silently stopped testing anything the moment a real row gained a
+    # second disclosure and no longer had `no_known_deviations` to contradict.
     a = C["measurements"]["measurement--glm53.k6-6bpw.brandonmusic-final25"]
-    a["disclosures"].append({"code": "reduced_run_count", "severity": "caveat",
-                             "detail": "and also this", "affects_comparability": False})
+    a["disclosures"] = [
+        {"code": "no_known_deviations", "severity": "info",
+         "detail": "nothing to disclose", "affects_comparability": False},
+        {"code": "reduced_run_count", "severity": "caveat",
+         "detail": "and also this", "affects_comparability": False},
+    ]
     return "DISC-002", "'nothing to disclose' cannot coexist with a disclosure"
 
 
@@ -291,6 +299,127 @@ def m_row_below_its_floor(C):
                          "ranking, it is a defect")
 
 
+
+
+# --- A. harness identity (HARN-*) ------------------------------------------
+# A row's number is a function of some code. Until 2026-08-30 nothing said WHICH
+# code, so a defect in the estimator put every published row equally under
+# suspicion and no row could be cleared. These prove the stamp cannot be skipped,
+# forged, or faked from a later checkout.
+
+_ENRICHED = "measurement--glm53.k6-6bpw.brandonmusic-final25"
+_PLAIN = "measurement--glm53.official-fp8.malaiwah-suite-v5-10m"
+
+
+def m_harness_missing(C):
+    del C["measurements"][_ENRICHED]["harness"]
+    return "HARN-001", "a row must say which code produced it, or say that it does not know"
+
+
+def m_harness_new_row_unstamped(C):
+    """THE case: a brand-new row, not on the frozen grandfather list, with no harness.
+
+    The grandfather list exists so 70+ published rows are not retroactively
+    invalidated. It must not become a door: an id that is not on it has to carry
+    a real stamp, and the list is never appended to.
+    """
+    new = copy.deepcopy(C["measurements"][_PLAIN])
+    new["id"] = "measurement--brandnew.unstamped.suite-v5-10m"
+    new["harness"] = {"harness_id": None, "recorded": False, "covers": ["metric.value"],
+                      "note": "not recorded"}
+    new["disclosures"] = [d for d in new["disclosures"]
+                          if d["code"] != "harness_unrecorded"] or [
+        {"code": "record_note", "severity": "info", "detail": "x",
+         "affects_comparability": False}]
+    C["measurements"][new["id"]] = new
+    return "HARN-001", "a NEW row cannot skip the harness by not being on the frozen list"
+
+
+def m_harness_id_forged(C):
+    h = C["measurements"][_ENRICHED]["harness"]
+    h["harness_id"] = "harness--0000000000000000"
+    return "HARN-003", "harness_id is recomputed from the digests, never trusted"
+
+
+def m_harness_digest_swapped(C):
+    """The digest set is edited while the id is left alone -- the shape a silent
+    provenance edit actually takes."""
+    h = C["measurements"][_ENRICHED]["harness"]
+    h["code_digests"][0]["sha256"] = "0" * 64
+    return "HARN-003", "editing a digest without the id must not validate"
+
+
+def m_harness_unrecorded_with_digests(C):
+    h = C["measurements"][_PLAIN]["harness"]
+    h["code_digests"] = [{"role": "estimator", "path": "bin/jointstd/stats.py",
+                          "sha256": "1" * 64}]
+    return "HARN-002", "an unrecorded harness must not carry digests invented later"
+
+
+def m_harness_grandfathered_undisclosed(C):
+    m = C["measurements"][_PLAIN]
+    m["disclosures"] = [d for d in m["disclosures"] if d["code"] != "harness_unrecorded"]
+    return "HARN-004", "the gap must be readable on the row, not only in schema/"
+
+
+# --- B. the per-domain interval (STAT-007/008/009) -------------------------
+
+def m_domain_shared_seed(C):
+    """STAT-17 as it was: two strata drawing one resample stream."""
+    bd = C["measurements"][_ENRICHED]["by_domain"]
+    bd[0]["interval_method"] = bd[1]["interval_method"] = "window_block_bootstrap_bca"
+    bd[0]["bootstrap_b"] = bd[1]["bootstrap_b"] = 1000
+    bd[0]["bootstrap_seed"] = bd[1]["bootstrap_seed"] = 20260829
+    return "STAT-008", "two domains sharing a seed share their Monte-Carlo error"
+
+
+def m_domain_no_coverage(C):
+    """STAT-01 as it was: a five-window interval labelled 95% and never measured."""
+    for cell in C["measurements"][_ENRICHED]["by_domain"]:
+        cell.pop("coverage_measured", None)
+    return "STAT-007", "a small-g interval must state the coverage it actually has"
+
+
+def m_domain_negative_lower(C):
+    C["measurements"][_ENRICHED]["by_domain"][0]["ci95_low"] = -0.009475
+    return "STAT-009", "a negative lower bound on a KL divergence is an artifact"
+
+
+def m_domain_method_unstated(C):
+    C["measurements"][_ENRICHED]["by_domain"][0]["interval_method"] = None
+    return "STAT-009", "an interval must name the procedure that produced it"
+
+
+# --- C. provenance assertions (PROV-014/015/016) ---------------------------
+# PROC-01: metric rows have always needed a hashed receipt; an ASSERTION about
+# mechanism or lineage needed nothing, so a prose provenance claim reached two
+# dataset cards and two registry rows uncited and validated clean.
+
+_FRUIT = "artifact--malaiwah.glm-5.2-siq-fruit.exl3-k3k4"
+
+
+def m_provenance_uncited(C):
+    for d in C["artifacts"][_FRUIT]["disclosures"]:
+        if d.get("asserts_provenance"):
+            d.pop("sources", None)
+    return "PROV-014", "a provenance assertion with no source is what PROC-01 was"
+
+
+def m_provenance_cited_by_branch(C):
+    for d in C["artifacts"][_FRUIT]["disclosures"]:
+        if d.get("asserts_provenance"):
+            d["sources"][0]["uri"] = ("https://github.com/malaiwah/proxy-fruit/blob/main/"
+                                      "export_fruit.py")
+    return "PROV-015", "cite by commit; a line anchor against a branch stops being true"
+
+
+def m_provenance_unmarked(C):
+    for d in C["artifacts"][_FRUIT]["disclosures"]:
+        if d.get("asserts_provenance"):
+            d["asserts_provenance"] = False
+    return "PROV-016", "an author who does not think of a mechanism claim as one is the case"
+
+
 def m_non_canonical_line(C):
     return None  # handled specially below
 
@@ -328,6 +457,19 @@ MUTATIONS = [
     ("lane-bridged-to-itself", m_lane_is_its_own_baseline),
     ("floor-measured-on-a-different-lane", m_floor_measured_on_a_different_lane),
     ("row-below-its-own-floor", m_row_below_its_floor),
+    ("harness-block-missing", m_harness_missing),
+    ("new-row-with-no-harness", m_harness_new_row_unstamped),
+    ("forged-harness-id", m_harness_id_forged),
+    ("harness-digest-swapped", m_harness_digest_swapped),
+    ("unrecorded-harness-with-digests", m_harness_unrecorded_with_digests),
+    ("grandfathered-row-not-disclosed", m_harness_grandfathered_undisclosed),
+    ("two-domains-one-bootstrap-seed", m_domain_shared_seed),
+    ("small-g-interval-without-coverage", m_domain_no_coverage),
+    ("negative-lower-bound-on-a-kl", m_domain_negative_lower),
+    ("interval-without-its-method", m_domain_method_unstated),
+    ("provenance-assertion-with-no-source", m_provenance_uncited),
+    ("provenance-cited-against-a-branch", m_provenance_cited_by_branch),
+    ("mechanism-claim-not-marked", m_provenance_unmarked),
 ]
 
 

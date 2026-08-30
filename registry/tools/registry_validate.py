@@ -22,6 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import registry_lib as L      # noqa: E402
 import _minischema            # noqa: E402
+import harness_id as H        # noqa: E402
 
 FORBIDDEN_NET_MODULES = ("socket", "ssl", "urllib", "http", "requests", "huggingface_hub",
                          "aiohttp", "httpx", "ftplib", "telnetlib", "xmlrpc")
@@ -1015,6 +1016,50 @@ def check_stats_and_identity(C, rep):
         if v is not None:
             if float(repr(v)) != v:
                 rep.err("STAT-006", "%s: metric.value does not round-trip through repr()" % mid, mid)
+        # STAT-007/008/009. The per-domain block, after the 2026-08-30 reseed.
+        # STAT-01 was never "the endpoints were computed wrongly" -- they reproduced
+        # scipy's BCa to within Monte Carlo error. It was that the row claimed a
+        # coverage level nobody had ever measured for it.
+        seeds = {}
+        for cell in (m.get("by_domain") or []):
+            if cell.get("ci95_low") is None:
+                continue
+            g = cell.get("windows")
+            if g is not None and g < 10 and not cell.get("coverage_measured"):
+                rep.err("STAT-007", "%s/%s quotes a 95%% interval over %d windows with no "
+                                    "coverage_measured. Below 10 clusters no bootstrap "
+                                    "interval delivers its nominal level; saying only '95%%' "
+                                    "states something never true of it."
+                        % (mid, cell.get("domain"), g), mid)
+            method = cell.get("interval_method")
+            if method is None:
+                rep.err("STAT-009", "%s/%s quotes an interval with no interval_method"
+                        % (mid, cell.get("domain")), mid)
+            need = (("bootstrap_b", "bootstrap_seed") if (method or "").startswith("window_block")
+                    else ("df", "t_critical"))
+            for key in need:
+                if cell.get(key) is None:
+                    rep.err("STAT-009", "%s/%s quotes a %s interval with no %s"
+                            % (mid, cell.get("domain"), method, key), mid)
+            if cell.get("ci95_low") < 0:
+                rep.err("STAT-009", "%s/%s has a negative lower bound %r on a KL divergence"
+                        % (mid, cell.get("domain"), cell.get("ci95_low")), mid)
+            sd = cell.get("bootstrap_seed")
+            if sd is not None:
+                if sd in seeds:
+                    rep.err("STAT-008", "%s: domains %r and %r share bootstrap_seed %d, so "
+                                        "their intervals share Monte-Carlo error -- and "
+                                        "share it arbitrarily, pairing unrelated windows."
+                            % (mid, seeds[sd], cell.get("domain"), sd), mid)
+                seeds[sd] = cell.get("domain")
+            cm = cell.get("coverage_measured")
+            if cm and cm.get("measured") is not None and cm.get("nominal") is not None:
+                if cm["measured"] > cm["nominal"] + 0.02:
+                    rep.warn("STAT-007", "%s/%s measures %.1f%% coverage against a nominal "
+                                         "%.0f%%: an over-wide interval is also a wrong one"
+                             % (mid, cell.get("domain"), 100 * cm["measured"],
+                                100 * cm["nominal"]), mid)
+
         art = C["artifacts"].get(m.get("artifact_ref")) or {}
         if m.get("status") == "published" and (art.get("huggingface") or {}).get("revision") is None:
             if not L.has_disclosure(m, "revision_unpinned", affects=True) and not L.has_disclosure(
@@ -1068,6 +1113,170 @@ def check_disclosures(C, rep, known_codes):
                         rec.get("status") not in ("pending", "retracted"):
                     rep.err("DISC-003", "%s has a blocking disclosure but status %r"
                             % (rid, rec.get("status")), rid)
+
+
+
+
+# ---------------------------------------------------------------------------
+# harness identity (HARN-*) and provenance assertions (PROV-014..016)
+# ---------------------------------------------------------------------------
+
+def check_harness(root, C, rep):
+    """Which code produced which number, and what is honestly not known.
+
+    The mechanism is worth nothing if the allowlist can grow, so HARN-006 refuses
+    a stale entry and the file itself says it is frozen. Everything else here is
+    recomputation: HARN-003 re-derives harness_id from the digests exactly as
+    CMP-001 re-derives the comparability key, because a self-reported identity
+    that nobody recomputes is a label, not an identity.
+    """
+    gpath = os.path.join(root, "schema", "harness-grandfather.json")
+    try:
+        with open(gpath, encoding="utf-8") as fh:
+            grand = json.load(fh)
+    except (IOError, ValueError) as exc:
+        rep.err("HARN-006", "schema/harness-grandfather.json is unreadable: %s" % exc)
+        return
+    allow = set(grand.get("ids") or [])
+    repo_root = os.path.dirname(root)
+
+    for gid in sorted(allow - set(C["measurements"])):
+        rep.err("HARN-006", "schema/harness-grandfather.json names %s, which is not a "
+                            "measurement row. A stale allowlist entry is a hole: a future "
+                            "row could reuse the id and skip HARN-001." % gid, gid)
+
+    for mid, m in sorted(C["measurements"].items()):
+        h = m.get("harness")
+        if h is None:
+            rep.err("HARN-001", "%s carries no harness block. Every measurement row must "
+                                "state which code produced it, or state that it does not "
+                                "know." % mid, mid,
+                    remedy="add a harness block; see registry/tools/harness_id.py")
+            continue
+        covers = h.get("covers") or []
+        recorded = h.get("recorded")
+        if recorded:
+            missing = [k for k in ("boundary", "code_digests", "tool_versions", "repository")
+                       if not h.get(k)]
+            if missing:
+                rep.err("HARN-002", "%s has a recorded harness missing %s"
+                        % (mid, ", ".join(missing)), mid)
+                continue
+            want = H.compute_id(h["code_digests"], h.get("tool_versions") or {},
+                                h["boundary"])
+            if h.get("harness_id") != want:
+                rep.err("HARN-003", "%s: harness_id %r does not recompute from its own "
+                                    "digests and tool versions (expected %r)"
+                        % (mid, h.get("harness_id"), want), mid)
+            roles = [d["role"] for d in h["code_digests"]]
+            if len(set(roles)) != len(roles):
+                rep.err("HARN-002", "%s: duplicate role in code_digests %r" % (mid, roles), mid)
+            for d in h["code_digests"]:
+                if os.path.isabs(d["path"]) or d["path"].startswith(".."):
+                    rep.err("HARN-002", "%s: code_digest path %r is not repository-relative"
+                            % (mid, d["path"]), mid)
+                    continue
+                full = os.path.join(repo_root, d["path"])
+                if os.path.exists(full) and H.sha256_file(full) != d["sha256"]:
+                    rep.warn("HARN-005", "%s was produced by a version of %s that differs "
+                                         "from the current checkout. This is the mechanism "
+                                         "working: the row predates a change to that file."
+                             % (mid, d["path"]), mid)
+        else:
+            if h.get("harness_id") is not None or h.get("code_digests"):
+                rep.err("HARN-002", "%s declares recorded=false but carries an id or "
+                                    "digests. An unrecorded harness must not carry digests "
+                                    "reconstructed from a later checkout." % mid, mid)
+        if "metric.value" not in covers or not recorded:
+            if mid not in allow:
+                rep.err("HARN-001", "%s is not in schema/harness-grandfather.json and does "
+                                    "not carry a recorded harness covering metric.value. "
+                                    "The allowlist is frozen; a new row must state which "
+                                    "code produced its number." % mid, mid,
+                        remedy="record a harness covering metric.value at measurement time")
+        covered_value = bool(recorded) and "metric.value" in covers
+        if mid in allow and not covered_value and not L.has_disclosure(m, "harness_unrecorded"):
+            rep.err("HARN-004", "%s is grandfathered under HARN-001 but carries no "
+                                "harness_unrecorded disclosure. The gap must be readable on "
+                                "the row: a consumer pulling one JSONL line does not read "
+                                "the schema directory." % mid, mid)
+
+
+# A file name that means "a project", not "a file in a repository". Kept explicit
+# and tiny rather than inferred: `llama.cpp` is the only one this registry has met,
+# and a heuristic that guessed would either miss real citations or nag about names.
+_NOT_A_FILE = ("llama.cpp",)
+_SRC_EXT = (".py", ".sh", ".c", ".cc", ".cpp", ".cu", ".h", ".hpp", ".rs", ".go",
+            ".java", ".ts", ".js")
+
+
+def _names_source_file(text):
+    out = []
+    for tok in text.replace("(", " ").replace(")", " ").replace(",", " ").split():
+        tok = tok.strip('`\'" ;:')
+        if tok in _NOT_A_FILE:
+            continue
+        low = tok.lower()
+        for ext in _SRC_EXT:
+            if low.endswith(ext) and len(tok) > len(ext):
+                out.append(tok)
+                break
+    return out
+
+
+def _is_pinned(src):
+    """A source that will still say tomorrow what it says today.
+
+    A sha256 pins bytes. A 40-hex commit in the path pins a tree. Anything on a
+    branch does not: `blob/main` is the exact failure this registry already
+    learned once -- a line-numbered citation against `main` stops being provenance
+    the moment somebody pushes.
+    """
+    uri = (src.get("uri") or "")
+    if src.get("sha256"):
+        return True
+    low = uri.lower()
+    if "/blob/main/" in low or "/resolve/main/" in low or "/tree/main/" in low:
+        return False
+    for part in uri.split("/"):
+        if len(part) == 40 and all(c in "0123456789abcdef" for c in part.lower()):
+            return True
+    return False
+
+
+def check_provenance_assertions(C, rep):
+    """PROC-01. A metric needs a hashed receipt; an assertion needed nothing."""
+    for coll in ("models", "artifacts", "panels", "references", "pipelines", "measurements"):
+        for rid, rec in sorted(C[coll].items()):
+            for d in rec.get("disclosures") or []:
+                detail = d.get("detail") or ""
+                asserts = bool(d.get("asserts_provenance"))
+                srcs = d.get("sources") or []
+                if asserts and not srcs:
+                    rep.err("PROV-014", "%s: disclosure %r asserts provenance and cites "
+                                        "nothing. An assertion about how an artifact was "
+                                        "produced is a published claim exactly as much as a "
+                                        "number is." % (rid, d.get("code")), rid,
+                            remedy="add sources[] with a commit-pinned uri and a line anchor")
+                for s in srcs:
+                    if asserts and not _is_pinned(s):
+                        rep.err("PROV-015", "%s: disclosure %r cites %r, which is not pinned. "
+                                            "Cite by COMMIT, never by branch: line numbers "
+                                            "move and a citation that quietly stops pointing "
+                                            "at what it claimed still reads as evidence."
+                                % (rid, d.get("code"), s.get("uri")), rid)
+                    if s.get("lines") and not _is_pinned(s):
+                        rep.err("PROV-015", "%s: disclosure %r anchors lines %r into an "
+                                            "unpinned uri" % (rid, d.get("code"), s["lines"]),
+                                rid)
+                if coll in ("artifacts", "models") and not asserts:
+                    named = _names_source_file(detail)
+                    if named:
+                        rep.err("PROV-016", "%s: disclosure %r reasons from source code (%s) "
+                                            "but is not marked asserts_provenance, so "
+                                            "PROV-014 never asked it for a citation."
+                                % (rid, d.get("code"), ", ".join(sorted(set(named)))), rid,
+                                remedy="set asserts_provenance=true and cite the commit-pinned file")
 
 
 # ---------------------------------------------------------------------------
@@ -1416,6 +1625,8 @@ def main():
         check_references(C, rep)
         check_stats_and_identity(C, rep)
         check_disclosures(C, rep, known_codes)
+        check_harness(args.root, C, rep)
+        check_provenance_assertions(C, rep)
         check_index(args.root, C, groups, rep)
         check_prose_keys(args.root, groups, rep)
         if args.assert_only_touched:

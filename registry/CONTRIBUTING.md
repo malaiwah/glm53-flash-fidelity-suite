@@ -155,9 +155,25 @@ older run, these are the ones without which we cannot build a row:
 | `measurer.{name,handle}` | How you are credited. |
 | `disclosures` | Non-empty. Nothing to disclose is written as one entry with `code: "no_known_deviations"`. |
 | `lane` | `sealed-ep8`, `streaming`, `local-mps`, `local-cuda-budget`. Lanes are not interchangeable. |
+| `produced_by.{entrypoint,entrypoint_sha256,revision}` | **Which code produced the number.** Since 2026-08-30 this is not optional: `registry_add` turns it into the row's `harness` block and invariant HARN-001 refuses any row that has none. |
 
 Strongly recommended: `auxiliary_metrics.top1_agreement`. A KL number without
 top-1 agreement hides which kind of divergence it is.
+
+### Why `produced_by` became mandatory
+
+Every measured value is a function of some code, and until 2026-08-30 no row said
+*which*. When a peer review found a defect in the interval estimator, the honest
+statement was that it put every published row equally under suspicion and cleared
+none of them — 70+ numbers, one shared liability, no way to say which predated the
+fix. The `harness` block is the field test that answers it: equal `harness_id`
+means byte-identical code across the digest set, and a differing id points you at
+the `code_digests` entry whose role changed.
+
+The 72 rows that predate the mechanism are listed in
+`schema/harness-grandfather.json` and each carries a `harness_unrecorded`
+disclosure. That list is **frozen and never appended to** — an allowlist that
+grows means nothing. New rows state their harness or are refused.
 
 ---
 
@@ -328,6 +344,15 @@ evidence beats submitting a bare number.
   false`) with no `subset_of_panel` disclosure saying *which* subset; or any run
   claiming more scored positions than the panel it names actually holds.
 - `panel.panel_ref` names a panel the registry does not have. See §6.
+- `produced_by` carries no `entrypoint_sha256`, so the code that produced the
+  number cannot be identified (HARN-001).
+- A disclosure that claims *how* the artifact was made — a mechanism, a lineage,
+  an inherited config, a code path — with no `sources` (PROV-014), or with a
+  source pinned to a **branch** rather than a commit (PROV-015). A metric has
+  always needed a hashed receipt here; an assertion needs one too. Cite
+  `/blob/<40-hex-commit>/file.py` with a `lines` anchor, never `/blob/main/`:
+  line numbers move, and a citation that quietly stops pointing at what it
+  claimed still reads as evidence.
 - `panel.panel_token_sha256` is not the digest the named panel carries. This
   catches the most common honest mistake there is: measuring on your own corpus
   and then picking the closest-looking `panel_ref` out of the README. Your tokens

@@ -242,6 +242,16 @@ echo "== registry =="
 t "offline selftest"        0 "$VPY" registry/tools/registry_validate.py --root registry --offline-selftest
 t "strict (2 = warnings only)" 2 "$VPY" registry/tools/registry_validate.py --root registry --strict
 t "registry's own selftest" 0 "$VPY" registry/tools/registry_selftest.py
+# The STAT-01/STAT-17 arithmetic, on the real 42 published cells. Kept OUT of
+# `registry/ make check` on purpose: it needs numpy, and `make check` is the one
+# command a contributor must be able to run on a stock interpreter with no
+# installs. Skipped rather than failed where numpy is absent, for the same reason.
+if "$VPY" -c "import numpy" >/dev/null 2>&1; then
+  t "per-domain interval: coverage, seeds, regenerable old endpoints" 0 \
+    "$VPY" registry/tools/selftest_stat01_reseed.py
+else
+  s "per-domain interval selftest" "numpy is not importable by $VPY"
+fi
 ( cd registry && "$VPY" tools/registry_validate.py --submission docs/examples/dione-q4.submission.json ) >"$TMP/we.log" 2>&1
 if grep -q '^ACCEPTED' "$TMP/we.log"; then
   echo "  PASS  worked example validates"; pass=$((pass+1))

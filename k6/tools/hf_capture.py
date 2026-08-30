@@ -229,7 +229,63 @@ def _find_mask(arrays: str, row: Dict[str, Any], length: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _from_pretrained(cls, model_dir: str, torch_dtype):
+REPORT_OBSERVED = "_load_report_observed"
+REPORT_AUGMENTED = "_load_report_has_conversion_errors"
+
+
+class _FullLoadingReport:
+    """Make `from_pretrained`'s load report tell the whole truth.
+
+    `output_loading_info=True` does not hand back `transformers`'
+    `LoadStateDictInfo`; it hands back `LoadStateDictInfo.to_dict()`, and that
+    method says, in its own source:
+
+        # Does not include the `conversion_errors` to be coherent with legacy
+        # reporting in the tests
+
+    `conversion_errors` is where a failure of the MoE `WeightConverter` lands --
+    the converter that, for `zai-org/GLM-5.3-BF16`, is responsible for 57,600 of
+    59,585 checkpoint tensors (96.7%).  A guard that reads only the dict is
+    blind to the failure of 96.7% of the checkpoint by construction.
+
+    So for the duration of the load we wrap `to_dict` to also emit
+    `conversion_errors` (and `skipped_pp_keys`), plus a flag saying the wrap
+    took effect.  If this build of `transformers` has no such class or method,
+    the flag stays false and `load_report` refuses to call the load verified
+    rather than reporting a clean bill of health it never checked.
+    """
+
+    def __init__(self) -> None:
+        self.target = None
+        self.original = None
+
+    def __enter__(self) -> "_FullLoadingReport":
+        try:
+            from transformers.utils.loading_report import LoadStateDictInfo
+        except Exception:  # pragma: no cover - older/newer transformers
+            return self
+        original = getattr(LoadStateDictInfo, "to_dict", None)
+        if original is None:  # pragma: no cover
+            return self
+
+        def to_dict(self_inner):
+            doc = dict(original(self_inner))
+            doc["conversion_errors"] = dict(getattr(self_inner, "conversion_errors", {}) or {})
+            doc["skipped_pp_keys"] = set(getattr(self_inner, "skipped_pp_keys", set()) or set())
+            doc[REPORT_AUGMENTED] = True
+            return doc
+
+        self.target, self.original = LoadStateDictInfo, original
+        LoadStateDictInfo.to_dict = to_dict
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        if self.target is not None:
+            self.target.to_dict = self.original
+        return False
+
+
+def _from_pretrained(cls, model_dir: str, torch_dtype, **extra):
     """`from_pretrained` plus the load report, across the dtype-kwarg rename.
 
     The report is what tells us whether the checkpoint actually populated the
@@ -237,20 +293,49 @@ def _from_pretrained(cls, model_dir: str, torch_dtype):
     `from_pretrained` knows the checkpoint-name -> parameter-name mapping (a
     MoE checkpoint may ship 256 per-expert matrices that the model holds as one
     fused tensor, so comparing key sets by hand is wrong).
+
+    Every return marks whether a report was actually OBSERVED.  It used to
+    return a bare ``{}`` on the no-report path, which downstream read as "no
+    missing keys" -- i.e. an unexamined load and a clean load were the same
+    value.  They are not the same fact and must not be the same value.
     """
-    for kwargs in ({"dtype": torch_dtype}, {"torch_dtype": torch_dtype}):
-        try:
-            out = cls.from_pretrained(model_dir, output_loading_info=True, **kwargs)
-        except TypeError:
-            continue
-        if isinstance(out, tuple):
-            return out[0], (out[1] or {})
-        return out, {}
-    # Very old / unusual classes: take the model without a report and say so.
-    return cls.from_pretrained(model_dir, torch_dtype=torch_dtype), {}
+    with _FullLoadingReport():
+        for kwargs in ({"dtype": torch_dtype}, {"torch_dtype": torch_dtype}):
+            try:
+                out = cls.from_pretrained(model_dir, output_loading_info=True,
+                                          **kwargs, **extra)
+            except TypeError as exc:
+                if "dtype" not in str(exc):
+                    # A TypeError from INSIDE the load is not a signature
+                    # mismatch. Retrying under a different kwarg name would
+                    # hide it, and the final fallback would then return a
+                    # model with no report at all.
+                    raise
+                continue
+            if isinstance(out, tuple):
+                info = dict(out[1] or {})
+                info[REPORT_OBSERVED] = out[1] is not None
+                return out[0], info
+            return out, {REPORT_OBSERVED: False}
+        # Very old / unusual classes: take the model without a report and say so.
+        return (cls.from_pretrained(model_dir, torch_dtype=torch_dtype, **extra),
+                {REPORT_OBSERVED: False})
 
 
-def load_model(model_dir: str, device: str, dtype_name: str):
+def load_model(model_dir: str, device: str, dtype_name: str,
+               device_map: Any = None, max_memory: Optional[Dict[Any, str]] = None,
+               offload_folder: Optional[str] = None):
+    """Instantiate the checkpoint, optionally without ever materialising it whole.
+
+    `device_map` exists for the reason `docs/GLM53-ROOT-FEASIBILITY.md` R2
+    gives: with `device_map=None` `transformers` materialises the entire model
+    in CPU RAM and this function then calls `.to(device)`.  At
+    `zai-org/GLM-5.3-BF16`'s 1,486.8 GB that exceeds the largest rentable RAM
+    and the whole VRAM of an 8x H200 node, so the default path cannot load the
+    root model on any machine we can rent.  When a `device_map` is passed the
+    model is dispatched by `accelerate` instead, and `.to(device)` is SKIPPED --
+    calling it on a dispatched model raises.
+    """
     import torch
     import transformers
 
@@ -258,6 +343,23 @@ def load_model(model_dir: str, device: str, dtype_name: str):
                    "float32": torch.float32}[dtype_name]
     config = transformers.AutoConfig.from_pretrained(model_dir)
     architectures = list(getattr(config, "architectures", None) or [])
+    extra: Dict[str, Any] = {}
+    if device_map is not None:
+        extra["device_map"] = device_map
+        if max_memory:
+            extra["max_memory"] = max_memory
+        if offload_folder:
+            extra["offload_folder"] = offload_folder
+    if device_map is not None:
+        try:
+            import accelerate  # noqa: F401
+        except Exception:
+            raise fail(
+                "--device-map needs `accelerate`, which is not installed. Without it "
+                "transformers materialises the WHOLE model in CPU RAM and this tool then "
+                "calls .to(--device); for zai-org/GLM-5.3-BF16 that is 1,486.8 GB and it "
+                "cannot succeed anywhere. Install accelerate, or drop --device-map and "
+                "accept the whole-model-resident path.")
     model = None
     info: Dict[str, Any] = {}
     errors = []
@@ -267,19 +369,21 @@ def load_model(model_dir: str, device: str, dtype_name: str):
             errors.append("transformers has no %s" % name)
             continue
         try:
-            model, info = _from_pretrained(cls, model_dir, torch_dtype)
+            model, info = _from_pretrained(cls, model_dir, torch_dtype, **extra)
             break
         except Exception as exc:  # pragma: no cover - depends on the checkpoint
-            errors.append("%s: %s" % (name, exc))
+            errors.append("%s: %s: %s" % (name, type(exc).__name__, exc))
     if model is None:
         try:
             model, info = _from_pretrained(transformers.AutoModelForCausalLM,
-                                           model_dir, torch_dtype)
+                                           model_dir, torch_dtype, **extra)
         except Exception as exc:
-            raise fail("could not instantiate the model (%s); AutoModelForCausalLM: %s"
-                       % ("; ".join(errors) or "no architectures declared", exc))
+            raise fail("could not instantiate the model (%s); AutoModelForCausalLM: %s: %s"
+                       % ("; ".join(errors) or "no architectures declared",
+                          type(exc).__name__, exc))
     model.eval()
-    model.to(device)
+    if device_map is None:
+        model.to(device)
     return model, config, info
 
 
@@ -311,13 +415,132 @@ def _base_capture(value: Optional[str]) -> Optional[Dict[str, Any]]:
                     "comparison partner was not read at capture time"}
 
 
-def missing_weight_keys(info: Dict[str, Any]) -> List[str]:
-    """Parameters `from_pretrained` had to invent because the checkpoint lacked them."""
-    missing = info.get("missing_keys") or []
+def _key_list(value: Any) -> List[str]:
+    if not value:
+        return []
     try:
-        return sorted(str(k) for k in missing)
+        return sorted(str(k) for k in value)
     except TypeError:  # pragma: no cover - a report shape we do not know
-        return [str(missing)]
+        return [str(value)]
+
+
+def missing_weight_keys(info: Dict[str, Any]) -> List[str]:
+    """Parameters `transformers` had to INVENT because the checkpoint lacked them.
+
+    `missing_keys` is not the whole set.  `mismatched_keys` names parameters
+    that were present in the checkpoint at the wrong shape, and the loading
+    report `transformers` prints for them says, verbatim,
+
+        Reinit due to size mismatch - ckpt: ... vs model: ...
+
+    -- a randomly initialised tensor under a different heading.  `transformers`
+    itself unions the two in `LoadStateDictInfo.missing_and_mismatched()`; this
+    function reads only `missing_keys` no longer.
+    """
+    keys = set(_key_list(info.get("missing_keys")))
+    for entry in (info.get("mismatched_keys") or []):
+        # (key, checkpoint_shape, model_shape)
+        keys.add(str(entry[0]) if isinstance(entry, (tuple, list)) and entry else str(entry))
+    return sorted(keys)
+
+
+def load_report(info: Dict[str, Any]) -> Dict[str, Any]:
+    """Everything the load told us, including what `to_dict()` drops.
+
+    `observed` is false when no report was produced at all.  That is NOT the
+    same as a clean report and this tool must never treat it as one: an
+    unexamined load is exactly the state in which a randomly-initialised model
+    gets measured and published.
+    """
+    mismatched = []
+    for entry in (info.get("mismatched_keys") or []):
+        if isinstance(entry, (tuple, list)) and len(entry) >= 3:
+            mismatched.append({"key": str(entry[0]),
+                               "checkpoint_shape": list(entry[1]) if entry[1] else None,
+                               "model_shape": list(entry[2]) if entry[2] else None})
+        else:
+            mismatched.append({"key": str(entry), "checkpoint_shape": None,
+                               "model_shape": None})
+    conversion = info.get("conversion_errors")
+    return {
+        "observed": bool(info.get(REPORT_OBSERVED)),
+        "conversion_errors_visible": bool(info.get(REPORT_AUGMENTED)),
+        "missing_keys": _key_list(info.get("missing_keys")),
+        "unexpected_keys": _key_list(info.get("unexpected_keys")),
+        "mismatched_keys": mismatched,
+        "error_msgs": [str(m) for m in (info.get("error_msgs") or [])],
+        "conversion_errors": {str(k): str(v) for k, v in (conversion or {}).items()},
+    }
+
+
+def refuse_on_load_report(report: Dict[str, Any], allow_missing: bool) -> List[str]:
+    """CAPTURE-03. Returns the reinitialised keys when the caller forced through.
+
+    Four independent ways a `transformers` load can hand back a model whose
+    forward pass is not the artifact's, in increasing order of subtlety:
+
+      1. `missing_keys`   -- the classic. Observed on Fruit: routed experts
+         shipped as exl3-trellis atoms, reported missing, randomly initialised,
+         mean ~0 std 0.0199, model runs.
+      2. `mismatched_keys` -- present but the wrong shape. "Reinit due to size
+         mismatch". Same harm, different heading, and this guard used to ignore
+         it entirely.
+      3. `error_msgs`     -- a state-dict copy that threw.
+      4. `conversion_errors` -- a `WeightConverter` that threw. The parameters
+         it was building are skipped, and `LoadStateDictInfo.to_dict()` -- the
+         dict this tool is handed -- deliberately omits the field. For a model
+         routed through the `qwen2_moe` fusion pattern this is 96.7% of the
+         checkpoint hiding behind a field we were not shown.
+
+    1 and 2 are overridable by `--allow-missing-weights`, which forces a
+    BLOCKING disclosure. 3 and 4 are not: an exception during loading means we
+    cannot say what the parameter now holds, so there is no disclosure that
+    would make a number measured on it readable.
+    """
+    if not report["observed"]:
+        raise fail(
+            "REFUSED: this load produced NO loading report, so nothing here has checked "
+            "whether transformers randomly initialised parameters the checkpoint did not "
+            "provide. An unexamined load is not a clean load. Use a transformers build "
+            "whose from_pretrained honours output_loading_info=True.")
+    if not report["conversion_errors_visible"]:
+        raise fail(
+            "REFUSED: this transformers build did not expose `conversion_errors`, the "
+            "field that records a failure of the on-the-fly WeightConverter. For a fused-"
+            "expert MoE checkpoint that converter owns almost the entire checkpoint, so a "
+            "guard that cannot read the field cannot claim the weights are the artifact's.")
+    if report["conversion_errors"]:
+        keys = sorted(report["conversion_errors"])
+        raise fail(
+            "REFUSED: %d weight CONVERSION error(s) during loading -- a WeightConverter "
+            "raised, so the parameters it was assembling were skipped and hold whatever "
+            "initialisation was left behind: %s%s. This is not overridable: an exception "
+            "mid-conversion means the parameter's contents are unknown, and there is no "
+            "disclosure that makes an unknown weight measurable. First error: %s"
+            % (len(keys), ", ".join(keys[:6]),
+               " (+%d more)" % (len(keys) - 6) if len(keys) > 6 else "",
+               report["conversion_errors"][keys[0]].strip().splitlines()[-1][:400]))
+    if report["error_msgs"]:
+        raise fail(
+            "REFUSED: %d error(s) were raised while copying the state dict into the model: "
+            "%s. Not overridable." % (len(report["error_msgs"]),
+                                      " | ".join(report["error_msgs"])[:600]))
+    reinitialised = sorted({m["key"] for m in report["mismatched_keys"]}
+                           | set(report["missing_keys"]))
+    if reinitialised and not allow_missing:
+        mismatched = len(report["mismatched_keys"])
+        raise fail(
+            "REFUSED: %d parameter(s) were NOT usable from the checkpoint and were randomly "
+            "initialised by transformers, so this model's forward pass is not the "
+            "artifact's: %s%s.%s Either this build of transformers cannot read the "
+            "checkpoint's storage format, or the checkpoint is incomplete. Pass "
+            "--allow-missing-weights only if you can defend a number measured on a "
+            "partially random model; it forces a BLOCKING disclosure."
+            % (len(reinitialised), ", ".join(reinitialised[:6]),
+               " (+%d more)" % (len(reinitialised) - 6) if len(reinitialised) > 6 else "",
+               (" %d of them were present at the WRONG SHAPE ('Reinit due to size "
+                "mismatch')." % mismatched) if mismatched else ""))
+    return reinitialised
 
 
 def head_module(model):
@@ -372,30 +595,35 @@ def run_capture(args: argparse.Namespace) -> int:
     identity, identity_files = checkpoint_identity(model_dir)
     log(stage="checkpoint_identity", sha256=identity, files=len(identity_files))
 
-    model, config, loading_info = load_model(model_dir, args.device, args.dtype)
+    max_memory = json.loads(args.max_memory) if args.max_memory else None
+    model, config, loading_info = load_model(
+        model_dir, args.device, args.dtype, device_map=args.device_map,
+        max_memory=max_memory, offload_folder=args.offload_folder)
 
-    # A checkpoint whose tensors this `transformers` build cannot name does not
-    # fail to load: `from_pretrained` RANDOMLY INITIALISES the parameters it
-    # could not find, logs a table, and returns a model that runs.  Captured,
-    # that produces a confident number for weights nobody ever measured -- the
-    # single most dangerous outcome this tool can have.  Observed on
-    # malaiwah/GLM-5.2-SIQ-Fruit, whose routed experts ship as exl3-trellis
-    # atoms (`.trellis`/`.suh`/`.svh`/`.mcg`): stock transformers reported
-    # `model.layers.{3..12}.mlp.experts.{gate_up,down}_proj` MISSING and handed
-    # back a model with random experts, mean ~0, std 0.0199.
-    missing = missing_weight_keys(loading_info)
+    # CAPTURE-03.  A checkpoint whose tensors this `transformers` build cannot
+    # name does not fail to load: `from_pretrained` RANDOMLY INITIALISES the
+    # parameters it could not find, logs a table, and returns a model that
+    # runs.  Captured, that produces a confident number for weights nobody ever
+    # measured -- the single most dangerous outcome this tool can have.
+    # Observed on malaiwah/GLM-5.2-SIQ-Fruit, whose routed experts ship as
+    # exl3-trellis atoms (`.trellis`/`.suh`/`.svh`/`.mcg`): stock transformers
+    # reported `model.layers.{3..12}.mlp.experts.{gate_up,down}_proj` MISSING
+    # and handed back a model with random experts, mean ~0, std 0.0199.
+    #
+    # `refuse_on_load_report` widens that to the three neighbouring ways the
+    # same harm arrives -- mismatched shapes, state-dict errors, and converter
+    # errors -- and to the case where no report was produced at all.
+    report = load_report(loading_info)
+    log(stage="load_report", observed=report["observed"],
+        conversion_errors_visible=report["conversion_errors_visible"],
+        missing=len(report["missing_keys"]), mismatched=len(report["mismatched_keys"]),
+        unexpected=len(report["unexpected_keys"]),
+        conversion_errors=len(report["conversion_errors"]),
+        error_msgs=len(report["error_msgs"]),
+        unexpected_sample=report["unexpected_keys"][:6])
+    missing = refuse_on_load_report(report, args.allow_missing_weights)
     if missing:
         log(stage="missing_weights", count=len(missing), keys=missing[:12])
-        if not args.allow_missing_weights:
-            raise fail(
-                "REFUSED: %d parameter(s) were NOT in the checkpoint and were randomly "
-                "initialised by transformers, so this model's forward pass is not the "
-                "artifact's: %s%s. Either this build of transformers cannot read the "
-                "checkpoint's storage format, or the checkpoint is incomplete. Pass "
-                "--allow-missing-weights only if you can defend a number measured on a "
-                "partially random model; it forces a BLOCKING disclosure."
-                % (len(missing), ", ".join(missing[:6]),
-                   " (+%d more)" % (len(missing) - 6) if len(missing) > 6 else ""))
 
     head = head_module(model)
     vocab_size = int(head.weight.shape[0])
@@ -524,7 +752,8 @@ def run_capture(args: argparse.Namespace) -> int:
                      hidden_size=hidden_size, head_rel=head_rel, head_full=head_full,
                      head_content=head_content, head_shape=list(head_weight.shape),
                      model_dir=model_dir, identity=identity, identity_files=identity_files,
-                     config=config, started=started, missing_weights=missing)
+                     config=config, started=started, missing_weights=missing,
+                     load_report=report)
 
 
 # ---------------------------------------------------------------------------
@@ -629,7 +858,7 @@ def default_card_body(args, manifest, scope) -> str:
 def _assemble(args, writer, panel, panel_records, capture_records, *, context_length,
               vocab_size, hidden_size, head_rel, head_full, head_content, head_shape,
               model_dir, identity, identity_files, config, started,
-              missing_weights=()) -> int:
+              missing_weights=(), load_report=None) -> int:
     scope = _scope(args)
     quantized = scope["policy"] != "native"
 
@@ -726,6 +955,22 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                       "initialised by transformers before this capture ran, so this is NOT "
                       "a measurement of the published artifact. First keys: %s."
                       % (len(missing_weights), ", ".join(list(missing_weights)[:6]))})
+
+    # `unexpected_keys` are checkpoint tensors this build of transformers does
+    # not place anywhere.  They are often legitimate -- GLM-5.3-BF16 ships an
+    # MTP layer (`model.layers.78.*`, 791 tensors) that `GlmMoeDsaForCausalLM`
+    # does not build -- so this is a DISCLOSURE, not a refusal.  But a reader
+    # comparing two datasets deserves to know that some of the checkpoint was
+    # never used, and until now nothing recorded it at all.
+    unexpected = list((load_report or {}).get("unexpected_keys") or [])
+    if unexpected:
+        disclosures.append({
+            "code": "checkpoint_tensors_not_loaded", "severity": "caveat",
+            "affects_comparability": False,
+            "detail": "%d checkpoint tensor(s) were present but not used by this "
+                      "architecture (transformers `unexpected_keys`); they took no part in "
+                      "the forward pass. First keys: %s."
+                      % (len(unexpected), ", ".join(sorted(unexpected)[:6]))})
 
     # DET-D4: `verify` warns when run_count < 5 and asks for this disclosure, but
     # nothing in the tooling emitted it, so every capture this engine writes
@@ -866,6 +1111,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--role", choices=["root", "quant", "derived"], required=True)
     parser.add_argument("--lane", required=True)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device-map", default=None,
+                        help="transformers device_map ('auto', 'balanced', a JSON object, "
+                             "...). When set, the model is DISPATCHED by accelerate and the "
+                             "post-load `.to(--device)` is skipped -- the only way to load a "
+                             "checkpoint larger than one device's memory.")
+    parser.add_argument("--max-memory", default=None,
+                        help="JSON object passed to from_pretrained as max_memory, e.g. "
+                             '\'{"0": "130GiB", "cpu": "250GiB"}\'')
+    parser.add_argument("--offload-folder", default=None,
+                        help="accelerate disk-offload directory. NOTE: this writes a SECOND "
+                             "full copy of the weights.")
     parser.add_argument("--dtype", default="bfloat16",
                         choices=["bfloat16", "float16", "float32"])
     parser.add_argument("--dataset-id", required=True)
@@ -900,6 +1156,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.device_map and args.device_map.strip().startswith("{"):
+        args.device_map = json.loads(args.device_map)
     if args.cold_run is None:
         args.cold_run = "%s-%d" % (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()), os.getpid())
     if os.path.exists(args.out):

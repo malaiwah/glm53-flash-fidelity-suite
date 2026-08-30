@@ -314,6 +314,9 @@
           ],
           "minimum": 0,
           "description": "hypot(se_clustered, sigma_run). Quote this, with both parts shown, whenever sigma_run/se_clustered > 0.2."
+        },
+        "coverage_measured": {
+          "$ref": "common.schema.json#/$defs/coverage_measured"
         }
       },
       "additionalProperties": false
@@ -1035,6 +1038,48 @@
           },
           "note": {
             "type": "string"
+          },
+          "interval_method": {
+            "enum": [
+              "delta_t_log",
+              "window_block_bootstrap_bca",
+              "window_block_bootstrap_t_log",
+              "none"
+            ],
+            "description": "Which procedure produced ci95_low/high. 'delta_t_log' is what this registry publishes for a stratum: a Student-t interval on log(mean) with the delta-method SE, exponentiated back. Non-negative by construction; measured 92.0% coverage at g=5-7 where BCa measures 81.3%; and it uses NO resample stream, so it cannot share Monte-Carlo error with the stratum beside it (STAT-17) and cannot blow up on a degenerate resample the way bootstrap-t does -- on the real k8/clean17/axis2_legal cell bootstrap-t returns an upper endpoint 18x the estimate from five ordinary windows."
+          },
+          "bootstrap_b": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "bootstrap_seed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The seed THIS domain was bootstrapped with. Domains must not share one: at equal window counts a shared seed gives identical resample index streams across domains, so the intervals share their Monte-Carlo error (measured |r| up to 0.57) -- and arbitrarily, since it pairs domain A's k-th window with domain B's k-th, which are unrelated windows (STAT-17)."
+          },
+          "coverage_measured": {
+            "$ref": "common.schema.json#/$defs/coverage_measured"
+          },
+          "df": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "Degrees of freedom of the t critical value: windows - 1."
+          },
+          "t_critical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "The two-sided 97.5% Student-t quantile at df. Published so the endpoints can be re-derived by hand from mean, se_clustered-free delta SE and this number; at g=5 it is 2.7764, not the normal's 1.9600, and approximating it would understate the interval by 42%."
           }
         },
         "additionalProperties": false
@@ -1067,6 +1112,9 @@
         }
       },
       "additionalProperties": false
+    },
+    "harness": {
+      "$ref": "common.schema.json#/$defs/harness"
     }
   },
   "allOf": [

@@ -498,6 +498,66 @@
       "severity": "warn",
       "statement": "A comparability group that ranks more than one published row has a measurement floor on some lane. Reported once per group: a ranked table with no zero-point has nothing bounding how low a member may be reported.",
       "enforced_by": "tools/registry_validate.py check_comparability"
+    },
+    {
+      "id": "HARN-001",
+      "severity": "error",
+      "statement": "Every measurement row carries a `harness` block, and every row whose id is NOT in schema/harness-grandfather.json carries one with recorded=true and \"metric.value\" in covers. The grandfather list is frozen and is never appended to: a NEW row that cannot state which code produced its number is refused. Existing rows are grandfathered rather than invalidated -- their receipts are hashed and their values reproduce -- but they say so on the row (HARN-004)."
+    },
+    {
+      "id": "HARN-002",
+      "severity": "error",
+      "statement": "harness.recorded=false requires harness_id=null and no code_digests, and harness.recorded=true requires a non-empty code_digests, a boundary, tool_versions and a repository. An unrecorded harness must never carry digests reconstructed from a later checkout: those bytes are not the bytes that produced the row, and a plausible digest set is a fabricated provenance record."
+    },
+    {
+      "id": "HARN-003",
+      "severity": "error",
+      "statement": "harness.harness_id equals 'harness--' + sha256(canonical_json({boundary, code_digests sorted by role, tool_versions with nulls dropped}))[:16]. Recomputed, never trusted -- the same rule as CMP-001. repository is deliberately NOT an input: a commit sha changes on a docs edit, which is exactly the churn the boundary exists to avoid."
+    },
+    {
+      "id": "HARN-004",
+      "severity": "error",
+      "statement": "A measurement row in schema/harness-grandfather.json carries a harness_unrecorded disclosure, UNLESS its harness records coverage of metric.value -- a grandfathered row whose headline is later re-derived by digested code is attributed, not unattributed, and saying otherwise would be as wrong as the omission. The liability has to be readable on the row itself; a consumer pulling one JSONL line does not read the schema directory."
+    },
+    {
+      "id": "HARN-005",
+      "severity": "warn",
+      "statement": "A harness code_digest whose path exists in the current checkout with a DIFFERENT sha256 is reported: this row was produced by code that has since changed. Not an error -- that is the mechanism working, and it is the field test the block exists for -- but it is the answer to 'which rows predate which fix' and the validator says it out loud."
+    },
+    {
+      "id": "HARN-006",
+      "severity": "error",
+      "statement": "Every id in schema/harness-grandfather.json resolves to a measurement row. A stale allowlist entry is a hole: it would let a future row reuse a retired id and skip HARN-001."
+    },
+    {
+      "id": "STAT-007",
+      "severity": "error",
+      "statement": "A by_domain entry quoting ci95 endpoints over fewer than 10 windows must carry coverage_measured. Below that many clusters no bootstrap interval delivers its nominal level -- measured 81.6% for BCa and 92.3% for bootstrap-t on log(mean) at g=5-7 -- so an interval that states only '95%' is stating something that was never true of it. This is STAT-01: the defect was not that the endpoints were computed wrongly, it was that the row claimed a level nobody had measured."
+    },
+    {
+      "id": "STAT-008",
+      "severity": "error",
+      "statement": "Within one row, no two by_domain entries share a non-null bootstrap_seed. STAT-17: at equal window counts a shared seed gives byte-identical resample index streams across domains, so the strata share their Monte-Carlo error -- measured |r| up to 0.57 on the real panel -- and share it arbitrarily, pairing domain A's k-th window with domain B's k-th, which are unrelated windows. The published per-domain interval goes further and uses no resample stream at all, so it has no Monte-Carlo error to share; the invariant remains because domain_table can still be asked for a bootstrap interval."
+    },
+    {
+      "id": "STAT-009",
+      "severity": "error",
+      "statement": "A by_domain entry quoting ci95 endpoints states interval_method, and its ci95_low is >= 0. A bootstrap method additionally states bootstrap_b and bootstrap_seed; delta_t_log states df and t_critical and reports both bootstrap fields as null, because 'this interval used no resampling' is a fact about it and a missing key would read as an oversight. A negative lower bound on a KL divergence is an estimator artifact, not a result: bootstrap-t on the RAW mean produces one on 5 of this registry's 42 cells, which is why the published interval works on the log scale."
+    },
+    {
+      "id": "PROV-014",
+      "severity": "error",
+      "statement": "A disclosure with asserts_provenance=true carries a non-empty sources array. PROC-01: metric rows have always required a hashed receipt, but an ASSERTION about mechanism or lineage required nothing, so a prose provenance claim reached two published dataset cards and two registry rows with no source at all and passed validation. An assertion is a published claim exactly as much as a number is."
+    },
+    {
+      "id": "PROV-015",
+      "severity": "error",
+      "statement": "Every source cited by a provenance assertion is PINNED: a github_file or hf_file uri carrying a 40-hex commit or a revision in its path, or any source carrying a sha256. A uri naming /blob/main/ or /resolve/main/ is refused outright. Cite by COMMIT, never by branch -- line numbers move, and a citation that silently stops pointing at what it claimed is worse than no citation, because it still reads as evidence."
+    },
+    {
+      "id": "PROV-016",
+      "severity": "error",
+      "statement": "On an artifact or model record, a disclosure whose detail names a source-code file (.py/.sh/.c/.cc/.cpp/.cu/.h/.rs/.go, or such a name followed by a line range) must set asserts_provenance=true. Without this the marker is opt-in and PROV-014 is decorative: the failure PROC-01 describes is exactly an author writing a mechanism claim and not thinking of it as one."
     }
   ],
   "known_disclosure_codes": [
@@ -515,7 +575,9 @@
     "different_reference_kind",
     "estimator_overridden",
     "estimator_unknown",
+    "harness_unrecorded",
     "head_substituted",
+    "interval_recomputed",
     "local_device_reduction_order",
     "lossy_capture_codec",
     "memory_budget_schedule",

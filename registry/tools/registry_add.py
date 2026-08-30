@@ -42,6 +42,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import registry_lib as L  # noqa: E402
+import harness_id as H   # noqa: E402
 
 E_SCHEMA, E_MISSING, E_INCONSISTENT, E_VOID, E_IDENTITY, E_ATTRIB, E_COLLISION = 3, 4, 5, 6, 7, 8, 9
 
@@ -185,6 +186,86 @@ OWN_SCHEMAS = set([PACKED_RECEIPT, FIVE_COLD_RUN, STREAM_VERDICT]
 FOREIGN_SCHEMAS = {FOREIGN_REPEATED, FOREIGN_WINDOW, FOREIGN_TP2}
 KNOWN = OWN_SCHEMAS | FOREIGN_SCHEMAS
 
+
+
+
+# ---------------------------------------------------------------------------
+# harness identity
+# ---------------------------------------------------------------------------
+
+def _ingest_digests():
+    """Digests of the code that turns a receipt into a row.
+
+    This tool did NOT compute metric.value -- the measuring run did -- so it
+    stamps only what it can honestly attest, and the measurement half has to come
+    from the receipt. Recording ingest digests under a `covers: ["metric.value"]`
+    would be a fabricated provenance record of exactly the kind the block exists
+    to make impossible.
+    """
+    return H.digests(os.path.dirname(L.repo_root(__file__)), H.INGEST_CLOSURE)
+
+
+def harness_from_produced_by(pb, source):
+    """A recorded harness for a row whose receipt declares its runner.
+
+    `produced_by` on a sealed submission already carries the entrypoint, its
+    sha256, the revision and the dependency versions -- a harness in all but
+    name. This is that block, normalised, recomputed and given an id.
+    """
+    entry = (pb or {}).get("entrypoint") or ""
+    esha = (pb or {}).get("entrypoint_sha256")
+    if not entry or not esha:
+        return None
+    if os.path.isabs(entry) or entry.startswith(".."):
+        raise Refuse(E_SCHEMA,
+                     "produced_by.entrypoint %r is an absolute or escaping path. A published "
+                     "harness records repository-relative paths: a receipt in this registry "
+                     "once pointed at /home/jl_fs on a filesystem that no longer exists."
+                     % entry)
+    digests = [{"role": "measurement_entrypoint", "path": entry, "sha256": esha}]
+    digests += _ingest_digests()
+    digests.sort(key=lambda d: d["role"])
+    versions = dict((pb or {}).get("dependencies") or {})
+    if pb.get("container_digest"):
+        versions["container_digest"] = pb["container_digest"]
+    return {
+        "harness_id": H.compute_id(digests, versions),
+        "recorded": True,
+        "boundary": H.BOUNDARY,
+        "covers": ["determinism", "metric.value", "row_assembly"],
+        "repository": {"url": pb.get("repository"), "commit": pb.get("revision"),
+                       "commit_role": "exact", "dirty": False},
+        "code_digests": digests,
+        "tool_versions": dict(sorted(versions.items())),
+        "note": "Measurement half from %s; ingest half read from this checkout." % source,
+    }
+
+
+UNRECORDED_HARNESS_DETAIL = (
+    "This row's receipt family declares no measuring entrypoint or its digest, so the code "
+    "that produced metric.value is not identified. The row is not refused -- the receipt is "
+    "still hashed and the value still reproduces from it -- but 'was this produced before or "
+    "after defect X was fixed' cannot be answered from the row. Supply --harness-manifest "
+    "with the runner's entrypoint and sha256 to close it. Note that registry_validate REFUSES "
+    "this row under HARN-001 unless its id is in the frozen grandfather list.")
+
+
+def harness_for_row(args):
+    """The harness block registry_add stamps on a row it generates."""
+    manifest = getattr(args, "harness_manifest", None)
+    if manifest:
+        with open(manifest, encoding="utf-8") as fh:
+            pb = json.load(fh)
+        h = harness_from_produced_by(pb, os.path.basename(manifest))
+        if h is None:
+            raise Refuse(E_MISSING,
+                         "--harness-manifest %s declares no entrypoint/entrypoint_sha256. A "
+                         "manifest without a digest is a pointer, not an identity." % manifest)
+        return h, None
+    return (H.unrecorded_block(["metric.value"],
+                               "No measuring harness was declared by this receipt."),
+            {"code": "harness_unrecorded", "severity": "info",
+             "detail": UNRECORDED_HARNESS_DETAIL, "affects_comparability": False})
 
 def load_receipt(path):
     if not os.path.exists(path):
@@ -1561,6 +1642,13 @@ def build_row(args, adapted, receipt_sources, registry):
                                 "--stack-fingerprint-sha256 pins its content; a pointer "
                                 "without a digest is an anecdote.")
 
+    harness_block, harness_disc = harness_for_row(args)
+    if harness_disc and not any(d.get("code") == "harness_unrecorded" for d in disclosures):
+        disclosures = [d for d in disclosures if d.get("code") != "no_known_deviations"]
+        disclosures.append(harness_disc)
+        if not disclosures:
+            disclosures = [harness_disc]
+
     ci = adapted.get("ci")
     lane_bias = _stream_bias(adapted, lane, is_floor=is_floor,
                              floor_ref=args.floor_measurement, floor_value=floor_value)
@@ -1617,6 +1705,7 @@ def build_row(args, adapted, receipt_sources, registry):
         "cross_refs": {"local_ai_registry": {"model_id": None, "model_instance_id": None,
                                              "url": None, "match_confidence": "unverified"}},
         "disclosures": disclosures,
+        "harness": harness_block,
     }
     # field_provenance is the reader's audit trail: every entry claims "this field
     # came from that JSON Pointer in the receipt". A field the operator overrode no
@@ -1703,6 +1792,12 @@ def add_common(p):
                    help="where that stack-fingerprint.json lives (recorded as a "
                         "receipt_file source with the digest above; requires "
                         "--stack-fingerprint-sha256)")
+    p.add_argument("--harness-manifest", default=None, metavar="FILE",
+                   help="JSON with the shape of submission_receipt.produced_by (tool, "
+                        "repository, revision, entrypoint, entrypoint_sha256, dependencies). "
+                        "Identifies the code that computed the number; without it the row "
+                        "records recorded=false and registry_validate refuses it under "
+                        "HARN-001 unless it is grandfathered.")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--json", action="store_true")
 
@@ -2415,6 +2510,16 @@ def submission_to_records(sub, path, fsha, registry, strict_new=False,
     det.setdefault("evidence_hashes", [])
     det.setdefault("distinct_evidence_hash_count", len(det["evidence_hashes"]))
 
+    harness_block = harness_from_produced_by(pb, os.path.basename(path))
+    if harness_block is None:
+        harness_block = H.unrecorded_block(
+            ["metric.value"],
+            "produced_by declares no entrypoint digest, so the measuring code is unidentified.")
+        if not any(d.get("code") == "harness_unrecorded" for d in disclosures):
+            disclosures.append({"code": "harness_unrecorded", "severity": "info",
+                                "detail": UNRECORDED_HARNESS_DETAIL,
+                                "affects_comparability": False})
+
     sources = [{"kind": "receipt_file", "uri": path, "sha256": fsha,
                 "note": "sealed submission receipt %s" % SUBMISSION_SCHEMA}]
     sources += [dict(e) for e in (sub.get("evidence") or [])]
@@ -2470,6 +2575,7 @@ def submission_to_records(sub, path, fsha, registry, strict_new=False,
         "cross_refs": {"local_ai_registry": {"model_id": None, "model_instance_id": None,
                                              "url": None, "match_confidence": "unverified"}},
         "disclosures": disclosures,
+        "harness": harness_block,
     }
     return row, new
 

@@ -23,6 +23,14 @@ dataset at all.
     A14 a checkpoint transformers could not fully read is REFUSED, not captured
     A15 --allow-missing-weights stamps a BLOCKING disclosure instead
     A16 --base-capture repo@rev becomes the object the schema requires
+    A17 a load report with `mismatched_keys` is REFUSED ("Reinit due to size mismatch")
+    A18 a load report with `conversion_errors` is refused and is NOT overridable
+    A19 a load that produced NO report is refused; unexamined != clean
+    A20 `conversion_errors` is actually visible after a real load (the field
+        `LoadStateDictInfo.to_dict()` deliberately drops)
+    A21 checkpoint tensors the architecture does not use are DISCLOSED, not refused
+    A22 --device-map dispatches instead of materialising, and skips the .to() that
+        cannot work for a checkpoint bigger than one device
 
 torch and transformers are optional: without them the file prints SKIP and
 exits 0, so `bin/selftest_all.sh` on the numpy-only floor is unaffected.
@@ -418,6 +426,154 @@ def _body(work):
           "present=%s named=%r listed=%s"
           % (os.path.isfile(shipped), manifest_a["panel"].get("panel_receipt_file"),
              "panel/panel-receipt.json" in listed))
+
+    # -- A17..A21 ------------------------------------------------------------
+    # The load report has FOUR ways to say "these parameters are not the
+    # artifact's", and CAPTURE-03 used to read exactly one of them.
+    #
+    # A17-A20 are asserted against `hf_capture`'s own report reader rather than
+    # end to end, deliberately: transformers 5.16.1 happens to RAISE on
+    # `mismatched_keys` and `conversion_errors` from inside `from_pretrained`,
+    # so on this build the two paths are indistinguishable from outside. The
+    # guard must not depend on the library continuing to make that choice --
+    # `ignore_mismatched_sizes=True`, an older build, or a future refactor all
+    # hand the report back instead of raising, and then this reader is the only
+    # thing standing between a randomly initialised tensor and a published
+    # number.
+    sys.path.insert(0, os.path.join(REPO, "k6", "tools"))
+    import hf_capture as HC
+
+    def _refused(report, allow_missing):
+        """True when the guard REFUSES; a missing guard is not a refusal."""
+        guard = getattr(HC, "refuse_on_load_report", None)
+        if guard is None:
+            return "no refuse_on_load_report in hf_capture"
+        try:
+            guard(report, allow_missing)
+        except SystemExit:
+            return True
+        return False
+
+    def _report(**fields):
+        reader = getattr(HC, "load_report", None)
+        if reader is None:
+            return None
+        doc = {"missing_keys": set(), "unexpected_keys": set(), "mismatched_keys": set(),
+               "error_msgs": [], "conversion_errors": {},
+               getattr(HC, "REPORT_OBSERVED", "_o"): True,
+               getattr(HC, "REPORT_AUGMENTED", "_a"): True}
+        doc.update(fields)
+        return reader(doc)
+
+    # A17 -- `mismatched_keys`: present in the checkpoint at the WRONG SHAPE.
+    # transformers' own loading report calls this "Reinit due to size mismatch",
+    # i.e. a randomly initialised tensor under another heading, and
+    # `missing_weight_keys` used to ignore the field entirely.
+    mismatch = [("model.layers.0.mlp.down_proj.weight", (16, 32), (16, 16))]
+    seen = HC.missing_weight_keys({"missing_keys": [], "mismatched_keys": mismatch})
+    check("A17 a mismatched (wrong-shape, reinitialised) key counts as missing",
+          seen == ["model.layers.0.mlp.down_proj.weight"]
+          and _refused(_report(mismatched_keys=mismatch), False) is True,
+          "missing_weight_keys -> %r; refused -> %r"
+          % (seen, _refused(_report(mismatched_keys=mismatch), False)))
+
+    # A18 -- `conversion_errors`: the field `LoadStateDictInfo.to_dict()`
+    # deliberately drops. For a fused-expert MoE checkpoint the converter owns
+    # 96.7% of the tensors, so this is the field that matters most and the one
+    # the guard was never shown. Not overridable: an exception mid-conversion
+    # leaves the parameter's contents unknown.
+    conv = {"model.layers.3.mlp.experts.gate_up_proj":
+            "MergeModulelist, Concatenate: expected 256 tensors, got 255"}
+    check("A18 conversion_errors are refused, and --allow-missing-weights does not "
+          "override them",
+          _refused(_report(conversion_errors=conv), False) is True
+          and _refused(_report(conversion_errors=conv), True) is True,
+          "refused=%r forced=%r" % (_refused(_report(conversion_errors=conv), False),
+                                    _refused(_report(conversion_errors=conv), True)))
+
+    # A19 -- no report at all. `_from_pretrained` used to return a bare `{}` on
+    # its fallback path, which the guard read as "no missing keys": an
+    # UNEXAMINED load and a CLEAN load had the same value.
+    empty = HC.load_report({}) if getattr(HC, "load_report", None) else None
+    check("A19 a load with NO report is refused even with --allow-missing-weights "
+          "(unexamined is not clean)",
+          _refused(empty, True) is True,
+          "refused=%r (report=%r)" % (_refused(empty, True), empty))
+
+    # A20 -- the wrap actually takes effect against the INSTALLED transformers.
+    _m, _c, live_info = HC.load_model(model, "cpu", "bfloat16")
+    reader = getattr(HC, "load_report", None)
+    live = reader(live_info) if reader else {}
+    check("A20 conversion_errors are visible after a real load",
+          bool(live.get("observed")) and bool(live.get("conversion_errors_visible"))
+          and live.get("conversion_errors") == {},
+          "observed=%r visible=%r info_keys=%r"
+          % (live.get("observed"), live.get("conversion_errors_visible"),
+             sorted(live_info)))
+    del _m
+
+    # A21 -- `unexpected_keys` is not a failure: GLM-5.3-BF16 ships an MTP layer
+    # the architecture does not build, 791 tensors of it. But a reader deserves
+    # to know part of the checkpoint took no part in the forward pass, and
+    # nothing recorded it at all.
+    extra_dir = os.path.join(work, "reference-extra")
+    _shutil.copytree(model, extra_dir)
+    extra_shard = os.path.join(extra_dir, "model.safetensors")
+    extra_tensors = _load(extra_shard)
+    import torch as _torch
+
+    extra_tensors["model.layers.99.mlp.down_proj.weight"] = _torch.zeros(
+        (4, 4), dtype=_torch.bfloat16)
+    _save(extra_tensors, extra_shard, metadata={"format": "pt"})
+    extra_out = os.path.join(work, "ds-extra")
+    proc = capture(extra_dir, panel, extra_out, role="root",
+                   dataset_id="fidelity--selftest.hf.root", name="extra")
+    stamped = []
+    if os.path.isfile(os.path.join(extra_out, F.MANIFEST_NAME)):
+        stamped = [d for d in json.load(open(os.path.join(extra_out, F.MANIFEST_NAME)))
+                   ["disclosures"] if d["code"] == "checkpoint_tensors_not_loaded"]
+    check("A21 an unused checkpoint tensor is disclosed, not refused",
+          proc.returncode == 0 and len(stamped) == 1
+          and stamped[0]["severity"] == "caveat"
+          and "model.layers.99.mlp.down_proj.weight" in stamped[0]["detail"],
+          "rc=%s stamped=%r out=%s" % (proc.returncode, stamped,
+                                       (proc.stderr or proc.stdout)[-300:]))
+
+    # -- A22 -----------------------------------------------------------------
+    # R2 in docs/GLM53-ROOT-FEASIBILITY.md: `load_model` materialised the whole
+    # model on CPU and then called `.to(device)`. For zai-org/GLM-5.3-BF16 that
+    # is 1,486.8 GB -- more than the largest rentable RAM (300 GB) and more than
+    # the entire VRAM of an 8x H200 node (1,128 GB) -- so the default path
+    # cannot load the root model on any machine we can rent. `device_map`
+    # dispatches instead, and the post-load `.to()` MUST be skipped: calling it
+    # on a dispatched model raises.
+    try:
+        import accelerate  # noqa: F401
+        have_accelerate = True
+    except Exception:
+        have_accelerate = False
+    if have_accelerate:
+        try:
+            dm_model, _dc, dm_info = HC.load_model(model, "cpu", "bfloat16",
+                                                   device_map={"": "cpu"})
+            dm_report = HC.load_report(dm_info)
+            dm_logits = dm_model(input_ids=_torch.tensor([[1, 2, 3]])).logits
+            check("A22 --device-map dispatches, skips .to(), and still reports the load",
+                  tuple(dm_logits.shape)[:2] == (1, 3)
+                  and dm_report["observed"] is True
+                  and dm_report["conversion_errors_visible"] is True
+                  and dm_report["missing_keys"] == [],
+                  "logits=%r report=%r" % (tuple(dm_logits.shape), dm_report))
+            del dm_model
+        except SystemExit as exc:
+            check("A22 --device-map dispatches, skips .to(), and still reports the load",
+                  False, "refused: %s" % exc.code)
+        except TypeError as exc:
+            check("A22 --device-map dispatches, skips .to(), and still reports the load",
+                  False, "load_model has no device_map parameter: %s" % exc)
+    else:
+        check("A22 --device-map dispatches, skips .to(), and still reports the load",
+              True, "SKIPPED: accelerate not installed")
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, detail in FAIL:

@@ -930,6 +930,11 @@ Do NOT justify this as closing a privilege-escalation hole — that claim is unp
 
 # PUBLISHED-NUMBER CHANGES (operator decision required)
 
+> **STAT-01 + STAT-17 are CLOSED as of 2026-08-30.** The operator approved the
+> reseed. What shipped is not exactly what this section recommended, and the
+> difference is recorded rather than quietly absorbed — see the CLOSED note at
+> the head of that item below and `docs/PUBLISHED-CORRECTIONS.md` §3.
+
 These are not blocked by a file lock. They are blocked because applying them rewrites
 numbers that are already public — in `registry/data/measurements.jsonl`, mirrored to the
 `quant-fidelity-registry` HF dataset. The code fix is written out; the reseed is not run.
@@ -940,6 +945,36 @@ committed ones, not estimated.
 ---
 
 ## STAT-01 + STAT-17 — the 42 per-domain intervals claim 95% and deliver 78-83%
+
+> **CLOSED 2026-08-30 — reseeded, with two departures from the recommendation.**
+>
+> 1. **Not bootstrap-t on log(mean).** Recommendation 3's "re-label" option was
+>    implemented and measured, and it is not publishable at g=5. On the real
+>    `k8-8bpw-stream/clean17/axis2_legal` cell — five ordinary windows, cv 0.47,
+>    nothing pathological — it returns an upper endpoint of **0.187 nats around a
+>    mean of 0.0103**, eighteen times the estimate, driven by resamples that draw
+>    four copies of one window and collapse the studentizing denominator. Three of
+>    the 42 cells exceed 10x. Replacing an interval that is too narrow with one
+>    that is absurd is not a correction. What shipped is the **analytic** Student-t
+>    interval on log(mean) with the delta-method SE, exponentiated
+>    (`interval_method: delta_t_log`): same coverage to within Monte-Carlo error,
+>    bounded, and with **no resample stream at all** — which retires STAT-17 rather
+>    than mitigating it, and also retires the 6.10%-at-B=1000 seed noise this
+>    section measured. `DOMAIN_BOOTSTRAP_B` was raised to 20000 anyway, for the
+>    `interval="bca"` path that regenerates the old numbers.
+> 2. **Recommendation 1's premise was checked and is wrong for coverage.** B does
+>    not move it: measured 81.3% at B=1000 and **81.5% at B=20000**. Raising B
+>    buys stability against seed choice, not coverage. Both numbers are in
+>    `registry/protocol/coverage/domain-interval-coverage.v1.json`.
+>
+> Coverage was **measured, not asserted**: 4000 replications per cell against a
+> lognormal fitted to each cell's own windows, old code and new code through the
+> same simulated panels. **81.3% before (77.2–84.5), 92.0% after (89.0–95.0).**
+> Not 95% — at five windows nothing is — so every cell now publishes
+> `coverage_measured`, which is the actual content of the STAT-01 fix. The panel
+> block keeps its BCa endpoints unchanged as recommendation 4 asks, and now states
+> its own measured coverage (90.2%). Recommendation 6's assertion is
+> `registry/tools/selftest_stat01_reseed.py`.
 
 **Files:** `registry/tools/joint_enrich.py` (`DOMAIN_BOOTSTRAP_B`, `_by_domain`),
 `bin/jointstd/stats.py` (`domain_table`).

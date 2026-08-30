@@ -264,7 +264,7 @@
       "additionalProperties": false
     },
     "source": {
-      "description": "A pointer to evidence. A source with kind=receipt_file/hf_file/github_file SHOULD carry a sha256; self-measured rows MUST have at least one such source with a sha256.",
+      "description": "A pointer to evidence. A source with kind=receipt_file/hf_file/github_file SHOULD carry a sha256; self-measured rows MUST have at least one such source with a sha256. A source cited for a PROVENANCE ASSERTION (disclosure.asserts_provenance) must additionally be PINNED -- a commit sha in the path, or a revision, or a sha256 -- because a claim anchored to a moving branch stops being provenance the moment somebody pushes.",
       "type": "object",
       "required": [
         "kind",
@@ -296,12 +296,17 @@
         },
         "note": {
           "type": "string"
+        },
+        "lines": {
+          "type": "string",
+          "pattern": "^[0-9]+(-[0-9]+)?$",
+          "description": "Optional line anchor into the pinned file, e.g. \"373-378\" or \"210\". Only meaningful with a COMMIT-pinned uri: line numbers move, so an anchor against a branch is worse than no anchor at all."
         }
       },
       "additionalProperties": false
     },
     "disclosure": {
-      "description": "One deviation, caveat or known defect. The array that holds these is REQUIRED and non-empty everywhere it appears; a record with nothing to disclose must say so with code=no_known_deviations.",
+      "description": "One deviation, caveat or known defect. The array that holds these is REQUIRED and non-empty everywhere it appears; a record with nothing to disclose must say so with code=no_known_deviations. A disclosure that ASSERTS PROVENANCE must say so and must cite pinned evidence: an assertion is a published claim exactly as much as a metric is, and until PROV-014 only the metric needed a receipt.",
       "type": "object",
       "required": [
         "code",
@@ -329,6 +334,19 @@
           "type": "boolean",
           "default": false,
           "description": "true when this disclosure means the row must not be silently ranked against same-panel rows."
+        },
+        "asserts_provenance": {
+          "type": "boolean",
+          "default": false,
+          "description": "true when this disclosure makes a claim about HOW the artifact was produced or WHERE it came from -- a mechanism, a lineage, a code path, an inherited config -- rather than only describing the record. A true here obliges `sources` (invariant PROV-014)."
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source"
+          },
+          "description": "Evidence for THIS disclosure's claim, not for the record as a whole. Required when asserts_provenance is true, and every entry must be pinned (PROV-015)."
         }
       },
       "additionalProperties": false
@@ -425,6 +443,186 @@
         "mixed",
         "unknown"
       ]
+    },
+    "harness": {
+      "description": "WHICH CODE PRODUCED THIS NUMBER. Additive and mandatory going forward: a row whose id is not in schema/harness-grandfather.json must carry a recorded harness covering metric.value (HARN-001). The identity is the CONTENT DIGEST SET of the computational closure -- every file on the path from the published inputs to the published number, enumerated by role -- plus the tool versions, and NOT the repository commit (which changes on a docs edit) and NOT the whole tree (same reason). The guarantee is one-way: equal harness_id means identical code; a differing id means read code_digests, because the boundary errs deliberately toward over-sensitivity. See registry/tools/harness_id.py, which is the implementation and carries the reasoning.",
+      "type": "object",
+      "required": [
+        "harness_id",
+        "recorded",
+        "covers"
+      ],
+      "properties": {
+        "harness_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^harness--[0-9a-f]{16}$",
+          "description": "'harness--' + sha256(canonical_json({boundary, code_digests, tool_versions}))[:16]. Recomputed by the validator (HARN-003), never trusted. null exactly when recorded is false."
+        },
+        "recorded": {
+          "type": "boolean",
+          "description": "false is the honest shape for a row measured before this mechanism existed. It is NOT an invitation to reconstruct digests from today's checkout: those files are not the files that produced the row, and a plausible digest set would be a fabricated provenance record."
+        },
+        "boundary": {
+          "type": "string",
+          "description": "Named digest-set boundary, e.g. estimator_closure/v1. Two rows are only code-comparable within one boundary."
+        },
+        "covers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "metric.value",
+              "auxiliary_metrics",
+              "uncertainty",
+              "by_domain",
+              "protocol",
+              "determinism",
+              "row_assembly"
+            ]
+          },
+          "description": "Which parts of THIS row the stamp attests. A row whose headline came from a GPU run that predates the mechanism but whose intervals were re-derived locally covers uncertainty and by_domain and NOT metric.value -- claiming otherwise would be the exact failure this block exists to prevent."
+        },
+        "repository": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "url",
+            "commit",
+            "commit_role",
+            "dirty"
+          ],
+          "properties": {
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{7,64}$"
+            },
+            "commit_role": {
+              "enum": [
+                "exact",
+                "parent"
+              ],
+              "description": "'exact': the named commit's tree produced the number. 'parent': the number was produced by the working tree that the child of this commit introduced -- which is the only honest answer when a change records its own provenance, since a commit cannot contain its own sha. Under 'parent' the code_digests, not the commit, are the identity."
+            },
+            "dirty": {
+              "type": "boolean",
+              "description": "true when the measuring tree differed from `commit`. Always true under commit_role=parent."
+            }
+          },
+          "additionalProperties": false,
+          "description": "A human pointer, deliberately NOT an input to harness_id."
+        },
+        "code_digests": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "role",
+              "path",
+              "sha256"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]+$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Repository-relative. Never absolute: a published receipt once pointed at /home/jl_fs on a filesystem that no longer exists."
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "tool_versions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": "python/numpy/torch and anything else whose version can move a number. This one DOES enter harness_id: CPython 3.12 switched builtin sum() to Neumaier summation and moved this project's reductions in the last ULP, so an interpreter is part of the estimator."
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "coverage_measured": {
+      "description": "What this interval's coverage MEASURES, against what it CLAIMS. Published because a nominal level is a property of the method's asymptotics and this panel is not asymptotic: g runs 5-7 per domain.",
+      "type": "object",
+      "required": [
+        "nominal",
+        "measured",
+        "reps",
+        "population"
+      ],
+      "properties": {
+        "nominal": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "measured": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "population": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The known-truth distribution the coverage was measured against, e.g. 'lognormal fitted to this cell's own window means'."
+        },
+        "miss_low": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of reps where TRUTH fell ABOVE the interval, i.e. the interval understated divergence. Reported separately because undercoverage in this direction is the harmful one."
+        },
+        "miss_high": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The simulation that produced these numbers."
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

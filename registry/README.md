@@ -218,6 +218,27 @@ than the measurer (`PROV-003`). Whether the *artifact* is ours is a third axis, 
 and the table says exactly that. Whether the *panel* is ours is the fourth. Third-party numbers are
 welcome here and are never silently merged with ours.
 
+**Which code produced the number is a field, not a footnote.** Every row carries a `harness` block:
+content digests of the computational closure that computed the value -- the estimator, its numerical
+support, the surface it read -- enumerated by role, plus the tool versions, reduced to one
+`harness_id`. Equal id means byte-identical code; a differing id points at the `code_digests` entry
+whose role changed. The commit sha is recorded beside it and deliberately *excluded* from the id,
+because a commit changes on a docs edit and an identity that churns for reasons that cannot move a
+number stops carrying information. The 72 rows that predate the mechanism (2026-08-30) are listed in
+`schema/harness-grandfather.json`, each carrying a `harness_unrecorded` disclosure; that list is frozen,
+and a new row without a harness is refused (`HARN-001`). They are not retroactively invalidated -- their
+receipts are hashed and their values reproduce -- and their digests are not reconstructed from a later
+checkout either, because today's files are not the files that produced them.
+
+**An assertion is a published claim, exactly as much as a number is.** A metric row has always needed a
+hashed receipt. A *provenance assertion* -- "this bf16 twin is a direct cast, not a dequantization",
+"this NVFP4 config block is inherited from the parent rather than authored" -- needed nothing, and two
+such claims reached published dataset cards and registry rows with no source at all. A disclosure that
+makes one now sets `asserts_provenance` and carries its own pinned `sources` with an optional `lines`
+anchor (`PROV-014`/`PROV-015`/`PROV-016`). Pinned means a commit sha or a digest: `/blob/main/` is
+refused outright, because line numbers move and a citation that quietly stops pointing at what it
+claimed still reads as evidence.
+
 **Panels are identified by their tokens, and the scoring window is part of that identity.** Our GLM
 suite scored from position 0 gives 0.028104; the *same tokens*, the *same artifact*, the *same teacher*,
 scored from position 1024, gives 0.018794. A 33% move with nothing changed but which positions were

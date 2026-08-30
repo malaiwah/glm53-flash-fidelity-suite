@@ -8,7 +8,8 @@
 PY ?= python3
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: check validate render render-check selftest joint reseed reseed-check explain clean
+.PHONY: check validate render render-check selftest joint reseed reseed-check explain clean \
+        stat-selftest coverage
 
 check: validate render-check selftest joint
 	@echo
@@ -44,6 +45,21 @@ reseed:
 
 reseed-check:
 	$(PY) tools/seed_registry.py --check
+
+# The per-domain interval's own arithmetic: measured coverage, per-stratum seeds,
+# and the proof that the PRE-reseed endpoints still regenerate so the 2026-08-30
+# delta stays attributable. Needs numpy, so it is NOT part of `check` -- `check`
+# is the command a contributor runs on a stock interpreter with nothing installed.
+# bin/selftest_all.sh runs it.
+stat-selftest:
+	$(PY) tools/selftest_stat01_reseed.py
+
+# Regenerate the measured-coverage record the by_domain blocks quote. Minutes, not
+# seconds: 54 cells x 4000 replications x up to 20000 resamples. The output is
+# committed, so `make check` never pays for it and a reader can still reproduce it.
+coverage:
+	$(PY) tools/coverage_sim.py --reps 4000 \
+	  --out protocol/coverage/domain-interval-coverage.v1.json
 
 # make explain A=measurement--... B=measurement--...
 explain:

@@ -59,8 +59,22 @@ from jointstd import protocol as _proto      # noqa: E402
 from jointstd import stats as _stats         # noqa: E402
 
 BOOTSTRAP_B = 5000
-DOMAIN_BOOTSTRAP_B = 1000
+# STAT-01/STAT-17 reseed, 2026-08-30. Was 1000. Raising B is NOT the fix -- measured
+# coverage is 81.6% at B=1000 and 81.8% at B=20000, because the deficit is small-g and
+# not Monte Carlo -- but at B=1000 the SEED noise on the worst cell is 6.10% relative on
+# the low endpoint, which means a reader diffing two honest reseeds sees movement that is
+# nothing but dice. 20000 takes that to 1.19%. It is 42 cells over <=7 values; the cost
+# is a few seconds.
+DOMAIN_BOOTSTRAP_B = 20000
 SEED = 20260829
+
+# The measured-coverage record the by_domain and uncertainty blocks quote. A committed
+# artifact, exactly like the receipts: `coverage_measured` is a PUBLISHED number, so it
+# is read back from a file any reader can regenerate with
+# `python3 tools/coverage_sim.py --reps 4000`, never transcribed into a literal here.
+COVERAGE_FILE = os.path.join(PROTOCOL_DIR, "coverage", "domain-interval-coverage.v1.json")
+DOMAIN_PROCEDURE = "new_delta_t_log"
+PANEL_PROCEDURE = "panel_bca_b5000"
 
 # measurement id -> per-window file basename.  Only rows whose receipts actually
 # carry per-window arrays appear here; the two that do not (the BF16 streaming
@@ -146,6 +160,38 @@ class _Context:
                     "window_selection.json exactly.",
         }
         self.scan = scan
+        cov = _load_json(COVERAGE_FILE)
+        self.coverage_reps = cov["reps"]
+        self.coverage_source = os.path.relpath(COVERAGE_FILE, _REGISTRY)
+        self.coverage_population = cov["population"]
+        self.coverage: Dict[Any, Dict[str, Any]] = {}
+        for c in cov["cells"]:
+            self.coverage[(c["series"], c["scope"], c["domain"])] = c["procedures"]
+
+    def coverage_block(self, slug: str, scope: str, domain: Optional[str],
+                       procedure: str) -> Dict[str, Any]:
+        """The measured coverage of one published cell.
+
+        Refuses rather than defaults: a cell with no measured coverage must not
+        quietly publish an interval that goes on claiming 95%. That silence is
+        the whole of STAT-01.
+        """
+        key = (slug, scope, domain)
+        if key not in self.coverage or procedure not in self.coverage[key]:
+            raise SystemExit(
+                "joint_enrich: no measured coverage for %r under %r. Regenerate "
+                "%s with tools/coverage_sim.py before publishing this cell."
+                % (key, procedure, self.coverage_source))
+        p = self.coverage[key][procedure]
+        return {
+            "nominal": 0.95,
+            "measured": p["coverage"],
+            "reps": self.coverage_reps,
+            "population": self.coverage_population,
+            "miss_low": p["miss_low"],
+            "miss_high": p["miss_high"],
+            "source": self.coverage_source,
+        }
 
     def protocol_block(self) -> Dict[str, Any]:
         b = self.proto.stamp()
@@ -163,7 +209,10 @@ class _Context:
 def _uncertainty(per_window: List[Dict[str, Any]], run_means: Optional[List[float]],
                  gate: float, sigma_override: Optional[float] = None,
                  sigma_runs: Optional[int] = None,
-                 sigma_note: Optional[str] = None) -> Dict[str, Any]:
+                 sigma_note: Optional[str] = None,
+                 ctx: Optional["_Context"] = None,
+                 slug: Optional[str] = None,
+                 scope: Optional[str] = None) -> Dict[str, Any]:
     summary = _stats.se_from_window_summaries(per_window)
     means = {w["window_id"]: float(w["mean"]) for w in per_window}
     # STAT-03. backend="auto" made the PUBLISHED CI endpoints depend on whether numpy
@@ -196,6 +245,14 @@ def _uncertainty(per_window: List[Dict[str, Any]], run_means: Optional[List[floa
     if "se_naive" in summary:
         unc["se_naive"] = _round(summary["se_naive"])
         unc["deff"] = _round(summary["deff_window"])
+    # STAT-01, panel half. The panel block KEEPS its BCa endpoints: 25 (or 17)
+    # windows is not the small-g regime, the endpoints are the joint standard's
+    # interop surface, and bin/jointstd/fixtures/brandonmusic-known-answer.json
+    # pins four external panels' BCa endpoints as a known-answer test -- switching
+    # the method here would break interoperability to fix nothing. What was missing
+    # is the statement of what it actually covers, so that is what is added.
+    if ctx is not None and slug is not None and scope is not None:
+        unc["coverage_measured"] = ctx.coverage_block(slug, scope, None, PANEL_PROCEDURE)
     note = [
         "Window-block bootstrap, B=%d, seed=%d; BCa endpoints quoted, percentile "
         "endpoints [%.9f, %.9f]." % (BOOTSTRAP_B, SEED,
@@ -240,16 +297,43 @@ def _uncertainty(per_window: List[Dict[str, Any]], run_means: Optional[List[floa
                         "freedom; the joint protocol asks for three.")
     else:
         note.append("sigma_run not estimable: fewer than two cold runs.")
+    if unc.get("coverage_measured"):
+        cm = unc["coverage_measured"]
+        note.append("Coverage of these BCa endpoints is MEASURED at %.1f%% against a "
+                    "nominal 95%% (%d reps, %s); the endpoints are unchanged and the "
+                    "method is unchanged, and this sentence is the difference between "
+                    "an interval that states its level and one that assumes it."
+                    % (100.0 * cm["measured"], cm["reps"], cm["population"]))
     note.append("Percentiles of the per-token distribution are NOT quoted: they are not "
                 "derivable from per-window summaries.")
     unc["note"] = " ".join(note)
     return unc
 
 
-def _by_domain(per_window: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _by_domain(per_window: List[Dict[str, Any]], ctx: "_Context",
+               slug: str, scope: str) -> List[Dict[str, Any]]:
+    """The per-domain table, under the STAT-01/STAT-17 reseed of 2026-08-30.
+
+    Three things changed together, because separately each one is wrong:
+
+      * the interval is bootstrap-t on log(mean), not BCa. BCa at g=5-7 measures
+        81.6% coverage while claiming 95%, and misses HIGH -- truth sits above
+        the interval, so the endpoints understate divergence and invent
+        separations between domains;
+      * each domain draws its own seed, so the strata stop sharing Monte-Carlo
+        error (STAT-17);
+      * every cell publishes its MEASURED coverage. Without that the row still
+        claims a level it does not deliver -- 92.3% is better than 81.6% and it
+        is not 95%, and at g=5 nothing is.
+
+    The panel-level block is deliberately NOT changed: it has 25 (or 17) windows,
+    BCa is the right interval there, its endpoints are the joint standard's
+    interop surface, and bin/jointstd/fixtures/brandonmusic-known-answer.json
+    pins four external panels' BCa endpoints as a known-answer test.
+    """
     rows = []
     for r in _stats.domain_table(per_window, b=DOMAIN_BOOTSTRAP_B, seed=SEED,
-                                 backend="numpy"):
+                                 backend="numpy", interval="delta_t_log"):
         row = {
             "domain": r["domain"],
             "windows": r["windows"],
@@ -258,12 +342,31 @@ def _by_domain(per_window: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         }
         if r.get("se_clustered_window") is not None:
             row["se_clustered"] = _round(r["se_clustered_window"])
-        if r.get("ci95_bca"):
-            row["ci95_low"] = _round(r["ci95_bca"][0])
-            row["ci95_high"] = _round(r["ci95_bca"][1])
-            row["interval_kind"] = "bca"
-            row["note"] = "BCa over %d window resamples (B=%d)." % (r["windows"],
-                                                                    DOMAIN_BOOTSTRAP_B)
+        if r.get("ci95_t_log"):
+            cov = ctx.coverage_block(slug, scope, r["domain"], DOMAIN_PROCEDURE)
+            row["ci95_low"] = _round(r["ci95_t_log"][0])
+            row["ci95_high"] = _round(r["ci95_t_log"][1])
+            row["interval_kind"] = "t"
+            row["interval_method"] = "delta_t_log"
+            row["bootstrap_b"] = None
+            row["bootstrap_seed"] = None
+            row["df"] = r["df"]
+            row["t_critical"] = _round(r["t_critical"])
+            row["coverage_measured"] = cov
+            row["note"] = (
+                "Student-t interval on log(mean), delta-method SE, exponentiated: "
+                "exp(log(mean) +- %.6f * se/mean) over %d windows (df %d). NO "
+                "resampling, so there is no seed and no Monte-Carlo error to share "
+                "with the domain beside it (STAT-17). Coverage MEASURED at %.1f%% "
+                "against a nominal 95%% (%d reps, %s); the BCa endpoints published "
+                "here before 2026-08-30 measured %.1f%% on this same cell. Read it "
+                "as a ~%.0f%% interval, not a 95%% one -- at %d windows no procedure "
+                "delivers the nominal level, and saying 95%% was the defect."
+                % (r["t_critical"], r["windows"], r["df"],
+                   100.0 * cov["measured"], cov["reps"], cov["population"],
+                   100.0 * ctx.coverage[(slug, scope, r["domain"])]
+                   ["old_bca_b1000"]["coverage"],
+                   100.0 * cov["measured"], r["windows"]))
         rows.append(row)
     return rows
 
@@ -293,6 +396,7 @@ def _clean_row(row: Dict[str, Any], ctx: _Context,
     sigma = 0.0 if bitwise else None
     new["uncertainty"] = _uncertainty(
         clean, None, ctx.proto.sigma_run_gate,
+        ctx=ctx, slug=SERIES[row["id"]], scope="clean17",
         sigma_override=sigma, sigma_runs=det.get("run_count") if bitwise else None,
         sigma_note=("sigma_run is exactly 0.0 on any window subset because the cold runs "
                     "are bitwise identical (%s, one distinct content hash)."
@@ -300,7 +404,7 @@ def _clean_row(row: Dict[str, Any], ctx: _Context,
                    ("sigma_run is not quoted on this scope: the runs are not bitwise "
                     "identical and per-run clean-scope means are not recoverable from "
                     "the published panel-scope run means."))
-    new["by_domain"] = _by_domain(clean)
+    new["by_domain"] = _by_domain(clean, ctx, SERIES[row["id"]], "clean17")
     ms = dict(new["measurement_scope"])
     ms.update({
         "scored_positions": summary["n"],
@@ -411,8 +515,9 @@ def apply(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "joint_enrich: %s per-window mean %.17g does not reproduce the "
                     "published value %.17g" % (mid, recomputed, row["metric"]["value"]))
             row["uncertainty"] = _uncertainty(
-                pw, row["determinism"].get("run_means"), ctx.proto.sigma_run_gate)
-            row["by_domain"] = _by_domain(pw)
+                pw, row["determinism"].get("run_means"), ctx.proto.sigma_run_gate,
+                ctx=ctx, slug=SERIES[mid], scope="panel25")
+            row["by_domain"] = _by_domain(pw, ctx, SERIES[mid], "panel25")
             row["protocol"] = dict(proto_block)
             ms = row["measurement_scope"]
             ms["scope_name"] = "panel25"

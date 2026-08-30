@@ -444,8 +444,22 @@ one-position shift 7.903 nats against a mean teacher entropy of 1.770 — 4.5×.
 
 Our `kld-report.json` has carried a `per_domain` block all along; we simply never
 published it. Now every enriched registry row carries `by_domain` with a
-window-clustered SE and a BCa interval, and invariant JOINT-006 requires the
+window-clustered SE and an interval, and invariant JOINT-006 requires the
 per-domain positions to sum to `measurement_scope.scored_positions`.
+
+**The interval on a stratum is not the interval on the panel, and since
+2026-08-30 it is not BCa.** A domain has 5 to 7 windows. Simulated against a
+lognormal fitted to each cell's own windows, 4000 replications per cell, the BCa
+interval those cells originally published measures **81.3%** coverage while
+saying 95% — and it misses in the harmful direction, with truth landing *above*
+the interval far more often than below, so the endpoints understate divergence.
+Raising B does not touch it (81.5% at B=20000): the deficit is small-`g`, not
+Monte Carlo. The published interval is now a Student-t interval on `log(mean)`
+with the delta-method SE, exponentiated (`interval_method: delta_t_log`), which
+measures **92.0%**, is non-negative by construction, and uses no resampling at
+all. Each cell carries `coverage_measured` stating what it actually delivers,
+because 92.0% is not 95% and at five windows nothing is. See
+`registry/tools/coverage_sim.py` and `docs/PUBLISHED-CORRECTIONS.md` §3.
 
 ### 5.3 Window block bootstrap with BCa
 

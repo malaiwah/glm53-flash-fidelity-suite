@@ -1,0 +1,178 @@
+{
+ "count": 42,
+ "endpoints": {
+  "bf16-floor-crossstack|clean17|axis1_general": [
+   0.00618281829293444,
+   0.0169481966706246
+  ],
+  "bf16-floor-crossstack|clean17|axis2_legal": [
+   0.00680953316828439,
+   0.0134894053090631
+  ],
+  "bf16-floor-crossstack|clean17|axis3_code_agentic": [
+   0.00582858230646766,
+   0.0127606142875556
+  ],
+  "bf16-floor-crossstack|panel25|axis1_general": [
+   0.00618281829293444,
+   0.0169481966706246
+  ],
+  "bf16-floor-crossstack|panel25|axis2_legal": [
+   0.00868958577767956,
+   0.0201555253222197
+  ],
+  "bf16-floor-crossstack|panel25|axis3_code_agentic": [
+   0.00720143663925755,
+   0.015295580879197
+  ],
+  "bf16-floor-crossstack|panel25|axis4_reasoning_termination": [
+   0.0106904621661296,
+   0.0199229260934004
+  ],
+  "brandonmusic-4bpw|clean17|axis1_general": [
+   0.0130863484603428,
+   0.0632458995868885
+  ],
+  "brandonmusic-4bpw|clean17|axis2_legal": [
+   0.0176522002832597,
+   0.03054002779953
+  ],
+  "brandonmusic-4bpw|clean17|axis3_code_agentic": [
+   0.0131380905015073,
+   0.0274139026615211
+  ],
+  "brandonmusic-4bpw|panel25|axis1_general": [
+   0.0130863484603428,
+   0.0632458995868885
+  ],
+  "brandonmusic-4bpw|panel25|axis2_legal": [
+   0.0206921714436851,
+   0.0381768041762928
+  ],
+  "brandonmusic-4bpw|panel25|axis3_code_agentic": [
+   0.0137852150441904,
+   0.0266172611807926
+  ],
+  "brandonmusic-4bpw|panel25|axis4_reasoning_termination": [
+   0.0131347396422671,
+   0.0231959596843492
+  ],
+  "fp8-crossstack|clean17|axis1_general": [
+   0.0109185877361317,
+   0.0308080190222817
+  ],
+  "fp8-crossstack|clean17|axis2_legal": [
+   0.0133782494588542,
+   0.0312770895245161
+  ],
+  "fp8-crossstack|clean17|axis3_code_agentic": [
+   0.00937378879574877,
+   0.018829245106684
+  ],
+  "fp8-crossstack|panel25|axis1_general": [
+   0.0109185877361317,
+   0.0308080190222817
+  ],
+  "fp8-crossstack|panel25|axis2_legal": [
+   0.016162669006654,
+   0.0333109277622976
+  ],
+  "fp8-crossstack|panel25|axis3_code_agentic": [
+   0.01292955316766,
+   0.0336722869646146
+  ],
+  "fp8-crossstack|panel25|axis4_reasoning_termination": [
+   0.0134197293325685,
+   0.0234153924479643
+  ],
+  "k6-sealed|clean17|axis1_general": [
+   0.00652693605339505,
+   0.0180539141657523
+  ],
+  "k6-sealed|clean17|axis2_legal": [
+   0.00741764093831472,
+   0.0160690631627848
+  ],
+  "k6-sealed|clean17|axis3_code_agentic": [
+   0.00669197221005582,
+   0.01470304709955
+  ],
+  "k6-sealed|panel25|axis1_general": [
+   0.00652693605339505,
+   0.0180539141657523
+  ],
+  "k6-sealed|panel25|axis2_legal": [
+   0.00945059955210543,
+   0.0229641193662481
+  ],
+  "k6-sealed|panel25|axis3_code_agentic": [
+   0.0075841382045903,
+   0.0158980178094747
+  ],
+  "k6-sealed|panel25|axis4_reasoning_termination": [
+   0.0109347444662552,
+   0.0194687742946016
+  ],
+  "k6-streaming|clean17|axis1_general": [
+   0.00652904155193087,
+   0.0179698106065556
+  ],
+  "k6-streaming|clean17|axis2_legal": [
+   0.00748432508780676,
+   0.0160678085083828
+  ],
+  "k6-streaming|clean17|axis3_code_agentic": [
+   0.00661136111139256,
+   0.0146455765393629
+  ],
+  "k6-streaming|panel25|axis1_general": [
+   0.00652904155193087,
+   0.0179698106065556
+  ],
+  "k6-streaming|panel25|axis2_legal": [
+   0.00948764630182324,
+   0.0231152816895481
+  ],
+  "k6-streaming|panel25|axis3_code_agentic": [
+   0.00752306464090629,
+   0.0157773248722071
+  ],
+  "k6-streaming|panel25|axis4_reasoning_termination": [
+   0.0108991642999101,
+   0.0194574823056433
+  ],
+  "k8-streaming|clean17|axis1_general": [
+   0.00597953663624455,
+   0.0171856256903807
+  ],
+  "k8-streaming|clean17|axis2_legal": [
+   0.00676907665294915,
+   0.0140421676005723
+  ],
+  "k8-streaming|clean17|axis3_code_agentic": [
+   0.00633166765827416,
+   0.0142031683941756
+  ],
+  "k8-streaming|panel25|axis1_general": [
+   0.00597953663624455,
+   0.0171856256903807
+  ],
+  "k8-streaming|panel25|axis2_legal": [
+   0.00846119653533074,
+   0.0215529348993126
+  ],
+  "k8-streaming|panel25|axis3_code_agentic": [
+   0.00630852752896403,
+   0.013400582816622
+  ],
+  "k8-streaming|panel25|axis4_reasoning_termination": [
+   0.0101183551441137,
+   0.0193313666457206
+  ]
+ },
+ "procedure": "jointstd.stats.domain_table(b=1000, seed=20260829, interval='bca'), numpy PCG64, rounded to 15 significant digits",
+ "recorded_from": "registry/data/measurements.jsonl at commit ec6224b5210f47302095230bb0ffb1df79ded8d5",
+ "schema_version": "quant-fidelity-registry/v1",
+ "title": "The per-domain BCa endpoints as published before the 2026-08-30 reseed",
+ "why": "A change to published numbers that cannot reproduce the numbers it replaced is a replacement nobody can audit. selftest_stat01_reseed.py T4 regenerates every endpoint below from the current tree and asserts it still matches, so the delta stays attributable to the change rather than to drift."
+}

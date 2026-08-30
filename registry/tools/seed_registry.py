@@ -18,25 +18,83 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import registry_lib as L  # noqa: E402
 import joint_enrich  # noqa: E402
+import harness_id as H  # noqa: E402
 
 V = L.SCHEMA_VERSION
+
+# ---------------------------------------------------------------------------
+# HARNESS IDENTITY (2026-08-30)
+# ---------------------------------------------------------------------------
+# Which code produced which number. See tools/harness_id.py for the boundary and
+# why it is drawn where it is.
+#
+# These three are PINNED LITERALS, not readings of the current environment, and
+# that is deliberate. `make reseed-check` must give the same answer on python 3.9
+# and 3.12 -- it is the integrity gate that proves the rows are a function of
+# their receipts, and a gate that fails on a different interpreter is a gate
+# nobody runs. A harness block is a historical record of the run that produced
+# the numbers, exactly like a receipt digest; it is not a probe of whoever is
+# running `make check` today. The code digests, by contrast, ARE read from the
+# bytes, because those bytes are in the repository and are the same everywhere.
+HARNESS_TOOL_VERSIONS = {"python": "3.9.6", "numpy": "2.0.2", "torch": None}
+HARNESS_REPOSITORY = {
+    "url": "https://github.com/malaiwah/glm53-flash-fidelity-suite",
+    # The tree the estimator was read from when these intervals were computed.
+    # commit_role=parent, dirty=true: a change cannot record its own sha, so the
+    # honest pointer is the commit this work was based on, and the code_digests
+    # -- which are of committed bytes -- are the identity. Every measurement made
+    # by RUNNING the committed tooling records commit_role=exact.
+    "commit": "ec6224b5210f47302095230bb0ffb1df79ded8d5",
+    "commit_role": "parent",
+    "dirty": True,
+}
+HARNESS_UNRECORDED_DETAIL = (
+    "metric.value on this row was produced before this registry recorded harness "
+    "identity (schema/harness-grandfather.json, frozen 2026-08-30), so there is no "
+    "content digest of the code that computed it. The row is grandfathered under "
+    "HARN-001 and is NOT retroactively invalidated: its receipt is still hashed and "
+    "still verifiable. What is missing is the ability to answer 'was this number "
+    "produced before or after defect X was fixed' in one field test. Digests are not "
+    "reconstructed from today's checkout, because today's files are not the files that "
+    "produced this row and a plausible-looking digest set would be a fabricated "
+    "provenance record.")
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
 
-def disc(code, severity, detail, affects=False):
-    return {"code": code, "severity": severity, "detail": detail, "affects_comparability": affects}
+def disc(code, severity, detail, affects=False, provenance=False, sources=None):
+    """One disclosure.
+
+    PROC-01. `provenance=True` marks a disclosure that claims HOW an artifact was
+    produced or WHERE it came from -- a mechanism, a lineage, a code path, an
+    inherited config -- as opposed to describing the record. That marking obliges
+    `sources` (PROV-014), each pinned (PROV-015). Until this existed a metric
+    needed a hashed receipt and an assertion needed nothing, so a prose provenance
+    claim reached two dataset cards and two registry rows uncited and validated
+    clean.
+    """
+    d = {"code": code, "severity": severity, "detail": detail, "affects_comparability": affects}
+    if provenance:
+        d["asserts_provenance"] = True
+        d["sources"] = list(sources or [])
+    elif sources:
+        d["sources"] = list(sources)
+    return d
 
 
 NONE_DISC = [disc("no_known_deviations", "info", "No deviation from this registry's default protocol is known for this record.")]
 
 
-def src(kind, uri, sha256=None, note=None):
+def src(kind, uri, sha256=None, note=None, lines=None):
     d = {"kind": kind, "uri": uri}
     if sha256:
         d["sha256"] = sha256
+    if lines:
+        # Only ever with a COMMIT-pinned uri: an anchor against a branch is worse
+        # than none, because it still reads as precision after the lines have moved.
+        d["lines"] = lines
     if note:
         d["note"] = note
     return d
@@ -3428,6 +3486,13 @@ ARTIFACTS += [
                   "routed-expert branch at 317-333 whose `continue` on 333 skips the trellis "
                   "encoder that resumes on 334, and the config path at 373-378 where "
                   "quantization_config is popped ONLY in BF16 mode")],
+             # PROC-01. This is a MECHANISM claim -- "a direct cast, not a
+             # dequantization" -- and it decides this artifact's reference_kind,
+             # which decides whether a KL number measured against it means what it
+             # says. It was published as prose with nothing attached, and the
+             # validator had nothing to object to, because only metric rows have
+             # ever needed a receipt. Now it carries the two line-anchored,
+             # commit-pinned citations it was always resting on.
              [disc("record_note", "info",
                    "Every tensor is bf16 and comes from the trained checkpoint by a direct "
                    "cast: export_fruit.py FRUIT_BF16=1 reads the annealed state dict and "
@@ -3435,7 +3500,21 @@ ARTIFACTS += [
                    "entirely. No dequantization step exists anywhere in the exporter, so this "
                    "is reference_kind native_bf16 and NOT dequantized_from_quant. The "
                    "underlying checkpoint did go through a 500-step QNOISE quantization-aware "
-                   "anneal before export; that is a property of the model, not of these bytes.")],
+                   "anneal before export; that is a property of the model, not of these bytes.",
+                   provenance=True,
+                   sources=[
+                       src("github_file",
+                           "https://github.com/malaiwah/proxy-fruit/blob/%s/export_fruit.py"
+                           % PROXY_FRUIT_PIN, None,
+                           "the unconditional bf16() helper: `sd[key].to(torch.bfloat16)`. "
+                           "There is no dequantize path in the file for it to be an "
+                           "alternative to.", lines="262-266"),
+                       src("github_file",
+                           "https://github.com/malaiwah/proxy-fruit/blob/%s/export_fruit.py"
+                           % PROXY_FRUIT_PIN, None,
+                           "the FRUIT_BF16=1 routed-expert branch, whose `continue` on 333 "
+                           "skips the trellis encoder that resumes on 334", lines="317-333"),
+                   ])],
              availability={"status": "public",
                            "uri": "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit-bf16"},
              derived_from_artifact_ref=None, cross_refs=lair(),
@@ -3468,6 +3547,11 @@ ARTIFACTS += [
                   "210 `quant_method=modelopt / quant_algo=NVFP4 does not describe the actual "
                   "routed-expert storage`, line 230 `No experts remain NVFP4: "
                   "nvfp4_keep_per_layer = 0`")],
+             # PROC-01. Two provenance claims in one paragraph -- the stored bytes
+             # are not what config.json declares, and the declaration is INHERITED
+             # rather than authored -- and the second one is the load-bearing half:
+             # it is the difference between "the producer mislabelled this" and
+             # "a field was copied forward". Both are cited, both by commit.
              [disc("declared_scheme_mismatch", "caveat",
                    "config.json declares quantization_config quant_method=modelopt, "
                    "quant_algo=NVFP4, group_size 16, W4A4, producer "
@@ -3478,7 +3562,30 @@ ARTIFACTS += [
                    "(export_fruit.py 373-378 pops quantization_config ONLY under FRUIT_BF16, "
                    "then does cfg = dict(src_cfg)) -- which is why its ignore list still names "
                    "model.layers.78.eh_proj, a layer this 13-layer model does not have. The "
-                   "scope on this row describes the bytes."),
+                   "scope on this row describes the bytes.",
+                   provenance=True,
+                   sources=[
+                       src("github_file",
+                           "https://github.com/malaiwah/proxy-fruit/blob/%s/export_fruit.py"
+                           % PROXY_FRUIT_PIN, None,
+                           "`src_cfg = json.loads((SRC/'config.json').read_text())`, then "
+                           "`src_cfg.pop('quantization_config', None)` ONLY when FRUIT_BF16=1, "
+                           "then `cfg = dict(src_cfg)`. The non-BF16 path never pops it: that "
+                           "is the inheritance.", lines="373-378"),
+                       src("hf_file",
+                           "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit/blob/"
+                           "c1798e3676fa16b4a874381171adab1e3033fbd5/tier_bitmap.json",
+                           None,
+                           "keep_nvfp4 is an empty list for every layer: zero tensors are "
+                           "NVFP4, which is the claim about the stored bytes"),
+                       src("github_file",
+                           "https://github.com/malaiwah/proxy-fruit/blob/%s/"
+                           "EXLLAMAV3_SIQ_REVIEW.md" % PROXY_FRUIT_PIN, None,
+                           "the producer's own review, independently: `quant_method=modelopt "
+                           "/ quant_algo=NVFP4 does not describe the actual routed-expert "
+                           "storage` (210) and `No experts remain NVFP4: "
+                           "nvfp4_keep_per_layer = 0` (230)", lines="210-230"),
+                   ]),
               disc("unreadable_by_stock_loader", "caveat",
                    "The routed experts are stored as .rank0.{trellis,suh,svh,mcg} atoms. Stock "
                    "transformers 5.16.1 does not fail on them: it reports "
@@ -3657,6 +3764,72 @@ def build_measurements_fruit(artifacts_map):
     ]
 
 
+def stamp_harness(measurements):
+    """Attach the harness block, and mark what predates it.
+
+    Two populations, and the difference between them is the entire point:
+
+    * the 12 rows whose `uncertainty` / `by_domain` / `protocol` blocks are
+      DERIVED here, from per-window means this repository publishes, by code
+      this repository ships. Those get a RECORDED harness covering exactly those
+      three fields -- and deliberately NOT metric.value, which came from a GPU
+      run that predates the mechanism. Claiming metric.value would be the precise
+      failure the block exists to prevent;
+    * every row's metric.value, which is grandfathered and says so, on the row.
+    """
+    closure = H.digests(os.path.dirname(L.repo_root(__file__)),
+                        H.JOINT_DERIVATION_CLOSURE)
+    hid = H.compute_id(closure, HARNESS_TOOL_VERSIONS)
+    for rec in measurements:
+        covers = []
+        if rec.get("by_domain"):
+            covers += ["by_domain", "uncertainty"]
+        if rec.get("protocol"):
+            covers.append("protocol")
+        # The clean17 rows are the only ones whose HEADLINE this code computed:
+        # `_clean_row` re-reduces the published per-window means over the 17-window
+        # scope and writes the result into metric.value. The panel25 headline came
+        # off a GPU and is only CHECKED here, so it stays uncovered -- the
+        # difference between "this code produced the number" and "this code agrees
+        # with the number" is the whole distinction the block exists to carry.
+        derived_value = rec["id"].endswith(joint_enrich.CLEAN_SUFFIX)
+        if derived_value:
+            covers.append("metric.value")
+        if covers:
+            rec["harness"] = {
+                "harness_id": hid,
+                "recorded": True,
+                "boundary": H.BOUNDARY,
+                "covers": sorted(covers),
+                "repository": dict(HARNESS_REPOSITORY),
+                "code_digests": closure,
+                "tool_versions": dict(sorted(HARNESS_TOOL_VERSIONS.items())),
+                "note": (("Covers metric.value: this scope's headline is the equal-weight "
+                          "mean of the published per-window means over the clean17 window "
+                          "set, computed by the code digested below. The per-window means "
+                          "themselves come from the receipts named in provenance.sources."
+                          if derived_value else
+                          "Covers the LOCALLY DERIVED blocks only. metric.value came from a "
+                          "measurement run that predates harness recording and is "
+                          "grandfathered; see the harness_unrecorded disclosure.")
+                         + " Two rows share this code exactly when harness_id is equal; a "
+                           "differing id means read code_digests, because the boundary errs "
+                           "toward over-sensitivity on purpose."),
+            }
+        else:
+            rec["harness"] = {
+                "harness_id": None,
+                "recorded": False,
+                "covers": ["metric.value"],
+                "note": "No harness was recorded for the code that produced this value.",
+            }
+        ds = [d for d in rec["disclosures"] if d["code"] != "no_known_deviations"]
+        if not derived_value:
+            ds.append(disc("harness_unrecorded", "info", HARNESS_UNRECORDED_DETAIL))
+        rec["disclosures"] = ds or NONE_DISC
+    return measurements
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=os.path.join(L.repo_root(__file__), "data"))
@@ -3673,6 +3846,7 @@ def main():
     # registry/protocol/per-window/*.json, so `make reseed-check` still proves
     # the rows are a function of their receipts.
     measurements = joint_enrich.apply(measurements)
+    measurements = stamp_harness(measurements)
 
     # The clean17 scope is a derived PANEL with a derived REFERENCE, so it gets
     # its own comparability key and can never be tabled beside the parent panel.

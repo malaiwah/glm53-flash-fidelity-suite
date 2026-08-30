@@ -17,7 +17,9 @@ analysis/paired.<A>-vs-<B>.<scope>.json    paired per-window ranking with BCa
 
 Each analysis carries: the window-clustered SE, the naive SE and the design
 effect where the receipt has per-window `std`; percentile and BCa bootstrap
-intervals (B=5000, seed 20260829); the per-domain table with its own intervals;
+intervals (B=5000, seed 20260829); the per-domain table, whose intervals are
+Student-t on `log(mean)` rather than BCa because BCa measures 81.3% coverage at
+the 5-7 windows a stratum has (see `docs/PUBLISHED-CORRECTIONS.md` §3);
 `sigma_run` and the quadrature; the percentile-exceedance guard; and the refusal
 that pooled token percentiles are not derivable from per-window summaries.
 

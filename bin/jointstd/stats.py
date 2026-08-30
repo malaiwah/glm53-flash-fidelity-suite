@@ -41,6 +41,7 @@ they differ (``--allow-unequal-windows`` to override deliberately), and
 from __future__ import annotations
 
 import math
+import hashlib
 import random
 import statistics
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -50,7 +51,29 @@ from . import chi2
 MIN_EXCEEDANCES = 100
 BOOTSTRAP_B = 5000
 BOOTSTRAP_SEED = 20260829
+DOMAIN_BOOTSTRAP_B = 20000
+# Below this many windows a BCa interval on the raw mean does not deliver its
+# nominal level and is not published as though it did.  Measured, not assumed:
+# registry/tools/coverage_sim.py, 4000 reps per cell against a lognormal fitted
+# to each cell's own windows.
+SMALL_G = 10
 POSITION_BUCKETS = ((0, 256), (256, 1024), (1024, 4096), (4096, 1 << 30))
+
+
+def derive_seed(seed: int, label: str) -> int:
+    """A per-stratum seed that is a deterministic function of the stratum name.
+
+    STAT-17.  Bootstrapping every domain from ONE seed gives identical resample
+    index streams wherever the window counts are equal, so the domains' intervals
+    share their Monte-Carlo error -- measured on the real panel at |r| up to 0.57.
+    That correlation is not merely unwanted, it is arbitrary: it pairs domain A's
+    k-th window with domain B's k-th, and those are unrelated windows.
+
+    Derived rather than drawn, so the value stays reproducible from the row: the
+    published cell records the seed it actually used.
+    """
+    h = int.from_bytes(hashlib.sha256(label.encode("utf-8")).digest()[:8], "big")
+    return int(seed ^ (h & 0x7FFFFFFF))
 
 
 # ============================================================ cluster-robust
@@ -278,6 +301,182 @@ def window_block_bootstrap(
     }
 
 
+def delta_t_log(
+    window_means: Dict[str, float],
+    alpha: float = 0.05,
+) -> Dict[str, Any]:
+    """Student-t interval on log(mean) with the delta-method SE, exponentiated.
+
+    THE PUBLISHED PER-DOMAIN INTERVAL, and the reason it is this and not
+    ``bootstrap_t_log``, measured rather than argued:
+
+      * coverage is the same to within Monte-Carlo error (92.0% vs 92.2% over the
+        42 real cells, 4000 reps each) -- both fix STAT-01's 81.3%;
+      * ``bootstrap_t_log`` blows up at g=5. On the real
+        k8-8bpw-stream/clean17/axis2_legal cell -- five ordinary windows, cv 0.47,
+        nothing pathological -- it returns an upper endpoint of 0.187 nats around
+        a mean of 0.0103, eighteen times the estimate. That is not the data: it is
+        resamples that draw four copies of one window, whose studentizing
+        denominator collapses and whose t is enormous. Publishing it would replace
+        an interval that is too NARROW with one that is absurd, and a reader would
+        take 0.187 nats as a real possibility;
+      * it has NO resample stream, so STAT-17 cannot recur here. A derived
+        per-domain seed stops the strata from sharing Monte-Carlo error; having no
+        Monte-Carlo error is strictly better than sharing none of it, and it also
+        removes the 6.10%-at-B=1000 seed noise that made two honest reseeds
+        disagree;
+      * it is non-negative by construction, like the bootstrap-t on log and unlike
+        the bootstrap-t on the raw mean, which puts a negative lower bound on a KL
+        divergence on 5 of these 42 cells.
+
+    It is NOT nominal. 92.0% is what it measures and 92.0% is what the row says,
+    which is the actual content of the STAT-01 fix.
+    """
+    wids = sorted(window_means)
+    vals = [float(window_means[w]) for w in wids]
+    g = len(vals)
+    if g < 2:
+        raise ValueError("need at least 2 windows for an interval")
+    m = statistics.fmean(vals)
+    if m <= 0.0:
+        raise ValueError("delta_t_log needs a positive mean; got %r" % m)
+    se = statistics.stdev(vals) / math.sqrt(g)
+    se_log = se / m
+    t = chi2.student_t_ppf(1.0 - alpha / 2.0, g - 1)
+    log_m = math.log(m)
+    return {
+        "statistic": "log_mean_kld",
+        "observed": m,
+        "n_windows": g,
+        "df": g - 1,
+        "se": se,
+        "se_log": se_log,
+        "t_critical": t,
+        "ci95_delta_t_log": [math.exp(log_m - t * se_log), math.exp(log_m + t * se_log)],
+        "windows": wids,
+    }
+
+
+def bootstrap_t_log(
+    window_means: Dict[str, float],
+    b: int = DOMAIN_BOOTSTRAP_B,
+    seed: int = BOOTSTRAP_SEED,
+    alpha: float = 0.05,
+    backend: str = "auto",
+) -> Dict[str, Any]:
+    """Bootstrap-t on log(mean), studentized with the delta-method SE.
+
+    NOT the published per-domain interval -- ``delta_t_log`` is.  Kept because it
+    is the right interval at moderate g, because the review that opened STAT-01
+    recommended it and the record should show what it actually does, and because
+    ``registry/tools/selftest_stat01_reseed.py`` uses it to demonstrate the
+    failure that ruled it out: at g=5 a resample that draws four copies of one
+    window has a studentizing denominator near zero and an enormous t, and the
+    exponentiated upper endpoint follows it.  On the real
+    k8-8bpw-stream/clean17/axis2_legal cell -- five ordinary windows, cv 0.47 --
+    that produces an upper endpoint of 0.187 nats around a mean of 0.0103.
+
+    WHY NOT BCa EITHER.  BCa is the right interval on this panel's 25 windows and
+    it is what the panel block publishes.  On a DOMAIN it is not: g runs 5 to 7,
+    and at that size BCa on the raw mean measures 81.3% coverage while claiming
+    95% (registry/tools/coverage_sim.py, 4000 reps per cell).  Raising B does not
+    touch it -- measured 81.5% at B=20000 -- because the deficit is small-g, not
+    Monte Carlo.  It also fails in the harmful direction: truth lands ABOVE the
+    interval far more often than below, so the intervals systematically
+    understate divergence and produce false SEPARATIONS between domains.
+
+    WHY log AND NOT THE RAW MEAN.  Bootstrap-t on the raw mean measures the same
+    coverage but puts a NEGATIVE lower endpoint on every one of the 42 cells at
+    least once across the simulation, and on 5 cells at their published values.
+    A negative lower bound on a KL divergence is a worse publication defect than
+    the undercoverage it fixes.  On the log scale the interval is non-negative by
+    construction.
+
+    Resamples that are degenerate (all g draws the same window, hence zero
+    within-resample spread) carry no studentized value and are excluded from the
+    t distribution rather than being given an infinite one; the count is
+    reported so an unusable cell is visible instead of silently thin.
+    """
+    wids = sorted(window_means)
+    vals = [float(window_means[w]) for w in wids]
+    g = len(vals)
+    if g < 2:
+        raise ValueError("need at least 2 windows to bootstrap")
+    observed = statistics.fmean(vals)
+    if observed <= 0.0:
+        raise ValueError("bootstrap_t_log needs a positive mean; got %r" % observed)
+    se = statistics.stdev(vals) / math.sqrt(g)
+    se_log = se / observed
+    log_obs = math.log(observed)
+
+    chosen = backend
+    if backend in ("auto", "numpy"):
+        try:
+            import numpy as np  # noqa: F401
+        except Exception:
+            if backend == "numpy":
+                raise RuntimeError(
+                    "backend='numpy' was requested and numpy is not importable. The "
+                    "stdlib backend draws a different resample stream from the same "
+                    "seed, so falling back would silently change the CI endpoints this "
+                    "registry publishes.")
+            chosen = "stdlib"
+        else:
+            chosen = "numpy"
+
+    if chosen == "numpy":
+        import numpy as np
+
+        arr = np.asarray(vals, dtype=np.float64)
+        rng = np.random.default_rng(seed)
+        # One (b, g) block draw, NOT b calls of size g. Verified equal: PCG64 fills
+        # row-major, so the two consume the identical stream and this function stays
+        # reproducible against window_block_bootstrap's draw pattern from the same
+        # seed. Vectorised rather than looped because the coverage simulator must
+        # measure THIS code -- a per-row `.mean()` and a `mean(axis=1)` differ in the
+        # last ULP (pairwise summation over a different shape), which is enough to
+        # move a t at the order statistic the quantile lands on.
+        xb = arr[rng.integers(0, g, size=(b, g))]
+        mb = xb.mean(axis=1)
+        seb = xb.std(axis=1, ddof=1) / math.sqrt(g)
+        keep = (mb > 0.0) & (seb > 0.0)
+        t = (np.log(mb[keep]) - log_obs) / (seb[keep] / mb[keep])
+        tlo, thi = (float(x) for x in np.quantile(t, [alpha / 2.0, 1.0 - alpha / 2.0]))
+        n_used = int(keep.sum())
+    else:
+        rnd = random.Random(seed)
+        tvals = []
+        for _ in range(b):
+            samp = [vals[rnd.randrange(g)] for _ in range(g)]
+            mb = statistics.fmean(samp)
+            seb = statistics.stdev(samp) / math.sqrt(g)
+            if mb > 0.0 and seb > 0.0:
+                tvals.append((math.log(mb) - log_obs) / (seb / mb))
+        tvals.sort()
+        tlo = quantile_linear(tvals, alpha / 2.0)
+        thi = quantile_linear(tvals, 1.0 - alpha / 2.0)
+        n_used = len(tvals)
+
+    return {
+        "statistic": "log_mean_kld",
+        "observed": observed,
+        "b": b,
+        "seed": seed,
+        "n_windows": g,
+        "backend": chosen,
+        "se_log": se_log,
+        "t_low": tlo,
+        "t_high": thi,
+        "resamples_used": n_used,
+        # thi goes to the LOW endpoint: the bootstrap-t interval is
+        # [theta - t_{1-a/2} se, theta - t_{a/2} se], which is the pivot
+        # reversal that makes it second-order accurate.
+        "ci95_t_log": [math.exp(log_obs - thi * se_log),
+                       math.exp(log_obs - tlo * se_log)],
+        "windows": wids,
+    }
+
+
 # ================================================================= sigma_run
 def sigma_run(run_means: Sequence[float]) -> Dict[str, Any]:
     """Run-to-run spread, and the honest statement of how many runs made it.
@@ -465,15 +664,34 @@ def guard_pooled_percentiles(per_window: Sequence[Dict[str, Any]]) -> Dict[str, 
 # ================================================================ per-domain
 def domain_table(
     per_window: Sequence[Dict[str, Any]],
-    b: int = 1000,
+    b: int = DOMAIN_BOOTSTRAP_B,
     seed: int = BOOTSTRAP_SEED,
     backend: str = "auto",
+    interval: str = "delta_t_log",
 ) -> List[Dict[str, Any]]:
     """Per-domain stratified means with window-clustered SE and a bootstrap CI.
 
     ``per_window`` items need ``window_id``, ``domain``, ``count``, ``mean``
     and optionally ``std``.
+
+    STAT-01 + STAT-17, fixed together because they are one decision.
+
+    *The seed.*  Each domain now bootstraps from ``derive_seed(seed, domain)``
+    instead of the shared ``seed``, so the strata stop sharing Monte-Carlo error,
+    and the seed it used is returned on the row so the endpoints stay
+    reproducible from the published record.
+
+    *The interval.*  ``interval="t_log"`` (the default, and what this registry
+    publishes) is bootstrap-t on log(mean): 92.3% measured coverage at g=5-7
+    against BCa's 81.6%.  ``interval="bca"`` reproduces the pre-2026-08-30
+    procedure and is kept so the old numbers can be regenerated and diffed, not
+    because it is a supported choice for a small stratum.
+
+    Neither change makes the interval nominal.  ``coverage_measured`` on the
+    published cell is what closes STAT-01: the row states what it measures.
     """
+    if interval not in ("delta_t_log", "t_log", "bca"):
+        raise ValueError("interval must be 'delta_t_log', 't_log' or 'bca', got %r" % interval)
     by_domain: Dict[str, List[Dict[str, Any]]] = {}
     for w in per_window:
         by_domain.setdefault(str(w.get("domain", "unknown")), []).append(w)
@@ -484,30 +702,61 @@ def domain_table(
         row: Dict[str, Any] = {"domain": dom, "windows": len(ws)}
         row.update(summ)
         if len(ws) >= 2:
-            # STAT-17 / STAT-01. Every domain is bootstrapped with the SAME seed, so
-            # with equal window counts the resample index streams are identical across
-            # domains and these intervals share their Monte-Carlo error (measured on the
-            # real panel: replicate-mean correlation up to |r| = 0.57, arbitrary, since
-            # it pairs domain A's k-th window with domain B's k-th -- unrelated windows).
-            #
-            # NOT fixed here on purpose. Deriving a per-domain seed moves 79 PUBLISHED
-            # by_domain endpoints by up to 24.15%, and that movement is not the seed: it
-            # is the raw MC instability of a BCa bootstrap at B=1000 over g=5..7 windows,
-            # which is the same thing that makes these intervals cover 78-83% while
-            # claiming 95% (STAT-01). Re-rolling the dice would publish a second wrong
-            # interval. Both are written up with the exact patch and the measured deltas
-            # in docs/REVIEW-DEFERRED.md; they need ONE operator-approved reseed.
-            bs = window_block_bootstrap(
-                {w["window_id"]: float(w["mean"]) for w in ws},
-                b=b, seed=seed, backend=backend,
-            )
-            row["ci95_percentile"] = bs["ci95_percentile"]
-            row["ci95_bca"] = bs["ci95_bca"]
+            dseed = derive_seed(seed, dom)
+            means = {w["window_id"]: float(w["mean"]) for w in ws}
             row["bootstrap_b"] = b
+            row["bootstrap_seed"] = dseed
+            row["small_g"] = len(ws) < SMALL_G
+            if interval == "delta_t_log":
+                dt = delta_t_log(means)
+                row["ci95_t_log"] = dt["ci95_delta_t_log"]
+                row["ci95_bca"] = None
+                row["ci95_percentile"] = None
+                row["interval_method"] = "delta_t_log"
+                row["interval_kind"] = "t"
+                row["t_critical"] = dt["t_critical"]
+                row["df"] = dt["df"]
+                # No resample stream, so no seed and no B to report. Reported as
+                # null rather than omitted: "this interval used no bootstrap" is a
+                # fact about it, and a missing key would read as an oversight.
+                row["bootstrap_b"] = None
+                row["bootstrap_seed"] = None
+            elif interval == "t_log":
+                bt = bootstrap_t_log(means, b=b, seed=dseed, backend=backend)
+                row["ci95_t_log"] = bt["ci95_t_log"]
+                row["ci95_bca"] = None
+                row["ci95_percentile"] = None
+                row["interval_method"] = "window_block_bootstrap_t_log"
+                row["interval_kind"] = "t"
+                row["resamples_used"] = bt["resamples_used"]
+            else:
+                bs = window_block_bootstrap(means, b=b, seed=dseed, backend=backend)
+                row["ci95_percentile"] = bs["ci95_percentile"]
+                row["ci95_bca"] = bs["ci95_bca"]
+                row["ci95_t_log"] = None
+                row["interval_method"] = "window_block_bootstrap_bca"
+                row["interval_kind"] = "bca"
         else:
             row["ci95_percentile"] = None
             row["ci95_bca"] = None
+            row["ci95_t_log"] = None
+            row["interval_method"] = "none"
+            row["interval_kind"] = "none"
+            row["bootstrap_b"] = None
+            row["bootstrap_seed"] = None
             row["note"] = "a single window cannot be block-bootstrapped"
+        # Every consumer of this table gets the caveat, not just the registry.
+        # bin/joint_standard.py calls this function, so a contributor running the
+        # public CLI would otherwise print an interval at g=5 with nothing beside
+        # it saying what that interval is worth -- which is the state STAT-01
+        # found the registry in.
+        if row.get("small_g") and row.get("interval_kind") not in (None, "none"):
+            row["coverage_note"] = (
+                "%d windows. A 95%%-labelled interval on this few clusters does not "
+                "deliver 95%%: measured 81.3%% for BCa and 92.0%% for this one over the "
+                "42 real cells in registry/tools/coverage_sim.py. Quote it as what it "
+                "measures, or quote se_clustered_window and build your own."
+                % row["windows"])
         rows.append(row)
     return rows
 

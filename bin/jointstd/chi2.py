@@ -114,3 +114,91 @@ def binom_sf_two_sided(k: int, n: int) -> float:
             term = term * Decimal(n - i) / Decimal(i + 1)
             total += term
         return min(1.0, float(2 * total))
+
+
+# ============================================================== Student's t
+# Added 2026-08-30 for the per-domain interval. It needs an EXACT quantile, not
+# a normal approximation: at g=5 the 97.5% point is 2.7764 against the normal's
+# 1.9600, so approximating it would understate the interval by 42% -- the same
+# direction and roughly the same size as the undercoverage the interval is being
+# rebuilt to fix.
+
+def _betacf(a: float, b: float, x: float) -> float:
+    """Continued fraction for the incomplete beta, by modified Lentz."""
+    tiny = 1e-300
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    h = d
+    for m in range(1, 300):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        de = d * c
+        h *= de
+        if abs(de - 1.0) < 1e-16:
+            break
+    return h
+
+
+def betainc(a: float, b: float, x: float) -> float:
+    """Regularized incomplete beta I_x(a, b)."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    ln = (math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+          + a * math.log(x) + b * math.log1p(-x))
+    front = math.exp(ln)
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _betacf(a, b, x) / a
+    return 1.0 - math.exp(math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+                          + b * math.log1p(-x) + a * math.log(x)) * _betacf(b, a, 1.0 - x) / b
+
+
+def student_t_cdf(t: float, df: int) -> float:
+    """P(T <= t) for Student's t with `df` degrees of freedom."""
+    if df <= 0:
+        raise ValueError("df must be positive")
+    x = float(df) / (df + t * t)
+    tail = 0.5 * betainc(df / 2.0, 0.5, x)
+    return 1.0 - tail if t > 0 else tail
+
+
+def student_t_ppf(p: float, df: int) -> float:
+    """Inverse CDF, by bisection on the exact CDF.
+
+    Bisection rather than an asymptotic expansion (Hill's) because this value
+    multiplies a published endpoint: 200 halvings of a bracket that starts at
+    +-1e4 leave nothing at double precision, and the cost is microseconds on the
+    42 cells that use it. Verified against the textbook table in
+    registry/tools/selftest_stat01_reseed.py.
+    """
+    if not 0.0 < p < 1.0:
+        raise ValueError("p must be in (0, 1)")
+    lo, hi = -1e4, 1e4
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if student_t_cdf(mid, df) < p:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
