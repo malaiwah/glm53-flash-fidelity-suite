@@ -2,10 +2,24 @@
 
 **Status:** plan of record, 2026-08-30.
 
-Two numbers here are still pending: measured min/window under the layer-outer
-schedule, and measured peak memory. Everything else is arithmetic over published
-artifact sizes and observed JarvisLabs pricing. When the engine reports, the
-tables get real numbers and this paragraph goes away.
+**Measured 2026-08-30** (`766a7e8`). The layer-outer engine is built and
+bit-identical to the window-outer schedule on two architectures and two devices;
+`docs/GLM53-LAYER-OUTER.md` carries the digests. Measured on Fruit on an L4:
+peak CUDA allocated **10.409 -> 2.167 GB (4.80x)**, resident weights **9.144 ->
+1.471 GB**. The GLM-5.3 projection below is revised accordingly and is now an
+extrapolation from measurement rather than from arithmetic alone.
+
+Revised GLM-5.3 root capture: peak VRAM **~47-51 GB** (not 81.7 -- the engine
+streams whole layers, so only embed+head+norm, 3.81 GB, stays resident),
+**0.4-1.6 min/window** (not 13-26), **Stage C $1.08-3.52** (not $38-96). One
+H200 with ~90 GB spare.
+
+Two figures in that projection to distrust until the first `layer_load` line of
+a real Stage B run, per the engine's own report: the expert-fusion transient
+(bounded from a CPU RSS reading, and Fruit's routed set is 24x smaller at the
+same vocabulary), and a ~0.13 ms/tensor size-independent load overhead that
+extrapolates to ~12.5 min/run over GLM-5.3's 76,800 source expert tensors per
+layer -- the same order as the IO itself.
 
 ---
 
