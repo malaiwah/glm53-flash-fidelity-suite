@@ -141,9 +141,16 @@ bin/measure-cloud \
     --lane  streaming --spot --max-runtime 12h
 ```
 
-`--max-runtime` must exceed the estimated work, which `--dry-run` prints —
-8h does not cover the 8.35h a 25-window / 2-cold-run panel needs, and the
-runner refuses rather than paying for a run its own watchdog would kill.
+`--max-runtime` must exceed the estimated work, which `--dry-run` prints, and
+the runner refuses rather than paying for a run its own watchdog would kill.
+How much work that is depends on the **surface**, not just the panel:
+`engines.json` carries a measured minutes-per-window per surface (2.82 for
+`tr3-published`, 3.12 for `exl3hf`, 3.19 for `dione`), so a 25-window /
+2-cold-run streaming measurement of a third-party release is ~2.4-2.7 GPU-hours
+of scoring plus bootstrap, fetch and materialize — call it 3.5-4 h end to end.
+The 8.35 h figure quoted in older notes was the K6 **payload-store** path
+(7.35 min/window) and is superseded for this one; take the number `--dry-run`
+prints for your target rather than any constant in prose.
 
 Resolves the repo to an immutable commit, sizes and prices the instance, asks
 for confirmation, creates it, fetches weights and panel, measures, seals the
