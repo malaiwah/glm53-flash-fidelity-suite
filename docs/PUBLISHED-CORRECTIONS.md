@@ -290,6 +290,26 @@ measured coverage of the NEW interval on that cell.
 | `glm53.k6-6bpw-stream.brandonmusic-final25` | axis4_reasoning_termination | 6 | low | 0.0108991642999101 | 0.0108333067519636 | 0.60% | 94.0% |
 | `glm53.bf16-replay-floor.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | low | 0.00582858230646766 | 0.00579517332734868 | 0.57% | 92.0% |
 
+### The two published analysis surfaces that carried the old endpoints
+
+The registry is not the only place these 42 intervals appear, and a correction that
+leaves a second published copy disagreeing with the first is not a correction.
+
+* **`docs/joint-standard/analysis/*.json`** (12 analysis receipts, GitHub) — regenerated
+  by `bin/joint-standard analyze`, which reads `domain_table` and therefore picks the new
+  interval up automatically. Verified field by field: nothing moved outside `by_domain`'s
+  interval fields, plus two keys that had drifted behind earlier work
+  (`scope.window_sizes_declared`, `se_quadrature.ci95_total`). Every mean, SE, design
+  effect, panel bootstrap and sigma_run is byte-identical.
+* **`reports/clean-scope-recompute.json`** (GitHub **and** the
+  `GLM-5.3-Flash-fidelity-suite-v1` dataset) — regenerated. Diffed leaf by leaf against
+  the published copy: exactly 126 leaves changed, all of them interval fields (42 `ci95`,
+  42 `ci95_bca` now explicitly `null`, 42 new `interval_method`). **Zero** changes outside
+  them — every scope mean, every scope delta, every attributable subtraction is unchanged.
+  The emitter now names the interval it emits rather than writing a Student-t interval
+  into a key called `ci95_bca`, which would be the same class of mislabel this whole
+  section exists to remove.
+
 ### How to verify it yourself
 
 ```bash

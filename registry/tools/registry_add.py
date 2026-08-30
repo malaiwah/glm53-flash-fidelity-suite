@@ -220,7 +220,8 @@ def harness_from_produced_by(pb, source):
         raise Refuse(E_SCHEMA,
                      "produced_by.entrypoint %r is an absolute or escaping path. A published "
                      "harness records repository-relative paths: a receipt in this registry "
-                     "once pointed at /home/jl_fs on a filesystem that no longer exists."
+                     "once pointed into a rented box's home directory, on a filesystem that "
+                     "no longer exists."
                      % entry)
     digests = [{"role": "measurement_entrypoint", "path": entry, "sha256": esha}]
     digests += _ingest_digests()

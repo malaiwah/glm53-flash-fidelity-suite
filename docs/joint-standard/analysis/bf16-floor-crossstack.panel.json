@@ -47,71 +47,91 @@
   "bootstrap_oracle_kld_eval": null,
   "by_domain": [
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.006182818292934442,
-        0.016948196670624614
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.0060895045683846205,
+        0.021629867794710666
       ],
-      "ci95_percentile": [
-        0.006002907074628974,
-        0.016808161137359924
-      ],
+      "coverage_note": "7 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
+      "df": 6,
       "domain": "axis1_general",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.01147672334551312,
       "n": 14329,
       "n_clusters_window": 7,
       "se_clustered_window": 0.0029724902534535814,
+      "small_g": true,
+      "t_critical": 2.446911851144968,
       "windows": 7
     },
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.008689585777679565,
-        0.020155525322219738
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.006794780537746292,
+        0.024189875827579494
       ],
-      "ci95_percentile": [
-        0.008168862430061883,
-        0.01874677002240205
-      ],
+      "coverage_note": "6 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
+      "df": 5,
       "domain": "axis2_legal",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.012820487412096968,
       "n": 12282,
       "n_clusters_window": 6,
       "se_clustered_window": 0.003166440983445429,
+      "small_g": true,
+      "t_critical": 2.570581835636313,
       "windows": 6
     },
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.007201436639257549,
-        0.015295580879197029
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.007048987196160465,
+        0.01909704004925644
       ],
-      "ci95_percentile": [
-        0.007543752313677773,
-        0.015499331721419643
-      ],
+      "coverage_note": "6 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
+      "df": 5,
       "domain": "axis3_code_agentic",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.011602361431698821,
       "n": 12282,
       "n_clusters_window": 6,
       "se_clustered_window": 0.0022491963613079026,
+      "small_g": true,
+      "t_critical": 2.570581835636313,
       "windows": 6
     },
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.010690462166129629,
-        0.019922926093400375
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.009752444766981616,
+        0.023543070394310858
       ],
-      "ci95_percentile": [
-        0.010613111862931726,
-        0.019905888713042448
-      ],
+      "coverage_note": "6 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
+      "df": 5,
       "domain": "axis4_reasoning_termination",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.015152639824983528,
       "n": 12282,
       "n_clusters_window": 6,
       "se_clustered_window": 0.0025975104681862727,
+      "small_g": true,
+      "t_critical": 2.570581835636313,
       "windows": 6
     }
   ],
@@ -166,6 +186,7 @@
     "positions_per_window": 2047,
     "scope_file": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/window-selection.brandonmusic-final25.json",
     "scored_positions": 51175,
+    "window_sizes_declared": true,
     "windows": [
       "final-0000",
       "final-0001",
@@ -195,8 +216,10 @@
     ]
   },
   "se_quadrature": {
+    "ci95_total": null,
     "gate": 0.2,
     "gate_ok": true,
+    "interval_kind": null,
     "note": "sigma_run not estimable; SE_total = SE_stat",
     "ratio": null,
     "se_stat": 0.001341608627795298,

@@ -543,7 +543,7 @@
               "path": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Repository-relative. Never absolute: a published receipt once pointed at /home/jl_fs on a filesystem that no longer exists."
+                "description": "Repository-relative. Never absolute: a published receipt in this project once pointed into a rented GPU box's home directory, on a filesystem that no longer exists, and a reader following it got a hard failure aimed at someone else's machine."
               },
               "sha256": {
                 "$ref": "#/$defs/sha256"

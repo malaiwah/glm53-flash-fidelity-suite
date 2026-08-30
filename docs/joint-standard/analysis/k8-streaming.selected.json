@@ -39,63 +39,78 @@
   "bootstrap_oracle_kld_eval": null,
   "by_domain": [
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.0059795366362445515,
-        0.01718562569038074
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.0058259247582836925,
+        0.022178367108803897
       ],
-      "ci95_percentile": [
-        0.005646085358131822,
-        0.016981615566094167
-      ],
+      "coverage_note": "7 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
       "deff_window": 36.13350707225051,
+      "df": 6,
       "domain": "axis1_general",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.01136703558705986,
       "n": 14329,
       "n_clusters_window": 7,
       "pooled_std": 0.06183268351279173,
       "se_clustered_window": 0.0031050257891583354,
       "se_naive": 0.0005165473689207676,
+      "small_g": true,
+      "t_critical": 2.446911851144968,
       "windows": 7
     },
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.006769076652949154,
-        0.014042167600572347
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.005744997956524276,
+        0.01855347140430497
       ],
-      "ci95_percentile": [
-        0.006679410681023261,
-        0.013996586887571808
-      ],
+      "coverage_note": "5 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
       "deff_window": 48.599402704851514,
+      "df": 4,
       "domain": "axis2_legal",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.010324226620147562,
       "n": 10235,
       "n_clusters_window": 5,
       "pooled_std": 0.0316312094608124,
       "se_clustered_window": 0.0021796529038721297,
       "se_naive": 0.00031265967675551097,
+      "small_g": true,
+      "t_critical": 2.7764451051977908,
       "windows": 5
     },
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.0063316676582741635,
-        0.014203168394175621
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.00574299349246938,
+        0.019498139699993547
       ],
-      "ci95_percentile": [
-        0.006475675206545193,
-        0.014414377376599286
-      ],
+      "coverage_note": "5 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
       "deff_window": 12.784340860179379,
+      "df": 4,
       "domain": "axis3_code_agentic",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.010581951115570407,
       "n": 10235,
       "n_clusters_window": 5,
       "pooled_std": 0.06590872312399303,
       "se_clustered_window": 0.00232936821548005,
       "se_naive": 0.0006514768299595354,
+      "small_g": true,
+      "t_critical": 2.7764451051977908,
       "windows": 5
     }
   ],
@@ -150,6 +165,7 @@
     "positions_per_window": 2047,
     "scope_file": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/window-selection.brandonmusic-final25.json",
     "scored_positions": 34799,
+    "window_sizes_declared": true,
     "windows": [
       "final-0000",
       "final-0001",
@@ -171,8 +187,10 @@
     ]
   },
   "se_quadrature": {
+    "ci95_total": null,
     "gate": 0.2,
     "gate_ok": true,
+    "interval_kind": null,
     "note": "sigma_run not estimable; SE_total = SE_stat",
     "ratio": null,
     "se_stat": 0.0015000884254381746,

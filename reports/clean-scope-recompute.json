@@ -137,10 +137,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.011739694055877225,
        "se_clustered_window": 0.003195509740141823,
-       "ci95_bca": [
-        0.006526936053395054,
-        0.018053914165752267
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.006031125476419084,
+        0.022851525318857823
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -148,10 +150,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.014657753884586004,
        "se_clustered_window": 0.003796051219974006,
-       "ci95_bca": [
-        0.009450599552105435,
-        0.02296411936624807
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.0075326177293666,
+        0.02852258758644882
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -159,10 +163,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.012911952347228223,
        "se_clustered_window": 0.0022221512440916036,
-       "ci95_bca": [
-        0.007584138204590299,
-        0.01589801780947474
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.008295850432399202,
+        0.020096615142189404
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis4_reasoning_termination",
@@ -170,10 +176,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.015914753476750452,
        "se_clustered_window": 0.0023717048393595537,
-       "ci95_bca": [
-        0.010934744466255227,
-        0.019468774294601573
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.010849990527256308,
+        0.02334374187603909
+       ],
+       "ci95_bca": null
       }
      ]
     },
@@ -201,10 +209,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.011739694055877225,
        "se_clustered_window": 0.003195509740141823,
-       "ci95_bca": [
-        0.006526936053395054,
-        0.018053914165752267
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.006031125476419084,
+        0.022851525318857823
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -212,10 +222,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.011448683071708841,
        "se_clustered_window": 0.0024835064070602027,
-       "ci95_bca": [
-        0.007417640938314718,
-        0.016069063162784794
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.0062688576913827706,
+        0.020908489318014985
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -223,10 +235,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.011818518903627059,
        "se_clustered_window": 0.002369290861006419,
-       "ci95_bca": [
-        0.006691972210055817,
-        0.014703047099550021
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.006773826515079503,
+        0.020620160372346173
+       ],
+       "ci95_bca": null
       }
      ]
     }
@@ -269,10 +283,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.011760871660686201,
        "se_clustered_window": 0.003196150771600996,
-       "ci95_bca": [
-        0.00652904155193087,
-        0.0179698106065556
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.006048449189263251,
+        0.0228683581346213
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -280,10 +296,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.014675231714109943,
        "se_clustered_window": 0.0037888679988247833,
-       "ci95_bca": [
-        0.009487646301823235,
-        0.023115281689548062
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.007557084110599127,
+        0.028498085069711424
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -291,10 +309,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.012844753725643303,
        "se_clustered_window": 0.0021965157354470496,
-       "ci95_bca": [
-        0.00752306464090629,
-        0.01577732487220709
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.008275947250333834,
+        0.019935808346986782
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis4_reasoning_termination",
@@ -302,10 +322,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.015904367716931822,
        "se_clustered_window": 0.002375639210261843,
-       "ci95_bca": [
-        0.01089916429991012,
-        0.019457482305643287
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.010833306751963603,
+        0.023349187673425278
+       ],
+       "ci95_bca": null
       }
      ]
     },
@@ -334,10 +356,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.011760871660686201,
        "se_clustered_window": 0.003196150771600996,
-       "ci95_bca": [
-        0.00652904155193087,
-        0.0179698106065556
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.006048449189263251,
+        0.0228683581346213
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -345,10 +369,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.011469656467137568,
        "se_clustered_window": 0.0024738051808448425,
-       "ci95_bca": [
-        0.007484325087806757,
-        0.016067808508382842
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.006302044576494688,
+        0.020874657085863214
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -356,10 +382,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.01176349836660026,
        "se_clustered_window": 0.0023416558963500166,
-       "ci95_bca": [
-        0.006611361111392565,
-        0.014645576539362859
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.0067687669256710215,
+        0.020443885177400856
+       ],
+       "ci95_bca": null
       }
      ]
     }
@@ -402,10 +430,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.01136703558705986,
        "se_clustered_window": 0.0031050257891583354,
-       "ci95_bca": [
-        0.0059795366362445515,
-        0.01718562569038074
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.0058259247582836925,
+        0.022178367108803897
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -413,10 +443,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.013399716050517279,
        "se_clustered_window": 0.0035532932739297837,
-       "ci95_bca": [
-        0.008461196535330735,
-        0.021552934899312558
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.006777274002187509,
+        0.02649330544648718
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -424,10 +456,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.010502908041343519,
        "se_clustered_window": 0.0019035629741204728,
-       "ci95_bca": [
-        0.0063085275289640275,
-        0.013400582816622009
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.0065913357843431,
+        0.01673576964277084
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis4_reasoning_termination",
@@ -435,10 +469,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.014436630320889642,
        "se_clustered_window": 0.002594699602928338,
-       "ci95_bca": [
-        0.010118355144113711,
-        0.019331366645720594
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.00909529600277872,
+        0.022914734711037048
+       ],
+       "ci95_bca": null
       }
      ]
     },
@@ -467,10 +503,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.01136703558705986,
        "se_clustered_window": 0.0031050257891583354,
-       "ci95_bca": [
-        0.0059795366362445515,
-        0.01718562569038074
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.0058259247582836925,
+        0.022178367108803897
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -478,10 +516,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.010324226620147562,
        "se_clustered_window": 0.0021796529038721297,
-       "ci95_bca": [
-        0.006769076652949154,
-        0.014042167600572347
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.005744997956524276,
+        0.01855347140430497
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -489,10 +529,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.010581951115570407,
        "se_clustered_window": 0.00232936821548005,
-       "ci95_bca": [
-        0.0063316676582741635,
-        0.014203168394175621
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.00574299349246938,
+        0.019498139699993547
+       ],
+       "ci95_bca": null
       }
      ]
     }
@@ -534,10 +576,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.019568764759592266,
        "se_clustered_window": 0.005603126838726583,
-       "ci95_bca": [
-        0.010918587736131663,
-        0.030808019022281665
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.00971149355609811,
+        0.03943127305848894
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -545,10 +589,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.023988326217099922,
        "se_clustered_window": 0.005207217782918072,
-       "ci95_bca": [
-        0.016162669006653967,
-        0.033310927762297625
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.0137297280156348,
+        0.04191195878335815
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -556,10 +602,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.020173329632765,
        "se_clustered_window": 0.005305639742680075,
-       "ci95_bca": [
-        0.01292955316766,
-        0.03367228696461461
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.010260396731948847,
+        0.03966349831337333
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis4_reasoning_termination",
@@ -567,10 +615,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.01890501251568574,
        "se_clustered_window": 0.0028153357532178323,
-       "ci95_bca": [
-        0.013419729332568466,
-        0.02341539244796427
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.012892114908650224,
+        0.027722332662302753
+       ],
+       "ci95_bca": null
       }
      ]
     },
@@ -598,10 +648,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.019568764759592266,
        "se_clustered_window": 0.005603126838726583,
-       "ci95_bca": [
-        0.010918587736131663,
-        0.030808019022281665
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.00971149355609811,
+        0.03943127305848894
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -609,10 +661,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.02067276158943368,
        "se_clustered_window": 0.004917643984446201,
-       "ci95_bca": [
-        0.013378249458854168,
-        0.03127708952451608
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.010679811732230869,
+        0.040015974293237284
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -620,10 +674,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.01539307808328466,
        "se_clustered_window": 0.002819310607967072,
-       "ci95_bca": [
-        0.009373788795748766,
-        0.01882924510668396
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.009257182000212307,
+        0.025596002419814627
+       ],
+       "ci95_bca": null
       }
      ]
     }
@@ -665,10 +721,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.01147672334551312,
        "se_clustered_window": 0.0029724902534535814,
-       "ci95_bca": [
-        0.006182818292934442,
-        0.016948196670624614
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.0060895045683846205,
+        0.021629867794710666
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -676,10 +734,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.012820487412096968,
        "se_clustered_window": 0.003166440983445429,
-       "ci95_bca": [
-        0.008689585777679565,
-        0.020155525322219738
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.006794780537746292,
+        0.024189875827579494
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -687,10 +747,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.011602361431698821,
        "se_clustered_window": 0.0022491963613079026,
-       "ci95_bca": [
-        0.007201436639257549,
-        0.015295580879197029
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.007048987196160465,
+        0.01909704004925644
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis4_reasoning_termination",
@@ -698,10 +760,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.015152639824983528,
        "se_clustered_window": 0.0025975104681862727,
-       "ci95_bca": [
-        0.010690462166129629,
-        0.019922926093400375
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.009752444766981616,
+        0.023543070394310858
+       ],
+       "ci95_bca": null
       }
      ]
     },
@@ -729,10 +793,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.01147672334551312,
        "se_clustered_window": 0.0029724902534535814,
-       "ci95_bca": [
-        0.006182818292934442,
-        0.016948196670624614
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.0060895045683846205,
+        0.021629867794710666
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -740,10 +806,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.010085462091388418,
        "se_clustered_window": 0.001954220431550372,
-       "ci95_bca": [
-        0.006809533168284386,
-        0.01348940530906309
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.005889164352486551,
+        0.017271813029616948
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -751,10 +819,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.010049099052412918,
        "se_clustered_window": 0.0019923328986953216,
-       "ci95_bca": [
-        0.0058285823064676626,
-        0.012760614287555577
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.005795173327348683,
+        0.0174256033531627
+       ],
+       "ci95_bca": null
       }
      ]
     }
@@ -797,10 +867,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.02888438570910585,
        "se_clustered_window": 0.012840972742839154,
-       "ci95_bca": [
-        0.013086348460342848,
-        0.06324589958688848
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.009732696566442059,
+        0.08572215645446683
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -808,10 +880,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.027608301692711928,
        "se_clustered_window": 0.005084917973307845,
-       "ci95_bca": [
-        0.020692171443685067,
-        0.03817680417629283
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.017195793650526706,
+        0.044325858860980984
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -819,10 +893,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.02162042033684949,
        "se_clustered_window": 0.0036391061443090543,
-       "ci95_bca": [
-        0.013785215044190419,
-        0.02661726118079259
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.014026705282971598,
+        0.033325186928218266
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis4_reasoning_termination",
@@ -830,10 +906,12 @@
        "scored_positions": 12282,
        "mean_kld_nats": 0.01938351235130761,
        "se_clustered_window": 0.002648656298750324,
-       "ci95_bca": [
-        0.013134739642267067,
-        0.02319595968434919
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.013642175963896754,
+        0.027541101365912424
+       ],
+       "ci95_bca": null
       }
      ]
     },
@@ -862,10 +940,12 @@
        "scored_positions": 14329,
        "mean_kld_nats": 0.02888438570910585,
        "se_clustered_window": 0.012840972742839154,
-       "ci95_bca": [
-        0.013086348460342848,
-        0.06324589958688848
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.009732696566442059,
+        0.08572215645446683
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis2_legal",
@@ -873,10 +953,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.023508184008518444,
        "se_clustered_window": 0.003683495440006614,
-       "ci95_bca": [
-        0.01765220028325968,
-        0.03054002779953001
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.01521539369586779,
+        0.036320763459998226
+       ],
+       "ci95_bca": null
       },
       {
        "domain": "axis3_code_agentic",
@@ -884,10 +966,12 @@
        "scored_positions": 10235,
        "mean_kld_nats": 0.020879721987824302,
        "se_clustered_window": 0.004363678405651466,
-       "ci95_bca": [
-        0.013138090501507268,
-        0.027413902661521064
-       ]
+       "interval_method": "delta_t_log",
+       "ci95": [
+        0.011687569258065453,
+        0.03730140807405102
+       ],
+       "ci95_bca": null
       }
      ]
     }

@@ -47,83 +47,103 @@
   "bootstrap_oracle_kld_eval": null,
   "by_domain": [
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.00652904155193087,
-        0.0179698106065556
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.006048449189263251,
+        0.0228683581346213
       ],
-      "ci95_percentile": [
-        0.006189903998343942,
-        0.017374475345227503
-      ],
+      "coverage_note": "7 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
       "deff_window": 52.92045319742275,
+      "df": 6,
       "domain": "axis1_general",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.011760871660686201,
       "n": 14329,
       "n_clusters_window": 7,
       "pooled_std": 0.052592452335547345,
       "se_clustered_window": 0.003196150771600996,
       "se_naive": 0.00043935490642902064,
+      "small_g": true,
+      "t_critical": 2.446911851144968,
       "windows": 7
     },
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.009487646301823235,
-        0.023115281689548062
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.007557084110599127,
+        0.028498085069711424
       ],
-      "ci95_percentile": [
-        0.008976962416894519,
-        0.021893411846845883
-      ],
+      "coverage_note": "6 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
       "deff_window": 62.95176404281637,
+      "df": 5,
       "domain": "axis2_legal",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.014675231714109943,
       "n": 12282,
       "n_clusters_window": 6,
       "pooled_std": 0.0529224656066094,
       "se_clustered_window": 0.0037888679988247833,
       "se_naive": 0.0004775353463279665,
+      "small_g": true,
+      "t_critical": 2.570581835636313,
       "windows": 6
     },
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.00752306464090629,
-        0.01577732487220709
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.008275947250333834,
+        0.019935808346986782
       ],
-      "ci95_percentile": [
-        0.00862330717246914,
-        0.016253253012981413
-      ],
+      "coverage_note": "6 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
       "deff_window": 12.522613014054691,
+      "df": 5,
       "domain": "axis3_code_agentic",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.012844753725643303,
       "n": 12282,
       "n_clusters_window": 6,
       "pooled_std": 0.06878937846063685,
       "se_clustered_window": 0.0021965157354470496,
       "se_naive": 0.0006207072797980763,
+      "small_g": true,
+      "t_critical": 2.570581835636313,
       "windows": 6
     },
     {
-      "bootstrap_b": 1000,
-      "ci95_bca": [
-        0.01089916429991012,
-        0.019457482305643287
+      "bootstrap_b": null,
+      "bootstrap_seed": null,
+      "ci95_bca": null,
+      "ci95_percentile": null,
+      "ci95_t_log": [
+        0.010833306751963603,
+        0.023349187673425278
       ],
-      "ci95_percentile": [
-        0.011276061415421416,
-        0.019846205600007796
-      ],
+      "coverage_note": "6 windows. A 95%-labelled interval on this few clusters does not deliver 95%: measured 81.3% for BCa and 92.0% for this one over the 42 real cells in registry/tools/coverage_sim.py. Quote it as what it measures, or quote se_clustered_window and build your own.",
       "deff_window": 8.515212148234172,
+      "df": 5,
       "domain": "axis4_reasoning_termination",
+      "interval_kind": "t",
+      "interval_method": "delta_t_log",
       "mean": 0.015904367716931822,
       "n": 12282,
       "n_clusters_window": 6,
       "pooled_std": 0.09022300651208837,
       "se_clustered_window": 0.002375639210261843,
       "se_naive": 0.0008141093610748118,
+      "small_g": true,
+      "t_critical": 2.570581835636313,
       "windows": 6
     }
   ],
@@ -178,6 +198,7 @@
     "positions_per_window": 2047,
     "scope_file": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/window-selection.brandonmusic-final25.json",
     "scored_positions": 51175,
+    "window_sizes_declared": true,
     "windows": [
       "final-0000",
       "final-0001",
@@ -207,8 +228,10 @@
     ]
   },
   "se_quadrature": {
+    "ci95_total": null,
     "gate": 0.2,
     "gate_ok": true,
+    "interval_kind": null,
     "note": "sigma_run not estimable; SE_total = SE_stat",
     "ratio": null,
     "se_stat": 0.0014372012222096185,
