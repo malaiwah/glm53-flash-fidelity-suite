@@ -97,6 +97,15 @@
         "two_pass": { "type": ["boolean", "null"] },
         "vocab_chunk": { "type": ["integer", "null"], "minimum": 1 },
         "position_block": { "type": ["integer", "null"], "minimum": 1 },
+        "replay_backend": {
+          "type": ["string", "null"],
+          "description": "WHERE the hidden->logit head matmul ran, as <library>:<device>:<dtype> -- 'numpy:cpu:float32' is the default and the published path, 'torch:cuda:float32' the GPU path, 'none' when the hash proof answered without a matmul. An fp32 GEMM accumulates in an order the BLAS chooses, so the same head and the same hidden states give different last digits on Accelerate, on OpenBLAS and on cuBLAS. Two rows are rankable against each other only if this field matches. Null when neither side is hidden-form."
+        },
+        "replay_env": {
+          "type": ["object", "null"],
+          "description": "OBSERVED torch matmul settings when a torch device did the replay (tf32, float32_matmul_precision, device name and capability), not asserted constants."
+        },
+        "replay_peak_device_bytes": { "type": ["integer", "null"], "minimum": 0 },
         "tf32": { "type": ["boolean", "null"] },
         "deterministic_algorithms": { "type": ["boolean", "null"] },
         "bf16_reduced_precision_reduction": { "type": ["boolean", "null"] },

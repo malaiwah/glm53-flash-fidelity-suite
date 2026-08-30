@@ -324,6 +324,8 @@ def cmd_compare(args):
                       "self-compare needs two SEPARATE cold captures, not one path twice")
     options = {
         "device": args.device,
+        "replay_device": args.replay_device,
+        "replay_dtype": args.replay_dtype,
         "vocab_chunk": args.vocab_chunk,
         "position_block": args.chunk_positions,
         "head_path": args.head,
@@ -356,7 +358,9 @@ def cmd_compare(args):
     emit("  estimator           full vocabulary, %s, head_policy=%s, stack=%s"
          % (receipt["estimator"]["accumulation_dtype"], receipt["estimator"]["head_policy"],
             receipt["estimator"]["stack_relation"]))
-    emit("  backend             %s" % receipt["comparator"].get("estimator_backend"))
+    emit("  backend             %s (replay %s)"
+         % (receipt["comparator"].get("estimator_backend"),
+            receipt["comparator"].get("replay_backend")))
     emit("  comparability       class=%s same_lane=%s usable_as_floor=%s"
          % (receipt["comparability"]["class"], receipt["comparability"]["same_lane"],
             receipt["comparability"]["usable_as_floor"]))
@@ -757,6 +761,19 @@ def build_parser():
     p.add_argument("--candidate", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--device", default="cpu")
+    p.add_argument("--replay-device", default="numpy",
+                   help="where the hidden->logit head matmul runs. 'numpy' (default) is "
+                        "the published path: fp32 BLAS on the CPU. Any other value is a "
+                        "torch device (e.g. 'cuda') and must equal --device. A GPU replay "
+                        "is ~an order of magnitude faster and its fp32 GEMM accumulates in "
+                        "a DIFFERENT ORDER, so it produces different last digits: rows "
+                        "measured under different --replay-device values are not rankable "
+                        "against each other. comparator.replay_backend records which ran.")
+    p.add_argument("--replay-dtype", choices=("float32", "float64"), default="float32",
+                   help="accumulation dtype for the replay matmul on a torch device. "
+                        "float32 matches what the numpy path accumulates in; float64 is "
+                        "more accurate AND more reproducible across backends, and is a "
+                        "different measurement from either.")
     p.add_argument("--vocab-chunk", type=_positive_int,
                    help="must divide vocab_size exactly (9680 for GLM-5.3-Flash)")
     p.add_argument("--chunk-positions", type=_positive_int, default=128)

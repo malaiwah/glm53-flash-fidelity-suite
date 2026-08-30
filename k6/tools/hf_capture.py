@@ -499,10 +499,11 @@ def load_report(info: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def refuse_on_load_report(report: Dict[str, Any], allow_missing: bool) -> List[str]:
+def refuse_on_load_report(report: Dict[str, Any], allow_missing: bool,
+                          allow_unexpected: bool = False) -> List[str]:
     """CAPTURE-03. Returns the reinitialised keys when the caller forced through.
 
-    Four independent ways a `transformers` load can hand back a model whose
+    Five independent ways a `transformers` load can hand back a model whose
     forward pass is not the artifact's, in increasing order of subtlety:
 
       1. `missing_keys`   -- the classic. Observed on Fruit: routed experts
@@ -517,8 +518,24 @@ def refuse_on_load_report(report: Dict[str, Any], allow_missing: bool) -> List[s
          dict this tool is handed -- deliberately omits the field. For a model
          routed through the `qwen2_moe` fusion pattern this is 96.7% of the
          checkpoint hiding behind a field we were not shown.
+      5. `unexpected_keys` -- the SILENT one, and the reason this list grew a
+         fifth entry.  Every parameter the model builds was filled, so nothing
+         above fires; the checkpoint simply carried tensors the loaded model
+         had no home for.  That is sometimes benign (GLM-5.3-BF16 ships an MTP
+         layer `GlmMoeDsaForCausalLM` does not build, 791 tensors of it) and
+         sometimes it is the whole defect.  On `Qwen/Qwen3.8-27B-FP8` (M1,
+         learning 6/7) the line read `unexpected: 64`: the producer's
+         `modules_to_not_convert` listed `...mlp.gate`, `should_convert_module`
+         matches it with a start-anchored `re.match`, so `...mlp.gate_proj`
+         matched too and 65 of 65 gate_proj modules skipped FP8 conversion.
+         Their 64 block-scale tensors then had nowhere to go and fell out as
+         "unexpected", the fp8 payload was read into a bf16 Linear with the
+         scale never applied, and the model produced confidently wrong values
+         in that projection.  Nothing raised.  That one log line was the only
+         signal.  It is now a refusal.
 
-    1 and 2 are overridable by `--allow-missing-weights`, which forces a
+    1, 2 and 5 are overridable -- by `--allow-missing-weights` and
+    `--allow-unexpected-tensors` respectively -- and each override forces a
     BLOCKING disclosure. 3 and 4 are not: an exception during loading means we
     cannot say what the parameter now holds, so there is no disclosure that
     would make a number measured on it readable.
@@ -566,6 +583,24 @@ def refuse_on_load_report(report: Dict[str, Any], allow_missing: bool) -> List[s
                " (+%d more)" % (len(reinitialised) - 6) if len(reinitialised) > 6 else "",
                (" %d of them were present at the WRONG SHAPE ('Reinit due to size "
                 "mismatch')." % mismatched) if mismatched else ""))
+    unexpected = list(report.get("unexpected_keys") or [])
+    if unexpected and not allow_unexpected:
+        raise fail(
+            "REFUSED: %d checkpoint tensor(s) were loaded from the artifact but this "
+            "architecture has no home for them, so they took no part in the forward pass: "
+            "%s%s. What that USUALLY means: a quantization path silently did not engage. "
+            "The producer's exclusion list, the quantizer's module matcher or this "
+            "`transformers` build disagreed about which modules carry quant state, the "
+            "affected modules were left in their unquantized form, and their scale/zero "
+            "tensors then had nowhere to go and landed here. A capture taken in that state "
+            "is a confident number for a projection nobody quantized. (It is also how a "
+            "legitimately unused block looks -- an MTP or draft layer the architecture does "
+            "not build -- which is why there is an override.) Cross-check the converted/"
+            "excluded module split against the checkpoint's real tensor names before "
+            "trusting anything captured here. Pass --allow-unexpected-tensors only if you "
+            "have done that; it forces a BLOCKING disclosure."
+            % (len(unexpected), ", ".join(unexpected[:6]),
+               " (+%d more)" % (len(unexpected) - 6) if len(unexpected) > 6 else ""))
     return reinitialised
 
 
@@ -747,7 +782,8 @@ def run_capture(args: argparse.Namespace) -> int:
             # guard runs per layer -- otherwise the streamed weights (97.5% of
             # GLM-5.3 by bytes) would be the only unexamined part of the model.
             report = load_report(info)
-            reinit = refuse_on_load_report(report, args.allow_missing_weights)
+            reinit = refuse_on_load_report(report, args.allow_missing_weights,
+                                           args.allow_unexpected_tensors)
             if reinit:
                 log(stage="layer_missing_weights", index=index, count=len(reinit),
                     keys=reinit[:8])
@@ -786,7 +822,8 @@ def run_capture(args: argparse.Namespace) -> int:
         conversion_errors=len(report["conversion_errors"]),
         error_msgs=len(report["error_msgs"]),
         unexpected_sample=report["unexpected_keys"][:6])
-    missing = refuse_on_load_report(report, args.allow_missing_weights)
+    missing = refuse_on_load_report(report, args.allow_missing_weights,
+                                    args.allow_unexpected_tensors)
     if missing:
         log(stage="missing_weights", count=len(missing), keys=missing[:12])
 
@@ -1189,11 +1226,14 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                       % (len(missing_weights), ", ".join(list(missing_weights)[:6]))})
 
     # `unexpected_keys` are checkpoint tensors this build of transformers does
-    # not place anywhere.  They are often legitimate -- GLM-5.3-BF16 ships an
-    # MTP layer (`model.layers.78.*`, 791 tensors) that `GlmMoeDsaForCausalLM`
-    # does not build -- so this is a DISCLOSURE, not a refusal.  But a reader
-    # comparing two datasets deserves to know that some of the checkpoint was
-    # never used, and until now nothing recorded it at all.
+    # not place anywhere.  Reaching here at all means --allow-unexpected-tensors
+    # was passed, because `refuse_on_load_report` now REFUSES otherwise: the
+    # benign reading (GLM-5.3-BF16's MTP layer, `model.layers.78.*`, 791
+    # tensors that `GlmMoeDsaForCausalLM` does not build) and the fatal one
+    # (Qwen3.8-27B-FP8's 64 orphaned `gate_proj` block scales, M1 learning 6/7)
+    # look IDENTICAL from here, and only one of them is safe to publish.  The
+    # factual record stays a caveat; the override itself is blocking, exactly
+    # as --allow-missing-weights is.
     unexpected = list((load_report or {}).get("unexpected_keys") or [])
     if unexpected:
         disclosures.append({
@@ -1202,6 +1242,16 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
             "detail": "%d checkpoint tensor(s) were present but not used by this "
                       "architecture (transformers `unexpected_keys`); they took no part in "
                       "the forward pass. First keys: %s."
+                      % (len(unexpected), ", ".join(sorted(unexpected)[:6]))})
+        disclosures.append({
+            "code": "unexpected_tensors_overridden", "severity": "blocking",
+            "affects_comparability": True,
+            "detail": "--allow-unexpected-tensors was passed to capture over %d checkpoint "
+                      "tensor(s) this architecture has no home for. The usual cause is a "
+                      "quantization path that silently did not engage, leaving its scale "
+                      "tensors orphaned and the affected modules unquantized; the benign "
+                      "cause is an unused MTP/draft block. This capture does not say which. "
+                      "First keys: %s."
                       % (len(unexpected), ", ".join(sorted(unexpected)[:6]))})
 
     # DET-D4: `verify` warns when run_count < 5 and asks for this disclosure, but
@@ -1404,6 +1454,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="capture even though transformers had to randomly initialise "
                              "parameters the checkpoint did not provide. Forces a BLOCKING "
                              "disclosure. Almost never the right flag.")
+    parser.add_argument("--allow-unexpected-tensors", action="store_true",
+                        help="capture even though the checkpoint carried tensors this "
+                             "architecture has no home for. Usually means a quantization "
+                             "path silently did not engage; sometimes means a legitimately "
+                             "unused MTP/draft block. Forces a BLOCKING disclosure.")
     parser.add_argument("--force", action="store_true")
     return parser
 

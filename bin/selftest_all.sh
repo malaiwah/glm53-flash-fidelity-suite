@@ -77,6 +77,14 @@ t "fidelity comparator known answers + exact self-compare (T8)" \
                                            0 "$PY" bin/selftest_fidelity_compare.py
 t "fidelity card annotation, 3 axes (T7)" \
                                            0 python3 bin/selftest_fidelity_card.py
+# The replay backend (T12). M1 measured the comparison at 10.8x the capture it
+# consumes because the head matmul ran in numpy on the CPU with the GPU at 0%.
+# --replay-device moves it; these rungs hold the line that moving it must not
+# move the floor, and that the backend is named on every receipt rather than
+# swapped silently. Runs on any interpreter with numpy; the torch rungs SKIP
+# loudly without torch.
+t "replay backend: floor is backend-independent, backend is named (T12: R1-R9)" \
+                                           0 "$PY" bin/selftest_replay_device.py
 # The portable capture engine's own battery (CAPTURE-03's four ways a load can
 # hand back a model that is not the artifact's, the --device-map path, the
 # panel receipt).  It existed and was never wired in here, so nothing ran it.

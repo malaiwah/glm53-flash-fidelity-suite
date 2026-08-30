@@ -13,6 +13,15 @@ Two halves, deliberately separable:
     (`comparator.estimator_backend`), because a silent backend swap is exactly
     the kind of undeclared difference this whole format exists to stop.
 
+  * the REPLAY (`_replay` / `_TorchReplay`) -- `logits' = hidden @ head.T` for
+    a hidden-form capture.  This is where the wall-clock is: M1 measured one
+    512-window comparison at 60m19s against a 335s capture of the same panel,
+    because the head matmul ran in numpy on the CPU while the GPU already
+    holding that head for the estimator sat at 0%.  `--replay-device cuda`
+    moves it, and because an fp32 GEMM's accumulation order is the BLAS's
+    choice, that is a DIFFERENT NUMBER in the last digits, so it is opt-in and
+    named on the receipt (`comparator.replay_backend`).
+
 The A == B short-circuit (SC-1) answers by hash proof without a matmul;
 `--force-compute` runs the math anyway and asserts bitwise agreement.
 """
@@ -592,6 +601,22 @@ def _torch_available() -> bool:
         return False
 
 
+def _as_tensor(array):
+    """numpy -> torch without the read-only warning, and without a needless copy.
+
+    `load_tensor` hands back `np.frombuffer` views, which are read-only;
+    `torch.from_numpy` accepts them but warns once per process. Copying only
+    the read-only case keeps the hot path allocation-free.
+    """
+    import numpy as np
+    import torch
+
+    block = np.ascontiguousarray(array)
+    if not block.flags.writeable:
+        block = block.copy()
+    return torch.from_numpy(block)
+
+
 def token_kld(reference_logits, candidate_logits, device: str = "cpu"):
     """The fp64 full-vocabulary estimator.
 
@@ -608,8 +633,12 @@ def token_kld(reference_logits, candidate_logits, device: str = "cpu"):
             sys.path.insert(0, _K6_TOOLS)
         import k6_kld_report  # noqa: WPS433
 
-        a = torch.from_numpy(np.ascontiguousarray(reference_logits))
-        b = torch.from_numpy(np.ascontiguousarray(candidate_logits))
+        # Already-resident tensors pass straight through: the GPU replay path
+        # hands this function logits that are ALREADY on the device, and a
+        # round trip through numpy would undo the whole point of the fix (and
+        # would also be the one place a host copy could silently re-enter).
+        a = reference_logits if torch.is_tensor(reference_logits) else _as_tensor(reference_logits)
+        b = candidate_logits if torch.is_tensor(candidate_logits) else _as_tensor(candidate_logits)
         try:
             values, matches = k6_kld_report._token_kld(a, b, device)
         except SystemExit as exc:
@@ -668,6 +697,147 @@ def _replay(hidden32, head32_t, vocab_chunk: Optional[int]):
 
 
 # ---------------------------------------------------------------------------
+# Replay backends
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS.  M1 measured it: one 512-window comparison took 60m19s
+# against a 335s capture of the same panel on the same box -- 10.8x the capture
+# it consumes -- because `_replay` does the language-model head matmul in numpy
+# on the CPU while the GPU, which is ALREADY HOLDING THE HEAD for the fp64 KLD
+# step, sits at 0%.  M2 is a 642.7 GB re-capture with several candidates and M3
+# is 1.5 TB; at those sizes the capture is a rounding error and the candidate
+# comparisons are the entire bill.
+#
+# WHY IT IS NOT THE DEFAULT.  An fp32 GEMM is not one function.  BLAS
+# accumulates in fp32 in an order chosen by the implementation's blocking, so
+# `hidden @ head.T` has a different last bit on OpenBLAS, on Accelerate, and on
+# cuBLAS.  MEASURED on the real published Qwen3.8 root, 32,752 positions,
+# numpy-fp32-on-OpenBLAS against cuBLAS-fp32 with TF32 off: max absolute logit
+# delta 3.624e-05 (1.360e-06 relative), and
+#
+#     KLD(numpy replay || cuda replay) = 5.237e-12 nats mean, 1.791e-10 max,
+#     top-1 agreement 1.000000 -- not one argmax flipped.
+#
+# That is 1.75e-9 relative to the smallest published Qwen3.8 row (FP8,
+# 0.002989850396847924) and 2.2e9 times below the streaming lane floor of
+# 0.011506, so a row agrees to roughly nine significant figures and differs
+# past the tenth.  Small, and NOT ZERO: the published values are 16-digit, so
+# they would not reproduce.  A comparison that produces a different value after
+# an optimisation is a broken comparison, not a faster one, so the numpy path
+# stays the default and the receipt now names which backend ran
+# (`comparator.replay_backend`), because a silent replay-backend swap is
+# exactly the class of drift this suite exists to make impossible.
+#
+# WHAT IS BACKEND-INDEPENDENT, AND IT IS THE ONE THAT MATTERS MOST.  The floor.
+# A self-compare replays bitwise-equal hidden states through one head on ONE
+# backend, so both sides get bitwise-equal logits and the KLD is exactly 0.0
+# on any deterministic backend -- the published `tokenwise-kld.npy` digest
+# 8be5dcca... included, since it is the digest of 1,048,064 float64 zeros.
+# `bin/selftest_replay_device.py` asserts that, on both backends, as a gate.
+
+
+def _replay_backend_name(replay_device: Optional[str], replay_dtype: str) -> str:
+    if not replay_device or replay_device == "numpy":
+        return "numpy:cpu:float32"
+    return "torch:%s:%s" % (replay_device, replay_dtype)
+
+
+def _torch_replay_env(replay_device: str) -> Dict[str, Any]:
+    """Pin every knob the receipt CLAIMS, and report what was actually set.
+
+    `comparator.tf32` and friends were hardcoded constants in the receipt:
+    vacuously honest while every matmul ran in numpy, a lie the moment one runs
+    on a GPU.  TF32 truncates the fp32 mantissa to 10 bits, which would put the
+    replay error two orders of magnitude above the fp32-accumulation term and
+    below the KLD values being measured.
+    """
+    import torch
+
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    try:
+        torch.set_float32_matmul_precision("highest")
+    except Exception:
+        pass
+    for flag in ("allow_bf16_reduced_precision_reduction",
+                 "allow_fp16_reduced_precision_reduction"):
+        try:
+            setattr(torch.backends.cuda.matmul, flag, False)
+        except Exception:
+            pass
+    observed = {
+        "tf32": bool(getattr(torch.backends.cuda.matmul, "allow_tf32", False)),
+        "float32_matmul_precision": getattr(torch, "get_float32_matmul_precision",
+                                            lambda: None)(),
+        "bf16_reduced_precision_reduction": bool(
+            getattr(torch.backends.cuda.matmul,
+                    "allow_bf16_reduced_precision_reduction", False)),
+    }
+    if replay_device.startswith("cuda") and torch.cuda.is_available():
+        index = torch.cuda.current_device()
+        observed["device_name"] = torch.cuda.get_device_name(index)
+        observed["device_capability"] = "%d.%d" % torch.cuda.get_device_capability(index)
+    return observed
+
+
+class _TorchReplay(object):
+    """The head, resident, plus the chunked matmul that consumes it.
+
+    Chunking is value-preserving BY CONSTRUCTION and that is the whole reason
+    it is allowed here: every output element of `hidden @ head.T` is an
+    independent dot product over the hidden axis, so splitting the POSITION
+    axis or the VOCABULARY axis partitions the output without touching any
+    reduction.  Splitting the hidden axis would not be, and is never done.
+    """
+
+    def __init__(self, head32_t, replay_device: str, replay_dtype: str,
+                 vocab_chunk: Optional[int]):
+        import torch
+
+        self.env = _torch_replay_env(replay_device)
+        self.device = torch.device(replay_device)
+        self.dtype = torch.float64 if replay_dtype == "float64" else torch.float32
+        self.vocab_chunk = vocab_chunk
+        self.head = _as_tensor(head32_t).to(device=self.device, dtype=self.dtype)
+        self.head_bytes = int(self.head.element_size() * self.head.nelement())
+
+    def to_device(self, block):
+        return _as_tensor(block).to(device=self.device, dtype=self.dtype)
+
+    def replay(self, hidden_block):
+        """logits' = hidden @ head^T for one block of positions."""
+        import torch
+
+        hidden = self.to_device(hidden_block)
+        if self.vocab_chunk is None:
+            out = hidden @ self.head
+        else:
+            out = torch.cat(
+                [hidden @ self.head[:, start:start + self.vocab_chunk]
+                 for start in range(0, self.head.shape[1], self.vocab_chunk)], dim=1)
+        # Same contract as the numpy path: proven finite here, refused -- never
+        # clamped -- and refused again by the estimator before any softmax.
+        if not torch.isfinite(out).all():
+            raise Refusal("compute", "non_finite",
+                          "the hidden->logit replay produced a non-finite value on %s; "
+                          "never clamped" % self.device)
+        return out
+
+    def peak_bytes(self) -> Optional[int]:
+        import torch
+
+        if self.device.type != "cuda":
+            return None
+        return int(torch.cuda.max_memory_allocated(self.device))
+
+    def reset_peak(self) -> None:
+        import torch
+
+        if self.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(self.device)
+
+
+# ---------------------------------------------------------------------------
 # Compute
 # ---------------------------------------------------------------------------
 
@@ -695,6 +865,24 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
         raise Refusal("compute", "bad_position_block",
                       "--chunk-positions must be >= 1; got %d" % position_block)
     device = options.get("device") or "cpu"
+    replay_device = options.get("replay_device") or "numpy"
+    replay_dtype = options.get("replay_dtype") or "float32"
+    if replay_dtype not in ("float32", "float64"):
+        raise Refusal("compute", "bad_replay_dtype",
+                      "--replay-dtype must be float32 or float64; got %r" % replay_dtype)
+    if replay_device != "numpy" and not _torch_available():
+        raise Refusal("compute", "replay_backend_unavailable",
+                      "--replay-device %s needs torch, which is not importable here. The "
+                      "default (numpy) is the published path and needs nothing."
+                      % replay_device)
+    if replay_device != "numpy" and replay_device != device:
+        # The estimator and the replay on two different devices would move the
+        # logits across PCIe once per position block -- slower than the numpy
+        # path it replaces -- and the receipt has one `device` field to name.
+        raise Refusal("compute", "replay_device_mismatch",
+                      "--replay-device %s and --device %s disagree; the replay must run on "
+                      "the device the estimator consumes, or the logits cross the bus "
+                      "twice per block" % (replay_device, device))
 
     head32_t = None
     head_applied = findings.get("head_applied")
@@ -738,24 +926,45 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
     depth: Dict[str, List[float]] = {}
     backend = None
 
+    replayer = None
+    if head32_t is not None and replay_device != "numpy":
+        replayer = _TorchReplay(head32_t, replay_device, replay_dtype, vocab_chunk)
+        replayer.reset_peak()
+
     for index in findings["shared_indices"]:
         rec_a, rec_b = ra[index], rb[index]
         left = load_tensor(reference.record_path(rec_a), rec_a["key"])
         right = load_tensor(candidate.record_path(rec_b), rec_b["key"])
-        if reference.form == "hidden":
-            left = _replay(left, head32_t, vocab_chunk)
-        if candidate.form == "hidden":
-            right = _replay(right, head32_t, vocab_chunk)
-        if left.shape != right.shape:
+        if replayer is None:
+            if reference.form == "hidden":
+                left = _replay(left, head32_t, vocab_chunk)
+            if candidate.form == "hidden":
+                right = _replay(right, head32_t, vocab_chunk)
+        rows_a = left.shape[0]
+        rows_b = right.shape[0]
+        width_a = vocab if reference.form == "hidden" and replayer is not None else left.shape[1]
+        width_b = vocab if candidate.form == "hidden" and replayer is not None else right.shape[1]
+        if (rows_a, width_a) != (rows_b, width_b):
             raise Refusal("compute", "geometry_mismatch",
-                          "record %d: %s vs %s" % (index, left.shape, right.shape))
+                          "record %d: %s vs %s" % (index, (rows_a, width_a), (rows_b, width_b)))
         # np.full(nan), not np.empty: an unwritten slot must be detectable rather than
         # being whatever the allocator last held. The check after the loop is a Refusal,
         # not an assert -- asserts vanish under `python -O`.
-        values = np.full(left.shape[0], np.nan, dtype=np.float64)
-        for start in range(0, left.shape[0], position_block):
-            stop = min(start + position_block, left.shape[0])
-            piece, matched, backend = token_kld(left[start:stop], right[start:stop], device)
+        values = np.full(rows_a, np.nan, dtype=np.float64)
+        for start in range(0, rows_a, position_block):
+            stop = min(start + position_block, rows_a)
+            if replayer is None:
+                block_a, block_b = left[start:stop], right[start:stop]
+            else:
+                # The fix, in four lines: the head is already resident for the
+                # fp64 estimator, so the replay happens THERE, one position
+                # block at a time, and the full [positions x vocab] fp32 logit
+                # array is never materialised on the host at all.
+                block_a = (replayer.replay(left[start:stop]) if reference.form == "hidden"
+                           else replayer.to_device(left[start:stop]))
+                block_b = (replayer.replay(right[start:stop]) if candidate.form == "hidden"
+                           else replayer.to_device(right[start:stop]))
+            piece, matched, backend = token_kld(block_a, block_b, device)
             values[start:stop] = piece
             matches_total += matched
         # Belt and braces on the poisoned buffer: token_kld already refuses non-finite
@@ -803,6 +1012,15 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
         "position_block": position_block,
         "device": device,
         "head_applied": findings.get("head_applied"),
+        # Named on EVERY receipt, including the numpy default. Two rows are
+        # only rankable against each other if their replay ran on the same
+        # backend, and a field that appears only when the non-default path ran
+        # would make the default look like "unknown" instead of "numpy".
+        "replay_backend": _replay_backend_name(replay_device, replay_dtype)
+        if head32_t is not None else None,
+        "replay_env": replayer.env if replayer is not None else None,
+        "replay_head_bytes": replayer.head_bytes if replayer is not None else None,
+        "replay_peak_device_bytes": replayer.peak_bytes() if replayer is not None else None,
     }
 
 
@@ -901,6 +1119,7 @@ def short_circuit_result(reference: Dataset, candidate: Dataset,
         "per_stratum": {},
         "context_depth_buckets": {},
         "estimator_backend": "hash_proof",
+        "replay_backend": "none",
         "vocab_chunk": None,
         "position_block": None,
         "device": "none",
@@ -967,9 +1186,19 @@ def build_receipt(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
             "two_pass": True,
             "vocab_chunk": result.get("vocab_chunk"),
             "position_block": result.get("position_block"),
-            "tf32": False,
+            # The replay backend is part of the number, not part of the
+            # plumbing: an fp32 GEMM accumulates in an order the BLAS chooses,
+            # so numpy-on-Accelerate, numpy-on-OpenBLAS and cuBLAS give
+            # different last digits from the same head and the same hidden
+            # states. Two rows are comparable only if this field matches.
+            "replay_backend": result.get("replay_backend"),
+            "replay_env": result.get("replay_env"),
+            "replay_peak_device_bytes": result.get("replay_peak_device_bytes"),
+            # Observed, not asserted, whenever a torch device did the replay.
+            "tf32": (result.get("replay_env") or {}).get("tf32", False),
             "deterministic_algorithms": True,
-            "bf16_reduced_precision_reduction": False,
+            "bf16_reduced_precision_reduction": (
+                result.get("replay_env") or {}).get("bf16_reduced_precision_reduction", False),
             "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
             "head_applied_tensor_content_sha256": result.get("head_applied"),
             # What was ACTUALLY recomputed, never a constant.  The seal covers the
@@ -1163,6 +1392,8 @@ def compare(reference_root: str, candidate_root: str, out_dir: str,
             result["device"] = computed["device"]
             result["vocab_chunk"] = computed["vocab_chunk"]
             result["position_block"] = computed["position_block"]
+            for field in ("replay_backend", "replay_env", "replay_peak_device_bytes"):
+                result[field] = computed.get(field)
     else:
         result = compute(reference, candidate, findings, options)
 

@@ -28,9 +28,11 @@ dataset at all.
     A19 a load that produced NO report is refused; unexamined != clean
     A20 `conversion_errors` is actually visible after a real load (the field
         `LoadStateDictInfo.to_dict()` deliberately drops)
-    A21 checkpoint tensors the architecture does not use are DISCLOSED, not refused
+    A21 checkpoint tensors the architecture does not use REFUSE the capture
     A22 --device-map dispatches instead of materialising, and skips the .to() that
         cannot work for a checkpoint bigger than one device
+    A23 --allow-unexpected-tensors captures instead, and stamps a BLOCKING disclosure
+    A24 the unexpected-tensor branch reads its own flag, not --allow-missing-weights
 
 torch and transformers are optional: without them the file prints SKIP and
 exits 0, so `bin/selftest_all.sh` on the numpy-only floor is unaffected.
@@ -512,10 +514,17 @@ def _body(work):
              sorted(live_info)))
     del _m
 
-    # A21 -- `unexpected_keys` is not a failure: GLM-5.3-BF16 ships an MTP layer
-    # the architecture does not build, 791 tensors of it. But a reader deserves
-    # to know part of the checkpoint took no part in the forward pass, and
-    # nothing recorded it at all.
+    # A21/A23 -- `unexpected_keys` used to be a log line and a caveat, and M1
+    # paid for that. `Qwen/Qwen3.8-27B-FP8` loads through stock transformers
+    # with `unexpected: 64` because the producer's `modules_to_not_convert`
+    # lists `...mlp.gate` and `should_convert_module` matches it with a
+    # start-anchored `re.match`, so `...mlp.gate_proj` matched too: 65 of 65
+    # gate_proj modules skipped FP8 conversion, their block scales fell out as
+    # "unexpected", and the projection ran on fp8 bytes read as bf16 with the
+    # scale never applied. Nothing raised. The benign case -- GLM-5.3-BF16's
+    # 791-tensor MTP layer that `GlmMoeDsaForCausalLM` does not build -- is
+    # INDISTINGUISHABLE from here, which is why the escape exists and why it is
+    # blocking.
     extra_dir = os.path.join(work, "reference-extra")
     _shutil.copytree(model, extra_dir)
     extra_shard = os.path.join(extra_dir, "model.safetensors")
@@ -528,16 +537,48 @@ def _body(work):
     extra_out = os.path.join(work, "ds-extra")
     proc = capture(extra_dir, panel, extra_out, role="root",
                    dataset_id="fidelity--selftest.hf.root", name="extra")
-    stamped = []
-    if os.path.isfile(os.path.join(extra_out, F.MANIFEST_NAME)):
-        stamped = [d for d in json.load(open(os.path.join(extra_out, F.MANIFEST_NAME)))
-                   ["disclosures"] if d["code"] == "checkpoint_tensors_not_loaded"]
-    check("A21 an unused checkpoint tensor is disclosed, not refused",
-          proc.returncode == 0 and len(stamped) == 1
+    combined = (proc.stderr or "") + (proc.stdout or "")
+    check("A21 an unexpected checkpoint tensor REFUSES the capture, naming the key "
+          "and the usual cause",
+          proc.returncode != 0
+          and not os.path.isfile(os.path.join(extra_out, F.MANIFEST_NAME))
+          and "model.layers.99.mlp.down_proj.weight" in combined
+          and "--allow-unexpected-tensors" in combined
+          and "quantization path silently did not engage" in combined,
+          "rc=%s manifest=%s out=%s"
+          % (proc.returncode, os.path.isfile(os.path.join(extra_out, F.MANIFEST_NAME)),
+             combined[-400:]))
+
+    # A23 -- the escape hatch, and the price of using it.
+    extra_out2 = os.path.join(work, "ds-extra-forced")
+    proc = capture(extra_dir, panel, extra_out2, role="root",
+                   dataset_id="fidelity--selftest.hf.root", name="extra-forced",
+                   extra=["--allow-unexpected-tensors"])
+    stamped, blocking = [], []
+    if os.path.isfile(os.path.join(extra_out2, F.MANIFEST_NAME)):
+        every = json.load(open(os.path.join(extra_out2, F.MANIFEST_NAME)))["disclosures"]
+        stamped = [d for d in every if d["code"] == "checkpoint_tensors_not_loaded"]
+        blocking = [d for d in every if d["code"] == "unexpected_tensors_overridden"]
+    check("A23 --allow-unexpected-tensors captures and stamps a BLOCKING disclosure",
+          proc.returncode in (0, 2) and len(stamped) == 1 and len(blocking) == 1
           and stamped[0]["severity"] == "caveat"
-          and "model.layers.99.mlp.down_proj.weight" in stamped[0]["detail"],
-          "rc=%s stamped=%r out=%s" % (proc.returncode, stamped,
-                                       (proc.stderr or proc.stdout)[-300:]))
+          and blocking[0]["severity"] == "blocking"
+          and blocking[0]["affects_comparability"] is True
+          and "model.layers.99.mlp.down_proj.weight" in blocking[0]["detail"],
+          "rc=%s stamped=%r blocking=%r out=%s"
+          % (proc.returncode, stamped, blocking,
+             ((proc.stderr or "") + (proc.stdout or ""))[-300:]))
+
+    # A24 -- the guard reads the flag, not the weather. Same report, both ways,
+    # straight at `refuse_on_load_report`: this is the assertion that fails if
+    # the fifth branch is ever removed while the CLI flag stays.
+    unexpected_report = _report(unexpected_keys={"model.layers.99.mlp.down_proj.weight"})
+    check("A24 refuse_on_load_report: unexpected refuses by default, passes under the flag",
+          _refused(unexpected_report, False) is True
+          and _refused(unexpected_report, True) is True
+          and HC.refuse_on_load_report(unexpected_report, False, True) == [],
+          "default=%r missing_flag_only=%r"
+          % (_refused(unexpected_report, False), _refused(unexpected_report, True)))
 
     # -- A22 -----------------------------------------------------------------
     # R2 in docs/GLM53-ROOT-FEASIBILITY.md: `load_model` materialised the whole
