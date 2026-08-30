@@ -1,0 +1,41 @@
+MIT License
+
+Copyright (c) 2026 Michel Belleau
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+THIRD-PARTY NOTICES
+
+This repository contains NO third-party source code.
+
+`bin/jointstd/` is an independent, stdlib-only implementation of the community
+measurement standard proposed by brandonmusic (Brandon M. Music). His harness
+(`kld_eval`) is distributed under the SHAPLEYMCG LICENSE 1.0, a source-available
+licence; no line of it is copied here. `bin/jointstd/oracle.py` OPTIONALLY
+IMPORTS his analysis layer, when the user has installed it themselves, to use as
+a validation oracle against our own implementation. The known-answer fixture at
+`bin/jointstd/fixtures/brandonmusic-known-answer.json` reproduces MEASUREMENT
+RESULTS he published — numbers, with attribution — not code.
+
+Measurements in this repository are made against panels and teacher logits
+published by brandonmusic, and against base models published by Z.ai (zai-org).
+Trellis codec kernels referenced by the quantization tooling are by turboderp
+(exllamav3, MIT). Each is credited at its point of use.
