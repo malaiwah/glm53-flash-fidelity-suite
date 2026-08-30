@@ -118,22 +118,36 @@ def scan(
     for w in final_windows:
         grams = token_ngrams(w["tokens"], n)
         hits = len(grams & calibration_grams)
-        frac = hits / max(1, len(grams))
+        # STAT-13. `hits / max(1, len(grams))` turned an EMPTY gram set into 0.0, so a
+        # window shorter than the n-gram width was reported as perfectly clean and could
+        # never be excluded -- a clean verdict for a window the scanner could not scan at
+        # all. Verified: a 12-token window that is a VERBATIM PREFIX of the calibration
+        # corpus scored 0.0000 and was SELECTED. That is the silent-zero class, in the
+        # scanner whose whole job is to certify the published clean scope.
+        scannable = len(grams) > 0
+        frac = (hits / len(grams)) if scannable else None
         doc_overlap = w.get("document_id") in calibration_document_ids
         row = {
             "window_id": w["window_id"],
             "domain": w.get("domain"),
             "document_id": w.get("document_id"),
             "document_id_in_calibration": bool(doc_overlap),
+            "scannable": scannable,
             "distinct_ngrams": len(grams),
             "shared_ngram_count": hits,
-            "shared_ngram_fraction": round(frac, 6),
+            "shared_ngram_fraction": (round(frac, 6) if scannable else None),
         }
+        if not scannable:
+            row["unscannable_reason"] = (
+                "window holds %d tokens, fewer than the %d-gram width: overlap is not "
+                "measurable" % (len(w["tokens"]), n))
         for extra in ("token_ids_sha256", "prediction_positions"):
             if w.get(extra) is not None:
                 row[extra] = w[extra]
         per_window.append(row)
-        if doc_overlap or frac > threshold:
+        # Refusing is the right answer for an unscannable window, for the same reason
+        # guard_pooled_percentiles refuses a percentile it cannot derive.
+        if doc_overlap or (not scannable) or frac > threshold:
             excluded.append(
                 {
                     "window_id": w["window_id"],
@@ -141,9 +155,10 @@ def scan(
                     "reason": (
                         "document overlaps calibration corpus"
                         if doc_overlap
+                        else row["unscannable_reason"] if not scannable
                         else "%d-gram overlap %.1f%% > %.0f%%" % (n, frac * 100.0, threshold * 100.0)
                     ),
-                    "shared_ngram_fraction": round(frac, 6),
+                    "shared_ngram_fraction": (round(frac, 6) if scannable else None),
                 }
             )
     excluded_ids = {e["window_id"] for e in excluded}

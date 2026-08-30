@@ -222,6 +222,86 @@ def t_chi2_and_mcnemar() -> None:
 
 
 # ======================================================================== 3
+def t_stats_refusals() -> None:
+    section("2b. REFUSALS AND EDGE CASES THAT USED TO ANSWER ANYWAY")
+
+    # STAT-14: the exact binomial was abandoned above 2000 discordant pairs, which
+    # excluded this tool's OWN worked example (--a-only 1629 --b-only 963, n=2592)
+    # and both McNemar tables in the known-answer fixture.
+    r = stats_mod.mcnemar(1629, 963)
+    if r.get("p_exact") is not None and abs(r["p_exact"] - 2.0803213154515343e-39) < 1e-52:
+        ok("STAT-14: the documented worked example has an exact p",
+           "n=%d p_exact=%.6e (pre-fix: None, 'skipped above 2000')"
+           % (r["discordant"], r["p_exact"]))
+    else:
+        bad("STAT-14: exact p at n=2592", "p_exact=%r" % r.get("p_exact"))
+    r2 = stats_mod.mcnemar(1273, 2120)
+    if r2.get("p_exact") is not None:
+        ok("STAT-14: fixture panel table has an exact p",
+           "n=%d p_exact=%.3e" % (r2["discordant"], r2["p_exact"]))
+    else:
+        bad("STAT-14: exact p at n=3393", "p_exact=%r" % r2.get("p_exact"))
+
+    # STAT-18: all() over an EMPTY sequence is vacuously True, so the refusal helper
+    # claimed pooled percentiles WERE derivable when handed no data at all.
+    g = stats_mod.guard_pooled_percentiles([])
+    if g.get("available") is False and "no windows" in (g.get("reason") or ""):
+        ok("STAT-18: no windows is a refusal, not availability", g["reason"])
+    else:
+        bad("STAT-18: empty per_window", repr(g))
+    g2 = stats_mod.guard_pooled_percentiles([{"window_id": "a", "mean": 0.1}])
+    if g2.get("available") is False:
+        ok("STAT-18: per-window summaries still refuse", "unchanged")
+    else:
+        bad("STAT-18: summaries", repr(g2))
+
+    # STAT-19: deff was gated on TRUTHINESS, so a zero-variance panel silently lost
+    # the key and joint_enrich's unconditional lookup raised KeyError.
+    z = stats_mod.se_from_window_summaries([
+        {"window_id": "a", "count": 10, "mean": 1.0, "std": 0.0},
+        {"window_id": "b", "count": 10, "mean": 1.0, "std": 0.0}])
+    if "deff_window" in z and z["deff_window"] is None:
+        ok("STAT-19: zero-variance panel says deff is UNDEFINED, not missing",
+           "se_naive=%r deff_window=None (pre-fix: key absent -> KeyError)"
+           % z.get("se_naive"))
+    else:
+        bad("STAT-19: zero-variance deff",
+            "deff_window present=%r value=%r" % ("deff_window" in z, z.get("deff_window")))
+    nz = stats_mod.se_from_window_summaries([
+        {"window_id": "a", "count": 10, "mean": 1.0, "std": 0.1},
+        {"window_id": "b", "count": 10, "mean": 2.0, "std": 0.2}])
+    if isinstance(nz.get("deff_window"), float):
+        ok("STAT-19: a real panel still gets a numeric deff", "%.4f" % nz["deff_window"])
+    else:
+        bad("STAT-19: numeric deff", repr(nz.get("deff_window")))
+
+    # STAT-13: a window shorter than the n-gram width was reported as perfectly
+    # clean. The fixture below is a VERBATIM PREFIX of the calibration corpus.
+    cal = ngram_mod.token_ngrams(list(range(100)), 13)
+    fins = [
+        {"window_id": "SHORT", "document_id": "C", "domain": "d",
+         "tokens": list(range(12))},                       # 12 < 13 -> no grams at all
+        {"window_id": "CLEAN", "document_id": "A", "domain": "d",
+         "tokens": list(range(500, 700))},
+    ]
+    sc = ngram_mod.scan(fins, cal, set(), n=13, threshold=0.05)
+    short = [w for w in sc["per_window"] if w["window_id"] == "SHORT"][0]
+    if (short.get("scannable") is False
+            and short.get("shared_ngram_fraction") is None
+            and "SHORT" not in sc["selected_windows"]):
+        ok("STAT-13: an unscannable window is refused, not certified clean",
+           "12 tokens < 13-gram width -> excluded (pre-fix: fraction 0.0, SELECTED)")
+    else:
+        bad("STAT-13: short window",
+            "scannable=%r frac=%r selected=%r" % (short.get("scannable"),
+                                                  short.get("shared_ngram_fraction"),
+                                                  "SHORT" in sc["selected_windows"]))
+    if "CLEAN" in sc["selected_windows"]:
+        ok("STAT-13: a genuinely clean window is still selected", "no false refusal")
+    else:
+        bad("STAT-13: clean window", "was excluded")
+
+
 def t_clustered_se() -> None:
     section("3. CLUSTER-ROBUST SE -- HAND ARITHMETIC, THEN HIS PUBLISHED VALUES")
 
@@ -1098,7 +1178,7 @@ def main() -> int:
     print("oracle (brandonmusic kld_eval): %s%s" % (
         "AVAILABLE " + json.dumps(st.get("modules", {})) if st["available"]
         else "not importable", "" if st["available"] else " -- %s" % st["reason"]))
-    for fn in (t_protocol, t_chi2_and_mcnemar, t_clustered_se, t_bootstrap,
+    for fn in (t_protocol, t_chi2_and_mcnemar, t_stats_refusals, t_clustered_se, t_bootstrap,
                t_paired, t_sigma_run, t_percentile_guard, t_ngram, t_canary,
                t_cli, t_registry_joint_check, t_no_network):
         fn()

@@ -116,8 +116,14 @@ def se_from_window_summaries(
     if g >= 2:
         se = math.sqrt(g / (g - 1.0) * ssq) / n
         out["se_clustered_window"] = se
-        if out.get("se_naive"):
-            out["deff_window"] = (se / out["se_naive"]) ** 2
+        # STAT-19. Gated on TRUTHINESS, so a panel whose per-window stds are all
+        # exactly 0.0 (se_naive == 0.0) silently dropped the key rather than saying the
+        # design effect is undefined. joint_enrich then emitted se_naive and looked up
+        # deff_window unconditionally -> KeyError. None serialises to JSON null, which is
+        # valid RFC-8259; inf/nan would not be, and json.dumps writes them bare.
+        naive = out.get("se_naive")
+        if naive is not None:
+            out["deff_window"] = (se / naive) ** 2 if naive > 0 else None
     return out
 
 
@@ -148,7 +154,12 @@ def _bca_endpoints(
     b = len(boots)
     ordered = sorted(boots)
     prop = sum(1 for x in boots if x < observed) / float(b)
-    prop = min(max(prop, 1e-9), 1.0 - 1e-9)
+    # STAT-22. 1e-9 asserts a bias correction three orders finer than B resamples can
+    # resolve; the finest proportion the data supports is 1/B. Endpoints do not move on
+    # any reachable input (the clamp binds only at prop 0.0/1.0, and prop == 1.0 is
+    # impossible for a bootstrap of the mean since E[boot] == observed), so this is a
+    # statement of what the resamples support, not a change to a published number.
+    prop = min(max(prop, 1.0 / (b + 1)), 1.0 - 1.0 / (b + 1))
     z0 = chi2.norm_ppf(prop)
     jbar = statistics.fmean(jack)
     num = sum((jbar - j) ** 3 for j in jack)
@@ -210,7 +221,10 @@ def window_block_bootstrap(
             boots[i] = arr[idx].mean()
         lo, hi = (float(x) for x in np.quantile(boots, [alpha / 2.0, 1.0 - alpha / 2.0]))
         jack = [float(np.delete(arr, k).mean()) for k in range(g)]
-        prop = float(np.clip(np.mean(boots < observed), 1e-9, 1 - 1e-9))
+        # STAT-22, numpy path: see _bca_endpoints. 1/(B+1) is the finest resolvable
+        # proportion; 1e-9 claimed precision B resamples do not have.
+        prop = float(np.clip(np.mean(boots < observed),
+                             1.0 / (b + 1), 1.0 - 1.0 / (b + 1)))
         z0 = chi2.norm_ppf(prop)
         jbar = float(np.mean(jack))
         jj = np.asarray(jack)
@@ -363,11 +377,13 @@ def mcnemar(b01: int, b10: int, continuity: bool = True) -> Dict[str, Any]:
     x2 = diff * diff / float(n)
     out["chi2"] = x2
     out["p"] = chi2.chi2_sf(x2, 1)
-    if n <= 2000:
-        out["p_exact"] = chi2.binom_sf_two_sided(b01, n)
-    else:
-        out["p_exact"] = None
-        out["p_exact_note"] = "exact binomial skipped above 2000 discordant pairs"
+    # STAT-14. The exact binomial used to be abandoned above 2000 discordant pairs --
+    # a cutoff that excluded this tool's OWN worked example (`mcnemar --a-only 1629
+    # --b-only 963`, n = 2592) and both McNemar tables in the known-answer fixture, so
+    # the number a careful reader wants was withheld precisely where it was documented.
+    # binom_sf_two_sided is now an O(kk) Decimal recurrence rather than a sum of kk
+    # exact bignums, identical to the last ULP and fast enough that no cutoff is needed.
+    out["p_exact"] = chi2.binom_sf_two_sided(b01, n)
     out["favours"] = "a" if b01 > b10 else ("b" if b10 > b01 else "tie")
     return out
 
@@ -411,13 +427,19 @@ def guard_pooled_percentiles(per_window: Sequence[Dict[str, Any]]) -> Dict[str, 
     a panel percentile would be wrong, so this returns a refusal instead of a
     number.  It is the same shape of rule as the registry's cross-lane refusal.
     """
-    have_tokens = all("values" in w for w in per_window)
+    # STAT-18. all() over an EMPTY sequence is vacuously True, so this refusal helper
+    # answered "yes, pooled percentiles are derivable" when handed no data at all --
+    # the opposite of what it exists to say. The empty case gets its own reason rather
+    # than blaming per-window summaries that were never supplied.
+    have_tokens = bool(per_window) and all("values" in w for w in per_window)
     if have_tokens:
         return {"available": True}
+    reason = ("no windows supplied" if not per_window else
+              ("pooled token percentiles are not derivable from per-window "
+               "summaries; a panel p95 is not a function of per-window p95s"))
     return {
         "available": False,
-        "reason": ("pooled token percentiles are not derivable from per-window "
-                   "summaries; a panel p95 is not a function of per-window p95s"),
+        "reason": reason,
         "remedy": "publish the per-token KL array (or per-window sufficient "
                   "statistics: n, sum d, sum d^2, and a quantile sketch)",
     }
@@ -445,6 +467,19 @@ def domain_table(
         row: Dict[str, Any] = {"domain": dom, "windows": len(ws)}
         row.update(summ)
         if len(ws) >= 2:
+            # STAT-17 / STAT-01. Every domain is bootstrapped with the SAME seed, so
+            # with equal window counts the resample index streams are identical across
+            # domains and these intervals share their Monte-Carlo error (measured on the
+            # real panel: replicate-mean correlation up to |r| = 0.57, arbitrary, since
+            # it pairs domain A's k-th window with domain B's k-th -- unrelated windows).
+            #
+            # NOT fixed here on purpose. Deriving a per-domain seed moves 79 PUBLISHED
+            # by_domain endpoints by up to 24.15%, and that movement is not the seed: it
+            # is the raw MC instability of a BCa bootstrap at B=1000 over g=5..7 windows,
+            # which is the same thing that makes these intervals cover 78-83% while
+            # claiming 95% (STAT-01). Re-rolling the dice would publish a second wrong
+            # interval. Both are written up with the exact patch and the measured deltas
+            # in docs/REVIEW-DEFERRED.md; they need ONE operator-approved reseed.
             bs = window_block_bootstrap(
                 {w["window_id"]: float(w["mean"]) for w in ws},
                 b=b, seed=seed, backend=backend,
