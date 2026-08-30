@@ -1,0 +1,81 @@
+{
+  "corpus": {
+    "documents_considered": 2,
+    "documents_selected": 2,
+    "path_prefix": "corpus/text/",
+    "repository": "malaiwah/qwen38-27b-fidelity-suite-v5",
+    "revision": null
+  },
+  "created_utc": "2026-08-30T11:59:29Z",
+  "documents": [
+    {
+      "bytes": 404518,
+      "document": "pg100.txt",
+      "document_sha256": "aea60c52db6edd47d57466ed780f4e91b7fe399a3cb9439879866ecdc445000c",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 106444,
+      "window_id": "final-0000"
+    },
+    {
+      "bytes": 308016,
+      "document": "arxiv5-cs-AI-0000.txt",
+      "document_sha256": "ad29c470c08f5cb0601b9c45c61d229e84cbe798203138845ecd1fb3675be482",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 57673,
+      "window_id": "final-0001"
+    }
+  ],
+  "format_version": 1,
+  "panel_id": "panel--glm53.stagea.smoke.2w",
+  "panel_name": "GLM-5.3 Stage A smoke panel (2 windows) -- NOT A MEASUREMENT PANEL",
+  "parameters": {
+    "context_length": 2048,
+    "prediction_positions_per_window": 2047,
+    "scored_positions_total": 4094,
+    "skip_tokens": 2048,
+    "strata": [
+      "literary",
+      "scientific"
+    ],
+    "windows_per_stratum": 1,
+    "windows_total": 2
+  },
+  "receipt_sha256": "78559e1241b34bce482b4e390fff52b1248b9f8ea50034fd1656fe8f53eca7f7",
+  "schema": "malaiwah.token-panel-build-receipt.v1",
+  "selection_rule": "strata sorted ascending; within each stratum documents sorted by file name ascending; each document tokenized whole with add_special_tokens=False; a document is eligible only if it yields at least skip_tokens+context_length tokens; its window is tokens[skip_tokens : skip_tokens+context_length]; the first windows_per_stratum eligible documents are taken; windows are numbered from zero in (stratum, document) order. No RNG is used anywhere.",
+  "separation": {
+    "checked": false,
+    "method": "declaration only; this tool runs no lexical or n-gram scan",
+    "note": "STAGE A SMOKE ONLY. Two windows, built to exercise the capture path on a 4-layer TRUNCATED checkpoint. Separation asserted at source level only; no contamination scan. Any KLD computed against a dataset built on this panel is meaningless."
+  },
+  "suite_token_hash_sha256": "20e6bb6868c06edd0a1f9bc2c5a1b11437bf94fbcb82b1e1e3ee025d71b2ddae",
+  "tokenizer": {
+    "add_special_tokens": false,
+    "chat_template_applied": false,
+    "files_sha256": {
+      "chat_template.jinja": "34d5ee66b12fa6446cdae131c352b8f68cd85369e0e6fda115583805fada3891",
+      "config.json": "33e63ec7fe607658be712bd6dd3c16c6549960d8e7f0483d34b939881b55f943",
+      "generation_config.json": "230c30609ecbbb9e6583bedde8e7bdda0c6eb8fe5fad0eaeb3d1b293d751cb4f",
+      "processor_config.json": "aae38374c94b08cc9b0547c6e64f05b951bd9735cea571c6988f5ed552bed3ed",
+      "revision.txt": "10f9132129097654d216adf45595f6988d6701785dfb644d94ce4173a4ba0ebf",
+      "tokenizer.json": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+      "tokenizer_config.json": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"
+    },
+    "id": "zai-org/GLM-5.3-BF16",
+    "repository": "zai-org/GLM-5.3-BF16",
+    "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+    "vocab_size": 154820
+  },
+  "tool": "k6/tools/build_token_panel.py",
+  "tool_sha256": "8fc028713b48b19fb9368f833dda61bcfa0dc3be37a8a67352abf1811f255c7e"
+}

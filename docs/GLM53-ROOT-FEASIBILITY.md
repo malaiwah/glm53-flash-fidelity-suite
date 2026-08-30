@@ -2,6 +2,15 @@
 
 **Verdict: GO-WITH-STAGING, and the gate that matters is not a GPU gate.**
 
+> **UPDATE 2026-08-30 — Stage A has been run, for $0.00. See section 9.**
+> R1 is CLOSED: 836 of 836 checkpoint tensors, including all 768 fused
+> per-expert matrices of a real sparse layer, are byte-for-byte identical
+> between the loaded model and the shard bytes. R3's guard was widened to see
+> `mismatched_keys`, `error_msgs`, `conversion_errors` and the no-report case.
+> R2's mechanism is fixed (`device_map`, proven on `glm_moe_dsa`); R2's
+> economics are unchanged. Two corrections to this document's own Stage A
+> recipe and to R1's stated tensor shape are in section 9.2.
+
 `zai-org/GLM-5.3-BF16` is our architecture — `glm_moe_dsa`, the same family as
 Fruit, which `k6/tools/hf_capture.py` captured end to end. Every config key
 Fruit needed is present. The memory arithmetic fits one H200 with room to
@@ -417,7 +426,9 @@ questions this stage was meant to answer: the model builds, the indexer
 schedule is coherent, layer 78 is not built, `tie_word_embeddings` is false and
 the head carries **no bias** (so `hf_capture`'s HEAD gate passes).
 
-**A2 — a truncated real-weights capture on the operator's own M4 Max.** The
+**A2 — a truncated real-weights capture on the operator's own M4 Max.**
+*(DONE 2026-08-30. Results, and two corrections to the recipe below, in
+section 9.)* The
 local box has **137 GB unified memory and 1.3 TiB free disk**. Fetch only the
 **9 shards (43.2 GB)** that carry `embed_tokens`, `lm_head`, `model.norm` and
 layers 0–3, write a pruned index, set `num_hidden_layers: 4`, and run
@@ -524,7 +535,9 @@ not measuring."*
 ## 7. Risks, ranked
 
 **R1 — the expert-fusion conversion is 98% of this checkpoint, and
-`hf_capture`'s guard cannot see it fail.** `GlmMoeDsaForCausalLM` holds routed
+`hf_capture`'s guard cannot see it fail.** *(CLOSED by Stage A -- 836/836
+tensors byte-exact, and the guard now reads `conversion_errors`. See section 9.3
+and 9.4. The `down_proj` shape stated below is wrong; see section 9.2.)* `GlmMoeDsaForCausalLM` holds routed
 experts as fused 3-D parameters (`experts.gate_up_proj` `[256, 4096, 6144]`,
 `experts.down_proj` `[256, 2048, 6144]`) while the checkpoint ships one matrix
 per expert per projection. A naive key-set diff reports **150 missing keys**;
@@ -550,7 +563,9 @@ refused). Reading `conversion_errors` requires the `LoadStateDictInfo` object
 rather than its dict.
 
 **R2 — `hf_capture.py` cannot load this model on any machine JarvisLabs
-rents.** `load_model` calls `from_pretrained(...)` with no `device_map`, then
+rents.** *(HALF-CLOSED by Stage A: `--device-map` / `--max-memory` /
+`--offload-folder` now exist and skip the fatal `.to()`, proven on
+`glm_moe_dsa`. The ECONOMICS below stand unchanged. See section 9.5.)* `load_model` calls `from_pretrained(...)` with no `device_map`, then
 `model.to(device)`. With `device_map=None`, transformers materialises 1,486.8 GB
 on **CPU**; the largest per-GPU RAM on offer is 300 GB (H200 IN2), so a
 single-GPU instance is OOM-killed before it ever reaches `.to()`. And `.to()`
@@ -566,7 +581,8 @@ and `import stream_score`, and `stream_score.py` is not in this repository —
 `fidelity_dataset.py` already refuses `--engine sealed-lane` for exactly that
 reason.
 
-**R3 — CAPTURE-03: would the random-initialisation refusal fire here?** Yes,
+**R3 — CAPTURE-03: would the random-initialisation refusal fire here?**
+*(Its blind spot is closed; see section 9.4.)* Yes,
 for the failure mode it was built for. `hf_capture.py:390` raises
 `REFUSED: N parameter(s) were NOT in the checkpoint and were randomly
 initialised` unless `--allow-missing-weights`, and it is reached before the
@@ -635,3 +651,232 @@ document is arithmetic; this is the one thing that must be built.
 
 Spend nothing until Stage A is done. It is free, it runs on the operator's own
 desk, and it is the difference between finding R1 for $0 and finding it for $50.
+
+---
+
+## 9. Stage A: what it actually proved (run 2026-08-30, $0.00)
+
+Stage A ran end to end on the operator's M4 Max. **No GPU was rented, nothing
+was published, no registry row was written, and no number produced here is a
+measurement.** The model it ran on is four layers deep; its KLD is arithmetic
+about a truncation, not fidelity.
+
+**Verdict: GO for Stage B.** R1 — the risk this stage existed to close — is
+closed, with counts rather than a summary. R3's guard was widened to see the
+three failures it was blind to. R2's *mechanism* is now fixed and proven on the
+real architecture; R2's *economics* are unchanged and remain the gate on
+Stage C.
+
+### 9.1 What was fetched, and what it cost
+
+`k6/tools/fetch_truncated_ckpt.py` (new) range-fetches only the byte ranges of
+the tensors a truncated model needs, writing them at their published offsets
+into **sparse** local shards under the published safetensors headers.
+
+| | planned in §6 | actual |
+|---|---:|---:|
+| shards touched | 9 | 9 |
+| download | 43.2 GB (whole shards) | **25.948 GB** |
+| tensors kept | — | **836** |
+| wall clock | — | **4m 53s** at 91 MB/s |
+| on-disk after | — | 24 GB (sparse; 43.2 GB apparent) |
+| dollars | $0.00 | **$0.00** |
+
+Whole-shard fetching would have moved 17.2 GB it never reads: five of the nine
+shards carry wanted tensors and unwanted ones side by side (shard 2 holds
+**one** layer-1 tensor and 211 layer-10 tensors). Range fetching is the right
+tool here even though §3 correctly rules it out for the *full* capture.
+
+Truncated model: 4 layers (0–2 dense, 3 sparse with all 256 routed experts),
+**12,973,900,544 parameters = 25,947,801,088 bytes**. The fetch plan's
+25,947,802,112 bytes exceeds it by exactly **1,024 bytes** — `mlp.gate.`
+`e_score_correction_bias`, 256 fp32 values, a buffer rather than a parameter.
+The census reconciles at this scale too.
+
+### 9.2 Two corrections to §6 and §7
+
+**§6's Stage A recipe does not load as written.** Setting only
+`num_hidden_layers: 4` is refused by `transformers` 5.16.1:
+
+> `ValueError: num_hidden_layers (4) must be equal to the number of mlp_layer_types (78)`
+
+The per-layer schedule lists must be truncated with it. `fetch_truncated_ckpt.py`
+truncates every config value that is a 78-long list of strings —
+`mlp_layer_types` and `indexer_types` — which preserves the schedule of the
+layers kept: `dense, dense, dense, sparse` and `full, full, full, shared`. So
+layer 3 is still a `shared` indexer consuming layer 2's `prev_topk_indices`,
+exactly as in the 78-layer model.
+
+**§7 R1 states the fused shape wrong.** `down_proj` is `[256, 6144, 2048]`
+(`[E, hidden, moe_intermediate]`), not `[256, 2048, 6144]`. `gate_up_proj` is
+`[256, 4096, 6144]` as stated. The confirmed converter is
+
+```
+["mlp.experts.*.gate_proj.weight", "mlp.experts.*.up_proj.weight"]
+    -> mlp.experts.gate_up_proj   via MergeModulelist(dim=0), Concatenate(dim=1)
+ "mlp.experts.*.down_proj.weight"
+    -> mlp.experts.down_proj      via MergeModulelist(dim=0)
+```
+
+and `modeling_glm_moe_dsa.py:571` splits the *output* of
+`linear(x, gate_up_proj[k])` with `.chunk(2, dim=-1)`, so rows `0:2048` are
+gate and rows `2048:4096` are up.
+
+### 9.3 R1 — CLOSED. The converter is honest, byte for byte
+
+`k6/tools/verify_fused_experts.py` (new) loads the checkpoint through
+`hf_capture.load_model` — the production path — then reads each per-expert
+matrix's raw bytes straight out of the local shard at its published offset,
+with no `safetensors` reader and no `transformers` in the path, and `memcmp`s
+it against the corresponding slice of the live fused parameter.
+
+| comparison | count | differed |
+|---|---:|---:|
+| `gate_up_proj[k][0:2048]` vs `experts.k.gate_proj.weight` | 256 | **0** |
+| `gate_up_proj[k][2048:4096]` vs `experts.k.up_proj.weight` | 256 | **0** |
+| `down_proj[k]` vs `experts.k.down_proj.weight` | 256 | **0** |
+| every other parameter and buffer, name-mapped 1:1 | 68 | **0** |
+| **total checkpoint tensors compared** | **836** | **0** |
+
+836 compared, 836 exact, and 836 of 836 is every tensor fetched. The fetch
+receipt's per-tensor sha256 were re-derived from the shard bytes at check time:
+768 re-checked, 0 mismatched. The two parameters with no checkpoint key are
+`model.rotary_emb.inv_freq` and `.original_inv_freq` — computed from the
+config, never shipped, correctly absent.
+
+**The same check passes through the `--device-map` path** (`{"": "cpu"}`,
+`accelerate` 1.14.0): 836/836 exact. Dispatching does not change the converter's
+output.
+
+The load report, read in full:
+
+```
+observed true   conversion_errors_visible true
+missing_keys 0   mismatched_keys 0   error_msgs 0   conversion_errors 0
+unexpected_keys 43
+```
+
+**The 43 unexpected keys are not what §7 predicted, and the reason matters.**
+They are not layer 78's MTP tensors — they are tensors of layers 9, 10, 19, 20,
+29 and 30 that happen to share the nine fetched shards. `transformers` 5.16.1
+enumerates each shard's **own safetensors header**, not merely the
+`weight_map` of the index, so a pruned index does not stop it from finding —
+and running the fusion converter over — tensors it encounters in the file. In
+this sparse tree those regions are holes that read as zeros. They were
+classified `UNEXPECTED` and discarded, so nothing was harmed. But that is
+precisely the mechanism by which a hole could have been served as a tensor of
+zeros had a key matched, and it is why the instrument for R1 has to be a byte
+comparison and not a key-set diff. On the full Stage B tree the same field will
+legitimately carry layer 78's 791 MTP tensors.
+
+### 9.4 R3 — the guard now sees what it needed to see
+
+`hf_capture.py` read `missing_keys` and nothing else. It now reads the whole
+report, through `load_report()` and `refuse_on_load_report()`:
+
+| signal | before | now |
+|---|---|---|
+| `missing_keys` | refuses (`--allow-missing-weights` overrides) | unchanged |
+| `mismatched_keys` (*"Reinit due to size mismatch"*) | **ignored** | refuses, same override |
+| `error_msgs` | **ignored** | refuses, **not** overridable |
+| `conversion_errors` | **not even visible** | refuses, **not** overridable |
+| no report at all | read as a clean report | refuses, not overridable |
+| `unexpected_keys` | never recorded | `checkpoint_tensors_not_loaded` disclosure |
+
+`conversion_errors` is reachable because `_FullLoadingReport` wraps
+`LoadStateDictInfo.to_dict` for the duration of the load — the method whose own
+source says it omits the field *"to be coherent with legacy reporting in the
+tests"*. If a `transformers` build offers no such class, the wrap does not take
+effect and the guard **refuses** rather than reporting a clean bill of health it
+never checked.
+
+Two honest qualifications. First, `transformers` 5.16.1 already raises from
+inside `from_pretrained` on both `conversion_errors` and `mismatched_keys`, so
+on this build the load fails either way — the old code failed closed here, with
+a confusing message. The hardening matters because that is the library's
+choice, not ours: `ignore_mismatched_sizes=True`, an older build, or a
+refactor all hand the report back instead of raising, and then this reader is
+the only thing between a reinitialised tensor and a published number. Second,
+`_from_pretrained` used to return a bare `{}` on its fallback path, so an
+**unexamined** load and a **clean** load were the same value. That one was live.
+
+Regression tests A17–A22 in `bin/selftest_hf_capture.py`; all six fail against
+`hf_capture.py` at commit `b3f518c` (verified by running the new selftest
+against a `git archive HEAD` tree) and pass after. A17's failure there reads
+`missing_weight_keys -> []` on a report carrying a mismatched key: the blind
+spot, stated.
+
+### 9.5 R2 — mechanism fixed, economics unchanged
+
+`load_model` now accepts `device_map` / `max_memory` / `offload_folder`, and
+**skips the `model.to(device)`** that follows `from_pretrained` when a
+`device_map` is given, because `.to()` on a dispatched model raises. Proven on
+`glm_moe_dsa` itself, not only on a fixture (§9.3). It refuses with a clear
+message when `accelerate` is absent instead of surfacing the library's.
+
+That unblocks the B-1 and B-2 lanes. It does **not** change their prices, and
+the layer-outer engine of B-3/C-3 is still unbuilt. §6's cost table stands.
+
+**A new number for the Stage B budget: the converter's transient is one layer,
+not three.** Loading the truncation peaked at **48.2 GB RSS** against
+25.95 GB of resident parameters — a **22.3 GB** excess, or 1.15x the 19.33 GB
+of one sparse layer's routed experts. So the fusion holds roughly the source
+copy of the layer it is building and not more. Budget **one extra sparse-layer
+buffer (~19.4 GB) of headroom above resident during load**, per layer in
+flight. Caveat: safetensors mmaps the shards, so an unknown part of that 22.3 GB
+is evictable file-backed page cache rather than anonymous memory — treat 19.4 GB
+as an upper bound, not a floor.
+
+### 9.6 The capture chain, on `glm_moe_dsa` at hidden width 6144
+
+Two cold captures in two separate processes, through
+`bin/fidelity-dataset capture --engine hf-transformers`:
+
+| | |
+|---|---|
+| windows / scored positions | 2 / 4,094 |
+| per window | 70.8 s, 67.6 s (CPU, M4 Max) |
+| total per run | 158.2 s |
+| head hook | fired **exactly once** per window |
+| head input | `[1, 2048, 6144]`, **bfloat16**, bias `None` |
+| hidden form / logit-form equivalent | 50.3 MB / 2.54 GB (50.4x) |
+| `verify` | VERIFIED, tensors recomputed |
+| `validate --strict` | **0 errors, 0 warnings** |
+| `capture_content_digest`, both runs | `faa26e5ac6…` — **identical** |
+| `compare --self-compare` | **exactly 0.0** (SC-1) |
+
+Every gate in §6's *Gate A → B* passes: `missing_keys`, `mismatched_keys` and
+`error_msgs` all empty; the fused expert bytes match the shard bytes exactly;
+the head hook fired once; the hidden dtype is bf16.
+
+The sealed manifests carry three disclosures — `no_known_deviations`,
+`reduced_run_count`, and the new `checkpoint_tensors_not_loaded` naming the 43
+unused tensors. Evidence lives in `k6/tools/glm53-stagea-evidence/`. **The
+datasets themselves were deleted**: they are a truncation, they are not a
+measurement, and nothing should be able to mistake them for one.
+
+### 9.7 What Stage B should now cost, and the one thing still unknown
+
+Nothing learned here moves §6's price table: the fetch is still ~1 h and
+$0.40–0.56, and B-1/B-2/B-3 still cost $51.76 / $13.77–18.04 / $2.45–2.93. What
+changed is *risk*, not price:
+
+* R1 no longer needs paid discovery. The converter was exercised on a real
+  sparse layer with all 256 experts and was exact. The remaining 75 sparse
+  layers go through the identical layer-agnostic code path.
+* R2's blocker is no longer "the engine cannot express this". B-1 and B-2 are
+  runnable today with the `device_map` flag.
+* Stage B should add `--max-memory` headroom of one sparse-layer buffer
+  (~19.4 GB) above its resident plan, per §9.5.
+* Stage B must not reuse this panel. `panel--glm53.stagea.smoke.2w` is two
+  windows built to exercise a code path; §5's 25-window, 5-stratum panel is
+  still the recommendation.
+
+**The single biggest remaining unknown is unchanged and is the one §8 named:
+no engine reads this checkpoint economically.** `device_map` makes the load
+*expressible*, not cheap — B-1 spills ~334 GiB to CPU RAM and pays a 358 GB
+pageable H2D transfer per window; B-2 writes a second full 1,486.8 GB copy to
+disk. The layer-outer, window-inner schedule that reads the tree once per run
+instead of once per window is still the difference between a $3 stage C and a
+$38–96 one, and it is still unwritten. Stage A moved the correctness risk to
+zero and left the engineering exactly where it was.

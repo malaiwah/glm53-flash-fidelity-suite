@@ -1,0 +1,329 @@
+{
+  "candidate": {
+    "capture_content_digest": "faa26e5ac63849e0cf6da97f9e20b391155a73e1eb7c50ade5b18b547065da1a",
+    "dataset_id": "fidelity--glm53.stagea.smoke.trunc4",
+    "dataset_sha256": "b8b1bd431e497e7b7768bcca6487aaa72ab8f9b372acfbc495caf624dc7d4f4a",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd",
+      "source": "native",
+      "tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd"
+    },
+    "label": "candidate",
+    "lane": "other",
+    "lane_identity_sha256": "fe2df966a4a0726f41e2dcad723a717512967d3dbeb7346752eabe20332567f3",
+    "repository": null,
+    "revision": null,
+    "role": "root",
+    "scope_digest": "attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "7ad87330430146e8fa563a33fa2ee04c83cad657c7fd644263d399490557e008",
+    "weights": {
+      "artifact_ref": null,
+      "checkpoint_identity_sha256": "c30165648a8211185aa71d3cd344b11a96ca44bda524f60d066bb246f234f27a",
+      "codec": null,
+      "config_sha256": "8c617b76ad2e33265497d5552826d89425c98480ede899d66de33c215d55af69",
+      "declared_bits": null,
+      "declared_head_bits": 16,
+      "index_sha256": null,
+      "model_ref": null,
+      "model_revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+      "quantized": false,
+      "repository": "zai-org/GLM-5.3-BF16 [STAGE A 4-LAYER TRUNCATION -- NOT THE PUBLISHED MODEL]",
+      "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639"
+    }
+  },
+  "comparability": {
+    "bias": null,
+    "class": "strict",
+    "key": null,
+    "key_inputs": null,
+    "same_lane": true,
+    "usable_as_floor": true
+  },
+  "comparator": {
+    "accumulation_dtype": "float64",
+    "bf16_reduced_precision_reduction": false,
+    "cublas_workspace_config": null,
+    "deterministic_algorithms": true,
+    "device": "none",
+    "estimator_backend": "hash_proof",
+    "head_applied_tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd",
+    "logprob_dtype": "float64",
+    "position_block": null,
+    "short_circuited": true,
+    "source_file_hashes_verified": true,
+    "tensor_content_digests_verified": true,
+    "tf32": false,
+    "tool": {
+      "entrypoint": "bin/fidelity-dataset compare",
+      "note": "the fp64 estimator is k6_kld_report._token_kld, imported not copied, whenever torch is importable; estimator_backend records which path ran."
+    },
+    "two_pass": true,
+    "vocab_chunk": null
+  },
+  "comparison_kind": "reproduction_confirmation",
+  "context_depth_buckets": null,
+  "created_utc": "2026-08-30T12:15:41Z",
+  "determinism": {
+    "cold_start_per_run": null,
+    "distinct_evidence_hash_count": 1,
+    "evidence_hashes": [
+      "faa26e5ac63849e0cf6da97f9e20b391155a73e1eb7c50ade5b18b547065da1a"
+    ],
+    "evidence_kind": "hidden_state_tensor_sha256",
+    "identical_across_runs": null,
+    "max_run_mean": 0.0,
+    "min_run_mean": 0.0,
+    "note": "one comparison of two sealed captures. identical_across_runs is null, not true: that claim needs two independently produced captures of the SAME weights (SC-2), which is a different receipt.",
+    "population_stddev_of_run_means": 0.0,
+    "run_count": 1,
+    "run_means": [
+      0.0
+    ]
+  },
+  "disclosures": [
+    {
+      "affects_comparability": false,
+      "code": "shared_reference_head",
+      "detail": "HEAD-1a: both captures declare the same lm_head tensor content digest (864f488a0074); one head applied to both sides is a shared APPLICATION of identical WEIGHTS.",
+      "severity": "info"
+    }
+  ],
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "head_policy": "shared_reference_head",
+    "logits_dtype": "bf16",
+    "softmax_note": "full vocabulary, torch.log_softmax in float64; no truncation, no top-k, no clamp. A non-finite intermediate is a hard refusal.",
+    "stack_relation": "same_stack",
+    "two_pass": true,
+    "vocab_chunk": null,
+    "zero_handling": "exact zero asserted, not rounded"
+  },
+  "format_version": 1,
+  "gates": {
+    "coverage": {
+      "detail": "2 of 2/2 declared records shared",
+      "overridden_by": null,
+      "passed": true
+    },
+    "form": {
+      "detail": "hidden vs hidden",
+      "overridden_by": null,
+      "passed": true
+    },
+    "geometry": {
+      "detail": "vocab_size 154880 equal; hidden_width 6144",
+      "overridden_by": null,
+      "passed": true
+    },
+    "head": {
+      "detail": "HEAD-1a: identical head content digest on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lane": {
+      "detail": "lane=other vs other",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lossy": {
+      "detail": "lossy_codec null on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "panel": {
+      "detail": "suite_token_hash_sha256 equal; 2 shared records; per-record token and mask digests equal; scoring_window equal",
+      "overridden_by": null,
+      "passed": true
+    },
+    "seal": {
+      "detail": "both manifests self-seal and checksums.txt verified; every tensor_content_sha256 recomputed",
+      "overridden_by": null,
+      "passed": true
+    },
+    "stack": {
+      "detail": "lane_identity equal / stack_fingerprint equal -> same_stack",
+      "overridden_by": null,
+      "passed": true
+    }
+  },
+  "high_kld_contexts": [
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 0,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0000"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 1,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0001"
+    }
+  ],
+  "kl": {
+    "max": 0.0,
+    "mean": 0.0,
+    "median": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "p99_9": 0.0
+  },
+  "kl_macro_stratum_mean": null,
+  "kl_micro_token_mean": 0.0,
+  "measurement_scope": {
+    "contexts": 2,
+    "covers_full_panel": true,
+    "position_filter": "all",
+    "positions_per_context": 2047,
+    "scored_positions": 4094,
+    "subset_detail": null
+  },
+  "metric": {
+    "direction": "reference_to_candidate",
+    "direction_label": "KL(reference || candidate)",
+    "higher_is_better": false,
+    "name": "mean_tokenwise_kld",
+    "units": "nats",
+    "value": 0.0
+  },
+  "panel": {
+    "context_length": 2048,
+    "contexts": 2,
+    "panel_id": "panel--glm53.stagea.smoke.2w",
+    "panel_token_sha256_legacy": "3b0dbcfa3cca92345c1506472637df73dfdd9c50d14c186d721f1126f3e7099e",
+    "scored_positions": 4094,
+    "scoring_window": {
+      "dropped_positions_total": 0,
+      "min_left_context_tokens": 1,
+      "policy": "every causal prediction position of every window is scored; nothing is dropped",
+      "score_from": 0,
+      "windowed": false
+    },
+    "suite_token_hash_sha256": "20e6bb6868c06edd0a1f9bc2c5a1b11437bf94fbcb82b1e1e3ee025d71b2ddae",
+    "tokenizer": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "zai-org/GLM-5.3-BF16",
+      "repository": "zai-org/GLM-5.3-BF16",
+      "revision": null,
+      "vocab_size": 154880
+    },
+    "tokenizer_candidate": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "zai-org/GLM-5.3-BF16",
+      "repository": "zai-org/GLM-5.3-BF16",
+      "revision": null,
+      "vocab_size": 154880
+    },
+    "tokenizer_identity_equal": true,
+    "tokenizer_reference": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "zai-org/GLM-5.3-BF16",
+      "repository": "zai-org/GLM-5.3-BF16",
+      "revision": null,
+      "vocab_size": 154880
+    }
+  },
+  "per_context": [
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 0,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0000"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 1,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0001"
+    }
+  ],
+  "per_domain": null,
+  "per_stratum": null,
+  "receipt_sha256": "c2daeb91198654f11605a459b5b2109c1a98efd3b6b9e0cecd933aa8251257f9",
+  "reference": {
+    "capture_content_digest": "faa26e5ac63849e0cf6da97f9e20b391155a73e1eb7c50ade5b18b547065da1a",
+    "dataset_id": "fidelity--glm53.stagea.smoke.trunc4",
+    "dataset_sha256": "dd0f4b6ab061103541f8e5a0ff5fc1812c336a0b9ea565cdb61b9b14c883af69",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd",
+      "source": "native",
+      "tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd"
+    },
+    "label": "reference",
+    "lane": "other",
+    "lane_identity_sha256": "fe2df966a4a0726f41e2dcad723a717512967d3dbeb7346752eabe20332567f3",
+    "repository": null,
+    "revision": null,
+    "role": "root",
+    "scope_digest": "attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "7ad87330430146e8fa563a33fa2ee04c83cad657c7fd644263d399490557e008",
+    "weights": {
+      "artifact_ref": null,
+      "checkpoint_identity_sha256": "c30165648a8211185aa71d3cd344b11a96ca44bda524f60d066bb246f234f27a",
+      "codec": null,
+      "config_sha256": "8c617b76ad2e33265497d5552826d89425c98480ede899d66de33c215d55af69",
+      "declared_bits": null,
+      "declared_head_bits": 16,
+      "index_sha256": null,
+      "model_ref": null,
+      "model_revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+      "quantized": false,
+      "repository": "zai-org/GLM-5.3-BF16 [STAGE A 4-LAYER TRUNCATION -- NOT THE PUBLISHED MODEL]",
+      "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639"
+    }
+  },
+  "schema": "malaiwah.fidelity-comparison-receipt.v1",
+  "self_compare": {
+    "asserted_exact_zero": true,
+    "capture_content_digest_equal": true,
+    "expected_tokenwise_bytes": 32880,
+    "expected_tokenwise_sha256": "d54931c81433dc5df59aad12036b0c1c8db560dc4c9cd107a3980ff23d82cd1b",
+    "force_compute_agreed": null,
+    "head_digest_equal": true,
+    "weights_identity_equal": true
+  },
+  "submission": {
+    "emitted": false,
+    "path": null,
+    "receipt_sha256": null,
+    "refusal": "comparison_kind is reproduction_confirmation, not measurement; bin/fidelity/receipt.py::_scan_for_unsubmittable is the second, independent refusal axis.",
+    "submission_schema": null
+  },
+  "tokenwise": {
+    "bytes": 32880,
+    "path": "tokenwise-kld.npy",
+    "sha256": "d54931c81433dc5df59aad12036b0c1c8db560dc4c9cd107a3980ff23d82cd1b"
+  },
+  "top1_agreement": 1.0,
+  "top1_discordant_contexts": [],
+  "uncertainty": {
+    "ci95_high": null,
+    "ci95_low": null,
+    "cluster_unit": null,
+    "clusters": null,
+    "method": "none",
+    "samples": null,
+    "seed": null
+  }
+}
