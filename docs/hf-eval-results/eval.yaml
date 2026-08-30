@@ -1,0 +1,45 @@
+# eval.yaml — registers a distribution-fidelity panel as a Hub Benchmark.
+#
+# Draft. Not yet submitted: `evaluation_framework: fidelity-kld` is not in
+# huggingface.js/packages/tasks/src/eval.ts, and the dataset is not allow-listed.
+# See OUTREACH.md in this directory for both asks.
+#
+# This benchmark is unlike the QA benchmarks currently registered. It does not
+# score a model against human-authored answers; it measures how far a model's
+# full output DISTRIBUTION has moved from a reference model's, on frozen token
+# IDs, teacher-forced. Lower is better. It is how quantization damage is
+# measured, and it is the axis a leaderboard of quantizations needs.
+
+name: GLM-5.3-Flash distribution fidelity (sealed 25-window panel)
+description: >
+  Mean KL divergence D(reference || candidate) in nats over the FULL vocabulary
+  (154,880 entries), fp64 accumulation, teacher-forced, on a sealed panel of 25
+  windows x 2,048 tokens (51,175 scored positions). The reference is
+  zai-org/GLM-5.3-Flash-BF16 at a pinned revision; frozen token IDs are published
+  with a hash. Lower is better; 0.0 means the candidate reproduces the reference
+  distribution exactly. Two numbers are comparable only when panel, reference,
+  KL direction, estimator precision, quantization scope and measurement lane all
+  match -- the task ids below encode the lane, and every submitted result should
+  carry scope and head_bits in `notes`.
+
+evaluation_framework: fidelity-kld
+
+tasks:
+  # Reference forward (transformers), characterizes the CHECKPOINT.
+  # Bitwise deterministic: repeated cold runs give identical means.
+  - id: glm53_flash_final25_checkpoint
+    config: default
+    split: test
+
+  # Through a serving engine, characterizes WEIGHTS + KERNELS + any
+  # activation quantization together. Not comparable to the checkpoint lane
+  # without a measured bridge; ours is -8.5e-6 on this panel.
+  - id: glm53_flash_final25_serving
+    config: default
+    split: test
+
+  # The same panel restricted to the 17 windows that survive a 13-gram
+  # calibration-overlap scan. Reported alongside, never instead.
+  - id: glm53_flash_clean17_checkpoint
+    config: default
+    split: test

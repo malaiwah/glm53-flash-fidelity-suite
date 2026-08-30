@@ -1,0 +1,22 @@
+# .eval_results/fidelity-kld.yaml — what we would submit, by PR, to a model repo
+# we have measured. Shows as "community-provided" while the PR is open; the
+# model author can close it if they dispute the score.
+#
+# This example is the real measured row for turboderp/GLM-5.3-Flash-exl3 @ 2a30229e.
+
+- dataset:
+    id: malaiwah/glm53-flash-fidelity-panel        # the Benchmark (pending allow-list)
+    task_id: glm53_flash_final25_checkpoint
+    revision: 95f4fdd94bf29989db2e0d1054e4931f55edb6aa
+  value: 0.025526426915472484
+  date: "2026-08-29"
+  source:
+    url: https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/tree/main/reports
+    name: Sealed receipt (both cold runs, per-window, digests)
+    user: malaiwah
+  notes: >-
+    lane=checkpoint(transformers reference forward, EP8 emulated, reduce-order fp32);
+    scope=experts K4/attn K6/shared K6/dense-MLP K5/lm_head K6;
+    head_bits=6; runs=2 cold, run means identical, one tokenwise sha256;
+    reference=zai-org/GLM-5.3-Flash-BF16@a6c167b6; lower is better;
+    same-lane BF16 floor on this panel = 0.011505922619330299
