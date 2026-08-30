@@ -192,10 +192,37 @@ MB/s** on four (`hf_transfer` uses more and should beat this):
 | BF16 non-routed shards, ~235 GB, only if your artifact lacks its own | 0.36 h |
 
 Bootstrap (python3.12 + `torch==2.11.0+cu130` + `transformers==5.16.1` +
-safetensors/numpy/accelerate) is another ~5-10 min. **A stranger starting from
-nothing** should therefore budget roughly **5.5-9.5 hours and $11-19** for a
-176-331 GB quant on H200 spot, or about half that if a cheaper SM90-or-newer
-card is free. Add ~0.4 h and ~$0.8 if you also have to pull the BF16 shards.
+safetensors/numpy/accelerate) is another ~5-10 min.
+
+#### One end-to-end run, start to finish, by someone who had not done it before
+
+The numbers above are the K6/K8 **payload-store** path. Measuring a
+**third-party release from its own HF shards** — which is what an outside
+contributor actually does — is cheaper, because the routed payloads are read
+from the release rather than a content-addressed store. A full run of
+`turboderp/GLM-5.3-Flash-exl3` at 2.05bpw (85.2 GB artifact), 25-window panel,
+2 cold runs, 1x H200 spot in IN2, nothing cached:
+
+| stage | wall clock |
+|---|---:|
+| bundle upload + watchdog | 5 min |
+| bootstrap (`setup`) | 6 min 21 s |
+| fetch artifact (85.2 GB) | 4 min 15 s |
+| materialize non-routed tree | 2 min 08 s |
+| fetch panel (31.7 GB) | 4 min 15 s |
+| **measure, 2 cold runs x 25 windows** | **2 h 09 m** |
+| score + seal + pull + teardown | 8 min |
+| **total** | **2 h 37 m** |
+
+Cost, all four ways the runner reports it: estimated **$6.80**, computed
+**$5.23**, billed **$5.28**, balance delta **$5.18**. Zero preemptions.
+
+**So budget ~3 h and ~$6-9 for a third-party EXL3-family release**, and use the
+older 5.5-9.5 h / $11-19 figure only for a payload-store measurement. Either
+way, take the number `--dry-run` prints for your target: it was 30% high here,
+in the safe direction.
+
+Add ~0.4 h and ~$0.8 if you also have to pull the BF16 shards.
 
 Two hardware traps worth knowing before you rent:
 
