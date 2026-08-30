@@ -1,0 +1,53 @@
+{
+  "corpus": {
+    "path_prefix": "suite/tokens/",
+    "repository": "malaiwah/qwen38-27b-fidelity-suite-v5",
+    "revision": "7797fcce3ffed62b99871348887f4626dc9b2b3b",
+    "suite_manifest_sha256": "44000bbd4ec24fea4a19696eb7b5e1055b66c4dc65a3bf14f243de58e38cd3f3",
+    "suite_schema": "qwen38-distribution-fidelity/6",
+    "suite_token_sha256_parent": "caef8a4628d6c07c162100895096f890cdf9cafc8e4c48b3d66035d737ee7cf7"
+  },
+  "derivation": "transport, not reconstruction",
+  "format_version": 1,
+  "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m",
+  "panel_name": "malaiwah Qwen3.8-27B suite v5, shard 0 -- 512 contexts",
+  "parameters": {
+    "context_length": 2048,
+    "prediction_positions_per_window": 2047,
+    "scored_positions_total": 1048064,
+    "windows_total": 512
+  },
+  "receipt_sha256": "380720efe0763789b0759241367ddc9de65662772ecdde2f97b1cc9271622002",
+  "schema": "malaiwah.token-panel-rebuild-receipt.v1",
+  "seals_verified": {
+    "per_context_file_sha256": {
+      "contexts_checked": 512,
+      "mismatches": 0,
+      "rule": "sha256(context-NNNN.json bytes) == context_index[i].token_sha256"
+    },
+    "shard_aggregate": {
+      "expected": "caef8a4628d6c07c162100895096f890cdf9cafc8e4c48b3d66035d737ee7cf7",
+      "match": true,
+      "recomputed": "caef8a4628d6c07c162100895096f890cdf9cafc8e4c48b3d66035d737ee7cf7",
+      "rule": "sha256(concat of per-context token_sha256 hex in context_index order) == registry panel identity.panel_token_sha256"
+    }
+  },
+  "selection_rule": "every context of the sealed shard, in the shard suite-manifest's context_index order; window N carries context_index[N]'s token ids verbatim. No RNG, no tokenizer, no re-derivation from text.",
+  "separation": {
+    "checked": false,
+    "method": "inherited from the parent suite manifest",
+    "note": "Gutenberg / arXiv / Wikipedia (en + de,fr,es,ja,zh,ru) / CPython v3.12.8 Lib; calibration-overlapping documents are pre-excluded."
+  },
+  "suite_token_hash_sha256": "8847e99a855fab374c3b5fecc1777eabf61307c36782ed48f9fc77e7aca3e42f",
+  "tokenizer": {
+    "add_special_tokens": false,
+    "chat_template_applied": false,
+    "id": "qwen3.8",
+    "note": "no tokenizer was loaded by this tool; token ids are transported from the sealed suite, so tokenizer identity is inherited from the suite manifest, not re-asserted.",
+    "repository": "Qwen/Qwen3.8-27B",
+    "revision": null,
+    "vocab_size": 248320
+  },
+  "tool": "k6/tools/build_panel_from_v5_suite.py",
+  "tool_sha256": "680008b36624c7624c4cdb91bd8917bfd6ed462450d57a8c9e89875a11fa32f4"
+}

@@ -278,7 +278,7 @@ the validator warns whenever a `strict` row rests on a panel whose `contaminatio
 
 ## How to read the tables below
 
-16 tables follow, one per comparability group, across 3 models. Three things are true of all of them, and each is a mistake somebody has already made with numbers like these:
+17 tables follow, one per comparability group, across 3 models. Three things are true of all of them, and each is a mistake somebody has already made with numbers like these:
 
 1. **A number means nothing outside its own table.** Every table states the seven-part key its rows share. Two numbers under different keys are different quantities that happen to print in the same units.
 2. **The smallest number on this page is not the best quant.** Today it is GLM-5.2-SIQ-Fruit BF16 (the reference export) at 0 nats -- and it is not a quant at all -- those are unquantized weights, read by a second engine, measuring what two engines disagree by. Sorting this file by value and reading off the top is the single easiest way to be wrong with it.
@@ -351,10 +351,10 @@ Attribution is a column, not a footnote: *measured by us*, *measured by us (thei
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
+> - `cmp--05e16411a5932713` (3 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m
 > - `cmp--4a93702ded23e01a` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
 > - `cmp--12bfc6ec82b47678` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
 > - `cmp--1ef6a9b5901f8e2a` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256
-> - `cmp--1669ccf7958fb75c` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shards01-2m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -369,11 +369,11 @@ Attribution is a column, not a footnote: *measured by us*, *measured by us (thei
 | malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0106039** | [0.00963981, 0.0117463] | 95.76 % | 1 run, unevidenced | measured by us | local receipt |
 | unsloth Qwen3.8-27B NVFP4 | `nvfp4 @4` | -- | **0.0310586** | [0.0279161, 0.0347947] | 92.90 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
 
-> **The same artifact, measured elsewhere in this file.** 6 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 8%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+> **The same artifact, measured elsewhere in this file.** 6 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
 > <details><summary>the 6 artifacts and their ranges</summary>
 >
-> - **Qwen3.8-27B FP8 (official)** -- 5 values here, from **0.00495487** to **0.00529563** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`.
@@ -423,10 +423,10 @@ Derived from `panel--qwen38.malaiwah.suite-v5-10m` by **shard_subset**: shards 0
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
+> - `cmp--05e16411a5932713` (3 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m
 > - `cmp--4a93702ded23e01a` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
 > - `cmp--5f556b50b25762a2` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
 > - `cmp--12bfc6ec82b47678` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
-> - `cmp--1ef6a9b5901f8e2a` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -440,11 +440,11 @@ Derived from `panel--qwen38.malaiwah.suite-v5-10m` by **shard_subset**: shards 0
 | Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00529563** | [0.00492561, 0.00572892] | 96.85 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
 | malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0105726** | [0.0096214, 0.0117039] | 95.83 % | 1 run, unevidenced | measured by us | local receipt |
 
-> **The same artifact, measured elsewhere in this file.** 5 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 8%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+> **The same artifact, measured elsewhere in this file.** 5 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
 > <details><summary>the 5 artifacts and their ranges</summary>
 >
-> - **Qwen3.8-27B FP8 (official)** -- 5 values here, from **0.00495487** to **0.00529563** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--12bfc6ec82b47678`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
@@ -473,7 +473,7 @@ Derived from `panel--qwen38.malaiwah.suite-v5-10m` by **shard_subset**: shard 0 
 
 > **Panel disclosure -- `unsealed_source`:** The qwen38 v5 token suite is pinned by suite_token_sha256 and by its manifest digest c79dfad3..., but the token files themselves are not published, so a third party cannot reproduce the digest today.
 
-This panel carries **2 separate comparability groups**. They are different measurements of different things and are never merged.
+This panel carries **3 separate comparability groups**. They are different measurements of different things and are never merged.
 
 #### Group `cmp--4a93702ded23e01a` -- 12 rows
 
@@ -490,10 +490,10 @@ This panel carries **2 separate comparability groups**. They are different measu
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
+> - `cmp--05e16411a5932713` (3 rows): `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m
 > - `cmp--46a8a19f0fa33bed` (4 rows): `stack_relation` same_stack -> cross_stack
 > - `cmp--5f556b50b25762a2` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
 > - `cmp--12bfc6ec82b47678` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
-> - `cmp--1ef6a9b5901f8e2a` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -514,11 +514,11 @@ This panel carries **2 separate comparability groups**. They are different measu
 | gittensor-model-hub Qwen3.8-27B NVFP4 (RTX5090) | `nvfp4 @4` | 20.6 GB | **0.0621631** | [0.0584911, 0.0663596] | 89.85 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
 | Qwen3.8-27B MTP-NVFP4 (upstream unattributed) | `nvfp4 @4` | -- | **0.15128** | [0.141538, 0.163025] | 84.74 % | 1 run, unevidenced | measured by us | local receipt |
 
-> **The same artifact, measured elsewhere in this file.** 6 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 8%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+> **The same artifact, measured elsewhere in this file.** 6 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
 > <details><summary>the 6 artifacts and their ranges</summary>
 >
-> - **Qwen3.8-27B FP8 (official)** -- 5 values here, from **0.00495487** to **0.00529563** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--5f556b50b25762a2`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--5f556b50b25762a2`.
@@ -578,6 +578,7 @@ This panel carries **2 separate comparability groups**. They are different measu
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
 > - `cmp--4a93702ded23e01a` (12 rows): `stack_relation` cross_stack -> same_stack
+> - `cmp--05e16411a5932713` (3 rows): `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m; `stack_relation` cross_stack -> same_stack
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -619,6 +620,50 @@ This panel carries **2 separate comparability groups**. They are different measu
 
 </details>
 
+#### Group `cmp--05e16411a5932713` -- 3 rows
+
+**Panel** `panel--qwen38.malaiwah.suite-v5-shard0-1m` -- malaiwah Qwen3.8-27B suite v5, shard 0 -- 512 contexts
+  512 contexts x 2047 scored positions = **1,048,064 scored positions**, score_from 0
+  sealed: **yes** (token digest `caef8a4628d6c07c...`) -- contamination scan: **yes, 0 hits**
+**Reference (teacher)** `reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m` -- native_bf16, artifact `artifact--qwen.qwen3.8-27b-bf16` @unpinned revision
+**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
+**Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
+**Comparability key** `cmp--05e16411a5932713`
+
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+>
+> **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
+>
+> **What it is NOT comparable to.** The nearest neighbouring groups differ in:
+> - `cmp--4a93702ded23e01a` (12 rows): `reference_id` reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
+> - `cmp--46a8a19f0fa33bed` (4 rows): `reference_id` reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m; `stack_relation` same_stack -> cross_stack
+> - `cmp--5f556b50b25762a2` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
+> - `cmp--12bfc6ec82b47678` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
+> 
+> Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
+>
+> Also, and always: **every table for a different model.** A KL number is a divergence over one model's own vocabulary against that model's own teacher. It is not a quality score that can be carried between models.
+
+| Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
+|---|---|---:|---:|---|---:|---|---|---|
+| **Qwen3.8-27B BF16** _(measurement floor)_ | `bf16` | -- | **0** | -- | 100.00 % | 3 runs, bitwise identical | measured by us (their artifact) | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/qwen38-hf/comparison.qwen38-bf16-selfcompare-floor.json) |
+| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00298985** | -- | 97.75 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/qwen38-hf/comparison.qwen38-fp8-dequantized.json) |
+| cyankiwi Qwen3.8-27B AWQ-INT4 | `awq @4` | 21.0 GB | **0.0224494** | -- | 94.02 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/qwen38-hf/comparison.qwen38-awq-int4-cyankiwi.json) |
+
+> **The same artifact, measured elsewhere in this file.** One of the artifacts below also carries a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+>
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
+
+<details><summary>Disclosures for the rows above (5)</summary>
+
+- `qwen38-hf.fp8-dequantized.suite-v5-shard0-1m` **lossy_capture_codec**: RECONSTRUCTED, NOT EXECUTED. The vendor FP8 path is unavailable on this hardware: the fused deep-gemm kernel aborts with 'Unknown recipe' on Blackwell. The candidate was therefore captured from a bf16 materialisation of the stored fp8 weights (k6/tools/dequant_fp8.py, w = fp8 * weight_scale_inv over 128x128 blocks, accumulated fp32, stored bf16). This is the dequantize-and-run methodology the GGUF/EXL3/MLX ecosystems use for KLD: it measures the error of the STORED weights, not of the vendor kernel. Validated before use: per-tensor rel-L2 against the root is 0.0265 uniformly across gate/up/down/q projections, which is FP8 E4M3's expected error and confirms the scale convention.
+- `qwen38-hf.fp8-dequantized.suite-v5-shard0-1m` **estimator_scope_narrower_than_artifact**: WEIGHT-ONLY, THEREFORE A LOWER BOUND. The checkpoint declares activation_scheme: 'dynamic', i.e. the served model also quantizes activations per-token at runtime. That term is absent from this measurement, so this value is a LOWER BOUND on the served model's divergence, not the served model's divergence. It is in particular NOT the same quantity as measurement--qwen38.fp8.suite-v5-shard0-1m (0.005197), which ran the real kernel on the vLLM lane.
+- `qwen38-hf.fp8-dequantized.suite-v5-shard0-1m` **record_note**: UPSTREAM LOADER DEFECT, ROUTED AROUND. Capturing this artifact through stock transformers silently loads it WRONG. The producer's modules_to_not_convert lists '...layers.N.mlp.gate' -- a MoE router that does not exist in this dense checkpoint -- and transformers.quantizers.quantizers_utils.should_convert_module tests re.match(key, full_name), which is anchored only at the START, so that pattern ALSO matches '...layers.N.mlp.gate_proj'. Verified against the real tensor names: 65 of 65 gate_proj modules excluded from fp8 conversion, 0 of 65 up_proj. Their fp8 weights load into plain bf16 Linears with the block scale never applied, and the 65 gate_proj.weight_scale_inv tensors drop out of the load as 'unexpected' -- the only signal, and nothing refuses on it. The dequantisation used here applies all 407 block scales, and the resulting checkpoint loads with 0 unexpected / 0 missing / 0 mismatched.
+- `qwen38-hf.fp8-dequantized.suite-v5-shard0-1m` **single_run**: One cold capture of the candidate. Repeatability was not established for the candidate side. The REFERENCE side is the three-run bitwise-identical capture the floor row uses, and the comparison itself is deterministic offline arithmetic over sealed tensors, so the unrepeated term is the candidate forward pass alone.
+- `qwen38-hf.awq-int4-cyankiwi.suite-v5-shard0-1m` **single_run**: One cold capture of the candidate. Repeatability was not established for the candidate side. The REFERENCE side is the three-run bitwise-identical capture the floor row uses, and the comparison itself is deterministic offline arithmetic over sealed tensors, so the unrepeated term is the candidate forward pass alone.
+
+</details>
+
 ### Panel: malaiwah Qwen3.8-27B suite v5 shard 0, scored from position 256
 
 Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_change**: score_from 0 -> 256 on shard 0.
@@ -640,10 +685,10 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
+> - `cmp--05e16411a5932713` (3 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m
 > - `cmp--4a93702ded23e01a` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
 > - `cmp--5f556b50b25762a2` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
 > - `cmp--12bfc6ec82b47678` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
-> - `cmp--1669ccf7958fb75c` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-shards01-2m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -657,11 +702,11 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 | Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00509007** | [0.00477169, 0.00544966] | 96.97 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
 | malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0101538** | [0.00936883, 0.0110793] | 95.98 % | 1 run, unevidenced | measured by us | local receipt |
 
-> **The same artifact, measured elsewhere in this file.** 5 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 8%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+> **The same artifact, measured elsewhere in this file.** 5 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
 > <details><summary>the 5 artifacts and their ranges</summary>
 >
-> - **Qwen3.8-27B FP8 (official)** -- 5 values here, from **0.00495487** to **0.00529563** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
@@ -705,10 +750,10 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
+> - `cmp--05e16411a5932713` (3 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m
 > - `cmp--4a93702ded23e01a` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
 > - `cmp--5f556b50b25762a2` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
 > - `cmp--1ef6a9b5901f8e2a` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256
-> - `cmp--1669ccf7958fb75c` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-shards01-2m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -722,11 +767,11 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 | Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00495487** | [0.00463566, 0.005316] | 97.02 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
 | malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.00987561** | [0.00910329, 0.0107555] | 96.04 % | 1 run, unevidenced | measured by us | local receipt |
 
-> **The same artifact, measured elsewhere in this file.** 5 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 8%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
+> **The same artifact, measured elsewhere in this file.** 5 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
 > <details><summary>the 5 artifacts and their ranges</summary>
 >
-> - **Qwen3.8-27B FP8 (official)** -- 5 values here, from **0.00495487** to **0.00529563** nats (7% apart). Other tables: `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
 > - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.

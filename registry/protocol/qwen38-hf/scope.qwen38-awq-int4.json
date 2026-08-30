@@ -1,0 +1,191 @@
+{
+  "assignments": [
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": null,
+      "tensor_class": "embed_tokens",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": null,
+      "tensor_class": "lm_head",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": null,
+      "tensor_class": "norm",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 4,
+      "format": "int4",
+      "layer_range": null,
+      "tensor_class": "attn.qkv",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 4,
+      "format": "int4",
+      "layer_range": null,
+      "tensor_class": "attn.o",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 4,
+      "format": "int4",
+      "layer_range": null,
+      "tensor_class": "mlp.gate",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 4,
+      "format": "int4",
+      "layer_range": null,
+      "tensor_class": "mlp.up",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 4,
+      "format": "int4",
+      "layer_range": null,
+      "tensor_class": "mlp.down",
+      "treatment": "quantized"
+    }
+  ],
+  "derivation": {
+    "declared_bits": 4,
+    "declared_format": "int4",
+    "declared_scheme": "compressed-tensors pack-quantized, num_bits=4, group_size=32, observer=mse, actorder=None",
+    "excluded_sample": [
+      "model.language_model.layers.0.linear_attn",
+      "model.language_model.layers.0.linear_attn.norm",
+      "model.language_model.layers.0.linear_attn.out_proj",
+      "model.language_model.layers.0.linear_attn.in_proj_b",
+      "model.language_model.layers.0.linear_attn.in_proj_a",
+      "model.language_model.layers.1.linear_attn",
+      "model.language_model.layers.1.linear_attn.norm",
+      "model.language_model.layers.1.linear_attn.in_proj_b",
+      "model.language_model.layers.1.linear_attn.in_proj_a",
+      "model.language_model.layers.2.linear_attn",
+      "model.language_model.layers.2.linear_attn.norm",
+      "model.language_model.layers.2.linear_attn.in_proj_b"
+    ],
+    "excluded_text_modules": 202,
+    "exclusion_rule": "config.quantization_config.ignore",
+    "note": "vision-tower tensors are excluded from this scope: the panel is text-only, no image or video token is ever fed, so the vision tower does not participate in any scored forward pass.",
+    "per_class_evidence": {
+      "attn.o": {
+        "example": "model.language_model.layers.0.linear_attn.conv1d.weight",
+        "modules": 113,
+        "modules_with_quant_state": 63,
+        "native_families": [
+          "linear_attn.conv1d",
+          "linear_attn.out_proj",
+          "self_attn.o_proj"
+        ],
+        "native_modules": 50,
+        "partial": true,
+        "tensors": 302,
+        "verdict": "quantized"
+      },
+      "attn.qkv": {
+        "example": "model.language_model.layers.0.linear_attn.in_proj_a.weight",
+        "modules": 243,
+        "modules_with_quant_state": 144,
+        "native_families": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "self_attn.k_proj",
+          "self_attn.q_proj",
+          "self_attn.v_proj"
+        ],
+        "native_modules": 99,
+        "partial": true,
+        "tensors": 675,
+        "verdict": "quantized"
+      },
+      "embed_tokens": {
+        "example": "model.language_model.embed_tokens.weight",
+        "modules": 1,
+        "modules_with_quant_state": 0,
+        "tensors": 1,
+        "verdict": "native"
+      },
+      "lm_head": {
+        "example": "lm_head.weight",
+        "modules": 1,
+        "modules_with_quant_state": 0,
+        "tensors": 1,
+        "verdict": "native"
+      },
+      "mlp.down": {
+        "example": "model.language_model.layers.0.mlp.down_proj.weight_packed",
+        "modules": 65,
+        "modules_with_quant_state": 64,
+        "native_families": [
+          "mlp.down_proj"
+        ],
+        "native_modules": 1,
+        "partial": true,
+        "tensors": 257,
+        "verdict": "quantized"
+      },
+      "mlp.gate": {
+        "example": "model.language_model.layers.0.mlp.gate_proj.weight_packed",
+        "modules": 65,
+        "modules_with_quant_state": 64,
+        "native_families": [
+          "mlp.gate_proj"
+        ],
+        "native_modules": 1,
+        "partial": true,
+        "tensors": 257,
+        "verdict": "quantized"
+      },
+      "mlp.up": {
+        "example": "model.language_model.layers.0.mlp.up_proj.weight_packed",
+        "modules": 65,
+        "modules_with_quant_state": 64,
+        "native_families": [
+          "mlp.up_proj"
+        ],
+        "native_modules": 1,
+        "partial": true,
+        "tensors": 257,
+        "verdict": "quantized"
+      },
+      "moe.experts": {
+        "tensors": 0,
+        "verdict": "absent"
+      },
+      "norm": {
+        "example": "model.language_model.layers.0.input_layernorm.weight",
+        "modules": 312,
+        "modules_with_quant_state": 0,
+        "tensors": 312,
+        "verdict": "native"
+      }
+    },
+    "quant_method": "compressed-tensors",
+    "source": "the artifact's own config.json + safetensors weight index",
+    "tensors_with_quant_state": 399,
+    "text_tensors_total": 2063,
+    "tool": "derive_scope.py"
+  },
+  "disclosures": [
+    {
+      "affects_comparability": false,
+      "code": "partial_class_quantization",
+      "detail": "This checkpoint is a HYBRID: of its 64 text layers, 48 use linear attention and 16 full attention. The producer quantized every layer's main projection but left the linear-attention families (linear_attn.conv1d, linear_attn.in_proj_a, linear_attn.in_proj_b, linear_attn.out_proj, mlp.down_proj, mlp.gate_proj, mlp.up_proj, self_attn.k_proj, self_attn.o_proj, self_attn.q_proj, self_attn.v_proj) in bf16. The registry tensor_class vocabulary is coarser than that split, so classes attn.o, attn.qkv, mlp.down, mlp.gate, mlp.up are recorded 'quantized' with this note rather than 'unknown': the recipe IS published, and scope.derivation carries the exact per-class tensor counts.",
+      "severity": "info"
+    }
+  ],
+  "head_policy": "native",
+  "kv_cache_dtype": "bf16",
+  "policy": "mixed"
+}

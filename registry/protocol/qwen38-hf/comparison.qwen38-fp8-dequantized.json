@@ -1,0 +1,4959 @@
+{
+  "candidate": {
+    "capture_content_digest": "cab1aa85c748ca024870bfdeca9841d53f2cc9744c775a862bc59d6bff0e8bb3",
+    "dataset_id": "fidelity--qwen38-27b.malaiwah.quant.fp8-deq",
+    "dataset_sha256": "dbe0a4462275bcb3de1c1cfeb181fe8f07bc6ec52fb3f8f74c130d4144022709",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723",
+      "source": "native",
+      "tensor_content_sha256": "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723"
+    },
+    "label": "candidate",
+    "lane": "local-cuda-budget",
+    "lane_identity_sha256": "5903a9ecad5ce1cd7e2f0fd33e9ea7ea7d2d5fe34c1c6fc304ab55b3e6569ea5",
+    "repository": null,
+    "revision": null,
+    "role": "quant",
+    "scope_digest": "attn.o=quantized:fp8-e4m3@8|attn.qkv=quantized:fp8-e4m3@8|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=quantized:fp8-e4m3@8|mlp.gate=quantized:fp8-e4m3@8|mlp.up=quantized:fp8-e4m3@8|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "09b9136769e496917b4d0f59f29ddf1d584fb8c6fd792510813bf129ba34b9c2",
+    "weights": {
+      "artifact_ref": null,
+      "checkpoint_identity_sha256": "546a54e75c95ad73e56dc41b00fca8287d5b090bfb9181709d03da9b25887184",
+      "codec": "fp8-e4m3-dequantized",
+      "config_sha256": "75ee6918f289ce855ca196cfdedfa29ae572054441554e7c33977ebde4565b5f",
+      "declared_bits": 8.0,
+      "declared_head_bits": 16,
+      "index_sha256": null,
+      "model_ref": "model--qwen.qwen3.8-27b",
+      "model_revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+      "quantized": true,
+      "repository": "Qwen/Qwen3.8-27B-FP8",
+      "revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a"
+    }
+  },
+  "comparability": {
+    "bias": null,
+    "class": "strict",
+    "key": "cmp--f46f1d72937e97ee",
+    "key_inputs": {
+      "accumulation_dtype": "float64",
+      "direction": "reference_to_candidate",
+      "head_policy": "shared_reference_head",
+      "metric_name": "mean_tokenwise_kld",
+      "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m",
+      "reference_id": "fidelity--qwen38-27b.malaiwah.root.bf16",
+      "stack_relation": "same_stack"
+    },
+    "same_lane": true,
+    "usable_as_floor": true
+  },
+  "comparator": {
+    "accumulation_dtype": "float64",
+    "bf16_reduced_precision_reduction": false,
+    "cublas_workspace_config": null,
+    "deterministic_algorithms": true,
+    "device": "cuda",
+    "estimator_backend": "torch:k6_kld_report._token_kld",
+    "head_applied_tensor_content_sha256": "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723",
+    "logprob_dtype": "float64",
+    "position_block": 128,
+    "short_circuited": false,
+    "source_file_hashes_verified": true,
+    "tensor_content_digests_verified": true,
+    "tf32": false,
+    "tool": {
+      "entrypoint": "bin/fidelity-dataset compare",
+      "note": "the fp64 estimator is k6_kld_report._token_kld, imported not copied, whenever torch is importable; estimator_backend records which path ran."
+    },
+    "two_pass": true,
+    "vocab_chunk": 24832
+  },
+  "comparison_kind": "measurement",
+  "context_depth_buckets": {
+    "0000-0255": 0.003456837299269113,
+    "0256-0511": 0.0031139565048350706,
+    "0512-1023": 0.0029986398512320436,
+    "1024-1535": 0.0028773555879764577,
+    "1536-2046": 0.002797633823135573
+  },
+  "created_utc": "2026-08-30T15:54:02Z",
+  "determinism": {
+    "cold_start_per_run": null,
+    "distinct_evidence_hash_count": 2,
+    "evidence_hashes": [
+      "2376837de2e42561a196a3f33e25ab6e79471bed0f97c5949605656ca97504c3",
+      "cab1aa85c748ca024870bfdeca9841d53f2cc9744c775a862bc59d6bff0e8bb3"
+    ],
+    "evidence_kind": "hidden_state_tensor_sha256",
+    "identical_across_runs": null,
+    "max_run_mean": 0.002989850396847924,
+    "min_run_mean": 0.002989850396847924,
+    "note": "one comparison of two sealed captures. identical_across_runs is null, not true: that claim needs two independently produced captures of the SAME weights (SC-2), which is a different receipt.",
+    "population_stddev_of_run_means": 0.0,
+    "run_count": 1,
+    "run_means": [
+      0.002989850396847924
+    ]
+  },
+  "disclosures": [
+    {
+      "affects_comparability": false,
+      "code": "shared_reference_head",
+      "detail": "HEAD-1a: both captures declare the same lm_head tensor content digest (d922b751f014); one head applied to both sides is a shared APPLICATION of identical WEIGHTS.",
+      "severity": "info"
+    }
+  ],
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "head_policy": "shared_reference_head",
+    "logits_dtype": "bf16",
+    "softmax_note": "full vocabulary, torch.log_softmax in float64; no truncation, no top-k, no clamp. A non-finite intermediate is a hard refusal.",
+    "stack_relation": "same_stack",
+    "two_pass": true,
+    "vocab_chunk": 24832,
+    "zero_handling": null
+  },
+  "format_version": 1,
+  "gates": {
+    "coverage": {
+      "detail": "512 of 512/512 declared records shared",
+      "overridden_by": null,
+      "passed": true
+    },
+    "form": {
+      "detail": "hidden vs hidden",
+      "overridden_by": null,
+      "passed": true
+    },
+    "geometry": {
+      "detail": "vocab_size 248320 equal; hidden_width 5120",
+      "overridden_by": null,
+      "passed": true
+    },
+    "head": {
+      "detail": "HEAD-1a: identical head content digest on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lane": {
+      "detail": "lane=local-cuda-budget vs local-cuda-budget",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lossy": {
+      "detail": "lossy_codec null on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "panel": {
+      "detail": "suite_token_hash_sha256 equal; 512 shared records; per-record token and mask digests equal; scoring_window equal",
+      "overridden_by": null,
+      "passed": true
+    },
+    "seal": {
+      "detail": "both manifests self-seal and checksums.txt verified; every tensor_content_sha256 recomputed",
+      "overridden_by": null,
+      "passed": true
+    },
+    "stack": {
+      "detail": "lane_identity equal / stack_fingerprint equal -> same_stack",
+      "overridden_by": null,
+      "passed": true
+    }
+  },
+  "high_kld_contexts": [
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 33,
+      "max": 1.3276885420939066,
+      "mean": 0.016493465052267505,
+      "scored_rows": 2047,
+      "window_id": "final-0033"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 17,
+      "max": 1.0506517774341093,
+      "mean": 0.015803869318842288,
+      "scored_rows": 2047,
+      "window_id": "final-0017"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 438,
+      "max": 0.753231167733656,
+      "mean": 0.01449658190852372,
+      "scored_rows": 2047,
+      "window_id": "final-0438"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 411,
+      "max": 0.39617517838646066,
+      "mean": 0.014232509808119258,
+      "scored_rows": 2047,
+      "window_id": "final-0411"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 83,
+      "max": 2.0162679295433397,
+      "mean": 0.013570701050393914,
+      "scored_rows": 2047,
+      "window_id": "final-0083"
+    }
+  ],
+  "kl": {
+    "max": 2.0162679295433397,
+    "mean": 0.002989850396847924,
+    "median": 0.0009696961924583243,
+    "p95": 0.009972340458292886,
+    "p99": 0.032763897796112766,
+    "p99_9": 0.14369528668542408
+  },
+  "kl_macro_stratum_mean": null,
+  "kl_micro_token_mean": 0.002989850396847924,
+  "measurement_scope": {
+    "contexts": 512,
+    "covers_full_panel": true,
+    "position_filter": "all",
+    "positions_per_context": 2047,
+    "scored_positions": 1048064,
+    "subset_detail": null
+  },
+  "metric": {
+    "direction": "reference_to_candidate",
+    "direction_label": "KL(reference || candidate)",
+    "higher_is_better": false,
+    "name": "mean_tokenwise_kld",
+    "units": "nats",
+    "value": 0.002989850396847924
+  },
+  "panel": {
+    "context_length": 2048,
+    "contexts": 512,
+    "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m",
+    "panel_token_sha256_legacy": "d0cdd562117373b17f23d6ba0cf9bc8e65200d1b5b06a76704e18bcb49363404",
+    "scored_positions": 1048064,
+    "scoring_window": {
+      "dropped_positions_total": 0,
+      "min_left_context_tokens": 1,
+      "policy": "every causal prediction position of every window is scored; nothing is dropped",
+      "score_from": 0,
+      "windowed": false
+    },
+    "suite_token_hash_sha256": "8847e99a855fab374c3b5fecc1777eabf61307c36782ed48f9fc77e7aca3e42f",
+    "tokenizer": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "Qwen/Qwen3.8-27B",
+      "repository": "Qwen/Qwen3.8-27B",
+      "revision": null,
+      "vocab_size": 248320
+    },
+    "tokenizer_candidate": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "Qwen/Qwen3.8-27B",
+      "repository": "Qwen/Qwen3.8-27B",
+      "revision": null,
+      "vocab_size": 248320
+    },
+    "tokenizer_identity_equal": true,
+    "tokenizer_reference": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "Qwen/Qwen3.8-27B",
+      "repository": "Qwen/Qwen3.8-27B",
+      "revision": null,
+      "vocab_size": 248320
+    }
+  },
+  "per_context": [
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 0,
+      "max": 0.1012067662775592,
+      "mean": 0.0022096205617240946,
+      "scored_rows": 2047,
+      "window_id": "final-0000"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 1,
+      "max": 0.6810713753817943,
+      "mean": 0.00244619747935631,
+      "scored_rows": 2047,
+      "window_id": "final-0001"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 2,
+      "max": 0.036674268341030575,
+      "mean": 0.0022566905301648443,
+      "scored_rows": 2047,
+      "window_id": "final-0002"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 3,
+      "max": 0.09062855209030404,
+      "mean": 0.0025516916013277073,
+      "scored_rows": 2047,
+      "window_id": "final-0003"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 4,
+      "max": 0.032495661060770106,
+      "mean": 0.0022247748030394254,
+      "scored_rows": 2047,
+      "window_id": "final-0004"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 5,
+      "max": 0.050663659580999255,
+      "mean": 0.0019901503204504878,
+      "scored_rows": 2047,
+      "window_id": "final-0005"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 6,
+      "max": 0.12170391897024874,
+      "mean": 0.0027526937790083436,
+      "scored_rows": 2047,
+      "window_id": "final-0006"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 7,
+      "max": 0.17169560562745317,
+      "mean": 0.003132351648613088,
+      "scored_rows": 2047,
+      "window_id": "final-0007"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 8,
+      "max": 0.035709936901240524,
+      "mean": 0.00184967970438569,
+      "scored_rows": 2047,
+      "window_id": "final-0008"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 9,
+      "max": 0.10618460434746509,
+      "mean": 0.0021221370267376716,
+      "scored_rows": 2047,
+      "window_id": "final-0009"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 10,
+      "max": 0.14606260461633733,
+      "mean": 0.0021134170532598868,
+      "scored_rows": 2047,
+      "window_id": "final-0010"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 11,
+      "max": 0.2841163247004946,
+      "mean": 0.0018208615415352953,
+      "scored_rows": 2047,
+      "window_id": "final-0011"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 12,
+      "max": 0.10029310518100443,
+      "mean": 0.0020421511213005905,
+      "scored_rows": 2047,
+      "window_id": "final-0012"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 13,
+      "max": 0.1509461620849433,
+      "mean": 0.0021408435904017543,
+      "scored_rows": 2047,
+      "window_id": "final-0013"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 14,
+      "max": 0.17542621405426578,
+      "mean": 0.0023956563323198057,
+      "scored_rows": 2047,
+      "window_id": "final-0014"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 15,
+      "max": 0.028979116108243313,
+      "mean": 0.0019997808287835683,
+      "scored_rows": 2047,
+      "window_id": "final-0015"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 16,
+      "max": 0.21726220808482297,
+      "mean": 0.002569547432459833,
+      "scored_rows": 2047,
+      "window_id": "final-0016"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 17,
+      "max": 1.0506517774341093,
+      "mean": 0.015803869318842288,
+      "scored_rows": 2047,
+      "window_id": "final-0017"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 18,
+      "max": 0.04116266998119713,
+      "mean": 0.0015722626909945425,
+      "scored_rows": 2047,
+      "window_id": "final-0018"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 19,
+      "max": 0.10075298870087537,
+      "mean": 0.0024384949448134543,
+      "scored_rows": 2047,
+      "window_id": "final-0019"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 20,
+      "max": 0.021876824216156998,
+      "mean": 0.0018151284493565592,
+      "scored_rows": 2047,
+      "window_id": "final-0020"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 21,
+      "max": 0.09985969724670746,
+      "mean": 0.0016041158976664216,
+      "scored_rows": 2047,
+      "window_id": "final-0021"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 22,
+      "max": 0.26201811775039396,
+      "mean": 0.003072848453872377,
+      "scored_rows": 2047,
+      "window_id": "final-0022"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 23,
+      "max": 0.3388379273773492,
+      "mean": 0.00314499299511887,
+      "scored_rows": 2047,
+      "window_id": "final-0023"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 24,
+      "max": 0.11172933764795967,
+      "mean": 0.002039229840660538,
+      "scored_rows": 2047,
+      "window_id": "final-0024"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 25,
+      "max": 0.10290198893544296,
+      "mean": 0.00280067192720824,
+      "scored_rows": 2047,
+      "window_id": "final-0025"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 26,
+      "max": 0.06174567660478711,
+      "mean": 0.0024441594399215788,
+      "scored_rows": 2047,
+      "window_id": "final-0026"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 27,
+      "max": 0.1022515036618662,
+      "mean": 0.0019907139629669556,
+      "scored_rows": 2047,
+      "window_id": "final-0027"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 28,
+      "max": 0.14615783370118168,
+      "mean": 0.0027763158498310984,
+      "scored_rows": 2047,
+      "window_id": "final-0028"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 29,
+      "max": 0.0741796311220601,
+      "mean": 0.002568662104517401,
+      "scored_rows": 2047,
+      "window_id": "final-0029"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 30,
+      "max": 0.08275274408980235,
+      "mean": 0.0028902588004107127,
+      "scored_rows": 2047,
+      "window_id": "final-0030"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 31,
+      "max": 0.11881067017697626,
+      "mean": 0.002709149406817574,
+      "scored_rows": 2047,
+      "window_id": "final-0031"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 32,
+      "max": 0.5778763456755962,
+      "mean": 0.0024453225135909274,
+      "scored_rows": 2047,
+      "window_id": "final-0032"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 33,
+      "max": 1.3276885420939066,
+      "mean": 0.016493465052267505,
+      "scored_rows": 2047,
+      "window_id": "final-0033"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 34,
+      "max": 0.11473537280685012,
+      "mean": 0.0020303218857337414,
+      "scored_rows": 2047,
+      "window_id": "final-0034"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 35,
+      "max": 0.045576279907139736,
+      "mean": 0.0020373162090352647,
+      "scored_rows": 2047,
+      "window_id": "final-0035"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 36,
+      "max": 0.10087919567681593,
+      "mean": 0.004476329304575469,
+      "scored_rows": 2047,
+      "window_id": "final-0036"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 37,
+      "max": 0.07575111486740183,
+      "mean": 0.0016727740349554076,
+      "scored_rows": 2047,
+      "window_id": "final-0037"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 38,
+      "max": 0.22788000515582443,
+      "mean": 0.0032674694902280004,
+      "scored_rows": 2047,
+      "window_id": "final-0038"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 39,
+      "max": 0.2049318204862369,
+      "mean": 0.0033527668279571305,
+      "scored_rows": 2047,
+      "window_id": "final-0039"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 40,
+      "max": 0.10142729918276785,
+      "mean": 0.0015907066566919874,
+      "scored_rows": 2047,
+      "window_id": "final-0040"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 41,
+      "max": 0.11981332931695989,
+      "mean": 0.002132034332248574,
+      "scored_rows": 2047,
+      "window_id": "final-0041"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 42,
+      "max": 0.24743785523971976,
+      "mean": 0.0023634503832686018,
+      "scored_rows": 2047,
+      "window_id": "final-0042"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 43,
+      "max": 0.06844533478027408,
+      "mean": 0.0024804687889217023,
+      "scored_rows": 2047,
+      "window_id": "final-0043"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 44,
+      "max": 0.07105716932719199,
+      "mean": 0.0021839027271404877,
+      "scored_rows": 2047,
+      "window_id": "final-0044"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 45,
+      "max": 0.17966164798158862,
+      "mean": 0.002483082779198274,
+      "scored_rows": 2047,
+      "window_id": "final-0045"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 46,
+      "max": 0.04072271664221671,
+      "mean": 0.0018544678588093583,
+      "scored_rows": 2047,
+      "window_id": "final-0046"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 47,
+      "max": 1.2463467088900984,
+      "mean": 0.002839093221027586,
+      "scored_rows": 2047,
+      "window_id": "final-0047"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 48,
+      "max": 0.09866820736415573,
+      "mean": 0.0019446816084291415,
+      "scored_rows": 2047,
+      "window_id": "final-0048"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 49,
+      "max": 0.07312405599839698,
+      "mean": 0.002777007219110241,
+      "scored_rows": 2047,
+      "window_id": "final-0049"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 50,
+      "max": 0.1380951484678508,
+      "mean": 0.0018973665959801961,
+      "scored_rows": 2047,
+      "window_id": "final-0050"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 51,
+      "max": 0.08178065630897703,
+      "mean": 0.002300159546542771,
+      "scored_rows": 2047,
+      "window_id": "final-0051"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 52,
+      "max": 0.474066865821582,
+      "mean": 0.005716361834346054,
+      "scored_rows": 2047,
+      "window_id": "final-0052"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 53,
+      "max": 0.13412708789877786,
+      "mean": 0.0029158664985972542,
+      "scored_rows": 2047,
+      "window_id": "final-0053"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 54,
+      "max": 0.1632443045511963,
+      "mean": 0.004082201813519692,
+      "scored_rows": 2047,
+      "window_id": "final-0054"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 55,
+      "max": 0.14672014018857424,
+      "mean": 0.00288428618646222,
+      "scored_rows": 2047,
+      "window_id": "final-0055"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 56,
+      "max": 0.04804293067878546,
+      "mean": 0.002080374586564112,
+      "scored_rows": 2047,
+      "window_id": "final-0056"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 57,
+      "max": 0.0922666825564222,
+      "mean": 0.0023182653191979553,
+      "scored_rows": 2047,
+      "window_id": "final-0057"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 58,
+      "max": 0.16670529534050152,
+      "mean": 0.001214729181868369,
+      "scored_rows": 2047,
+      "window_id": "final-0058"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 59,
+      "max": 0.19148128381019025,
+      "mean": 0.0019908917093469664,
+      "scored_rows": 2047,
+      "window_id": "final-0059"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 60,
+      "max": 0.11145421872220958,
+      "mean": 0.003599373724993824,
+      "scored_rows": 2047,
+      "window_id": "final-0060"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 61,
+      "max": 0.6597787248476652,
+      "mean": 0.007839356446003986,
+      "scored_rows": 2047,
+      "window_id": "final-0061"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 62,
+      "max": 0.12315908607062202,
+      "mean": 0.00241675274040008,
+      "scored_rows": 2047,
+      "window_id": "final-0062"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 63,
+      "max": 0.0975258592450995,
+      "mean": 0.0021135126890139124,
+      "scored_rows": 2047,
+      "window_id": "final-0063"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 64,
+      "max": 0.3446050714452835,
+      "mean": 0.0026851241728341603,
+      "scored_rows": 2047,
+      "window_id": "final-0064"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 65,
+      "max": 0.9161390088223067,
+      "mean": 0.00247953664412446,
+      "scored_rows": 2047,
+      "window_id": "final-0065"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 66,
+      "max": 0.09704372800550506,
+      "mean": 0.002036163632278531,
+      "scored_rows": 2047,
+      "window_id": "final-0066"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 67,
+      "max": 0.06977744857846356,
+      "mean": 0.0016463748039211579,
+      "scored_rows": 2047,
+      "window_id": "final-0067"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 68,
+      "max": 0.13259441112745723,
+      "mean": 0.002637435370312849,
+      "scored_rows": 2047,
+      "window_id": "final-0068"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 69,
+      "max": 0.9531462012705574,
+      "mean": 0.003420454234558648,
+      "scored_rows": 2047,
+      "window_id": "final-0069"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 70,
+      "max": 0.043503861580360834,
+      "mean": 0.0024095008102716967,
+      "scored_rows": 2047,
+      "window_id": "final-0070"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 71,
+      "max": 0.24737618964643246,
+      "mean": 0.0028285165611406536,
+      "scored_rows": 2047,
+      "window_id": "final-0071"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 72,
+      "max": 0.6042855617936447,
+      "mean": 0.002065669829420505,
+      "scored_rows": 2047,
+      "window_id": "final-0072"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 73,
+      "max": 0.6567548530182594,
+      "mean": 0.010360659097724573,
+      "scored_rows": 2047,
+      "window_id": "final-0073"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 74,
+      "max": 0.0768779906098175,
+      "mean": 0.0022464309006238457,
+      "scored_rows": 2047,
+      "window_id": "final-0074"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 75,
+      "max": 0.1585662803463645,
+      "mean": 0.0020288906454802107,
+      "scored_rows": 2047,
+      "window_id": "final-0075"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 76,
+      "max": 0.0940384071030951,
+      "mean": 0.002017863695089999,
+      "scored_rows": 2047,
+      "window_id": "final-0076"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 77,
+      "max": 0.05812225059102728,
+      "mean": 0.0021085230169209175,
+      "scored_rows": 2047,
+      "window_id": "final-0077"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 78,
+      "max": 0.044611697817400264,
+      "mean": 0.0018608524173401417,
+      "scored_rows": 2047,
+      "window_id": "final-0078"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 79,
+      "max": 0.22223769119532802,
+      "mean": 0.0027609147578483376,
+      "scored_rows": 2047,
+      "window_id": "final-0079"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 80,
+      "max": 0.07526233927003159,
+      "mean": 0.0023323656227285786,
+      "scored_rows": 2047,
+      "window_id": "final-0080"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 81,
+      "max": 0.2163158507691422,
+      "mean": 0.0030515343581915435,
+      "scored_rows": 2047,
+      "window_id": "final-0081"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 82,
+      "max": 0.5490525670341091,
+      "mean": 0.0022119415216196483,
+      "scored_rows": 2047,
+      "window_id": "final-0082"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 83,
+      "max": 2.0162679295433397,
+      "mean": 0.013570701050393914,
+      "scored_rows": 2047,
+      "window_id": "final-0083"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 84,
+      "max": 0.28505804900027426,
+      "mean": 0.002841091289528825,
+      "scored_rows": 2047,
+      "window_id": "final-0084"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 85,
+      "max": 0.08867359330776396,
+      "mean": 0.002592505259056928,
+      "scored_rows": 2047,
+      "window_id": "final-0085"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 86,
+      "max": 0.8552106019628983,
+      "mean": 0.0033487732807465295,
+      "scored_rows": 2047,
+      "window_id": "final-0086"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 87,
+      "max": 0.02634110815171659,
+      "mean": 0.0015944363074337066,
+      "scored_rows": 2047,
+      "window_id": "final-0087"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 88,
+      "max": 0.3828753772866796,
+      "mean": 0.003213111341452663,
+      "scored_rows": 2047,
+      "window_id": "final-0088"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 89,
+      "max": 0.04707350326252695,
+      "mean": 0.0019552299463231307,
+      "scored_rows": 2047,
+      "window_id": "final-0089"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 90,
+      "max": 0.1757534953571798,
+      "mean": 0.003345230440152252,
+      "scored_rows": 2047,
+      "window_id": "final-0090"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 91,
+      "max": 0.5988184669823694,
+      "mean": 0.001980936522226037,
+      "scored_rows": 2047,
+      "window_id": "final-0091"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 92,
+      "max": 0.29572303436620645,
+      "mean": 0.002445822805890274,
+      "scored_rows": 2047,
+      "window_id": "final-0092"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 93,
+      "max": 0.08750615904903039,
+      "mean": 0.0028900113599248218,
+      "scored_rows": 2047,
+      "window_id": "final-0093"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 94,
+      "max": 0.19104212487465227,
+      "mean": 0.0034591451274081685,
+      "scored_rows": 2047,
+      "window_id": "final-0094"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 95,
+      "max": 0.03159419352016536,
+      "mean": 0.0018066370007114598,
+      "scored_rows": 2047,
+      "window_id": "final-0095"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 96,
+      "max": 0.13586250823730078,
+      "mean": 0.0028708039111232674,
+      "scored_rows": 2047,
+      "window_id": "final-0096"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 97,
+      "max": 0.06547219127311368,
+      "mean": 0.002448812374161481,
+      "scored_rows": 2047,
+      "window_id": "final-0097"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 98,
+      "max": 0.18595903934553,
+      "mean": 0.003211272850717013,
+      "scored_rows": 2047,
+      "window_id": "final-0098"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 99,
+      "max": 0.2712939020610423,
+      "mean": 0.0025009343193857936,
+      "scored_rows": 2047,
+      "window_id": "final-0099"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 100,
+      "max": 0.17665992431854383,
+      "mean": 0.0024298992624147194,
+      "scored_rows": 2047,
+      "window_id": "final-0100"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 101,
+      "max": 0.19183322372341052,
+      "mean": 0.001578088978043132,
+      "scored_rows": 2047,
+      "window_id": "final-0101"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 102,
+      "max": 0.5020570443260819,
+      "mean": 0.0035135845503627625,
+      "scored_rows": 2047,
+      "window_id": "final-0102"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 103,
+      "max": 0.488467633654488,
+      "mean": 0.008027613156239703,
+      "scored_rows": 2047,
+      "window_id": "final-0103"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 104,
+      "max": 0.6576015519915887,
+      "mean": 0.00425643296483969,
+      "scored_rows": 2047,
+      "window_id": "final-0104"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 105,
+      "max": 0.043046239062597615,
+      "mean": 0.00221494377018621,
+      "scored_rows": 2047,
+      "window_id": "final-0105"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 106,
+      "max": 0.0430644570695787,
+      "mean": 0.0021299025896310618,
+      "scored_rows": 2047,
+      "window_id": "final-0106"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 107,
+      "max": 0.16187853966024693,
+      "mean": 0.00318327756851196,
+      "scored_rows": 2047,
+      "window_id": "final-0107"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 108,
+      "max": 0.07083801283780151,
+      "mean": 0.00251712839669514,
+      "scored_rows": 2047,
+      "window_id": "final-0108"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 109,
+      "max": 0.07476514238719881,
+      "mean": 0.0019173499505232732,
+      "scored_rows": 2047,
+      "window_id": "final-0109"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 110,
+      "max": 0.09308428430367087,
+      "mean": 0.0012845144764839446,
+      "scored_rows": 2047,
+      "window_id": "final-0110"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 111,
+      "max": 0.1303780256470739,
+      "mean": 0.0018449372903745753,
+      "scored_rows": 2047,
+      "window_id": "final-0111"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 112,
+      "max": 0.10556985425512548,
+      "mean": 0.002144128243940156,
+      "scored_rows": 2047,
+      "window_id": "final-0112"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 113,
+      "max": 0.16246002466251266,
+      "mean": 0.002366558014582653,
+      "scored_rows": 2047,
+      "window_id": "final-0113"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 114,
+      "max": 0.10002303663578674,
+      "mean": 0.0020842983141730717,
+      "scored_rows": 2047,
+      "window_id": "final-0114"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 115,
+      "max": 0.09897635366969207,
+      "mean": 0.002228754743183372,
+      "scored_rows": 2047,
+      "window_id": "final-0115"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 116,
+      "max": 0.14883018614883303,
+      "mean": 0.0021744063317892474,
+      "scored_rows": 2047,
+      "window_id": "final-0116"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 117,
+      "max": 0.04943336696065748,
+      "mean": 0.002011992260598343,
+      "scored_rows": 2047,
+      "window_id": "final-0117"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 118,
+      "max": 0.06503425858962411,
+      "mean": 0.002314825731283417,
+      "scored_rows": 2047,
+      "window_id": "final-0118"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 119,
+      "max": 0.30257843705315624,
+      "mean": 0.0034748574213943144,
+      "scored_rows": 2047,
+      "window_id": "final-0119"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 120,
+      "max": 0.15771130610047268,
+      "mean": 0.005747603838676546,
+      "scored_rows": 2047,
+      "window_id": "final-0120"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 121,
+      "max": 0.32748656898871376,
+      "mean": 0.0038074280059688386,
+      "scored_rows": 2047,
+      "window_id": "final-0121"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 122,
+      "max": 0.11482241941919602,
+      "mean": 0.002502763694116083,
+      "scored_rows": 2047,
+      "window_id": "final-0122"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 123,
+      "max": 0.09512263071490784,
+      "mean": 0.0028539187842712664,
+      "scored_rows": 2047,
+      "window_id": "final-0123"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 124,
+      "max": 0.07768044144648519,
+      "mean": 0.0019571938435938136,
+      "scored_rows": 2047,
+      "window_id": "final-0124"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 125,
+      "max": 0.2360446756378296,
+      "mean": 0.002283090567334896,
+      "scored_rows": 2047,
+      "window_id": "final-0125"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 126,
+      "max": 0.3762825906513639,
+      "mean": 0.00324204136051345,
+      "scored_rows": 2047,
+      "window_id": "final-0126"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 127,
+      "max": 0.2432869646050057,
+      "mean": 0.003441634213789769,
+      "scored_rows": 2047,
+      "window_id": "final-0127"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 128,
+      "max": 0.3043959754273419,
+      "mean": 0.0018822976169404165,
+      "scored_rows": 2047,
+      "window_id": "final-0128"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 129,
+      "max": 0.28008574617364385,
+      "mean": 0.002812232392661781,
+      "scored_rows": 2047,
+      "window_id": "final-0129"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 130,
+      "max": 0.0571056689052989,
+      "mean": 0.0020812941979251867,
+      "scored_rows": 2047,
+      "window_id": "final-0130"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 131,
+      "max": 0.2604832268645862,
+      "mean": 0.002653373389247952,
+      "scored_rows": 2047,
+      "window_id": "final-0131"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 132,
+      "max": 0.14826828022106844,
+      "mean": 0.0029300884548823744,
+      "scored_rows": 2047,
+      "window_id": "final-0132"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 133,
+      "max": 0.049397194423161706,
+      "mean": 0.0021380776818637993,
+      "scored_rows": 2047,
+      "window_id": "final-0133"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 134,
+      "max": 0.2298981778333878,
+      "mean": 0.003441494223863982,
+      "scored_rows": 2047,
+      "window_id": "final-0134"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 135,
+      "max": 0.2644787158317981,
+      "mean": 0.003991301875157418,
+      "scored_rows": 2047,
+      "window_id": "final-0135"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 136,
+      "max": 0.14498990175215543,
+      "mean": 0.0027526601023742927,
+      "scored_rows": 2047,
+      "window_id": "final-0136"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 137,
+      "max": 0.1165156650113351,
+      "mean": 0.002102409820025835,
+      "scored_rows": 2047,
+      "window_id": "final-0137"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 138,
+      "max": 0.18680929173597435,
+      "mean": 0.004339836245487223,
+      "scored_rows": 2047,
+      "window_id": "final-0138"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 139,
+      "max": 0.23542165044041005,
+      "mean": 0.0025390646005513974,
+      "scored_rows": 2047,
+      "window_id": "final-0139"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 140,
+      "max": 0.7639811302006225,
+      "mean": 0.002677947212731609,
+      "scored_rows": 2047,
+      "window_id": "final-0140"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 141,
+      "max": 0.04102598267411116,
+      "mean": 0.0019929045306444834,
+      "scored_rows": 2047,
+      "window_id": "final-0141"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 142,
+      "max": 0.047118898382649654,
+      "mean": 0.002243490003568211,
+      "scored_rows": 2047,
+      "window_id": "final-0142"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 143,
+      "max": 0.06968468097009352,
+      "mean": 0.0018324563997544386,
+      "scored_rows": 2047,
+      "window_id": "final-0143"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 144,
+      "max": 0.17651351461728126,
+      "mean": 0.002449099776905805,
+      "scored_rows": 2047,
+      "window_id": "final-0144"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 145,
+      "max": 0.3373266664665627,
+      "mean": 0.004043397424949888,
+      "scored_rows": 2047,
+      "window_id": "final-0145"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 146,
+      "max": 1.136742522961348,
+      "mean": 0.004154842484861492,
+      "scored_rows": 2047,
+      "window_id": "final-0146"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 147,
+      "max": 0.20433061513353035,
+      "mean": 0.0027009935715592544,
+      "scored_rows": 2047,
+      "window_id": "final-0147"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 148,
+      "max": 0.7522357114090603,
+      "mean": 0.0016129943267783082,
+      "scored_rows": 2047,
+      "window_id": "final-0148"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 149,
+      "max": 0.1256068922699505,
+      "mean": 0.002364755195991136,
+      "scored_rows": 2047,
+      "window_id": "final-0149"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 150,
+      "max": 0.2289374897039594,
+      "mean": 0.0035930545673507563,
+      "scored_rows": 2047,
+      "window_id": "final-0150"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 151,
+      "max": 0.143208752568154,
+      "mean": 0.0019335005581497496,
+      "scored_rows": 2047,
+      "window_id": "final-0151"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 152,
+      "max": 1.1729538037934248,
+      "mean": 0.007668293758226593,
+      "scored_rows": 2047,
+      "window_id": "final-0152"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 153,
+      "max": 0.07775691582581323,
+      "mean": 0.00247879464843272,
+      "scored_rows": 2047,
+      "window_id": "final-0153"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 154,
+      "max": 0.23690853715564195,
+      "mean": 0.003978024942699752,
+      "scored_rows": 2047,
+      "window_id": "final-0154"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 155,
+      "max": 0.05581486683895552,
+      "mean": 0.0019977467817853746,
+      "scored_rows": 2047,
+      "window_id": "final-0155"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 156,
+      "max": 0.16972397993176183,
+      "mean": 0.002928539029067766,
+      "scored_rows": 2047,
+      "window_id": "final-0156"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 157,
+      "max": 0.1797505313777646,
+      "mean": 0.0019764715875603463,
+      "scored_rows": 2047,
+      "window_id": "final-0157"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 158,
+      "max": 0.2174001227322508,
+      "mean": 0.002141591563450773,
+      "scored_rows": 2047,
+      "window_id": "final-0158"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 159,
+      "max": 0.4033460857289617,
+      "mean": 0.006782374766901047,
+      "scored_rows": 2047,
+      "window_id": "final-0159"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 160,
+      "max": 0.22785483369777942,
+      "mean": 0.00315285996495321,
+      "scored_rows": 2047,
+      "window_id": "final-0160"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 161,
+      "max": 0.21353555082204778,
+      "mean": 0.002142752888564773,
+      "scored_rows": 2047,
+      "window_id": "final-0161"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 162,
+      "max": 0.05772869519336543,
+      "mean": 0.002082214459560285,
+      "scored_rows": 2047,
+      "window_id": "final-0162"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 163,
+      "max": 0.3974132006521334,
+      "mean": 0.0025030977064301775,
+      "scored_rows": 2047,
+      "window_id": "final-0163"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 164,
+      "max": 0.05135945100436896,
+      "mean": 0.001955638671990662,
+      "scored_rows": 2047,
+      "window_id": "final-0164"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 165,
+      "max": 0.09810209882934018,
+      "mean": 0.001728931389278878,
+      "scored_rows": 2047,
+      "window_id": "final-0165"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 166,
+      "max": 0.08723858755570009,
+      "mean": 0.0027250114731493915,
+      "scored_rows": 2047,
+      "window_id": "final-0166"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 167,
+      "max": 0.07443197714600588,
+      "mean": 0.0023490827295323756,
+      "scored_rows": 2047,
+      "window_id": "final-0167"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 168,
+      "max": 0.18249495366803067,
+      "mean": 0.0022999781065661264,
+      "scored_rows": 2047,
+      "window_id": "final-0168"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 169,
+      "max": 0.5369381021957098,
+      "mean": 0.0029852689567483608,
+      "scored_rows": 2047,
+      "window_id": "final-0169"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 170,
+      "max": 0.21574128262859643,
+      "mean": 0.002626822768065371,
+      "scored_rows": 2047,
+      "window_id": "final-0170"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 171,
+      "max": 0.2661015255138797,
+      "mean": 0.0026062422390300565,
+      "scored_rows": 2047,
+      "window_id": "final-0171"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 172,
+      "max": 0.11368415802334438,
+      "mean": 0.0029024586319282993,
+      "scored_rows": 2047,
+      "window_id": "final-0172"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 173,
+      "max": 0.3002616251189678,
+      "mean": 0.0023591025256967713,
+      "scored_rows": 2047,
+      "window_id": "final-0173"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 174,
+      "max": 0.31883950065094635,
+      "mean": 0.004681414625341197,
+      "scored_rows": 2047,
+      "window_id": "final-0174"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 175,
+      "max": 1.1576772033692084,
+      "mean": 0.0034037196230055984,
+      "scored_rows": 2047,
+      "window_id": "final-0175"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 176,
+      "max": 0.10608826637323839,
+      "mean": 0.002504280995856405,
+      "scored_rows": 2047,
+      "window_id": "final-0176"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 177,
+      "max": 0.055850962608209646,
+      "mean": 0.0025435533039431632,
+      "scored_rows": 2047,
+      "window_id": "final-0177"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 178,
+      "max": 1.3031172037454837,
+      "mean": 0.006821331612811756,
+      "scored_rows": 2047,
+      "window_id": "final-0178"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 179,
+      "max": 0.12077140061082688,
+      "mean": 0.002727399578437498,
+      "scored_rows": 2047,
+      "window_id": "final-0179"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 180,
+      "max": 0.04142561946443081,
+      "mean": 0.0019364966120504307,
+      "scored_rows": 2047,
+      "window_id": "final-0180"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 181,
+      "max": 0.19538923936105235,
+      "mean": 0.0029988338411476062,
+      "scored_rows": 2047,
+      "window_id": "final-0181"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 182,
+      "max": 0.5947809999349187,
+      "mean": 0.004669851425235101,
+      "scored_rows": 2047,
+      "window_id": "final-0182"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 183,
+      "max": 0.045205797818540484,
+      "mean": 0.002511039683884133,
+      "scored_rows": 2047,
+      "window_id": "final-0183"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 184,
+      "max": 0.16473164937143922,
+      "mean": 0.0021329792337320356,
+      "scored_rows": 2047,
+      "window_id": "final-0184"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 185,
+      "max": 0.19355591555810092,
+      "mean": 0.0021234546534030178,
+      "scored_rows": 2047,
+      "window_id": "final-0185"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 186,
+      "max": 0.2881010566581953,
+      "mean": 0.0031687190029339733,
+      "scored_rows": 2047,
+      "window_id": "final-0186"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 187,
+      "max": 0.5058127814007907,
+      "mean": 0.006889825134421954,
+      "scored_rows": 2047,
+      "window_id": "final-0187"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 188,
+      "max": 0.15734204307263788,
+      "mean": 0.001979236746286736,
+      "scored_rows": 2047,
+      "window_id": "final-0188"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 189,
+      "max": 0.10825949195325853,
+      "mean": 0.002346338588568725,
+      "scored_rows": 2047,
+      "window_id": "final-0189"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 190,
+      "max": 0.15570988571372218,
+      "mean": 0.0030074815877851025,
+      "scored_rows": 2047,
+      "window_id": "final-0190"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 191,
+      "max": 0.17591274387089098,
+      "mean": 0.0025492155086636863,
+      "scored_rows": 2047,
+      "window_id": "final-0191"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 192,
+      "max": 0.21418285635756565,
+      "mean": 0.002387913921808376,
+      "scored_rows": 2047,
+      "window_id": "final-0192"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 193,
+      "max": 1.196310898068914,
+      "mean": 0.003972748978440861,
+      "scored_rows": 2047,
+      "window_id": "final-0193"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 194,
+      "max": 0.20363553239034993,
+      "mean": 0.002284067172006219,
+      "scored_rows": 2047,
+      "window_id": "final-0194"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 195,
+      "max": 0.161394787341552,
+      "mean": 0.002669049718305722,
+      "scored_rows": 2047,
+      "window_id": "final-0195"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 196,
+      "max": 0.08674734042109222,
+      "mean": 0.0022932366892479674,
+      "scored_rows": 2047,
+      "window_id": "final-0196"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 197,
+      "max": 0.09179180196301857,
+      "mean": 0.0031333804107650707,
+      "scored_rows": 2047,
+      "window_id": "final-0197"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 198,
+      "max": 0.3976811604021557,
+      "mean": 0.002779481411199993,
+      "scored_rows": 2047,
+      "window_id": "final-0198"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 199,
+      "max": 0.06165871078554784,
+      "mean": 0.002432397282180964,
+      "scored_rows": 2047,
+      "window_id": "final-0199"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 200,
+      "max": 0.27820505410506163,
+      "mean": 0.003599283907119285,
+      "scored_rows": 2047,
+      "window_id": "final-0200"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 201,
+      "max": 0.8537326066521111,
+      "mean": 0.0036321050195449256,
+      "scored_rows": 2047,
+      "window_id": "final-0201"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 202,
+      "max": 0.44911615973425695,
+      "mean": 0.007713917264636584,
+      "scored_rows": 2047,
+      "window_id": "final-0202"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 203,
+      "max": 0.24675962225167225,
+      "mean": 0.0030676405721201216,
+      "scored_rows": 2047,
+      "window_id": "final-0203"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 204,
+      "max": 0.5027157698809684,
+      "mean": 0.0039173029686953974,
+      "scored_rows": 2047,
+      "window_id": "final-0204"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 205,
+      "max": 0.22270294962141252,
+      "mean": 0.0037312819291036837,
+      "scored_rows": 2047,
+      "window_id": "final-0205"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 206,
+      "max": 0.2662507649660018,
+      "mean": 0.002562110073299055,
+      "scored_rows": 2047,
+      "window_id": "final-0206"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 207,
+      "max": 0.2918352889115202,
+      "mean": 0.0035915684814151133,
+      "scored_rows": 2047,
+      "window_id": "final-0207"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 208,
+      "max": 0.22070962394321234,
+      "mean": 0.00261600037479259,
+      "scored_rows": 2047,
+      "window_id": "final-0208"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 209,
+      "max": 0.03898501428366488,
+      "mean": 0.001889196809022446,
+      "scored_rows": 2047,
+      "window_id": "final-0209"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 210,
+      "max": 0.22218838653071338,
+      "mean": 0.0019756894043268134,
+      "scored_rows": 2047,
+      "window_id": "final-0210"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 211,
+      "max": 0.046759185480248405,
+      "mean": 0.0018152690038328349,
+      "scored_rows": 2047,
+      "window_id": "final-0211"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 212,
+      "max": 0.23428980349715303,
+      "mean": 0.001936727077724926,
+      "scored_rows": 2047,
+      "window_id": "final-0212"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 213,
+      "max": 1.3853796565881504,
+      "mean": 0.0029574148660823384,
+      "scored_rows": 2047,
+      "window_id": "final-0213"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 214,
+      "max": 0.11879514110459766,
+      "mean": 0.003165261618924456,
+      "scored_rows": 2047,
+      "window_id": "final-0214"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 215,
+      "max": 0.24154964233897733,
+      "mean": 0.004465982121078997,
+      "scored_rows": 2047,
+      "window_id": "final-0215"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 216,
+      "max": 0.02716019316621504,
+      "mean": 0.0016194035690032993,
+      "scored_rows": 2047,
+      "window_id": "final-0216"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 217,
+      "max": 0.2720077668401431,
+      "mean": 0.004639501323365999,
+      "scored_rows": 2047,
+      "window_id": "final-0217"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 218,
+      "max": 0.13035726554144564,
+      "mean": 0.0024351567457063447,
+      "scored_rows": 2047,
+      "window_id": "final-0218"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 219,
+      "max": 0.2816798742918579,
+      "mean": 0.003806523579649204,
+      "scored_rows": 2047,
+      "window_id": "final-0219"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 220,
+      "max": 0.09214436037732823,
+      "mean": 0.0022507773452340846,
+      "scored_rows": 2047,
+      "window_id": "final-0220"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 221,
+      "max": 1.3579886668351888,
+      "mean": 0.003033301391949959,
+      "scored_rows": 2047,
+      "window_id": "final-0221"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 222,
+      "max": 0.5307972555825017,
+      "mean": 0.0017102840885533965,
+      "scored_rows": 2047,
+      "window_id": "final-0222"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 223,
+      "max": 0.15238562915401652,
+      "mean": 0.0024183082523322325,
+      "scored_rows": 2047,
+      "window_id": "final-0223"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 224,
+      "max": 0.09967915075548128,
+      "mean": 0.0019151523191437367,
+      "scored_rows": 2047,
+      "window_id": "final-0224"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 225,
+      "max": 0.1994535127909786,
+      "mean": 0.0032659514033344115,
+      "scored_rows": 2047,
+      "window_id": "final-0225"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 226,
+      "max": 0.045086859475645454,
+      "mean": 0.0018819747953937058,
+      "scored_rows": 2047,
+      "window_id": "final-0226"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 227,
+      "max": 0.1218910023539497,
+      "mean": 0.002160713754605927,
+      "scored_rows": 2047,
+      "window_id": "final-0227"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 228,
+      "max": 0.19986786301879705,
+      "mean": 0.002525260281850928,
+      "scored_rows": 2047,
+      "window_id": "final-0228"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 229,
+      "max": 0.15922469728282757,
+      "mean": 0.0033024936256267133,
+      "scored_rows": 2047,
+      "window_id": "final-0229"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 230,
+      "max": 0.14158895939718208,
+      "mean": 0.0038853614285760474,
+      "scored_rows": 2047,
+      "window_id": "final-0230"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 231,
+      "max": 0.3807312037922158,
+      "mean": 0.002698065573213426,
+      "scored_rows": 2047,
+      "window_id": "final-0231"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 232,
+      "max": 0.13185504974898823,
+      "mean": 0.002056819008427442,
+      "scored_rows": 2047,
+      "window_id": "final-0232"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 233,
+      "max": 0.14347710611112335,
+      "mean": 0.0027783713832795582,
+      "scored_rows": 2047,
+      "window_id": "final-0233"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 234,
+      "max": 0.07063504772902159,
+      "mean": 0.0023336013446023304,
+      "scored_rows": 2047,
+      "window_id": "final-0234"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 235,
+      "max": 0.21683659815578582,
+      "mean": 0.0023466882560818593,
+      "scored_rows": 2047,
+      "window_id": "final-0235"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 236,
+      "max": 0.35587750969923315,
+      "mean": 0.0027019215123353733,
+      "scored_rows": 2047,
+      "window_id": "final-0236"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 237,
+      "max": 0.2527314242809773,
+      "mean": 0.003167788022406066,
+      "scored_rows": 2047,
+      "window_id": "final-0237"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 238,
+      "max": 0.2425038256853239,
+      "mean": 0.003002673604093912,
+      "scored_rows": 2047,
+      "window_id": "final-0238"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 239,
+      "max": 0.16200068643820442,
+      "mean": 0.0021097586021982966,
+      "scored_rows": 2047,
+      "window_id": "final-0239"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 240,
+      "max": 0.3890843397162654,
+      "mean": 0.0021632272312238363,
+      "scored_rows": 2047,
+      "window_id": "final-0240"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 241,
+      "max": 0.5425182953083103,
+      "mean": 0.004452101859108784,
+      "scored_rows": 2047,
+      "window_id": "final-0241"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 242,
+      "max": 0.049960647404264064,
+      "mean": 0.002088240956227899,
+      "scored_rows": 2047,
+      "window_id": "final-0242"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 243,
+      "max": 0.5167475935499831,
+      "mean": 0.0047282632594496535,
+      "scored_rows": 2047,
+      "window_id": "final-0243"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 244,
+      "max": 0.7774126637730356,
+      "mean": 0.011104302048496923,
+      "scored_rows": 2047,
+      "window_id": "final-0244"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 245,
+      "max": 0.128373742745196,
+      "mean": 0.0026331277058501477,
+      "scored_rows": 2047,
+      "window_id": "final-0245"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 246,
+      "max": 0.04480861436005351,
+      "mean": 0.0019951113769992755,
+      "scored_rows": 2047,
+      "window_id": "final-0246"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 247,
+      "max": 0.0795508549653513,
+      "mean": 0.002539229639819404,
+      "scored_rows": 2047,
+      "window_id": "final-0247"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 248,
+      "max": 0.09149748086320182,
+      "mean": 0.0022834259266313753,
+      "scored_rows": 2047,
+      "window_id": "final-0248"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 249,
+      "max": 0.7349109586829686,
+      "mean": 0.002944701443393984,
+      "scored_rows": 2047,
+      "window_id": "final-0249"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 250,
+      "max": 0.1367277671149486,
+      "mean": 0.0034479106396328486,
+      "scored_rows": 2047,
+      "window_id": "final-0250"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 251,
+      "max": 0.12170606214775742,
+      "mean": 0.004381820774230919,
+      "scored_rows": 2047,
+      "window_id": "final-0251"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 252,
+      "max": 0.5234550199865575,
+      "mean": 0.0027045388546902698,
+      "scored_rows": 2047,
+      "window_id": "final-0252"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 253,
+      "max": 0.5401802617435374,
+      "mean": 0.003983514764972581,
+      "scored_rows": 2047,
+      "window_id": "final-0253"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 254,
+      "max": 0.03732162122130476,
+      "mean": 0.001976987209979174,
+      "scored_rows": 2047,
+      "window_id": "final-0254"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 255,
+      "max": 0.15420079667890874,
+      "mean": 0.002156763309597075,
+      "scored_rows": 2047,
+      "window_id": "final-0255"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 256,
+      "max": 0.9659115024065164,
+      "mean": 0.01323492812575829,
+      "scored_rows": 2047,
+      "window_id": "final-0256"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 257,
+      "max": 0.036276218100966706,
+      "mean": 0.0014682414315331648,
+      "scored_rows": 2047,
+      "window_id": "final-0257"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 258,
+      "max": 0.11630318678249023,
+      "mean": 0.0022157006405773643,
+      "scored_rows": 2047,
+      "window_id": "final-0258"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 259,
+      "max": 0.057358264880838936,
+      "mean": 0.0017178103982198093,
+      "scored_rows": 2047,
+      "window_id": "final-0259"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 260,
+      "max": 0.18737087067332267,
+      "mean": 0.0032651109650933285,
+      "scored_rows": 2047,
+      "window_id": "final-0260"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 261,
+      "max": 0.3401795624270629,
+      "mean": 0.003298288038404014,
+      "scored_rows": 2047,
+      "window_id": "final-0261"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 262,
+      "max": 0.30015491005460937,
+      "mean": 0.0029242289311731426,
+      "scored_rows": 2047,
+      "window_id": "final-0262"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 263,
+      "max": 0.13067230540964136,
+      "mean": 0.003026778203190538,
+      "scored_rows": 2047,
+      "window_id": "final-0263"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 264,
+      "max": 0.1724307905074248,
+      "mean": 0.0021269600523700217,
+      "scored_rows": 2047,
+      "window_id": "final-0264"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 265,
+      "max": 0.2619356512864188,
+      "mean": 0.005763997039140395,
+      "scored_rows": 2047,
+      "window_id": "final-0265"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 266,
+      "max": 0.03707759342280244,
+      "mean": 0.0017633886787988876,
+      "scored_rows": 2047,
+      "window_id": "final-0266"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 267,
+      "max": 0.383554837457476,
+      "mean": 0.0029982575703646755,
+      "scored_rows": 2047,
+      "window_id": "final-0267"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 268,
+      "max": 0.14689528238596575,
+      "mean": 0.0022912361136158727,
+      "scored_rows": 2047,
+      "window_id": "final-0268"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 269,
+      "max": 0.09303797385340311,
+      "mean": 0.002796518570950228,
+      "scored_rows": 2047,
+      "window_id": "final-0269"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 270,
+      "max": 0.49157101382584,
+      "mean": 0.0030274894104534876,
+      "scored_rows": 2047,
+      "window_id": "final-0270"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 271,
+      "max": 0.1290196648908761,
+      "mean": 0.0028689085563960975,
+      "scored_rows": 2047,
+      "window_id": "final-0271"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 272,
+      "max": 0.07116753844563871,
+      "mean": 0.0019145754365394092,
+      "scored_rows": 2047,
+      "window_id": "final-0272"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 273,
+      "max": 0.032186093398633396,
+      "mean": 0.0015249902466377343,
+      "scored_rows": 2047,
+      "window_id": "final-0273"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 274,
+      "max": 0.08922161546256388,
+      "mean": 0.0023457258504144094,
+      "scored_rows": 2047,
+      "window_id": "final-0274"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 275,
+      "max": 0.16894283035136512,
+      "mean": 0.002452840043918612,
+      "scored_rows": 2047,
+      "window_id": "final-0275"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 276,
+      "max": 0.09198190935973577,
+      "mean": 0.002124294141225901,
+      "scored_rows": 2047,
+      "window_id": "final-0276"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 277,
+      "max": 0.31641024194664114,
+      "mean": 0.003166761381865613,
+      "scored_rows": 2047,
+      "window_id": "final-0277"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 278,
+      "max": 0.22109314282286552,
+      "mean": 0.0028351391272447026,
+      "scored_rows": 2047,
+      "window_id": "final-0278"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 279,
+      "max": 0.44296672358102857,
+      "mean": 0.006775644005362456,
+      "scored_rows": 2047,
+      "window_id": "final-0279"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 280,
+      "max": 0.2605400725114895,
+      "mean": 0.0028189549064371175,
+      "scored_rows": 2047,
+      "window_id": "final-0280"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 281,
+      "max": 0.34169994072579213,
+      "mean": 0.0018428895480176227,
+      "scored_rows": 2047,
+      "window_id": "final-0281"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 282,
+      "max": 0.2704452665880301,
+      "mean": 0.003609151699920009,
+      "scored_rows": 2047,
+      "window_id": "final-0282"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 283,
+      "max": 0.1941372486140918,
+      "mean": 0.0031793573481712803,
+      "scored_rows": 2047,
+      "window_id": "final-0283"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 284,
+      "max": 0.05027204825512394,
+      "mean": 0.0016722090367473806,
+      "scored_rows": 2047,
+      "window_id": "final-0284"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 285,
+      "max": 0.2850744183075153,
+      "mean": 0.0025974497306566723,
+      "scored_rows": 2047,
+      "window_id": "final-0285"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 286,
+      "max": 0.5430344150940112,
+      "mean": 0.0028540922633569325,
+      "scored_rows": 2047,
+      "window_id": "final-0286"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 287,
+      "max": 0.0688391109373812,
+      "mean": 0.0020382747532516213,
+      "scored_rows": 2047,
+      "window_id": "final-0287"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 288,
+      "max": 0.23796645685274548,
+      "mean": 0.0028435677953497027,
+      "scored_rows": 2047,
+      "window_id": "final-0288"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 289,
+      "max": 0.17738862077723863,
+      "mean": 0.0024233662539053387,
+      "scored_rows": 2047,
+      "window_id": "final-0289"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 290,
+      "max": 0.8915583474572029,
+      "mean": 0.010561159987719808,
+      "scored_rows": 2047,
+      "window_id": "final-0290"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 291,
+      "max": 0.03534219191777578,
+      "mean": 0.002462978571000821,
+      "scored_rows": 2047,
+      "window_id": "final-0291"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 292,
+      "max": 0.04658141412306261,
+      "mean": 0.0019286207174562919,
+      "scored_rows": 2047,
+      "window_id": "final-0292"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 293,
+      "max": 0.04410680460270791,
+      "mean": 0.0019150443722271131,
+      "scored_rows": 2047,
+      "window_id": "final-0293"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 294,
+      "max": 0.12412039027110813,
+      "mean": 0.0022245000772394712,
+      "scored_rows": 2047,
+      "window_id": "final-0294"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 295,
+      "max": 0.42125788870306036,
+      "mean": 0.002501894976497509,
+      "scored_rows": 2047,
+      "window_id": "final-0295"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 296,
+      "max": 0.044894143789765494,
+      "mean": 0.0018914396321482584,
+      "scored_rows": 2047,
+      "window_id": "final-0296"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 297,
+      "max": 0.3406334393817405,
+      "mean": 0.0030064384633172805,
+      "scored_rows": 2047,
+      "window_id": "final-0297"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 298,
+      "max": 0.14628731687453517,
+      "mean": 0.0027466818912293763,
+      "scored_rows": 2047,
+      "window_id": "final-0298"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 299,
+      "max": 0.20420502334390506,
+      "mean": 0.002183077188028978,
+      "scored_rows": 2047,
+      "window_id": "final-0299"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 300,
+      "max": 0.31457146337022757,
+      "mean": 0.0023824025906698794,
+      "scored_rows": 2047,
+      "window_id": "final-0300"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 301,
+      "max": 0.3191718710631006,
+      "mean": 0.0034998823374516063,
+      "scored_rows": 2047,
+      "window_id": "final-0301"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 302,
+      "max": 0.04144972657771748,
+      "mean": 0.0015680252484675929,
+      "scored_rows": 2047,
+      "window_id": "final-0302"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 303,
+      "max": 0.14124399062237172,
+      "mean": 0.003045254955954602,
+      "scored_rows": 2047,
+      "window_id": "final-0303"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 304,
+      "max": 0.09866533341741718,
+      "mean": 0.0022382819359276322,
+      "scored_rows": 2047,
+      "window_id": "final-0304"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 305,
+      "max": 0.12814953286880074,
+      "mean": 0.0025336548569296668,
+      "scored_rows": 2047,
+      "window_id": "final-0305"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 306,
+      "max": 0.24508911314632256,
+      "mean": 0.0026871732121355285,
+      "scored_rows": 2047,
+      "window_id": "final-0306"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 307,
+      "max": 0.270104354383075,
+      "mean": 0.002474826520304495,
+      "scored_rows": 2047,
+      "window_id": "final-0307"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 308,
+      "max": 0.2682028061896681,
+      "mean": 0.003350168604554757,
+      "scored_rows": 2047,
+      "window_id": "final-0308"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 309,
+      "max": 0.04438560676235887,
+      "mean": 0.0018312121231425233,
+      "scored_rows": 2047,
+      "window_id": "final-0309"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 310,
+      "max": 0.07379244846068528,
+      "mean": 0.0018822880042975421,
+      "scored_rows": 2047,
+      "window_id": "final-0310"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 311,
+      "max": 0.1119905284765189,
+      "mean": 0.00239390882763627,
+      "scored_rows": 2047,
+      "window_id": "final-0311"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 312,
+      "max": 0.019986827157590658,
+      "mean": 0.0015577630170086915,
+      "scored_rows": 2047,
+      "window_id": "final-0312"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 313,
+      "max": 0.21630160084976188,
+      "mean": 0.002078068906376772,
+      "scored_rows": 2047,
+      "window_id": "final-0313"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 314,
+      "max": 0.06422676299846565,
+      "mean": 0.002216432711035875,
+      "scored_rows": 2047,
+      "window_id": "final-0314"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 315,
+      "max": 0.20416096021599867,
+      "mean": 0.006095203568949853,
+      "scored_rows": 2047,
+      "window_id": "final-0315"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 316,
+      "max": 0.7103873832592061,
+      "mean": 0.00274180623584421,
+      "scored_rows": 2047,
+      "window_id": "final-0316"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 317,
+      "max": 0.22880549355069188,
+      "mean": 0.0028084906474782592,
+      "scored_rows": 2047,
+      "window_id": "final-0317"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 318,
+      "max": 0.035456596184420944,
+      "mean": 0.00168081070340243,
+      "scored_rows": 2047,
+      "window_id": "final-0318"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 319,
+      "max": 0.10344509766551999,
+      "mean": 0.0017133732468131585,
+      "scored_rows": 2047,
+      "window_id": "final-0319"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 320,
+      "max": 0.10903996971977545,
+      "mean": 0.0016761323383528805,
+      "scored_rows": 2047,
+      "window_id": "final-0320"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 321,
+      "max": 1.0631193123961526,
+      "mean": 0.0038348218060874637,
+      "scored_rows": 2047,
+      "window_id": "final-0321"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 322,
+      "max": 0.15830628747912606,
+      "mean": 0.0035015301934754953,
+      "scored_rows": 2047,
+      "window_id": "final-0322"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 323,
+      "max": 0.15214820248500674,
+      "mean": 0.00273908772579035,
+      "scored_rows": 2047,
+      "window_id": "final-0323"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 324,
+      "max": 0.4963984646808498,
+      "mean": 0.0044548394928440455,
+      "scored_rows": 2047,
+      "window_id": "final-0324"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 325,
+      "max": 0.19205827873564194,
+      "mean": 0.004371273701097019,
+      "scored_rows": 2047,
+      "window_id": "final-0325"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 326,
+      "max": 0.03288185468998402,
+      "mean": 0.002222280561473878,
+      "scored_rows": 2047,
+      "window_id": "final-0326"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 327,
+      "max": 0.4162627171127483,
+      "mean": 0.0021640720829845983,
+      "scored_rows": 2047,
+      "window_id": "final-0327"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 328,
+      "max": 0.032800857638735456,
+      "mean": 0.0017488032812695935,
+      "scored_rows": 2047,
+      "window_id": "final-0328"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 329,
+      "max": 0.5130827112706965,
+      "mean": 0.002213673835632309,
+      "scored_rows": 2047,
+      "window_id": "final-0329"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 330,
+      "max": 0.5372158317573779,
+      "mean": 0.006911034691865545,
+      "scored_rows": 2047,
+      "window_id": "final-0330"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 331,
+      "max": 0.8942442101526983,
+      "mean": 0.0022111479703084023,
+      "scored_rows": 2047,
+      "window_id": "final-0331"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 332,
+      "max": 0.28864771298938025,
+      "mean": 0.002850629125144925,
+      "scored_rows": 2047,
+      "window_id": "final-0332"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 333,
+      "max": 0.02738938040078002,
+      "mean": 0.0016636755911083136,
+      "scored_rows": 2047,
+      "window_id": "final-0333"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 334,
+      "max": 0.07323638200031612,
+      "mean": 0.0017684938422133183,
+      "scored_rows": 2047,
+      "window_id": "final-0334"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 335,
+      "max": 0.06555744893148949,
+      "mean": 0.0020782850890620074,
+      "scored_rows": 2047,
+      "window_id": "final-0335"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 336,
+      "max": 0.07090215005499563,
+      "mean": 0.0018742245458289435,
+      "scored_rows": 2047,
+      "window_id": "final-0336"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 337,
+      "max": 0.1737680685071915,
+      "mean": 0.0016957553733266595,
+      "scored_rows": 2047,
+      "window_id": "final-0337"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 338,
+      "max": 0.2164492340075648,
+      "mean": 0.0022536509292822716,
+      "scored_rows": 2047,
+      "window_id": "final-0338"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 339,
+      "max": 0.14140246576220192,
+      "mean": 0.0022414997763972795,
+      "scored_rows": 2047,
+      "window_id": "final-0339"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 340,
+      "max": 0.5095708756412733,
+      "mean": 0.004098768292976921,
+      "scored_rows": 2047,
+      "window_id": "final-0340"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 341,
+      "max": 0.38454937496932023,
+      "mean": 0.009274634482325184,
+      "scored_rows": 2047,
+      "window_id": "final-0341"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 342,
+      "max": 0.157533064929298,
+      "mean": 0.0020278627279449383,
+      "scored_rows": 2047,
+      "window_id": "final-0342"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 343,
+      "max": 0.04353456578912528,
+      "mean": 0.0025257986415971895,
+      "scored_rows": 2047,
+      "window_id": "final-0343"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 344,
+      "max": 0.20213221053059138,
+      "mean": 0.0032688598564700054,
+      "scored_rows": 2047,
+      "window_id": "final-0344"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 345,
+      "max": 0.15291614187143235,
+      "mean": 0.0034766731438762065,
+      "scored_rows": 2047,
+      "window_id": "final-0345"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 346,
+      "max": 0.10293233028756504,
+      "mean": 0.0019196628743603935,
+      "scored_rows": 2047,
+      "window_id": "final-0346"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 347,
+      "max": 0.09858616401783105,
+      "mean": 0.001865028489309916,
+      "scored_rows": 2047,
+      "window_id": "final-0347"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 348,
+      "max": 0.04787233809793734,
+      "mean": 0.001896578563802481,
+      "scored_rows": 2047,
+      "window_id": "final-0348"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 349,
+      "max": 0.034023657283815345,
+      "mean": 0.0022208787523686486,
+      "scored_rows": 2047,
+      "window_id": "final-0349"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 350,
+      "max": 0.3002772941075873,
+      "mean": 0.0041722226987210625,
+      "scored_rows": 2047,
+      "window_id": "final-0350"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 351,
+      "max": 0.07574031166031894,
+      "mean": 0.0021559609866688926,
+      "scored_rows": 2047,
+      "window_id": "final-0351"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 352,
+      "max": 0.05018948015922034,
+      "mean": 0.0021439549986332343,
+      "scored_rows": 2047,
+      "window_id": "final-0352"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 353,
+      "max": 0.0661821313758223,
+      "mean": 0.0023439635688621858,
+      "scored_rows": 2047,
+      "window_id": "final-0353"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 354,
+      "max": 0.0962076834702449,
+      "mean": 0.0022553057321751183,
+      "scored_rows": 2047,
+      "window_id": "final-0354"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 355,
+      "max": 0.2599565228161932,
+      "mean": 0.002553077282962885,
+      "scored_rows": 2047,
+      "window_id": "final-0355"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 356,
+      "max": 0.12285387907556922,
+      "mean": 0.0023141450920569446,
+      "scored_rows": 2047,
+      "window_id": "final-0356"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 357,
+      "max": 0.75993252087159,
+      "mean": 0.0034259010871564416,
+      "scored_rows": 2047,
+      "window_id": "final-0357"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 358,
+      "max": 0.17096639937917174,
+      "mean": 0.0033329669502295723,
+      "scored_rows": 2047,
+      "window_id": "final-0358"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 359,
+      "max": 0.1351891565084774,
+      "mean": 0.0027269527748535146,
+      "scored_rows": 2047,
+      "window_id": "final-0359"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 360,
+      "max": 0.1905664345709482,
+      "mean": 0.0027187450521746434,
+      "scored_rows": 2047,
+      "window_id": "final-0360"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 361,
+      "max": 0.08854307520152492,
+      "mean": 0.0017510411927719484,
+      "scored_rows": 2047,
+      "window_id": "final-0361"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 362,
+      "max": 0.31902083802255415,
+      "mean": 0.002910503092609335,
+      "scored_rows": 2047,
+      "window_id": "final-0362"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 363,
+      "max": 0.3580666975936976,
+      "mean": 0.0020241216943100754,
+      "scored_rows": 2047,
+      "window_id": "final-0363"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 364,
+      "max": 0.15072586823191217,
+      "mean": 0.004393403578474101,
+      "scored_rows": 2047,
+      "window_id": "final-0364"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 365,
+      "max": 0.2121111740662055,
+      "mean": 0.0033875908971253005,
+      "scored_rows": 2047,
+      "window_id": "final-0365"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 366,
+      "max": 0.09285095793193641,
+      "mean": 0.0021207368762167925,
+      "scored_rows": 2047,
+      "window_id": "final-0366"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 367,
+      "max": 0.07155475769827677,
+      "mean": 0.002211139570539563,
+      "scored_rows": 2047,
+      "window_id": "final-0367"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 368,
+      "max": 0.48966126177006836,
+      "mean": 0.007435517695739524,
+      "scored_rows": 2047,
+      "window_id": "final-0368"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 369,
+      "max": 0.4122734125921136,
+      "mean": 0.002905795652484728,
+      "scored_rows": 2047,
+      "window_id": "final-0369"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 370,
+      "max": 0.25721824924635284,
+      "mean": 0.002895257975460178,
+      "scored_rows": 2047,
+      "window_id": "final-0370"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 371,
+      "max": 0.13115187868856487,
+      "mean": 0.002053573138385157,
+      "scored_rows": 2047,
+      "window_id": "final-0371"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 372,
+      "max": 0.07951553260803243,
+      "mean": 0.0021568827558099022,
+      "scored_rows": 2047,
+      "window_id": "final-0372"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 373,
+      "max": 0.12522301149932244,
+      "mean": 0.0022928348507553933,
+      "scored_rows": 2047,
+      "window_id": "final-0373"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 374,
+      "max": 0.12460194129467975,
+      "mean": 0.0026315232672683873,
+      "scored_rows": 2047,
+      "window_id": "final-0374"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 375,
+      "max": 0.21946715994805943,
+      "mean": 0.0020621071970058644,
+      "scored_rows": 2047,
+      "window_id": "final-0375"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 376,
+      "max": 0.34073266345832415,
+      "mean": 0.00214365524115429,
+      "scored_rows": 2047,
+      "window_id": "final-0376"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 377,
+      "max": 0.24586202109546645,
+      "mean": 0.002235647075410035,
+      "scored_rows": 2047,
+      "window_id": "final-0377"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 378,
+      "max": 0.23910238056193836,
+      "mean": 0.0025838645173080974,
+      "scored_rows": 2047,
+      "window_id": "final-0378"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 379,
+      "max": 0.305361320199494,
+      "mean": 0.0024458744099882667,
+      "scored_rows": 2047,
+      "window_id": "final-0379"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 380,
+      "max": 0.06451694161121595,
+      "mean": 0.0016731746363530904,
+      "scored_rows": 2047,
+      "window_id": "final-0380"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 381,
+      "max": 0.4081359203151957,
+      "mean": 0.002364987542178065,
+      "scored_rows": 2047,
+      "window_id": "final-0381"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 382,
+      "max": 0.14345767625189257,
+      "mean": 0.0029487303169862572,
+      "scored_rows": 2047,
+      "window_id": "final-0382"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 383,
+      "max": 0.038840652380419394,
+      "mean": 0.0022806165901944064,
+      "scored_rows": 2047,
+      "window_id": "final-0383"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 384,
+      "max": 0.3026575896413557,
+      "mean": 0.002156826854491962,
+      "scored_rows": 2047,
+      "window_id": "final-0384"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 385,
+      "max": 0.5163702140621174,
+      "mean": 0.0025891259411424993,
+      "scored_rows": 2047,
+      "window_id": "final-0385"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 386,
+      "max": 0.0841095778007562,
+      "mean": 0.001974978326518127,
+      "scored_rows": 2047,
+      "window_id": "final-0386"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 387,
+      "max": 0.05084180234787203,
+      "mean": 0.002076488170403619,
+      "scored_rows": 2047,
+      "window_id": "final-0387"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 388,
+      "max": 0.4366559931004271,
+      "mean": 0.002597810505497112,
+      "scored_rows": 2047,
+      "window_id": "final-0388"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 389,
+      "max": 0.13410449946072653,
+      "mean": 0.003989003297790666,
+      "scored_rows": 2047,
+      "window_id": "final-0389"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 390,
+      "max": 0.4699119471264973,
+      "mean": 0.0025095608509024003,
+      "scored_rows": 2047,
+      "window_id": "final-0390"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 391,
+      "max": 0.7072357438782273,
+      "mean": 0.003733443708880767,
+      "scored_rows": 2047,
+      "window_id": "final-0391"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 392,
+      "max": 0.2616139883265384,
+      "mean": 0.004916078440979614,
+      "scored_rows": 2047,
+      "window_id": "final-0392"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 393,
+      "max": 0.11720231378497671,
+      "mean": 0.003391859411210457,
+      "scored_rows": 2047,
+      "window_id": "final-0393"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 394,
+      "max": 0.03530979986283102,
+      "mean": 0.002095722115877159,
+      "scored_rows": 2047,
+      "window_id": "final-0394"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 395,
+      "max": 0.23267243693350398,
+      "mean": 0.0023189324802391723,
+      "scored_rows": 2047,
+      "window_id": "final-0395"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 396,
+      "max": 0.15544877786668415,
+      "mean": 0.002306219259799292,
+      "scored_rows": 2047,
+      "window_id": "final-0396"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 397,
+      "max": 0.15637187479586975,
+      "mean": 0.0029594520019988967,
+      "scored_rows": 2047,
+      "window_id": "final-0397"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 398,
+      "max": 0.03583491729328508,
+      "mean": 0.001780330526698507,
+      "scored_rows": 2047,
+      "window_id": "final-0398"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 399,
+      "max": 0.5846824395157261,
+      "mean": 0.008292396294678775,
+      "scored_rows": 2047,
+      "window_id": "final-0399"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 400,
+      "max": 0.05284728135032607,
+      "mean": 0.0019180087498447114,
+      "scored_rows": 2047,
+      "window_id": "final-0400"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 401,
+      "max": 0.8841255411044435,
+      "mean": 0.0036006322261987623,
+      "scored_rows": 2047,
+      "window_id": "final-0401"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 402,
+      "max": 0.4642249381040332,
+      "mean": 0.0019361365067053337,
+      "scored_rows": 2047,
+      "window_id": "final-0402"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 403,
+      "max": 0.3375520381725693,
+      "mean": 0.0019372486669757384,
+      "scored_rows": 2047,
+      "window_id": "final-0403"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 404,
+      "max": 0.32722361681667067,
+      "mean": 0.003478685786018996,
+      "scored_rows": 2047,
+      "window_id": "final-0404"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 405,
+      "max": 0.17137467148132562,
+      "mean": 0.003645588566505401,
+      "scored_rows": 2047,
+      "window_id": "final-0405"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 406,
+      "max": 0.1529228546919413,
+      "mean": 0.0028351408990201716,
+      "scored_rows": 2047,
+      "window_id": "final-0406"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 407,
+      "max": 0.05373800762465818,
+      "mean": 0.0022990299456262034,
+      "scored_rows": 2047,
+      "window_id": "final-0407"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 408,
+      "max": 0.6875113557639229,
+      "mean": 0.012071230902690596,
+      "scored_rows": 2047,
+      "window_id": "final-0408"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 409,
+      "max": 0.16948527900823085,
+      "mean": 0.003168315806059214,
+      "scored_rows": 2047,
+      "window_id": "final-0409"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 410,
+      "max": 0.2959465201685969,
+      "mean": 0.002722976874422048,
+      "scored_rows": 2047,
+      "window_id": "final-0410"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 411,
+      "max": 0.39617517838646066,
+      "mean": 0.014232509808119258,
+      "scored_rows": 2047,
+      "window_id": "final-0411"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 412,
+      "max": 0.09249611898187914,
+      "mean": 0.0024833109235063767,
+      "scored_rows": 2047,
+      "window_id": "final-0412"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 413,
+      "max": 0.08196076444307471,
+      "mean": 0.0022142736410098803,
+      "scored_rows": 2047,
+      "window_id": "final-0413"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 414,
+      "max": 0.11768359281586804,
+      "mean": 0.0034055780262987625,
+      "scored_rows": 2047,
+      "window_id": "final-0414"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 415,
+      "max": 0.06461726086993215,
+      "mean": 0.002532602627912212,
+      "scored_rows": 2047,
+      "window_id": "final-0415"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 416,
+      "max": 0.044472228202270835,
+      "mean": 0.002191320699461305,
+      "scored_rows": 2047,
+      "window_id": "final-0416"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 417,
+      "max": 0.2869700430148892,
+      "mean": 0.004116162149990995,
+      "scored_rows": 2047,
+      "window_id": "final-0417"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 418,
+      "max": 0.1245722134353664,
+      "mean": 0.0018535136846161591,
+      "scored_rows": 2047,
+      "window_id": "final-0418"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 419,
+      "max": 0.036568974073952494,
+      "mean": 0.0020957425157947704,
+      "scored_rows": 2047,
+      "window_id": "final-0419"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 420,
+      "max": 0.05685435187801026,
+      "mean": 0.0018283189722822773,
+      "scored_rows": 2047,
+      "window_id": "final-0420"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 421,
+      "max": 0.07513222896773772,
+      "mean": 0.0023012347320253506,
+      "scored_rows": 2047,
+      "window_id": "final-0421"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 422,
+      "max": 0.06125216166836164,
+      "mean": 0.0025166458744028475,
+      "scored_rows": 2047,
+      "window_id": "final-0422"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 423,
+      "max": 0.7166484174363188,
+      "mean": 0.00336204669370823,
+      "scored_rows": 2047,
+      "window_id": "final-0423"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 424,
+      "max": 0.25022235122535813,
+      "mean": 0.0021330967513774994,
+      "scored_rows": 2047,
+      "window_id": "final-0424"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 425,
+      "max": 0.28263337024734614,
+      "mean": 0.0024810060747459074,
+      "scored_rows": 2047,
+      "window_id": "final-0425"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 426,
+      "max": 0.33268771123560154,
+      "mean": 0.0026753713491361577,
+      "scored_rows": 2047,
+      "window_id": "final-0426"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 427,
+      "max": 0.04598698750883868,
+      "mean": 0.0021498378655359198,
+      "scored_rows": 2047,
+      "window_id": "final-0427"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 428,
+      "max": 0.4939398090737752,
+      "mean": 0.002336137305021764,
+      "scored_rows": 2047,
+      "window_id": "final-0428"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 429,
+      "max": 0.0521452013026173,
+      "mean": 0.0018640645823604421,
+      "scored_rows": 2047,
+      "window_id": "final-0429"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 430,
+      "max": 0.1650981120656961,
+      "mean": 0.00225957952193496,
+      "scored_rows": 2047,
+      "window_id": "final-0430"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 431,
+      "max": 0.1654640911167003,
+      "mean": 0.0024652841016939457,
+      "scored_rows": 2047,
+      "window_id": "final-0431"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 432,
+      "max": 0.12596062745577574,
+      "mean": 0.0028876692034509608,
+      "scored_rows": 2047,
+      "window_id": "final-0432"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 433,
+      "max": 0.07650986584871244,
+      "mean": 0.0024257412014742795,
+      "scored_rows": 2047,
+      "window_id": "final-0433"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 434,
+      "max": 0.124659186150796,
+      "mean": 0.0024604189213507433,
+      "scored_rows": 2047,
+      "window_id": "final-0434"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 435,
+      "max": 0.3295458673619205,
+      "mean": 0.0016226214041680238,
+      "scored_rows": 2047,
+      "window_id": "final-0435"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 436,
+      "max": 0.02320630321736808,
+      "mean": 0.0016303034592254086,
+      "scored_rows": 2047,
+      "window_id": "final-0436"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 437,
+      "max": 0.05036032786990775,
+      "mean": 0.0009964036992031338,
+      "scored_rows": 2047,
+      "window_id": "final-0437"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 438,
+      "max": 0.753231167733656,
+      "mean": 0.01449658190852372,
+      "scored_rows": 2047,
+      "window_id": "final-0438"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 439,
+      "max": 0.15594434530237153,
+      "mean": 0.0018409727398735849,
+      "scored_rows": 2047,
+      "window_id": "final-0439"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 440,
+      "max": 0.1293083204126603,
+      "mean": 0.0018650580712583757,
+      "scored_rows": 2047,
+      "window_id": "final-0440"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 441,
+      "max": 0.05776813614554267,
+      "mean": 0.0026267583778459553,
+      "scored_rows": 2047,
+      "window_id": "final-0441"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 442,
+      "max": 0.17894949964901116,
+      "mean": 0.002901566349576677,
+      "scored_rows": 2047,
+      "window_id": "final-0442"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 443,
+      "max": 0.13883759313639793,
+      "mean": 0.0019007490534265104,
+      "scored_rows": 2047,
+      "window_id": "final-0443"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 444,
+      "max": 0.1178727378996157,
+      "mean": 0.002517333469646009,
+      "scored_rows": 2047,
+      "window_id": "final-0444"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 445,
+      "max": 0.2854151938781616,
+      "mean": 0.0024210696914233848,
+      "scored_rows": 2047,
+      "window_id": "final-0445"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 446,
+      "max": 0.05392895771378327,
+      "mean": 0.0021555331338766323,
+      "scored_rows": 2047,
+      "window_id": "final-0446"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 447,
+      "max": 0.2507161125605695,
+      "mean": 0.0032932556180434273,
+      "scored_rows": 2047,
+      "window_id": "final-0447"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 448,
+      "max": 0.13603807344177443,
+      "mean": 0.0025410062341396297,
+      "scored_rows": 2047,
+      "window_id": "final-0448"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 449,
+      "max": 0.04720037697782689,
+      "mean": 0.001992388147425361,
+      "scored_rows": 2047,
+      "window_id": "final-0449"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 450,
+      "max": 0.31425641366614215,
+      "mean": 0.0030704610298443523,
+      "scored_rows": 2047,
+      "window_id": "final-0450"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 451,
+      "max": 0.4706371478409777,
+      "mean": 0.0038419225889643155,
+      "scored_rows": 2047,
+      "window_id": "final-0451"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 452,
+      "max": 0.07115745092457214,
+      "mean": 0.0018502719274188233,
+      "scored_rows": 2047,
+      "window_id": "final-0452"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 453,
+      "max": 0.25982115449079135,
+      "mean": 0.0024977031997815463,
+      "scored_rows": 2047,
+      "window_id": "final-0453"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 454,
+      "max": 0.05290492322940741,
+      "mean": 0.0017816840162363302,
+      "scored_rows": 2047,
+      "window_id": "final-0454"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 455,
+      "max": 0.0888892711054558,
+      "mean": 0.001956132057325686,
+      "scored_rows": 2047,
+      "window_id": "final-0455"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 456,
+      "max": 0.2381153250115981,
+      "mean": 0.003577050042841488,
+      "scored_rows": 2047,
+      "window_id": "final-0456"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 457,
+      "max": 0.12999394863695804,
+      "mean": 0.0022048901139596947,
+      "scored_rows": 2047,
+      "window_id": "final-0457"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 458,
+      "max": 0.2654386909892727,
+      "mean": 0.0021738880746503585,
+      "scored_rows": 2047,
+      "window_id": "final-0458"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 459,
+      "max": 0.1288493200263414,
+      "mean": 0.002085980788060046,
+      "scored_rows": 2047,
+      "window_id": "final-0459"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 460,
+      "max": 0.12416746147473624,
+      "mean": 0.0026819554084827027,
+      "scored_rows": 2047,
+      "window_id": "final-0460"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 461,
+      "max": 0.0772945996564146,
+      "mean": 0.002258870712060425,
+      "scored_rows": 2047,
+      "window_id": "final-0461"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 462,
+      "max": 0.21718140086673574,
+      "mean": 0.0028415123273358186,
+      "scored_rows": 2047,
+      "window_id": "final-0462"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 463,
+      "max": 0.3665295681302083,
+      "mean": 0.003838890120316106,
+      "scored_rows": 2047,
+      "window_id": "final-0463"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 464,
+      "max": 1.0529535678065594,
+      "mean": 0.011166058693179997,
+      "scored_rows": 2047,
+      "window_id": "final-0464"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 465,
+      "max": 0.03619587407600967,
+      "mean": 0.0021294637053268202,
+      "scored_rows": 2047,
+      "window_id": "final-0465"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 466,
+      "max": 0.23692493985746288,
+      "mean": 0.0027138066876101832,
+      "scored_rows": 2047,
+      "window_id": "final-0466"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 467,
+      "max": 1.0616771887070755,
+      "mean": 0.0027529689062871375,
+      "scored_rows": 2047,
+      "window_id": "final-0467"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 468,
+      "max": 1.4729297652031919,
+      "mean": 0.012078652164639471,
+      "scored_rows": 2047,
+      "window_id": "final-0468"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 469,
+      "max": 0.06841466796837958,
+      "mean": 0.0019358887717189105,
+      "scored_rows": 2047,
+      "window_id": "final-0469"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 470,
+      "max": 0.023750710978095467,
+      "mean": 0.0018468724350107386,
+      "scored_rows": 2047,
+      "window_id": "final-0470"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 471,
+      "max": 0.061731712176993005,
+      "mean": 0.001756161139795968,
+      "scored_rows": 2047,
+      "window_id": "final-0471"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 472,
+      "max": 0.38703288877270275,
+      "mean": 0.004143484269672316,
+      "scored_rows": 2047,
+      "window_id": "final-0472"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 473,
+      "max": 1.4166256415281382,
+      "mean": 0.007504890274248904,
+      "scored_rows": 2047,
+      "window_id": "final-0473"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 474,
+      "max": 0.20437822934729677,
+      "mean": 0.0024658310903291187,
+      "scored_rows": 2047,
+      "window_id": "final-0474"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 475,
+      "max": 0.08438809440744506,
+      "mean": 0.005112873582948709,
+      "scored_rows": 2047,
+      "window_id": "final-0475"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 476,
+      "max": 0.11828040129353828,
+      "mean": 0.003777897166139392,
+      "scored_rows": 2047,
+      "window_id": "final-0476"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 477,
+      "max": 0.38732349782189723,
+      "mean": 0.003371710899877133,
+      "scored_rows": 2047,
+      "window_id": "final-0477"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 478,
+      "max": 0.6043946768625733,
+      "mean": 0.0019965291183614885,
+      "scored_rows": 2047,
+      "window_id": "final-0478"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 479,
+      "max": 0.025415016622251062,
+      "mean": 0.0022493317732376647,
+      "scored_rows": 2047,
+      "window_id": "final-0479"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 480,
+      "max": 0.0825129240290761,
+      "mean": 0.0024051036333160155,
+      "scored_rows": 2047,
+      "window_id": "final-0480"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 481,
+      "max": 0.07294865251835293,
+      "mean": 0.0025180855073612483,
+      "scored_rows": 2047,
+      "window_id": "final-0481"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 482,
+      "max": 0.3115601737178049,
+      "mean": 0.00417221890631748,
+      "scored_rows": 2047,
+      "window_id": "final-0482"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 483,
+      "max": 0.16126129150614663,
+      "mean": 0.002087739291940522,
+      "scored_rows": 2047,
+      "window_id": "final-0483"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 484,
+      "max": 0.07048471202126241,
+      "mean": 0.0024642975932275732,
+      "scored_rows": 2047,
+      "window_id": "final-0484"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 485,
+      "max": 0.050736899165838234,
+      "mean": 0.0021925903502977187,
+      "scored_rows": 2047,
+      "window_id": "final-0485"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 486,
+      "max": 0.16066844899784088,
+      "mean": 0.0023587536465285563,
+      "scored_rows": 2047,
+      "window_id": "final-0486"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 487,
+      "max": 0.13261103233745314,
+      "mean": 0.002098652689669477,
+      "scored_rows": 2047,
+      "window_id": "final-0487"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 488,
+      "max": 0.21234467253503497,
+      "mean": 0.003996790079849349,
+      "scored_rows": 2047,
+      "window_id": "final-0488"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 489,
+      "max": 0.15787933641193377,
+      "mean": 0.0025249466670675233,
+      "scored_rows": 2047,
+      "window_id": "final-0489"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 490,
+      "max": 0.05415808298578302,
+      "mean": 0.00217091520011617,
+      "scored_rows": 2047,
+      "window_id": "final-0490"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 491,
+      "max": 0.12391162715026706,
+      "mean": 0.003088294850664169,
+      "scored_rows": 2047,
+      "window_id": "final-0491"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 492,
+      "max": 0.46654339412788404,
+      "mean": 0.00432953008378658,
+      "scored_rows": 2047,
+      "window_id": "final-0492"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 493,
+      "max": 0.19900281179836468,
+      "mean": 0.0031059932786141773,
+      "scored_rows": 2047,
+      "window_id": "final-0493"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 494,
+      "max": 1.7624778655118845,
+      "mean": 0.005715726221790818,
+      "scored_rows": 2047,
+      "window_id": "final-0494"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 495,
+      "max": 0.11208690024070128,
+      "mean": 0.0022564648116977764,
+      "scored_rows": 2047,
+      "window_id": "final-0495"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 496,
+      "max": 0.13624364957371593,
+      "mean": 0.0016410985405182245,
+      "scored_rows": 2047,
+      "window_id": "final-0496"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 497,
+      "max": 0.0760827282635026,
+      "mean": 0.002130748979186485,
+      "scored_rows": 2047,
+      "window_id": "final-0497"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 498,
+      "max": 0.16243314793212382,
+      "mean": 0.003843178118850936,
+      "scored_rows": 2047,
+      "window_id": "final-0498"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 499,
+      "max": 0.0897604698729042,
+      "mean": 0.0022409133729783415,
+      "scored_rows": 2047,
+      "window_id": "final-0499"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 500,
+      "max": 0.14236323168732734,
+      "mean": 0.002098418930690698,
+      "scored_rows": 2047,
+      "window_id": "final-0500"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 501,
+      "max": 0.1174780293230866,
+      "mean": 0.0020379343989853035,
+      "scored_rows": 2047,
+      "window_id": "final-0501"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 502,
+      "max": 0.34040634745970555,
+      "mean": 0.004518749211355673,
+      "scored_rows": 2047,
+      "window_id": "final-0502"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 503,
+      "max": 0.8716513239858689,
+      "mean": 0.009452519898874127,
+      "scored_rows": 2047,
+      "window_id": "final-0503"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 504,
+      "max": 0.16329987466581797,
+      "mean": 0.0031657792303124194,
+      "scored_rows": 2047,
+      "window_id": "final-0504"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 505,
+      "max": 0.33695176546409256,
+      "mean": 0.0032488706475489455,
+      "scored_rows": 2047,
+      "window_id": "final-0505"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 506,
+      "max": 0.056839783526760786,
+      "mean": 0.0023914932772100667,
+      "scored_rows": 2047,
+      "window_id": "final-0506"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 507,
+      "max": 0.11505165620850374,
+      "mean": 0.0022549179834989936,
+      "scored_rows": 2047,
+      "window_id": "final-0507"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 508,
+      "max": 0.058379252446447594,
+      "mean": 0.0013478918814877083,
+      "scored_rows": 2047,
+      "window_id": "final-0508"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 509,
+      "max": 0.056520758484174045,
+      "mean": 0.0021127040153051564,
+      "scored_rows": 2047,
+      "window_id": "final-0509"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 510,
+      "max": 0.5827716146420278,
+      "mean": 0.0031009846861814144,
+      "scored_rows": 2047,
+      "window_id": "final-0510"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 511,
+      "max": 0.07082663494200742,
+      "mean": 0.0018549101245210412,
+      "scored_rows": 2047,
+      "window_id": "final-0511"
+    }
+  ],
+  "per_domain": {
+    "code": 0.00355618636606878,
+    "encyclopedic": 0.0027710653015447354,
+    "literary": 0.003400965585617657,
+    "multilingual": 0.003139332219020085,
+    "scientific": 0.0020610038761004136
+  },
+  "per_stratum": null,
+  "receipt_sha256": "5bd5cc6b80b726776fd51f3569348fa52161b327d6902dad919aa301bf39481a",
+  "reference": {
+    "capture_content_digest": "2376837de2e42561a196a3f33e25ab6e79471bed0f97c5949605656ca97504c3",
+    "dataset_id": "fidelity--qwen38-27b.malaiwah.root.bf16",
+    "dataset_sha256": "8a65836468ee50585d44a387f2a35cfe8a4a6cdb1508c154704b588ca59b280f",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723",
+      "source": "native",
+      "tensor_content_sha256": "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723"
+    },
+    "label": "reference",
+    "lane": "local-cuda-budget",
+    "lane_identity_sha256": "5903a9ecad5ce1cd7e2f0fd33e9ea7ea7d2d5fe34c1c6fc304ab55b3e6569ea5",
+    "repository": "malaiwah/qwen38-27b-fidelity-root-v1",
+    "revision": null,
+    "role": "root",
+    "scope_digest": "attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "09b9136769e496917b4d0f59f29ddf1d584fb8c6fd792510813bf129ba34b9c2",
+    "weights": {
+      "artifact_ref": null,
+      "checkpoint_identity_sha256": "f28d26c4716affaee9a5bcaf18704c904be3c27b6dfd7ec6d9f13dec6b28be14",
+      "codec": null,
+      "config_sha256": "191e0af232104ed8b65258cf3fb2b842e288008baca7633c11b82a1ac7203aab",
+      "declared_bits": null,
+      "declared_head_bits": 16,
+      "index_sha256": null,
+      "model_ref": "model--qwen.qwen3.8-27b",
+      "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+      "quantized": false,
+      "repository": "Qwen/Qwen3.8-27B",
+      "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+    }
+  },
+  "schema": "malaiwah.fidelity-comparison-receipt.v1",
+  "self_compare": null,
+  "submission": {
+    "emitted": false,
+    "path": null,
+    "receipt_sha256": null,
+    "refusal": null,
+    "submission_schema": null
+  },
+  "tokenwise": {
+    "bytes": 8384640,
+    "path": "tokenwise-kld.npy",
+    "sha256": "5be7950cdafb4a90018d37ff50dab63468fb74805976d1552c8b916290833b51"
+  },
+  "top1_agreement": 0.977509961223742,
+  "top1_discordant_contexts": [],
+  "uncertainty": {
+    "ci95_high": null,
+    "ci95_low": null,
+    "cluster_unit": null,
+    "clusters": null,
+    "method": "none",
+    "samples": null,
+    "seed": null
+  }
+}

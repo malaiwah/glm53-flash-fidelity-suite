@@ -1,6 +1,21 @@
 {
-  "schema_version": "quant-fidelity-registry/v1",
-  "title": "Cross-record invariants for registry_validate.py",
+  "canonical_serialization": {
+    "comparability_key": "'cmp--' + sha256('|'.join(str(key_inputs[f]) for f in comparability_key_field_order)).hexdigest()[:16]; inputs are enum values and ids, none of which may contain '|'",
+    "description": "The single serialization rule used for every derived hash and every line in data/*.jsonl. registry_add.py and registry_validate.py both call tools/registry_lib.py, so they cannot drift.",
+    "floats": "repr() of the IEEE-754 double; values are never rounded on the way in",
+    "json": "json.dumps(obj, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False)",
+    "jsonl": "one canonical object per line, file sorted ascending by the record id",
+    "scope_digest_numbers": "bits_per_weight renders as str(int(v)) when integral, else repr(float(v)), so 6 and 6.0 agree"
+  },
+  "comparability_key_field_order": [
+    "panel_id",
+    "reference_id",
+    "metric_name",
+    "direction",
+    "accumulation_dtype",
+    "stack_relation",
+    "head_policy"
+  ],
   "description": "JSON Schema enforces the shape of one record. These are the checks that need two or more records, or a recomputation. registry_validate.py must implement every id below and report failures with the invariant id. Severity 'error' fails the run; 'warn' is reported and does not fail unless --strict.",
   "invariants": [
     {
@@ -19,10 +34,10 @@
       "statement": "A row with any bias block is never comparability.class=strict."
     },
     {
+      "amended": "v1.0.0: the cross-engine GGUF floor measures unsloth's BF16 .gguf repack of Qwen3.8-27B, not the reference safetensors themselves. Requiring literal artifact equality would have rejected a correct floor.",
       "id": "BIAS-004",
       "severity": "error",
-      "statement": "comparability.bias.floor_measurement_ref points at a row measuring the reference's own artifact, or an artifact of kind=base that derives from it -- for a cross-ENGINE floor the unquantized weights are necessarily repackaged for the other engine (a BF16 .gguf of the same base). A floor measures unquantized weights through the candidate's stack; anything else is a comparison, not a floor.",
-      "amended": "v1.0.0: the cross-engine GGUF floor measures unsloth's BF16 .gguf repack of Qwen3.8-27B, not the reference safetensors themselves. Requiring literal artifact equality would have rejected a correct floor."
+      "statement": "comparability.bias.floor_measurement_ref points at a row measuring the reference's own artifact, or an artifact of kind=base that derives from it -- for a cross-ENGINE floor the unquantized weights are necessarily repackaged for the other engine (a BF16 .gguf of the same base). A floor measures unquantized weights through the candidate's stack; anything else is a comparison, not a floor."
     },
     {
       "id": "BIAS-005",
@@ -30,10 +45,10 @@
       "statement": "A floor row (artifact_ref == the reference's artifact_ref) is reported so the renderer can label it 'measurement floor' rather than ranking it as a quantization result."
     },
     {
+      "enforced_by": "tools/registry_add.py build_row (exit 7 at write time)",
       "id": "BIAS-006",
       "severity": "error",
-      "statement": "comparability.bias.floor_measurement_ref, when set, points at a measurement produced by a pipeline declaring the SAME measurement lane as the biased row's own pipeline (a pipeline with no `lane` object is the sealed-ep8 lane). The comparability key carries no lane input (PROV-012), so a sealed-lane row and a streaming-lane row of the same artifact routinely share one key, and BIAS-002's same-key check alone would let a floor measured on one lane be named as another lane's zero-point. A floor is the zero-point for its own lane only: this registry's cross-stack floor (0.012712 nats, pipeline--malaiwah.glm53-crosscheck) must never be subtracted from a streaming-lane row, nor a streaming-lane floor from a cross-stack row, even where the two rows happen to share a comparability key.",
-      "enforced_by": "tools/registry_add.py build_row (exit 7 at write time)"
+      "statement": "comparability.bias.floor_measurement_ref, when set, points at a measurement produced by a pipeline declaring the SAME measurement lane as the biased row's own pipeline (a pipeline with no `lane` object is the sealed-ep8 lane). The comparability key carries no lane input (PROV-012), so a sealed-lane row and a streaming-lane row of the same artifact routinely share one key, and BIAS-002's same-key check alone would let a floor measured on one lane be named as another lane's zero-point. A floor is the zero-point for its own lane only: this registry's cross-stack floor (0.012712 nats, pipeline--malaiwah.glm53-crosscheck) must never be subtracted from a streaming-lane row, nor a streaming-lane floor from a cross-stack row, even where the two rows happen to share a comparability key."
     },
     {
       "id": "BIAS-007",
@@ -56,10 +71,10 @@
       "statement": "Within one comparability key, all member measurements agree on measurement_scope.scored_positions, or every disagreeing member has covers_full_panel=false plus a subset_of_panel disclosure."
     },
     {
+      "amended": "v1.0.0: added pipeline_ref. brandonmusic's v44/v71/v75 rows measure the same weights on the same panel against the same teacher and differ only in the serving stack -- which is the variable he is actually reporting. Excluding pipeline_ref would have rejected three legitimate rows as duplicates.",
       "id": "CMP-004",
       "severity": "error",
-      "statement": "No two measurements share (artifact_ref, panel_ref, reference_ref, pipeline_ref, metric.name, estimator.stack_relation, estimator.head_policy, provenance.measured_by) unless one has status superseded/retracted and names the other via supersedes.",
-      "amended": "v1.0.0: added pipeline_ref. brandonmusic's v44/v71/v75 rows measure the same weights on the same panel against the same teacher and differ only in the serving stack -- which is the variable he is actually reporting. Excluding pipeline_ref would have rejected three legitimate rows as duplicates."
+      "statement": "No two measurements share (artifact_ref, panel_ref, reference_ref, pipeline_ref, metric.name, estimator.stack_relation, estimator.head_policy, provenance.measured_by) unless one has status superseded/retracted and names the other via supersedes."
     },
     {
       "id": "CMP-005",
@@ -87,10 +102,10 @@
       "statement": "If metric.name is mean_of_run_means_tokenwise_kld and run_means is present, metric.value equals mean(run_means) to 1e-12 relative tolerance."
     },
     {
+      "amended": "v1.0.0: original wording required identical_across_runs=true whenever stddev was 0, which would have forced a false determinism claim onto every zero-spread row that publishes no per-run output digest. Inverted to match the invariant's stated intent.",
       "id": "DET-004",
       "severity": "error",
-      "statement": "population_stddev_of_run_means == 0 with run_count >= 2 may NOT be presented as identical_across_runs=true unless evidence_kind is a content-hash kind (tokenwise_kld_sha256, logits_tensor_sha256, hidden_state_tensor_sha256, sealed_tokenwise_digest) with exactly one distinct hash. Equal run means alone are recorded as evidence_kind=run_mean_equality_only with identical_across_runs false or null. Equal means without a content hash is a coincidence claim, not a determinism claim.",
-      "amended": "v1.0.0: original wording required identical_across_runs=true whenever stddev was 0, which would have forced a false determinism claim onto every zero-spread row that publishes no per-run output digest. Inverted to match the invariant's stated intent."
+      "statement": "population_stddev_of_run_means == 0 with run_count >= 2 may NOT be presented as identical_across_runs=true unless evidence_kind is a content-hash kind (tokenwise_kld_sha256, logits_tensor_sha256, hidden_state_tensor_sha256, sealed_tokenwise_digest) with exactly one distinct hash. Equal run means alone are recorded as evidence_kind=run_mean_equality_only with identical_across_runs false or null. Equal means without a content hash is a coincidence claim, not a determinism claim."
     },
     {
       "id": "DET-005",
@@ -193,10 +208,10 @@
       "statement": "A row carrying a protocol block should carry both hashes. Two rows are protocol-comparable when protocol.scoring_sha256 matches; a differing file_sha256 with a matching scoring hash is a provenance note, not an incomparability."
     },
     {
+      "enforced_by": "tools/registry_joint_check.py (exit 1)",
       "id": "JOINT-009",
       "severity": "error",
-      "statement": "A row whose uncertainty.sigma_run is nonzero must also carry a TOTAL-uncertainty interval, either as uncertainty.ci95_total or named explicitly in uncertainty.note. The block bootstrap resamples windows WITHIN one cold run, so ci95_low/high can never contain run-to-run spread: on a nondeterministic kernel path those endpoints are the statistical half only and understate the row's own uncertainty. Every row in this registry today has sigma_run exactly 0.0 -- brandonmusic's five 4bpw runs are bitwise identical and so are ours -- so this passes vacuously and is a LATCH, not a gate: the first measurement on a nondeterministic path (his NVFP4 MoE path is the known example, sigma_run 3.3e-4) fails here until `uncertainty` gains a real ci95_total field. That schema addition is owed and is deliberately not pre-added, so that nothing claims a field it has never emitted.",
-      "enforced_by": "tools/registry_joint_check.py (exit 1)"
+      "statement": "A row whose uncertainty.sigma_run is nonzero must also carry a TOTAL-uncertainty interval, either as uncertainty.ci95_total or named explicitly in uncertainty.note. The block bootstrap resamples windows WITHIN one cold run, so ci95_low/high can never contain run-to-run spread: on a nondeterministic kernel path those endpoints are the statistical half only and understate the row's own uncertainty. Every row in this registry today has sigma_run exactly 0.0 -- brandonmusic's five 4bpw runs are bitwise identical and so are ours -- so this passes vacuously and is a LATCH, not a gate: the first measurement on a nondeterministic path (his NVFP4 MoE path is the known example, sigma_run 3.3e-4) fails here until `uncertainty` gains a real ci95_total field. That schema addition is owed and is deliberately not pre-added, so that nothing claims a field it has never emitted."
     },
     {
       "id": "OFFLINE-001",
@@ -224,10 +239,10 @@
       "statement": "When contexts, positions_per_context and scored_positions_total are all non-null and scoring_window.windowed=false, scored_positions_total == contexts * positions_per_context."
     },
     {
+      "amended": "v1.0.0: restated as a family rule. Two sibling scoring-window views of one parent share the parent's digest without either deriving from the other, which the original pairwise wording rejected.",
       "id": "PANEL-004",
       "severity": "error",
-      "statement": "Two panels never share an identity.panel_token_sha256 unless they belong to one token-identity family: a connected component of the derived_from graph in which every edge has derivation.kind in {reformat, scoring_window_change}. Those derivations re-score identical tokens; every other derivation changes which tokens are in the panel and must therefore change the digest.",
-      "amended": "v1.0.0: restated as a family rule. Two sibling scoring-window views of one parent share the parent's digest without either deriving from the other, which the original pairwise wording rejected."
+      "statement": "Two panels never share an identity.panel_token_sha256 unless they belong to one token-identity family: a connected component of the derived_from graph in which every edge has derivation.kind in {reformat, scoring_window_change}. Those derivations re-score identical tokens; every other derivation changes which tokens are in the panel and must therefore change the digest."
     },
     {
       "id": "PANEL-005",
@@ -295,11 +310,11 @@
       "statement": "A measured_by=self-measured row names a pipeline whose author is the measurer. A number we claim to have produced must have run on a stack we own."
     },
     {
+      "amended": "v1.0.2 (audit 2026-08-29): the old gate compared measurer.handle against produced_by.repository, two strings the submitter types, so a receipt that wrote the maintainer's handle in both fields minted a strict self-measured row in the flagship comparability group.",
+      "enforced_by": "tools/registry_add.py submission_to_records (exit 8, or downgrade + attribution_downgraded disclosure)",
       "id": "PROV-009",
       "severity": "error",
-      "statement": "An inbound submission may not be attributed to the registry maintainer on the strength of anything inside the submission. produced_by.repository must be a maintainer-owned repository AND the operator must assert the attribution at the command line (registry_add --maintainer-attribution); an unasserted maintainer claim is recorded as third-party-reported with an attribution_downgraded disclosure. self-measured is the registry's highest trust level and comparability.class=strict follows from it, so it is a property of the invocation, never of the file: no pull request and no CI job can mint it.",
-      "enforced_by": "tools/registry_add.py submission_to_records (exit 8, or downgrade + attribution_downgraded disclosure)",
-      "amended": "v1.0.2 (audit 2026-08-29): the old gate compared measurer.handle against produced_by.repository, two strings the submitter types, so a receipt that wrote the maintainer's handle in both fields minted a strict self-measured row in the flagship comparability group."
+      "statement": "An inbound submission may not be attributed to the registry maintainer on the strength of anything inside the submission. produced_by.repository must be a maintainer-owned repository AND the operator must assert the attribution at the command line (registry_add --maintainer-attribution); an unasserted maintainer claim is recorded as third-party-reported with an attribution_downgraded disclosure. self-measured is the registry's highest trust level and comparability.class=strict follows from it, so it is a property of the invocation, never of the file: no pull request and no CI job can mint it."
     },
     {
       "id": "PROV-010",
@@ -307,10 +322,10 @@
       "statement": "A measured_by=self-measured row cites at least one hashed source that the registry maintainer actually holds: a local receipt path, or a URI in the maintainer's own HuggingFace/GitHub namespace. A row whose entire evidence lives in a third party's repository is that party's measurement wearing our name -- the failure mode PROV-007 only catches while the author_reported_only disclosure is still attached."
     },
     {
+      "enforced_by": "tools/registry_add.py submission_to_records",
       "id": "PROV-011",
       "severity": "error",
-      "statement": "A row generated from a submission receipt whose lane is not sealed-ep8 carries a non_sealed_lane disclosure with affects_comparability=true. submission.schema.json states that the lane forces the matching disclosure code; without this, a streaming-lane number lands in the sealed lane's comparability group with nothing on the row to say so.",
-      "enforced_by": "tools/registry_add.py submission_to_records"
+      "statement": "A row generated from a submission receipt whose lane is not sealed-ep8 carries a non_sealed_lane disclosure with affects_comparability=true. submission.schema.json states that the lane forces the matching disclosure code; without this, a streaming-lane number lands in the sealed lane's comparability group with nothing on the row to say so."
     },
     {
       "id": "PROV-012",
@@ -388,10 +403,10 @@
       "statement": "reference.self_consistency.floor_measurement_ref is set for every reference backing at least one cross_stack measurement."
     },
     {
+      "enforced_by": "tools/registry_add.py submission_to_records (exit 7)",
       "id": "REFC-005",
       "severity": "error",
-      "statement": "A submission's declared reference.teacher_receipt_sha256 must equal the capture_receipt_sha256 of the reference record it names. Where the reference record carries no capture digest the row is forced to disclose teacher_capture_unverified, which makes it advisory.",
-      "enforced_by": "tools/registry_add.py submission_to_records (exit 7)"
+      "statement": "A submission's declared reference.teacher_receipt_sha256 must equal the capture_receipt_sha256 of the reference record it names. Where the reference record carries no capture digest the row is forced to disclose teacher_capture_unverified, which makes it advisory."
     },
     {
       "id": "SCOPE-001",
@@ -439,10 +454,10 @@
       "statement": "An artifact with any scope.assignments entry whose treatment is 'unknown' carries a disclosure with code=artifact_identity_incomplete, and no measurement of that artifact is comparability.class=strict."
     },
     {
+      "enforced_by": "tools/registry_add.py submission_to_records (exit 4 / exit 7)",
       "id": "SCOPE-010",
       "severity": "error",
-      "statement": "A submission with measurement_scope.covers_full_panel=false must carry a subset_of_panel disclosure, and may never score more positions than the panel it names.",
-      "enforced_by": "tools/registry_add.py submission_to_records (exit 4 / exit 7)"
+      "statement": "A submission with measurement_scope.covers_full_panel=false must carry a subset_of_panel disclosure, and may never score more positions than the panel it names."
     },
     {
       "id": "STAT-001",
@@ -470,34 +485,34 @@
       "statement": "auxiliary_metrics.top1_agreement is present on every published KL row: a KL number without top-1 agreement hides which kind of divergence it is."
     },
     {
+      "amended": "v1.0.1 (audit 2026-08-28): statement narrowed to what the check actually enforces. An adversarial fixture that rounded a headline value to 4 decimal places passed STAT-006 cleanly, because a rounded float round-trips through repr like any other.",
       "id": "STAT-006",
       "severity": "error",
-      "statement": "metric.value survives serialization without precision loss: repr(value) round-trips to the same float and the serialized line contains that repr, so the data file never stores a display-rounded number in place of the computed one. LIMIT, stated because the wording used to imply more: this cannot detect a value that was already rounded BEFORE it reached the registry -- 0.0053 round-trips perfectly. Binding a value to its receipt is the seeder's job (live-read for the Qwen rows) and, for the transcribed GLM rows, a manual fetch-and-hash against provenance.sources[].sha256.",
-      "amended": "v1.0.1 (audit 2026-08-28): statement narrowed to what the check actually enforces. An adversarial fixture that rounded a headline value to 4 decimal places passed STAT-006 cleanly, because a rounded float round-trips through repr like any other."
+      "statement": "metric.value survives serialization without precision loss: repr(value) round-trips to the same float and the serialized line contains that repr, so the data file never stores a display-rounded number in place of the computed one. LIMIT, stated because the wording used to imply more: this cannot detect a value that was already rounded BEFORE it reached the registry -- 0.0053 round-trips perfectly. Binding a value to its receipt is the seeder's job (live-read for the Qwen rows) and, for the transcribed GLM rows, a manual fetch-and-hash against provenance.sources[].sha256."
     },
     {
+      "enforced_by": "tools/registry_validate.py check_provenance",
       "id": "PROV-013",
       "severity": "error",
-      "statement": "A row whose provenance.measured_by is not self-measured does not name the registry maintainer in measurer.name, measurer.handle or measurer.url. The rendered Attribution column reads measurer.name, so a submission carrying name: <maintainer> on a throwaway handle printed as the maintainer's own measurement while every handle-keyed check stayed quiet.",
-      "enforced_by": "tools/registry_validate.py check_provenance"
+      "statement": "A row whose provenance.measured_by is not self-measured does not name the registry maintainer in measurer.name, measurer.handle or measurer.url. The rendered Attribution column reads measurer.name, so a submission carrying name: <maintainer> on a throwaway handle printed as the maintainer's own measurement while every handle-keyed check stayed quiet."
     },
     {
+      "enforced_by": "tools/registry_validate.py check_comparability",
       "id": "FLOOR-001",
       "severity": "error",
-      "statement": "A published quantized row does not report LESS divergence than the measurement floor of its own comparability group on its own lane. Unquantized weights measured through the same stack are the zero-point; a number below them is a defect, not a ranking.",
-      "enforced_by": "tools/registry_validate.py check_comparability"
+      "statement": "A published quantized row does not report LESS divergence than the measurement floor of its own comparability group on its own lane. Unquantized weights measured through the same stack are the zero-point; a number below them is a defect, not a ranking."
     },
     {
+      "enforced_by": "tools/registry_validate.py check_comparability",
       "id": "FLOOR-002",
       "severity": "error",
-      "statement": "When no floor was measured on a row's own lane, the row is still bounded by the floors in its comparability group on other lanes, with a 5% margin. This is a bound, not a paired comparison: BIAS-006 still forbids SUBTRACTING a cross-lane floor. The measured lane offset on this registry is 8.5e-06 nats, ~6e-04 of the floor.",
-      "enforced_by": "tools/registry_validate.py check_comparability"
+      "statement": "When no floor was measured on a row's own lane, the row is still bounded by the floors in its comparability group on other lanes, with a 5% margin. This is a bound, not a paired comparison: BIAS-006 still forbids SUBTRACTING a cross-lane floor. The measured lane offset on this registry is 8.5e-06 nats, ~6e-04 of the floor."
     },
     {
+      "enforced_by": "tools/registry_validate.py check_comparability",
       "id": "FLOOR-003",
       "severity": "warn",
-      "statement": "A comparability group that ranks more than one published row has a measurement floor on some lane. Reported once per group: a ranked table with no zero-point has nothing bounding how low a member may be reported.",
-      "enforced_by": "tools/registry_validate.py check_comparability"
+      "statement": "A comparability group that ranks more than one published row has a measurement floor on some lane. Reported once per group: a ranked table with no zero-point has nothing bounding how low a member may be reported."
     },
     {
       "id": "HARN-001",
@@ -574,6 +589,7 @@
     "declared_scheme_mismatch",
     "different_reference_kind",
     "estimator_overridden",
+    "estimator_scope_narrower_than_artifact",
     "estimator_unknown",
     "harness_unrecorded",
     "head_substituted",
@@ -617,28 +633,13 @@
     "value_identical_to_sibling",
     "weak_contamination_guard"
   ],
-  "comparability_key_field_order": [
-    "panel_id",
-    "reference_id",
-    "metric_name",
-    "direction",
-    "accumulation_dtype",
-    "stack_relation",
-    "head_policy"
-  ],
+  "schema_version": "quant-fidelity-registry/v1",
   "scope_digest_recipe": {
-    "segment": "<tensor_class>=<treatment>:<format>[@<bits_per_weight>]",
+    "example": "attn.o=native:bf16|attn.qkv=native:bf16|embed_tokens=native:bf16|lm_head=native:bf16|mlp.down=quantized:exl3-mcg@6|mlp.gate=quantized:exl3-mcg@5|mlp.up=quantized:exl3-mcg@5|head=native|kv=bf16",
     "join": "|",
+    "segment": "<tensor_class>=<treatment>:<format>[@<bits_per_weight>]",
     "sort": "lexicographic over segments",
-    "suffix": "|head=<scope.head_policy>|kv=<scope.kv_cache_dtype>",
-    "example": "attn.o=native:bf16|attn.qkv=native:bf16|embed_tokens=native:bf16|lm_head=native:bf16|mlp.down=quantized:exl3-mcg@6|mlp.gate=quantized:exl3-mcg@5|mlp.up=quantized:exl3-mcg@5|head=native|kv=bf16"
+    "suffix": "|head=<scope.head_policy>|kv=<scope.kv_cache_dtype>"
   },
-  "canonical_serialization": {
-    "description": "The single serialization rule used for every derived hash and every line in data/*.jsonl. registry_add.py and registry_validate.py both call tools/registry_lib.py, so they cannot drift.",
-    "json": "json.dumps(obj, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False)",
-    "floats": "repr() of the IEEE-754 double; values are never rounded on the way in",
-    "jsonl": "one canonical object per line, file sorted ascending by the record id",
-    "comparability_key": "'cmp--' + sha256('|'.join(str(key_inputs[f]) for f in comparability_key_field_order)).hexdigest()[:16]; inputs are enum values and ids, none of which may contain '|'",
-    "scope_digest_numbers": "bits_per_weight renders as str(int(v)) when integral, else repr(float(v)), so 6 and 6.0 agree"
-  }
+  "title": "Cross-record invariants for registry_validate.py"
 }

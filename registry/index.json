@@ -2,15 +2,15 @@
   "collections": {
     "artifacts": {
       "file": "data/artifacts.jsonl",
-      "record_count": 38,
+      "record_count": 39,
       "schema": "schema/artifact.schema.json",
-      "sha256": "cbeba9f50e0f98d806c85ea56821fbea037d8210c582cc9d29c8159f97f71703"
+      "sha256": "1d1234f49a06a1fa897dab4c06d284ac6c2466387ab4b1b2e51813519b094b76"
     },
     "measurements": {
       "file": "data/measurements.jsonl",
-      "record_count": 72,
+      "record_count": 75,
       "schema": "schema/measurement.schema.json",
-      "sha256": "05f2745984437391d3006d1825ca8368e8fe7bad2dc7c508fb53917f4b86192d"
+      "sha256": "0305429114c0b10ec32b3a79f5f87f6063083fd665f54e1761d9c9ca6989ba32"
     },
     "models": {
       "file": "data/models.jsonl",
@@ -26,18 +26,30 @@
     },
     "pipelines": {
       "file": "data/pipelines.jsonl",
-      "record_count": 14,
+      "record_count": 15,
       "schema": "schema/pipeline.schema.json",
-      "sha256": "a029599a7a194366e4b7d3aca9280f50cc046aa809ddf90558dcdb00b6381d60"
+      "sha256": "e8036643511ae37759dbda371f8a9d6ce3e58fd9d24f727d2504fc0edcc9537a"
     },
     "references": {
       "file": "data/references.jsonl",
-      "record_count": 12,
+      "record_count": 13,
       "schema": "schema/reference.schema.json",
-      "sha256": "cfb8f5235706abae00531b8e902e8acf1ec63024b6ccd3003316fa867886ad48"
+      "sha256": "ca593279ddaab6c3338bfb214db7c95ec57d7607cb231b61c14020d4b18bebe8"
     }
   },
   "comparability_keys": [
+    {
+      "accumulation_dtype": "float64",
+      "direction": "reference_to_candidate",
+      "head_policy": "shared_reference_head",
+      "key": "cmp--05e16411a5932713",
+      "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-shard0-1m (same_stack, shared_reference_head)",
+      "member_count": 3,
+      "metric_name": "mean_tokenwise_kld",
+      "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m",
+      "reference_id": "reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m",
+      "stack_relation": "same_stack"
+    },
     {
       "accumulation_dtype": "float64",
       "direction": "reference_to_candidate",
@@ -233,18 +245,18 @@
   ],
   "comparability_rule": "Two measurement values may be compared IF AND ONLY IF their comparability.key values are equal. A table that mixes keys is malformed.",
   "counts": {
-    "artifacts": 38,
-    "measurements": 72,
-    "measurements_advisory": 68,
+    "artifacts": 39,
+    "measurements": 75,
+    "measurements_advisory": 70,
     "measurements_author_reported": 15,
     "measurements_independently_verified": 0,
-    "measurements_self_measured": 57,
-    "measurements_strict": 4,
+    "measurements_self_measured": 60,
+    "measurements_strict": 5,
     "measurements_third_party_reported": 0,
     "models": 3,
     "panels": 12,
-    "pipelines": 14,
-    "references": 12
+    "pipelines": 15,
+    "references": 13
   },
   "cross_refs": {
     "local_ai_registry": {
@@ -254,13 +266,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-08-30T12:25:52+00:00",
+  "generated_at": "2026-08-30T16:03:27+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-08-30T12:25:52+00:00",
+    "last_run_at": "2026-08-30T16:03:27+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }

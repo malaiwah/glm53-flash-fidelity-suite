@@ -3663,6 +3663,252 @@ PIPELINES += [
 ]
 
 
+# ---------------------------------------------------------------------------
+# M1: Qwen3.8-27B same-lane root capture (hf-transformers lane, RTX PRO 6000)
+#
+# The 37 Qwen3.8-27B rows above are scored against a vLLM-captured teacher, so
+# each carries an unmeasured cross-stack term and its attributable error is
+# inferred by subtraction. The rows below are scored against a teacher captured
+# by the SAME engine on the SAME lane as the candidates, so the floor is 0.0 by
+# construction -- MEASURED, not assumed -- and a candidate's raw KLD IS its
+# attributable error, with nothing subtracted.
+#
+# They are NOT rankable against the 37 older rows. The comparability key binds
+# the reference and the references differ. The panel is deliberately the SAME
+# one, so the two groups differ by the LANE ALONE, which makes the difference
+# interpretable without making it comparable.
+# ---------------------------------------------------------------------------
+
+Q38_HF_REF = "reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m"
+Q38_AWQ_CYAN = "artifact--cyankiwi.qwen3.8-27b-awq-int4"
+PL_FIDDS_Q38 = "pipeline--malaiwah.fidelity-dataset-hf.rtxpro6000"
+
+Q38_ROOT_REV = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+Q38_FP8_REV = "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a"
+Q38_AWQ_REV = "63768c10df38c0395e12ef49edac1bd539eaeeea"
+Q38_SUITE_REV = "7797fcce3ffed62b99871348887f4626dc9b2b3b"
+
+Q38_ROOT_CAPTURE_SHA = "2376837de2e42561a196a3f33e25ab6e79471bed0f97c5949605656ca97504c3"
+Q38_ROOT_DS_SHA = "8a65836468ee50585d44a387f2a35cfe8a4a6cdb1508c154704b588ca59b280f"
+Q38_HEAD_SHA = "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723"
+Q38_PANEL_AGG_SHA = "8847e99a855fab374c3b5fecc1777eabf61307c36782ed48f9fc77e7aca3e42f"
+Q38_FP8_CAPTURE_SHA = "cab1aa85c748ca024870bfdeca9841d53f2cc9744c775a862bc59d6bff0e8bb3"
+Q38_FP8_DS_SHA = "dbe0a4462275bcb3de1c1cfeb181fe8f07bc6ec52fb3f8f74c130d4144022709"
+Q38_AWQ_CAPTURE_SHA = "d22de49aa8bc31e11fcabc1b9217fd3151b9ef0cfad319bc7c9188db6e55261a"
+Q38_AWQ_DS_SHA = "59205aebb69dff05e5d84c51941fd9134a46fd68ed3f98cbf1959d141cfb262e"
+
+Q38_ROOT_DS = "https://huggingface.co/datasets/malaiwah/qwen38-27b-fidelity-root-v1"
+Q38_SUITE_DS = "https://huggingface.co/datasets/malaiwah/qwen38-27b-fidelity-suite-v5"
+
+# The computational closure for a number this campaign PRODUCED. Unlike every
+# row above, metric.value here was computed by code this repository ships, at a
+# commit we can name; the bytes that ran were verified byte-identical to that
+# commit's blobs ON the machine that ran them, so these rows carry a RECORDED
+# harness covering metric.value rather than the grandfather clause.
+#
+# The digests are transcribed from that verification rather than re-read from
+# today's checkout ON PURPOSE: `k6/tools/hf_capture.py` has since changed on
+# main, and re-digesting it now would stamp these rows with the identity of code
+# that did not produce them -- exactly the failure harness_id.py exists to
+# prevent. Anyone can re-derive them: `git show <pin>:<path> | sha256sum`.
+FIDELITY_COMPARE_PIN = "9133f4288838a3333b25b575f4d5e4e8ab3b419a"
+FIDELITY_COMPARE_DIGESTS = [
+    {"role": "capture", "path": "k6/tools/hf_capture.py",
+     "sha256": "1a64290a445d437145df69bf6172df557af9e21330b97700c6596efba6947a9b"},
+    {"role": "comparator", "path": "bin/fidelity/dscompare.py",
+     "sha256": "77544ea17d63c324b67066fc2b750176bee5ac777c323a0b53fe69af043d5a33"},
+    {"role": "estimator", "path": "k6/tools/k6_kld_report.py",
+     "sha256": "7c2fa04808d595948489a2846e40eb76828f31495767014a426046c4d6501871"},
+    {"role": "format", "path": "bin/fidelity/dsformat.py",
+     "sha256": "269bee32eb6d786ee0068f57185f08a529fabd49d1c2be652bf29919568fb023"},
+    {"role": "front_end", "path": "bin/fidelity_dataset.py",
+     "sha256": "7966954ef2774257b1575e22ec34c110cb5530cba813683584c32e73cbd68303"},
+    {"role": "manifest", "path": "bin/fidelity/dsmanifest.py",
+     "sha256": "8281a18a630e222ae0f96c6e612cd605bff02b82a3464a253e07381fce75153c"},
+]
+FIDELITY_COMPARE_TOOL_VERSIONS = {
+    "python": "3.10.20", "torch": "2.11.0+cu130", "transformers": "5.8.1",
+    "numpy": "2.2.6", "safetensors": "0.8.0-rc.0",
+}
+
+
+def q38_hf_harness():
+    """RECORDED harness for the rows this campaign computed end to end."""
+    return {
+        "harness_id": H.compute_id(FIDELITY_COMPARE_DIGESTS,
+                                   FIDELITY_COMPARE_TOOL_VERSIONS),
+        "recorded": True,
+        "boundary": H.BOUNDARY,
+        "covers": ["auxiliary_metrics", "determinism", "metric.value"],
+        "repository": {"url": "https://github.com/malaiwah/quant-fidelity-suite",
+                       "commit": FIDELITY_COMPARE_PIN, "commit_role": "exact",
+                       "dirty": False},
+        "code_digests": FIDELITY_COMPARE_DIGESTS,
+        "tool_versions": dict(sorted(FIDELITY_COMPARE_TOOL_VERSIONS.items())),
+        "note": ("Covers metric.value: capture and comparison both ran from this "
+                 "commit's bytes, verified byte-identical on the measuring machine "
+                 "before the run. Digests are transcribed from that verification, "
+                 "not re-read from a later checkout, because hf_capture.py has since "
+                 "changed on main and re-digesting would name code that did not "
+                 "produce these numbers. Re-derive with "
+                 "`git show %s:<path> | sha256sum`." % FIDELITY_COMPARE_PIN[:12]),
+    }
+
+
+Q38_HF_LANE_DISC = disc(
+    "record_note", "info",
+    "LANE IDENTITY. transformers reported the fused linear-attention path "
+    "unavailable (flash-linear-attention / causal-conv1d absent) and fell back to "
+    "the reference torch implementation, identically for the reference and every "
+    "candidate. That fallback is part of what these digests mean; installing those "
+    "kernels is a different lane and is not guaranteed to reproduce them. The "
+    "`kernels` package (0.12.3) WAS installed partway through, between the root "
+    "capture and the candidates; a control re-captured 8 root windows afterwards "
+    "and reproduced the sealed root's per-record tensor_content_sha256 exactly "
+    "(0 mismatches of 8), so the lane did not move.")
+
+Q38_NOT_RANKABLE_DISC = disc(
+    "record_note", "info",
+    "NOT RANKABLE AGAINST THE 37 OLDER Qwen3.8-27B ROWS. Those are scored against "
+    "reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m, a vLLM capture; this "
+    "row is scored against a transformers capture on the local-cuda-budget lane. "
+    "The comparability key binds the reference, so the two groups are different "
+    "keys. The panel is deliberately identical -- same 512 contexts, same "
+    "panel_token_sha256 caef8a46... -- so the two groups differ by the LANE ALONE, "
+    "which makes the difference interpretable but still not comparable. This is "
+    "recorded as INFORMATION, not as a comparability caveat: within its own key the "
+    "row is strict, and the separation from the older group is already carried "
+    "structurally by the differing key rather than by this note.")
+
+Q38_HYBRID_SCOPE_DISC = disc(
+    "record_note", "info",
+    "HYBRID ARCHITECTURE, COARSE VOCABULARY. Qwen3.8-27B is "
+    "Qwen3_5ForConditionalGeneration: of 64 text layers, 48 use linear attention "
+    "and 16 full attention (full_attention_interval 4), plus a vision tower and an "
+    "MTP block, and it is DENSE -- the checkpoint contains zero expert tensors. "
+    "Two consequences for scope. (a) The producers quantize each layer's main "
+    "projection but leave the linear-attention families (conv1d, in_proj_a/b) in "
+    "bf16; the registry tensor_class vocabulary cannot express that split, so "
+    "attn.qkv/attn.o read 'quantized' with the per-class tensor counts recorded in "
+    "the dataset's scope.derivation. (b) The root's scope comes from "
+    "native_scope(), which emits moe.experts=native:bf16@16 unconditionally -- for "
+    "this model that is a vocabulary placeholder, NOT a claim that experts exist.")
+
+
+ARTIFACTS += [
+    artifact(Q38_AWQ_CYAN, QWN, "cyankiwi Qwen3.8-27B AWQ-INT4", "quant",
+             hf("cyankiwi/Qwen3.8-27B-AWQ-INT4", Q38_AWQ_REV, "hf_api"),
+             "safetensors", "INT4", 21041255795,
+             codec("awq", 4.0, None, group_size=32),
+             scope("uniform", [
+                 asg("embed_tokens", "native", "bf16"),
+                 asg("attn.qkv", "quantized", "int4", 4.0),
+                 asg("attn.o", "quantized", "int4", 4.0),
+                 asg("mlp.gate", "quantized", "int4", 4.0),
+                 asg("mlp.up", "quantized", "int4", 4.0),
+                 asg("mlp.down", "quantized", "int4", 4.0),
+                 asg("norm", "native", "bf16"), asg("lm_head", "native", "bf16"),
+             ], "native", kv="bf16"),
+             attr("cyankiwi", "quantizer", handle="cyankiwi",
+                  url="https://huggingface.co/cyankiwi"),
+             [src("model_card", "https://huggingface.co/cyankiwi/Qwen3.8-27B-AWQ-INT4", None,
+                  "revision 63768c10..., index_sha256 82b1bf79..., 2,396 index entries; "
+                  "scope derived from the artifact's own quantization_config + weight index "
+                  "by k6/tools/derive_scope.py")],
+             [disc("record_note", "info",
+                   "Scope derived from the artifact's OWN config and weight index, not guessed. "
+                   "quantization_config declares compressed-tensors pack-quantized, num_bits=4, "
+                   "group_size=32, observer=mse, and a 313-entry `ignore` list. Verified against "
+                   "the real tensor names: every mlp/attention projection carries pack-quantized "
+                   "state, while the linear-attention families (conv1d, out_proj, in_proj_a/b) "
+                   "and the ENTIRE mtp block stay bf16. The producer labels the repo AWQ; the "
+                   "stored container is compressed-tensors pack-quantized, so `format` is the "
+                   "registry's numeric `int4` and codec.family is `awq`."),
+              Q38_HYBRID_SCOPE_DISC],
+             weights_extra={"size_basis": "repo_all_files",
+                            "index_sha256": "82b1bf79f5b61333e83da17ec3bf89c9f178e29395a14c6b3ce3bbc474e1ead8"},
+             derived_from_artifact_ref=Q_BF16,
+             availability={"status": "public",
+                           "uri": "https://huggingface.co/cyankiwi/Qwen3.8-27B-AWQ-INT4"},
+             cross_refs=lair(), seal={"sealed": False}),
+]
+
+REFERENCES += [
+    {"schema_version": V, "id": Q38_HF_REF,
+     "name": "malaiwah Qwen3.8-27B BF16 hidden-state capture, transformers lane, "
+             "suite-v5 shard-0 panel",
+     "artifact_ref": Q_BF16, "panel_ref": P_Q1M, "reference_kind": "native_bf16",
+     "capture": {"stack": "transformers", "stack_version": "5.8.1",
+                 "pipeline_ref": PL_FIDDS_Q38,
+                 "compute_dtype": "bf16", "logits_dtype": "fp32", "kv_cache_dtype": "bf16",
+                 "head_source": "shared_head_artifact", "head_sha256": Q38_HEAD_SHA,
+                 "batch_invariant": None,
+                 "capture_receipt_sha256": Q38_ROOT_DS_SHA},
+     "author": MAL("measurer"), "logits_available": True,
+     "self_consistency": {
+         "floor_measurement_ref": "measurement--qwen38-hf.bf16-selfcompare-floor.suite-v5-shard0-1m",
+         "note": "Reference and candidates are captured by the SAME engine on the SAME lane and "
+                 "compared offline in fp64, so there is no cross-stack floor term to subtract. "
+                 "Measured, not assumed: THREE cold captures of these weights in three separate "
+                 "processes agree bitwise (capture_content_digest 2376837d...), and comparing two "
+                 "of them with --force-compute over all 1,048,064 x 248,320 logits returns exactly "
+                 "0.0 nats at top-1 agreement 1.0, with the forced computation reproducing the "
+                 "hash proof's tokenwise-kld digest byte for byte."},
+     "sources": [src("dataset_card", Q38_ROOT_DS, None,
+                     "malaiwah.fidelity-dataset.v1; dataset_sha256 8a658364..., "
+                     "capture_content_digest 2376837d..., model revision 1d4bf0f2...")],
+     "disclosures": [
+         disc("shared_reference_head", "info",
+              "Hidden states are captured for both sides and ONE head (d922b751...) is applied to "
+              "both. Legitimate rather than merely convenient here: every candidate measured on "
+              "this lane leaves lm_head native bf16 by its own config, so the candidate's own head "
+              "is the same tensor."),
+         Q38_HF_LANE_DISC,
+         Q38_NOT_RANKABLE_DISC,
+         disc("architecture_subset_loaded", "info",
+              "The checkpoint is multimodal (Qwen3_5ForConditionalGeneration, 333 vision tensors) "
+              "and the panel is text-only: no image or video token is ever fed, so the vision "
+              "tower does not participate in any scored forward pass. transformers loaded all "
+              "1,199 tensors with 0 missing, 0 unexpected and 0 mismatched.")]},
+]
+
+PIPELINES += [
+    pipeline(PL_FIDDS_Q38,
+             "malaiwah three-step fidelity dataset (capture / capture / compare), "
+             "hf-transformers engine, RTX PRO 6000",
+             ["capture", "scorer", "aggregator"],
+             "https://github.com/malaiwah/quant-fidelity-suite", FIDELITY_COMPARE_PIN,
+             "bin/fidelity_dataset.py + k6/tools/hf_capture.py", MAL("toolchain-author"),
+             [disc("record_note", "info",
+                   "Same toolchain as pipeline--malaiwah.fidelity-dataset-hf, different hardware, "
+                   "recorded separately so the hardware block stays factual. Capture and "
+                   "comparison are separated: each side runs one transformers forward per panel "
+                   "window, taps the lm_head input with a forward pre-hook, and seals a portable "
+                   "dataset; the comparison then reads two datasets and needs neither set of "
+                   "weights. Because both sides are captured by the same engine on the same lane, "
+                   "the floor is structurally zero rather than subtracted -- verified here at "
+                   "exactly 0.0 nats with the estimator actually executed (--force-compute), not "
+                   "answered by the hash short-circuit."),
+              disc("record_note", "info",
+                   "COST SHAPE, measured on this run and recorded for whoever plans the next one: "
+                   "a 512-window capture took 335 s (0.0109 min/window) while ONE 512-window "
+                   "comparison took 60 min 19 s (0.118 min/window) -- the comparison costs ~10.8x "
+                   "the capture it consumes. dscompare._replay applies the head with a numpy "
+                   "matmul on the CPU and only the fp64 KLD reduction runs on the GPU, so a "
+                   "comparison pins ~20 cores while the GPU sits at 0%.")],
+             numerics=FP64,
+             hardware={"gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition", "gpu_count": 1,
+                       "tensor_parallel": 1,
+                       "note": "JarvisLabs on-demand container, region IN1, 96 GB VRAM, "
+                               "driver 595.58.03, 28 vCPU"},
+             cost={"usd_per_measurement": None,
+                   "basis": "one box served the root (3 cold runs), 2 candidates, 3 comparisons "
+                            "and the publish"},
+             sources=[src("dataset_card", Q38_ROOT_DS)],
+             cross_refs=lair()),
+]
+
+
 def build_measurements_fruit(artifacts_map):
     M = lambda *a, **k: measurement(*a, artifacts_map=artifacts_map, **k)
     GH = "https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/fruit/"
@@ -3766,6 +4012,193 @@ def build_measurements_fruit(artifacts_map):
     ]
 
 
+def build_measurements_qwen38_hf(artifacts_map):
+    """The same-lane Qwen3.8-27B rows: a MEASURED 0.0 floor and two candidates."""
+    M = lambda *a, **k: measurement(*a, artifacts_map=artifacts_map, **k)
+    GH = ("https://github.com/malaiwah/quant-fidelity-suite/blob/main/"
+          "registry/protocol/qwen38-hf/")
+    ds_root = src("dataset_card", Q38_ROOT_DS, None,
+                  "reference capture: dataset_sha256 8a658364..., "
+                  "capture_content_digest 2376837d...")
+    est = dict(accumulation="float64", head_policy="shared_reference_head",
+               vocab_chunk=24832, two_pass=True, stack_relation="same_stack")
+
+    rows = [
+        M("measurement--qwen38-hf.bf16-selfcompare-floor.suite-v5-shard0-1m",
+          QWN, Q_BF16, P_Q1M, Q38_HF_REF, PL_FIDDS_Q38, 0.0,
+          top1=1.0, scored_positions=1048064, contexts=512,
+          runs=3, cold=True, identical=True,
+          evidence_kind="hidden_state_tensor_sha256",
+          evidence_hashes=[Q38_ROOT_CAPTURE_SHA],
+          det_note="THREE cold captures of the same bf16 weights, in three separate "
+                   "processes on one RTX PRO 6000, produced the same "
+                   "capture_content_digest 2376837d... Their dataset_sha256 values "
+                   "differ because a manifest embeds timestamps and a cold-run label, "
+                   "which is exactly why determinism evidence is taken over tensor "
+                   "CONTENT. The third ran concurrently with a CPU-saturated "
+                   "comparison and still matched, so host load does not perturb the "
+                   "arithmetic.",
+          sources=[ds_root,
+                   src("github_file", GH + "comparison.qwen38-bf16-selfcompare-floor.json",
+                       "b2436077ac6b94b2814657749ef957e6f3087de453f72fd742f358812b99063b",
+                       "malaiwah.fidelity-comparison-receipt.v1 for the --force-compute "
+                       "self-compare of two cold root captures")],
+          disclosures=[
+              disc("record_note", "info",
+                   "THE FLOOR, MEASURED. `fidelity-dataset compare --self-compare "
+                   "--force-compute` over all 1,048,064 x 248,320 logits in fp64 returns "
+                   "mean tokenwise KLD exactly 0.0 nats at top-1 agreement 1.0, with every "
+                   "percentile (median, p95, p99, p99.9, max) also 0.0. Run twice: once "
+                   "answered by the capture-digest short-circuit and once with the "
+                   "estimator forced to execute (backend "
+                   "torch:k6_kld_report._token_kld). Both produced the same "
+                   "tokenwise-kld.npy digest 8be5dcca..., so the forced computation "
+                   "reproduces the hash proof byte for byte rather than merely agreeing "
+                   "with it. This is the architectural payoff of separating capture from "
+                   "comparison: when both sides are captured by one engine on one lane, "
+                   "comparison overhead is structurally zero and never has to be "
+                   "subtracted from anything. Every candidate row on this reference "
+                   "therefore reports attributable error EQUAL to its raw KLD."),
+              disc("shared_reference_head", "info",
+                   "One head (d922b751...) applied to both sides' hidden states."),
+              disc("reduced_run_count", "info",
+                   "THREE cold captures, not the campaign's usual five. Three was chosen "
+                   "because the evidence here is a CONTENT digest rather than a spread over "
+                   "run means: all three processes produced the identical "
+                   "capture_content_digest, so a fourth and fifth would restate a bitwise "
+                   "identity rather than tighten an estimate. The third was deliberately run "
+                   "under a saturated CPU to test whether host load perturbs the arithmetic; "
+                   "it did not."),
+              Q38_HF_LANE_DISC, Q38_NOT_RANKABLE_DISC, Q38_HYBRID_SCOPE_DISC],
+          **est),
+
+        M("measurement--qwen38-hf.fp8-dequantized.suite-v5-shard0-1m",
+          QWN, Q_FP8, P_Q1M, Q38_HF_REF, PL_FIDDS_Q38, 0.002989850396847924,
+          top1=0.977509961223742,
+          aux={"median_kld": 0.0009696961924583243,
+               "p95_kld": 0.009972340458292886,
+               "p99_kld": 0.032763897796112766,
+               "p999_kld": 0.14369528668542408,
+               "max_kld": 2.0162679295433397},
+          scored_positions=1048064, contexts=512,
+          runs=1, cold=True, evidence_kind="hidden_state_tensor_sha256",
+          evidence_hashes=[Q38_FP8_CAPTURE_SHA],
+          det_note="One cold capture of the candidate. The reference side is the same "
+                   "three-run-verified capture the floor row uses.",
+          cls="advisory",
+          sources=[ds_root,
+                   src("model_card", "https://huggingface.co/Qwen/Qwen3.8-27B-FP8", None,
+                       "revision 017b9c7a..."),
+                   src("github_file", GH + "comparison.qwen38-fp8-dequantized.json",
+                       "55fa8d0505c5e2855e2ab04280bd7ac37727ea272d0e947fbf62ddb9958ea084",
+                       "malaiwah.fidelity-comparison-receipt.v1; candidate dataset_sha256 "
+                       "dbe0a446..., capture_content_digest cab1aa85...")],
+          disclosures=[
+              disc("lossy_capture_codec", "caveat",
+                   "RECONSTRUCTED, NOT EXECUTED. The vendor FP8 path is unavailable on this "
+                   "hardware: the fused deep-gemm kernel aborts with 'Unknown recipe' on "
+                   "Blackwell. The candidate was therefore captured from a bf16 "
+                   "materialisation of the stored fp8 weights "
+                   "(k6/tools/dequant_fp8.py, w = fp8 * weight_scale_inv over 128x128 "
+                   "blocks, accumulated fp32, stored bf16). This is the dequantize-and-run "
+                   "methodology the GGUF/EXL3/MLX ecosystems use for KLD: it measures the "
+                   "error of the STORED weights, not of the vendor kernel. Validated before "
+                   "use: per-tensor rel-L2 against the root is 0.0265 uniformly across "
+                   "gate/up/down/q projections, which is FP8 E4M3's expected error and "
+                   "confirms the scale convention.",
+                   True),
+              disc("estimator_scope_narrower_than_artifact", "caveat",
+                   "WEIGHT-ONLY, THEREFORE A LOWER BOUND. The checkpoint declares "
+                   "activation_scheme: 'dynamic', i.e. the served model also quantizes "
+                   "activations per-token at runtime. That term is absent from this "
+                   "measurement, so this value is a LOWER BOUND on the served model's "
+                   "divergence, not the served model's divergence. It is in particular NOT "
+                   "the same quantity as measurement--qwen38.fp8.suite-v5-shard0-1m "
+                   "(0.005197), which ran the real kernel on the vLLM lane.",
+                   True),
+              disc("record_note", "caveat",
+                   "UPSTREAM LOADER DEFECT, ROUTED AROUND. Capturing this artifact through "
+                   "stock transformers silently loads it WRONG. The producer's "
+                   "modules_to_not_convert lists '...layers.N.mlp.gate' -- a MoE router that "
+                   "does not exist in this dense checkpoint -- and "
+                   "transformers.quantizers.quantizers_utils.should_convert_module tests "
+                   "re.match(key, full_name), which is anchored only at the START, so that "
+                   "pattern ALSO matches '...layers.N.mlp.gate_proj'. Verified against the "
+                   "real tensor names: 65 of 65 gate_proj modules excluded from fp8 "
+                   "conversion, 0 of 65 up_proj. Their fp8 weights load into plain bf16 "
+                   "Linears with the block scale never applied, and the 65 "
+                   "gate_proj.weight_scale_inv tensors drop out of the load as 'unexpected' "
+                   "-- the only signal, and nothing refuses on it. The dequantisation used "
+                   "here applies all 407 block scales, and the resulting checkpoint loads "
+                   "with 0 unexpected / 0 missing / 0 mismatched.",
+                   True),
+              disc("single_run", "caveat",
+                   "One cold capture of the candidate. Repeatability was not established "
+                   "for the candidate side. The REFERENCE side is the three-run "
+                   "bitwise-identical capture the floor row uses, and the comparison itself "
+                   "is deterministic offline arithmetic over sealed tensors, so the "
+                   "unrepeated term is the candidate forward pass alone."),
+              disc("shared_reference_head", "info",
+                   "One head (d922b751...) applied to both sides' hidden states."),
+              Q38_HF_LANE_DISC, Q38_NOT_RANKABLE_DISC, Q38_HYBRID_SCOPE_DISC],
+          **est),
+
+        M("measurement--qwen38-hf.awq-int4-cyankiwi.suite-v5-shard0-1m",
+          QWN, Q38_AWQ_CYAN, P_Q1M, Q38_HF_REF, PL_FIDDS_Q38, 0.022449361029279465,
+          top1=0.9401801798363458,
+          aux={"median_kld": 0.007379024173383942,
+               "p95_kld": 0.07445505811118572,
+               "p99_kld": 0.25099987912793037,
+               "p999_kld": 1.1358863146676335,
+               "max_kld": 9.553774200094734},
+          scored_positions=1048064, contexts=512,
+          runs=1, cold=True, evidence_kind="hidden_state_tensor_sha256",
+          evidence_hashes=[Q38_AWQ_CAPTURE_SHA],
+          det_note="One cold capture of the candidate. The reference side is the same "
+                   "three-run-verified capture the floor row uses.",
+          cls="advisory",
+          sources=[ds_root,
+                   src("model_card", "https://huggingface.co/cyankiwi/Qwen3.8-27B-AWQ-INT4",
+                       None, "revision 63768c10..."),
+                   src("github_file", GH + "comparison.qwen38-awq-int4-cyankiwi.json",
+                       "e7d6e50ef432bcb133af62280778a109b7aeda918a2d1845cb5e82aadafc7ce3",
+                       "malaiwah.fidelity-comparison-receipt.v1; candidate dataset_sha256 "
+                       "59205aeb..., capture_content_digest d22de49a...")],
+          disclosures=[
+              disc("record_note", "info",
+                   "EXECUTED, NOT RECONSTRUCTED. transformers loaded the compressed-tensors "
+                   "pack-quantized checkpoint natively with 0 missing, 0 unexpected and 0 "
+                   "mismatched tensors, so this is the artifact as the loader runs it. "
+                   "Attributable error EQUALS this value: the floor on this reference is a "
+                   "measured 0.0, so nothing is subtracted."),
+              disc("third_party_artifact_self_measured", "info",
+                   "cyankiwi's weights, our measurement."),
+              disc("record_note", "info",
+                   "DISTINCT FROM artifact--unattributed.qwen3.8-27b-awq-int4. That row's "
+                   "artifact identity was never established (its receipt records only a "
+                   "local path) and its scope claims moe.experts=quantized:awq@4 for a "
+                   "checkpoint that contains no expert tensors at all. This row names a "
+                   "pinned public repository and derives its scope from that repository's "
+                   "own config and weight index. The two are NOT asserted to be the same "
+                   "bytes."),
+              disc("single_run", "caveat",
+                   "One cold capture of the candidate. Repeatability was not established "
+                   "for the candidate side. The REFERENCE side is the three-run "
+                   "bitwise-identical capture the floor row uses, and the comparison itself "
+                   "is deterministic offline arithmetic over sealed tensors, so the "
+                   "unrepeated term is the candidate forward pass alone."),
+              disc("shared_reference_head", "info",
+                   "One head (d922b751...) applied to both sides' hidden states."),
+              Q38_HF_LANE_DISC, Q38_NOT_RANKABLE_DISC, Q38_HYBRID_SCOPE_DISC],
+          **est),
+    ]
+    # Stamp at BUILD time, from the digests of the code that actually ran.
+    # stamp_harness() honours a row that already carries a recorded block.
+    for rec in rows:
+        rec["harness"] = q38_hf_harness()
+    return rows
+
+
 def stamp_harness(measurements):
     """Attach the harness block, and mark what predates it.
 
@@ -3783,6 +4216,15 @@ def stamp_harness(measurements):
                         H.JOINT_DERIVATION_CLOSURE)
     hid = H.compute_id(closure, HARNESS_TOOL_VERSIONS)
     for rec in measurements:
+        # A row that already carries a RECORDED harness produced its own stamp at
+        # build time, from the digests of the code that actually ran. Re-stamping
+        # it here would overwrite that with THIS checkout's joint-derivation
+        # closure -- naming code that did not compute the row's metric.value,
+        # which is the exact failure harness_id.py exists to prevent.
+        if (rec.get("harness") or {}).get("recorded"):
+            rec["disclosures"] = [d for d in rec["disclosures"]
+                                  if d["code"] != "no_known_deviations"] or NONE_DISC
+            continue
         covers = []
         if rec.get("by_domain"):
             covers += ["by_domain", "uncertainty"]
@@ -3840,7 +4282,8 @@ def main():
 
     amap = {a["id"]: a for a in ARTIFACTS}
     measurements = (build_measurements(amap) + build_measurements_runtime(amap)
-                    + build_measurements_qwen(amap) + build_measurements_fruit(amap))
+                    + build_measurements_qwen(amap) + build_measurements_fruit(amap)
+                    + build_measurements_qwen38_hf(amap))
     # Joint fidelity standard (2026-08-29): window-clustered BCa intervals, the
     # per-domain table, sigma_run in quadrature, the protocol stamp, and the
     # calibration-clean scope siblings. Implemented in tools/joint_enrich.py so
