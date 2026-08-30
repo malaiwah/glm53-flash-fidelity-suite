@@ -725,6 +725,65 @@ def job_id_for(args: argparse.Namespace) -> str:
 
 
 
+
+def _validate_scope_json(con: Console, path: str) -> None:
+    """Schema-check --scope-json NOW, not after the rental.
+
+    The scope file is copied verbatim into the sealed receipt, and the receipt
+    is schema-validated at SEAL time -- the last stage of the run. A scope file
+    carrying one property the submission schema does not allow therefore costs
+    the entire rental before anything says so: the turbo-2.05bpw re-run measured
+    for 2 h 06 m, scored, sealed a receipt with the right number in it, and only
+    then failed with
+
+        /artifact/scope: additional property 'derivation' is not allowed
+
+    That receipt was recoverable by re-sealing offline from the pulled receipts,
+    so no money was lost -- but nothing about that was designed, and a run whose
+    receipts had not been pulled would have had to be paid for twice.
+
+    Validated against the REAL submission schema rather than a hand-copied
+    subset: the scope is embedded in a skeleton document and only the errors
+    under /artifact/scope are reported, so this cannot drift from what the
+    validator will actually enforce.
+    """
+    tools = SUITE_ROOT / "registry" / "tools"
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    try:
+        import _minischema                                # noqa: WPS433
+        reg = _minischema.Registry(str(SUITE_ROOT / "registry" / "schema"))
+    except Exception as exc:                              # noqa: BLE001
+        con.warn("scope schema check skipped: %s" % redact(str(exc)))
+        return
+    try:
+        doc = read_json(path)
+    except Exception as exc:                              # noqa: BLE001
+        raise Refusal("--scope-json %s is not readable JSON (%s)"
+                      % (path, redact(str(exc))),
+                      ["Nothing was created. $0.00 spent."])
+    try:
+        errs = reg.validate({"artifact": {"scope": doc}},
+                            "submission.schema.json")
+    except Exception as exc:                              # noqa: BLE001
+        con.warn("scope schema check skipped: %s" % redact(str(exc)))
+        return
+    scoped = [e for e in errs
+              if str(getattr(e, "path", "")).startswith("/artifact/scope")]
+    if scoped:
+        raise Refusal(
+            "--scope-json %s does not satisfy the submission schema" % path,
+            ["%s: %s" % (getattr(e, "path", "?"), getattr(e, "message", e))
+             for e in scoped[:6]]
+            + ["",
+               "This file is copied VERBATIM into the sealed receipt, and the "
+               "receipt is schema-checked at seal time -- the last stage of the "
+               "run. Caught here it costs nothing; caught there it costs the "
+               "whole rental.",
+               "Nothing was created. $0.00 spent."])
+    con.ok("scope file schema", "valid against submission.schema.json")
+
+
 def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any]) -> None:
     """A reference must be the unquantized thing, or it is not a reference.
 
@@ -2440,6 +2499,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         # submit -- and discovering that after paying for the run is the worst
         # possible time. 3 for the sealed lane, matching how K6 was measured.
         args.cold_runs = 2 if args.lane == "streaming" else 3
+
+    if getattr(args, "scope_json", None):
+        try:
+            _validate_scope_json(con, args.scope_json)
+        except Refusal as exc:
+            con.say("")
+            con.say("REFUSE: %s" % exc.reason)
+            for line in exc.advice:
+                con.say("        %s" % line)
+            return EXIT_REFUSED
 
     register_secret(os.environ.get("JL_API_KEY"))
     jl = JL(dry=args.dry_run)

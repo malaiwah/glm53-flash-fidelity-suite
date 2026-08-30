@@ -1,0 +1,9 @@
+{
+  "branch": "2.05bpw",
+  "header": "the release's own header states bits 2.05, head_bits 5, vision_bits 5, mtp_bits 2, codebook mul1, out_scales always, exllamav3 1.4.4.",
+  "note": "Every quantized rate differs from the 4.05bpw branch of the SAME repository. Reusing that branch's scope file here -- which is what produced the first, unpublished 2.05bpw receipt -- overstates every quantized class by 1-2 bits and files the row under a comparability group describing a recipe this artifact does not have.",
+  "quantization_config_sha256": "22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c",
+  "repository": "turboderp/GLM-5.3-Flash-exl3",
+  "revision": "51058cd551c7e570d87bd32a4adee720edce2349",
+  "tool": "read from the release's published quantization_config.json"
+}

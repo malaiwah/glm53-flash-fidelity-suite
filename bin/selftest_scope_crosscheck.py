@@ -177,6 +177,47 @@ check("a run that recorded no census does not invent a conflict",
 check("a mixed routed census accepts any rate it contains",
       sealed(scope(expert_bits=3), 5, {"K2": 900, "K3": 100}) == [])
 
+print("\n== the scope file is schema-checked before the rental, not after it ==")
+import tempfile                                            # noqa: E402
+from pathlib import Path as _P                             # noqa: E402
+
+SUITE = _P(mc.SUITE_ROOT)
+REAL = SUITE / "k6" / "exl3hf-evidence" / "scope-turbo-2.05bpw.json"
+if not REAL.is_file():
+    REAL = SUITE / "k6" / "tools" / "exl3hf-evidence" / "scope-turbo-2.05bpw.json"
+
+
+def schema_check(doc):
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(doc, fh)
+        tmp = fh.name
+    try:
+        mc._validate_scope_json(Con(), tmp)
+        return None
+    except mc.Refusal as exc:
+        return "\n".join([str(exc)] + [str(a) for a in (exc.advice or [])])
+    finally:
+        os.unlink(tmp)
+
+
+base = json.loads(REAL.read_text())
+check("the committed 2.05bpw scope satisfies the submission schema",
+      schema_check(base) is None)
+
+# The exact failure that cost the turbo-2.05bpw re-run its seal stage after
+# 2 h 06 m of measuring: a property the submission schema does not allow.
+withderiv = dict(base, derivation={"tool": "x"})
+msg = schema_check(withderiv)
+check("a scope carrying an extra property is REFUSED", bool(msg))
+check("...naming the property, as the seal-time validator would",
+      bool(msg) and "derivation" in msg)
+check("...and saying what it would otherwise have cost",
+      bool(msg) and "whole rental" in msg)
+
+check("a scope missing head_policy is REFUSED",
+      schema_check({k: v for k, v in base.items() if k != "head_policy"})
+      is not None)
+
 print()
 if FAILED:
     print("selftest_scope_crosscheck: %d FAILED" % len(FAILED))

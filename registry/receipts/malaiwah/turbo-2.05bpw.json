@@ -1,0 +1,259 @@
+{
+  "artifact": {
+    "codec": {
+      "bits_per_weight_effective": null,
+      "bits_per_weight_nominal": 2.05,
+      "family": "exl3-mul1",
+      "group_size": null,
+      "quantizer_tool": "exllamav3 EXL3",
+      "quantizer_version": "1.4.4"
+    },
+    "config_sha256": null,
+    "container": "exl3",
+    "index_sha256": null,
+    "precision_label": "2.05 bpw",
+    "producer": {
+      "handle": "turboderp",
+      "name": "turboderp",
+      "url": "https://huggingface.co/turboderp"
+    },
+    "repository": "turboderp/GLM-5.3-Flash-exl3",
+    "revision": "51058cd551c7e570d87bd32a4adee720edce2349",
+    "scope": {
+      "activation_quantization": null,
+      "assignments": [
+        {
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "all",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "embed_tokens",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 4,
+          "format": "exl3-mul1",
+          "layer_range": "all",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "attn.qkv",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 4,
+          "format": "exl3-mul1",
+          "layer_range": "all",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "attn.o",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 16,
+          "format": "fp16",
+          "layer_range": "all",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "attn.other",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 3,
+          "format": "exl3-mul1",
+          "layer_range": "0-2",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "mlp.gate",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 3,
+          "format": "exl3-mul1",
+          "layer_range": "0-2",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "mlp.up",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 3,
+          "format": "exl3-mul1",
+          "layer_range": "0-2",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "mlp.down",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 32,
+          "format": "fp32",
+          "layer_range": "3-44",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "moe.router",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 2,
+          "format": "exl3-mul1",
+          "layer_range": "3-44",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "moe.experts",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 4,
+          "format": "exl3-mul1",
+          "layer_range": "3-44",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "moe.shared_expert",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "all",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "norm",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 2,
+          "format": "exl3-mul1",
+          "layer_range": "45",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class. mtp_bits is a header scalar (the MTP layer ships in a separate sidecar).",
+          "tensor_class": "mtp",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 5,
+          "format": "exl3-mul1",
+          "layer_range": "all",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "lm_head",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 5,
+          "format": "exl3-mul1",
+          "layer_range": "all",
+          "note": "read from the release's OWN quantization_config.json @ 51058cd551c7e570d87bd32a4adee720edce2349 (47,905,719 bytes, sha256 22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c; one tensor_storage entry per module, each stating bits_per_weight): every rate below was read from it, verified identical within each class.",
+          "tensor_class": "other",
+          "treatment": "quantized"
+        }
+      ],
+      "head_policy": "quantized",
+      "kv_cache_dtype": "not_applicable",
+      "mtp_included": true,
+      "policy": "mixed"
+    },
+    "scope_digest": "attn.o=quantized:exl3-mul1@4|attn.other=native:fp16@16|attn.qkv=quantized:exl3-mul1@4|embed_tokens=native:bf16@16|lm_head=quantized:exl3-mul1@5|mlp.down=quantized:exl3-mul1@3|mlp.gate=quantized:exl3-mul1@3|mlp.up=quantized:exl3-mul1@3|moe.experts=quantized:exl3-mul1@2|moe.router=native:fp32@32|moe.shared_expert=quantized:exl3-mul1@4|mtp=quantized:exl3-mul1@2|norm=native:bf16@16|other=quantized:exl3-mul1@5|head=quantized|kv=not_applicable",
+    "shard_hash_verification": "none",
+    "size_bytes": 85233484348,
+    "tensor_parallel_pre_sliced": false,
+    "tensor_parallel_world_size": null,
+    "url": "https://huggingface.co/turboderp/GLM-5.3-Flash-exl3"
+  },
+  "auxiliary_metrics": {
+    "top1_agreement": 0.8891841719589644
+  },
+  "cost": {
+    "basis": null,
+    "usd": null
+  },
+  "determinism": {
+    "cold_start_per_run": true,
+    "distinct_evidence_hash_count": 1,
+    "evidence_hashes": [
+      "9d27f2cbc2c1f27079ee7e80d0185268ef2d0b0ac4a5cf709ab7fd5dededed4e"
+    ],
+    "evidence_kind": "tokenwise_kld_sha256",
+    "identical_across_runs": true,
+    "note": "2 cold runs, 2 distinct kld_report_sha256, 1 distinct tokenwise_kld_sha256. The report-file digests differ per run and prove nothing; the tokenwise digest is the determinism evidence. cold_run_deviation (verbatim): 2 cold runs, not 5 (budget; disclosed)",
+    "per_run_report_sha256": [
+      "9254595d189d6a2fa31dea96bd4a1dd0556a50a497ff86347c7a76773e593988",
+      "e99a4a6cf5ec6f542963ff19714dbc47761c285b521a38af40b45f3364b0ef15"
+    ],
+    "run_count": 2,
+    "run_means": [
+      0.12163767673339457,
+      0.12163767673339457
+    ]
+  },
+  "disclosures": [
+    {
+      "affects_comparability": true,
+      "code": "streaming_lane_offset",
+      "detail": "Measured on the streaming lane. Routed-expert combine order differs from the sealed EP8 lane, moving logits rms 0.26-0.28; with --reduce-order fp32 the window-0 KLD delta against the sealed lane is +1.5076e-5 at 99.80% argmax agreement. Streaming runs are bitwise identical to each other, so determinism holds within the lane; they are NOT bitwise identical to sealed-lane runs, and bitwise cross-topology parity is not achievable at all.",
+      "severity": "caveat"
+    },
+    {
+      "affects_comparability": true,
+      "code": "quantized_from_quantized_parent",
+      "detail": "The release's own quantization_config declares original_quantization_config.fmt = e4m3: this artifact was quantized from an already-quantized checkpoint, not from the BF16 reference this row is scored against. Its divergence therefore includes the parent's, and it is not lineage-comparable with a row quantized directly from BF16 at the same bit rate.",
+      "severity": "caveat"
+    }
+  ],
+  "environment": {
+    "gpu": "H200",
+    "gpu_count": 1,
+    "host": "jarvislabs",
+    "peak_vram_gb": null,
+    "tensor_parallel": 1,
+    "vram_budget_gb": null,
+    "wall_clock_hours": null
+  },
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "head_policy": "native_head",
+    "logits_dtype": "fp32",
+    "stack_relation": "same_stack",
+    "two_pass": false,
+    "vocab_chunk": null,
+    "zero_handling": null
+  },
+  "evidence": [],
+  "lane": "streaming",
+  "measured_at": "2026-08-30T23:06:59Z",
+  "measurement_scope": {
+    "contexts": 25,
+    "covers_full_panel": true,
+    "position_filter": "all",
+    "positions_per_context": 2047,
+    "scored_positions": 51175,
+    "subset_detail": null
+  },
+  "measurer": {
+    "handle": "malaiwah",
+    "is_artifact_author": false,
+    "name": "malaiwah",
+    "url": "https://huggingface.co/malaiwah"
+  },
+  "metric": {
+    "direction": "reference_to_candidate",
+    "name": "mean_of_run_means_tokenwise_kld",
+    "units": "nats",
+    "value": 0.12163767673339457
+  },
+  "panel": {
+    "contexts": 25,
+    "panel_receipt_sha256": "0beec5770e5107547731b084f1bc5f9fb8ba79d67af56ddb70d919da367737d5",
+    "panel_ref": "panel--glm53.brandonmusic.final25",
+    "panel_token_sha256": "6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff",
+    "scored_positions_total": 51175
+  },
+  "produced_by": {
+    "container_digest": null,
+    "container_image": null,
+    "dependencies": {
+      "lane": "streaming",
+      "reduce_order": "fp32"
+    },
+    "entrypoint": "bin/measure_cloud.py",
+    "entrypoint_sha256": "2d4ccd44f80b3ad925789e851478f2dd3a8ab52edc47b6f1df1fe30d5e2c412c",
+    "repository": "malaiwah/glm53-fidelity-suite",
+    "revision": "f3b6d8234a1ccb9b3fa461f28ebdb9b043c2ae3a",
+    "runtime_reader_sha256": null,
+    "tool": "quant-fidelity-suite/bin"
+  },
+  "receipt_sha256": "8ecf603d9cc26043f86d0e042f349ec0c73dbb001ab55f36f8f0aabbd30944f5",
+  "reference": {
+    "reference_ref": "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+    "teacher_backend_identity_sha256": "85b11599c6b36a83fa8099a09a298a386a0c603d1f18d3702e7fb1c470962ce4",
+    "teacher_receipt_sha256": "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5"
+  },
+  "submission_schema": "quant-fidelity-registry/submission-receipt.v1"
+}
