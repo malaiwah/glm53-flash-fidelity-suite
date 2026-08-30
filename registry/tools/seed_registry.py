@@ -68,6 +68,8 @@ STREAM_K6_VERDICT = "receipts/malaiwah/stream-k6-verdict.json"
 STREAM_TURBO405_RECEIPT = "receipts/malaiwah/stream-turbo-4.05bpw-kld.json"
 STREAM_TR34_RECEIPT = "receipts/malaiwah/stream-tr3-4bpw-kld.json"
 STREAM_TR34_RECEIPT_SHA = "1e790a0e2a69b1646ffee3c1c1529596bc2a5ac7d4f314039c6950b6e3ae1e6f"
+STREAM_DIONE30_RECEIPT = "receipts/malaiwah/stream-dione-3.0bpw-kld.json"
+STREAM_DIONE30_RECEIPT_SHA = _receipt_sha(STREAM_DIONE30_RECEIPT)
 STREAM_K8_RECEIPT = "receipts/malaiwah/stream-k8-kld.json"
 STREAM_BF16_RECEIPT = "receipts/malaiwah/stream-bf16-kld.json"
 STREAM_K6_RECEIPT_SHA = _receipt_sha(STREAM_K6_RECEIPT)
@@ -2170,6 +2172,91 @@ def build_measurements(artifacts_map):
     #     6-bit head), codebook (mcg vs mul1), and lineage (quantized from BF16
     #     vs from the FP8 release).
     TR34 = 0.02550342763436377
+    D30 = 0.050501241465423556
+    out.append(M("measurement--glm53.dione-3.0bpw-stream.brandonmusic-final25", GLM,
+                 A_DIONE30, P_B25, R_B25, PL_STREAM, D30,
+                 metric_name="mean_of_run_means_tokenwise_kld",
+                 top1=0.9299658036150464,
+                 scored_positions=51175, contexts=25, runs=2, cold=True,
+                 run_means=[0.050501241465423556, 0.050501241465423556],
+                 identical=True, evidence_kind="tokenwise_kld_sha256",
+                 evidence_hashes=['845617b34375f5b47d6b9b40cb19e822c808761322cf859cf9209d59c30a00c8'],
+                 det_note=('2 cold runs, 2 distinct kld_report_sha256 values, 1 distinct tokenwise_kld_sha256. The report-file digests differ per run and prove nothing; the tokenwise digest is the determinism evidence.'),
+                 sources=[src("receipt_file", STREAM_DIONE30_RECEIPT,
+                              STREAM_DIONE30_RECEIPT_SHA,
+                              "malaiwah.glm53-dione-3.0bpw-packed-kld-summary.v1"),
+                          src("hf_file", HF_REGISTRY_RAW + STREAM_DIONE30_RECEIPT,
+                              STREAM_DIONE30_RECEIPT_SHA),
+                          src("hf_file",
+                              "https://huggingface.co/datasets/malaiwah/"
+                              "GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/"
+                              "dione-3.0bpw-packed-kld.json", STREAM_DIONE30_RECEIPT_SHA)],
+                 receipt_schema="malaiwah.glm53-dione-3.0bpw-packed-kld-summary.v1",
+                 cls="advisory",
+                 bias={"kind": "other", "direction": "unknown",
+                       "floor_measurement_ref": M_BF16_FLOOR,
+                       "estimated_magnitude": None,
+                       "detail": "Measured on the 'streaming' lane, whose offset against "
+                                 "the sealed-ep8 lane is known to be non-zero and is NOT "
+                                 "measured for this artifact: it has no sealed-lane row to "
+                                 "bridge against. Its 4-bpw SIBLING does "
+                                 "(measurement--glm53.dione-q4.brandonmusic-final25, "
+                                 "0.027262784814670614 on the sealed lane), but a lane "
+                                 "offset is a property of the routing, not a constant, so "
+                                 "it does not transfer between rungs of a ladder. This "
+                                 "lane's own measurement floor (%s) is %r nats; netting "
+                                 "it out gives an estimated quantization-attributable "
+                                 "error of %r nats here -- an estimate, not an identity, "
+                                 "because KL is not additive, and it is only meaningful "
+                                 "because both terms share the same reference and lane."
+                                 % (M_BF16_FLOOR, BF16_FLOOR, D30 - BF16_FLOOR)},
+                 gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06,
+                       "threshold_gt": None, "passed": True},
+                 disclosures=[
+                     disc("third_party_artifact_self_measured", "info",
+                          "Someone else's weights, our measurement. 0xSero produced the "
+                          "artifact; malaiwah produced the number. Credit for the artifact "
+                          "is theirs."),
+                     disc("unsealed_source", "caveat",
+                          "The Dione checkpoint ships no upstream receipts, reconstruction "
+                          "closures or sealed reader ABI, so the packed surface was decoded "
+                          "WITHOUT seal verification. What the release DOES publish is a "
+                          "per-shard sha256 manifest (EXL3_MANIFEST.json), and all 130 shard "
+                          "digests were recomputed on the measurement instance before "
+                          "anything was decoded (dione_shard_hash_verification: full); "
+                          "that, the immutable revision, the local config/index digests and "
+                          "the consumed-payload sha256 census are the provenance anchors.",
+                          True),
+                     disc("reduced_run_count", "caveat",
+                          "cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 (budget; disclosed)"),
+                     # PROV-012: the comparability key carries no lane input, so a
+                     # streaming row tabled beside sealed-lane rows must SAY which
+                     # machine produced it. registry_add emits this automatically; a
+                     # hand-authored seed row does not, and the invariant is the thing
+                     # that caught it.
+                     disc("non_sealed_lane", "caveat",
+                          "Produced by the 'streaming' lane, not the sealed-ep8 lane. The "
+                          "lane's offset against the sealed lane is NOT measured for this "
+                          "artifact: no sealed-lane row for it exists to bridge against, "
+                          "and the offset its 4-bpw sibling would give is a property of "
+                          "the routing rather than a constant of the ladder.", True),
+                     # Both of these are the OPPOSITE of a caveat, and both are what
+                     # registry_add's dione adapter emits from the same receipt.
+                     disc("shard_hashes_verified", "info",
+                          "dione_shard_hash_verification=full (verbatim from the receipt): "
+                          "all 130 shard sha256s were recomputed against the release's own "
+                          "EXL3_MANIFEST.json on the measurement instance -- 135 s over "
+                          "149.6 GB -- before any payload was decoded, and every weight file "
+                          "on disk was covered by that list. The release publishes no seal, "
+                          "so this and the immutable revision are the provenance anchors."),
+                     disc("native_head_retained", "info",
+                          "declared_head_bits 16 (verbatim from the receipt): this release "
+                          "retains the lm_head at source precision, unlike a stock-exllamav3 "
+                          "release which quantizes it. The head is APPLIED natively from the "
+                          "artifact's own weights, which is why estimator.head_policy is "
+                          "native_head."),
+                 ],
+                 notes=("Third rung of 0xSero's ladder measured here. His Q4 reads 0.027262784814670614 on the SEALED lane and this 3.0bpw reads 0.050501241465423556 on the STREAMING lane; the two are not directly comparable (different lane, different comparability key) and the registry refuses to net them. Within this lane the attributable error against the BF16 floor is 0.03899531884609326 nats. The producer's own RELEASE_STATUS.json marks this release quality: FAIL at their own threshold (their held-out forward KL 0.15251, top-1 0.87285 over 65,504 positions of THEIR panel) -- their number, their panel, their estimator, recorded on the artifact record rather than mixed into this one.")))
     out.append(M("measurement--glm53.tr3-4bpw-stream.brandonmusic-final25", GLM,
                  A_TR3MIRROR, P_B25, R_B25, PL_STREAM, TR34,
                  metric_name="mean_of_run_means_tokenwise_kld",
