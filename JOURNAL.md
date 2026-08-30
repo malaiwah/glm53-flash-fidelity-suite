@@ -2395,7 +2395,7 @@ M3 should cost about half of M1.
 identical to the last bit and whose tokenwise KL arrays share one sha256
 (845617b3). Top-1 agreement 0.9299658036150464, also identical across runs. Against
 this lane's own BF16 floor (0.011505922619330299) the quantization-attributable
-error is 0.038995318846093260 nats.
+error is 0.038995318846093259 nats.
 
 **The first point below 4 bpw on this panel, and it costs more than the bytes
 it saves.** Every other GLM-5.3-Flash quant measured here sits at 4 bpw or
@@ -2430,7 +2430,7 @@ itself.
 | malaiwah TR3 K6 | 6 | 0.013714888822596553 | 0.002209 |
 | Mia-AiLab TR3 4bpw (brandonmusic's bytes) | 4 | 0.025503427634363770 | 0.013998 |
 | turboderp exl3 4.05bpw | 4.05 | 0.025526426915472484 | 0.014021 |
-| **0xSero Dione 3.0bpw** | **3.0** | **0.050501241465423556** | **0.038995318846093260** |
+| **0xSero Dione 3.0bpw** | **3.0** | **0.050501241465423556** | **0.038995318846093259** |
 
 **The scope was published all along; we had not read it.** 0xSero's Q4 row has
 carried `unknown` for embed_tokens, attn.qkv, attn.o and lm_head since it was
