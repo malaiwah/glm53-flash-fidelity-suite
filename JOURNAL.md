@@ -2195,3 +2195,196 @@ confirms the figure; over-estimating the clock is the safe direction.
 
 **Balance** $175.97 -> $124.41 over the session, of which ours is ~$9.2; the
 rest is other sessions' boxes on the shared account.
+
+## 2026-08-29 — measurement 2: the tr3-published reader, and an artifact that turned out to be a mirror
+
+**The target was not what the mission said it was, and that was findable for
+$0.00.** Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw was scheduled as "the direct A/B
+against brandonmusic's 4bpw — same nominal rate, different quantizer". It is
+not a different quantizer. Its `MIRROR.json` says
+`"Byte-identical redistribution. Not an original quantization."`, and two
+independent checks agree: all 120 `*.safetensors` have the same LFS oid as
+`brandonmusic/GLM-5.3-Flash-tr3-4bpw @ 5ab363a8` (only README.md differs among
+their 142 shared files), and the mirror republishes brandonmusic's own
+`SHA256SUMS` verbatim — against which all 120 downloaded shards verified
+byte-wise on the instance.
+
+That does not make the measurement less valuable; it makes it a different, and
+better, measurement:
+
+* it is the first row for these weights on OUR streaming lane, and the first
+  measured by anyone other than their author — brandonmusic's own 0.024555 is
+  an author-reported five-run number on his sealed EP8 stack;
+* it is the campaign's only cross-lane bridge over IDENTICAL BYTES; every other
+  lane comparison changes the weights too;
+* the real same-rate A/B is against M1's turboderp 4.05bpw (0.025526, same
+  lane, same panel, same teacher) — same nominal rate, different quantizer,
+  opposite ends of the scope axis, and different lineage.
+
+**THE NUMBER.** 0.02550342763436377 nats, mean of two cold runs whose run means
+are identical to the last bit and whose tokenwise KL arrays share one sha256
+(31177f24...). Top-1 agreement 0.9531411822178798, also identical across runs.
+Against this lane's own BF16 floor (0.011505922619330299) the
+quantization-attributable error is 0.013997505015033470 nats.
+
+Two comparisons follow, and they are different questions.
+
+SAME WEIGHTS, DIFFERENT LANE AND STACK. brandonmusic measured these exact bytes
+at 0.024554564249958208 on his own sealed EP8 stack over five cold runs. The
+bytes are provably the same, so the +0.000948863 nats between us is a
+LANE-PLUS-STACK offset — his reader digest is 1fb3be87, ours 1ccce446 — and it
+BOUNDS the lane term rather than measuring it. It is the only pair in the
+registry where the weights are held fixed across lanes; every other lane
+comparison changes the weights too.
+
+SAME LANE, SAME RATE, DIFFERENT QUANTIZER. turboderp's stock-exllamav3 4.05bpw
+reads 0.025526426915472484 on this exact lane, panel and teacher. TR3 is
+0.000023 nats tighter — and on a panel whose window-block SE for a 4-bpw row is
+about 0.0038, that is not a difference at all. That is the result worth stating
+plainly: two 4-bpw quants built on opposite scope policies (routed-experts-only
+with a native BF16 head versus full-scope with a 6-bit head), different
+codebooks (mcg versus mul1) and different lineages (from BF16 versus from the
+FP8 release) land indistinguishably close on this panel. Anyone choosing between
+them on these numbers is choosing on noise. The scope and lineage disclosures on
+the two rows are the real difference, and both rows carry them.
+
+**The reader.** `tr3-published` had been refused at plan time since the suite
+existed. The missing piece was never decode math: a TR3 release stores
+`<module>.{trellis,suh,svh,mcg}` in canonical HF shards — the same objects
+`exl3hf_surface` already reads, with the same frozen campaign MCG LUT the K6/K8
+rows were measured through. `k6/tools/tr3_surface.py` composes that module for
+every byte of the codec path and owns only three things: the scope
+(routed-experts-only, native BF16 head), the names (official throughout — none
+of the exl3hf fusion remaps apply), and the SEAL.
+
+**The seal is the part worth keeping.** This is the only third-party surface in
+the suite whose publisher seals it, and the seal REPRODUCES: the materialization
+receipt's own `receipt_sha256` recomputes from its canonical content, its
+`config_sha256`/`index_sha256` match the published files, the ABI's
+`output_tensor_names_sha256` recomputes as sha256 of the canonical JSON of all
+150,226 sorted tensor names, the plan digests agree, the count algebra closes
+(4 x 37,152 = 148,608 payload objects + 1,618 natives = 150,226), and the 1,618
+non-routed names are EXACTLY the official release's. Twelve claims, all
+checkable for a few hundred kilobytes — so `measure-cloud` checks them at PLAN
+time, before renting anything, and the box re-checks them against the downloaded
+bytes at minute ten. Those rows carry a `sealed_source_verified` disclosure
+where the exl3hf and Dione rows carry `unsealed_source`.
+
+**Four defects, all caught before they could reach a number.**
+
+1. `sha256sum -c` is the wrong instrument for a mirror. The mirror trims
+   brandonmusic's 192 `.materialization/shards/*.json` sidecars and writes its
+   own README/LICENSE while copying his SHA256SUMS verbatim, so `-c` reported
+   122 failures — none of them a weight — and exited 1. Under `set -o pipefail`
+   that killed `fetch_target` after a 175 GB download and a full checksum pass.
+   `bin/verify_published_sums.py` asks the narrower, stronger question instead:
+   every present file the list covers must match (fail-closed for weights),
+   every weight on disk must be COVERED by the list (a hole `-c` leaves open),
+   and entries naming files this repo does not publish are REPORTED by name.
+2. A TR3 release's non-routed tensors cannot serve transformers from the
+   artifact's own shards. They ARE the official ones — but they are interleaved
+   with 148,608 routed payload objects across the same 120 shards, and
+   transformers derives its checkpoint key set from the shard FILES, not from
+   the index. The symlink view therefore reported 54,272 routed payload tensors
+   as unloaded and the load gate refused. `--source tr3` now takes `--bf16`
+   from the same materialize stage exl3hf uses; for a TR3 release the
+   materializer decodes NOTHING and re-shards the natives verbatim
+   (`native_copied: 1618`, `decoded: 0`, dtypes preserved).
+3. My own: a multi-edit script failed partway and I trusted its summary instead
+   of the file. Seven edits had not landed — including the one that pointed
+   `model_root` at the materialized tree — so the runner composed the right
+   argv, the materializer wrote the right tree, and the engine built its view
+   over the artifact anyway. Re-applied with a per-edit applied/failed ledger,
+   then grepped for.
+4. Hiding behind (3): `prepare_nonrouted_view` reused its view directory across
+   runs but only rewrote the INDEX, leaving symlinks from whatever root built
+   it first. A view built from root A and reused against root B is A's shards
+   with B's index, and it surfaces as an inexplicable load error several stages
+   downstream — exactly where it surfaced. The view now carries a
+   `.view-source.json` stamp and is rebuilt when the source changes.
+
+**A registry correction that came free with the reading.** Three artifact
+records — our K6 and K8, and brandonmusic's 4bpw — shared a scope helper that
+said `attn.qkv`, `attn.o` and `mlp.{gate,up,down}` were quantized at the nominal
+rate. They are not. All three are routed-experts-only, and the evidence had been
+sitting in the artifacts' own metadata (`scope: glm53_routed_experts_only`,
+`non_routed_dtype_policy: official_source_native`, `native_tensor_count: 1618`)
+and in our own `k6/K8-ANOMALY.json` test_6_scope. The wrong digest mattered: it
+made those rows look scope-comparable with the stock-exllamav3 rows on the same
+panel, which really do quantize attention at K6 and the head at K6. Corrected,
+with a `scope_record_corrected` disclosure on each saying what it used to say.
+
+LESSON 39 (rehearse the last stage first). Three of M2's four expensive defects
+sat in stages that run AFTER the money is spent -- the load gate at the start of
+`measure`, and the schema gate inside `seal`. Two of them were found by
+REHEARSING those stages offline against real artifact metadata and a synthetic
+summary, before the runs finished: the scope object carried two keys
+artifact.schema.json forbids, and its kv_cache_dtype disagreed with the
+registry's existing record for the same bytes (exit 7). A stage you have never
+run is not a stage you have; the cheapest place to run it is on the laptop, with
+the real inputs and a fake number.
+
+LESSON 40 (a multi-edit script must be verified against the file). An edit
+script that applies eight substitutions and asserts on each one either applies
+all eight or, if it raises before writing, applies NONE -- and its console
+output looks the same either way if you only read the last line. Seven edits
+silently did not land, including the one that pointed the model tree at the
+materialized shards, and the result was the same failure twice with the same
+message. Every edit pass now prints an applied/failed ledger AND is grepped for
+in the file afterwards.
+
+LESSON 41 (do not launch a long-lived controller from a blocking tool call).
+`nohup controller & ; wait-loop` in one shell means the harness's timeout kills
+the whole process group -- controller included. The controller took SIGTERM
+mid-measure and entered its guaranteed teardown. It held (--hold-on-failure
+covers `not completed`, not just failure), so nothing was lost, but that was
+luck rather than design: run the controller as a managed background task, and
+let the waiting happen in a different one.
+
+LESSON 42 (identical runs need identical code). Two edits to the surface module
+landed while cold run 1 was in flight. The measured NUMBER was unaffected, but
+`scope_census_sha256` -- which feeds `checkpoint_identity_sha256` -- is computed
+from the surface's own scope, so run 1 would have identified the artifact
+differently from run 2. Both restarts cost about five minutes each. A pair of
+cold runs is determinism evidence only if the two ran the same program.
+
+LESSON 43 (the controller supervises, it must not own). A two-hour capture died
+at window 22 of 25 because the LOCAL process watching it was killed. The
+instance log ends mid-run with no error and no traceback: the remote process
+group simply went with the session that started it. Sixty-five minutes of a
+rented H200 had to be bought again for a reason with nothing to do with the
+measurement. Stages now launch through `nohup setsid` -- own session, orphaned
+to init -- and the controller re-attaches by done-marker. That also changes what
+the managed run MEANS: it is the LAUNCHER, so "succeeded" means "launched", and
+the verdict falls back to the marker plus a liveness probe whose two answers
+cannot be confused with its own command text.
+
+LESSON 44 (lesson 36 wears more than one hat). The liveness probe added for
+lesson 43 was `pgrep -f 'stage_measure.sh <stage>'`. Exercised against the live
+box it reported a stage that has never existed as running, because `pgrep -f`
+matches full command lines and the probe's own shell carries the pattern in its
+own. Every stage would have read "alive" forever and a dead one would never have
+been detected. It is M1's lesson 36 -- a probe whose output can be produced by
+its own command text -- in different clothes, found the same way: by running the
+new path before trusting it. `[s]tage_measure.sh` fixes it; the three cases
+(nonexistent, real, naive) were checked on the instance before it was believed.
+
+**Cost, four ways.** 1x H200 spot at $1.99/h, IN2, one box (486969) adopted
+across five controller lifetimes. (1) The planner's point estimate was $14.38,
+band $14.38–$20.13, ceiling $20.58 at --max-runtime 10h. (2) Measured
+wall-clock: the box lived 21:51→03:29 UTC = 5.63 h = $11.20, plus a 400 GB
+filesystem for the same span at an inferred rate, ~$0.4. (3) Account balance is
+not usable as ground truth this session: it moved $122.12 → $164.52 across a
+top-up and three other sessions' boxes on the shared account. (4) Attributable
+to the measurement itself: about $11.6.
+
+That is MORE than M1's ~$9.2, and the mission asked for less. The overrun is
+entirely restarts, and it is worth being exact about who paid for what: two
+restarts were mine, freezing the code so both cold runs would be produced by the
+same program (~10 min), one was the external kill at window 22 of 25 (~65 min),
+and one was the SHA256SUMS refusal after a full 175 GB fetch and checksum pass
+(~25 min). The measurement work itself — bootstrap 2m07s, fetch 5m42s at ~510
+MB/s, materialize 2m06s, two cold runs at 4221.7 s and 4219.5 s, score, seal —
+is 2.6 h, and the planner now prices it at $6.61 rather than $14.38 because the
+7.35 min/window constant finally had its second data point and could be retired.
+M3 should cost about half of M1.
