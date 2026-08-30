@@ -582,6 +582,7 @@ A_NVFP4_BM = "artifact--brandonmusic.glm-5.3-flash-nvfp4-runtime"
 A_K6 = "artifact--malaiwah.glm-5.3-flash-tr3-6bpw"
 A_K8 = "artifact--malaiwah.glm-5.3-flash-tr3-8bpw"
 A_DIONE = "artifact--0xsero.glm-5.3-flash-exl3-q4"
+A_DIONE30 = "artifact--0xsero.glm-5.3-flash-exl3-3.0bpw"
 A_B4 = "artifact--brandonmusic.glm-5.3-flash-tr3-4bpw"
 A_TURBO405 = "artifact--turboderp.glm-5.3-flash-exl3-4.05bpw"
 A_TR3MIRROR = "artifact--mia-ailab.glm-5.3-flash-exl3-tr3-4bpw"
@@ -638,6 +639,104 @@ REV_UNPINNED = lambda what: disc(
 # The old digest mattered: it made these rows look scope-comparable with the
 # stock-exllamav3 rows on the same panel, which really do quantize attention
 # (at K6) and the head (at K6).  They are at opposite ends of the scope axis.
+# ---------------------------------------------------------------------------
+# The Dione (0xSero selective-EXL3) per-tensor-class recipe.
+#
+# Both rungs of 0xSero's ladder ship the SAME scope at different rates, and both
+# STATE it in their own config.json: quantized_scope names the exact module
+# range, retained_dtype is `source_precision`, and a name census of the
+# 583,090-entry index closes on it exactly (580,608 routed payload tensors, and
+# a non-routed set that bijects the official release's 1,618 names).  The Q4
+# record used to say `unknown` for embed_tokens / attn.qkv / attn.o / lm_head;
+# that was a gap in this registry's reading, not in the release's publishing.
+# One table serves both records: one place to be wrong.
+# ---------------------------------------------------------------------------
+DIONE_CITE = lambda bpw, extra: (
+    "read from the release's OWN config.json quantization_config "
+    "(quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, "
+    "trellis_k=%g, bits_per_weight=%g, mcg=true, retained_dtype=source_precision, "
+    "quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287."
+    "{gate_proj,up_proj,down_proj}.weight)%s, and confirmed by a name census of "
+    "its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 "
+    "experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official "
+    "1,618 non-routed names, no strays either way "
+    "(k6/tools/dione_surface.py census_weight_map)." % (bpw, bpw, extra))
+
+# `uniform`, not `mixed`: SCOPE-003 reads the word as "do the QUANTIZED classes
+# share one (format, bits)", and here exactly one class is quantized at all.
+DIONE_SCOPE = lambda bpw, extra="": scope("uniform", [
+    asg("embed_tokens", "native", "bf16", 16,
+        note="retained at source precision in the release's own retained/ shards. "
+             + DIONE_CITE(bpw, extra)),
+    asg("attn.qkv", "native", "bf16", 16,
+        note="NOT quantized: the quantized scope is the routed experts only. "
+             + DIONE_CITE(bpw, extra)),
+    asg("attn.o", "native", "bf16", 16,
+        note="NOT quantized: routed-experts-only scope. " + DIONE_CITE(bpw, extra)),
+    asg("attn.other", "native", "mixed", None,
+        note="indexers, mHC and the attention norms ship as the official tensors "
+             "at their source dtypes (A_log, dt_bias and e_score_correction_bias "
+             "are fp32 there and fp32 here). " + DIONE_CITE(bpw, extra)),
+    asg("mlp.gate", "native", "bf16", 16, layer_range="0-2",
+        note="only the three DENSE layers have an mlp.*; NOT quantized. "
+             + DIONE_CITE(bpw, extra)),
+    asg("mlp.up", "native", "bf16", 16, layer_range="0-2",
+        note="NOT quantized. " + DIONE_CITE(bpw, extra)),
+    asg("mlp.down", "native", "bf16", 16, layer_range="0-2",
+        note="NOT quantized. " + DIONE_CITE(bpw, extra)),
+    asg("moe.router", "native", "fp32", 32,
+        note="the routing gate and e_score_correction_bias are retained natively. "
+             + DIONE_CITE(bpw, extra)),
+    asg("moe.shared_expert", "native", "bf16", 16,
+        note="the shared expert is not routed and is NOT quantized. "
+             + DIONE_CITE(bpw, extra)),
+    asg("moe.experts", "quantized", "exl3-mcg", bpw, layer_range="3-44",
+        note="36,288 modules = 42 layers x 288 experts x 3 projections, each "
+             "stored as 4 TP-rank slices (<module>.rank{R}.{trellis,suh,svh,mcg}) "
+             "at K%g. The ONLY quantized class. " % bpw + DIONE_CITE(bpw, extra)),
+    asg("mtp", "native", "bf16", 16, layer_range="45",
+        note="layer 45's routed experts are RETAINED at source precision in this "
+             "family (they are QUANTIZED in the TR3 releases -- the two are not "
+             "interchangeable). Present in the artifact, outside the measured "
+             "function: standard-logits scoring never executes the MTP layer. "
+             + DIONE_CITE(bpw, extra)),
+    asg("norm", "native", "bf16", 16, note=DIONE_CITE(bpw, extra)),
+    asg("lm_head", "native", "bf16", 16,
+        note="the head is RETAINED at source precision -- unlike stock exllamav3, "
+             "which quantizes it (head_bits 6-8). " + DIONE_CITE(bpw, extra)),
+    asg("other", "native", "bf16", 16,
+        note="the vision tower is retained natively and is never executed by "
+             "text-only scoring. " + DIONE_CITE(bpw, extra)),
+], "native", kv="bf16", mtp=True)
+
+DIONE_SCOPE_CORRECTED = disc(
+    "scope_record_corrected", "info",
+    "Superseded record: this artifact's scope previously read embed_tokens, "
+    "attn.qkv, attn.o and lm_head as `unknown`, with the note that the release "
+    "'declares a scope policy that was not parsed into this registry'. It is "
+    "parsed now. The release's own config.json states quantized_scope = "
+    "model.language_model.layers.3..44.mlp.experts.0..287."
+    "{gate_proj,up_proj,down_proj}.weight and retained_dtype = source_precision, "
+    "and a name census of its published index closes on exactly that: 580,608 "
+    "routed payload tensors and a non-routed set that bijects the official BF16 "
+    "release's 1,618 names. So the head is native BF16, not unknown, and the "
+    "artifact is routed-experts-only. Corrected 2026-08-30 from the artifact's "
+    "own published metadata. scope_digest changed accordingly; the measured "
+    "VALUE is unaffected -- the measurement always ran the artifact as published.")
+
+DIONE_TP_SLICED = disc(
+    "tp_sliced_artifact", "info",
+    "Shipped pre-sliced for TP4: each routed matrix is stored as four "
+    "independently quantized EXL3 payloads under TENSOR names "
+    "<module>.rank0..rank3.{trellis,suh,svh,mcg}, and the full HF matrix is the "
+    "rank-ordered concatenation (dim 0 for gate/up, dim 1 for down). That is "
+    "artifact identity, not a runtime option. NOTE: the layers/layer-NN-part-K "
+    "FILES are a parallel-encoding artifact, not the TP slices -- in the 3.0bpw "
+    "release layers 3-5 have one part holding all 288 experts while layers 6-44 "
+    "split even/odd experts across two, and every one of them carries all four "
+    "ranks.")
+
+
 EXL3_SCOPE_UNIFORM = lambda bpw: scope("uniform", [
     asg("embed_tokens", "native", "bf16", 16,
         note="routed-experts-only scope: not quantized"),
@@ -806,10 +905,8 @@ ARTIFACTS = [
     artifact(A_DIONE, GLM, "0xSero GLM-5.3-Flash EXL3 Q4 (Dione, TP4-sliced)", "quant",
              hf("0xSero/GLM-5.3-Flash-EXL3-Q4", "99cccdf0e8741715662c383828a9ea601990c125", "hf_api"),
              "exl3", "Q4", 187607584245,
-             codec("exl3-mcg", 4.0, None, tool="exllamav3"),
-             unknown_scope("exl3-mcg", 4.0, kv="unknown", head="unknown",
-                           note="the release's exl3-manifest.json / PUBLIC_RELEASE_MANIFEST.json declares a scope "
-                                "policy that was not parsed into this registry; recorded as unknown rather than guessed"),
+             codec("exl3-mcg", 4.0, None, tool="exllamav3", version=None),
+             DIONE_SCOPE(4.0),
              SERO("quantizer"),
              [src("hf_file", "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/dione-q4-packed-kld.json",
                   "d18b37d8ed1ba90ed837d1fb2adca0b90999b2d702613f6730ef87fe23d9f9b7", "malaiwah.glm53-dione-q4-packed-kld-summary.v1: dione_repo, dione_revision 99cccdf0..., "
@@ -817,14 +914,12 @@ ARTIFACTS = [
               src("hf_file", "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/dione-q4-packed-kld.json"),
               src("url", "https://huggingface.co/api/models/0xSero/GLM-5.3-Flash-EXL3-Q4?blobs=true",
                   None, "498 files, 217 safetensors; all-files sum 187,607,584,245; safetensors sum 187,453,172,472")],
-             [INCOMPLETE,
+             [DIONE_SCOPE_CORRECTED,
               disc("unsealed_source", "caveat",
                    "The Dione checkpoint ships no upstream receipts, reconstruction closures or sealed reader ABI. "
                    "The packed surface was decoded WITHOUT seal verification; the immutable repo revision and the "
                    "consumed payload sha256s were recorded instead (dione_shard_hash_verification: full).", True),
-              disc("tp_sliced_artifact", "info",
-                   "Shipped pre-sliced for TP4 (per-layer part-0..part-3 side files). That is artifact identity, "
-                   "not a runtime option.")],
+              DIONE_TP_SLICED],
              weights_extra={"size_basis": "repo_all_files", "shard_count": 217,
                             "tensor_parallel": {"pre_sliced": True, "world_size": 4}},
              derived_from_artifact_ref=A_BF16_A6,
@@ -832,6 +927,107 @@ ARTIFACTS = [
              cross_refs=lair(model_id="glm-5.3-flash", url="https://huggingface.co/datasets/0xSero/local-ai-registry",
                             confidence="probable"),
              seal={"sealed": False, "note": "unsealed source; see the unsealed_source disclosure"}),
+    artifact(A_DIONE30, GLM,
+             "0xSero GLM-5.3-Flash EXL3 3.0bpw (Dione, K3, TP4-sliced, native BF16 head)",
+             "quant",
+             hf("0xSero/GLM-5.3-Flash-EXL3-3.0bpw",
+                "8b099bf276507a17faea920deff3f62d5597fb52", "hf_api"),
+             "exl3", "3.0 bpw", 149556991042,
+             codec("exl3-mcg", 3.0, None, tool="exllamav3",
+                   version="git 5f3c537ca9d89893d771256f5c43c93656553fbb",
+                   # The release publishes its calibration shape AND the digests
+                   # of the six corpus files it drew from. Whether any of them
+                   # overlaps this panel cannot be answered from either side:
+                   # the panel's own per-document provenance is published as a
+                   # digest only. `null` is that answer, not a shrug.
+                   calibration={"used": True,
+                                "corpus": "0xSero release-calibration-manifest: 600 rows x "
+                                          "2048 columns over c4/code/multilingual/technical/"
+                                          "tiny/wiki (six utf8 corpus files, each sha256'd in "
+                                          "evidence/release-calibration-manifest.json) plus 92 "
+                                          "random-token rows; routing_policy natural_top8, "
+                                          "route floor 1024, zero_hit_experts 0",
+                                "tokens": 1228800,
+                                "overlaps_any_panel": None,
+                                "overlapping_panel_refs": []}),
+             DIONE_SCOPE(3.0, " and its retained_scope string 'attention, indexers, mHC, "
+                              "routers, shared experts, dense layers 0-2, embeddings, "
+                              "lm_head, norms, vision, MTP'"),
+             SERO("quantizer"),
+             [src("url",
+                  "https://huggingface.co/api/models/0xSero/GLM-5.3-Flash-EXL3-3.0bpw"
+                  "?blobs=true&revision=8b099bf276507a17faea920deff3f62d5597fb52",
+                  None,
+                  "335 files, 130 safetensors; all-files sum 149,556,991,042; safetensors "
+                  "sum 149,402,871,912; the index's own metadata.total_size 149,325,518,712"),
+              src("hf_file",
+                  "https://huggingface.co/0xSero/GLM-5.3-Flash-EXL3-3.0bpw/resolve/"
+                  "8b099bf276507a17faea920deff3f62d5597fb52/config.json",
+                  "0f97529bf936f823b84dc77ac0e09190e9439094e29dc8895547df8e17e4a24e",
+                  "the release's own quantization_config: bits_per_weight 3.0, trellis_k 3, "
+                  "mcg true, tensor_parallel_size 4, retained_dtype source_precision, "
+                  "quantized_scope layers 3..44 x experts 0..287 x {gate,up,down}_proj, "
+                  "source_revision a6c167b6. Every entry in scope.assignments is read from "
+                  "it."),
+              src("hf_file",
+                  "https://huggingface.co/0xSero/GLM-5.3-Flash-EXL3-3.0bpw/resolve/"
+                  "8b099bf276507a17faea920deff3f62d5597fb52/EXL3_MANIFEST.json",
+                  "05e0ff9cc6a3f87fbd8e27b46bb679e114579dfea3bc4afcc2d724b58be3d1ee",
+                  "the release manifest (schema_version 1): a sha256 and byte count for "
+                  "each of the 130 shards, target_bpw 3.0, indexed_tensor_count 583,090, "
+                  "quantized_tensor_count 580,608, retained tensor_count 2,482, source "
+                  "zai-org/GLM-5.3-Flash-BF16 @ a6c167b6. All 130 digests were recomputed "
+                  "on the measurement instance before any payload was decoded."),
+              src("hf_file",
+                  "https://huggingface.co/0xSero/GLM-5.3-Flash-EXL3-3.0bpw/resolve/"
+                  "8b099bf276507a17faea920deff3f62d5597fb52/RELEASE_STATUS.json",
+                  None,
+                  "the producer's OWN gate verdicts: overall_status "
+                  "weights_public_validation_incomplete; quality FAIL against their own "
+                  "threshold (their forward_kl 0.15251, perplexity_delta_fraction 0.09297, "
+                  "top1_agreement 0.87285 over 65,504 held-out positions of THEIR panel); "
+                  "serve and mtp pending; structure and public_ungated pass."),
+              src("hf_file",
+                  "https://huggingface.co/0xSero/GLM-5.3-Flash-EXL3-3.0bpw/resolve/"
+                  "8b099bf276507a17faea920deff3f62d5597fb52/evidence/"
+                  "release-calibration-manifest.json",
+                  None,
+                  "the calibration recorded in codec.calibration: 600 rows x 2048 columns, "
+                  "1,228,800 tokens, exllamav3_revision 5f3c537c, six sha256'd corpus "
+                  "files, routing_policy natural_top8.")],
+             [disc("unsealed_source", "caveat",
+                   "The Dione checkpoint ships no upstream receipts, reconstruction "
+                   "closures or sealed reader ABI. The packed surface was decoded WITHOUT "
+                   "seal verification. What it DOES publish is a per-shard sha256 manifest, "
+                   "and all 130 shard digests were recomputed on the measurement instance "
+                   "before anything was decoded (dione_shard_hash_verification: full); that "
+                   "plus the immutable revision and the consumed-payload sha256 census are "
+                   "the provenance anchors.", True),
+              DIONE_TP_SLICED,
+              disc("producer_quality_gate_failed", "info",
+                   "The producer's own RELEASE_STATUS.json marks this release "
+                   "weights_public_validation_incomplete with quality: FAIL -- their own "
+                   "held-out forward KL is 0.15251 nats at 0.87285 top-1 over 65,504 "
+                   "positions, and they publish it rather than hiding it. That is THEIR "
+                   "panel and THEIR estimator, so the number is not comparable with this "
+                   "registry's; it is recorded because a reader deciding whether to run "
+                   "these weights should see the producer's own verdict next to ours.")],
+             weights_extra={"size_basis": "repo_all_files", "shard_count": 130,
+                            "index_sha256":
+                                "0fd35de9b0d5fc9428a45d3b311dc757ea891e4cec7788050b75089593ad3215",
+                            "config_sha256":
+                                "0f97529bf936f823b84dc77ac0e09190e9439094e29dc8895547df8e17e4a24e",
+                            "tensor_parallel": {"pre_sliced": True, "world_size": 4}},
+             derived_from_artifact_ref=A_BF16_A6,
+             availability={"status": "public",
+                           "uri": "https://huggingface.co/0xSero/GLM-5.3-Flash-EXL3-3.0bpw"},
+             cross_refs=lair(model_id="glm-5.3-flash",
+                             url="https://huggingface.co/datasets/0xSero/local-ai-registry",
+                             confidence="probable"),
+             seal={"sealed": False,
+                   "note": "unsealed source; the release publishes no seal. Its 130 shard "
+                           "sha256s (EXL3_MANIFEST.json, schema_version 1) were recomputed "
+                           "in full on the measurement instance."}),
     artifact(A_TURBO405, GLM,
              "turboderp GLM-5.3-Flash EXL3 4.05bpw (stock exllamav3, mul1, quantized head)",
              "quant",

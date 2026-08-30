@@ -2,15 +2,15 @@
   "collections": {
     "artifacts": {
       "file": "data/artifacts.jsonl",
-      "record_count": 36,
+      "record_count": 37,
       "schema": "schema/artifact.schema.json",
-      "sha256": "3cb09ce67be71c48b5d4b3e3431aa5a7d1736bb92383b9e15d98ab7293c48b1b"
+      "sha256": "c49186c9d26c8e92cfe87c48234c0cdad5ea06b67d277f7d38849c52cca571a8"
     },
     "measurements": {
       "file": "data/measurements.jsonl",
       "record_count": 70,
       "schema": "schema/measurement.schema.json",
-      "sha256": "2d40112a5ca109663d9fbe3b07d720651c97406c66170d41719b004d8751d302"
+      "sha256": "7cd61f146c60abc14d3b240284e1040be030a35b3f342c980399791f675c37b3"
     },
     "models": {
       "file": "data/models.jsonl",
@@ -233,7 +233,7 @@
   ],
   "comparability_rule": "Two measurement values may be compared IF AND ONLY IF their comparability.key values are equal. A table that mixes keys is malformed.",
   "counts": {
-    "artifacts": 36,
+    "artifacts": 37,
     "measurements": 70,
     "measurements_advisory": 66,
     "measurements_author_reported": 15,
@@ -254,13 +254,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-08-30T03:27:50+00:00",
+  "generated_at": "2026-08-30T04:12:12+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-08-30T03:27:50+00:00",
+    "last_run_at": "2026-08-30T04:12:12+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }

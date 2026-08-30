@@ -1061,12 +1061,21 @@ def published_scope(surface: DioneSurface) -> Dict[str, Any]:
                     len(MAIN_ROUTED_LAYERS), NUM_EXPERTS, surface.tp_size,
                     surface.bits, cite)},
     ]
+    # `policy` is DERIVED from the table, never asserted beside it.  The
+    # registry's SCOPE-003 invariant says a scope whose quantized classes all
+    # share one (format, bits) is `uniform`, and this one does -- moe.experts
+    # is the only quantized class.  Saying "mixed" because the scope MIXES
+    # quantized and native classes is the wrong reading of the word, and it is
+    # an ERROR at registry ingest: after both cold runs are paid for.
+    quantized = {(a["format"], a["bits_per_weight"]) for a in assignments
+                 if a["treatment"] == "quantized"}
+    policy = "none" if not quantized else ("uniform" if len(quantized) == 1 else "mixed")
     # EXACTLY the six keys artifact.schema.json's `scope` allows: it is
     # additionalProperties:false, so an extra `schema`/`source` key here is a
     # REJECTED submission at seal time -- after both cold runs are paid for.
     # Provenance travels in the wrapper scope_report() builds around this.
     return {
-        "policy": "mixed",
+        "policy": policy,
         "head_policy": "native",
         "kv_cache_dtype": "bf16",
         "mtp_included": True,

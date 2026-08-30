@@ -1,168 +1,168 @@
 {
-  "submission_schema": "quant-fidelity-registry/submission-receipt.v1",
-  "receipt_sha256": "47a07bfb54fdd59522ffb4f1babd26a87fc6419928032b867d30999ad917307b",
-  "produced_by": {
-    "tool": "glm53-fidelity-suite/k6",
-    "repository": "malaiwah/glm53-fidelity-suite",
-    "revision": "c91ee7a",
-    "entrypoint": "k6/tools/measure_dione.sh",
-    "entrypoint_sha256": "2bea3be44aaa5fcd84c52a9821d1b2f468ee9938e75b4632bf0fd86b4313b7b3",
-    "runtime_reader_sha256": null,
-    "container_image": null,
-    "container_digest": null,
-    "dependencies": {
-      "torch": "2.11.0+cu130",
-      "transformers": "5.16.1",
-      "exllamav3": "c5d9c657"
-    }
-  },
-  "measured_at": "2026-08-28T08:43:00Z",
-  "lane": "sealed-ep8",
-  "measurer": {
-    "name": "malaiwah",
-    "handle": "malaiwah",
-    "url": "https://huggingface.co/malaiwah",
-    "is_artifact_author": false
-  },
   "artifact": {
-    "repository": "0xSero/GLM-5.3-Flash-EXL3-Q4",
-    "revision": "99cccdf0e8741715662c383828a9ea601990c125",
-    "url": "https://huggingface.co/0xSero/GLM-5.3-Flash-EXL3-Q4",
-    "container": "exl3",
-    "precision_label": "Q4 (Dione, TP4-sliced)",
-    "size_bytes": 187607584245,
-    "index_sha256": null,
-    "config_sha256": null,
-    "shard_hash_verification": "full",
     "codec": {
-      "family": "exl3-mcg",
-      "bits_per_weight_nominal": 4,
       "bits_per_weight_effective": null,
+      "bits_per_weight_nominal": 4,
+      "family": "exl3-mcg",
       "group_size": null,
       "quantizer_tool": "exllamav3 EXL3",
       "quantizer_version": null
     },
+    "config_sha256": null,
+    "container": "exl3",
+    "index_sha256": null,
+    "precision_label": "Q4 (Dione, TP4-sliced)",
+    "producer": {
+      "handle": "0xSero",
+      "name": "0xSero",
+      "url": "https://huggingface.co/0xSero"
+    },
+    "repository": "0xSero/GLM-5.3-Flash-EXL3-Q4",
+    "revision": "99cccdf0e8741715662c383828a9ea601990c125",
     "scope": {
       "activation_quantization": null,
       "assignments": [
         {
-          "bits_per_weight": null,
-          "format": "unknown",
+          "bits_per_weight": 16,
+          "format": "bf16",
           "layer_range": "all",
-          "note": "the release's exl3-manifest.json / PUBLIC_RELEASE_MANIFEST.json declares a scope policy that was not parsed into this registry; recorded as unknown rather than guessed",
+          "note": "retained at source precision in the release's own retained/ shards. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
           "tensor_class": "embed_tokens",
-          "treatment": "unknown"
+          "treatment": "native"
         },
         {
-          "bits_per_weight": null,
-          "format": "unknown",
+          "bits_per_weight": 16,
+          "format": "bf16",
           "layer_range": "all",
+          "note": "NOT quantized: the quantized scope is the routed experts only. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
           "tensor_class": "attn.qkv",
-          "treatment": "unknown"
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "all",
+          "note": "NOT quantized: routed-experts-only scope. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
+          "tensor_class": "attn.o",
+          "treatment": "native"
         },
         {
           "bits_per_weight": null,
-          "format": "unknown",
+          "format": "mixed",
           "layer_range": "all",
-          "tensor_class": "attn.o",
-          "treatment": "unknown"
+          "note": "indexers, mHC and the attention norms ship as the official tensors at their source dtypes (A_log, dt_bias and e_score_correction_bias are fp32 there and fp32 here). read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
+          "tensor_class": "attn.other",
+          "treatment": "native"
         },
         {
-          "bits_per_weight": 4.0,
-          "format": "exl3-mcg",
-          "layer_range": "all",
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "0-2",
+          "note": "only the three DENSE layers have an mlp.*; NOT quantized. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
           "tensor_class": "mlp.gate",
-          "treatment": "quantized"
+          "treatment": "native"
         },
         {
-          "bits_per_weight": 4.0,
-          "format": "exl3-mcg",
-          "layer_range": "all",
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "0-2",
+          "note": "NOT quantized. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
           "tensor_class": "mlp.up",
-          "treatment": "quantized"
+          "treatment": "native"
         },
         {
-          "bits_per_weight": 4.0,
-          "format": "exl3-mcg",
-          "layer_range": "all",
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "0-2",
+          "note": "NOT quantized. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
           "tensor_class": "mlp.down",
-          "treatment": "quantized"
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 32,
+          "format": "fp32",
+          "layer_range": "all",
+          "note": "the routing gate and e_score_correction_bias are retained natively. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
+          "tensor_class": "moe.router",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "all",
+          "note": "the shared expert is not routed and is NOT quantized. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
+          "tensor_class": "moe.shared_expert",
+          "treatment": "native"
         },
         {
           "bits_per_weight": 4.0,
           "format": "exl3-mcg",
-          "layer_range": "all",
+          "layer_range": "3-44",
+          "note": "36,288 modules = 42 layers x 288 experts x 3 projections, each stored as 4 TP-rank slices (<module>.rank{R}.{trellis,suh,svh,mcg}) at K4. The ONLY quantized class. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
           "tensor_class": "moe.experts",
           "treatment": "quantized"
         },
         {
-          "bits_per_weight": null,
-          "format": "unknown",
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "45",
+          "note": "layer 45's routed experts are RETAINED at source precision in this family (they are QUANTIZED in the TR3 releases -- the two are not interchangeable). Present in the artifact, outside the measured function: standard-logits scoring never executes the MTP layer. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
+          "tensor_class": "mtp",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 16,
+          "format": "bf16",
           "layer_range": "all",
+          "note": "read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
+          "tensor_class": "norm",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "all",
+          "note": "the head is RETAINED at source precision -- unlike stock exllamav3, which quantizes it (head_bits 6-8). read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
           "tensor_class": "lm_head",
-          "treatment": "unknown"
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "all",
+          "note": "the vision tower is retained natively and is never executed by text-only scoring. read from the release's OWN config.json quantization_config (quant_method=exl3_selective_tp4, format=glm53-selective-exl3-tp4-v1, trellis_k=4, bits_per_weight=4, mcg=true, retained_dtype=source_precision, quantized_scope=model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight), and confirmed by a name census of its 583,090-entry index: 580,608 routed payload tensors (42 layers x 288 experts x 3 projections x 4 TP ranks x 4 objects) and exactly the official 1,618 non-routed names, no strays either way (k6/tools/dione_surface.py census_weight_map).",
+          "tensor_class": "other",
+          "treatment": "native"
         }
       ],
-      "head_policy": "unknown",
-      "kv_cache_dtype": "unknown",
-      "mtp_included": null,
-      "policy": "mixed"
+      "head_policy": "native",
+      "kv_cache_dtype": "bf16",
+      "mtp_included": true,
+      "policy": "uniform"
     },
-    "scope_digest": "attn.o=unknown:unknown|attn.qkv=unknown:unknown|embed_tokens=unknown:unknown|lm_head=unknown:unknown|mlp.down=quantized:exl3-mcg@4|mlp.gate=quantized:exl3-mcg@4|mlp.up=quantized:exl3-mcg@4|moe.experts=quantized:exl3-mcg@4|head=unknown|kv=unknown",
-    "producer": {
-      "name": "0xSero",
-      "handle": "0xSero",
-      "url": "https://huggingface.co/0xSero"
-    },
+    "scope_digest": "attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@4|moe.router=native:fp32@32|moe.shared_expert=native:bf16@16|mtp=native:bf16@16|norm=native:bf16@16|other=native:bf16@16|head=native|kv=bf16",
+    "shard_hash_verification": "full",
+    "size_bytes": 187607584245,
     "tensor_parallel_pre_sliced": true,
-    "tensor_parallel_world_size": 4
-  },
-  "panel": {
-    "panel_ref": "panel--glm53.brandonmusic.final25",
-    "panel_token_sha256": "6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff",
-    "panel_receipt_sha256": "0beec5770e5107547731b084f1bc5f9fb8ba79d67af56ddb70d919da367737d5",
-    "contexts": 25,
-    "scored_positions_total": 51175
-  },
-  "reference": {
-    "reference_ref": "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
-    "teacher_receipt_sha256": "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5",
-    "teacher_backend_identity_sha256": "85b11599c6b36a83fa8099a09a298a386a0c603d1f18d3702e7fb1c470962ce4"
-  },
-  "metric": {
-    "name": "mean_of_run_means_tokenwise_kld",
-    "value": 0.027262784814670614,
-    "units": "nats",
-    "direction": "reference_to_candidate"
+    "tensor_parallel_world_size": 4,
+    "url": "https://huggingface.co/0xSero/GLM-5.3-Flash-EXL3-Q4"
   },
   "auxiliary_metrics": {
     "top1_agreement": null
   },
-  "estimator": {
-    "accumulation_dtype": "float64",
-    "logits_dtype": "fp32",
-    "two_pass": false,
-    "vocab_chunk": null,
-    "stack_relation": "same_stack",
-    "head_policy": "native_head",
-    "zero_handling": null
+  "cost": {
+    "basis": null,
+    "usd": null
   },
   "determinism": {
-    "run_count": 5,
     "cold_start_per_run": true,
-    "run_means": [
-      0.027262784814670614,
-      0.027262784814670614,
-      0.027262784814670614,
-      0.027262784814670614,
-      0.027262784814670614
-    ],
-    "identical_across_runs": true,
-    "evidence_kind": "tokenwise_kld_sha256",
+    "distinct_evidence_hash_count": 1,
     "evidence_hashes": [
       "f4038d07c329e6e8663e8a09509219b99d34ec6d71a9246eeb65daa37755cb5b"
     ],
-    "distinct_evidence_hash_count": 1,
+    "evidence_kind": "tokenwise_kld_sha256",
+    "identical_across_runs": true,
+    "note": "5 cold runs produced 5 DIFFERENT per-run report hashes and exactly ONE tokenwise-KL tensor hash. The report hashes embed run index, paths and timings; the tensor hash is the evidence.",
     "per_run_report_sha256": [
       "a537126c020a852e6d25dc9c4de08fc1d9a9fca7e3ae6a82f4b8246e11ba18de",
       "0aeec55c312111b787dcea1415cfa26fbe4cc8ba69bb58ed049bb0011f99a2cc",
@@ -170,55 +170,104 @@
       "f75679b1769a3a397480323802b3173af00636baadb66e5cd864bdb84e7d01f6",
       "f000caa7f1d757cf87b047a61cde852a3a137226a58ab899a09a3736cdf21cc3"
     ],
-    "note": "5 cold runs produced 5 DIFFERENT per-run report hashes and exactly ONE tokenwise-KL tensor hash. The report hashes embed run index, paths and timings; the tensor hash is the evidence."
+    "run_count": 5,
+    "run_means": [
+      0.027262784814670614,
+      0.027262784814670614,
+      0.027262784814670614,
+      0.027262784814670614,
+      0.027262784814670614
+    ]
   },
-  "measurement_scope": {
-    "scored_positions": 51175,
-    "contexts": 25,
-    "positions_per_context": 2047,
-    "covers_full_panel": true,
-    "subset_detail": null,
-    "position_filter": "all"
-  },
+  "disclosures": [
+    {
+      "affects_comparability": true,
+      "code": "unsealed_source",
+      "detail": "The Dione checkpoint ships no upstream receipts, reconstruction closures or sealed reader ABI. The packed surface was decoded WITHOUT seal verification; the immutable repo revision and the consumed payload sha256s were recorded instead, and every whole shard was verified against the release's own exl3-manifest.json (shard_hash_verification: full).",
+      "severity": "caveat"
+    },
+    {
+      "affects_comparability": false,
+      "code": "third_party_artifact_self_measured",
+      "detail": "Someone else's weights, our measurement. 0xSero produced the artifact; malaiwah produced the number. Credit for the artifact is theirs.",
+      "severity": "info"
+    }
+  ],
   "environment": {
     "gpu": "NVIDIA H200",
     "gpu_count": 4,
+    "host": "jarvislabs",
+    "peak_vram_gb": null,
     "tensor_parallel": 4,
     "vram_budget_gb": null,
-    "peak_vram_gb": null,
-    "host": "jarvislabs",
     "wall_clock_hours": null
   },
-  "cost": {
-    "usd": null,
-    "basis": null
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "head_policy": "native_head",
+    "logits_dtype": "fp32",
+    "stack_relation": "same_stack",
+    "two_pass": false,
+    "vocab_chunk": null,
+    "zero_handling": null
   },
   "evidence": [
     {
       "kind": "hf_file",
-      "uri": "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/dione-q4-packed-kld.json",
+      "note": "malaiwah.glm53-dione-q4-packed-kld-summary.v1 -- the five-run rollup this submission was generated from.",
       "sha256": null,
-      "note": "malaiwah.glm53-dione-q4-packed-kld-summary.v1 -- the five-run rollup this submission was generated from."
+      "uri": "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/dione-q4-packed-kld.json"
     }
   ],
-  "disclosures": [
-    {
-      "code": "artifact_identity_incomplete",
-      "severity": "caveat",
-      "affects_comparability": true,
-      "detail": "The per-tensor-class quantization recipe for this artifact was never published, so scope.assignments records 'unknown' for the classes the release does not declare, rather than a guessed allocation. The scope_digest shows the gap."
+  "lane": "sealed-ep8",
+  "measured_at": "2026-08-28T08:43:00Z",
+  "measurement_scope": {
+    "contexts": 25,
+    "covers_full_panel": true,
+    "position_filter": "all",
+    "positions_per_context": 2047,
+    "scored_positions": 51175,
+    "subset_detail": null
+  },
+  "measurer": {
+    "handle": "malaiwah",
+    "is_artifact_author": false,
+    "name": "malaiwah",
+    "url": "https://huggingface.co/malaiwah"
+  },
+  "metric": {
+    "direction": "reference_to_candidate",
+    "name": "mean_of_run_means_tokenwise_kld",
+    "units": "nats",
+    "value": 0.027262784814670614
+  },
+  "panel": {
+    "contexts": 25,
+    "panel_receipt_sha256": "0beec5770e5107547731b084f1bc5f9fb8ba79d67af56ddb70d919da367737d5",
+    "panel_ref": "panel--glm53.brandonmusic.final25",
+    "panel_token_sha256": "6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff",
+    "scored_positions_total": 51175
+  },
+  "produced_by": {
+    "container_digest": null,
+    "container_image": null,
+    "dependencies": {
+      "exllamav3": "c5d9c657",
+      "torch": "2.11.0+cu130",
+      "transformers": "5.16.1"
     },
-    {
-      "code": "unsealed_source",
-      "severity": "caveat",
-      "affects_comparability": true,
-      "detail": "The Dione checkpoint ships no upstream receipts, reconstruction closures or sealed reader ABI. The packed surface was decoded WITHOUT seal verification; the immutable repo revision and the consumed payload sha256s were recorded instead, and every whole shard was verified against the release's own exl3-manifest.json (shard_hash_verification: full)."
-    },
-    {
-      "code": "third_party_artifact_self_measured",
-      "severity": "info",
-      "affects_comparability": false,
-      "detail": "Someone else's weights, our measurement. 0xSero produced the artifact; malaiwah produced the number. Credit for the artifact is theirs."
-    }
-  ]
+    "entrypoint": "k6/tools/measure_dione.sh",
+    "entrypoint_sha256": "2bea3be44aaa5fcd84c52a9821d1b2f468ee9938e75b4632bf0fd86b4313b7b3",
+    "repository": "malaiwah/glm53-fidelity-suite",
+    "revision": "c91ee7a",
+    "runtime_reader_sha256": null,
+    "tool": "glm53-fidelity-suite/k6"
+  },
+  "receipt_sha256": "0e851d280027a36a6666f70546fedaa04a929f7e5894298e39e6f058005d9925",
+  "reference": {
+    "reference_ref": "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+    "teacher_backend_identity_sha256": "85b11599c6b36a83fa8099a09a298a386a0c603d1f18d3702e7fb1c470962ce4",
+    "teacher_receipt_sha256": "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5"
+  },
+  "submission_schema": "quant-fidelity-registry/submission-receipt.v1"
 }

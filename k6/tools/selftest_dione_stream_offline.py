@@ -401,6 +401,36 @@ def run(work: Path) -> int:
     check("scope digest is stable across loads",
           ds.scope_digest(ds.load_dione_surface(good, repo="fixture/dione",
                                                 revision=REV)) == digest)
+    # SCOPE-003: the registry reads `policy` as "do the QUANTIZED classes share
+    # one (format, bits)", not "does the scope mix quantized and native".  A
+    # hard-coded "mixed" here is an ERROR at registry ingest -- after both cold
+    # runs are paid for -- so the policy is derived, and this rung is the
+    # derivation's witness.
+    quantized = {(a["format"], a["bits_per_weight"]) for a in scope["assignments"]
+                 if a["treatment"] == "quantized"}
+    check("policy follows SCOPE-003 (one quantized (format,bits) -> uniform)",
+          len(quantized) == 1 and scope["policy"] == "uniform",
+          "quantized=%s policy=%s" % (sorted(quantized), scope["policy"]))
+    # And the registry's own record for a sibling release of this family must
+    # agree with what the surface reads, class for class.  The Q4 record was
+    # `unknown` for four classes until this surface could read them; if the two
+    # ever diverge again, the row and the artifact would disagree about the
+    # same producer's format.
+    data = TOOLS.parent.parent / "registry" / "data" / "artifacts.jsonl"
+    if data.is_file():
+        rows = [json.loads(line) for line in data.read_text().splitlines() if line.strip()]
+        seeded = {r["id"]: r for r in rows}
+        record = seeded.get("artifact--0xsero.glm-5.3-flash-exl3-3.0bpw")
+        if record is not None:
+            check("the registry's 3.0bpw record carries the digest this surface reads",
+                  record["scope_digest"] == digest,
+                  "registry=%s" % record["scope_digest"])
+        else:
+            skip("the registry's 3.0bpw record carries the digest this surface reads",
+                 "record not seeded yet")
+    else:
+        skip("the registry's 3.0bpw record carries the digest this surface reads",
+             "registry data not present")
 
     # [5] the materializer ----------------------------------------------------
     out = work / "materialized"
