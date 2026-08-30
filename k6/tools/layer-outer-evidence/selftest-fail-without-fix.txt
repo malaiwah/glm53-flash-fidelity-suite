@@ -1,0 +1,81 @@
+bin/selftest_layer_outer.py run against `git archive HEAD` of the parent commit
+-- i.e. the tree BEFORE k6/tools/layer_outer.py and hf_capture.py's --schedule
+flag existed, with only the new test file copied in.
+
+This is the fail-without-fix evidence required by AGENTS.md ("add a regression
+test that FAILS without your fix -- and verify that by reverting it in a scratch
+copy, not by assuming").
+
+  before this change:  1 passed, 19 failed
+  after  this change: 20 passed,  0 failed
+
+The one case that passes BEFORE (L9) passes vacuously: it asserts a refusal, and
+the pre-change tree refuses the whole invocation on the unrecognised --schedule
+flag. It is not coverage.
+
+Temporary directory paths have been replaced with <tmp>.
+
+--- BEFORE (pre-change tree) --------------------------------------------------
+  FAIL  L0 all four captures exit 0
+  FAIL  L1 layer-outer/resident reproduces the window-outer capture bit-for-bit
+  FAIL  L2 layer-outer/stream reproduces it too -- the loader moves nothing
+  FAIL  L3 the default schedule is window-outer and naming it changes nothing
+  FAIL  L13 both schedules write a measured peak-memory report naming its units
+  FAIL  L4 every streamed layer parameter is byte-identical to from_pretrained's
+  FAIL  L5 freeing a layer actually returns its parameters to the meta device
+  FAIL  L6 a fused-expert MoE checkpoint streams byte-exactly (the WeightConverter path)
+  FAIL  L7 a shard shorter than its own header is REFUSED (holes-read-as-zeros)
+  FAIL  L8 a shard-header/index key-set disagreement is REFUSED
+  PASS  L9 a streamed layer whose checkpoint tensors are absent is REFUSED
+  FAIL  L10 --schedule layer-outer with --device-map is refused, not silently raced
+  FAIL  L11a find_decoder_layers finds the stack whose parent owns embed_tokens
+  FAIL  L11b it refuses rather than guessing when no stack matches
+  FAIL  L12a the schedule drives a plain in-order stack
+  FAIL  L12b a layer that runs more than once per forward is REFUSED
+  FAIL  L14a a second cold layer-outer capture agrees with the first
+  FAIL  L14b self-compare through layer-outer is exactly 0.0 (hashproof)
+  FAIL  L14b self-compare through layer-outer is exactly 0.0 (forcecompute)
+  FAIL  L14c window-outer vs layer-outer scores exactly 0.0 under --force-compute
+1 passed, 19 failed
+  FAILED L0 all four captures exit 0: default rc=2 ognized arguments: --memory-report <tmp>; window-outer rc=2 eport <tmp> --schedule window-outer; resident rc=2 shj6d0411m5dtb2_f3ffqry00000gn/T/layerouter-hqgjut2u/mem-resident.json --schedule layer-outer --layer-residency resident; stream rc=2 /pt/shj6d0411m5dtb2_f3ffqry00000gn/T/layerouter-hqgjut2u/mem-stream.json --schedule layer-outer --layer-residency stream
+  FAILED L1 layer-outer/resident reproduces the window-outer capture bit-for-bit: the capture did not run; see L0
+  FAILED L2 layer-outer/stream reproduces it too -- the loader moves nothing: the capture did not run; see L0
+  FAILED L3 the default schedule is window-outer and naming it changes nothing: the capture did not run; see L0
+  FAILED L13 both schedules write a measured peak-memory report naming its units: {"window-outer": null, "stream": null}
+  FAILED L4 every streamed layer parameter is byte-identical to from_pretrained's: k6/tools/layer_outer.py is not importable: No module named 'layer_outer'
+  FAILED L5 freeing a layer actually returns its parameters to the meta device: k6/tools/layer_outer.py is not importable: No module named 'layer_outer'
+  FAILED L6 a fused-expert MoE checkpoint streams byte-exactly (the WeightConverter path): k6/tools/layer_outer.py is not importable: No module named 'layer_outer'
+  FAILED L7 a shard shorter than its own header is REFUSED (holes-read-as-zeros): k6/tools/layer_outer.py is not importable: No module named 'layer_outer'
+  FAILED L8 a shard-header/index key-set disagreement is REFUSED: k6/tools/layer_outer.py is not importable: No module named 'layer_outer'
+  FAILED L10 --schedule layer-outer with --device-map is refused, not silently raced: rc=2 stderr= SUBSET_DETAIL]
+  FAILED L11a find_decoder_layers finds the stack whose parent owns embed_tokens: k6/tools/layer_outer.py is not importable: No module named 'layer_outer'
+  FAILED L11b it refuses rather than guessing when no stack matches: k6/tools/layer_outer.py is not importable: No module named 'layer_outer'
+  FAILED L12a the schedule drives a plain in-order stack: k6/tools/layer_outer.py is not importable: No module named 'layer_outer'
+  FAILED L12b a layer that runs more than once per forward is REFUSED: k6/tools/layer_outer.py is not importable: No module named 'layer_outer'
+  FAILED L14a a second cold layer-outer capture agrees with the first: rc=2 (no reference digest; see L0)
+  FAILED L14b self-compare through layer-outer is exactly 0.0 (hashproof): rc=3 metric=None kl={}
+  FAILED L14b self-compare through layer-outer is exactly 0.0 (forcecompute): rc=3 metric=None kl={}
+  FAILED L14c window-outer vs layer-outer scores exactly 0.0 under --force-compute: rc=3 metric=None
+
+--- AFTER (this change) -------------------------------------------------------
+  PASS  L0 all four captures exit 0
+  PASS  L1 layer-outer/resident reproduces the window-outer capture bit-for-bit
+  PASS  L2 layer-outer/stream reproduces it too -- the loader moves nothing
+  PASS  L3 the default schedule is window-outer and naming it changes nothing
+  PASS  L13 both schedules write a measured peak-memory report naming its units
+  PASS  L4 every streamed layer parameter is byte-identical to from_pretrained's
+  PASS  L5 freeing a layer actually returns its parameters to the meta device
+  PASS  L6 a fused-expert MoE checkpoint streams byte-exactly (the WeightConverter path)
+  PASS  L7 a shard shorter than its own header is REFUSED (holes-read-as-zeros)
+  PASS  L8 a shard-header/index key-set disagreement is REFUSED
+  PASS  L9 a streamed layer whose checkpoint tensors are absent is REFUSED
+  PASS  L10 --schedule layer-outer with --device-map is refused, not silently raced
+  PASS  L11a find_decoder_layers finds the stack whose parent owns embed_tokens
+  PASS  L11b it refuses rather than guessing when no stack matches
+  PASS  L12a the schedule drives a plain in-order stack
+  PASS  L12b a layer that runs more than once per forward is REFUSED
+  PASS  L14a a second cold layer-outer capture agrees with the first
+  PASS  L14b self-compare through layer-outer is exactly 0.0 (hashproof)
+  PASS  L14b self-compare through layer-outer is exactly 0.0 (forcecompute)
+  PASS  L14c window-outer vs layer-outer scores exactly 0.0 under --force-compute
+20 passed, 0 failed

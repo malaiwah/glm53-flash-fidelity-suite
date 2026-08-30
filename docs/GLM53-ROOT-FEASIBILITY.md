@@ -816,6 +816,8 @@ message when `accelerate` is absent instead of surfacing the library's.
 
 That unblocks the B-1 and B-2 lanes. It does **not** change their prices, and
 the layer-outer engine of B-3/C-3 is still unbuilt. §6's cost table stands.
+*(Superseded 2026-08-30: the layer-outer engine is now built and proven. See
+§10 and `docs/GLM53-LAYER-OUTER.md`.)*
 
 **A new number for the Stage B budget: the converter's transient is one layer,
 not three.** Loading the truncation peaked at **48.2 GB RSS** against
@@ -880,3 +882,42 @@ disk. The layer-outer, window-inner schedule that reads the tree once per run
 instead of once per window is still the difference between a $3 stage C and a
 $38–96 one, and it is still unwritten. Stage A moved the correctness risk to
 zero and left the engineering exactly where it was.
+
+---
+
+## 10. Stage A → the engine (built 2026-08-30)
+
+**§9.7's closing sentence is no longer true, and this section is here so nobody
+reads it as current.** The layer-outer, window-inner engine exists:
+`k6/tools/layer_outer.py`, driven by
+`hf_capture.py --schedule layer-outer`. It is proven **bit-identical** to the
+window-outer schedule — the same `capture_content_digest` — on both the 0.1B
+`glm5_next` fixture and `malaiwah/GLM-5.2-SIQ-Fruit-bf16` (`glm_moe_dsa`, this
+model's architecture), on CPU and on CUDA, with
+`compare --self-compare --force-compute` returning exactly 0.0 nats.
+
+Two numbers in this document change as a result, both in the safe direction,
+and one of them changes because the engine's residency split is finer than §2
+assumed:
+
+| | this document | measured/implemented |
+|---|---:|---:|
+| peak VRAM, GLM-5.3, 25 windows | 81.7 GB (§2) | **~47–51 GB** |
+| minutes per window | 13–26 (§4, window-outer) | **0.4–1.6** |
+| Stage C cost | $2.45–2.93 (C-3, §6) | **$1.08–3.52**, confirmed |
+
+§2's 81.7 GB assumed the whole **non-routed set (37.78 GB)** stays resident and
+only the routed experts stream. The engine streams *whole layers* — attention,
+shared expert, router, DSA indexer, norms and routed experts together — so only
+`embed_tokens + lm_head + model.norm` (3.81 GB) is permanently resident and the
+weight peak is 3.81 + one layer (19.76 GB) = **23.56 GB**. The rest of the
+budget is the expert-fusion transient §9.5 upper-bounded at 22.3 GB, which is
+now the dominant and least-measured term.
+
+Full evidence, the two digest proofs, the measured memory tables, what the
+schedule does **not** handle, and what would falsify the projection:
+**`docs/GLM53-LAYER-OUTER.md`**. Raw receipts:
+`k6/tools/layer-outer-evidence/`.
+
+**Stage B is unchanged as a decision and is not taken here.** No GLM-5.3
+capture has been run.

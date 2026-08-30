@@ -1,0 +1,22 @@
+{
+  "context_length": 2048,
+  "decoder_layers": 13,
+  "device": "cpu",
+  "hidden_size": 1024,
+  "layer_residency": "stream",
+  "model": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+  "peak_resident_weight_bytes": 1470778624,
+  "peak_resident_weight_detail": {
+    "buffers": 10496,
+    "parameters": 1470768128,
+    "total": 1470778624
+  },
+  "peak_resident_weight_gb": 1.471,
+  "peak_rss_bytes": 11577589760,
+  "peak_rss_gb": 11.578,
+  "resident_weight_note": "the maximum, over the run, of the materialised parameter+buffer bytes. On the CPU path peak_rss_bytes ALSO counts the safetensors mmap page cache, which is evictable and is not held by the schedule; this figure is not confounded by it. On CUDA, peak_cuda_allocated_bytes is the authoritative number because it includes activations and workspace and has no page cache.",
+  "rss_units_source": "Darwin ru_maxrss",
+  "schedule": "layer-outer",
+  "vocab_size": 154880,
+  "windows": 2
+}

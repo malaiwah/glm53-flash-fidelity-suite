@@ -1,0 +1,70 @@
+{
+  "schema": "malaiwah.layer-outer-bit-identity.v1",
+  "what_this_is": "The two bit-identity proofs for k6/tools/layer_outer.py's layer-outer/window-inner capture schedule. The gate is capture_content_digest -- the digest over TENSOR CONTENT, not the container -- computed by k6/tools/hf_capture.py on captures that differ only in --schedule. Every row's two digests must be equal; a small delta is a failure, not a rounding.",
+  "run_date_utc": "2026-08-30",
+  "engine": {
+    "file": "k6/tools/layer_outer.py",
+    "driver": "k6/tools/hf_capture.py --schedule layer-outer [--layer-residency stream|resident]",
+    "transformers": "5.16.1"
+  },
+  "proofs": [
+    {
+      "gate": 1,
+      "model": "inference-optimization/GLM-5.3-Flash-0.1B-A0.1B",
+      "revision": "7c3a6d3dc51732dd8ab230888e06ba8c93a381ac",
+      "architecture": "glm5_next (Glm5NextForConditionalGeneration)",
+      "why_it_matters": "5 layers, hidden 256, hc_mult 4, layer_types mixing linear_attention and deepseek_sparse_attention, 8 routed experts. Exercises a carried hyper-channel dimension and a second inter-layer value (topk_indices) at toy cost.",
+      "panel": "3 windows x 48 synthetic tokens",
+      "device": "cpu (Apple M4 Max)",
+      "window_outer_capture_content_digest": "4755a01a4712dc251d6ac5a2b87440db403c2241b65fec9e042eba7166423e16",
+      "layer_outer_capture_content_digest": "4755a01a4712dc251d6ac5a2b87440db403c2241b65fec9e042eba7166423e16",
+      "equal": true
+    },
+    {
+      "gate": 1,
+      "model": "inference-optimization/GLM-5.3-Flash-0.1B-A0.1B",
+      "revision": "7c3a6d3dc51732dd8ab230888e06ba8c93a381ac",
+      "architecture": "glm5_next (Glm5NextForConditionalGeneration)",
+      "why_it_matters": "The same model at the real context length, on real sealed panel tokens rather than random ids.",
+      "panel": "panel--glm53.stagea.smoke.2w -- 2 windows x 2048 tokens, 4094 scored rows",
+      "device": "cpu (Apple M4 Max)",
+      "window_outer_capture_content_digest": "efca1227fca0bc934d2b86d74c02c1bfce21fa0eea5d6d28f2ad06394cd9cddb",
+      "layer_outer_capture_content_digest": "efca1227fca0bc934d2b86d74c02c1bfce21fa0eea5d6d28f2ad06394cd9cddb",
+      "equal": true
+    },
+    {
+      "gate": 2,
+      "model": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+      "revision": "ef68013aa6e16453cf52b5b77647f72fbe258c3c",
+      "architecture": "glm_moe_dsa (GlmMoeDsaForCausalLM) -- THE ARCHITECTURE GLM-5.3 USES",
+      "why_it_matters": "13 layers, hidden 1024, 256 routed experts, first_k_dense_replace 3, indexer_types 3x full then 10x shared, so the DSA prev_topk_indices carry is exercised on ten layers. num_nextn_predict_layers 1, so the MTP layer 13 is in the checkpoint and NOT built by transformers -- the same shape as GLM-5.3's layer 78.",
+      "panel": "panel--glm53.stagea.smoke.2w -- 2 windows x 2048 tokens, 4094 scored rows",
+      "device": "cpu (Apple M4 Max)",
+      "window_outer_capture_content_digest": "d2917092d8cc604a547c501747d7b12cde98d0f6545f8a1eab06e729c7fef914",
+      "layer_outer_capture_content_digest": "d2917092d8cc604a547c501747d7b12cde98d0f6545f8a1eab06e729c7fef914",
+      "equal": true
+    },
+    {
+      "gate": 2,
+      "model": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+      "revision": "ef68013aa6e16453cf52b5b77647f72fbe258c3c",
+      "architecture": "glm_moe_dsa (GlmMoeDsaForCausalLM)",
+      "why_it_matters": "The same gate on CUDA, which is where a root capture actually runs. The CPU proof does not cover the streamed loader's device_map={'': 'cuda:0'} path, and an untested CUDA path would be a hole in exactly the place the engine exists for. torch 2.11.0+cu130, NVIDIA L4.",
+      "panel": "panel--glm53.stagea.smoke.2w -- 2 windows x 2048 tokens, 4094 scored rows",
+      "device": "cuda:0 (NVIDIA L4 24GB, JarvisLabs IN2 spot)",
+      "window_outer_capture_content_digest": "aeb896b02afe4565e704f98c30b006dd04cf9285c5875ac09645bdbe8b5e228b",
+      "layer_outer_capture_content_digest": "aeb896b02afe4565e704f98c30b006dd04cf9285c5875ac09645bdbe8b5e228b",
+      "equal": true
+    }
+  ],
+  "why_the_cuda_digest_differs_from_the_cpu_one": "aeb896b0... != d2917092... for the same model and panel because a CUDA kernel and a CPU kernel are different stacks -- that is the ordinary cross-stack residual this suite already models with stack_fingerprint, and it is not a schedule effect. The gate is that the TWO SCHEDULES agree on each device, which they do, on both.",
+  "gate_3_comparator": {
+    "command": "bin/fidelity-dataset compare --self-compare --force-compute (window-outer as reference, layer-outer as candidate)",
+    "receipt": "fixture-crossschedule-compare-receipt.json",
+    "mean_tokenwise_kld_nats": 0.0,
+    "kl_max": 0.0,
+    "top1_agreement": 1.0,
+    "backend": "torch:k6_kld_report._token_kld",
+    "note": "--force-compute so the arithmetic runs rather than short-circuiting on a digest match. Every order statistic is 0.0, not just the mean."
+  }
+}

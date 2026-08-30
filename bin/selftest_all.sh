@@ -77,6 +77,16 @@ t "fidelity comparator known answers + exact self-compare (T8)" \
                                            0 "$PY" bin/selftest_fidelity_compare.py
 t "fidelity card annotation, 3 axes (T7)" \
                                            0 python3 bin/selftest_fidelity_card.py
+# The portable capture engine's own battery (CAPTURE-03's four ways a load can
+# hand back a model that is not the artifact's, the --device-map path, the
+# panel receipt).  It existed and was never wired in here, so nothing ran it.
+t "hf-transformers capture engine: load-report guards, refusals (A1-A22)" \
+                                           0 "$PY" bin/selftest_hf_capture.py
+# The layer-outer/window-inner schedule and its streaming residency.  L1-L3 are
+# the deliverable in three assertions: the new loop order must produce the SAME
+# capture_content_digest as the old one, and the default must stay the old one.
+t "layer-outer schedule: bit-identity, streamed loader, holes guard (L1-L14)" \
+                                           0 "$PY" bin/selftest_layer_outer.py
 # The joint fidelity standard (protocol hash, R0 canary, 13-gram overlap scan,
 # clustered SE + BCa block bootstrap, sigma_run in quadrature, McNemar,
 # percentile guards, and the registry's JOINT-* invariants). Its known-answer

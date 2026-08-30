@@ -1,0 +1,96 @@
+{
+  "layer-outer": {
+    "digest": "aeb896b02afe4565e704f98c30b006dd04cf9285c5875ac09645bdbe8b5e228b",
+    "memory": {
+      "context_length": 2048,
+      "decoder_layers": 13,
+      "device": "cuda:0",
+      "hidden_size": 1024,
+      "layer_residency": "stream",
+      "model": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+      "peak_cuda_allocated_bytes": 2166542336,
+      "peak_cuda_allocated_gb": 2.167,
+      "peak_cuda_reserved_bytes": 3711959040,
+      "peak_cuda_reserved_gb": 3.712,
+      "peak_resident_weight_bytes": 1470778624,
+      "peak_resident_weight_detail": {
+        "buffers": 10496,
+        "parameters": 1470768128,
+        "total": 1470778624
+      },
+      "peak_resident_weight_gb": 1.471,
+      "peak_rss_bytes": 11419566080,
+      "peak_rss_gb": 11.42,
+      "resident_weight_note": "the maximum, over the run, of the materialised parameter+buffer bytes. On the CPU path peak_rss_bytes ALSO counts the safetensors mmap page cache, which is evictable and is not held by the schedule; this figure is not confounded by it. On CUDA, peak_cuda_allocated_bytes is the authoritative number because it includes activations and workspace and has no page cache.",
+      "rss_units_source": "Linux ru_maxrss",
+      "schedule": "layer-outer",
+      "vocab_size": 154880,
+      "windows": 2
+    },
+    "windows": [
+      {
+        "bytes": 4192532,
+        "index": 0,
+        "rows": 2047,
+        "seconds": 0.016,
+        "stage": "window",
+        "window_id": "final-0000"
+      },
+      {
+        "bytes": 4192532,
+        "index": 1,
+        "rows": 2047,
+        "seconds": 0.024,
+        "stage": "window",
+        "window_id": "final-0001"
+      }
+    ]
+  },
+  "window-outer": {
+    "digest": "aeb896b02afe4565e704f98c30b006dd04cf9285c5875ac09645bdbe8b5e228b",
+    "memory": {
+      "context_length": 2048,
+      "decoder_layers": null,
+      "device": "cuda:0",
+      "hidden_size": 1024,
+      "layer_residency": null,
+      "model": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+      "peak_cuda_allocated_bytes": 10409307136,
+      "peak_cuda_allocated_gb": 10.409,
+      "peak_cuda_reserved_bytes": 11096031232,
+      "peak_cuda_reserved_gb": 11.096,
+      "peak_resident_weight_bytes": 9144279808,
+      "peak_resident_weight_detail": {
+        "buffers": 10496,
+        "parameters": 9144269312,
+        "total": 9144279808
+      },
+      "peak_resident_weight_gb": 9.144,
+      "peak_rss_bytes": 17498603520,
+      "peak_rss_gb": 17.499,
+      "resident_weight_note": "the maximum, over the run, of the materialised parameter+buffer bytes. On the CPU path peak_rss_bytes ALSO counts the safetensors mmap page cache, which is evictable and is not held by the schedule; this figure is not confounded by it. On CUDA, peak_cuda_allocated_bytes is the authoritative number because it includes activations and workspace and has no page cache.",
+      "rss_units_source": "Linux ru_maxrss",
+      "schedule": "window-outer",
+      "vocab_size": 154880,
+      "windows": 2
+    },
+    "windows": [
+      {
+        "bytes": 4192532,
+        "index": 0,
+        "rows": 2047,
+        "seconds": 0.678,
+        "stage": "window",
+        "window_id": "final-0000"
+      },
+      {
+        "bytes": 4192532,
+        "index": 1,
+        "rows": 2047,
+        "seconds": 0.222,
+        "stage": "window",
+        "window_id": "final-0001"
+      }
+    ]
+  }
+}

@@ -64,7 +64,33 @@ sys.path.insert(0, os.path.join(REPO, "bin"))
 from fidelity import dsformat as F  # noqa: E402
 from fidelity import dsmanifest, dsvalidate  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import layer_outer  # noqa: E402
+
 TOOL_VERSION = "hf_capture/1"
+
+# Recorded in `runtime.capture_tool.mechanism`, which is NOT an input to
+# `stack_fingerprint_sha256` -- deliberately.  The fingerprint is what
+# `dscompare` reads to decide `stack_relation`, and a cross-stack verdict
+# stamps `usable_as_floor: false` and attaches a 1e-2-class bias block.  The
+# layer-outer schedule is proven bit-identical to the window-outer one on two
+# architectures (see docs/GLM53-LAYER-OUTER.md), so charging a capture a
+# comparability penalty for it would be asserting a difference the digests say
+# is not there.  It is still written down, in the sealed receipt, where a
+# reader can see which loop produced their tensors.
+SCHEDULE_MECHANISM = {
+    layer_outer.SCHEDULE_WINDOW_OUTER:
+        "transformers forward pass; forward pre-hook on model.get_output_embeddings()",
+    layer_outer.SCHEDULE_LAYER_OUTER:
+        "transformers forward pass, layer-outer/window-inner schedule: for each decoder "
+        "layer the model's own forward is run once per window with the layers below "
+        "replaying their memoised output and the layers above suspending, so each "
+        "layer's weights are materialised once for the whole panel. Windows are pushed "
+        "through sequentially, never batched. Forward pre-hook on "
+        "model.get_output_embeddings(), fired by the model's own epilogue after the "
+        "last layer",
+}
 
 CUT_POINT = "after_final_rmsnorm_before_lm_head"
 CUT_STATEMENT = (
@@ -579,6 +605,97 @@ def _bf16_raw(tensor) -> bytes:
     return flat.view(torch.uint16).numpy().tobytes()
 
 
+def _source_files(args: argparse.Namespace) -> Dict[str, str]:
+    """Every file that decided the arithmetic, hashed.
+
+    `layer_outer.py` is listed only when it ran: a window-outer capture is not
+    made by that file and must not claim to be.
+    """
+    files = {"k6/tools/hf_capture.py": F.sha256_file(os.path.abspath(__file__))}
+    if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER:
+        files["k6/tools/layer_outer.py"] = F.sha256_file(
+            os.path.abspath(layer_outer.__file__))
+    return files
+
+
+def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_seconds):
+    """Drive `layer_outer.run_panel` and hand back one tapped hidden state per window.
+
+    The saving is in weight LOADING, not compute.  `on_layer_start` /
+    `on_layer_end` are where it is banked: with `--layer-residency stream` each
+    layer's weights are materialised once here for the whole panel and freed
+    before the next, so a run reads the checkpoint tree once instead of once
+    per window.
+    """
+    if streamer is not None:
+        layers = streamer.layers
+    else:
+        try:
+            _, layers = layer_outer.find_decoder_layers(model)
+        except layer_outer.LayerOuterError as exc:
+            raise fail(str(exc))
+    log(stage="schedule", schedule=args.schedule, residency=args.layer_residency,
+        layers=len(layers), windows=len(panel.windows))
+
+    # The window-outer loop discovers a ragged panel on the window that differs,
+    # having paid only for the windows before it. This schedule runs every
+    # window's forward before the record loop is reached, so the same refusal
+    # would arrive after the whole panel had been paid for. Check it first.
+    lengths = {len(window["token_ids"]) for window in panel.windows}
+    if len(lengths) > 1:
+        raise fail("a ragged panel is not supported: context lengths %s"
+                   % sorted(lengths))
+
+    watcher = args.resident_watcher
+
+    def on_layer_start(index: int) -> None:
+        if streamer is not None:
+            started = time.monotonic()
+            try:
+                streamer.load_layer(index)
+            except layer_outer.LayerOuterError as exc:
+                raise fail(str(exc))
+            # Sampled with the layer loaded -- i.e. at the moment the schedule
+            # holds the most it ever holds.
+            resident = watcher.sample()
+            log(stage="layer_load", index=index, seconds=round(time.monotonic() - started, 3),
+                checkpoint_tensors=streamer.layer_counts.get(index),
+                resident_weight_bytes=resident)
+
+    def on_layer_end(index: int) -> None:
+        if streamer is not None:
+            streamer.free_layer(index)
+            watcher.sample()
+
+    def timed_forward(window_index: int) -> None:
+        started = time.monotonic()
+        forward_window(window_index)
+        layer_seconds[window_index] += time.monotonic() - started
+
+    def collect(window_index: int):
+        window = panel.windows[window_index]
+        if len(tap) != 1:
+            raise fail("window %s: the head hook fired %d times, expected exactly 1 -- an "
+                       "extra forward would misalign the capture"
+                       % (window["window_id"], len(tap)))
+        return tap[0]
+
+    try:
+        hidden = layer_outer.run_panel(model, layers, timed_forward, len(panel.windows),
+                                       log, on_layer_start=on_layer_start,
+                                       on_layer_end=on_layer_end, collect=collect)
+    except layer_outer.LayerOuterError as exc:
+        raise fail(str(exc))
+    del tap[:]
+    if streamer is not None:
+        streamer.close()
+    for index, value in enumerate(hidden):
+        if value is None:  # pragma: no cover - run_panel guarantees this
+            raise fail("window %d produced no hidden state under the layer-outer schedule"
+                       % index)
+    return hidden
+
+
 def run_capture(args: argparse.Namespace) -> int:
     import numpy as np
     import torch
@@ -595,10 +712,58 @@ def run_capture(args: argparse.Namespace) -> int:
     identity, identity_files = checkpoint_identity(model_dir)
     log(stage="checkpoint_identity", sha256=identity, files=len(identity_files))
 
+    layer_outer.reset_peak_memory(args.device)
     max_memory = json.loads(args.max_memory) if args.max_memory else None
-    model, config, loading_info = load_model(
-        model_dir, args.device, args.dtype, device_map=args.device_map,
-        max_memory=max_memory, offload_folder=args.offload_folder)
+    streamer = None
+    if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER \
+            and args.layer_residency == layer_outer.RESIDENCY_STREAM:
+        # The whole point: never materialise the model, materialise one layer at
+        # a time.  `load_model`'s path is not reachable from here -- it would
+        # allocate the 1,486.8 GB this schedule exists to avoid.
+        import transformers
+
+        config = transformers.AutoConfig.from_pretrained(model_dir)
+        architectures = list(getattr(config, "architectures", None) or [])
+        cls = None
+        for name in architectures:
+            cls = getattr(transformers, name, None)
+            if cls is not None:
+                break
+        if cls is None:
+            # No AutoModelForCausalLM fallback here, unlike `load_model`: the
+            # meta-device build calls `cls(config)` directly and an auto class
+            # cannot be instantiated that way. A refusal naming the config's own
+            # architectures is more useful than a TypeError from inside torch.
+            raise fail(
+                "the layer-outer streaming loader needs a concrete architecture class; "
+                "config.architectures is %r and transformers exposes none of them. "
+                "AutoModelForCausalLM cannot be built on the meta device without one; "
+                "use --schedule window-outer, which can fall back to it."
+                % (architectures,))
+
+        def layer_guard(index: int, info: Dict[str, Any]) -> None:
+            # CAPTURE-03, per streamed layer.  The window-outer path gets one
+            # load and one guard; this path gets one load per layer, so the
+            # guard runs per layer -- otherwise the streamed weights (97.5% of
+            # GLM-5.3 by bytes) would be the only unexamined part of the model.
+            report = load_report(info)
+            reinit = refuse_on_load_report(report, args.allow_missing_weights)
+            if reinit:
+                log(stage="layer_missing_weights", index=index, count=len(reinit),
+                    keys=reinit[:8])
+
+        try:
+            streamer = layer_outer.build_streamed_model(
+                model_dir, cls, config, args.dtype, args.device, log,
+                layer_guard=layer_guard)
+        except layer_outer.LayerOuterError as exc:
+            raise fail(str(exc))
+        model = streamer.model
+        loading_info = layer_outer.streamed_loading_info(streamer)
+    else:
+        model, config, loading_info = load_model(
+            model_dir, args.device, args.dtype, device_map=args.device_map,
+            max_memory=max_memory, offload_folder=args.offload_folder)
 
     # CAPTURE-03.  A checkpoint whose tensors this `transformers` build cannot
     # name does not fail to load: `from_pretrained` RANDOMLY INITIALISES the
@@ -624,6 +789,13 @@ def run_capture(args: argparse.Namespace) -> int:
     missing = refuse_on_load_report(report, args.allow_missing_weights)
     if missing:
         log(stage="missing_weights", count=len(missing), keys=missing[:12])
+
+    # The high-water mark of MATERIALISED weight bytes. RSS cannot answer this
+    # on the CPU path (safetensors mmaps the shards, so the page cache lands in
+    # ru_maxrss whether or not the schedule ever held those bytes as its own),
+    # and it is the figure a "does GLM-5.3 fit" projection actually needs.
+    args.resident_watcher = layer_outer.ResidentWeightPeak(model)
+    args.resident_watcher.sample()
 
     head = head_module(model)
     vocab_size = int(head.weight.shape[0])
@@ -665,6 +837,26 @@ def run_capture(args: argparse.Namespace) -> int:
     capture_records: List[Dict[str, Any]] = []
     context_length = None
 
+    # THE ONE FORWARD CALL, shared by both schedules.  It is written once so
+    # that the layer-outer path cannot drift from the window-outer path in the
+    # inputs it builds: same dtypes, same devices, same kwargs, same
+    # `use_cache=False`.  What differs between the schedules is only WHEN this
+    # is called and which layers are resident when it is.
+    def forward_window(index: int) -> None:
+        window = panel.windows[index]
+        del tap[:]
+        input_ids = torch.tensor([window["token_ids"]], dtype=torch.long, device=args.device)
+        attention_mask = torch.from_numpy(
+            np.asarray(window["mask"], dtype=np.int64).reshape(1, -1)).to(args.device)
+        with torch.inference_mode():
+            model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+
+    precomputed: Optional[List[Any]] = None
+    layer_seconds: List[float] = [0.0] * len(panel.windows)
+    if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER:
+        precomputed = _run_layer_outer(args, model, streamer, panel, tap, forward_window,
+                                       layer_seconds)
+
     try:
         for index, window in enumerate(panel.windows):
             ids = window["token_ids"]
@@ -680,19 +872,22 @@ def run_capture(args: argparse.Namespace) -> int:
                 raise fail("window %s: the mask bytes we wrote hash to %s, not the sealed %s"
                            % (window["window_id"], mask_sha[:12], window["mask_sha256"][:12]))
 
-            del tap[:]
-            input_ids = torch.tensor([ids], dtype=torch.long, device=args.device)
-            attention_mask = torch.from_numpy(
-                np.asarray(mask, dtype=np.int64).reshape(1, -1)).to(args.device)
-            elapsed = time.monotonic()
-            with torch.inference_mode():
-                model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
-            elapsed = time.monotonic() - elapsed
-            if len(tap) != 1:
-                raise fail("window %s: the head hook fired %d times, expected exactly 1 -- an "
-                           "extra forward would misalign the capture"
-                           % (window["window_id"], len(tap)))
-            hidden_full = tap[0]
+            if precomputed is not None:
+                # layer-outer: this window's forward already happened, spread
+                # across the layer loop.  Everything below -- the row
+                # selection, the BF16 payload, the records -- is the same code
+                # on the same tensor.
+                hidden_full = precomputed[index]
+                elapsed = layer_seconds[index]
+            else:
+                elapsed = time.monotonic()
+                forward_window(index)
+                elapsed = time.monotonic() - elapsed
+                if len(tap) != 1:
+                    raise fail("window %s: the head hook fired %d times, expected exactly 1 "
+                               "-- an extra forward would misalign the capture"
+                               % (window["window_id"], len(tap)))
+                hidden_full = tap[0]
             if hidden_full.shape[0] != len(ids):
                 raise fail("window %s: hidden seq %d != tokens %d"
                            % (window["window_id"], hidden_full.shape[0], len(ids)))
@@ -746,6 +941,40 @@ def run_capture(args: argparse.Namespace) -> int:
     head_content = F.tensor_content_sha256(head_full, "lm_head.weight")
     log(stage="head", file=head_rel, tensor_content_sha256=head_content,
         bytes=os.path.getsize(head_full))
+
+    # -- measured, not predicted -------------------------------------------
+    # docs/GLM53-ROOT-FEASIBILITY.md §2 projects a peak from the census. A
+    # projection is not a measurement, so every run now reports what it
+    # actually used and the projection can be rebuilt on top of numbers.
+    args.resident_watcher.sample()
+    memory = layer_outer.peak_memory(args.device)
+    memory.update({"peak_resident_weight_bytes": args.resident_watcher.peak,
+                   "peak_resident_weight_gb": round(args.resident_watcher.peak / 1e9, 3),
+                   "peak_resident_weight_detail": args.resident_watcher.detail,
+                   "resident_weight_note":
+                       "the maximum, over the run, of the materialised parameter+buffer "
+                       "bytes. On the CPU path peak_rss_bytes ALSO counts the safetensors "
+                       "mmap page cache, which is evictable and is not held by the "
+                       "schedule; this figure is not confounded by it. On CUDA, "
+                       "peak_cuda_allocated_bytes is the authoritative number because it "
+                       "includes activations and workspace and has no page cache.",
+                   "schedule": args.schedule, "device": args.device,
+                   "layer_residency": (args.layer_residency
+                                       if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER
+                                       else None),
+                   "windows": len(panel.windows), "context_length": context_length,
+                   "hidden_size": hidden_size, "vocab_size": vocab_size,
+                   "model": args.weights_repository or args.model,
+                   "decoder_layers": (len(streamer.layers) if streamer is not None
+                                      else None)})
+    log(stage="peak_memory", **memory)
+    if args.memory_report:
+        directory = os.path.dirname(os.path.abspath(args.memory_report))
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(args.memory_report, "w", encoding="utf-8") as handle:
+            json.dump(memory, handle, indent=2, sort_keys=True)
+            handle.write("\n")
 
     return _assemble(args, writer, panel, panel_records, capture_records,
                      context_length=context_length, vocab_size=vocab_size,
@@ -915,12 +1144,15 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                  "checkpoint_files": identity_files},
         runtime_environment={"python": sys.version.split()[0],
                              "cold_run": args.cold_run},
-        source_files={"k6/tools/hf_capture.py": F.sha256_file(os.path.abspath(__file__))},
+        source_files=_source_files(args),
         capture_tool={"file": "k6/tools/hf_capture.py",
                       "sha256": F.sha256_file(os.path.abspath(__file__)),
                       "version": TOOL_VERSION, "wraps": [],
-                      "mechanism": "transformers forward pass; forward pre-hook on "
-                                   "model.get_output_embeddings()"})
+                      "schedule": args.schedule,
+                      "layer_residency": (args.layer_residency
+                                          if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER
+                                          else None),
+                      "mechanism": SCHEDULE_MECHANISM[args.schedule]})
 
     evidence = capture_doc["capture_content_digest"]
     determinism = {
@@ -1111,6 +1343,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--role", choices=["root", "quant", "derived"], required=True)
     parser.add_argument("--lane", required=True)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--schedule", default=layer_outer.SCHEDULE_WINDOW_OUTER,
+                        choices=[layer_outer.SCHEDULE_WINDOW_OUTER,
+                                 layer_outer.SCHEDULE_LAYER_OUTER],
+                        help="window-outer (default) loads the model and pushes one window "
+                             "at a time through the whole stack -- for a model that does "
+                             "not fit, that pays for the weights once PER WINDOW. "
+                             "layer-outer inverts the loop: for each layer { load it once; "
+                             "for each window: push that window through it; free it }, so "
+                             "the checkpoint tree is read once per RUN. Windows are still "
+                             "pushed sequentially and the per-window arithmetic is "
+                             "bit-identical; see docs/GLM53-LAYER-OUTER.md for the proofs.")
+    parser.add_argument("--layer-residency", default=layer_outer.RESIDENCY_STREAM,
+                        choices=[layer_outer.RESIDENCY_STREAM, layer_outer.RESIDENCY_RESIDENT],
+                        help="layer-outer only. `stream` (default) builds the model on the "
+                             "meta device and materialises one layer at a time -- the point "
+                             "of the schedule. `resident` reorders the loop over a fully "
+                             "loaded model; it saves nothing and exists so a digest "
+                             "mismatch can be attributed to the loop or to the loader.")
+    parser.add_argument("--memory-report", default=None,
+                        help="write measured peak memory for this run to this JSON path. "
+                             "It is written OUTSIDE the dataset so it cannot disturb the "
+                             "seal; the same figures are also logged as stage=peak_memory.")
     parser.add_argument("--device-map", default=None,
                         help="transformers device_map ('auto', 'balanced', a JSON object, "
                              "...). When set, the model is DISPATCHED by accelerate and the "
@@ -1167,6 +1421,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         import shutil
 
         shutil.rmtree(args.out)
+    if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER and args.device_map:
+        # These are two different answers to the same question and they fight.
+        # `--device-map` hands the model to `accelerate`, which attaches
+        # `AlignDevicesHook`s that move weights around per module call; the
+        # layer-outer streamer owns residency itself and would be racing those
+        # hooks for the same parameters. They are also not complementary: the
+        # reason `--device-map` exists (docs/GLM53-ROOT-FEASIBILITY.md R2) is
+        # that the window-outer loop cannot fit the model, and layer-outer
+        # removes that need on a single device. Composing them is future work,
+        # not a silently-broken flag combination.
+        print("hf_capture: REFUSED: --schedule layer-outer with --device-map. The "
+              "layer-outer streamer manages residency itself (meta model, one layer "
+              "materialised at a time); accelerate's dispatch hooks move the same "
+              "parameters on their own schedule and the two would fight over them. "
+              "Drop --device-map: on a single device layer-outer is what --device-map "
+              "was working around. Multi-device layer-outer is not implemented.",
+              file=sys.stderr)
+        return 3
     if args.role != "root" and not args.scope_file:
         print("hf_capture: REFUSED: --role %s without --scope-file. A candidate capture that "
               "does not describe what was quantized is unreadable evidence." % args.role,

@@ -2798,3 +2798,122 @@ as never having been run end to end against a real snapshot. Both surfaces that
 have since been exercised (tr3, dione) needed a materialize stage instead. The
 next NVFP4 measurement should assume it needs one too, and find out at plan time
 rather than at load time.
+
+---
+
+## 2026-08-30 — the layer-outer engine: the last blocker on GLM-5.3, and the $35–95 it is worth
+
+Stage A ended on one sentence (`docs/GLM53-ROOT-FEASIBILITY.md` §9.7): *"the
+layer-outer, window-inner schedule that reads the tree once per run instead of
+once per window is still the difference between a $3 stage C and a $38–96 one,
+and it is still unwritten."* It is now written, and proven.
+
+`k6/tools/layer_outer.py` + `hf_capture.py --schedule layer-outer`. The default
+schedule is unchanged and the old path is untouched.
+
+### The design decision that made it safe
+
+The naive layer-outer loop re-implements the model's forward — embeddings,
+position ids, mask mapping, rotary tables, per-layer kwargs, carried state,
+final norm — and every one of those is a chance to differ from `transformers`
+by a detail. Two of them bite exactly here: `GlmMoeDsaModel.forward` threads a
+**second** value between layers (`hidden_states, topk_indices = layer(...,
+prev_topk_indices=topk_indices)` — the DSA indexer's shared top-k, recomputed
+only by `full` layers), and `Glm5NextTextModel.forward` carries a hyper-channel
+dimension. A re-implementation that knows about hidden states and not about
+those is silently wrong, and silently wrong is the worst outcome available.
+
+So the engine re-implements **nothing**. It runs the model's own `forward` once
+per (layer, window) and proxies only the decoder layers: layers below the one
+being computed return the previous outer iteration's return value *verbatim*
+(whatever its shape — the carried state rides along untouched), the layer being
+computed calls the real layer and memoises, layers above raise a suspend
+exception that unwinds the pass. On the last layer there is no proxy left above,
+so the model runs straight on into its own final norm and head — that is the
+epilogue, executed by the model's own code, with the existing head pre-hook
+firing exactly as before. The only thing the file decides is *when* each layer
+runs. The prologue is recomputed once per (layer, window); that is an embedding
+gather and a mask build against a layer of a 753B MoE, and it is paid on purpose
+to buy an implementation that cannot drift.
+
+Same principle on the loading side: the streamer builds on meta through
+`cls.get_init_context(...)` and materialises one layer at a time through
+`transformers`' own `convert_and_load_state_dict_in_model`. Re-deriving the
+256→1 expert fusion by hand would have been the same category of mistake.
+Byte-equality against `from_pretrained`, parameter by parameter, is asserted
+(L4/L6), not assumed.
+
+### What it bought
+
+| | before | after |
+|---|---:|---:|
+| Fruit peak VRAM (L4, measured) | 10.409 GB | **2.167 GB** |
+| Fruit peak resident weights | 9.144 GB | **1.471 GB** |
+| GLM-5.3 projected peak VRAM | 81.7 GB | **~47–51 GB** |
+| GLM-5.3 min/window | 13–26 | **0.4–1.6** |
+| Stage C | $38–96 | **$1.08–3.52** |
+
+The GLM-5.3 peak drops below §2's projection because the engine's residency
+split is finer than that projection assumed: §2 kept the whole 37.78 GB
+non-routed set resident, whereas the engine streams *whole layers* and leaves
+only `embed + lm_head + norm` (3.81 GB) permanently resident.
+
+### Four things this cost me, worth remembering
+
+**Lesson 50 — RSS is the wrong instrument for an mmap loader, and it is wrong
+in the flattering direction on the old path and the damning direction on the
+new one.** The first Fruit run reported 19.98 GB window-outer vs 11.60 GB
+layer-outer and I nearly wrote that down as a 1.7× win. It is not: `safetensors`
+mmaps the shards, so both runs carry ~10 GB of evictable page cache in
+`ru_maxrss`. The real figures are 9.14 vs 1.47 GB of materialised weights — a
+6.2× — and I only got them by adding an explicit `resident_parameter_bytes`
+high-water mark. Stage A had already flagged this ("an unknown part of that
+22.3 GB is evictable file-backed page cache") and I still walked into it.
+`ru_maxrss` is also **bytes on Darwin and kilobytes on Linux**; the report names
+its units for that reason.
+
+**Lesson 51 — a CPU proof of a GPU engine is half a proof.** Everything passed
+on the Mac. The streamed loader's `device_map={"": "cuda:0"}` path had never
+run. One L4 spot instance, created and destroyed inside the hour, closed that —
+and the CUDA digests matched on both schedules. Shipping "proven" without it
+would have left the hole in exactly the place the engine exists for.
+
+**Lesson 52 — `bin/selftest_hf_capture.py` was never wired into
+`bin/selftest_all.sh`.** 25 cases, green, and nothing ran them. Stage A's own
+regression tests (A17–A22) were in that file. Both it and the new
+`selftest_layer_outer.py` are wired in now. A test that no runner invokes is a
+document, not a test.
+
+**Lesson 53 — record the schedule where it does not cost comparability.** The
+schedule is in `runtime.capture_tool`, deliberately *not* in
+`stack_fingerprint`: `dscompare` reads the fingerprint to decide
+`stack_relation`, and a `cross_stack` verdict stamps `usable_as_floor: false`
+and attaches a 1e-2-class bias block. Charging a capture that penalty for a loop
+order the digests prove is bit-identical would be asserting a difference that is
+not there. Disclosure and penalty are different things and they go in different
+fields.
+
+### Fail-without-fix
+
+`bin/selftest_layer_outer.py` against `git archive HEAD` of the parent commit
+(new test file copied in, everything else the pre-change tree): **1 passed, 19
+failed**. After: **20 passed, 0 failed**. The one that passes before passes
+vacuously — it asserts a refusal, and the old tree refuses the whole invocation
+on the unrecognised flag. Named in `docs/GLM53-LAYER-OUTER.md` §9 so the 1 is
+not read as coverage.
+
+### To watch
+
+The engine's least-measured term is the **expert-fusion transient** during a
+layer load. Stage A upper-bounded it at 22.3 GB (1.15× one sparse layer's routed
+experts) from a CPU RSS reading; on Fruit's CUDA run it is small enough to hide
+under the epilogue's logits buffer, but Fruit's routed set per layer is 24×
+smaller than GLM-5.3's at the same vocabulary, so the happy reading must not be
+extrapolated. Second: Fruit's per-layer load shows ~0.13 ms per checkpoint
+tensor of size-independent overhead, and a GLM-5.3 sparse layer has 76,800
+source expert tensors — extrapolating to ~10 s/layer, ~12.5 min/run, the same
+order as the IO. **Both are answered by the first sparse layer's `layer_load`
+log line in a Stage B run.** Measure them; do not trust this paragraph.
+
+**Stage B was not taken.** No GLM-5.3 capture was run. That remains a separate,
+budgeted decision.
