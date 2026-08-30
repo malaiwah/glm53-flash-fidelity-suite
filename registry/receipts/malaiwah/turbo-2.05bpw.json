@@ -1,0 +1,259 @@
+{
+  "artifact": {
+    "codec": {
+      "bits_per_weight_effective": null,
+      "bits_per_weight_nominal": 2.05,
+      "family": "exl3-mul1",
+      "group_size": null,
+      "quantizer_tool": "exllamav3 EXL3",
+      "quantizer_version": "1.4.4"
+    },
+    "config_sha256": null,
+    "container": "exl3",
+    "index_sha256": null,
+    "precision_label": "2.05 bpw",
+    "producer": {
+      "handle": "turboderp",
+      "name": "turboderp",
+      "url": "https://huggingface.co/turboderp"
+    },
+    "repository": "turboderp/GLM-5.3-Flash-exl3",
+    "revision": "51058cd551c7e570d87bd32a4adee720edce2349",
+    "scope": {
+      "activation_quantization": null,
+      "assignments": [
+        {
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "all",
+          "note": "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "embed_tokens",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 6,
+          "format": "exl3-mul1",
+          "layer_range": "all",
+          "note": "KDA layers ship a FUSED qkv_proj (rows q|k|v); MLA layers ship q_a/q_b/kv_a_with_mqa/wq_b. All K6. read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "attn.qkv",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 6,
+          "format": "exl3-mul1",
+          "layer_range": "all",
+          "note": "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "attn.o",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 16,
+          "format": "fp16",
+          "layer_range": "all",
+          "note": "b_proj, f_a/f_b_proj, g_a/g_b_proj, weights_proj, wk, conv1d and the attention norms ship as plain fp16/bf16 tensors. read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "attn.other",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 5,
+          "format": "exl3-mul1",
+          "layer_range": "0-2",
+          "note": "only the three DENSE layers have an mlp.*; layers 3-44 are MoE. read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "mlp.gate",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 5,
+          "format": "exl3-mul1",
+          "layer_range": "0-2",
+          "note": "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "mlp.up",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 5,
+          "format": "exl3-mul1",
+          "layer_range": "0-2",
+          "note": "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "mlp.down",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 32,
+          "format": "fp32",
+          "layer_range": "3-44",
+          "note": "the routing gate ships fp16/fp32, unquantized. read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "moe.router",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 4,
+          "format": "exl3-mul1",
+          "layer_range": "3-44",
+          "note": "12,096 modules = 42 layers x 288 experts x 3 projections, all K4. read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "moe.experts",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 6,
+          "format": "exl3-mul1",
+          "layer_range": "3-44",
+          "note": "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "moe.shared_expert",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 16,
+          "format": "bf16",
+          "layer_range": "all",
+          "note": "read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "norm",
+          "treatment": "native"
+        },
+        {
+          "bits_per_weight": 4,
+          "format": "exl3-mul1",
+          "layer_range": "45",
+          "note": "layer 45 ships in a separate mtp.safetensors and is NOT executed by standard-logits scoring; present in the artifact, outside the measured function. read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "mtp",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 6,
+          "format": "exl3-mul1",
+          "layer_range": "all",
+          "note": "stock exllamav3 quantizes the head (head_bits 6), unlike TR3 which keeps it native BF16. The FP8 parent had lm_head in modules_to_not_convert, so this 6-bit head was quantized from BF16 weights. read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "lm_head",
+          "treatment": "quantized"
+        },
+        {
+          "bits_per_weight": 6,
+          "format": "exl3-mul1",
+          "layer_range": "all",
+          "note": "vision tower (model.visual.*): attn q/k/v/o and MLP are EXL3 at K6, patch embed and norms native. Never executed by text-only scoring. read from the release's OWN quantization_config.json @ 2a30229e (47.9 MB, one tensor_storage entry per module): bits = trellis.shape[-1]//16, verified identical within each class",
+          "tensor_class": "other",
+          "treatment": "quantized"
+        }
+      ],
+      "head_policy": "quantized",
+      "kv_cache_dtype": "not_applicable",
+      "mtp_included": true,
+      "policy": "mixed"
+    },
+    "scope_digest": "attn.o=quantized:exl3-mul1@6|attn.other=native:fp16@16|attn.qkv=quantized:exl3-mul1@6|embed_tokens=native:bf16@16|lm_head=quantized:exl3-mul1@6|mlp.down=quantized:exl3-mul1@5|mlp.gate=quantized:exl3-mul1@5|mlp.up=quantized:exl3-mul1@5|moe.experts=quantized:exl3-mul1@4|moe.router=native:fp32@32|moe.shared_expert=quantized:exl3-mul1@6|mtp=quantized:exl3-mul1@4|norm=native:bf16@16|other=quantized:exl3-mul1@6|head=quantized|kv=not_applicable",
+    "shard_hash_verification": "none",
+    "size_bytes": 85233484348,
+    "tensor_parallel_pre_sliced": false,
+    "tensor_parallel_world_size": null,
+    "url": "https://huggingface.co/turboderp/GLM-5.3-Flash-exl3"
+  },
+  "auxiliary_metrics": {
+    "top1_agreement": 0.8891841719589644
+  },
+  "cost": {
+    "basis": null,
+    "usd": null
+  },
+  "determinism": {
+    "cold_start_per_run": true,
+    "distinct_evidence_hash_count": 1,
+    "evidence_hashes": [
+      "9d27f2cbc2c1f27079ee7e80d0185268ef2d0b0ac4a5cf709ab7fd5dededed4e"
+    ],
+    "evidence_kind": "tokenwise_kld_sha256",
+    "identical_across_runs": true,
+    "note": "2 cold runs, 2 distinct kld_report_sha256, 1 distinct tokenwise_kld_sha256. The report-file digests differ per run and prove nothing; the tokenwise digest is the determinism evidence. cold_run_deviation (verbatim): 2 cold runs, not 5 (budget; disclosed)",
+    "per_run_report_sha256": [
+      "30111561b4078036cb9b6bef26f0ef1e22037158104358d4d1ef19487a278bba",
+      "a265e312055929ec215f1f316263f1ea453d818a653d6f075b6bcd2488d3ba05"
+    ],
+    "run_count": 2,
+    "run_means": [
+      0.12163767673339457,
+      0.12163767673339457
+    ]
+  },
+  "disclosures": [
+    {
+      "affects_comparability": true,
+      "code": "streaming_lane_offset",
+      "detail": "Measured on the streaming lane. Routed-expert combine order differs from the sealed EP8 lane, moving logits rms 0.26-0.28; with --reduce-order fp32 the window-0 KLD delta against the sealed lane is +1.5076e-5 at 99.80% argmax agreement. Streaming runs are bitwise identical to each other, so determinism holds within the lane; they are NOT bitwise identical to sealed-lane runs, and bitwise cross-topology parity is not achievable at all.",
+      "severity": "caveat"
+    },
+    {
+      "affects_comparability": true,
+      "code": "quantized_from_quantized_parent",
+      "detail": "The release's own quantization_config declares original_quantization_config.fmt = e4m3: this artifact was quantized from an already-quantized checkpoint, not from the BF16 reference this row is scored against. Its divergence therefore includes the parent's, and it is not lineage-comparable with a row quantized directly from BF16 at the same bit rate.",
+      "severity": "caveat"
+    }
+  ],
+  "environment": {
+    "gpu": "H200",
+    "gpu_count": 1,
+    "host": "jarvislabs",
+    "peak_vram_gb": null,
+    "tensor_parallel": 1,
+    "vram_budget_gb": null,
+    "wall_clock_hours": null
+  },
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "head_policy": "native_head",
+    "logits_dtype": "fp32",
+    "stack_relation": "same_stack",
+    "two_pass": false,
+    "vocab_chunk": null,
+    "zero_handling": null
+  },
+  "evidence": [],
+  "lane": "streaming",
+  "measured_at": "2026-08-30T19:39:33Z",
+  "measurement_scope": {
+    "contexts": 25,
+    "covers_full_panel": true,
+    "position_filter": "all",
+    "positions_per_context": 2047,
+    "scored_positions": 51175,
+    "subset_detail": null
+  },
+  "measurer": {
+    "handle": "malaiwah",
+    "is_artifact_author": false,
+    "name": "malaiwah",
+    "url": "https://huggingface.co/malaiwah"
+  },
+  "metric": {
+    "direction": "reference_to_candidate",
+    "name": "mean_of_run_means_tokenwise_kld",
+    "units": "nats",
+    "value": 0.12163767673339457
+  },
+  "panel": {
+    "contexts": 25,
+    "panel_receipt_sha256": "0beec5770e5107547731b084f1bc5f9fb8ba79d67af56ddb70d919da367737d5",
+    "panel_ref": "panel--glm53.brandonmusic.final25",
+    "panel_token_sha256": "6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff",
+    "scored_positions_total": 51175
+  },
+  "produced_by": {
+    "container_digest": null,
+    "container_image": null,
+    "dependencies": {
+      "lane": "streaming",
+      "reduce_order": "fp32"
+    },
+    "entrypoint": "bin/measure_cloud.py",
+    "entrypoint_sha256": "a9eb9d9aa37970083ada97439ce6b5f3848b905cadebd8fde13df2042c5f389e",
+    "repository": "malaiwah/glm53-fidelity-suite",
+    "revision": "6c9274676f2e493204a84c79ee1e6aef89c9534b",
+    "runtime_reader_sha256": null,
+    "tool": "glm53-fidelity-suite/bin"
+  },
+  "receipt_sha256": "5318ae2e22850b8c826086bfc813b3937825f8e70c91fa44baef44950eb745d1",
+  "reference": {
+    "reference_ref": "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+    "teacher_backend_identity_sha256": "85b11599c6b36a83fa8099a09a298a386a0c603d1f18d3702e7fb1c470962ce4",
+    "teacher_receipt_sha256": "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5"
+  },
+  "submission_schema": "quant-fidelity-registry/submission-receipt.v1"
+}

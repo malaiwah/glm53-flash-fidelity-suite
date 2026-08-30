@@ -203,7 +203,8 @@ def _ingest_digests():
     would be a fabricated provenance record of exactly the kind the block exists
     to make impossible.
     """
-    return H.digests(os.path.dirname(L.repo_root(__file__)), H.INGEST_CLOSURE)
+    root = L.repo_root(__file__)          # the dir holding schema/ and data/
+    return H.digests(os.path.dirname(root), H.INGEST_CLOSURE, alias_root=root)
 
 
 def harness_from_produced_by(pb, source):

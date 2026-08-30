@@ -1046,6 +1046,59 @@ def main():
 
     print()
     print("=" * 78)
+    print("E2. the tools work in the shape a CONTRIBUTOR clones, not only in ours")
+    print("=" * 78)
+    # CONTRIBUTING §1 tells an outside contributor to clone the PUBLISHED dataset
+    # repo and run `python tools/registry_validate.py --submission <receipt>`.
+    # That repo has schema/, data/ and tools/ at its ROOT -- there is no
+    # `registry/` directory above them. INGEST_CLOSURE names
+    # `registry/tools/registry_add.py`, resolved against the parent of the
+    # registry root, so in that shape it resolved to a path outside the clone and
+    # the documented command died with an IOError traceback instead of printing
+    # ACCEPTED or a named failure. Every outside submission check hit it.
+    #
+    # The invariant that must hold while fixing it: the harness_id is a function
+    # of the CODE, not of where somebody cloned it. Same bytes -> same digests ->
+    # same id, in both shapes.
+    flat = os.path.join(tmp, "as-published")
+    os.makedirs(flat, exist_ok=True)
+    for sub in ("tools", "schema", "data"):
+        src = os.path.join(args.root, sub)
+        if os.path.isdir(src):
+            shutil.copytree(src, os.path.join(flat, sub))
+    probe = (
+        "import sys, json; sys.path.insert(0, %r); "
+        "import registry_add as A; print(json.dumps(A._ingest_digests()))"
+        % os.path.join(flat, "tools"))
+    out = subprocess.run([PY, "-c", probe], capture_output=True, text=True,
+                         cwd=os.path.join(flat, "tools"))
+    ok = out.returncode == 0
+    print("  %-58s %s" % ("the ingest closure resolves in the published shape",
+                          "PASS" if ok else "FAIL (%s)"
+                          % (out.stderr.strip().splitlines() or [""])[-1][:70]))
+    passed += ok
+    failed += not ok
+    if ok:
+        here = subprocess.run(
+            [PY, "-c", "import sys, json; sys.path.insert(0, %r); "
+                       "import registry_add as A; print(json.dumps(A._ingest_digests()))"
+                       % os.path.join(args.root, "tools")],
+            capture_output=True, text=True, cwd=os.path.join(args.root, "tools"))
+        same = (here.returncode == 0
+                and json.loads(here.stdout) == json.loads(out.stdout))
+        print("  %-58s %s" % ("...and yields the SAME digests as our own shape",
+                              "PASS" if same else "FAIL"))
+        passed += same
+        failed += not same
+        paths = [d["path"] for d in json.loads(out.stdout)]
+        stable = all(p.startswith("registry/tools/") for p in paths)
+        print("  %-58s %s" % ("...recording the suite-relative path either way",
+                              "PASS" if stable else "FAIL (%s)" % paths))
+        passed += stable
+        failed += not stable
+
+    print()
+    print("=" * 78)
     print("F. a hand-edited value is caught by re-deriving the rows from their receipts")
     print("=" * 78)
     out = subprocess.run([PY, os.path.join(HERE, "seed_registry.py"), "--check"],

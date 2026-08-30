@@ -119,19 +119,45 @@ def _canonical(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-def digests(repo_root, closure):
+def digests(repo_root, closure, alias_root=None):
     """[{role, path, sha256}] for a closure, read from the tree at `repo_root`.
 
     Reads the BYTES.  A digest transcribed beside the file it names is a
     constant, not a provenance record -- the same lesson `_receipt_sha` in
     seed_registry.py was written for.
+
+    `alias_root` exists because this registry lives in TWO shapes.  In the suite
+    repo the tools are at `registry/tools/`; in the published dataset repo --
+    the one CONTRIBUTING §1 tells a contributor to clone -- the SAME files are at
+    `tools/`, with no `registry/` above them.  Resolving only against
+    `repo_root` therefore raised IOError out of `registry_validate.py
+    --submission`, which is the single command the contributor path documents,
+    so every outside submission check died on a stack trace instead of printing
+    ACCEPTED or a named failure.
+
+    The RECORDED `path` stays the suite-relative one in both shapes, and that is
+    the point: `harness_id` is a function of the code, not of where somebody
+    cloned it.  Only the place the bytes are read from changes.
     """
     out = []
     for role, rel in closure:
         full = os.path.join(repo_root, rel)
+        if not os.path.exists(full) and alias_root:
+            # strip the leading path segment: registry/tools/x.py -> tools/x.py
+            head, sep, tail = rel.partition("/")
+            if sep:
+                candidate = os.path.join(alias_root, tail)
+                if os.path.exists(candidate):
+                    full = candidate
         if not os.path.exists(full):
-            raise IOError("harness closure names %s, which does not exist under %s"
-                          % (rel, repo_root))
+            raise IOError("harness closure names %s, which exists under neither "
+                          "%s nor %s (as %s). This registry ships in two shapes "
+                          "-- the suite repo, where the tools are at "
+                          "registry/tools/, and the published dataset repo, "
+                          "where they are at tools/ -- and the caller must pass "
+                          "alias_root for the second."
+                          % (rel, repo_root, alias_root or "(no alias root)",
+                             rel.partition("/")[2] or rel))
         out.append({"role": role, "path": rel, "sha256": sha256_file(full)})
     return sorted(out, key=lambda d: d["role"])
 

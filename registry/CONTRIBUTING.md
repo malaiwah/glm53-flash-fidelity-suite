@@ -122,6 +122,26 @@ The Hugging Face dataset repo above is the one that exists today and carries
 `schema/`, `tools/` and `data/`. The GitHub mirror named in §3 is **not live
 yet**; until it is, clone the HF repo for this step and submit by discussion.
 
+**What runs in that clone, and what does not.** The published dataset repo is a
+*subset* of the suite repo's `registry/` directory — it ships `tools/`,
+`schema/` and `data/` at its root, without the `registry/` level above them and
+without a few files that live only in the suite. So:
+
+| in a clone of the HF dataset | |
+|---|---|
+| `python tools/registry_validate.py --submission <receipt>` | **works** — this is the command you need |
+| `python tools/registry_validate.py --strict` (`make validate`) | works |
+| `python tools/registry_validate.py --offline-selftest` | works |
+| `make render-check` | **fails** — `README.head.md` is not published |
+| `make joint` | **fails** — `registry_joint_check.py` is not published |
+| `make selftest` | **partially fails** — some cases reach for suite-only files |
+| `make check` (which runs all four) | **cannot pass in this repo today** |
+
+Run the submission check; do not be alarmed when `make check` does not go green
+there. `make check` is green in the suite repo (`quant-fidelity-suite`), where
+all of its inputs exist. If you have that clone, `bin/registry-submit
+<receipt.json>` is the same validation with a friendlier wrapper.
+
 ### What it costs, before you start
 
 Both runners print a dollar estimate before they spend anything, but here is

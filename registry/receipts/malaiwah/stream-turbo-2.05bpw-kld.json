@@ -1,0 +1,496 @@
+{
+  "artifact_config_sha256": "43921c0b6dd51805a243649a647417230ef9cb9ba8e26ae06a461c3f7e08d037",
+  "artifact_index_sha256": "9509363becd75ed23fc60fd678cd4dd3de214c4fa4df177f8d13ab7a09bc4ecb",
+  "artifact_repo": "turboderp/GLM-5.3-Flash-exl3",
+  "artifact_revision": "51058cd551c7e570d87bd32a4adee720edce2349",
+  "bitwise_deterministic": true,
+  "codebook": "mul1",
+  "cold_run_count": 2,
+  "cold_run_deviation": "2 cold runs, not 5 (budget; disclosed)",
+  "declared_bits": 2.05,
+  "declared_head_bits": 5,
+  "distinct_tokenwise_kld_sha256": [
+    "9d27f2cbc2c1f27079ee7e80d0185268ef2d0b0ac4a5cf709ab7fd5dededed4e"
+  ],
+  "exllamav3_version": "1.4.4",
+  "kld_report_sha256": [
+    "30111561b4078036cb9b6bef26f0ef1e22037158104358d4d1ef19487a278bba",
+    "a265e312055929ec215f1f316263f1ea453d818a653d6f075b6bcd2488d3ba05"
+  ],
+  "materialization_receipt_sha256": "9c9162207e41929fb85fb6a800ac75f5989c59564b7d36080e8011a31f639d55",
+  "measured_mean_kld": 0.12163767673339457,
+  "per_domain": {
+    "axis1_general": {
+      "count": 14329,
+      "cvar95": 0.9739515347886502,
+      "max": 6.7598694670517325,
+      "mean": 0.11884223881901645,
+      "p50": 0.03155374159862673,
+      "p95": 0.48774131340117755,
+      "p99": 1.2566447506523422,
+      "std": 0.2627634159949779
+    },
+    "axis2_legal": {
+      "count": 12282,
+      "cvar95": 1.808549483764195,
+      "max": 10.678926356885764,
+      "mean": 0.21153385426928104,
+      "p50": 0.07299806835229009,
+      "p95": 0.8312662665746972,
+      "p99": 2.42744602005791,
+      "std": 0.48603183414248613
+    },
+    "axis3_code_agentic": {
+      "count": 12282,
+      "cvar95": 1.086989544685636,
+      "max": 7.821192328485437,
+      "mean": 0.10203175277585091,
+      "p50": 0.009227875219970198,
+      "p95": 0.4284965021482642,
+      "p99": 1.4385845032448,
+      "std": 0.3177903478773131
+    },
+    "axis4_reasoning_termination": {
+      "count": 12282,
+      "cvar95": 0.8100763636120182,
+      "max": 5.157546092691575,
+      "mean": 0.05460876738849294,
+      "p50": 0.00010007344550499923,
+      "p95": 0.33250409462440417,
+      "p99": 1.04954351374376,
+      "std": 0.22883641517269193
+    }
+  },
+  "per_run_top1_agreement": [
+    0.8891841719589644,
+    0.8891841719589644
+  ],
+  "per_window": [
+    {
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.8034169247755022,
+        "max": 3.781488910646339,
+        "mean": 0.1335521442950495,
+        "p50": 0.07491653968714279,
+        "p95": 0.42777627999810486,
+        "p99": 1.0485827706206976,
+        "std": 0.21948886636551848
+      },
+      "window_id": "final-0000"
+    },
+    {
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 1.9084031677981808,
+        "max": 6.324712604417478,
+        "mean": 0.23802624715630516,
+        "p50": 0.08764267125058936,
+        "p95": 0.9310005524937328,
+        "p99": 2.3349852538459532,
+        "std": 0.4982184832829226
+      },
+      "window_id": "final-0001"
+    },
+    {
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 1.9230496680462685,
+        "max": 7.821192328485437,
+        "mean": 0.17518025743832538,
+        "p50": 0.010524801661728225,
+        "p95": 0.896790817945035,
+        "p99": 2.6045491356771717,
+        "std": 0.5137909054840407
+      },
+      "window_id": "final-0002"
+    },
+    {
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.690396694981555,
+        "max": 2.9102110780034582,
+        "mean": 0.04746482008264828,
+        "p50": 4.7909037148759815e-05,
+        "p95": 0.30631072013441446,
+        "p99": 0.9024338752923289,
+        "std": 0.19507511828732793
+      },
+      "window_id": "final-0003"
+    },
+    {
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 1.5942715003428047,
+        "max": 5.254125541454102,
+        "mean": 0.29998576800354143,
+        "p50": 0.17267006464910908,
+        "p95": 1.1038035270109925,
+        "p99": 1.8546255783989478,
+        "std": 0.39564128432510065
+      },
+      "window_id": "final-0004"
+    },
+    {
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 1.553695955063526,
+        "max": 5.719373420456009,
+        "mean": 0.1985308128269886,
+        "p50": 0.08370448527062664,
+        "p95": 0.6890622336001511,
+        "p99": 2.371800703478666,
+        "std": 0.40455128667557516
+      },
+      "window_id": "final-0005"
+    },
+    {
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 1.3415709873593344,
+        "max": 5.830727848281112,
+        "mean": 0.0998653403127117,
+        "p50": 0.001483125167972922,
+        "p95": 0.48352374041491447,
+        "p99": 1.6971471983037878,
+        "std": 0.385050906929704
+      },
+      "window_id": "final-0006"
+    },
+    {
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.6674982442273791,
+        "max": 3.009370439347482,
+        "mean": 0.046082632168476474,
+        "p50": 0.00015737436407325673,
+        "p95": 0.3068053494358007,
+        "p99": 0.8593506768179757,
+        "std": 0.1872831665538853
+      },
+      "window_id": "final-0007"
+    },
+    {
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.5401864221411345,
+        "max": 3.4739585496005114,
+        "mean": 0.0670044015771716,
+        "p50": 0.019015017075307727,
+        "p95": 0.25064083799545256,
+        "p99": 0.677207248346653,
+        "std": 0.16255821329288497
+      },
+      "window_id": "final-0008"
+    },
+    {
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 1.3465088145357955,
+        "max": 6.415962987048413,
+        "mean": 0.16001668778083705,
+        "p50": 0.06383535030460746,
+        "p95": 0.5511804689423515,
+        "p99": 1.849969908721827,
+        "std": 0.3895964732935142
+      },
+      "window_id": "final-0009"
+    },
+    {
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.632629468956208,
+        "max": 4.464416600157781,
+        "mean": 0.09465596070391746,
+        "p50": 0.038113637851204314,
+        "p95": 0.3400219435407753,
+        "p99": 0.7393562068699071,
+        "std": 0.18273329918589357
+      },
+      "window_id": "final-0010"
+    },
+    {
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.8019598327195084,
+        "max": 4.082442409116126,
+        "mean": 0.05400958599884502,
+        "p50": 0.00014468594239553805,
+        "p95": 0.3121467503888025,
+        "p99": 1.0692965663600311,
+        "std": 0.22125145368686133
+      },
+      "window_id": "final-0011"
+    },
+    {
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.72657659808605,
+        "max": 3.7311074132631052,
+        "mean": 0.06649295396273609,
+        "p50": 0.0011098881050272782,
+        "p95": 0.30028480149749603,
+        "p99": 0.8830696699157641,
+        "std": 0.2160108313686236
+      },
+      "window_id": "final-0012"
+    },
+    {
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 1.9891924889803627,
+        "max": 8.9422559647767,
+        "mean": 0.20181486080465674,
+        "p50": 0.05846424764664673,
+        "p95": 0.7222133356923949,
+        "p99": 2.916831580559537,
+        "std": 0.5580785780928974
+      },
+      "window_id": "final-0013"
+    },
+    {
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.4556730023331723,
+        "max": 2.204770758081367,
+        "mean": 0.05012827865711058,
+        "p50": 0.004246468031357883,
+        "p95": 0.23158417806402154,
+        "p99": 0.5410574974826866,
+        "std": 0.12800612976202044
+      },
+      "window_id": "final-0014"
+    },
+    {
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.9298657540190157,
+        "max": 3.373085095398592,
+        "mean": 0.0643299630644179,
+        "p50": 5.8732239696314005e-05,
+        "p95": 0.3933209418396747,
+        "p99": 1.0916444424486174,
+        "std": 0.2511626062918946
+      },
+      "window_id": "final-0015"
+    },
+    {
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.5423519522236369,
+        "max": 4.8595587075723286,
+        "mean": 0.07401288629407067,
+        "p50": 0.021948743881881744,
+        "p95": 0.28732494659879776,
+        "p99": 0.6594956658356224,
+        "std": 0.16830891578170007
+      },
+      "window_id": "final-0016"
+    },
+    {
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 1.7799809116339644,
+        "max": 6.153583901734726,
+        "mean": 0.2075563639821346,
+        "p50": 0.06034569676032654,
+        "p95": 0.8862617618915688,
+        "p99": 2.354293665587,
+        "std": 0.463729588474604
+      },
+      "window_id": "final-0017"
+    },
+    {
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.8751655433749891,
+        "max": 5.261080861610037,
+        "mean": 0.08915200839597466,
+        "p50": 0.010854133385427612,
+        "p95": 0.367525459362319,
+        "p99": 1.0660782406696134,
+        "std": 0.2627538161096996
+      },
+      "window_id": "final-0018"
+    },
+    {
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.8559556441329177,
+        "max": 5.01988276755252,
+        "mean": 0.05621475390011521,
+        "p50": 0.0001298656238572736,
+        "p95": 0.33136183598867286,
+        "p99": 1.1719823029941108,
+        "std": 0.2478439492858451
+      },
+      "window_id": "final-0019"
+    },
+    {
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 1.1443859326007133,
+        "max": 6.7598694670517325,
+        "mean": 0.13523338106093785,
+        "p50": 0.030631250956054262,
+        "p95": 0.5621172603280984,
+        "p99": 1.631530615831727,
+        "std": 0.323759945514643
+      },
+      "window_id": "final-0020"
+    },
+    {
+      "document_id": "reap-recall-packed-axis2_legal-2",
+      "domain": "axis2_legal",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 2.068254391344295,
+        "max": 10.678926356885764,
+        "mean": 0.2632581530647641,
+        "p50": 0.09118000651157865,
+        "p95": 1.092266025519207,
+        "p99": 2.547080495935878,
+        "std": 0.5669740718695244
+      },
+      "window_id": "final-0021"
+    },
+    {
+      "document_id": "reap-recall-packed-axis3_code_agentic-3",
+      "domain": "axis3_code_agentic",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.9382010045677293,
+        "max": 3.7871081953481327,
+        "mean": 0.10320867114706568,
+        "p50": 0.012585439571708153,
+        "p95": 0.43615987560332226,
+        "p99": 1.130964678706052,
+        "std": 0.2585615107054683
+      },
+      "window_id": "final-0022"
+    },
+    {
+      "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+      "domain": "axis4_reasoning_termination",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.8899639157620983,
+        "max": 5.157546092691575,
+        "mean": 0.0595508491164548,
+        "p50": 7.018962240974388e-05,
+        "p95": 0.3896550208485494,
+        "p99": 1.0256459633626482,
+        "std": 0.2597847499920164
+      },
+      "window_id": "final-0023"
+    },
+    {
+      "document_id": "reap-recall-packed-axis1_general-4",
+      "domain": "axis1_general",
+      "role": "final",
+      "summary": {
+        "count": 2047,
+        "cvar95": 0.46200166952887595,
+        "max": 5.003620935389194,
+        "mean": 0.05561413653960789,
+        "p50": 0.010938686712406977,
+        "p95": 0.21990827559948867,
+        "p99": 0.45472114154491944,
+        "std": 0.1667877907491178
+      },
+      "window_id": "final-0024"
+    }
+  ],
+  "per_window_source": "run-1; identical across runs (one distinct tokenwise_kld_sha256)",
+  "position_block": 512,
+  "profile": "turbo-2.05bpw-hf-sharded",
+  "qualification_window_count": 25,
+  "quality_gate": {
+    "metric": "mean_tokenwise_kld",
+    "threshold_lt": 0.06
+  },
+  "quality_gate_passed": false,
+  "routed_bits_decode_histogram": {
+    "K2": 907200
+  },
+  "run_mean_spread": 0.0,
+  "run_means": [
+    0.12163767673339457,
+    0.12163767673339457
+  ],
+  "schema": "malaiwah.glm53-turbo-2.05bpw-packed-kld-summary.v1",
+  "seal_disclosure": "unsealed-source scoring: stock exllamav3 releases ship no upstream receipts, reconstruction closures or sealed reader ABI; the packed surface was decoded WITHOUT seal verification (consumed payload sha256s and the immutable repo revision are recorded instead)",
+  "student_label": "turboderp-exl3-mul1-2.05bpw",
+  "student_receipt_sha256": "1e93a563850ece4d18730a7b4713b5cf1a5ab556e8e7855bb44236caf39362ab",
+  "teacher_label": "sealed-ep8",
+  "teacher_receipt_sha256": "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5",
+  "teacher_source": "sealed_ep8_bf16_teacher",
+  "token_panel_receipt_sha256": "0beec5770e5107547731b084f1bc5f9fb8ba79d67af56ddb70d919da367737d5",
+  "top1_agreement": 0.8891841719589644
+}

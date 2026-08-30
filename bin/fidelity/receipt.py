@@ -260,8 +260,16 @@ def produced_by_block(suite_root: Path, entrypoint: str,
     deps = {str(k): str(v) for k, v in (dependencies or {}).items()
             if v is not None}
     return {
-        "tool": "glm53-fidelity-suite/bin",
-        "repository": "malaiwah/glm53-fidelity-suite",
+        # The GitHub repo was RENAMED glm53-fidelity-suite -> quant-fidelity-suite
+        # when it stopped being one model's campaign. This block is copied
+        # verbatim onto every published row's `harness.repository.url`, and the
+        # old name 404s, so every receipt sealed between the rename and this fix
+        # cites a repository that cannot be fetched -- in the one field whose
+        # entire job is to let a reader find the code that produced the number.
+        # The local checkout directory is still the old name; that is cosmetic,
+        # this was not.
+        "tool": "quant-fidelity-suite/bin",
+        "repository": "malaiwah/quant-fidelity-suite",
         "revision": revision,
         "entrypoint": entrypoint,
         "entrypoint_sha256": sha256_file(str(path)),

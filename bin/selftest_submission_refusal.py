@@ -91,6 +91,21 @@ def main() -> int:
           doc.get("submission_schema") ==
           "quant-fidelity-registry/submission-receipt.v1" and
           len(doc.get("receipt_sha256", "")) == 64)
+
+    # `produced_by` is copied verbatim onto the published row's
+    # `harness.repository.url`, whose entire job is to let a reader fetch the
+    # code that produced the number. The GitHub repo was renamed
+    # glm53-fidelity-suite -> quant-fidelity-suite; the emitter kept the old
+    # name, which 404s, so receipts sealed after the rename cited a repository
+    # nobody can open. Assert the CURRENT name, and assert the dead one is gone
+    # from the module rather than merely shadowed somewhere later.
+    src = (Path(__file__).resolve().parent / "fidelity" / "receipt.py").read_text()
+    live = [ln for ln in src.splitlines()
+            if "glm53-fidelity-suite" in ln and not ln.lstrip().startswith("#")]
+    check("the receipt emitter names the CURRENT repository, not the renamed one",
+          not live, "; ".join(live)[:160])
+    check("...and the current name is the one that is emitted",
+          '"repository": "malaiwah/quant-fidelity-suite"' in src)
     bad = minimal_submission_kwargs()
     bad["metric"] = {"name": "x", "value": 0.01,
                      "source_receipt": {
