@@ -16,6 +16,9 @@ skipped rungs run there before any paid capture.
       (mul1, K4/K6) -- pins the whole decode ABI (unpack+LUT+permute+hadamard).
   [4] mcg parity vs the campaign reader (bitwise at K4/K6) -- proves the
       shared math is verbatim; skipped without quant_pipeline.
+  [6] K2 codec evidence (M4): the anybits unpack inverts the exllamav3
+      pack.cu transliteration at K2, agrees with dione's copy, and the MCG K2
+      decode is pinned by a golden digest.
   [5] materializer mapping on a synthetic mini-checkpoint: KDA qkv/conv split,
       visual qkv fusion, bias adoption, routed skip + virtual entries,
       official-index completeness gate, sealed inventory + receipt.
@@ -152,6 +155,11 @@ try:
     from quant_pipeline.evaluation import glm53_packed_k4_reader as reader  # noqa: E402
 except Exception as exc:  # noqa: BLE001
     skip("mcg decode parity vs campaign reader (K4/K6)", f"quant_pipeline not importable: {exc}")
+# [5] below rebinds the bare name `reader` to an Exl3HfShardReader, so any later
+# rung that asks "is the campaign reader available?" through `reader` gets an
+# answer produced by something that is not the campaign reader.  That is the
+# M1 probe lesson in one variable name; bind it under a name nothing reuses.
+CAMPAIGN_READER = reader
 if reader is not None:
     for bits in (4, 6):
         tr = torch.randint(-32768, 32767, (8, 8, bits * 16), generator=gen, dtype=torch.int16)
@@ -303,5 +311,60 @@ with tempfile.TemporaryDirectory() as tmp:
     cfg = json.loads((out / "config.json").read_text())
     check("materializer: quantization_config stripped from the written config",
           "quantization_config" not in cfg)
+
+
+# [6] K2 codec evidence ------------------------------------------------------
+# M4 measures vcruz305/GLM-5.3-Flash-EXL3-K2, the first K2 artifact on this
+# lane.  Every rung above pinned K3/K4/K6/K8; a rate that has never been
+# exercised is a rate whose number nobody may publish.  The rungs use their own
+# generator so nothing above them is re-rolled.
+#
+# The strongest available offline evidence is not self-consistency: it is that
+# our unpack INVERTS the real exllamav3 packer.  selftest_dione_offline carries
+# a numpy transliteration of quant/pack.cu, so import it and run K2 through it.
+# It defines the packer at module scope and guards main(), so importing costs
+# nothing and needs no quant_pipeline.
+import selftest_dione_offline as sdo  # noqa: E402
+
+k2gen = torch.Generator().manual_seed(20260830)
+rng2 = np.random.default_rng(0x4B32)
+for bits in (2,):
+    states = sdo.tail_biting_states(rng2, tiles=48, bits=bits)
+    packed = sdo.pack_trellis_reference(states, bits)
+    packed_t = torch.from_numpy(packed.astype(np.int16)).reshape(6, 8, bits * 16)
+    want = torch.from_numpy(states.astype(np.int16)).reshape(6, 8, 256)
+    ours = xs.unpack_trellis_states_anybits(packed_t, bits)
+    theirs = ds._unpack_trellis_states_anybits(packed_t, bits)
+    check(f"K{bits}: anybits unpack inverts the exllamav3 pack.cu transliteration",
+          torch.equal(ours, want))
+    check(f"K{bits}: anybits unpack parity vs dione", torch.equal(ours, theirs))
+
+# K2 decode golden: pins the whole MCG decode ABI (unpack + LUT + permute +
+# hadamard) at the rate M4 publishes, so a later refactor cannot move the
+# number quietly.
+tr2 = torch.randint(-32768, 32767, (8, 8, 2 * 16), generator=k2gen, dtype=torch.int16)
+suh2 = (torch.randint(0, 2, (8 * 16,), generator=k2gen).float() * 2 - 1).half()
+svh2 = ((torch.randint(0, 2, (8 * 16,), generator=k2gen).float() * 2 - 1) * 0.02).half()
+out2_mcg = xs.decode_payload_hf(tr2, suh2, svh2, codebook="mcg")
+out2_mul1 = xs.decode_payload_hf(tr2, suh2, svh2, codebook="mul1")
+check("K2 mcg decode is finite", torch.isfinite(out2_mcg).all().item(),
+      f"shape {tuple(out2_mcg.shape)}")
+check("K2 mcg and mul1 decodes differ (the codebook is load-bearing at K2 too)",
+      not torch.equal(out2_mcg, out2_mul1))
+GOLDEN_K2_MCG = "ee76ee58e63b11e24e70258e31a9edd613540d07aa091ae3a100abccf2cf24c3"
+got_k2 = xs._sha256_bytes(out2_mcg.numpy().tobytes())
+if GOLDEN_K2_MCG == "PIN-ME":
+    print(f"    golden K2 mcg: {got_k2}")
+else:
+    check("mcg decode golden sha (K2)", got_k2 == GOLDEN_K2_MCG, got_k2)
+
+if CAMPAIGN_READER is not None:
+    if 2 in getattr(CAMPAIGN_READER, "SUPPORTED_BITS", ()):
+        theirs2 = CAMPAIGN_READER.decode_choice_hf(tr2, suh2, svh2, bits=2)
+        check("mcg decode parity vs campaign reader (K2)", torch.equal(out2_mcg, theirs2))
+    else:
+        skip("mcg decode parity vs campaign reader (K2)",
+             "the campaign reader's SUPPORTED_BITS does not include 2; the "
+             "pack.cu round-trip above is the K2 evidence")
 
 print(f"selftest_exl3hf_offline: {sum(1 for _, ok, _ in RESULTS if ok)}/{len(RESULTS)} green")

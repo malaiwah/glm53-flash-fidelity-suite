@@ -148,6 +148,13 @@ NATIVE_CAPTURE_ROLE = "native_bf16_student"
 EXL3HF_PROFILES = {
     "turbo-4.05bpw": (4.05, "turboderp-exl3-mul1-4.05bpw"),
     "turbo-3.05bpw": (3.05, "turboderp-exl3-mul1-3.05bpw"),
+    # vcruz305's K2 pack: the same STOCK-exllamav3 HF storage layout (canonical
+    # index, per-module {trellis,suh,svh,<codebook>}, official unfused tensor
+    # names) as turboderp's releases, and therefore the same reader -- but the
+    # MCG codebook and a routed-experts-ONLY scope with a native BF16 head, so
+    # the label may not borrow turboderp's producer or the mul1 codec.  The
+    # surface is a storage question; the scope is an artifact question.
+    "vcruz-k2-2bpw": (2.0, "vcruz305-exl3-mcg-2bpw"),
 }
 # TR3-published (sealed EXL3/MCG, routed-experts-only) profiles.  Same shape as
 # EXL3HF_PROFILES and the same rule: the label must match k6_kld_report's map.
@@ -1878,8 +1885,8 @@ def main() -> int:
     parser.add_argument("--cold-run", type=int, required=True)
     parser.add_argument("--profile", default="k6",
                         choices=("k6", "k8", "k6k8", "native-bf16", "mlx", "gguf", "nvfp4",
-                                 "turbo-4.05bpw", "turbo-3.05bpw", "tr3-4bpw",
-                                 "dione-q4", "dione-3.0bpw"))
+                                 "turbo-4.05bpw", "turbo-3.05bpw", "vcruz-k2-2bpw",
+                                 "tr3-4bpw", "dione-q4", "dione-3.0bpw"))
     parser.add_argument("--roles", default="final")
     parser.add_argument("--windows", help="comma-separated window ids to score (default: all)")
     parser.add_argument("--pipeline-root")

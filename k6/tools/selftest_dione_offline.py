@@ -7,7 +7,8 @@ Proves, on this machine:
      quant/pack.cu: 16 spans, big-endian 32-bit buffer, SWAP16 store) packs
      valid tail-biting trellis state streams that the campaign reader's
      unpack_trellis_states inverts EXACTLY (bits 4 and 6), and that the
-     adapter's anybits copy inverts EXACTLY (bits 3, 4, 6).
+     adapter's anybits copy inverts EXACTLY (bits 3, 4, 6, 2 -- K2 added
+     for M4's vcruz305 EXL3-K2 pack).
   2. DECODE IDENTITY - the adapter's decode path is bitwise identical to the
      campaign reader's decode_choice_hf on identical payloads (bits 4, 6);
      the K3 anybits path is exercised for shape/orientation.
@@ -107,7 +108,10 @@ def main() -> int:
     passed = []
 
     # ------------------------------------------------------------------ 1
-    for bits in (3, 4, 6):
+    # K2 is appended rather than prepended: the rng is consumed in order and
+    # the rungs below draw from it, so a new rate at the FRONT would silently
+    # re-roll every later fixture.
+    for bits in (3, 4, 6, 2):
         states = tail_biting_states(rng, tiles=48, bits=bits)
         packed = pack_trellis_reference(states, bits)
         packed_t = torch.from_numpy(packed.astype(np.int16)).reshape(6, 8, bits * 16)
@@ -118,7 +122,7 @@ def main() -> int:
             got_reader = reader.unpack_trellis_states(packed_t, bits=bits)
             assert torch.equal(got_reader, want), f"reader unpack != packed states (K{bits})"
             assert torch.equal(got_reader, got_any), f"reader != anybits unpack (K{bits})"
-    passed.append("1 pack-layout equivalence (exllamav3 pack.cu transliteration): K3/K4/K6")
+    passed.append("1 pack-layout equivalence (exllamav3 pack.cu transliteration): K3/K4/K6/K2")
 
     # ------------------------------------------------------------------ 2
     for bits in (4, 6):

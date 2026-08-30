@@ -220,11 +220,44 @@ PROFILE_STORAGE_LABEL = {
     "nvfp4": "nvfp4-stream",
     "turbo-4.05bpw": "turbo-4.05bpw-hf-sharded",
     "turbo-3.05bpw": "turbo-3.05bpw-hf-sharded",
+    "vcruz-k2-2bpw": "vcruz-k2-2bpw-hf-sharded",
     "tr3-4bpw": "tr3-4bpw-hf-sharded",
     # genuinely TP4-sliced: dione_surface pins glm53-selective-exl3-tp4-v1
     "dione-q4": "dione-q4-tp4",
     "dione-3.0bpw": "dione-3.0bpw-tp4",
 }
+
+
+#: Which capture SURFACE each profile's run receipts came from.  Declared, never
+#: inferred from the profile NAME.  The provenance-republishing block below used
+#: to dispatch on `profile.startswith(("dione", "turbo"))`, which is a probe whose
+#: answer happens to be right for the three profiles that existed when it was
+#: written and silently wrong for the fourth: `vcruz-k2-2bpw` is captured by the
+#: SAME `stream_score --source exl3hf` front end as the turbo-* profiles and seals
+#: the same receipt fields, and it starts with neither prefix.  Under the old
+#: dispatch its headline summary would have carried no artifact_repo, no
+#: artifact_revision, no codebook and no seal_disclosure -- a registry row citing
+#: an artifact it cannot name, discovered after the money.  That is JOURNAL
+#: LESSON 48 recurring one profile later, so the mapping is now data.
+PROFILE_SURFACE_FAMILY = {
+    "turbo-4.05bpw": "exl3hf",
+    "turbo-3.05bpw": "exl3hf",
+    "vcruz-k2-2bpw": "exl3hf",
+    "dione-q4": "dione",
+    "dione-3.0bpw": "dione",
+    "tr3-4bpw": "tr3",
+}
+
+
+def _profile_surface_family(profile):
+    """The capture surface for this profile, or None for a lane-native profile.
+
+    A profile that names a THIRD-PARTY artifact and is missing here would seal a
+    headline receipt with no provenance, so an unknown profile whose run receipts
+    turn out to carry surface pins is caught at seal time by the required-field
+    check, not by this lookup returning None.
+    """
+    return PROFILE_SURFACE_FAMILY.get(profile)
 
 
 def _profile_storage_label(profile):
@@ -543,6 +576,7 @@ def _comparison_table(
         ("dione-3.0bpw", "3.0 (TP4-sliced)", "~139 GiB"),
         ("turbo-4.05bpw", "4.05 (full-scope, head 6)", "150.2 GiB"),
         ("turbo-3.05bpw", "3.05 (full-scope, head 6)", "116.6 GiB"),
+        ("vcruz-k2-2bpw", "2.0 (routed experts only, native head)", "91.0 GiB"),
         # community MLX affine snapshots: bit mix and size are properties of the
         # artifact, so both are READ from the receipt instead of hardcoded here
         ("mlx", None, None),
@@ -581,6 +615,7 @@ def _comparison_table(
                 "dione-3.0bpw": "0xSero Dione 3.0bpw (EXL3 K3, unsealed source)",
                 "turbo-4.05bpw": "turboderp 4.05bpw (stock EXL3 mul1, quantized head, unsealed source)",
                 "turbo-3.05bpw": "turboderp 3.05bpw (stock EXL3 mul1, quantized head, unsealed source)",
+                "vcruz-k2-2bpw": "vcruz305 K2 2bpw (EXL3 mcg, routed experts only, native head, unsealed source)",
                 "mlx": "%s (MLX affine, unsealed source, quantized BEYOND the routed experts)"
                        % (receipt.get("mlx_repo") or "community MLX"),
             }[profile]
@@ -628,7 +663,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", required=True,
                         choices=("k6", "k6-stream", "k8", "k6k8", "dione-q4", "dione-3.0bpw",
-                                 "turbo-4.05bpw", "turbo-3.05bpw", "tr3-4bpw",
+                                 "turbo-4.05bpw", "turbo-3.05bpw", "vcruz-k2-2bpw", "tr3-4bpw",
                                  "native-bf16", "mlx", "gguf", "nvfp4"))
     parser.add_argument("--teacher", type=Path, required=True)
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
@@ -684,6 +719,11 @@ def main() -> int:
         # Labels must match stream_score.EXL3HF_PROFILES.
         "turbo-4.05bpw": "turboderp-exl3-mul1-4.05bpw",
         "turbo-3.05bpw": "turboderp-exl3-mul1-3.05bpw",
+        # vcruz305's K2 pack shares turboderp's STORAGE layout (stock-exllamav3
+        # HF shards, read by --source exl3hf) and nothing else: MCG codebook,
+        # routed-experts-only scope, native BF16 head.  Separate label because a
+        # label that said "turboderp-exl3-mul1" would be false on all three.
+        "vcruz-k2-2bpw": "vcruz305-exl3-mcg-2bpw",
         # a SEALED TR3-published EXL3/MCG release (brandonmusic's layout and its
         # byte-identical mirrors), scored through stream_score --source tr3.
         # Routed experts only, native BF16 head, and -- unlike every other
@@ -985,7 +1025,8 @@ def main() -> int:
                 "run-1 ONLY; the runs are not bitwise identical and this block describes "
                 "one of them"),
         }
-        if args.profile.startswith(("dione", "turbo")):
+        surface_family = _profile_surface_family(args.profile)
+        if surface_family in ("dione", "exl3hf"):
             # the headline number's own receipt must carry the unsealed-source
             # disclosure and the immutable provenance pins, not only the
             # capture receipt underneath it
@@ -997,7 +1038,15 @@ def main() -> int:
             student_receipt = sealed_json(
                 runs[0] / "capture-receipt.json", CAPTURE_SCHEMA, "receipt_sha256"
             )
-            if args.profile.startswith("turbo"):
+            if surface_family == "exl3hf":
+                for field in ("exl3hf_repo", "exl3hf_revision"):
+                    if student_receipt.get(field) is None:
+                        raise _fail(
+                            f"--profile {args.profile}: the capture receipt carries no "
+                            f"{field}; it was not produced by stream_score.py "
+                            "--source exl3hf, and the headline receipt would name no "
+                            "artifact"
+                        )
                 summary.update(
                     {
                         "student_receipt_sha256": student_receipt["receipt_sha256"],
@@ -1053,7 +1102,7 @@ def main() -> int:
                         "seal_disclosure": student_receipt.get("seal_disclosure"),
                     }
                 )
-        elif args.profile.startswith("tr3"):
+        elif surface_family == "tr3":
             # Same rule as Dione/turbo -- the headline receipt carries the
             # provenance pins itself -- with one difference that matters: a TR3
             # release SEALS itself, so what travels here is the VERIFICATION

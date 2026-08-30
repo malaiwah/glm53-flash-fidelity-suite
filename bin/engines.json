@@ -157,7 +157,7 @@
         "3.05": "turbo-3.05bpw",
         "4.0": "tr3-4bpw"
       },
-      "profile_map_note": "4.0-bpw now maps to tr3-4bpw: a SEALED TR3-published EXL3/MCG release (brandonmusic's layout and its byte-identical mirrors) read by stream_score --source tr3. 4.05/3.05 map to the stock-exllamav3 (exl3hf) profiles turbo-4.05bpw/turbo-3.05bpw. Dione 4-bpw snapshots are a DIFFERENT surface at the same nominal rate and remain sealed-lane only. stream_score --profile choices: k6,k8,k6k8,native-bf16,turbo-4.05bpw,turbo-3.05bpw,tr3-4bpw,mlx,gguf,nvfp4. k6k8 is reachable only by explicit --profile, never by bpw inference (6.68 is not a bpw key). || M3: profile_map_by_surface now resolves the profile from (surface, bits) before the bpw-only map is consulted. A 4.0-bpw Dione release and a 4.0-bpw TR3 release are the same number and different everything else; keying on bits alone would have labelled one as the other, and the old `or 'k6'` fallback would have labelled an unmapped rate as a K6 payload-store run.",
+      "profile_map_note": "4.0-bpw now maps to tr3-4bpw: a SEALED TR3-published EXL3/MCG release (brandonmusic's layout and its byte-identical mirrors) read by stream_score --source tr3. 4.05/3.05 map to the stock-exllamav3 (exl3hf) profiles turbo-4.05bpw/turbo-3.05bpw. Dione 4-bpw snapshots are a DIFFERENT surface at the same nominal rate and remain sealed-lane only. stream_score --profile choices: k6,k8,k6k8,native-bf16,turbo-4.05bpw,turbo-3.05bpw,tr3-4bpw,mlx,gguf,nvfp4. k6k8 is reachable only by explicit --profile, never by bpw inference (6.68 is not a bpw key). || M3: profile_map_by_surface now resolves the profile from (surface, bits) before the bpw-only map is consulted. A 4.0-bpw Dione release and a 4.0-bpw TR3 release are the same number and different everything else; keying on bits alone would have labelled one as the other, and the old `or 'k6'` fallback would have labelled an unmapped rate as a K6 payload-store run. || M4: exl3hf gains 2.0 -> vcruz-k2-2bpw (vcruz305/GLM-5.3-Flash-EXL3-K2). Same stock-exllamav3 HF STORAGE layout as turboderp's releases -- which is what picks the reader -- but the MCG codebook, a routed-experts-ONLY scope and a native BF16 head, so it gets its own profile and its own student label rather than a turbo-* one.",
       "receipt_class": "submittable",
       "scorer": {
         "entrypoint": "k6/tools/k6_kld_report.py",
@@ -221,7 +221,8 @@
         },
         "exl3hf": {
           "4.05": "turbo-4.05bpw",
-          "3.05": "turbo-3.05bpw"
+          "3.05": "turbo-3.05bpw",
+          "2.0": "vcruz-k2-2bpw"
         },
         "native-bf16": {
           "native": "native-bf16"

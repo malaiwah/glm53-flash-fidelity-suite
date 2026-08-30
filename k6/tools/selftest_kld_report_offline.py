@@ -20,6 +20,8 @@ exercises the whole aggregation path with no logits and no torch.  The few
   NUM-09  a resumed report scored at a different position_block must refuse
   NUM-13  --five-run-out must not be accepted and silently ignored
   NUM-14  a malformed sibling receipt must not crash the comparison table
+  NUM-15  the provenance branch dispatches on the capture SURFACE, not on a
+          profile-name prefix (LESSON 48 recurring on a fourth profile)
 """
 from __future__ import annotations
 
@@ -227,6 +229,37 @@ def main():
         unknown = _stderr_of(lambda: K._profile_storage_label("some-new-profile"))
         check("NUM-07  an unknown profile refuses rather than inheriting -tp4",
               unknown is not None and "STORAGE label" in (unknown or ""), str(unknown))
+
+        print("\n== NUM-15: the provenance branch dispatches on SURFACE, not name prefix ==")
+        # LESSON 48, one profile later. `startswith(("dione","turbo"))` answered
+        # correctly for the three profiles that existed when it was written and
+        # would have answered "not a third-party artifact" for vcruz-k2-2bpw --
+        # an exl3hf capture whose headline receipt would then carry no
+        # artifact_repo, no artifact_revision, no codebook and no
+        # seal_disclosure. Probe both outcomes, not just the one that passes.
+        for profile, want in (("turbo-4.05bpw", "exl3hf"),
+                              ("turbo-3.05bpw", "exl3hf"),
+                              ("vcruz-k2-2bpw", "exl3hf"),
+                              ("dione-q4", "dione"),
+                              ("dione-3.0bpw", "dione"),
+                              ("tr3-4bpw", "tr3")):
+            got = K._profile_surface_family(profile)
+            check("NUM-15  %-14s -> surface %s" % (profile, want), got == want, str(got))
+        check("NUM-15  a lane-native profile has no surface family",
+              K._profile_surface_family("k6") is None
+              and K._profile_surface_family("native-bf16") is None)
+        # the prefix probe and the declared map must not be confused for each
+        # other: assert the map disagrees with the old prefix rule exactly where
+        # the old rule was wrong.
+        check("NUM-15  the old prefix rule would have missed vcruz-k2-2bpw",
+              not "vcruz-k2-2bpw".startswith(("dione", "turbo"))
+              and K._profile_surface_family("vcruz-k2-2bpw") == "exl3hf")
+        # every profile stream_score can capture a third-party artifact with must
+        # be declared here, or its provenance silently vanishes
+        for profile in ("turbo-4.05bpw", "turbo-3.05bpw", "vcruz-k2-2bpw",
+                        "dione-q4", "dione-3.0bpw", "tr3-4bpw"):
+            check("NUM-15  %-14s has a storage label too" % profile,
+                  isinstance(K._profile_storage_label(profile), str))
 
         print("\n== NUM-13: an evidence flag must not be silently ignored ==")
         r = cli("--profile", "k8", "--teacher", "/nonexistent", "--runs", "/nonexistent",
