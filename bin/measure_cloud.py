@@ -1498,8 +1498,19 @@ def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
     while True:
         con.step("stage %s" % stage)
         started = time.time()
-        run = jl.run_job(td.machine_id,
-                         "bash %s/bin/stage_measure.sh %s" % (td.fs_root, stage))
+        # DETACHED, in its own session, orphaned to init. The controller's job is
+        # to SUPERVISE the stage, not to own it: a controller that dies -- a
+        # signal, a closed laptop, a harness that reaps long-lived background
+        # tasks -- used to take the remote process group with it. Observed on
+        # M2: a two-hour capture was killed at window 22 of 25 by the death of
+        # the local process watching it, and the whole run had to be redone.
+        # With setsid the stage keeps going and the controller re-attaches to it
+        # by done-marker on the next poll, or on a later resume.
+        run = jl.run_job(
+            td.machine_id,
+            "nohup setsid bash %s/bin/stage_measure.sh %s "
+            ">>%s/logs/stage-%s.log 2>&1 </dev/null & echo launched %s"
+            % (td.fs_root, stage, td.fs_root, stage, stage))
         run_id = (run or {}).get("run_id") or (run or {}).get("id")
         outcome = _await_stage(con, jl, td, run_id, stage, deadline)
         if outcome == "done":
@@ -1602,11 +1613,26 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
                      % (stage, run_id, state, code))
             return "failed"
         if state == "succeeded":
-            # Succeeded WITHOUT the marker means the script returned 0 without
-            # finishing its stage -- report it rather than looping forever.
-            if code in (0, None):
-                con.warn("stage %s: the run exited 0 but wrote no done marker"
-                         % stage)
+            # The managed run is the LAUNCHER, not the stage: it starts a
+            # detached, own-session process and returns immediately. "succeeded"
+            # therefore means "launched", and the only honest signals left are
+            # the marker (checked above) and whether the stage process is still
+            # alive. Ask the instance, and compare the answer exactly -- a probe
+            # whose output can be confused with its own command text answers
+            # yes forever (that was M1's lesson 36).
+            alive = ""
+            try:
+                alive = jl.exec_stdout(
+                    td.machine_id,
+                    "pgrep -f 'stage_measure.sh %s' >/dev/null 2>&1 "
+                    "&& echo alive || echo gone" % stage,
+                    timeout=120, check=False)
+            except JLError:
+                alive = ""
+            if alive.strip().splitlines()[-1:] == ["alive"]:
+                continue
+            con.warn("stage %s: no done marker and no live stage process "
+                     "(launcher exit_code=%s)" % (stage, code))
             return "failed"
 
         # 3. still running: surface an early diagnosis from the log if there is
