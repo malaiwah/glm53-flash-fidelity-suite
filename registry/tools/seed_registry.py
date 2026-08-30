@@ -49,16 +49,30 @@ def attr(name, role, handle=None, url=None, maintainer=False):
 
 # Receipts this repository holds, at receipts/<handle>/<slug>.json. The digest is of the
 # committed file, so a row citing one of these is citing bytes any reader can fetch and hash.
+# REG-03. These digests used to be hardcoded literals, so `make reseed-check` proved only
+# that data/*.jsonl agreed with the literals in THIS file -- two files in the same commit
+# -- while the Makefile and this module's docstring both claim the rows are a function of
+# their receipts. A published receipt and the row citing it could disagree silently: the
+# digest on the row was never recomputed from the bytes. Now they ARE the bytes.
+def _receipt_sha(rel):
+    """sha256 of a committed receipt, read at seed time.
+
+    The point of the exercise: a row's `sources[].sha256` must be a digest of the file it
+    names, not a constant transcribed beside it."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), rel)
+    return L.sha256_file(path)
+
+
 STREAM_K6_RECEIPT = "receipts/malaiwah/stream-k6-kld.json"
-STREAM_K6_RECEIPT_SHA = "7ee0de697d050ff1aca9b85981a158f57304a46c020408b39742f5f85a0ff969"
 STREAM_K6_VERDICT = "receipts/malaiwah/stream-k6-verdict.json"
-STREAM_K6_VERDICT_SHA = "e205c14f5700417b32f4cb4a2d6724f3bf416ffc9d4cca3f129c18b0a0e7b005"
 STREAM_TURBO405_RECEIPT = "receipts/malaiwah/stream-turbo-4.05bpw-kld.json"
-STREAM_TURBO405_RECEIPT_SHA = "68ef836737f9eeb59f62da5107246249fcd30c462ccf25493bab75f917df0706"
 STREAM_K8_RECEIPT = "receipts/malaiwah/stream-k8-kld.json"
-STREAM_K8_RECEIPT_SHA = "8eab14b0ef3ba042e49735973d91dcc47e470b9331f9e65151635b2862bb05d1"
 STREAM_BF16_RECEIPT = "receipts/malaiwah/stream-bf16-kld.json"
-STREAM_BF16_RECEIPT_SHA = "8abee678d26fc4be92f3b6327419da25c505de2021043dc2719c1e355290090b"
+STREAM_K6_RECEIPT_SHA = _receipt_sha(STREAM_K6_RECEIPT)
+STREAM_K6_VERDICT_SHA = _receipt_sha(STREAM_K6_VERDICT)
+STREAM_TURBO405_RECEIPT_SHA = _receipt_sha(STREAM_TURBO405_RECEIPT)
+STREAM_K8_RECEIPT_SHA = _receipt_sha(STREAM_K8_RECEIPT)
+STREAM_BF16_RECEIPT_SHA = _receipt_sha(STREAM_BF16_RECEIPT)
 HF_REGISTRY_RAW = "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/"
 
 MAL = lambda role: attr("malaiwah", role, handle="malaiwah", url="https://huggingface.co/malaiwah", maintainer=True)
@@ -2515,6 +2529,381 @@ def build_measurements_qwen(artifacts_map):
 # 7. MAIN
 # ===========================================================================
 
+
+# ===========================================================================
+# 8. GLM-5.2-SIQ-Fruit -- the first family measured with the three-step
+#    fidelity-dataset architecture (capture / capture / compare).
+#
+# Fruit is the registry maintainer's own trained model, so the reference is
+# unambiguous: no borrowed teacher, no third-party checkpoint, no lane bridged
+# to another lane. That also means nothing here has been independently
+# reproduced, which the model row says out loud.
+# ===========================================================================
+FRUIT = "model--malaiwah.glm-5.2-siq-fruit"
+F_BF16 = "artifact--malaiwah.glm-5.2-siq-fruit-bf16"
+F_SIQ = "artifact--malaiwah.glm-5.2-siq-fruit.exl3-k3k4"
+P_FRUIT = "panel--fruit.malaiwah.heldout-v1"
+R_FRUIT = "reference--malaiwah.fruit-bf16-hf.heldout-v1"
+PL_FIDDS = "pipeline--malaiwah.fidelity-dataset-hf"
+
+FRUIT_ROOT_DS = "https://huggingface.co/datasets/malaiwah/fruit-fidelity-root-v1"
+FRUIT_QUANT_DS = "https://huggingface.co/datasets/malaiwah/fruit-fidelity-quant-siq-v1"
+FRUIT_TOKEN_SHA = "a6d367cc3ba448800372dee435d2bb4f536d23ca68843628832fa3b122ceabe1"
+FRUIT_PANEL_RECEIPT_SHA = "6c195ef252305d0e647c2f33b99e60d927c306a4e86ff3a055173297bc9a403c"
+FRUIT_ROOT_DATASET_SHA = "f56674f9159a68fa4abd5ccb2e727aadf510f35ce1b44b5cc4b825987560e7cf"
+FRUIT_ROOT_CAPTURE_SHA = "b417acc22b8aa7f3294b8e62c4b619bc5051aef9fd8a073602572a30af6b3e1c"
+FRUIT_QUANT_DATASET_SHA = "135776882d1ad3b4a1bdd0401035e61905351ad296b90b42396b45412ea270a0"
+FRUIT_QUANT_CAPTURE_SHA = "8875fe45cffdb958f39d0e39a3e26a885b26dc48b2509cb4c13276ecdcb9d49e"
+FRUIT_HEAD_SHA = "8d0f7d6e35c48a3f6b97f5f5ebc24657a3fd32e1e6c22adc710a9b317b5b5440"
+
+MODELS += [
+    {"schema_version": V, "id": FRUIT, "name": "GLM-5.2-SIQ-Fruit", "family": "glm5.2",
+     "license": "apache-2.0",
+     "publisher": MAL("model-publisher"),
+     "huggingface": hf("malaiwah/GLM-5.2-SIQ-Fruit", "c1798e3676fa16b4a874381171adab1e3033fbd5"),
+     "architecture": {
+         "kind": "moe-decoder", "hidden_size": 1024, "num_layers": 13, "vocab_size": 154880,
+         "has_mtp": True, "total_parameters": 5040000000, "active_parameters": 460000000,
+         "note": "GlmMoeDsaForCausalLM: 3 dense + 10 sparse layers, 256 routed experts at "
+                 "top-8, moe_intermediate_size 512, MLA attention with a DSA lightning "
+                 "indexer, and one co-trained MTP draft layer at index 13. A serving proxy "
+                 "for the GLM-5.2 family (about 1:150 by total parameters), trained by the "
+                 "registry maintainer as a CI fixture and kernel-development vehicle -- not "
+                 "an assistant, and not a quality benchmark."},
+     "tokenizer": {"id": "glm-5.2-siq-fruit", "repository": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+                   "revision": "ef68013aa6e16453cf52b5b77647f72fbe258c3c", "vocab_size": 154880,
+                   "files_sha256": {"tokenizer.json":
+                       "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d"}},
+     "canonical_weights": {"artifact_ref": F_BF16, "precision": "bf16"},
+     "cross_refs": lair(),
+     "sources": [src("model_card", "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit",
+                     None, "geometry, nine-source pretraining recipe, SIQ artifact description"),
+                 src("github_file", "https://github.com/malaiwah/proxy-fruit",
+                     None, "trainer, exporter, gauntlets")],
+     "disclosures": [disc("record_note", "info",
+                          "The model, every artifact of it, the panel, the reference and the "
+                          "measurement all have the same author. Stated rather than hidden: it "
+                          "makes the reference unambiguous, and it means no third party has "
+                          "reproduced any of these rows.")]},
+]
+
+PANELS += [
+    {"schema_version": V, "id": P_FRUIT,
+     "name": "Fruit held-out fidelity panel v1 -- 16 windows x 2048",
+     "author": MAL("panel-author"), "model_scope": [FRUIT],
+     "tokenizer": {"id": "glm-5.2-siq-fruit", "repository": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+                   "revision": "ef68013aa6e16453cf52b5b77647f72fbe258c3c", "vocab_size": 154880},
+     "structure": {"contexts": 16, "context_length": 2048, "positions_per_context": 2047,
+                   "positions_per_context_min": 2047, "positions_per_context_max": 2047,
+                   "scored_positions_total": 32752,
+                   "scoring_window": {"score_from": 0, "windowed": False,
+                                      "min_left_context_tokens": 1,
+                                      "dropped_positions_total": 0,
+                                      "policy": "no window: every causal prediction position "
+                                                "of every context is included"},
+                   "strata": {"literary": {"contexts": 8}, "scientific": {"contexts": 8}}},
+     "identity": {"hash_covers": "token_ids", "panel_token_sha256": FRUIT_TOKEN_SHA,
+                  "panel_receipt_sha256": FRUIT_PANEL_RECEIPT_SHA,
+                  "manifest_sha256": None, "shard_token_sha256": {}},
+     "corpus": {"public": True, "version": "qwen38-kld5-corpus-text/1", "build_tool_ref": None,
+                "lineage": "k6/tools/build_token_panel.py over the published corpus tree "
+                           "malaiwah/qwen38-27b-fidelity-suite-v5 @ 7797fcce, corpus/text/. "
+                           "Strata sorted ascending; within each, documents sorted by file "
+                           "name; each tokenized whole with add_special_tokens=False; "
+                           "eligible at >= 4096 tokens; window = tokens[2048:4096] because the "
+                           "head of a real document is title pages and boilerplate; first 8 "
+                           "eligible documents per stratum. No RNG anywhere. "
+                           "panel/panel-receipt.json inside the root dataset carries every "
+                           "source document's sha256 and the exact token slice.",
+                "license_note": "literary = Project Gutenberg text, public domain in the US; "
+                                "scientific = arXiv titles and abstracts under the arXiv API "
+                                "terms of use. The panel redistributes token ids, not text.",
+                "sources": [src("dataset_card",
+                                "https://huggingface.co/datasets/malaiwah/qwen38-27b-fidelity-suite-v5")]},
+     "contamination": {"checked": False, "hits": None, "benchmarks_scanned": [],
+                       "method": "source-level separation only. Fruit's published pretraining "
+                                 "recipe names nine sources: FineWeb-Edu, English and Chinese "
+                                 "Wikipedia, TinyStories, two GLM-5.2 distillation corpora, "
+                                 "REAP calibration text, SPDX licence text, and code. This "
+                                 "panel draws only from the literary and scientific strata, "
+                                 "neither of which appears in that list.",
+                       "receipt": None},
+     "sealed": True,
+     "availability": {"status": "public", "uri": FRUIT_ROOT_DS},
+     "derived_from": None, "derivation": None, "cross_refs": lair(),
+     "sources": [src("dataset_card", FRUIT_ROOT_DS, None,
+                     "the panel ships inside the root fidelity dataset: panel/panel.json, "
+                     "panel/tokens/, panel/masks/, and the byte-verbatim build receipt "
+                     "panel/panel-receipt.json")],
+     "disclosures": [
+         disc("weak_contamination_guard", "caveat",
+              "Separation from Fruit's training data is asserted at SOURCE level only: the two "
+              "strata used are not among the nine sources Fruit's card names. No shingle or "
+              "n-gram scan against the published pretraining shards was run, so incidental "
+              "overlap through a web-crawl source such as FineWeb-Edu is not excluded."),
+         disc("small_panel", "caveat",
+              "16 windows / 32,752 scored positions. On the one artifact measured here so far "
+              "the per-window standard deviation is 0.0283 nats around a mean of 0.0387, a "
+              "standard error near 0.0071. Numbers on this panel cannot separate artifacts "
+              "that differ by less than roughly 30 percent.", True)]},
+]
+
+_FRUIT_NATIVE = [
+    asg("embed_tokens", "native", "bf16", 16), asg("attn.qkv", "native", "bf16", 16),
+    asg("attn.o", "native", "bf16", 16), asg("attn.other", "native", "bf16", 16),
+    asg("mlp.gate", "native", "bf16", 16), asg("mlp.up", "native", "bf16", 16),
+    asg("mlp.down", "native", "bf16", 16), asg("moe.router", "native", "bf16", 16),
+    asg("moe.shared_expert", "native", "bf16", 16), asg("moe.experts", "native", "bf16", 16),
+    asg("mtp", "native", "bf16", 16), asg("norm", "native", "bf16", 16),
+    asg("lm_head", "native", "bf16", 16),
+]
+
+_FRUIT_SIQ_SCOPE = scope("mixed", [
+    asg("embed_tokens", "native", "bf16", 16),
+    asg("attn.qkv", "native", "bf16", 16, "0-13"),
+    asg("attn.o", "native", "bf16", 16, "0-13"),
+    asg("attn.other", "native", "bf16", 16, "0-13",
+        note="the DSA lightning-indexer tensors"),
+    asg("mlp.gate", "native", "bf16", 16, "0-2", note="the three dense MLP layers"),
+    asg("mlp.up", "native", "bf16", 16, "0-2"),
+    asg("mlp.down", "native", "bf16", 16, "0-2"),
+    asg("moe.router", "native", "bf16", 16, "3-13"),
+    asg("moe.shared_expert", "native", "bf16", 16, "3-13"),
+    asg("moe.experts", "quantized", "exl3-trellis", 3.375, "3-12",
+        note="THE ONLY CHANGED CLASS in the ten sparse layers. 96 experts at K4 and 160 at K3 "
+             "per layer, from the artifact's own tier_bitmap.json: (96*4 + 160*3)/256 = 3.375. "
+             "Stored as .rank0.{trellis,suh,svh,mcg} atoms."),
+    asg("mtp", "quantized", "exl3-trellis", 3, "13",
+        note="the MTP draft layer's 256 experts, uniform K3"),
+    asg("norm", "native", "bf16", 16),
+    asg("lm_head", "native", "bf16", 16,
+        note="bitwise identical to the reference head: both exports write it through the same "
+             "unconditional bf16 path"),
+], "native", kv="bf16", mtp=True)
+
+ARTIFACTS += [
+    artifact(F_BF16, FRUIT, "GLM-5.2-SIQ-Fruit BF16 (the reference export)", "base",
+             hf("malaiwah/GLM-5.2-SIQ-Fruit-bf16", "ef68013aa6e16453cf52b5b77647f72fbe258c3c"),
+             "safetensors", "BF16", 10102776813,
+             codec("bf16", None),
+             scope("none", _FRUIT_NATIVE, "native", kv="bf16", mtp=True),
+             MAL("model-publisher"),
+             [src("model_card", "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit-bf16"),
+              src("github_file",
+                  "https://github.com/malaiwah/proxy-fruit/blob/main/export_fruit.py", None,
+                  "the FRUIT_BF16=1 branch (lines 317-333) and the unconditional bf16() helper "
+                  "(lines 262-266)")],
+             [disc("record_note", "info",
+                   "Every tensor is bf16 and comes from the trained checkpoint by a direct "
+                   "cast: export_fruit.py FRUIT_BF16=1 reads the annealed state dict and "
+                   "writes .to(torch.bfloat16) bits, and its `continue` skips the SIQ encoder "
+                   "entirely. No dequantization step exists anywhere in the exporter, so this "
+                   "is reference_kind native_bf16 and NOT dequantized_from_quant. The "
+                   "underlying checkpoint did go through a 500-step QNOISE quantization-aware "
+                   "anneal before export; that is a property of the model, not of these bytes.")],
+             availability={"status": "public",
+                           "uri": "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit-bf16"},
+             derived_from_artifact_ref=None, cross_refs=lair(),
+             weights_extra={"size_basis": "repo_all_files",
+                            "index_sha256": "86e6cc1d8548c7bdbbc117e93b85b8ae249f446de9b48d2195e51f358674ba56",
+                            "config_sha256": "5a19697e555fff140d1b089b852c3ef227114b196f8d76796560feeeb34dc44a"}),
+    artifact(F_SIQ, FRUIT, "GLM-5.2-SIQ-Fruit (exl3-trellis K3/K4 routed experts)", "quant",
+             hf("malaiwah/GLM-5.2-SIQ-Fruit", "c1798e3676fa16b4a874381171adab1e3033fbd5"),
+             "safetensors", "EXL3 K3/K4 experts, BF16 elsewhere", 3125527019,
+             codec("exl3-trellis", 3.375,
+                   tool="proxy-fruit export_fruit.py (exl3-trellis encoder)"),
+             _FRUIT_SIQ_SCOPE, MAL("quantizer"),
+             [src("model_card", "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit"),
+              src("hf_file",
+                  "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit/blob/main/tier_bitmap.json",
+                  None, "per-expert K allocation and the encoder's own expert_rel_rt_mse")],
+             [disc("declared_scheme_mismatch", "caveat",
+                   "config.json declares quantization_config quant_method=modelopt, "
+                   "quant_algo=NVFP4, group_size 16, W4A4, producer "
+                   "b300-exl3-modelopt-dispatch-shim. That block does not describe the stored "
+                   "bytes: zero tensors are NVFP4 (tier_bitmap.json's keep_nvfp4 is empty for "
+                   "every layer) and the routed experts are exl3-trellis K3/K4. The exporter "
+                   "copies the block from the parent GLM-5.2 config rather than authoring it "
+                   "-- its ignore list still names model.layers.78.eh_proj, and this model has "
+                   "13 layers. The scope on this row describes the bytes."),
+              disc("unreadable_by_stock_loader", "caveat",
+                   "The routed experts are stored as .rank0.{trellis,suh,svh,mcg} atoms. Stock "
+                   "transformers 5.16.1 does not fail on them: it reports "
+                   "model.layers.{3..12}.mlp.experts.{gate_up,down}_proj as MISSING, randomly "
+                   "initialises them (mean about 0, std 0.0199) and returns a running model. "
+                   "Any measurement of this artifact through a stock loader without a "
+                   "reconstruction step is a measurement of random weights.", True)],
+             availability={"status": "public",
+                           "uri": "https://huggingface.co/malaiwah/GLM-5.2-SIQ-Fruit"},
+             derived_from_artifact_ref=F_BF16, cross_refs=lair(),
+             weights_extra={"size_basis": "repo_all_files",
+                            "index_sha256": "5808a4b3e75c4a949a1ede42e6c6fb2576089ec1544038b77de24076e99bf3da",
+                            "config_sha256": "7df3d68ab252ffa0bff636d00f82330f56939f2808915eb7d2d209c98e0b9753"}),
+]
+
+REFERENCES += [
+    {"schema_version": V, "id": R_FRUIT,
+     "name": "malaiwah Fruit BF16 hidden-state capture, transformers lane, held-out panel v1",
+     "artifact_ref": F_BF16, "panel_ref": P_FRUIT, "reference_kind": "native_bf16",
+     "capture": {"stack": "transformers", "stack_version": "5.16.1", "pipeline_ref": PL_FIDDS,
+                 "compute_dtype": "bf16", "logits_dtype": "fp32", "kv_cache_dtype": "bf16",
+                 "head_source": "shared_head_artifact", "head_sha256": FRUIT_HEAD_SHA,
+                 "batch_invariant": None,
+                 "capture_receipt_sha256": FRUIT_ROOT_DATASET_SHA},
+     "author": MAL("measurer"), "logits_available": True,
+     "self_consistency": {"floor_measurement_ref": None,
+                          "note": "Reference and candidate are captured by the SAME engine on "
+                                  "the SAME lane and compared offline in fp64, so there is no "
+                                  "cross-stack floor term to subtract. Measured, not assumed: "
+                                  "two cold captures of these weights agree bitwise "
+                                  "(capture_content_digest b417acc2...), and comparing them "
+                                  "with --force-compute over all 32,752 x 154,880 logits "
+                                  "returns exactly 0.0 nats at top-1 agreement 1.0."},
+     "sources": [src("dataset_card", FRUIT_ROOT_DS, None,
+                     "malaiwah.fidelity-dataset.v1; dataset_sha256 f56674f9..., "
+                     "capture_content_digest b417acc2...")],
+     "disclosures": [
+         disc("shared_reference_head", "info",
+              "Hidden states are captured for both sides and ONE head (8d0f7d6e...) is applied "
+              "to both. Legitimate here rather than merely convenient: both exports write "
+              "lm_head through the same unconditional bf16 path, so the candidate's own head "
+              "is the same tensor."),
+         disc("architecture_subset_loaded", "caveat",
+              "Stock transformers implements glm_moe_dsa natively but drops Fruit's DSA "
+              "lightning indexer for layers 3-13 and the whole MTP draft layer 13, loading "
+              "4,572,134,656 of 5.04B parameters. The forward pass is dense MLA attention with "
+              "no speculative decoding. Identical for the reference and every candidate on "
+              "this lane, so the comparison is sound -- but a number here is the stored "
+              "weights' error, not the serving stack's.", True)]},
+]
+
+PIPELINES += [
+    pipeline(PL_FIDDS,
+             "malaiwah three-step fidelity dataset (capture / capture / compare), "
+             "hf-transformers engine",
+             ["capture", "scorer", "aggregator"],
+             "https://github.com/malaiwah/glm53-flash-fidelity-suite", None,
+             "bin/fidelity_dataset.py + k6/tools/hf_capture.py", MAL("toolchain-author"),
+             [disc("record_note", "info",
+                   "Capture and comparison are separated: each side runs one transformers "
+                   "forward per panel window, taps the lm_head input with a forward pre-hook, "
+                   "and seals a portable dataset. The comparison then reads two datasets and "
+                   "needs neither set of weights. Because both sides are captured by the same "
+                   "engine on the same lane, the floor is structurally zero rather than "
+                   "subtracted -- verified at exactly 0.0 nats.")],
+             numerics=FP64,
+             hardware={"gpu": "NVIDIA L4", "gpu_count": 1, "tensor_parallel": 1,
+                       "note": "JarvisLabs spot container, region IN2"},
+             cost={"usd_per_measurement": None, "basis": None},
+             sources=[src("dataset_card", FRUIT_ROOT_DS),
+                      src("dataset_card", FRUIT_QUANT_DS)],
+             cross_refs=lair()),
+]
+
+
+def build_measurements_fruit(artifacts_map):
+    M = lambda *a, **k: measurement(*a, artifacts_map=artifacts_map, **k)
+    GH = "https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/registry/protocol/fruit/"
+    ds_sources = [
+        src("dataset_card", FRUIT_ROOT_DS, None,
+            "reference capture: dataset_sha256 f56674f9..., capture_content_digest b417acc2..."),
+        src("dataset_card", FRUIT_QUANT_DS, None,
+            "candidate capture: dataset_sha256 13577688..., capture_content_digest 8875fe45..."),
+    ]
+    return [
+        M("measurement--fruit.bf16-selfcompare-floor.heldout-v1", FRUIT, F_BF16, P_FRUIT,
+          R_FRUIT, PL_FIDDS, 0.0,
+          head_policy="shared_reference_head", top1=1.0,
+          scored_positions=32752, contexts=16,
+          runs=2, cold=True, identical=True, evidence_kind="hidden_state_tensor_sha256",
+          evidence_hashes=[FRUIT_ROOT_CAPTURE_SHA],
+          det_note="Two cold captures of the same bf16 weights in two separate processes on "
+                   "one L4 produced the same capture_content_digest. Their dataset_sha256 "
+                   "values differ because a manifest embeds timestamps and a cold-run label, "
+                   "which is exactly why determinism evidence is taken over tensor CONTENT.",
+          sources=ds_sources + [
+              src("github_file", GH + "comparison.fruit-bf16-selfcompare-floor.heldout-v1.json",
+                  "cf1f2271c68a3c5c497ba6ad9612d8f2ddcd3cda3d7ebbb80cb8e044db04c104",
+                  "malaiwah.fidelity-comparison-receipt.v1 for the self-compare of the two "
+                  "cold root captures; both sides carry capture_content_digest b417acc2...")],
+          disclosures=[
+              disc("record_note", "info",
+                   "THE FLOOR, measured rather than assumed. `fidelity-dataset compare "
+                   "--self-compare --force-compute` over all 32,752 x 154,880 logits in fp64 "
+                   "returns mean tokenwise KLD exactly 0.0 nats at top-1 agreement 1.0. This "
+                   "is the architectural payoff of separating capture from comparison: when "
+                   "both sides are captured by one engine on one lane, comparison overhead is "
+                   "structurally zero and never has to be subtracted from anything."),
+              disc("shared_reference_head", "info",
+                   "One head (8d0f7d6e...) applied to both sides' hidden states.")]),
+        M("measurement--fruit.siq-exl3-k3k4.heldout-v1", FRUIT, F_SIQ, P_FRUIT, R_FRUIT,
+          PL_FIDDS, 0.03873745371351417,
+          head_policy="shared_reference_head", top1=0.8797630679042501,
+          aux={"median_kld": 0.01676410508811121, "p95_kld": 0.14771257394235618,
+               "p99_kld": 0.3174928513324092, "p999_kld": 0.756304641037244,
+               "max_kld": 1.4961663314355835,
+               "context_macro_mean_kld": 0.038737453713514176,
+               "strata": {"literary": 0.027501507795953492,
+                          "scientific": 0.049973399631074854}},
+          notes="Per-window mean 0.038737453713514176, population sd 0.028308679654341876, "
+                "min 0.012369540015856577 (final-0006, literary), max 0.09151472952402755 "
+                "(final-0009, scientific) over 16 windows. The macro mean over contexts equals "
+                "the token mean because every window contributes the same 2,047 positions.",
+          scored_positions=32752, contexts=16,
+          runs=1, cold=True, evidence_kind="hidden_state_tensor_sha256",
+          evidence_hashes=[FRUIT_QUANT_CAPTURE_SHA],
+          det_note="One cold capture of the candidate. The reference side of this comparison "
+                   "is the same two-run-verified capture the floor row uses.",
+          cls="advisory",
+          sources=ds_sources + [
+              src("github_file", GH + "comparison.fruit-siq-exl3-k3k4.heldout-v1.json",
+                  "a128a272936eb27fa65057ec0ed04f904f1fc9fac4779e3d8f86b771e89a73a2",
+                  "malaiwah.fidelity-comparison-receipt.v1; receipt_sha256 04e052be..., "
+                  "per-context and per-domain breakdowns, tokenwise-kld digest 3b381147..."),
+              src("github_file", GH + "exl3-reconstruction.fruit-siq.json",
+                  "e317be43ef2b7ae8b77142b40982393d490879892ebb7296dac8f829c4f4930f",
+                  "malaiwah.exl3-reconstruction-receipt.v1: per-module rel-L2 and cosine for "
+                  "all 8,448 decoded expert matrices, and the cross-check against the "
+                  "producer's own tier_bitmap expert_rel_rt_mse")],
+          disclosures=[
+              disc("record_note", "info",
+                   "Comparison receipt malaiwah.fidelity-comparison-receipt.v1 "
+                   "04e052be94c3e39a2da4c4d9ebbfd18722c728fdd532983c4fa4d2c3e5459317, "
+                   "reference dataset_sha256 f56674f9..., candidate dataset_sha256 13577688..."),
+              disc("lossy_capture_codec", "caveat",
+                   "RECONSTRUCTED, NOT EXECUTED. The artifact's routed experts are exl3-trellis "
+                   "atoms that stock transformers cannot read, so the candidate capture ran a "
+                   "bf16 reconstruction of them (k6/tools/materialize_exl3_experts.py) rather "
+                   "than the vendor kernel. This is the dequantize-and-run methodology the "
+                   "GGUF/MLX/EXL3 ecosystems use for KLD: it measures the error of the STORED "
+                   "WEIGHTS and isolates it from kernel error. It does not measure Fruit's "
+                   "production path (b12x/SparkInfer + vLLM, fp8/nvfp4 KV, MTP). Decode "
+                   "evidence: the codebook table is bitwise equal to the campaign's "
+                   "independently frozen mcg table on all 65,536 entries; the bit rate read "
+                   "off every one of 8,448 payloads agrees with the producer's tier_bitmap; "
+                   "and the reconstruction error reproduces the ENCODER's own recorded "
+                   "expert_rel_rt_mse with ratio mean 1.00013 over range 0.98902-1.01337. The "
+                   "decode has NOT been proven bitwise against a running exllamav3 kernel, "
+                   "which is why this row is advisory.", True),
+              disc("small_panel", "caveat",
+                   "Per-window standard deviation 0.0283 around a mean of 0.0387 over 16 "
+                   "windows, i.e. a standard error near 0.0071. Do not rank this against "
+                   "anything it differs from by less than roughly 30 percent. The two strata "
+                   "differ by nearly 2x on their own (literary 0.0275, scientific 0.0500).",
+                   True),
+              disc("single_run", "caveat",
+                   "One cold capture of the candidate. Repeatability was established for the "
+                   "reference side only."),
+              disc("shared_reference_head", "info",
+                   "One head (8d0f7d6e...) applied to both sides' hidden states. Not a "
+                   "substitution: both exports write lm_head through the same bf16 path, so "
+                   "the candidate's own head is the same tensor."),
+              disc("declared_scheme_mismatch", "caveat",
+                   "The artifact's config.json declares NVFP4/modelopt; the stored bytes are "
+                   "exl3-trellis K3/K4. scope_digest describes the bytes.")]),
+    ]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=os.path.join(L.repo_root(__file__), "data"))
@@ -2523,7 +2912,7 @@ def main():
 
     amap = {a["id"]: a for a in ARTIFACTS}
     measurements = (build_measurements(amap) + build_measurements_runtime(amap)
-                    + build_measurements_qwen(amap))
+                    + build_measurements_qwen(amap) + build_measurements_fruit(amap))
     # Joint fidelity standard (2026-08-29): window-clustered BCa intervals, the
     # per-domain table, sigma_run in quadrature, the protocol stamp, and the
     # calibration-clean scope siblings. Implemented in tools/joint_enrich.py so

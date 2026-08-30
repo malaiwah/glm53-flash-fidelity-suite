@@ -515,14 +515,26 @@ def _owner(uri):
     if u.startswith("receipts/"):
         parts = u.split("/")
         return parts[1] if len(parts) > 2 and parts[1] else "unattributed"
-    for host, offset in (("huggingface.co/datasets/", 0), ("huggingface.co/", 0),
-                         ("raw.githubusercontent.com/", 0), ("github.com/", 0)):
-        i = u.find(host)
-        if i >= 0:
-            rest = u[i + len(host):].split("/")
-            return rest[offset] if rest and rest[offset] else "unattributed"
+    # REG-11. This used to be a SUBSTRING search (`u.find(host)`), so any URL merely
+    # CONTAINING "huggingface.co/malaiwah/" anywhere -- including in a query string on
+    # someone else's host -- was attributed to us:
+    #     https://evil.example.com/?ref=huggingface.co/malaiwah/x  ->  owner "malaiwah"
+    # Parse the netloc instead, and require it to BE an allow-listed host rather than to
+    # appear somewhere in the string.
     if "://" in u:
-        return "unattributed"
+        try:
+            netloc = u.split("://", 1)[1].split("/", 1)[0]
+        except IndexError:
+            return "unattributed"
+        netloc = netloc.split("@")[-1].split("?")[0].split("#")[0].split(":")[0].lower()
+        if netloc not in ("huggingface.co", "hf.co", "raw.githubusercontent.com",
+                          "github.com"):
+            return "unattributed"
+        path = u.split("://", 1)[1].split("/", 1)
+        segs = [x for x in (path[1] if len(path) > 1 else "").split("/") if x]
+        if segs and segs[0] == "datasets":
+            segs = segs[1:]
+        return segs[0] if segs else "unattributed"
     # Everything left is a filesystem path: absolute, in-repo relative, or one of the
     # prose placeholders the seeder writes ("scratchpad copy of ..."). A file we can
     # open is a file we hold.
@@ -534,7 +546,9 @@ def _ours(uri):
     owner = _owner(uri)
     if owner == "local":
         return True
-    return owner.lower().startswith(L.MAINTAINER.lower())
+    # REG-11. startswith() let a PREFIX SQUAT through: huggingface.co/malaiwah-impostor/
+    # answered True. Exact match, case-folded.
+    return owner.lower() == L.MAINTAINER.lower()
 
 
 def _row_lane(C, m):
@@ -564,6 +578,66 @@ def _is_floor_artifact(C, floor_aid, ref_aid):
             return True
         cur = (C["artifacts"].get(cur) or {}).get("derived_from_artifact_ref")
     return False
+
+
+def check_receipts_on_disk(root, C, rep):
+    """RECEIPT-001: a row citing receipts/<...> must cite the bytes that are there.
+
+    REG-03. Nothing recomputed a cited receipt digest. seed_registry transcribed the
+    digests as literals, so `make reseed-check` proved data/*.jsonl agreed with the
+    literals in seed_registry.py -- two files in the same commit -- while the Makefile
+    claims the rows are a function of their RECEIPTS. Rewriting a published receipt's
+    measured_mean_kld and leaving the row alone was caught by nothing here."""
+    # Scoped to a root that actually carries receipts/. The CI diff gate validates a
+    # synthetic root holding only schema/ and data/, and "the receipt is not here" is not
+    # a finding about the DATA in that case -- it is a statement about the harness. When
+    # receipts/ does exist, a cited-but-absent file is a real error.
+    if not os.path.isdir(os.path.join(root, "receipts")):
+        return
+    for coll in ("measurements", "artifacts", "pipelines", "panels", "references"):
+        for rid, row in (C.get(coll) or {}).items():
+            for src in ((row.get("provenance") or {}).get("sources") or []):
+                uri = (src.get("uri") or "").strip()
+                declared = src.get("sha256")
+                if not uri.startswith("receipts/") or not declared:
+                    continue
+                path = os.path.join(root, uri)
+                if not os.path.isfile(path):
+                    rep.err("RECEIPT-001", "%s cites %s, which is not in this repository"
+                            % (rid, uri), rid)
+                    continue
+                actual = L.sha256_file(path)
+                if actual != declared:
+                    rep.err("RECEIPT-001",
+                            "%s cites %s with sha256 %s, but the committed file hashes "
+                            "to %s -- the row and the receipt it names disagree"
+                            % (rid, uri, declared[:16], actual[:16]), rid)
+
+
+def check_control_chars(C, rep):
+    """REG-20: no string in any record may carry a control character.
+
+    A digest or id with a trailing newline is published, copied and compared by readers
+    and never byte-compares equal to the real one. The anchored patterns miss it (Python's
+    `$` matches before a trailing newline) and `[^/]` in the URL patterns admits an
+    embedded one, so this is the flavour-independent check."""
+    bad = "".join(chr(c) for c in list(range(0x20)) + [0x7f])
+
+    def walk(node, rid, path):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, rid, "%s/%s" % (path, k))
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, rid, "%s/%d" % (path, i))
+        elif isinstance(node, str) and any(ch in node for ch in bad):
+            rep.err("REG-20", "%s%s carries a control character in %r"
+                    % (rid, path, node[:40]), rid)
+
+    for coll in ("models", "artifacts", "panels", "references", "pipelines",
+                 "measurements"):
+        for rid, row in (C.get(coll) or {}).items():
+            walk(row, rid, "")
 
 
 def check_provenance(C, rep):
@@ -1332,6 +1406,8 @@ def main():
         if args.explain:
             return explain(C, args.explain, args.against)
         check_referential(C, rep)
+        check_receipts_on_disk(args.root, C, rep)
+        check_control_chars(C, rep)
         groups = check_comparability(C, rep)
         check_provenance(C, rep)
         check_determinism(C, rep)

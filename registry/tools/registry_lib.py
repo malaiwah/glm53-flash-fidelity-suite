@@ -33,8 +33,14 @@ COLLECTIONS = (
 ID_PREFIX_TO_COLLECTION = {tag: name for name, tag, _ in COLLECTIONS}
 COLLECTION_TO_ID_PREFIX = {name: tag for name, tag, _ in COLLECTIONS}
 
-ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*(?:--[a-z0-9][a-z0-9.-]*)*$")
-SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+# REG-20. Python's `$` also matches immediately BEFORE a trailing newline, so
+# "<64 hex>\n" satisfied SHA256_RE and "measurement--x\n" satisfied ID_RE. JSON Schema
+# patterns are ECMA-262, where `$` is end-of-input; both validators here are Python-backed
+# so they agreed with each other and not with the spec. A digest with a trailing newline
+# is published, copied and compared by readers, and never byte-compares equal to the real
+# one. `\Z` is unconditional end-of-string.
+ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*(?:--[a-z0-9][a-z0-9.-]*)*\Z")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}\Z")
 
 # ---------------------------------------------------------------------------
 # Canonical serialization

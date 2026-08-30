@@ -91,16 +91,33 @@ class Registry(object):
         return errors
 
 
+# REG-23. Keywords whose values are SCHEMAS. Everything else is a leaf: recursing into a
+# DATA position made `{"const": {"a": 1}}` -- spec-legal, a is an instance property --
+# raise "unsupported keyword 'a'", which registry_validate turns into exit 4 for the whole
+# run. `default`, `examples` and object-valued `enum` members had the same problem, and
+# they survived only by accident when their keys happened to be schema keywords. A
+# whitelist of applicators is closed under future additions to SUPPORTED; a blacklist of
+# data keywords has to be re-audited every time one is added.
+_MAP_OF_SCHEMAS = ("properties", "$defs", "patternProperties")
+_SCHEMA_VALUED = ("additionalProperties", "propertyNames", "items", "contains", "not",
+                  "if", "then", "else", "prefixItems", "allOf", "anyOf", "oneOf")
+
+
 def _assert_supported(node, where, path="#"):
     if isinstance(node, dict):
         for k, v in node.items():
-            if k in ("properties", "$defs", "patternProperties", "dependentRequired"):
+            if k in _MAP_OF_SCHEMAS:
+                if not isinstance(v, dict):
+                    raise SchemaError("%s: %r must be an object of schemas at %s"
+                                      % (where, k, path))
                 for kk, vv in v.items():
                     _assert_supported(vv, where, path + "/" + k + "/" + kk)
                 continue
             if k not in SUPPORTED:
                 raise SchemaError("%s: unsupported keyword %r at %s" % (where, k, path))
-            _assert_supported(v, where, path + "/" + k)
+            # dependentRequired's values are lists of property NAMES, not schemas.
+            if k in _SCHEMA_VALUED:
+                _assert_supported(v, where, path + "/" + k)
     elif isinstance(node, list):
         for i, v in enumerate(node):
             _assert_supported(v, where, "%s/%d" % (path, i))

@@ -22,6 +22,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import registry_lib as L  # noqa: E402
+import registry_validate as RV  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
@@ -925,6 +926,92 @@ def main():
     print("  %-58s %s" % ("a value edited by hand is caught as reseed drift", "PASS" if ok else "FAIL"))
     passed += ok
     failed += not ok
+
+    # ================================================================== REG batch
+    print()
+    print("=" * 78)
+    print("R. attribution, digests and schema-walk edge cases")
+    print("=" * 78)
+
+    # REG-11: _owner did a SUBSTRING search, so any URL merely CONTAINING
+    # "huggingface.co/malaiwah/" was attributed to us, and _ours used startswith(),
+    # so a prefix squat passed too.
+    spoofs = [
+        ("https://evil.example.com/?ref=huggingface.co/malaiwah/x", False),
+        ("https://huggingface.co/malaiwah-impostor/repo/r.json", False),
+        ("https://github.com/evil/repo?x=huggingface.co/malaiwah/y", False),
+        ("https://huggingface.co/malaiwah/GLM-5.3-Flash-TR3-6bpw/resolve/main/r.json", True),
+        ("https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/x.json", True),
+        ("receipts/malaiwah/stream-k6-kld.json", True),
+    ]
+    bad = [(u, w, RV._ours(u)) for u, w in spoofs if RV._ours(u) != w]
+    ok = not bad
+    print("  %-58s %s" % ("REG-11 attribution parses the netloc, not a substring",
+                          "PASS" if ok else "FAIL %r" % (bad,)))
+    failed += not ok
+
+    # REG-20: Python's `$` also matches before a trailing newline, so a digest or id
+    # with one satisfied the anchored patterns and never byte-compared equal.
+    ok = (not L.SHA256_RE.match("a" * 64 + "\n")
+          and not L.ID_RE.match("measurement--x\n")
+          and bool(L.SHA256_RE.match("a" * 64))
+          and bool(L.ID_RE.match("measurement--x")))
+    print("  %-58s %s" % ("REG-20 a trailing newline is not a valid id or digest",
+                          "PASS" if ok else "FAIL"))
+    failed += not ok
+
+    # REG-23: _assert_supported recursed into DATA positions, so a spec-legal
+    # object-valued const/default/enum member raised "unsupported keyword" and took
+    # the whole validator down with exit 4.
+    import _minischema as MS
+    ok = True
+    for schema in ({"const": {"a": 1}}, {"default": {"x": 2}}, {"enum": [{"a": 1}]}):
+        try:
+            MS._assert_supported(schema, "t")
+        except MS.SchemaError:
+            ok = False
+    guard = 0
+    for schema in ({"unevaluatedProperties": False}, {"items": {"bogusKw": 1}},
+                   {"properties": {"p": {"bogusKw": 1}}}):
+        try:
+            MS._assert_supported(schema, "t")
+        except MS.SchemaError:
+            guard += 1
+    print("  %-58s %s" % ("REG-23 object-valued const/default/enum load; unknown "
+                          "keywords still raise", "PASS" if (ok and guard == 3) else
+                          "FAIL (data ok=%s, guard %d/3)" % (ok, guard)))
+    failed += not (ok and guard == 3)
+
+    # REG-03: nothing recomputed a cited receipt digest, so a published receipt and
+    # the row citing it could disagree in silence.
+    import shutil as _sh
+    rcp = os.path.join(args.root, "receipts", "malaiwah", "stream-k6-kld.json")
+    if os.path.isfile(rcp):
+        tamp = os.path.join(tmp, "receipt-tamper")
+        for sub in ("schema", "data", "receipts"):
+            _sh.copytree(os.path.join(args.root, sub), os.path.join(tamp, sub))
+        vic = os.path.join(tamp, "receipts", "malaiwah", "stream-k6-kld.json")
+        doc = json.load(open(vic))
+        doc["measured_mean_kld"] = 0.001
+        with open(vic, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=1)
+        out = subprocess.run([PY, os.path.join(HERE, "registry_validate.py"),
+                              "--root", tamp], capture_output=True, text=True)
+        ok = out.returncode != 0 and "RECEIPT-001" in out.stdout
+        print("  %-58s %s" % ("REG-03 a row whose receipt was edited is REFUSED",
+                              "PASS" if ok else "FAIL (exit %d)" % out.returncode))
+        failed += not ok
+        # and a root with no receipts/ at all must NOT error: the CI diff gate
+        # validates a synthetic root holding only schema/ and data/.
+        partial = os.path.join(tmp, "receipt-partial")
+        for sub in ("schema", "data"):
+            _sh.copytree(os.path.join(args.root, sub), os.path.join(partial, sub))
+        out2 = subprocess.run([PY, os.path.join(HERE, "registry_validate.py"),
+                               "--root", partial], capture_output=True, text=True)
+        ok2 = "RECEIPT-001" not in out2.stdout
+        print("  %-58s %s" % ("REG-03 a data-only root does not fire RECEIPT-001",
+                              "PASS" if ok2 else "FAIL"))
+        failed += not ok2
 
     print()
     print("=" * 78)
