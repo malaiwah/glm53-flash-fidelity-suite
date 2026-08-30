@@ -69,7 +69,9 @@ STREAM_TURBO405_RECEIPT = "receipts/malaiwah/stream-turbo-4.05bpw-kld.json"
 STREAM_TR34_RECEIPT = "receipts/malaiwah/stream-tr3-4bpw-kld.json"
 STREAM_TR34_RECEIPT_SHA = "1e790a0e2a69b1646ffee3c1c1529596bc2a5ac7d4f314039c6950b6e3ae1e6f"
 STREAM_DIONE30_RECEIPT = "receipts/malaiwah/stream-dione-3.0bpw-kld.json"
+STREAM_VCRUZK2_RECEIPT = "receipts/malaiwah/stream-vcruz-k2-2bpw-kld.json"
 STREAM_DIONE30_RECEIPT_SHA = _receipt_sha(STREAM_DIONE30_RECEIPT)
+STREAM_VCRUZK2_RECEIPT_SHA = _receipt_sha(STREAM_VCRUZK2_RECEIPT)
 STREAM_K8_RECEIPT = "receipts/malaiwah/stream-k8-kld.json"
 STREAM_BF16_RECEIPT = "receipts/malaiwah/stream-bf16-kld.json"
 STREAM_K6_RECEIPT_SHA = _receipt_sha(STREAM_K6_RECEIPT)
@@ -87,6 +89,8 @@ TURBODERP = lambda role: attr("turboderp", role, handle="turboderp",
                               url="https://huggingface.co/turboderp")
 ORCA = lambda role: attr("orcarouter", role, handle="orcarouter", url="https://huggingface.co/orcarouter")
 TURBO = lambda role: attr("turboderp", role, handle="turboderp", url="https://huggingface.co/turboderp")
+VCRUZ = lambda role: attr("vcruz305", role, handle="vcruz305",
+                          url="https://huggingface.co/vcruz305")
 ZAI = lambda role: attr("Z.ai", role, handle="zai-org", url="https://huggingface.co/zai-org")
 QWEN = lambda role: attr("Qwen (Alibaba)", role, handle="Qwen", url="https://huggingface.co/Qwen")
 UNSLOTH = lambda role: attr("unsloth", role, handle="unsloth", url="https://huggingface.co/unsloth")
@@ -587,6 +591,8 @@ A_DIONE = "artifact--0xsero.glm-5.3-flash-exl3-q4"
 A_DIONE30 = "artifact--0xsero.glm-5.3-flash-exl3-3.0bpw"
 A_B4 = "artifact--brandonmusic.glm-5.3-flash-tr3-4bpw"
 A_TURBO405 = "artifact--turboderp.glm-5.3-flash-exl3-4.05bpw"
+A_VCRUZK2 = "artifact--vcruz305.glm-5.3-flash-exl3-k2"
+VCRUZ_SRC = ("read from the release's OWN config.json quantization_config @ 1718dd40 (bits 2, codebook mcg, head_bits 16, quant_method exl3, scope glm53_routed_experts_only, non_routed_dtype_policy official_source_native, version 0.0.43) and confirmed by a name census of its own 150,226-entry model.safetensors.index.json: 148,608 routed payload tensors (43 layers x 288 experts x 3 projections x 4 objects) and exactly the official 1,618 non-routed names, unfused and under official names, no strays either way")
 A_TR3MIRROR = "artifact--mia-ailab.glm-5.3-flash-exl3-tr3-4bpw"
 A_FP8_DEQ = "artifact--orcarouter.glm-5.3-flash-fp8-dequantized"
 ORCA_IDS = {b: "artifact--orcarouter.glm-5.3-flash-mlx-%s" % b.replace("-", "").replace("_", "")
@@ -1128,6 +1134,195 @@ ARTIFACTS = [
                            "uri": "https://huggingface.co/turboderp/GLM-5.3-Flash-exl3"},
              cross_refs=lair(),
              seal={"sealed": False, "note": "unsealed source; see the unsealed_source disclosure"}),
+    # M4. The fourth rung of the measured GLM-5.3-Flash ladder and the lowest rate
+    # on this panel. Storage is turboderp's (stock-exllamav3 HF shards, canonical
+    # index, per-module {trellis,suh,svh,mcg}); everything the storage does not
+    # decide is 0xSero's shape instead -- MCG codebook, routed experts only,
+    # non-routed tensors retained at the official source precision, native BF16
+    # head. Reading either half off the other would put a false claim on this row,
+    # so every assignment below cites the release's own config and its own index.
+    artifact(A_VCRUZK2, GLM,
+             "vcruz305 GLM-5.3-Flash EXL3 K2 (stock-exllamav3 HF layout, mcg, routed "
+             "experts only, native BF16 head)",
+             "quant",
+             hf("vcruz305/GLM-5.3-Flash-EXL3-K2",
+                "1718dd403534fd369e82d676e55a50dc19630ffc", "hf_api"),
+             "exl3", "2.0 bpw", 97767357064,
+             codec("exl3-mcg", 2.0, None, tool="exllamav3",
+                   version="quantization_config.version 0.0.43 (the release names no "
+                           "exllamav3 git revision; its encoder is the producer's own "
+                           "glm53_exl3_encode_experts.py writing the stock EXL3/MCG "
+                           "payload layout)",
+                   # The release publishes no calibration manifest at all. `None` is
+                   # "not published", which is not the same as "not used": an EXL3
+                   # trellis fit is calibrated by construction. Recording False here
+                   # would be an assertion nobody made.
+                   calibration={"used": None,
+                                "corpus": "not published: the release ships no "
+                                          "calibration manifest, corpus digest or "
+                                          "token count. An EXL3 fit is calibrated by "
+                                          "construction, so this is 'undisclosed', "
+                                          "not 'none'.",
+                                "tokens": None,
+                                "overlaps_any_panel": None,
+                                "overlapping_panel_refs": []}),
+             scope("uniform", [
+                 asg("embed_tokens", "native", "bf16", 16,
+                     note="NOT quantized: the quantized scope is the routed experts only. "
+                          + VCRUZ_SRC),
+                 asg("attn.qkv", "native", "bf16", 16,
+                     note="NOT quantized, and stored UNFUSED under the official names -- "
+                          "q_proj/k_proj/v_proj on the 34 KDA layers and "
+                          "q_a/q_b/kv_a_proj_with_mqa/kv_b_proj on the 12 MLA layers -- "
+                          "unlike stock exllamav3 releases, which ship a fused "
+                          "self_attn.qkv_proj. " + VCRUZ_SRC),
+                 asg("attn.o", "native", "bf16", 16, note="NOT quantized. " + VCRUZ_SRC),
+                 asg("attn.other", "native", "mixed", None,
+                     note="q/k/v_conv1d, b_proj, f_a/f_b_proj, g_a/g_b_proj, the DSA "
+                          "indexers and the attention norms ship as the official tensors "
+                          "at their source dtypes (A_log and dt_bias are fp32 there and "
+                          "fp32 here). " + VCRUZ_SRC),
+                 asg("mlp.gate", "native", "bf16", 16, layer_range="0-2",
+                     note="only the three DENSE layers have an mlp.{gate,up,down}_proj; "
+                          "NOT quantized. " + VCRUZ_SRC),
+                 asg("mlp.up", "native", "bf16", 16, layer_range="0-2",
+                     note="NOT quantized. " + VCRUZ_SRC),
+                 asg("mlp.down", "native", "bf16", 16, layer_range="0-2",
+                     note="NOT quantized. " + VCRUZ_SRC),
+                 asg("moe.router", "native", "fp32", 32, layer_range="3-45",
+                     note="the routing gate and e_score_correction_bias are retained "
+                          "natively. " + VCRUZ_SRC),
+                 asg("moe.shared_expert", "native", "bf16", 16, layer_range="3-45",
+                     note="the shared expert is not routed and is NOT quantized. "
+                          + VCRUZ_SRC),
+                 asg("moe.experts", "quantized", "exl3-mcg", 2.0, layer_range="3-44",
+                     note="36,288 modules = 42 layers x 288 experts x 3 projections, each "
+                          "stored as one K2 EXL3/MCG payload {trellis[.,.,32] int16, suh "
+                          "fp16, svh fp16, mcg int32 marker} under the official module "
+                          "name. The dominant quantized class. " + VCRUZ_SRC),
+                 asg("mtp", "quantized", "exl3-mcg", 2.0, layer_range="45",
+                     note="layer 45's 864 routed experts ARE quantized here, at the same "
+                          "K2 rate, and they live in the MAIN index rather than a separate "
+                          "mtp.safetensors. That differs from the Dione family (which "
+                          "retains them at source precision) and from turboderp's stock "
+                          "releases (which quantize them into a side file). Present in the "
+                          "artifact, OUTSIDE the measured function: standard-logits scoring "
+                          "never executes the MTP layer. Layer 45's non-routed tensors "
+                          "(eh_proj, enorm, hnorm, shared_head.norm, its norms, o_proj, "
+                          "router and shared expert) are native. " + VCRUZ_SRC),
+                 asg("norm", "native", "bf16", 16, note="NOT quantized. " + VCRUZ_SRC),
+                 asg("lm_head", "native", "bf16", 16,
+                     note="the head is RETAINED at source precision: head_bits 16 and "
+                          "non_routed_dtype_policy official_source_native, and "
+                          "lm_head.weight appears in the index as a plain tensor with no "
+                          "{trellis,suh,svh,mcg} group. Unlike stock exllamav3, which "
+                          "quantizes it (turboderp's 4.05bpw head is K6). " + VCRUZ_SRC),
+                 asg("other", "native", "bf16", 16,
+                     note="the vision tower (model.visual.*) is retained natively -- its "
+                          "attn.qkv is FUSED, which is the official BF16 layout -- and is "
+                          "never executed by text-only scoring. " + VCRUZ_SRC),
+             ], "native", kv="bf16", mtp=True),
+             VCRUZ("quantizer"),
+             [src("url",
+                  "https://huggingface.co/api/models/vcruz305/GLM-5.3-Flash-EXL3-K2"
+                  "?blobs=true&revision=1718dd403534fd369e82d676e55a50dc19630ffc",
+                  None,
+                  "138 files, 120 safetensors; all-files sum 97,767,357,064; safetensors "
+                  "sum 97,728,721,536, which is also the index's own "
+                  "metadata.total_size. The weights were uploaded in one commit "
+                  "(a618e7ad, 2026-08-28); every later commit on this repo touches only "
+                  "the model card and the runtime/ build context."),
+              src("hf_file",
+                  "https://huggingface.co/vcruz305/GLM-5.3-Flash-EXL3-K2/resolve/"
+                  "1718dd403534fd369e82d676e55a50dc19630ffc/config.json",
+                  None,
+                  "the release's own inline quantization_config -- bits 2, codebook mcg, "
+                  "head_bits 16, quant_method exl3, scope glm53_routed_experts_only, "
+                  "non_routed_dtype_policy official_source_native, version 0.0.43. Every "
+                  "entry in scope.assignments is read from it or from the index."),
+              src("hf_file",
+                  "https://huggingface.co/vcruz305/GLM-5.3-Flash-EXL3-K2/resolve/"
+                  "1718dd403534fd369e82d676e55a50dc19630ffc/"
+                  "model.safetensors.index.json",
+                  None,
+                  "150,226 entries: 37,152 quantized modules x 4 objects = 148,608 routed "
+                  "payload tensors, plus exactly the official BF16 release's 1,618 "
+                  "non-routed names. The name census that fixes the scope is this file's, "
+                  "not a producer claim; the runner re-ran it before renting anything and "
+                  "the materializer's completeness gate re-ran it on the instance "
+                  "(1618/1618, 0 duplicates)."),
+              src("hf_file",
+                  "https://huggingface.co/vcruz305/GLM-5.3-Flash-EXL3-K2/resolve/"
+                  "1718dd403534fd369e82d676e55a50dc19630ffc/quantization_config.json",
+                  None,
+                  "the standalone sidecar. Its header fields agree with the inline block, "
+                  "but its tensor_storage map is INCOMPLETE -- 4,180 of the 37,152 "
+                  "quantized modules, covering layers 10-13 in full and layer 14 in part -- "
+                  "and its serving_reader_qualified reads true where the inline block "
+                  "reads false. Nothing on this record is read from it; the scope comes "
+                  "from the inline block and the index."),
+              src("hf_file",
+                  "https://huggingface.co/datasets/malaiwah/"
+                  "GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/"
+                  "vcruz-k2-2bpw-packed-kld.json",
+                  STREAM_VCRUZK2_RECEIPT_SHA,
+                  "malaiwah.glm53-vcruz-k2-2bpw-packed-kld-summary.v1")],
+             [disc("unsealed_source", "caveat",
+                   "The release ships no upstream receipts, no reconstruction closures, no "
+                   "sealed reader ABI -- and, unlike every other third-party artifact "
+                   "measured on this panel, no per-shard digest list of its own either: "
+                   "there is no SHA256SUMS and no EXL3_MANIFEST.json. The provenance "
+                   "anchors are therefore the immutable 40-hex revision, the Hub's own "
+                   "per-file LFS content digests at that revision (a 122-entry list "
+                   "captured before the rental and re-verified against the 120 downloaded "
+                   "shards on the measurement instance), the artifact's config and index "
+                   "sha256 recomputed locally and bound into the materialization receipt, "
+                   "and the consumed-payload sha256 census the capture records.", True),
+              disc("routed_experts_only_scope", "info",
+                   "2-bit MCG trellis on the routed MoE experts of layers 3-45 and nothing "
+                   "else: attention, indexers, mHC, routers, shared experts, the three "
+                   "dense layers, embeddings, norms, the vision tower and the head are all "
+                   "retained at the official source precision. The measured divergence is "
+                   "therefore attributable to the routed experts alone, which is what "
+                   "makes it comparable with the TR3 and Dione rungs and NOT with "
+                   "turboderp's full-scope releases."),
+              disc("native_head_retained", "info",
+                   "head_bits 16 and non_routed_dtype_policy official_source_native: the "
+                   "lm_head is the official BF16 tensor, present in the index as a plain "
+                   "weight. Stock exllamav3 quantizes it; this release does not."),
+              disc("revision_unpinned", "caveat",
+                   "The release names its parent as zai-org/GLM-5.3-Flash-BF16 (model card "
+                   "and base_model metadata) but publishes NO source revision, so "
+                   "derived_from_artifact_ref is left empty rather than guessed at one of "
+                   "the two BF16 records this registry holds. The lineage that IS "
+                   "established is the direction: quantized from BF16, not from the FP8 "
+                   "release -- unlike turboderp's exl3 artifacts, whose own "
+                   "quantization_config declares an FP8 parent."),
+              disc("unreadable_by_stock_loader", "info",
+                   "The producer states plainly that stock vLLM cannot load these weights: "
+                   "it has neither the exl3 quantization method nor the Glm5Next "
+                   "architecture, and they ship prebuilt wheels for a GB10 Spark and an "
+                   "L40 TP4 build context alongside. Irrelevant to this measurement, which "
+                   "decodes the payloads offline, and material to anyone deciding whether "
+                   "to run them."),
+              disc("record_note", "info",
+                   "The producer publishes their own quality evidence, and it is a "
+                   "different question from this registry's: sixcat 0.5.1 think-on at 64k "
+                   "scores 84.2 overall (knowledge 65, math 100, truth 85, instruct 75, "
+                   "code 90, tools 90) with a trunc-in-think flag on the instruct "
+                   "category, plus decode throughput on one GB10 and an L40 TP4 text "
+                   "smoke. A capability benchmark is not a fidelity divergence and the two "
+                   "cannot be netted against each other; it is recorded on the ARTIFACT, "
+                   "where it describes the artifact, and kept off the measurement row.")],
+             weights_extra={"size_basis": "repo_all_files", "shard_count": 120,
+                            "tensor_parallel": {"pre_sliced": False, "world_size": None}},
+             derived_from_artifact_ref=None,
+             availability={"status": "public",
+                           "uri": "https://huggingface.co/vcruz305/GLM-5.3-Flash-EXL3-K2"},
+             cross_refs=lair(),
+             seal={"sealed": False,
+                   "note": "unsealed source, and no producer digest list of any kind; see "
+                           "the unsealed_source disclosure for what binds the bytes"}),
     artifact(A_B4, GLM, "brandonmusic GLM-5.3-Flash tr3 4bpw", "quant",
              hf("brandonmusic/GLM-5.3-Flash-tr3-4bpw", None, "none"),
              "exl3", "4bpw", 175642157700,
@@ -2277,6 +2472,123 @@ def build_measurements(artifacts_map):
                           "native_head."),
                  ],
                  notes=("Third rung of 0xSero's ladder measured here. His Q4 reads 0.027262784814670614 on the SEALED lane and this 3.0bpw reads 0.050501241465423556 on the STREAMING lane; the two are not directly comparable (different lane, different comparability key) and the registry refuses to net them. Within this lane the attributable error against the BF16 floor is 0.03899531884609326 nats. The producer's own RELEASE_STATUS.json marks this release quality: FAIL at their own threshold (their held-out forward KL 0.15251, top-1 0.87285 over 65,504 positions of THEIR panel) -- their number, their panel, their estimator, recorded on the artifact record rather than mixed into this one.")))
+    # ---- M4 measured values, transcribed from receipts/malaiwah/
+    # stream-vcruz-k2-2bpw-kld.json, whose sha256 this row cites and whose
+    # bytes `make reseed-check` re-reads.
+    M4_VALUE = 0.15520955491423008
+    M4_RUN1 = 0.15520955491423008
+    M4_RUN2 = 0.15520955491423008
+    M4_TOP1 = 0.8726526624328286
+    M4_IDENTICAL = True
+    M4_EVIDENCE = ["a75500a9d060dacff12023553b2360ac0a29d28ebd95b844bf9b39e312a291ee"]
+    M4_GATE_PASSED = False
+    M4_DET_NOTE = ("2 cold runs, 2 distinct kld_report_sha256 values, 1 distinct "
+                   "tokenwise_kld_sha256. The report-file digests differ per run and "
+                   "prove nothing; the tokenwise digest is the determinism evidence.")
+    M4_DISCLOSURES = [
+        disc("third_party_artifact_self_measured", "info",
+             "Someone else's weights, our measurement. vcruz305 produced the artifact; "
+             "malaiwah produced the number. Credit for the artifact is theirs."),
+        disc("quality_gate_failed", "caveat",
+             "The panel's gate is mean tokenwise KLD < 0.06 and this row reads "
+             "0.15520955491423008 -- 2.6x the threshold, and 3.07x the 3.0-bpw rung "
+             "immediately above it. The gate is the artifact's verdict, not the "
+             "measurement's: the run is bitwise deterministic, its two cold runs agree "
+             "to the last bit, and the number is published exactly as it came out. "
+             "What it says is that a 2-bit routed-expert quantization of this model "
+             "diverges by 0.155 nats from its own BF16 source on this panel, at 87.27 % "
+             "top-1 agreement.", True),
+        disc("unsealed_source", "caveat",
+             "The release ships no upstream receipts, no reconstruction closures, no "
+             "sealed reader ABI -- and no per-shard digest list of its own: no "
+             "SHA256SUMS, no EXL3_MANIFEST.json. What binds the bytes is the immutable "
+             "40-hex revision, the Hub's own per-file LFS content digests at that "
+             "revision -- a 122-entry list, manifest digest 43a162282c06b19d09802"
+             "9afea4bedc77238026bca28fc514e50e33d827a9b66, captured from the models "
+             "API BEFORE the rental and recomputed on the instance against the "
+             "downloaded tree: 122/122 verified, 97,764,515,699 bytes, 0 absent, 0 "
+             "safetensors on disk uncovered by the list -- plus the artifact's "
+             "config sha256 163bd0888684f7eaf963ad67cdff3fbdca0749796c0aa5a6e7035816"
+             "e503ecfc and index sha256 e9dd7cb2f6358843de334baa40ff537b4914721dbaa9c"
+             "7dab42a386562afce19 recomputed locally and bound into the "
+             "materialization receipt, and the consumed-payload sha256 census.", True),
+        disc("reduced_run_count", "caveat",
+             "cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 "
+             "(budget; disclosed)"),
+        disc("non_sealed_lane", "caveat",
+             "Produced by the 'streaming' lane, not the sealed-ep8 lane. The lane's "
+             "offset against the sealed lane is NOT measured for this artifact: it has "
+             "no sealed-lane row, and no sibling on either lane, to bridge against.",
+             True),
+        disc("native_head_retained", "info",
+             "declared_head_bits 16 (verbatim from the receipt): this release retains "
+             "the lm_head at source precision, unlike a stock-exllamav3 release which "
+             "quantizes it. The head is APPLIED natively from the artifact's own "
+             "weights, which is why estimator.head_policy is native_head."),
+        disc("routed_experts_only_scope", "info",
+             "The quantized scope is the routed MoE experts and nothing else, so the "
+             "divergence is attributable to them alone -- comparable with the TR3 and "
+             "Dione rungs of this ladder, and NOT with turboderp's full-scope "
+             "releases, which also quantize attention, the dense layers and the head."),
+    ]
+    M4_NOTES = (
+        "The lowest rate measured on this panel, and the first row here to FAIL the "
+        "0.06 gate. 0.15520955491423008 nats at 87.27 % top-1, against 0.050501241465423556 "
+        "at 93.00 % for the 3.0-bpw rung and 0.025503427634363770 at 95.31 % for 4 bpw: "
+        "3.07x the divergence of 3 bpw for 35 % fewer bytes (97.8 GB against 149.6 GB), "
+        "and 6.09x the divergence of 4 bpw for 44 % fewer bytes. Against this lane's own "
+        "BF16 floor the quantization-attributable error is 0.143703632294899769 nats. "
+        "Both cold runs produced identical run means and ONE tokenwise KL digest, so the "
+        "path is bitwise deterministic; the divergence is the codec, not the harness. "
+        "Every one of the 907,200 decoded expert matrices was K2 "
+        "(routed_bits_decode_histogram {K2: 907200}), which is the decode side confirming "
+        "the release's declared routed-experts-only scope. Per-domain the damage is "
+        "uneven: axis2_legal 0.2509, axis1_general 0.1727, axis3_code_agentic 0.1272, "
+        "axis4_reasoning_termination 0.0671 -- a 3.7x spread across domains that the "
+        "single panel mean hides.")
+
+    # M4: the lowest rate on this panel, and the first row here whose quality gate
+    # does not necessarily pass. Whatever the number is, it is published: a gate
+    # verdict is a finding about the artifact, not a verdict on the measurement.
+    VCRUZK2 = M4_VALUE
+    out.append(M("measurement--glm53.vcruz-k2-2bpw-stream.brandonmusic-final25", GLM,
+                 A_VCRUZK2, P_B25, R_B25, PL_STREAM, VCRUZK2,
+                 metric_name="mean_of_run_means_tokenwise_kld",
+                 top1=M4_TOP1,
+                 scored_positions=51175, contexts=25, runs=2, cold=True,
+                 run_means=[M4_RUN1, M4_RUN2],
+                 identical=M4_IDENTICAL, evidence_kind="tokenwise_kld_sha256",
+                 evidence_hashes=M4_EVIDENCE,
+                 det_note=M4_DET_NOTE,
+                 sources=[src("receipt_file", STREAM_VCRUZK2_RECEIPT,
+                              STREAM_VCRUZK2_RECEIPT_SHA,
+                              "malaiwah.glm53-vcruz-k2-2bpw-packed-kld-summary.v1"),
+                          src("hf_file", HF_REGISTRY_RAW + STREAM_VCRUZK2_RECEIPT,
+                              STREAM_VCRUZK2_RECEIPT_SHA),
+                          src("hf_file",
+                              "https://huggingface.co/datasets/malaiwah/"
+                              "GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/"
+                              "vcruz-k2-2bpw-packed-kld.json", STREAM_VCRUZK2_RECEIPT_SHA)],
+                 receipt_schema="malaiwah.glm53-vcruz-k2-2bpw-packed-kld-summary.v1",
+                 cls="advisory",
+                 bias={"kind": "other", "direction": "unknown",
+                       "floor_measurement_ref": M_BF16_FLOOR,
+                       "estimated_magnitude": None,
+                       "detail": "Measured on the 'streaming' lane, whose offset against "
+                                 "the sealed-ep8 lane is known to be non-zero and is NOT "
+                                 "measured for this artifact: it has no sealed-lane row "
+                                 "to bridge against, and no sibling of its own on either "
+                                 "lane. This lane's own measurement floor (%s) is %r "
+                                 "nats; netting it out gives an estimated "
+                                 "quantization-attributable error of %r nats here -- an "
+                                 "estimate, not an identity, because KL is not additive, "
+                                 "and it is only meaningful because both terms share the "
+                                 "same reference and lane."
+                                 % (M_BF16_FLOOR, BF16_FLOOR, VCRUZK2 - BF16_FLOOR)},
+                 gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06,
+                       "threshold_gt": None, "passed": M4_GATE_PASSED},
+                 disclosures=M4_DISCLOSURES,
+                 notes=M4_NOTES))
     out.append(M("measurement--glm53.tr3-4bpw-stream.brandonmusic-final25", GLM,
                  A_TR3MIRROR, P_B25, R_B25, PL_STREAM, TR34,
                  metric_name="mean_of_run_means_tokenwise_kld",
