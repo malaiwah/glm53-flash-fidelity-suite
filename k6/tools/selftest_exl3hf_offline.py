@@ -9,6 +9,8 @@ skipped rungs run there before any paid capture.
   [1] mul1 LUT exactness: the fp32 hfma emulation equals an independent fp64
       computation with explicit fp16 rounding for all 65,536 states, and a
       spot-check recomputes the byte-sum path with pure Python ints.
+  [1b] mcg LUT: pinned by a frozen digest and recomputed by an independent
+      pure-integer route; needs NO private package.
   [2] anybits unpack parity vs dione_surface (bitwise, K3/K4/K6/K8).
   [3] decode determinism: golden sha256 over a fixed synthetic payload
       (mul1, K4/K6) -- pins the whole decode ABI (unpack+LUT+permute+hadamard).
@@ -81,6 +83,35 @@ for i in list(range(0, 1 << 16, 4099)) + [0, 65535]:
 check("hfma emulation: fp32 path == exact-rational path (sampled)", exact)
 mark = int(np.int32(np.uint32(xs.MUL1_MULT)))
 check("mul1 marker constant", mark == xs.MUL1_MARKER_SIGNED_INT32, str(mark))
+
+# [1b] mcg LUT: independent recomputation + frozen digest -----------------------
+# The mcg table used to come from `quant_pipeline`, which is not published, so a
+# fresh clone could decode `mul1` releases and nothing else. It is now built
+# in-tree from exllamav3 v1.4.2 codebook.cuh `decode_3inst<1>`. This rung needs
+# no private package: it recomputes the table by a DIFFERENT route (pure Python
+# integers, one state at a time) and pins the whole table by digest.
+mcg = xs.mcg_lut().numpy()
+check("mcg LUT is 65,536 fp16 entries",
+      mcg.shape == (1 << 16,) and mcg.dtype == np.float16)
+check("mcg LUT matches its frozen digest",
+      xs._sha256_bytes(np.ascontiguousarray(mcg).tobytes()) == xs.MCG_LUT_SHA256)
+bad = []
+for i in list(range(0, 1 << 16, 2591)) + [0, 1, 65535]:
+    # x *= 0xCBAC1FED; x = (x & 0x8FFF8FFF) ^ 0x3B603B60; hadd(lo_fp16, hi_fp16)
+    x = (i * 0xCBAC1FED) & 0xFFFFFFFF
+    x = (x & 0x8FFF8FFF) ^ 0x3B603B60
+    lo = np.array([x & 0xFFFF], dtype=np.uint16).view(np.float16)[0]
+    hi = np.array([(x >> 16) & 0xFFFF], dtype=np.uint16).view(np.float16)[0]
+    if np.float16(lo + hi) != mcg[i]:
+        bad.append(i)
+check("mcg LUT == pure-integer recomputation (stratified states)",
+      not bad, f"disagreed at {bad[:5]}")
+check("mcg LUT is finite and symmetric-ranged",
+      bool(np.isfinite(mcg).all()) and abs(float(mcg.min()) + float(mcg.max())) < 1e-3,
+      f"min={float(mcg.min())} max={float(mcg.max())}")
+check("the mcg path no longer imports the unpublished campaign package",
+      "quant_pipeline" not in (TOOLS / "exl3hf_surface.py").read_text()
+      .split("def codebook_lut")[1])
 
 # [2] unpack parity vs dione_surface ------------------------------------------
 gen = torch.Generator().manual_seed(20260829)

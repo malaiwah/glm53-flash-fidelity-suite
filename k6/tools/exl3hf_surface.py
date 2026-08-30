@@ -183,13 +183,62 @@ def mul1_lut(device="cpu"):
     return lut
 
 
+MCG_MULT = 0xCBAC1FED
+MCG_MASK = 0x8FFF8FFF
+MCG_XOR = 0x3B603B60
+# sha256 over the 65,536 fp16 values' raw little-endian bytes. Frozen: this table
+# is a mathematical constant, so a change to it is a bug, never a version bump.
+MCG_LUT_SHA256 = "95383563929baa9d1ae5de0be22490284382673620bdd85929feea7bdbef04a9"
+
+
+def mcg_lut(device="cpu"):
+    """The exllamav3 `mcg` (3INST, cb == 1) codebook as a 65,536-entry fp16 LUT.
+
+    Transcribed from exllamav3 v1.4.2
+    `exllamav3/exllamav3_ext/quant/codebook.cuh`, `decode_3inst<1>`:
+
+        x *= 0xCBAC1FEDu;
+        asm ("lop3.b32 D, A, 0x8fff8fff, 0x3b603b60, 0x6a;");
+        half2_uint32 xu(x);
+        return __hadd(__low2half(xu.as_half2), __high2half(xu.as_half2));
+
+    `lop3` with immLut 0x6a is `(a & b) ^ c` -- with the canonical a = 0xF0,
+    b = 0xCC, c = 0xAA the truth table (0xF0 & 0xCC) ^ 0xAA is 0x6A -- so the
+    middle line is `x = (x & 0x8FFF8FFF) ^ 0x3B603B60`.  The masked-and-xored
+    word is then read as two fp16 lanes and added.  numpy's float16 addition
+    rounds once from an exact intermediate, which is what `__hadd` does.
+
+    This used to import `quant_pipeline.evaluation.glm53_packed_k4_reader`, a
+    package that is not published, so a fresh clone of this repository could
+    decode `mul1` releases and nothing else.  The two implementations were
+    checked to agree on all 65,536 entries before this one replaced the import.
+    """
+    import torch
+
+    key = ("mcg", str(device))
+    cached = _LUT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    idx = np.arange(1 << 16, dtype=np.uint64)
+    prod = ((idx * np.uint64(MCG_MULT)) & np.uint64(0xFFFFFFFF)).astype(np.uint32)
+    prod = ((prod & np.uint32(MCG_MASK)) ^ np.uint32(MCG_XOR)).astype(np.uint32)
+    low = (prod & np.uint32(0xFFFF)).astype(np.uint16).view(np.float16)
+    high = ((prod >> np.uint32(16)) & np.uint32(0xFFFF)).astype(np.uint16).view(np.float16)
+    values = (low + high).astype(np.float16)
+    if not np.isfinite(values).all():
+        raise _fail("mcg lookup table is non-finite")
+    got = _sha256_bytes(np.ascontiguousarray(values).tobytes())
+    if got != MCG_LUT_SHA256:
+        raise _fail(f"mcg lookup table digest {got} != frozen {MCG_LUT_SHA256}")
+    lut = torch.from_numpy(np.ascontiguousarray(values)).to(device)
+    _LUT_CACHE[key] = lut
+    return lut
+
+
 def codebook_lut(codebook: str, device="cpu"):
     if codebook == "mul1":
         return mul1_lut(device)
     if codebook == "mcg":
-        # the campaign reader's own frozen MCG table (kept as the single source)
-        from quant_pipeline.evaluation.glm53_packed_k4_reader import mcg_lut
-
         return mcg_lut(device)
     raise _fail(f"unknown codebook {codebook!r} (known: mul1, mcg)")
 

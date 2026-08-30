@@ -229,6 +229,27 @@ def _find_mask(arrays: str, row: Dict[str, Any], length: int) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _from_pretrained(cls, model_dir: str, torch_dtype):
+    """`from_pretrained` plus the load report, across the dtype-kwarg rename.
+
+    The report is what tells us whether the checkpoint actually populated the
+    model.  It is requested here rather than reconstructed later because only
+    `from_pretrained` knows the checkpoint-name -> parameter-name mapping (a
+    MoE checkpoint may ship 256 per-expert matrices that the model holds as one
+    fused tensor, so comparing key sets by hand is wrong).
+    """
+    for kwargs in ({"dtype": torch_dtype}, {"torch_dtype": torch_dtype}):
+        try:
+            out = cls.from_pretrained(model_dir, output_loading_info=True, **kwargs)
+        except TypeError:
+            continue
+        if isinstance(out, tuple):
+            return out[0], (out[1] or {})
+        return out, {}
+    # Very old / unusual classes: take the model without a report and say so.
+    return cls.from_pretrained(model_dir, torch_dtype=torch_dtype), {}
+
+
 def load_model(model_dir: str, device: str, dtype_name: str):
     import torch
     import transformers
@@ -238,6 +259,7 @@ def load_model(model_dir: str, device: str, dtype_name: str):
     config = transformers.AutoConfig.from_pretrained(model_dir)
     architectures = list(getattr(config, "architectures", None) or [])
     model = None
+    info: Dict[str, Any] = {}
     errors = []
     for name in architectures:
         cls = getattr(transformers, name, None)
@@ -245,23 +267,57 @@ def load_model(model_dir: str, device: str, dtype_name: str):
             errors.append("transformers has no %s" % name)
             continue
         try:
-            model = cls.from_pretrained(model_dir, dtype=torch_dtype)
-            break
-        except TypeError:
-            model = cls.from_pretrained(model_dir, torch_dtype=torch_dtype)
+            model, info = _from_pretrained(cls, model_dir, torch_dtype)
             break
         except Exception as exc:  # pragma: no cover - depends on the checkpoint
             errors.append("%s: %s" % (name, exc))
     if model is None:
         try:
-            model = transformers.AutoModelForCausalLM.from_pretrained(model_dir,
-                                                                      dtype=torch_dtype)
+            model, info = _from_pretrained(transformers.AutoModelForCausalLM,
+                                           model_dir, torch_dtype)
         except Exception as exc:
             raise fail("could not instantiate the model (%s); AutoModelForCausalLM: %s"
                        % ("; ".join(errors) or "no architectures declared", exc))
     model.eval()
     model.to(device)
-    return model, config
+    return model, config, info
+
+
+def _base_capture(value: Optional[str]) -> Optional[Dict[str, Any]]:
+    """`--base-capture` -> the schema's object, not the raw string.
+
+    `dataset.base_capture` is `{dataset_sha256, capture_content_digest,
+    repository, revision, note}` or null.  The flag used to be written straight
+    through, so ANY capture that named its intended root was refused by the
+    validator the capture itself runs -- after the forward pass had been paid
+    for.  A bare `repo` or `repo@revision` is the common case and is accepted;
+    a JSON object is passed through so the digests can be pinned.
+    """
+    if value in (None, ""):
+        return None
+    text = value.strip()
+    if text.startswith("{"):
+        doc = json.loads(text)
+        if not isinstance(doc, dict):
+            raise fail("--base-capture JSON must be an object, got %s" % type(doc).__name__)
+        doc.setdefault("dataset_sha256", None)
+        return doc
+    if text.startswith("hf://"):
+        text = text[len("hf://"):]
+    repository, _, revision = text.partition("@")
+    return {"dataset_sha256": None, "capture_content_digest": None,
+            "repository": repository or None, "revision": revision or None,
+            "note": "named by --base-capture; digests not pinned because the "
+                    "comparison partner was not read at capture time"}
+
+
+def missing_weight_keys(info: Dict[str, Any]) -> List[str]:
+    """Parameters `from_pretrained` had to invent because the checkpoint lacked them."""
+    missing = info.get("missing_keys") or []
+    try:
+        return sorted(str(k) for k in missing)
+    except TypeError:  # pragma: no cover - a report shape we do not know
+        return [str(missing)]
 
 
 def head_module(model):
@@ -316,7 +372,31 @@ def run_capture(args: argparse.Namespace) -> int:
     identity, identity_files = checkpoint_identity(model_dir)
     log(stage="checkpoint_identity", sha256=identity, files=len(identity_files))
 
-    model, config = load_model(model_dir, args.device, args.dtype)
+    model, config, loading_info = load_model(model_dir, args.device, args.dtype)
+
+    # A checkpoint whose tensors this `transformers` build cannot name does not
+    # fail to load: `from_pretrained` RANDOMLY INITIALISES the parameters it
+    # could not find, logs a table, and returns a model that runs.  Captured,
+    # that produces a confident number for weights nobody ever measured -- the
+    # single most dangerous outcome this tool can have.  Observed on
+    # malaiwah/GLM-5.2-SIQ-Fruit, whose routed experts ship as exl3-trellis
+    # atoms (`.trellis`/`.suh`/`.svh`/`.mcg`): stock transformers reported
+    # `model.layers.{3..12}.mlp.experts.{gate_up,down}_proj` MISSING and handed
+    # back a model with random experts, mean ~0, std 0.0199.
+    missing = missing_weight_keys(loading_info)
+    if missing:
+        log(stage="missing_weights", count=len(missing), keys=missing[:12])
+        if not args.allow_missing_weights:
+            raise fail(
+                "REFUSED: %d parameter(s) were NOT in the checkpoint and were randomly "
+                "initialised by transformers, so this model's forward pass is not the "
+                "artifact's: %s%s. Either this build of transformers cannot read the "
+                "checkpoint's storage format, or the checkpoint is incomplete. Pass "
+                "--allow-missing-weights only if you can defend a number measured on a "
+                "partially random model; it forces a BLOCKING disclosure."
+                % (len(missing), ", ".join(missing[:6]),
+                   " (+%d more)" % (len(missing) - 6) if len(missing) > 6 else ""))
+
     head = head_module(model)
     vocab_size = int(head.weight.shape[0])
     hidden_size = int(head.weight.shape[1])
@@ -444,7 +524,7 @@ def run_capture(args: argparse.Namespace) -> int:
                      hidden_size=hidden_size, head_rel=head_rel, head_full=head_full,
                      head_content=head_content, head_shape=list(head_weight.shape),
                      model_dir=model_dir, identity=identity, identity_files=identity_files,
-                     config=config, started=started)
+                     config=config, started=started, missing_weights=missing)
 
 
 # ---------------------------------------------------------------------------
@@ -548,7 +628,8 @@ def default_card_body(args, manifest, scope) -> str:
 
 def _assemble(args, writer, panel, panel_records, capture_records, *, context_length,
               vocab_size, hidden_size, head_rel, head_full, head_content, head_shape,
-              model_dir, identity, identity_files, config, started) -> int:
+              model_dir, identity, identity_files, config, started,
+              missing_weights=()) -> int:
     scope = _scope(args)
     quantized = scope["policy"] != "native"
 
@@ -635,6 +716,17 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
         disclosures = [{"code": "no_known_deviations", "severity": "info",
                         "affects_comparability": False,
                         "detail": "captured by k6/tools/hf_capture.py"}]
+    # --allow-missing-weights was used: the number in this dataset is partly a
+    # measurement of randomly initialised parameters. Say so, loudly, forever.
+    if missing_weights:
+        disclosures.append({
+            "code": "randomly_initialised_weights", "severity": "blocking",
+            "affects_comparability": True,
+            "detail": "%d parameter(s) were absent from the checkpoint and were randomly "
+                      "initialised by transformers before this capture ran, so this is NOT "
+                      "a measurement of the published artifact. First keys: %s."
+                      % (len(missing_weights), ", ".join(list(missing_weights)[:6]))})
+
     # DET-D4: `verify` warns when run_count < 5 and asks for this disclosure, but
     # nothing in the tooling emitted it, so every capture this engine writes
     # would carry a warning nobody could clear.  A single cold run is a real
@@ -656,7 +748,7 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                  "author": {"name": args.author, "role": "capture-author", "handle": None,
                             "url": None, "is_registry_maintainer": False},
                  "license": "mit", "repository": args.repository, "revision": None,
-                 "base_capture": args.base_capture},
+                 "base_capture": _base_capture(args.base_capture)},
         weights={"repository": args.weights_repository or args.model,
                  "revision": args.model_revision, "model_revision": args.model_revision,
                  "quantized": quantized, "checkpoint_identity_sha256": identity,
@@ -708,6 +800,21 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
         determinism=determinism,
         coverage=coverage,
         disclosures=disclosures)
+
+    # The panel's own build receipt, byte-verbatim (spec section 2,
+    # `panel/panel-receipt.json`).  Recording `panel_receipt_sha256` while
+    # shipping no preimage leaves a reader holding a digest of something they
+    # cannot obtain: for a ROOT dataset -- the yardstick everything else is
+    # measured against -- that is the one piece of provenance most worth having.
+    # It must be written BEFORE `finish()`, or `checksums.txt` will not cover it
+    # and `verify` refuses the tree with `unlisted_file`.
+    if panel.receipt_sha256:
+        receipt_src = os.path.join(panel.root, "panel.receipt.json")
+        raw_receipt = open(receipt_src, "rb").read()
+        writer.add_file("panel/panel-receipt.json", raw_receipt)
+        manifest["panel"]["panel_receipt_file"] = "panel/panel-receipt.json"
+        log(stage="panel_receipt", file="panel/panel-receipt.json",
+            sha256=panel.receipt_sha256, bytes=len(raw_receipt))
 
     # README.md is REQUIRED by the spec, is covered by checksums.txt, and so has
     # to exist BEFORE the seal.  A capture that does not write one produces a
@@ -783,6 +890,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--subset-detail", default=None)
     parser.add_argument("--disclosures", default=None, help="JSON list")
     parser.add_argument("--readme", default=None)
+    parser.add_argument("--allow-missing-weights", action="store_true",
+                        help="capture even though transformers had to randomly initialise "
+                             "parameters the checkpoint did not provide. Forces a BLOCKING "
+                             "disclosure. Almost never the right flag.")
     parser.add_argument("--force", action="store_true")
     return parser
 
