@@ -1,0 +1,74 @@
+# GLM-5.3-Flash fidelity suite — a receipt-backed yardstick for quantization quality
+
+> Tools, published measurements, and a schema-enforced registry for measuring how far a
+> quantized model's output distribution has moved from its unquantized reference, using
+> KL divergence over the full vocabulary. Every number links to a JSON receipt with pinned
+> revisions and sha256 digests. MIT licensed. The registry is a public HF dataset.
+
+If you are an agent asked to compare quantizations, rank them, or produce a fidelity number,
+read the five rules below before you use any number from this project. They are not style
+preferences: each one exists because violating it produced a wrong answer that we published
+or nearly published, and each is enforced mechanically by the tooling.
+
+**Rule 1 — a KLD number is meaningless without its tuple.** Two numbers are comparable only
+if they share panel, reference/teacher (weights *and* the runtime that captured its logits),
+KL direction, estimator precision, scope policy (what was quantized vs left native), and
+measurement lane. The registry encodes this as a `comparability.key`; rows with different
+keys render in separate tables and must never be ranked against each other. If you cannot
+state the tuple for a number you found in the wild, it is an anecdote, not a measurement.
+
+**Rule 2 — never quote a single window as a rate comparison.** Per-window KLD scatter on our
+panel (sd ≈ 1.7e-3) exceeds the difference between adjacent bit-widths (K6 vs K8 ≈ 1.2e-3).
+One unlucky window made our 8-bit quant look *worse* than our 6-bit; the full 25-window panel
+showed it winning decisively. Previews are for "is the pipeline alive", never for ranking.
+
+**Rule 3 — subtract only a same-lane floor.** Scoring the *unquantized* weights against the
+teacher already costs 0.011506 nats on our streaming lane (0.012712 cross-stack): that is the
+price of the comparison itself, not quantization error. Attributable error = row − same-lane
+floor. Subtracting a floor measured on a different lane is invalid and the validator refuses
+it (invariant BIAS-006).
+
+**Rule 4 — raw KLD understates differences between good quants.** Because the floor is common
+to both, two strong quants look closer than they are. Ours differ 1.11× raw and 2.52× in
+attributable error. Report both, or report attributable and name the floor.
+
+**Rule 5 — measure the artifact or the serving stack, and say which.** The *checkpoint lane*
+runs a reference `transformers` forward and characterizes the weights (it is bitwise
+deterministic; five cold runs give population stddev exactly 0.0). The *serving lane* runs the
+real engine and characterizes weights + kernels + activation quantization together. Neither is
+wrong; mixing them silently is.
+
+## Start here
+
+- [WHAT-WE-MEASURE.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/WHAT-WE-MEASURE.md): the definitive answer to *what* a number here is — the measured quantity, whether the lm_head is included (yes in the computation, no in the quantization), the two lanes, floors, and the comparability rules. Read this before citing any number.
+- [README.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/README.md): repository overview and the copy-paste measurement recipes.
+- [registry README](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/registry/README.md): the measurement tables, grouped by comparability key, generated from the data (never hand-written).
+
+## Measure a quant
+
+- [bin/README.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/bin/README.md): every CLI, its flags, and what each refusal means.
+- `bin/measure --model <hf-repo>`: one command. Resolves the revision and lineage, checks whether the artifact is **already measured** (prints the existing rows and exits rather than spending), picks the panel, and runs. Start with `--dry-run`.
+- `bin/measure-cloud`: rents a GPU, measures, tears down, and reports cost four ways. Teardown is guaranteed on success, failure, exception and Ctrl-C, with an on-instance watchdog as backstop.
+- `bin/measure-local`: your own hardware. Works on Apple Silicon via MPS (decode is bitwise identical to CPU) and on a 32 GB consumer CUDA card under a `--vram-budget` that is a hard bound.
+- `bin/registry-view`: query the published registry — filter by model, artifact, panel, lane, or who measured it — against a local clone or the live dataset.
+- [FIDELITY-DATASET-SPEC.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/docs/FIDELITY-DATASET-SPEC.md): the three-step model — capture a reference dataset, capture a candidate dataset, compare them. Captures are publishable artifacts, so a comparison needs no GPU and no access to our infrastructure.
+
+## Machine-readable data (prefer these over parsing prose)
+
+- [measurements.jsonl](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/data/measurements.jsonl): every measurement with its comparability key, lane, run count, determinism evidence, disclosed deviations and receipt link.
+- [artifacts.jsonl](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/data/artifacts.jsonl), [panels.jsonl](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/data/panels.jsonl), [references.jsonl](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/data/references.jsonl), [pipelines.jsonl](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/data/pipelines.jsonl): the records a measurement points at. A measurement cannot exist without a panel and a reference.
+- [JSON Schemas + invariants](https://github.com/malaiwah/glm53-flash-fidelity-suite/tree/main/registry/schema): the rules the validator enforces, including the ones that refuse cross-lane floor subtraction and unbacked determinism claims.
+- [CARD-ANNOTATION-SPEC.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/docs/CARD-ANNOTATION-SPEC.md): how a model card declares its fidelity provenance, as a conformant HF `model-index` result plus an `x_fidelity` block. Read a card's `model-index` to get its KLD without bespoke code.
+
+## Contribute a measurement
+
+- [registry/CONTRIBUTING.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/registry/CONTRIBUTING.md): what a receipt must contain, the submission template, and how you are credited. A measurement costs roughly $6–15 of rented GPU time.
+- `bin/registry-submit <receipt.json>`: prints the row your receipt generates, its comparability key, and which existing rows it may be ranked against — or exactly which check it failed.
+
+## Optional
+
+- [JOURNAL.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/JOURNAL.md): the campaign log — every decision, failure, cost, and 30+ numbered lessons. Useful if you are debugging a similar pipeline; most lessons are about ways a measurement can be silently wrong.
+- [k6/BF16-FLOOR.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/k6/BF16-FLOOR.md): how the floor was measured and the ways subtracting it can be misused.
+- [k6/K8-ANOMALY.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/k6/K8-ANOMALY.md): the investigation behind Rule 2 — why an 8-bit quant appeared worse than a 6-bit one on one window.
+- [docs/PROTOCOL-ALIGNMENT.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/docs/PROTOCOL-ALIGNMENT.md): element-by-element alignment with brandonmusic's proposed community standard, including where his protocol is stricter than ours and what we adopted.
+- [k6/HANDOFF.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/k6/HANDOFF.md): twenty operational lessons for running a quantization or measurement campaign.

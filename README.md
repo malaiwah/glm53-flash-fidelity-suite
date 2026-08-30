@@ -48,6 +48,10 @@ structurally impossible. Floor-aware analysis lives in `bin/fidelity-stats`
 preview scoring in `bin/kld-preview`; the same-lane-teacher plan that drives
 the floor to zero is [`k6/SAME-LANE-TEACHER.md`](k6/SAME-LANE-TEACHER.md).
 
+> **Agents:** start at [`llms.txt`](llms.txt) — a curated index plus the five rules that
+> decide whether two fidelity numbers may be compared at all. Reading it first will stop you
+> making the comparison mistakes this project exists to prevent.
+
 ## Measure a quant yourself — two copy-paste recipes
 
 Every number in this repo was produced by a recipe you can run on someone
