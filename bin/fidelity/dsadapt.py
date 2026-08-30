@@ -405,6 +405,31 @@ def _k3_tokenizer(suite: Dict[str, Any], checkpoint: Dict[str, Any],
     }
 
 
+def _rewrite_tensor_key(path, old_key, new_key):
+    """Rename the single tensor key in a safetensors file, in place.
+
+    CC-03. The payload region is untouched, so tensor_content_sha256 and payload_sha256
+    are unchanged; only the container digest moves. The header must stay 8-byte aligned
+    or the real safetensors loader rejects the file -- dsformat's pure-python reader does
+    NOT check that, so a test written only against it would pass on a file torch cannot
+    open."""
+    import json as _json
+    import struct as _struct
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    hlen = _struct.unpack("<Q", raw[:8])[0]
+    header = _json.loads(raw[8:8 + hlen])
+    if old_key not in header:
+        raise AdapterError("%s does not carry %r" % (path, old_key))
+    header[new_key] = header.pop(old_key)
+    blob = _json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    blob += b" " * ((-len(blob)) % 8)          # safetensors requires 8-byte alignment
+    with open(path, "wb") as fh:
+        fh.write(_struct.pack("<Q", len(blob)))
+        fh.write(blob)
+        fh.write(raw[8 + hlen:])
+
+
 def _emit_k3_dataset(root, out_dir, *, translation, suite, top, tensor_manifest, by_index,
                      panel_rows, tokens_root, tensor_dir, head_source, head_paths, runtime,
                      form, inferred, dataset_id, name, role, lane, link, limit,
@@ -851,9 +876,37 @@ def adapt_serving_v2(
         else:
             shutil.copy2(tensor_path, dest)
         _, header = F.read_safetensors_header(dest)
-        key = "hidden_states" if "hidden_states" in header else "hidden"
-        if key == "hidden":
-            inferred.append("capture.records[].key (rewritten from 'hidden', REC-2)")
+        # CC-03. REC-2 says a pre-v1 `hidden` key is "accepted on ingest and rewritten".
+        # The rewrite was MANIFEST-ONLY: the tensor file was hardlinked verbatim and still
+        # carried `hidden`, while record["key"] was overwritten to `hidden_states`. The
+        # emitted manifest then named a tensor the bytes do not contain -- dsvalidate's
+        # own SEAL-1(d) refuses it ("tensor key 'hidden_states' absent; file carries
+        # ['hidden']") and any consumer following record["key"] gets a KeyError. Rewrite
+        # the FILE so the manifest tells the truth. A header-key rename leaves
+        # tensor_content_sha256 and payload_sha256 byte-identical (verified) -- only the
+        # container digest moves, and dsformat already declares that is never
+        # determinism evidence.
+        present = [k for k in header if k != "__metadata__"]
+        key = "hidden_states" if "hidden_states" in header else None
+        if key is None:
+            legacy = [k for k in present if k in F.LEGACY_HIDDEN_KEYS]
+            if not legacy:
+                raise AdapterError(
+                    "capture tensor %s carries none of the accepted hidden-state keys "
+                    "(%s); it holds %r" % (dest_rel, ", ".join(
+                        (F.TENSOR_KEY_HIDDEN,) + tuple(F.LEGACY_HIDDEN_KEYS)), present))
+            if len(present) != 1:
+                raise AdapterError(
+                    "capture tensor %s holds %d tensors (%r); a legacy key can only be "
+                    "rewritten safely in a single-tensor file, because renaming a key in "
+                    "a multi-tensor header can shift data offsets"
+                    % (dest_rel, len(present), present))
+            key = legacy[0]
+            _rewrite_tensor_key(dest, key, F.TENSOR_KEY_HIDDEN)
+            _, header = F.read_safetensors_header(dest)
+            inferred.append("capture.records[].key (file rewritten from %r to %r, REC-2)"
+                            % (key, F.TENSOR_KEY_HIDDEN))
+            key = F.TENSOR_KEY_HIDDEN
         shape = header[key]["shape"]
         record = dsmanifest.tensor_record(
             index=index, filename=os.path.basename(dest_rel), abs_path=dest,
@@ -865,9 +918,6 @@ def adapt_serving_v2(
             document_id=suite_row.get("source_cluster"),
             allocation_stratum=suite_row.get("stratum"),
             source_cluster_id=suite_row.get("source_cluster"))
-        if key != "hidden_states":
-            record["key"] = F.TENSOR_KEY_HIDDEN
-            record["key_rewritten_from"] = key
         # The published manifest's own container digest, cross-checked.
         published = next((r for r in source["captures"] if int(r["index"]) == index), {})
         record["source_manifest_sha256"] = published.get("sha256")

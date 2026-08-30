@@ -1020,6 +1020,51 @@ def section_interop(tmp):
               "naming one)",
               F.token_ids_json_sha256_legacy(ids) == row["token_sha256"]
               and F.token_ids_json_sha256(ids) != row["token_sha256"])
+        # ---- CC-03: a LEGACY-keyed capture must be rewritten in the FILE ----------
+        # REC-2 says a pre-v1 `hidden` key is "accepted on ingest and rewritten". The
+        # rewrite was manifest-only: the tensor was hardlinked verbatim and still carried
+        # `hidden` while record["key"] said `hidden_states`, so the emitted manifest named
+        # a tensor the bytes do not contain. dsvalidate's own SEAL-1(d) refuses that, and
+        # any consumer following record["key"] gets a KeyError.
+        legacy_src = os.path.join(tmp, "legacy-src")
+        os.makedirs(legacy_src, exist_ok=True)
+        real_shard = os.path.join(published, "reference-bf16-shard0")
+        shutil.copyfile(os.path.join(real_shard, "capture-manifest-full.json"),
+                        os.path.join(legacy_src, "capture-manifest-full.json"))
+        src_t = os.path.join(real_shard, "hidden_0000.safetensors")
+        dst_t = os.path.join(legacy_src, "hidden_0000.safetensors")
+        with open(src_t, "rb") as fh:
+            raw = fh.read()
+        hlen = struct.unpack("<Q", raw[:8])[0]
+        hdr = json.loads(raw[8:8 + hlen])
+        hdr["hidden"] = hdr.pop("hidden_states")          # forge the pre-v1 key
+        blob = json.dumps(hdr, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        blob += b" " * ((-len(blob)) % 8)
+        with open(dst_t, "wb") as fh:
+            fh.write(struct.pack("<Q", len(blob))); fh.write(blob); fh.write(raw[8 + hlen:])
+        before_content = F.tensor_content_sha256(dst_t, "hidden")
+        lout = os.path.join(tmp, "legacy-out")
+        lman = dsadapt.adapt_serving_v2(
+            legacy_src, lout, suite_dir=os.path.join(published, "suite"),
+            head_dir=os.path.join(published, "head"),
+            dataset_id="fidelity--selftest.legacy-key", name="legacy key",
+            role="root", lane="other", limit=1, link=False)
+        cap_man = F.read_json(os.path.join(lout, "capture", "manifest.json"))
+        rec = cap_man["records"][0]
+        emitted = os.path.join(lout, "capture", rec["file"])
+        _, ehdr = F.read_safetensors_header(emitted)
+        ekeys = [k for k in ehdr if k != "__metadata__"]
+        lrep = dsvalidate.validate_dataset(lout, verify_tensors=True, allow_partial=True)
+        check("CC-03 a pre-v1 `hidden` capture is rewritten in the FILE, so the manifest "
+              "names a tensor the bytes actually contain",
+              rec.get("key") == "hidden_states" and ekeys == ["hidden_states"]
+              and lrep.passed,
+              "record.key=%r file keys=%r validate=%s %s"
+              % (rec.get("key"), ekeys, lrep.passed, json.dumps(lrep.errors[:1])))
+        check("CC-03 the rewrite preserves tensor CONTENT identity (only the container "
+              "digest moves)",
+              F.tensor_content_sha256(emitted, "hidden_states") == before_content,
+              before_content[:16])
     else:
         print("  SKIP  I11-I15 published deliverables (not on this machine)")
 
