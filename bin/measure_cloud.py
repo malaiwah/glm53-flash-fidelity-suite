@@ -789,6 +789,142 @@ def _refuse_incomplete_exl3hf(con: Console, repo_id: str, revision: str,
            % (len(set(planned)), len(want)))
 
 
+# Registry tensor_class <- real module-name mapping, most-specific first.
+# Deliberately duplicated from k6/tools/derive_scope.py's vocabulary rather
+# than imported: this gate must keep working if that tool is refactored, and
+# a silent vocabulary drift here would turn a REFUSAL into a pass.
+_SCOPE_CLASS_PATTERNS = [
+    ("other", [r"visual\.", r"vision"]),
+    ("lm_head", [r"(^|\.)lm_head"]),
+    ("embed_tokens", [r"embed_tokens"]),
+    ("mtp", [r"(^|\.)mtp\.", r"\.mtp$"]),
+    ("moe.experts", [r"experts\.\d+\."]),
+    ("moe.shared_expert", [r"shared_expert"]),
+    ("moe.router", [r"mlp\.gate$"]),
+    ("attn.qkv", [r"qkv_proj", r"self_attn\.(q|k|v)_proj", r"\.wq_b", r"q_[ab]_proj",
+                  r"kv_a_proj_with_mqa"]),
+    ("attn.o", [r"o_proj"]),
+    ("mlp.gate", [r"mlp\.gate_proj"]),
+    ("mlp.up", [r"mlp\.up_proj"]),
+    ("mlp.down", [r"mlp\.down_proj"]),
+]
+
+
+def _scope_class_of(name: str) -> Optional[str]:
+    for cls, pats in _SCOPE_CLASS_PATTERNS:
+        for p in pats:
+            if re.search(p, name):
+                return cls
+    return None
+
+
+def _refuse_scope_contradicted_by_release(con: Console, repo_id: str,
+                                          revision: str, surface,
+                                          scope: Optional[Dict[str, Any]],
+                                          plan: Dict[str, Any]) -> None:
+    """Is the supplied --scope-json actually THIS release's recipe?
+
+    `--scope-json` copies its file verbatim into the sealed receipt and into
+    the artifact record, and its own help says the file "must be READ off the
+    release, never assumed".  Nothing enforced that.  A producer who publishes
+    several rates on several BRANCHES of one repo -- turboderp ships 4.05,
+    3.05 and 2.05bpw that way -- makes the failure trivially easy: the scope
+    file for a sibling branch is a valid file, describes the same repo, names
+    the same classes, and is wrong in every rate.
+
+    That is not a cosmetic error.  `scope_digest` is computed over these
+    assignments and the comparability key is computed over the digest, so a
+    wrong scope files the row under a group describing a recipe the artifact
+    does not have -- the exact confusion this registry exists to prevent.
+
+    Decidable for free from the release's own published header, so it runs at
+    plan time, before anything is rented.
+    """
+    if not scope:
+        return
+    claimed = {a.get("tensor_class"): a.get("bits_per_weight")
+               for a in (scope.get("assignments") or [])
+               if a.get("treatment") == "quantized"}
+    if not claimed:
+        return
+
+    # (1) The head, from evidence the surface sniffer already read.
+    declared_head = (getattr(surface, "evidence", None) or {}).get("head_bits")
+    if declared_head is not None and claimed.get("lm_head") not in (None, declared_head):
+        raise Refusal(
+            "the supplied --scope-json says lm_head is %s bits; this release's own "
+            "quantization_config declares head_bits %s"
+            % (claimed.get("lm_head"), declared_head),
+            ["The scope file describes a DIFFERENT artifact than the one being "
+             "measured -- most often a sibling branch of the same repo.",
+             "scope_digest, and therefore the comparability key, is computed over "
+             "these assignments: publishing this would file the row under a group "
+             "describing a recipe this artifact does not have.",
+             "Derive the scope from THIS revision (%s) or omit --scope-json and "
+             "take the honest 'unknown' default." % (revision or "")[:12],
+             "Nothing was created. $0.00 spent."])
+
+    # (2) Every quantized class, from the per-module rates the release itself
+    #     publishes.  exl3 states `bits_per_weight` per module in
+    #     quantization_config.json; no other surface publishes a per-class rate
+    #     we can check, so for those the head check above is the whole gate.
+    if surface.surface != "exl3hf":
+        con.ok("scope vs release", "head_bits %s agrees" % declared_head)
+        return
+    try:
+        qc = fetch_json(repo_id, "quantization_config.json", revision=revision)
+    except HFError as exc:
+        con.warn("scope gate: per-class check skipped: %s" % redact(str(exc)))
+        return
+    storage = qc.get("tensor_storage") or {}
+    if not storage:
+        con.warn("scope gate: release publishes no tensor_storage; head check only")
+        return
+
+    observed: Dict[str, set] = {}
+    for name, entry in storage.items():
+        bits = entry.get("bits_per_weight")
+        if bits is None:
+            continue
+        cls = _scope_class_of(name)
+        if cls:
+            observed.setdefault(cls, set()).add(bits)
+
+    # The header's own scalars cover classes tensor_storage spells per-module
+    # under names the class map cannot reach (the MTP sidecar is a separate
+    # file; the vision tower has its own rate).
+    for key, cls in (("mtp_bits", "mtp"), ("vision_bits", "other")):
+        if qc.get(key) is not None:
+            observed.setdefault(cls, set()).add(qc[key])
+
+    mismatch = []
+    for cls, bits in sorted(claimed.items()):
+        seen = observed.get(cls)
+        if not seen or bits is None:
+            continue                      # class absent from the header: not decidable
+        if bits not in seen:
+            mismatch.append((cls, bits, sorted(seen)))
+    plan.setdefault("target", {})["scope_crosscheck"] = {
+        "classes_checked": len([c for c in claimed if c in observed]),
+        "mismatched": len(mismatch),
+    }
+    if mismatch:
+        raise Refusal(
+            "the supplied --scope-json contradicts this release's own published "
+            "per-module rates in %d tensor class(es)" % len(mismatch),
+            ["%s: scope says %s bits, the release publishes %s"
+             % (c, b, "/".join(str(x) for x in seen)) for c, b, seen in mismatch]
+            + ["",
+               "Read from %s/quantization_config.json at revision %s."
+               % (repo_id, (revision or "")[:12]),
+               "scope_digest, and therefore the comparability key, is computed over "
+               "these assignments -- a wrong scope does not merely mislabel the row, "
+               "it files it under the wrong comparability group.",
+               "Nothing was created. $0.00 spent."])
+    con.ok("scope vs release", "%d quantized classes agree with the release's own "
+           "per-module rates" % len([c for c in claimed if c in observed]))
+
+
 def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
                      plan: Dict[str, Any]) -> None:
     """Recompute the release's OWN seal from its metadata, before renting.
@@ -1069,6 +1205,11 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
         }
         if surface.surface == "exl3hf" and not surface.problems:
             _refuse_incomplete_exl3hf(con, target.repo_id, target.revision, plan)
+        if not surface.problems:
+            _refuse_scope_contradicted_by_release(
+                con, target.repo_id, target.revision, surface,
+                read_json(args.scope_json) if getattr(args, "scope_json", None) else None,
+                plan)
         if surface.surface == "tr3-published" and not surface.problems:
             _verify_tr3_seal(con, target.repo_id, target.revision, plan)
         if surface.problems:

@@ -101,6 +101,12 @@ def main() -> int:
              or _scope_from_receipts(receipts, con)
              or _scope_from_registry(suite_root, target, con)
              or _default_scope(target))
+    scope_conflicts = _refuse_scope_contradicted_by_run(scope, m, con)
+    if scope_conflicts:
+        con.err("REFUSING to seal: the scope contradicts what this run decoded")
+        for line in scope_conflicts:
+            print(("  " + line) if line else "")
+        return 2
 
     doc = build_submission(
         suite_root=suite_root,
@@ -311,6 +317,73 @@ def _aggregate(receipts: Path, con: Console) -> Optional[Dict[str, Any]]:
         "aggregate_receipt_schema": doc.get("schema"),
         "aggregate_receipt_sha256": sha256_file(str(candidates[0])),
     }
+
+
+
+def _refuse_scope_contradicted_by_run(scope: Optional[Dict[str, Any]],
+                                      summary: Dict[str, Any],
+                                      con: Console) -> List[str]:
+    """Does the scope about to be sealed describe the model this run decoded?
+
+    `job["scope"]` -- the file handed to `measure-cloud --scope-json` -- wins
+    over every other source above, including the scope the surface itself read
+    off the artifact during the run.  That precedence is convenient and unsafe:
+    a scope file for a SIBLING BRANCH of the same repository is a valid file
+    that names the same classes and is wrong in every rate.
+
+    The run already produced the refutation.  A streaming measurement records
+    `declared_head_bits`, read off the artifact it actually opened, and
+    `routed_bits_decode_histogram`, a census of the bit width every routed
+    expert module was actually decoded at.  Comparing those two numbers to the
+    scope costs nothing and needs no network, and it is the last point at
+    which a wrong recipe can be stopped before it is sealed into a receipt and
+    hashed into a comparability key.
+
+    This is not hypothetical: the first turboderp 2.05bpw receipt was sealed
+    with the 4.05bpw branch's scope -- lm_head 6 against a run that recorded
+    declared_head_bits 5, moe.experts 4 against a histogram of {"K2": 907200}.
+    """
+    if not scope:
+        return []
+    claimed = {a.get("tensor_class"): a.get("bits_per_weight")
+               for a in (scope.get("assignments") or [])
+               if a.get("treatment") == "quantized"}
+    if not claimed:
+        return []
+    conflicts: List[str] = []
+
+    declared_head = summary.get("declared_head_bits")
+    if declared_head is not None and claimed.get("lm_head") not in (None, declared_head):
+        conflicts.append("lm_head: scope says %s bits, this run read "
+                         "declared_head_bits %s off the artifact"
+                         % (claimed["lm_head"], declared_head))
+
+    # {"K2": 907200} -- the key is the decoder's own rate label.
+    hist = summary.get("routed_bits_decode_histogram") or {}
+    decoded = sorted({int(k[1:]) for k in hist
+                      if isinstance(k, str) and k[:1] == "K" and k[1:].isdigit()})
+    if decoded and claimed.get("moe.experts") is not None \
+            and claimed["moe.experts"] not in decoded:
+        conflicts.append(
+            "moe.experts: scope says %s bits, this run decoded %s (%s expert modules)"
+            % (claimed["moe.experts"],
+               "/".join("K%d" % d for d in decoded), sum(hist.values())))
+
+    if conflicts:
+        return conflicts + [
+            "",
+            "The scope handed to --scope-json takes precedence over the scope the "
+            "surface read off the artifact, so a file belonging to a sibling branch "
+            "of the same repository is accepted in silence.",
+            "scope_digest is computed over these assignments and the comparability "
+            "key over the digest: sealing this would file the row under a group "
+            "describing a recipe this artifact does not have.",
+            "Supply the scope for THIS revision, or drop --scope-json and take the "
+            "honest 'unknown' default.",
+        ]
+    if declared_head is not None or decoded:
+        con.ok("scope vs run", "the sealed scope agrees with what this run decoded")
+    return []
 
 
 def _scope_from_receipts(receipts: Path, con: Console) -> Optional[Dict[str, Any]]:
