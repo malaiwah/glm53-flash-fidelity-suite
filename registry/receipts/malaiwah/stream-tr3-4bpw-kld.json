@@ -1,0 +1,70 @@
+{
+  "artifact_config_sha256": "4f5341e048984459471bfb9c894e6bf87e69b9c67402672af901631d1349f265",
+  "artifact_index_sha256": "2f64d21c67c90bbafeb36c4e9b2f06f54063ed439e9f7cf95962d425a1d8515d",
+  "artifact_materialization_receipt_sha256": "092be1ffa8db66bf02d4c370d0433a57aa48d4a6e5ce89723ef6a3bb7ca32643",
+  "artifact_repo": "Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw",
+  "artifact_revision": "024db9f7e9871e8efdf21538ba55af7442be3cd5",
+  "bitwise_deterministic": true,
+  "codebook": "mcg",
+  "codec_family": "exl3-mcg",
+  "cold_run_count": 2,
+  "cold_run_deviation": "2 cold runs, not 5 (budget; disclosed)",
+  "declared_bits": 4.0,
+  "declared_head_bits": 16,
+  "distinct_tokenwise_kld_sha256": [
+    "31177f244e7c2dca7c80863f8c0859596bf0308e3d80d586019d9d9cfb16e09c"
+  ],
+  "exllamav3_pin": "c5d9c657966ffeeaa9353f0cc899f18629da4a13",
+  "exllamav3_version": "0.0.43",
+  "kld_report_sha256": [
+    "3ffad6cb32e35c02e83ac23cfc49f8c52e90864f243cfa77a50bbbc99ed77efa",
+    "9220a2592c6ae2bc19588ce9b35bffc226e6f5b37ce64571032b41802dfe9ac2"
+  ],
+  "materialization_receipt_sha256": "15a5fabe5c777a66726100d5e0482c0970ca166985683afcd803bf576e36989c",
+  "measured_mean_kld": 0.02550342763436377,
+  "nonrouted_policy_declared": "official_source_native",
+  "per_run_top1_agreement": [
+    0.9531411822178798,
+    0.9531411822178798
+  ],
+  "profile": "tr3-4bpw-hf-sharded",
+  "quality_gate": {
+    "metric": "mean_tokenwise_kld",
+    "threshold_lt": 0.06
+  },
+  "quality_gate_passed": true,
+  "routed_bits_decode_histogram": {
+    "K4": 907200
+  },
+  "run_means": [
+    0.02550342763436377,
+    0.02550342763436377
+  ],
+  "schema": "malaiwah.glm53-tr3-4bpw-packed-kld-summary.v1",
+  "scope_census_sha256": "b66f10ae9ea64fec54db8c5657b4d9727af8ab25c97adcae089cbf3a58f6b156",
+  "scope_policy": "glm53_routed_experts_only",
+  "seal_check_names": [
+    "abi_schema",
+    "materialization_receipt_self_seal",
+    "config_sha256",
+    "index_sha256",
+    "output_tensor_names_sha256",
+    "plan_sha256_agreement",
+    "payload_objects_per_choice",
+    "tensor_count_algebra",
+    "nonrouted_native_exact",
+    "nonrouted_name_set_equals_official",
+    "native_tensor_count_matches_names",
+    "mcg_multiplier"
+  ],
+  "seal_checks_passed": 12,
+  "seal_disclosure": "sealed-source scoring: the release publishes exl3-mcg-storage-abi.json and materialization-receipt.json, and this adapter RECOMPUTED every claim in them from the published bytes before decoding (receipt self-seal, config/index digests, output_tensor_names_sha256 over all 150,226 names, plan_sha256 agreement, the packed/native/output count algebra, nonrouted_native_exact, and the non-routed name set against the official release). The ABI's own serving_reader_qualified=false concerns TP SERVING, which this offline single-device decode does not do.",
+  "seal_verified": true,
+  "shard_verification": "receipt-shard-map == published SHA256SUMS",
+  "student_label": "tr3-exl3-mcg-4bpw",
+  "student_receipt_sha256": "88db8c2c9bd66869326469a91276efe608c1b8bcac4db3d9f9d58724d8c6af87",
+  "teacher_label": "sealed-ep8",
+  "teacher_receipt_sha256": "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5",
+  "teacher_source": "sealed_ep8_bf16_teacher",
+  "top1_agreement": 0.9531411822178798
+}

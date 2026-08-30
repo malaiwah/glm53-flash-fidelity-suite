@@ -66,6 +66,8 @@ def _receipt_sha(rel):
 STREAM_K6_RECEIPT = "receipts/malaiwah/stream-k6-kld.json"
 STREAM_K6_VERDICT = "receipts/malaiwah/stream-k6-verdict.json"
 STREAM_TURBO405_RECEIPT = "receipts/malaiwah/stream-turbo-4.05bpw-kld.json"
+STREAM_TR34_RECEIPT = "receipts/malaiwah/stream-tr3-4bpw-kld.json"
+STREAM_TR34_RECEIPT_SHA = "1e790a0e2a69b1646ffee3c1c1529596bc2a5ac7d4f314039c6950b6e3ae1e6f"
 STREAM_K8_RECEIPT = "receipts/malaiwah/stream-k8-kld.json"
 STREAM_BF16_RECEIPT = "receipts/malaiwah/stream-bf16-kld.json"
 STREAM_K6_RECEIPT_SHA = _receipt_sha(STREAM_K6_RECEIPT)
@@ -1949,6 +1951,117 @@ def build_measurements(artifacts_map):
     # same-stack streaming row, nor this floor from a cross-stack one. BIAS-006 (new)
     # refuses a floor_measurement_ref that crosses lanes; build_row refuses it at
     # write time (exit 7) before a row like that could even be generated.
+
+
+    # brandonmusic's TR3 EXL3/MCG 4bpw, fetched from the Mia-AiLab mirror at a
+    # PINNED revision and measured 2026-08-29 by bin/measure-cloud. Same lane,
+    # same panel, same teacher as the K6/K8/floor/turbo rows above --
+    # comparability key cmp--202b717f3219c414.
+    #
+    # This row answers two DIFFERENT questions, and they must not be blurred:
+    #   * SAME WEIGHTS, DIFFERENT LANE AND STACK. brandonmusic's own
+    #     author-reported five-run number on his sealed EP8 stack is 0.024554564249958208
+    #     (measurement--glm53.brandonmusic-4bpw.brandonmusic-final25). The bytes
+    #     are provably identical -- equal LFS oids for all 120 shards, plus a
+    #     byte-wise verification against his own published SHA256SUMS -- so the
+    #     difference of +0.000948863 nats is lane PLUS stack and nothing
+    #     else. It is the only such pair in this registry; every other lane
+    #     comparison changes the weights too.
+    #   * SAME LANE, SAME RATE, DIFFERENT QUANTIZER. turboderp's stock-exllamav3
+    #     4.05bpw reads 0.025526426915472484 on this exact lane. Same panel, same teacher,
+    #     same estimator, ~the same nominal rate, and three declared differences:
+    #     scope (routed-experts-only with a native BF16 head vs full-scope with a
+    #     6-bit head), codebook (mcg vs mul1), and lineage (quantized from BF16
+    #     vs from the FP8 release).
+    TR34 = 0.02550342763436377
+    out.append(M("measurement--glm53.tr3-4bpw-stream.brandonmusic-final25", GLM,
+                 A_TR3MIRROR, P_B25, R_B25, PL_STREAM, TR34,
+                 metric_name="mean_of_run_means_tokenwise_kld",
+                 top1=0.9531411822178798,
+                 scored_positions=51175, contexts=25, runs=2, cold=True,
+                 run_means=[0.02550342763436377, 0.02550342763436377],
+                 identical=True, evidence_kind="tokenwise_kld_sha256",
+                 evidence_hashes=['31177f244e7c2dca7c80863f8c0859596bf0308e3d80d586019d9d9cfb16e09c'],
+                 det_note=("2 cold runs, 2 distinct kld_report_sha256 "
+                           "values, 1 distinct tokenwise_kld_sha256. The report-file "
+                           "digests differ per run and prove nothing; the single "
+                           "tokenwise digest is the determinism evidence."),
+                 sources=[src("receipt_file", STREAM_TR34_RECEIPT, STREAM_TR34_RECEIPT_SHA,
+                              "malaiwah.glm53-tr3-4bpw-packed-kld-summary.v1"),
+                          src("hf_file", HF_REGISTRY_RAW + STREAM_TR34_RECEIPT,
+                              STREAM_TR34_RECEIPT_SHA),
+                          src("hf_file",
+                              "https://huggingface.co/datasets/malaiwah/"
+                              "GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/"
+                              "tr3-4bpw-packed-kld.json", STREAM_TR34_RECEIPT_SHA)],
+                 receipt_schema="malaiwah.glm53-tr3-4bpw-packed-kld-summary.v1",
+                 cls="advisory",
+                 bias={"kind": "other", "direction": "unknown",
+                       "floor_measurement_ref": M_BF16_FLOOR,
+                       "estimated_magnitude": None,
+                       "detail": "Measured on the 'streaming' lane. Unlike every other "
+                                 "streaming row, this artifact HAS a sealed-lane sibling to "
+                                 "bridge against: the same bytes read 0.024554564249958208 there "
+                                 "(author-reported, brandonmusic's own five-run receipt on "
+                                 "his own stack), so the streaming-lane number sits "
+                                 "+0.000948863 nats from it -- a LANE-PLUS-STACK offset, "
+                                 "not a lane offset, because the reader digests differ too "
+                                 "(1fb3be87... vs 1ccce446...). This lane's own measurement "
+                                 "floor (%s) is %r nats; netting it out gives an estimated "
+                                 "quantization-attributable error of %r nats here -- an "
+                                 "estimate, not an identity, because KL is not additive, and "
+                                 "it is only meaningful because both terms share the same "
+                                 "reference and lane."
+                                 % (M_BF16_FLOOR, BF16_FLOOR, TR34 - BF16_FLOOR)},
+                 gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06,
+                       "threshold_gt": None, "passed": True},
+                 disclosures=[
+                     disc("sealed_source_verified", "info",
+                          "The release publishes its own storage ABI and materialization "
+                          "receipt, and this measurement RECOMPUTED all 12 of their claims "
+                          "from the published bytes before decoding: the receipt's own "
+                          "self-seal, the config/index digests, the sha256 over all 150,226 "
+                          "emitted tensor names, plan_sha256 agreement, the "
+                          "packed/native/output count algebra, nonrouted_native_exact, and "
+                          "the non-routed name-set bijection against the official release. "
+                          "Shard bytes: the receipt's shard_sha256 map equals the published "
+                          "SHA256SUMS, against which all 120 downloaded shards verified "
+                          "byte-wise. This is the only third-party row here that carries a "
+                          "verified seal rather than an unsealed_source caveat.", False),
+                     disc("byte_identical_redistribution", "info",
+                          "The measured bytes are brandonmusic's, redistributed: all 120 "
+                          "shards have the same LFS oid as "
+                          "brandonmusic/GLM-5.3-Flash-tr3-4bpw @ 5ab363a8. The mirror was "
+                          "measured rather than the upstream because it pins a revision and "
+                          "the upstream record carries none. Credit for the quantization is "
+                          "brandonmusic's; credit for this number is ours.", True),
+                     disc("routed_experts_only_scope", "info",
+                          "scope glm53_routed_experts_only, non_routed_dtype_policy "
+                          "official_source_native, head_bits 16, read from the release's own "
+                          "config. Only the routed experts are quantized; all 1,618 "
+                          "non-routed tensors including lm_head are the OFFICIAL ones, "
+                          "verified name-set-equal to the official release's. The "
+                          "stock-exllamav3 rows on this same panel quantize attention, the "
+                          "dense MLPs, the shared experts, the vision tower and the head as "
+                          "well: at ~the same nominal bpw they are measuring a different "
+                          "amount of model.", True),
+                     disc("reduced_run_count", "caveat",
+                          "cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 (budget; disclosed)",
+                          True),
+                     disc("non_sealed_lane", "caveat",
+                          "Produced by the 'streaming' lane, not the sealed-ep8 lane. Unlike "
+                          "every other streaming row here, this artifact HAS a sealed-lane "
+                          "sibling to bridge against, because the bytes are provably "
+                          "identical to brandonmusic's: the same weights read 0.024554564249958208 "
+                          "there. The +0.000948863 nats between them is a "
+                          "LANE-PLUS-STACK offset, not a lane offset -- his run used his "
+                          "reader (1fb3be87...) and ours uses ours (1ccce446...) -- so it "
+                          "bounds the lane term rather than measuring it.", True),
+                     disc("third_party_artifact_self_measured", "info",
+                          "Someone else's weights, our measurement. brandonmusic produced "
+                          "the artifact and Mia-AiLab redistributed it; malaiwah produced "
+                          "the number.")],
+                 notes="First tr3-published artifact measurable by this suite: the streaming lane gained a reader (stream_score --source tr3, k6/tools/tr3_surface.py) in the same change. The routed decode is the campaign's own -- exl3hf_surface.decode_module over the frozen MCG LUT, proven bitwise identical to calling it directly -- so the codec path is the one the K6/K8 rows on this lane were measured through. The non-routed weights are the ARTIFACT's own, re-sharded VERBATIM by the materializer (1,618 tensors copied, 0 decoded, dtypes preserved) because they share shards with the 148,608 routed payload objects and transformers keys its checkpoint load off the shard files. No official-release weight is in the measured function. 907200 K4 expert matrices were decoded per cold run. Attributable error against this lane's own floor: 0.013997505 nats, versus 0.014020504 for turboderp's 4.05bpw -- the TR3 quant is the tighter of the two at ~the same nominal rate, on a strictly smaller quantized scope."))
 
     # turboderp's stock-exllamav3 4.05bpw, measured 2026-08-29 by bin/measure-cloud's
     # first end-to-end run. Same lane, same panel, same teacher as the K6/K8/floor rows
