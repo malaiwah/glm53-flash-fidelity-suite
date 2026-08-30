@@ -515,11 +515,11 @@
                 "exact",
                 "parent"
               ],
-              "description": "'exact': the named commit's tree produced the number. 'parent': the number was produced by the working tree that the child of this commit introduced -- which is the only honest answer when a change records its own provenance, since a commit cannot contain its own sha. Under 'parent' the code_digests, not the commit, are the identity."
+              "description": "'exact': the named commit's tree holds these exact closure bytes, verified file by file. 'parent': the number was produced by an uncommitted working tree, so the honest pointer is the commit it was based on -- a change cannot contain its own sha. Under 'parent' the code_digests, not the commit, are the identity."
             },
             "dirty": {
               "type": "boolean",
-              "description": "true when the measuring tree differed from `commit`. Always true under commit_role=parent."
+              "description": "true when the CLOSURE FILES differed from `commit` -- the closure, not the whole worktree, because a reseed necessarily changes data/ and that says nothing about which code ran. Always true under commit_role=parent."
             }
           },
           "additionalProperties": false,

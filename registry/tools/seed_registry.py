@@ -39,14 +39,16 @@ V = L.SCHEMA_VERSION
 HARNESS_TOOL_VERSIONS = {"python": "3.9.6", "numpy": "2.0.2", "torch": None}
 HARNESS_REPOSITORY = {
     "url": "https://github.com/malaiwah/quant-fidelity-suite",
-    # The tree the estimator was read from when these intervals were computed.
-    # commit_role=parent, dirty=true: a change cannot record its own sha, so the
-    # honest pointer is the commit this work was based on, and the code_digests
-    # -- which are of committed bytes -- are the identity. Every measurement made
-    # by RUNNING the committed tooling records commit_role=exact.
-    "commit": "ec6224b5210f47302095230bb0ffb1df79ded8d5",
-    "commit_role": "parent",
-    "dirty": True,
+    # The commit whose tree holds these exact closure bytes. Verified, not
+    # assumed: `git log <commit>..HEAD -- <each closure path>` is empty and each
+    # file is byte-identical to that tree, which is what `dirty: false` asserts
+    # (the closure, not the whole worktree -- data/ necessarily differs, since
+    # this reseed is what changes it). If the closure is ever edited without
+    # being committed, this must go back to commit_role=parent with dirty=true
+    # rather than pointing at a tree that does not contain the code that ran.
+    "commit": "c562f769e39a6fd74121771ac248a57d53d23029",
+    "commit_role": "exact",
+    "dirty": False,
 }
 HARNESS_UNRECORDED_DETAIL = (
     "metric.value on this row was produced before this registry recorded harness "

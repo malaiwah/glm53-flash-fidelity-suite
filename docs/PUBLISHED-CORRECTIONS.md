@@ -101,7 +101,206 @@ from a published repo, and notes the two releases' differing schema namespaces.
 
 ---
 
-<!--STAT01-SECTION-->
+## 3. `malaiwah/quant-fidelity-registry` — the 42 per-domain intervals (STAT-01 + STAT-17)
+
+**Published 2026-08-30. This one changes NUMBERS, not only metadata**, which is why it
+was written up for an operator decision in `docs/REVIEW-DEFERRED.md` first and is
+disclosed here before the mirror rather than after.
+
+### What was wrong
+
+Forty-two per-domain confidence intervals in `registry/data/measurements.jsonl` were
+emitted as `ci95_low`/`ci95_high` with `interval_kind: "bca"`, and every consumer
+read them as 95% intervals. They are not. Simulated against a lognormal fitted to each
+cell's own window means, **4000 replications per cell**, the procedure that produced
+them measures:
+
+| procedure | mean coverage | min | max | cells that ever return a negative lower endpoint |
+|---|---|---|---|---|
+| **BCa, B=1000 — what was published** | **81.3%** | 77.2% | 84.5% | 0 of 42 |
+| BCa, B=20000 | **81.5%** | 77.8% | 84.7% | 0 of 42 |
+| bootstrap-t on log(mean), B=20000 | **92.2%** | 89.0% | 95.0% | 0 of 42 |
+| bootstrap-t on the raw mean, B=20000 | **92.2%** | 88.8% | 94.9% | 42 of 42 |
+| **Student-t on log(mean), delta SE — what ships now** | **92.0%** | 88.3% | 94.7% | 0 of 42 |
+
+Three things follow from that table, and only the first was in the original finding.
+
+1. **The deficit is small-`g`, not Monte Carlo.** A domain has 5 to 7 windows. Raising
+   B twentyfold moves coverage from 81.3% to 81.5% — nothing. The intervals were not
+   noisy, they were the wrong shape.
+2. **It fails in the harmful direction.** Truth lands *above* the interval far more
+   often than below on every one of the 42 cells, so the endpoints systematically
+   understate divergence. The practical consequence is false **separations**: a reader
+   using two per-domain intervals to say "legal differs from code" was wrong about one
+   time in five, not one in twenty.
+3. **Bootstrap-t on log — the fix the review recommended — is not publishable here.**
+   Its coverage is right, but on the real `k8-8bpw-stream / clean17 / axis2_legal` cell
+   (five ordinary windows, cv 0.47) it returns an upper endpoint of **0.187 nats around
+   a mean of 0.0103**, eighteen times the estimate, because resamples that draw four
+   copies of one window collapse the studentizing denominator. Three of the 42 cells
+   exceed 10x. Replacing an interval that is too narrow with one that is absurd is not
+   a correction.
+
+Separately, every domain was bootstrapped from the **same** seed (STAT-17), so at equal
+window counts the strata drew byte-identical resample index streams and shared their
+Monte-Carlo error — arbitrarily, since it pairs domain A's k-th window with domain B's
+k-th, which are unrelated windows.
+
+### What changed
+
+`interval_method: "delta_t_log"` — a Student-t interval on `log(mean)` with the
+delta-method SE, exponentiated back. It is:
+
+* **calibrated**: 92.0% measured against 81.3% for what it replaces;
+* **non-negative by construction**, unlike bootstrap-t on the raw mean, which puts a
+  negative lower bound on a KL divergence on all 42 cells at least once in simulation;
+* **bounded**: the widest published upper endpoint is 3.0x its own estimate;
+* **free of any resample stream**, which retires STAT-17 rather than mitigating it. There
+  is no seed to share and no seed noise to argue about. `bootstrap_seed` and
+  `bootstrap_b` are published as `null`, and `df` and `t_critical` are published instead,
+  so any reader can re-derive both endpoints by hand from `mean` and the window means.
+
+And the part that is the actual fix: **every cell now carries `coverage_measured`**,
+stating what it delivers (92.0% mean, 88.3%-94.7% across cells) against the nominal
+95%. STAT-01 was never that the endpoints were computed wrongly — they reproduce
+`scipy.stats.bootstrap(method='BCa')` to within Monte-Carlo error. It was that the row
+claimed a level nobody had ever measured for it. 92% is not 95%, and at five windows
+nothing is; the row says so now instead of implying otherwise.
+
+The **panel-level** block is deliberately unchanged: 25 (or 17) windows is not the
+small-`g` regime, its BCa endpoints are the joint standard's interop surface, and
+`bin/jointstd/fixtures/brandonmusic-known-answer.json` pins four external panels'
+endpoints as a known-answer test. It now states its own measured coverage, **90.2%**
+(88.2%-91.6%), as a caveat rather than a method change.
+
+### What did NOT change — recomputed, not asserted
+
+`registry/tools/reseed_delta.py` diffs the old and new data field by field:
+
+```
+headline metric.value changed                       : 0
+top-level uncertainty numbers changed               : 0
+by_domain mean / se_clustered / positions changed   : 0
+by_domain CI endpoints changed                      : 84
+worst relative move                                 : 40.2441%
+```
+
+"top-level uncertainty numbers" is every numeric field of `uncertainty`:
+`ci95_low`, `ci95_high`, `se_clustered`, `se_naive`, `deff`, `sigma_run`,
+`sigma_run_runs`, `se_total`, `clusters`, `samples`, `bootstrap_b`, `bootstrap_seed`.
+No headline KLD moved, no top-level interval moved, no domain **mean** moved, no
+`se_clustered` moved. Only the per-domain interval endpoints did, which is the change.
+
+The pre-reseed endpoints are recorded verbatim in
+`registry/protocol/coverage/pre-reseed-by-domain-endpoints.json`, and
+`registry/tools/selftest_stat01_reseed.py` T4 **regenerates all 42 of them bit-for-bit**
+from the current tree via `domain_table(interval="bca", seed=20260829, b=1000)`. A
+change to published numbers that cannot reproduce the numbers it replaced is a
+replacement nobody can audit.
+
+### Every endpoint that moved
+
+84 endpoints across 42 cells in 12 rows. `g` is the window count; `coverage` is the
+measured coverage of the NEW interval on that cell.
+
+| row | domain | g | endpoint | old | new | move | coverage |
+|---|---|---|---:|---|---|---:|---:|
+| `glm53.k6-6bpw.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | high | 0.01470304709955 | 0.0206201603723462 | 40.24% | 91.5% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | high | 0.0146455765393629 | 0.0204438851774009 | 39.59% | 91.6% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | high | 0.0142031683941756 | 0.0194981396999935 | 37.28% | 91.8% |
+| `glm53.bf16-replay-floor.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | high | 0.0127606142875556 | 0.0174256033531627 | 36.56% | 92.0% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | high | 0.0274139026615211 | 0.037301408074051 | 36.07% | 92.3% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack.clean17` | axis3_code_agentic | 5 | high | 0.018829245106684 | 0.0255960024198146 | 35.94% | 93.0% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25` | axis1_general | 7 | high | 0.0632458995868885 | 0.0857221564544668 | 35.54% | 88.5% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25.clean17` | axis1_general | 7 | high | 0.0632458995868885 | 0.0857221564544668 | 35.54% | 88.3% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25.clean17` | axis2_legal | 5 | high | 0.0140421676005723 | 0.018553471404305 | 32.13% | 93.2% |
+| `glm53.k6-6bpw.brandonmusic-final25.clean17` | axis2_legal | 5 | high | 0.0160690631627848 | 0.020908489318015 | 30.12% | 94.0% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25.clean17` | axis2_legal | 5 | high | 0.0160678085083828 | 0.0208746570858632 | 29.92% | 93.8% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25` | axis1_general | 7 | high | 0.0171856256903807 | 0.0221783671088039 | 29.05% | 89.4% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25.clean17` | axis1_general | 7 | high | 0.0171856256903807 | 0.0221783671088039 | 29.05% | 88.9% |
+| `glm53.bf16-replay-floor.brandonmusic-final25.clean17` | axis2_legal | 5 | high | 0.0134894053090631 | 0.0172718130296169 | 28.04% | 94.7% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack` | axis1_general | 7 | high | 0.0308080190222817 | 0.0394312730584889 | 27.99% | 90.8% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack.clean17` | axis1_general | 7 | high | 0.0308080190222817 | 0.0394312730584889 | 27.99% | 89.6% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack.clean17` | axis2_legal | 5 | high | 0.0312770895245161 | 0.0400159742932373 | 27.94% | 93.1% |
+| `glm53.bf16-replay-floor.brandonmusic-final25` | axis1_general | 7 | high | 0.0169481966706246 | 0.0216298677947107 | 27.62% | 90.5% |
+| `glm53.bf16-replay-floor.brandonmusic-final25.clean17` | axis1_general | 7 | high | 0.0169481966706246 | 0.0216298677947107 | 27.62% | 89.8% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25` | axis1_general | 7 | high | 0.0179698106065556 | 0.0228683581346213 | 27.26% | 89.6% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25.clean17` | axis1_general | 7 | high | 0.0179698106065556 | 0.0228683581346213 | 27.26% | 90.4% |
+| `glm53.k6-6bpw.brandonmusic-final25` | axis1_general | 7 | high | 0.0180539141657523 | 0.0228515253188578 | 26.57% | 90.7% |
+| `glm53.k6-6bpw.brandonmusic-final25.clean17` | axis1_general | 7 | high | 0.0180539141657523 | 0.0228515253188578 | 26.57% | 89.2% |
+| `glm53.k6-6bpw.brandonmusic-final25` | axis3_code_agentic | 6 | high | 0.0158980178094747 | 0.0200966151421894 | 26.41% | 92.0% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25` | axis3_code_agentic | 6 | high | 0.0157773248722071 | 0.0199358083469868 | 26.36% | 92.5% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack` | axis2_legal | 6 | high | 0.0333109277622976 | 0.0419119587833581 | 25.82% | 92.8% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25` | axis1_general | 7 | low | 0.0130863484603428 | 0.00973269656644206 | 25.63% | 88.5% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25.clean17` | axis1_general | 7 | low | 0.0130863484603428 | 0.00973269656644206 | 25.63% | 88.3% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25` | axis3_code_agentic | 6 | high | 0.0266172611807926 | 0.0333251869282183 | 25.20% | 92.9% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25` | axis3_code_agentic | 6 | high | 0.013400582816622 | 0.0167357696427708 | 24.89% | 92.4% |
+| `glm53.bf16-replay-floor.brandonmusic-final25` | axis3_code_agentic | 6 | high | 0.015295580879197 | 0.0190970400492564 | 24.85% | 91.5% |
+| `glm53.k6-6bpw.brandonmusic-final25` | axis2_legal | 6 | high | 0.0229641193662481 | 0.0285225875864488 | 24.21% | 93.5% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25` | axis2_legal | 6 | high | 0.0231152816895481 | 0.0284980850697114 | 23.29% | 92.7% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25` | axis2_legal | 6 | high | 0.0215529348993126 | 0.0264933054464872 | 22.92% | 92.4% |
+| `glm53.bf16-replay-floor.brandonmusic-final25` | axis2_legal | 6 | low | 0.00868958577767956 | 0.00679478053774629 | 21.81% | 93.1% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack` | axis3_code_agentic | 6 | low | 0.01292955316766 | 0.0102603967319488 | 20.64% | 91.7% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25` | axis2_legal | 6 | low | 0.00948764630182324 | 0.00755708411059913 | 20.35% | 92.7% |
+| `glm53.k6-6bpw.brandonmusic-final25` | axis2_legal | 6 | low | 0.00945059955210543 | 0.0075326177293666 | 20.29% | 93.5% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack.clean17` | axis2_legal | 5 | low | 0.0133782494588542 | 0.0106798117322309 | 20.17% | 93.1% |
+| `glm53.bf16-replay-floor.brandonmusic-final25` | axis2_legal | 6 | high | 0.0201555253222197 | 0.0241898758275795 | 20.02% | 93.1% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25` | axis4_reasoning_termination | 6 | high | 0.0194574823056433 | 0.0233491876734253 | 20.00% | 94.0% |
+| `glm53.k6-6bpw.brandonmusic-final25` | axis4_reasoning_termination | 6 | high | 0.0194687742946016 | 0.0233437418760391 | 19.90% | 93.9% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25` | axis2_legal | 6 | low | 0.00846119653533074 | 0.00677727400218751 | 19.90% | 92.4% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25.clean17` | axis2_legal | 5 | high | 0.03054002779953 | 0.0363207634599982 | 18.93% | 94.5% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25` | axis4_reasoning_termination | 6 | high | 0.0231959596843492 | 0.0275411013659124 | 18.73% | 93.9% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25` | axis4_reasoning_termination | 6 | high | 0.0193313666457206 | 0.022914734711037 | 18.54% | 93.8% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack` | axis4_reasoning_termination | 6 | high | 0.0234153924479643 | 0.0277223326623028 | 18.39% | 93.8% |
+| `glm53.bf16-replay-floor.brandonmusic-final25` | axis4_reasoning_termination | 6 | high | 0.0199229260934004 | 0.0235430703943109 | 18.17% | 93.8% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack` | axis3_code_agentic | 6 | high | 0.0336722869646146 | 0.0396634983133733 | 17.79% | 91.7% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25` | axis2_legal | 6 | low | 0.0206921714436851 | 0.0171957936505267 | 16.90% | 94.2% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25` | axis2_legal | 6 | high | 0.0381768041762928 | 0.044325858860981 | 16.11% | 94.2% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25.clean17` | axis2_legal | 5 | low | 0.00748432508780676 | 0.00630204457649469 | 15.80% | 93.8% |
+| `glm53.k6-6bpw.brandonmusic-final25.clean17` | axis2_legal | 5 | low | 0.00741764093831472 | 0.00626885769138277 | 15.49% | 94.0% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25.clean17` | axis2_legal | 5 | low | 0.00676907665294915 | 0.00574499795652428 | 15.13% | 93.2% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack` | axis2_legal | 6 | low | 0.016162669006654 | 0.0137297280156348 | 15.05% | 92.8% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25.clean17` | axis2_legal | 5 | low | 0.0176522002832597 | 0.0152153936958678 | 13.80% | 94.5% |
+| `glm53.bf16-replay-floor.brandonmusic-final25.clean17` | axis2_legal | 5 | low | 0.00680953316828439 | 0.00588916435248655 | 13.52% | 94.7% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack` | axis1_general | 7 | low | 0.0109185877361317 | 0.00971149355609811 | 11.06% | 90.8% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack.clean17` | axis1_general | 7 | low | 0.0109185877361317 | 0.00971149355609811 | 11.06% | 89.6% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | low | 0.0131380905015073 | 0.0116875692580655 | 11.04% | 92.3% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25` | axis4_reasoning_termination | 6 | low | 0.0101183551441137 | 0.00909529600277872 | 10.11% | 93.8% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25` | axis3_code_agentic | 6 | low | 0.00752306464090629 | 0.00827594725033383 | 10.01% | 92.5% |
+| `glm53.k6-6bpw.brandonmusic-final25` | axis3_code_agentic | 6 | low | 0.0075841382045903 | 0.0082958504323992 | 9.38% | 92.0% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | low | 0.00633166765827416 | 0.00574299349246938 | 9.30% | 91.8% |
+| `glm53.bf16-replay-floor.brandonmusic-final25` | axis4_reasoning_termination | 6 | low | 0.0106904621661296 | 0.00975244476698162 | 8.77% | 93.8% |
+| `glm53.k6-6bpw.brandonmusic-final25` | axis1_general | 7 | low | 0.00652693605339505 | 0.00603112547641908 | 7.60% | 90.7% |
+| `glm53.k6-6bpw.brandonmusic-final25.clean17` | axis1_general | 7 | low | 0.00652693605339505 | 0.00603112547641908 | 7.60% | 89.2% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25` | axis1_general | 7 | low | 0.00652904155193087 | 0.00604844918926325 | 7.36% | 89.6% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25.clean17` | axis1_general | 7 | low | 0.00652904155193087 | 0.00604844918926325 | 7.36% | 90.4% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25` | axis3_code_agentic | 6 | low | 0.00630852752896403 | 0.0065913357843431 | 4.48% | 92.4% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack` | axis4_reasoning_termination | 6 | low | 0.0134197293325685 | 0.0128921149086502 | 3.93% | 93.8% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25` | axis4_reasoning_termination | 6 | low | 0.0131347396422671 | 0.0136421759638968 | 3.86% | 93.9% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25` | axis1_general | 7 | low | 0.00597953663624455 | 0.00582592475828369 | 2.57% | 89.4% |
+| `glm53.k8-8bpw-stream.brandonmusic-final25.clean17` | axis1_general | 7 | low | 0.00597953663624455 | 0.00582592475828369 | 2.57% | 88.9% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | low | 0.00661136111139256 | 0.00676876692567102 | 2.38% | 91.6% |
+| `glm53.bf16-replay-floor.brandonmusic-final25` | axis3_code_agentic | 6 | low | 0.00720143663925755 | 0.00704898719616047 | 2.12% | 91.5% |
+| `glm53.brandonmusic-4bpw.brandonmusic-final25` | axis3_code_agentic | 6 | low | 0.0137852150441904 | 0.0140267052829716 | 1.75% | 92.9% |
+| `glm53.bf16-replay-floor.brandonmusic-final25` | axis1_general | 7 | low | 0.00618281829293444 | 0.00608950456838462 | 1.51% | 90.5% |
+| `glm53.bf16-replay-floor.brandonmusic-final25.clean17` | axis1_general | 7 | low | 0.00618281829293444 | 0.00608950456838462 | 1.51% | 89.8% |
+| `glm53.official-fp8.brandonmusic-final25.crossstack.clean17` | axis3_code_agentic | 5 | low | 0.00937378879574877 | 0.00925718200021231 | 1.24% | 93.0% |
+| `glm53.k6-6bpw.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | low | 0.00669197221005582 | 0.0067738265150795 | 1.22% | 91.5% |
+| `glm53.k6-6bpw.brandonmusic-final25` | axis4_reasoning_termination | 6 | low | 0.0109347444662552 | 0.0108499905272563 | 0.78% | 93.9% |
+| `glm53.k6-6bpw-stream.brandonmusic-final25` | axis4_reasoning_termination | 6 | low | 0.0108991642999101 | 0.0108333067519636 | 0.60% | 94.0% |
+| `glm53.bf16-replay-floor.brandonmusic-final25.clean17` | axis3_code_agentic | 5 | low | 0.00582858230646766 | 0.00579517332734868 | 0.57% | 92.0% |
+
+### How to verify it yourself
+
+```bash
+cd registry
+make check                     # 0 errors, 84 selftests, 440 joint checks
+make reseed-check              # the rows are still a function of their receipts
+make stat-selftest             # the 22 assertions behind this section
+make coverage                  # regenerate the coverage record (minutes)
+python3 tools/reseed_delta.py OLD.jsonl data/measurements.jsonl
+```
+
 
 ---
 

@@ -118,6 +118,14 @@ registry/tools/registry_validate.py
 # registry_validate.py --submission imports registry_add at runtime;
 # without it the on-instance self-check dies AFTER the receipt is sealed.
 registry/tools/registry_add.py
+# Both of the above import harness_id at module scope, and check_harness reads
+# the grandfather list off disk. Omitting either turns the on-instance self-check
+# into an ImportError AFTER the receipt is sealed -- the exact failure mode the
+# "a guard must name every dependency it guards" lesson was written for, and it
+# is how this line got added: bin/selftest_all.sh's bundle-only round trip caught
+# it on the first run after harness identity landed.
+registry/tools/harness_id.py
+registry/schema/harness-grandfather.json
 registry/schema/common.schema.json
 registry/schema/submission.schema.json
 registry/schema/measurement.schema.json
