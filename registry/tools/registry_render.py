@@ -198,6 +198,12 @@ def elsewhere_note(C, key, rows):
                 continue
             if g(other, "comparability", "key") == key:
                 continue
+            # A withdrawn row is not one of the values a reader may be handed: counting it
+            # here reported "8 values here, from 0.0011 to 0.0137234 (1148% apart)" for a
+            # group whose live spread is 18%. The retraction has to reach the derived prose
+            # too, or the page contradicts its own table.
+            if other.get("status") in WITHDRAWN_STATUS:
+                continue
             spread.setdefault(aid, []).append(other)
     if not spread:
         return []
@@ -408,7 +414,29 @@ def lane_note(C, lane, rows, total):
     return out
 
 
+WITHDRAWN_STATUS = ("superseded", "retracted")
+
+
+def _live(C, mids):
+    """Members whose rows are still standing. `pending` counts: it is a registered artifact
+    with a null value, it renders as "--" and it sorts last."""
+    return [m for m in mids
+            if C["measurements"][m].get("status") not in WITHDRAWN_STATUS]
+
+
+def _withdrawn(C, mids):
+    return [m for m in mids if C["measurements"][m].get("status") in WITHDRAWN_STATUS]
+
+
 def render_group(C, key, members, groups):
+    # The renderer filtered nothing on `status`. The registry has a retraction mechanism --
+    # the status enum, `supersedes`, DISC-003 -- whose result was invisible in the published
+    # document: a retracted row was tabled exactly like a live one, in rank order, and the
+    # word "retracted" appeared nowhere in README.md. A retracted number that still ranks
+    # first is worse than no retraction at all. The counts and the derived prose below use
+    # the same partition, or the page contradicts its own table.
+    all_members = list(members)
+    members = _live(C, members) or members
     out = []
     out += caption(C, key, members)
     out.append("")
@@ -486,12 +514,35 @@ def render_group(C, key, members, groups):
             out += attributable_note(lanes[lane])
         out += bias_callouts(C, lanes[lane])
 
+    gone = _withdrawn(C, all_members)
+    if gone:
+        out.append("> **%d row%s in this group %s been withdrawn** and %s not ranked above. A "
+                   "withdrawn row is kept here, struck through, so a reader who has already quoted "
+                   "it can find out that it no longer stands."
+                   % (len(gone), "" if len(gone) == 1 else "s",
+                      "has" if len(gone) == 1 else "have",
+                      "is" if len(gone) == 1 else "are"))
+        out.append("")
+        out.append("| Artifact | Status | %s (nats) | Superseded by | Why |" % metric_name)
+        out.append("|---|---|---:|---|---|")
+        for mid in gone:
+            m = C["measurements"][mid]
+            art = C["artifacts"].get(m["artifact_ref"]) or {}
+            val = m["metric"]["value"]
+            why = next((d.get("detail") for d in (m.get("disclosures") or [])
+                        if d.get("severity") == "blocking"), None) or (m.get("notes") or "--")
+            out.append("| ~~%s~~ | **%s** | ~~%s~~ | %s | %s |"
+                       % (art.get("name") or m["artifact_ref"], m.get("status"),
+                          ("%.7g" % val) if val is not None else "--",
+                          m.get("supersedes") or "--", str(why).replace("|", "/")[:180]))
+        out.append("")
+
     out += elsewhere_note(C, key, rows)
     notes = []
     for mid in rows:
         m = C["measurements"][mid]
         for d in m.get("disclosures", []):
-            if d.get("affects_comparability") or d.get("severity") == "caveat":
+            if d.get("affects_comparability") or d.get("severity") in ("caveat", "blocking"):
                 notes.append("- `%s` **%s**: %s" % (mid.split("--", 1)[1], d["code"], d["detail"]))
         if m.get("notes"):
             notes.append("- `%s` note: %s" % (mid.split("--", 1)[1], m["notes"]))
@@ -512,8 +563,12 @@ def render(C, groups):
 
     vals = [m["metric"]["value"] for m in C["measurements"].values()
             if m["metric"]["value"] is not None]
-    best = min(C["measurements"].values(),
-               key=lambda m: m["metric"]["value"] if m["metric"]["value"] is not None else 1e9)
+    best = min((m for m in C["measurements"].values()
+                if m.get("status") == "published" and m["metric"]["value"] is not None),
+               key=lambda m: m["metric"]["value"],
+               default=min(C["measurements"].values(),
+                           key=lambda m: m["metric"]["value"]
+                           if m["metric"]["value"] is not None else 1e9))
     best_ref_art = (C["references"].get(best["reference_ref"]) or {}).get("artifact_ref")
     best_gloss = ("and it is not a quant at all -- those are unquantized weights, read by a second "
                   "engine, measuring what two engines disagree by"

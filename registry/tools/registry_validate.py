@@ -369,6 +369,94 @@ def check_comparability(C, rep):
                                         "produced it declared it unusable as a zero-point."
                             % (mid, bias["floor_measurement_ref"]), mid)
 
+    # FLOOR-001 / FLOOR-002: a quantized artifact cannot be MORE faithful than
+    # unquantized weights measured through the same stack. The registry publishes that
+    # zero-point as an explicit floor row, so the cheapest possible check on a new number
+    # is "is it below the floor of its own comparability group". Nothing was doing it:
+    # a fabricated row at 0.009 nats sailed past every invariant and rendered at the TOP
+    # of the flagship ranked table, above the real 0.0137 K6 row. This is attack-agnostic
+    # -- it catches a forged submission, a miscalibrated third-party measurement and an
+    # honest tool bug with equal force, which is why it is worth more than any one of the
+    # identity checks above.
+    #
+    # Two tiers. Same key AND same lane is airtight, and is an error. Same key but a
+    # different lane is still a valid BOUND -- this registry has measured its own lane
+    # offset at 8.5e-06 nats (K6 sealed 0.013723384665701147 vs streaming
+    # 0.013714888822596553), five orders of magnitude below the floor itself -- but it is
+    # not a comparability claim, so it is reported with a margin and named separately.
+    _floors = {}          # (key, lane) -> [(mid, value)]
+    _floors_any_lane = {}  # key         -> [(mid, lane, value)]
+    _group_size = {}       # key         -> published member count
+    _floorless_reported = set()
+    for mid, m in C["measurements"].items():
+        if m.get("status") == "published":
+            k = (m.get("comparability") or {}).get("key")
+            if k:
+                _group_size[k] = _group_size.get(k, 0) + 1
+    for mid, m in C["measurements"].items():
+        if m.get("status") != "published":
+            continue
+        ref = C["references"].get(m.get("reference_ref")) or {}
+        if not _is_floor_artifact(C, m.get("artifact_ref"), ref.get("artifact_ref")):
+            continue
+        if (m.get("comparability") or {}).get("usable_as_floor") is False:
+            continue
+        value = (m.get("metric") or {}).get("value")
+        key = (m.get("comparability") or {}).get("key")
+        if value is None or key is None:
+            continue
+        _floors.setdefault((key, _row_lane(C, m)), []).append((mid, value))
+        _floors_any_lane.setdefault(key, []).append((mid, _row_lane(C, m), value))
+
+    for mid, m in C["measurements"].items():
+        if m.get("status") != "published":
+            continue
+        value = (m.get("metric") or {}).get("value")
+        key = (m.get("comparability") or {}).get("key")
+        if value is None or key is None:
+            continue
+        ref = C["references"].get(m.get("reference_ref")) or {}
+        if _is_floor_artifact(C, m.get("artifact_ref"), ref.get("artifact_ref")):
+            continue                      # a floor is not below itself
+        lane = _row_lane(C, m)
+        same = _floors.get((key, lane)) or []
+        for fid, fval in same:
+            if fid != mid and value < fval:
+                rep.err("FLOOR-001", "%s reports %.17g on lane %r, BELOW the measurement floor %s "
+                                     "(%.17g) of its own comparability group. A quantized artifact "
+                                     "cannot be more faithful to the reference than the unquantized "
+                                     "weights measured through the same stack: this number is not "
+                                     "a ranking, it is a defect."
+                        % (mid, value, lane, fid, fval), mid)
+        if not same:
+            other = [(fid, flane, fval) for fid, flane, fval in _floors_any_lane.get(key, [])
+                     if fid != mid]
+            # 5% margin: cross-lane comparison is a bound, not a comparability claim, and
+            # the measured lane offset is ~6e-04 of the floor. Anything below 0.95x the
+            # other lane's floor is not a lane effect.
+            for fid, flane, fval in other:
+                if value < fval * 0.95:
+                    rep.err("FLOOR-002", "%s reports %.17g on lane %r, below 95%% of the floor %s "
+                                         "(%.17g, lane %r) in the same comparability group. No floor "
+                                         "was measured on this row's own lane, so this is a bound "
+                                         "rather than a paired comparison -- but the measured "
+                                         "lane offset on this registry is ~6e-04 of the floor, and "
+                                         "this gap is far larger than any lane effect."
+                            % (mid, value, lane, fid, fval, flane), mid)
+            if not other and _group_size.get(key, 0) > 1 and key not in _floorless_reported:
+                # ONCE PER GROUP, not once per row. A lone row has nothing to be ranked
+                # against, so an unbounded number there misleads nobody; a multi-member
+                # group with no floor is a ranked table whose ordering rests on nothing.
+                # Reported per-row this was 50 lines and it buried the 51 warnings that
+                # were already here -- a warning channel nobody reads is worse than no
+                # warning, so it is emitted once against the first member encountered.
+                _floorless_reported.add(key)
+                rep.warn("FLOOR-003", "comparability group %s ranks %d published rows with no "
+                                      "measurement floor on any lane (first member %s): the "
+                                      "ordering has no zero-point and nothing bounds how low a "
+                                      "member may be reported."
+                         % (key, _group_size[key], mid), mid)
+
     # CMP-003 / CMP-005
     for key, members in sorted(groups.items()):
         positions = {}
@@ -510,6 +598,27 @@ def check_provenance(C, rep):
         else:
             if measurer.get("is_registry_maintainer"):
                 rep.err("PROV-002", "%s is %s but names the registry maintainer as measurer" % (mid, by), mid)
+            # PROV-013. is_registry_maintainer is a derived boolean; the rendered
+            # Attribution column reads measurer.NAME. A submission carrying
+            # name: <maintainer> on a throwaway handle set the boolean false, passed
+            # PROV-002, and still printed as "reported by <maintainer>" in the published
+            # table. Case-folded, and the url is checked too because a hf.co/<maintainer>
+            # link is the same claim by another route.
+            _m = L.MAINTAINER.lower()
+            for _field in ("name", "handle"):
+                if (measurer.get(_field) or "").strip().lower() == _m:
+                    rep.err("PROV-013",
+                            "%s is %s but its measurer.%s is %r -- the registry maintainer. The "
+                            "Attribution column is rendered from measurer.name, so this row reads "
+                            "as our measurement. Credit is not transferable in either direction."
+                            % (mid, by, _field, measurer.get(_field)), mid,
+                            "name whoever actually produced the number")
+            _url = (measurer.get("url") or "").strip().lower().rstrip("/")
+            if _url and ("huggingface.co/" + _m) in _url:
+                rep.err("PROV-013",
+                        "%s is %s but its measurer.url points into the registry maintainer's "
+                        "namespace (%s)." % (mid, by, measurer.get("url")), mid,
+                        "link to whoever actually produced the number")
             if (m.get("comparability") or {}).get("class") != "advisory":
                 rep.err("PROV-002", "%s is %s and must be comparability.class=advisory" % (mid, by), mid)
             if not L.has_disclosure(m, "author_reported_only"):
@@ -996,26 +1105,87 @@ def check_submission(root, path):
 
 def check_only_touched(root, C, generated_path, rep):
     """CI gate: the regeneration must have touched ONLY rows derived from the submitted
-    receipts. A hand-edited row elsewhere in data/ is exactly what this catches."""
+    receipts. A hand-edited row elsewhere in data/ is exactly what this catches.
+
+    It did not catch anything. `allowed` was built and then never compared to anything;
+    the only outcome for a changed data/ file was a WARNING, and main() exits non-zero on
+    errors only. Editing the published K6 headline from 0.013723384665701147 to
+    0.0100000000000001 by hand passed this gate with exit 0. It also returned early when
+    `git diff` produced nothing -- including when git was unavailable or the tree was not
+    a repository at all -- so the gate was silently absent rather than failing closed.
+
+    Now it diffs by RECORD, not by file: `L.write_jsonl` rewrites the whole file on any
+    change, so a line diff is noise. Every id whose canonical form differs from HEAD, and
+    every id added or removed, must appear in the generated report."""
     try:
         with open(generated_path, encoding="utf-8") as fh:
             gen = json.load(fh)
     except (IOError, ValueError) as exc:
         rep.err("CI.GENERATED", "cannot read %s (%s)" % (generated_path, exc))
         return
-    allowed = set(gen.get("measurements", [])) | set(gen.get("artifacts", [])) | \
-        set(gen.get("pipelines", []))
+    allowed = set()
+    for coll in ("measurements", "artifacts", "pipelines", "models", "panels", "references"):
+        allowed |= set(gen.get(coll, []))
+
     import subprocess
+
+    def git(*argv):
+        out = subprocess.run(("git",) + argv, cwd=root, capture_output=True, text=True)
+        if out.returncode != 0:
+            raise RuntimeError((out.stderr or out.stdout or "").strip()[:200] or "git failed")
+        return out.stdout
+
     try:
-        out = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", "data/"],
-                             cwd=root, capture_output=True, text=True)
-        changed_files = [f for f in out.stdout.split() if f]
-    except Exception:
-        changed_files = []
+        # `git diff --name-only` prints paths relative to the REPOSITORY TOP, not to cwd.
+        # The registry is usually a subdirectory of the suite, so "data/measurements.jsonl"
+        # comes back as "registry/data/measurements.jsonl" and opening it relative to root
+        # silently found nothing -- which read as "every row was deleted".
+        top = git("rev-parse", "--show-toplevel").strip()
+        changed_files = [f for f in git("diff", "--name-only", "HEAD", "--", "data/").split() if f]
+    except (RuntimeError, OSError) as exc:
+        # Fail CLOSED. A gate that cannot run is not a gate that passed.
+        rep.err("CI.GENERATED",
+                "cannot diff data/ against HEAD (%s), so it is not possible to prove that only "
+                "the generated rows changed" % exc,
+                remedy="run this from a git checkout of the registry")
+        return
     if not changed_files:
         return
-    rep.warn("CI.GENERATED", "data/ files changed: %s; generated ids: %s"
-             % (", ".join(changed_files), ", ".join(sorted(allowed)) or "none"))
+
+    for rel in changed_files:
+        coll = os.path.splitext(os.path.basename(rel))[0]
+        try:
+            before_text = git("show", "HEAD:" + rel)
+        except (RuntimeError, OSError):
+            before_text = ""          # new file: every row in it is an addition
+        def index(text):
+            out = {}
+            for line in text.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and isinstance(rec.get("id"), str):
+                    out[rec["id"]] = L.canonical_json(rec)
+            return out
+        before = index(before_text)
+        try:
+            with open(os.path.join(top, rel), encoding="utf-8") as fh:
+                after = index(fh.read())
+        except IOError:
+            after = {}
+        touched = sorted(
+            set(k for k in after if before.get(k) != after[k])
+            | set(k for k in before if k not in after))
+        stray = [k for k in touched if k not in allowed]
+        if stray:
+            rep.err("CI.GENERATED",
+                    "%s: %d record(s) changed that no submitted receipt generates: %s. Only rows "
+                    "derived from the receipts in this pull request may move."
+                    % (rel, len(stray), ", ".join(stray[:8]) + (" ..." if len(stray) > 8 else "")),
+                    remedy="revert the hand edit, or add the receipt that produces it")
 
 
 def summarize(C, groups, generated_path):

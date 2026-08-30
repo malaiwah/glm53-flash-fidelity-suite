@@ -297,8 +297,9 @@
     {
       "id": "PROV-009",
       "severity": "error",
-      "statement": "An inbound submission may not be attributed to the registry maintainer unless produced_by.repository is a maintainer-owned repository. self-measured is the registry's highest trust level and comparability.class=strict follows from it; a submission cannot assert either on the maintainer's behalf.",
-      "enforced_by": "tools/registry_add.py submission_to_records (exit 8)"
+      "statement": "An inbound submission may not be attributed to the registry maintainer on the strength of anything inside the submission. produced_by.repository must be a maintainer-owned repository AND the operator must assert the attribution at the command line (registry_add --maintainer-attribution); an unasserted maintainer claim is recorded as third-party-reported with an attribution_downgraded disclosure. self-measured is the registry's highest trust level and comparability.class=strict follows from it, so it is a property of the invocation, never of the file: no pull request and no CI job can mint it.",
+      "enforced_by": "tools/registry_add.py submission_to_records (exit 8, or downgrade + attribution_downgraded disclosure)",
+      "amended": "v1.0.2 (audit 2026-08-29): the old gate compared measurer.handle against produced_by.repository, two strings the submitter types, so a receipt that wrote the maintainer's handle in both fields minted a strict self-measured row in the flagship comparability group."
     },
     {
       "id": "PROV-010",
@@ -473,10 +474,35 @@
       "severity": "error",
       "statement": "metric.value survives serialization without precision loss: repr(value) round-trips to the same float and the serialized line contains that repr, so the data file never stores a display-rounded number in place of the computed one. LIMIT, stated because the wording used to imply more: this cannot detect a value that was already rounded BEFORE it reached the registry -- 0.0053 round-trips perfectly. Binding a value to its receipt is the seeder's job (live-read for the Qwen rows) and, for the transcribed GLM rows, a manual fetch-and-hash against provenance.sources[].sha256.",
       "amended": "v1.0.1 (audit 2026-08-28): statement narrowed to what the check actually enforces. An adversarial fixture that rounded a headline value to 4 decimal places passed STAT-006 cleanly, because a rounded float round-trips through repr like any other."
+    },
+    {
+      "id": "PROV-013",
+      "severity": "error",
+      "statement": "A row whose provenance.measured_by is not self-measured does not name the registry maintainer in measurer.name, measurer.handle or measurer.url. The rendered Attribution column reads measurer.name, so a submission carrying name: <maintainer> on a throwaway handle printed as the maintainer's own measurement while every handle-keyed check stayed quiet.",
+      "enforced_by": "tools/registry_validate.py check_provenance"
+    },
+    {
+      "id": "FLOOR-001",
+      "severity": "error",
+      "statement": "A published quantized row does not report LESS divergence than the measurement floor of its own comparability group on its own lane. Unquantized weights measured through the same stack are the zero-point; a number below them is a defect, not a ranking.",
+      "enforced_by": "tools/registry_validate.py check_comparability"
+    },
+    {
+      "id": "FLOOR-002",
+      "severity": "error",
+      "statement": "When no floor was measured on a row's own lane, the row is still bounded by the floors in its comparability group on other lanes, with a 5% margin. This is a bound, not a paired comparison: BIAS-006 still forbids SUBTRACTING a cross-lane floor. The measured lane offset on this registry is 8.5e-06 nats, ~6e-04 of the floor.",
+      "enforced_by": "tools/registry_validate.py check_comparability"
+    },
+    {
+      "id": "FLOOR-003",
+      "severity": "warn",
+      "statement": "A comparability group that ranks more than one published row has a measurement floor on some lane. Reported once per group: a ranked table with no zero-point has nothing bounding how low a member may be reported.",
+      "enforced_by": "tools/registry_validate.py check_comparability"
     }
   ],
   "known_disclosure_codes": [
     "artifact_identity_incomplete",
+    "attribution_downgraded",
     "author_reported_only",
     "byte_identical_redistribution",
     "calibration_panel_overlap",

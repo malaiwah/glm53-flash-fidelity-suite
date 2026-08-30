@@ -79,6 +79,10 @@
         "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "url": { "type": ["string", "null"], "format": "uri" },
         "container": { "enum": ["safetensors", "gguf", "exl3", "mlx", "pytorch-bin", "other"] },
+        "path": {
+          "type": ["string", "null"],
+          "description": "Which artifact inside the repository, when the repo publishes more than one at this revision: a directory prefix (\"4-bit/\") or a filename (\"model-Q8_0.gguf\"), exactly as the registry records it. REQUIRED whenever the (repository, revision) pair matches more than one catalogued artifact -- their weights differ and two of them can carry an identical scope_digest, so nothing else can tell them apart. Optional otherwise."
+        },
         "precision_label": { "type": ["string", "null"] },
         "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
         "index_sha256": { "$ref": "common.schema.json#/$defs/sha256_or_null" },

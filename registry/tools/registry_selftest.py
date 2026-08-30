@@ -260,6 +260,36 @@ def m_floor_measured_on_a_different_lane(C):
     return "BIAS-006", "a floor measured on one lane is not the zero-point for a different lane"
 
 
+def m_row_below_its_floor(C):
+    """A published row reporting LESS divergence than unquantized weights.
+
+    The forged-submission case (a `receipts/malaiwah/` file claiming self-measured, at
+    0.009 nats) rendered at the TOP of the flagship ranked table with the validator
+    reporting zero errors, because nothing compared a row against the measurement floor
+    sitting in its own comparability group.  This mutation is INTERNALLY CONSISTENT --
+    the CI, the run means and the per-domain table all move with the headline -- so every
+    other invariant is satisfied and only FLOOR-001 can catch it.  A 6bpw quant cannot be
+    more faithful to the reference than the bf16 weights it was quantized from."""
+    m = C["measurements"]["measurement--glm53.k6-6bpw-stream.brandonmusic-final25"]
+    new = 0.0090001
+    delta = new - m["metric"]["value"]
+    m["metric"]["value"] = new
+    det = m["determinism"]
+    det["run_means"] = [new] * len(det["run_means"])
+    det["min_run_mean"] = det["max_run_mean"] = new
+    u = m["uncertainty"]
+    for k in ("ci95_low", "ci95_high"):
+        if u.get(k) is not None:
+            u[k] += delta
+    for d in m.get("by_domain") or []:
+        d["mean"] += delta
+        for k in ("ci95_low", "ci95_high"):
+            if d.get(k) is not None:
+                d[k] += delta
+    return "FLOOR-001", ("a quantized row below the unquantized floor of its own group is not a "
+                         "ranking, it is a defect")
+
+
 def m_non_canonical_line(C):
     return None  # handled specially below
 
@@ -296,6 +326,7 @@ MUTATIONS = [
     ("stream-row-without-its-bias", m_stream_row_loses_its_bias),
     ("lane-bridged-to-itself", m_lane_is_its_own_baseline),
     ("floor-measured-on-a-different-lane", m_floor_measured_on_a_different_lane),
+    ("row-below-its-own-floor", m_row_below_its_floor),
 ]
 
 
@@ -681,11 +712,52 @@ def main():
                 print("      %s" % (r.stdout + r.stderr)[:500])
             return good
 
+        # The forgery the red-team cases above could NOT reach: an inbound file that types
+        # the maintainer's handle AND a maintainer-owned produced_by.repository. Both
+        # strings are supplied by the submitter, so the old gate compared a claim against
+        # itself and minted `self-measured` + `class: strict` in the flagship group. The
+        # trust level now comes from the INVOCATION (--maintainer-attribution), which CI
+        # never passes, so the same file can only ever land as third-party-reported.
+        forged = os.path.join(tmp, "forged-attribution.json")
+        with open(ex, encoding="utf-8") as fh:
+            s_forge = json.load(fh)
+        s_forge["measurer"] = {"name": "Evil Quants", "handle": L.MAINTAINER, "url": None,
+                               "is_artifact_author": False}
+        s_forge["produced_by"]["repository"] = L.MAINTAINER + "/glm53-fidelity-suite"
+        s_forge["artifact"]["repository"] = "evilquant/GLM-5.3-Flash-SUPER"
+        s_forge["receipt_sha256"] = ""
+        s_forge["receipt_sha256"] = L.sha256_hex(L.canonical_json(s_forge))
+        with open(forged, "w", encoding="utf-8") as fh:
+            json.dump(s_forge, fh)
+        out = subprocess.run([PY, os.path.join(HERE, "registry_add.py"), "--registry", args.root,
+                              "--receipt", forged], capture_output=True, text=True)
+        ok = out.returncode == 0 and "third-party-reported" in out.stdout \
+            and "self-measured" not in out.stdout
+        print("  %-58s %s" % ("a typed maintainer handle cannot mint self-measured",
+                              "PASS" if ok else "FAIL"))
+        if not ok and args.verbose:
+            print("      %s" % (out.stdout + out.stderr)[:400])
+        passed += ok
+        failed += not ok
+
+        out = subprocess.run([PY, os.path.join(HERE, "registry_add.py"), "--registry", args.root,
+                              "--receipt", ex, "--maintainer-attribution"],
+                             capture_output=True, text=True)
+        ok = out.returncode == 0 and "self-measured" in out.stdout
+        print("  %-58s %s" % ("...but the operator may assert it at the command line",
+                              "PASS" if ok else "FAIL"))
+        passed += ok
+        failed += not ok
+
         for label, code, text, edits in (
             ("a row scored against a different teacher capture", 7, "different teacher",
              {"reference.teacher_receipt_sha256": "d" * 64}),
             ("an outsider claiming the maintainer's attribution", 8, "not a repository of theirs",
              {"produced_by.repository": "somebody-else/their-eval"}),
+            ("the maintainer's NAME on a throwaway handle", 8, "identity",
+             {"measurer.name": "malaiwah", "measurer.handle": "totally-not-malaiwah",
+              "measurer.url": "https://huggingface.co/malaiwah",
+              "produced_by.repository": "somebody-else/their-eval"}),
             ("a subset row with no subset_of_panel disclosure", 4, "no subset_of_panel disclosure",
              {"measurement_scope.covers_full_panel": False,
               "measurement_scope.scored_positions": 4094,
@@ -700,6 +772,134 @@ def main():
             failed += not ok
     else:
         print("  (docs/examples/dione-q4.submission.json absent; skipped)")
+
+    print()
+    print("=" * 78)
+    print("I. a withdrawn row must not rank, and a subset must be recordable")
+    print("=" * 78)
+    # REG-05. The renderer filtered nothing on `status`: a retracted row was tabled in rank
+    # order like a live one and the word "retracted" appeared nowhere in README.md.
+    rend = os.path.join(tmp, "retracted")
+    shutil.copytree(os.path.join(args.root, "schema"), os.path.join(rend, "schema"))
+    shutil.copytree(os.path.join(args.root, "data"), os.path.join(rend, "data"))
+    shutil.copytree(os.path.join(args.root, "tables"), os.path.join(rend, "tables"),
+                    dirs_exist_ok=True) if os.path.isdir(os.path.join(args.root, "tables")) else None
+    for name in ("README.head.md",):
+        src = os.path.join(args.root, name)
+        if os.path.exists(src):
+            shutil.copy(src, os.path.join(rend, name))
+    mp = os.path.join(rend, "data", "measurements.jsonl")
+    rows = [json.loads(x) for x in open(mp, encoding="utf-8") if x.strip()]
+    base = [r for r in rows if r["id"] == "measurement--glm53.k6-6bpw.brandonmusic-final25"][0]
+    dead = json.loads(json.dumps(base))
+    dead["id"] = "measurement--glm53.aaa-retracted-demo"
+    dead["status"] = "retracted"
+    d = 0.0011 - dead["metric"]["value"]
+    dead["metric"]["value"] = 0.0011
+    det = dead["determinism"]
+    det["run_means"] = [0.0011] * len(det["run_means"])
+    det["min_run_mean"] = det["max_run_mean"] = 0.0011
+    for k in ("ci95_low", "ci95_high"):
+        if dead["uncertainty"].get(k) is not None:
+            dead["uncertainty"][k] += d
+    for dd in dead.get("by_domain") or []:
+        dd["mean"] += d
+        for k in ("ci95_low", "ci95_high"):
+            if dd.get(k) is not None:
+                dd[k] += d
+    dead.setdefault("disclosures", []).append(
+        {"code": "record_note", "severity": "blocking", "affects_comparability": True,
+         "detail": "WITHDRAWN: scorer bug found after publication."})
+    rows.append(dead)
+    L.write_jsonl(mp, rows)
+    out = subprocess.run([PY, os.path.join(HERE, "registry_render.py"), "--root", rend],
+                         capture_output=True, text=True)
+    md = ""
+    try:
+        md = open(os.path.join(rend, "README.md"), encoding="utf-8").read()
+    except IOError:
+        pass
+    ranked = [l for l in md.splitlines()
+              if l.startswith("| ") and "**0.0011**" in l]
+    ok = bool(md) and not ranked and "retracted" in md.lower() \
+        and "WITHDRAWN: scorer bug" in md and "1148%" not in md
+    print("  %-58s %s" % ("a retracted row is struck through, never ranked",
+                          "PASS" if ok else "FAIL"))
+    if not ok and args.verbose:
+        print("      ranked=%r  has_retracted=%s  render_rc=%d"
+              % (ranked[:1], "retracted" in md.lower(), out.returncode))
+    passed += ok
+    failed += not ok
+
+    print()
+    print("=" * 78)
+    print("H. the CI diff gate must actually refuse a row no receipt generates")
+    print("=" * 78)
+    # `--assert-only-touched` is the gate that is supposed to stop a hand-edited published
+    # number reaching data/. It built its `allowed` set and then compared it to nothing:
+    # the only outcome for a changed data/ file was a warning, and main() exits non-zero on
+    # errors only. Editing the K6 headline by hand passed it with exit 0.
+    gitrepo = os.path.join(tmp, "ci-gate")
+    os.makedirs(gitrepo)
+    shutil.copytree(os.path.join(args.root, "schema"), os.path.join(gitrepo, "schema"))
+    shutil.copytree(os.path.join(args.root, "data"), os.path.join(gitrepo, "data"))
+    genp = os.path.join(tmp, "generated-none.json")
+    with open(genp, "w", encoding="utf-8") as fh:
+        json.dump({"measurements": [], "artifacts": [], "pipelines": []}, fh)
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+    quiet = dict(capture_output=True, text=True, cwd=gitrepo, env=env)
+    have_git = subprocess.run(["git", "init", "-q"], **quiet).returncode == 0
+    if have_git:
+        subprocess.run(["git", "add", "-A"], **quiet)
+        subprocess.run(["git", "commit", "-qm", "baseline"], **quiet)
+
+        out = subprocess.run([PY, os.path.join(HERE, "registry_validate.py"), "--root", gitrepo,
+                              "--assert-only-touched", genp], capture_output=True, text=True)
+        ok = out.returncode == 0
+        print("  %-58s %s" % ("an untouched checkout passes", "PASS" if ok else "FAIL"))
+        passed += ok
+        failed += not ok
+
+        mp = os.path.join(gitrepo, "data", "measurements.jsonl")
+        rows = [json.loads(x) for x in open(mp, encoding="utf-8") if x.strip()]
+        target = "measurement--glm53.k6-6bpw.brandonmusic-final25"
+        for r in rows:
+            if r["id"] == target:
+                new = 0.0100000000000001
+                d = new - r["metric"]["value"]
+                r["metric"]["value"] = new
+                u = r["uncertainty"]
+                for k in ("ci95_low", "ci95_high"):
+                    if u.get(k) is not None:
+                        u[k] += d
+                det = r["determinism"]
+                det["run_means"] = [new] * len(det["run_means"])
+                det["min_run_mean"] = det["max_run_mean"] = new
+        L.write_jsonl(mp, rows)
+        out = subprocess.run([PY, os.path.join(HERE, "registry_validate.py"), "--root", gitrepo,
+                              "--assert-only-touched", genp], capture_output=True, text=True)
+        ok = out.returncode == 1 and target in out.stdout and "CI.GENERATED" in out.stdout
+        print("  %-58s %s" % ("a hand-edited published value is REFUSED and named",
+                              "PASS" if ok else "FAIL (exit %d)" % out.returncode))
+        if not ok and args.verbose:
+            print("      %s" % (out.stdout + out.stderr)[:400])
+        passed += ok
+        failed += not ok
+
+        # A gate that cannot run must not read as a gate that passed.
+        nogit = os.path.join(tmp, "ci-gate-nogit")
+        shutil.copytree(gitrepo, nogit)
+        shutil.rmtree(os.path.join(nogit, ".git"))
+        out = subprocess.run([PY, os.path.join(HERE, "registry_validate.py"), "--root", nogit,
+                              "--assert-only-touched", genp], capture_output=True, text=True)
+        ok = out.returncode == 1 and "cannot diff" in out.stdout
+        print("  %-58s %s" % ("outside a git checkout it fails CLOSED",
+                              "PASS" if ok else "FAIL (exit %d)" % out.returncode))
+        passed += ok
+        failed += not ok
+    else:
+        print("  (git unavailable; CI diff gate cases skipped)")
 
     print()
     print("=" * 78)

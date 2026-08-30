@@ -18,10 +18,12 @@ ever fetched.
   registry_add.py from-report    --report R  ... [--reference-revision SHA --reference-revision-evidence REF]
   registry_add.py from-crosscheck --report R ... (--floor-measurement ID | --floor-pending)
   registry_add.py from-foreign   --receipt R --reported-by HANDLE --source-url URL ...
-  registry_add.py note           --value F --reported-by HANDLE --source-url URL --reference-unverified ...
   registry_add.py schemas        # list the receipt families this tool understands
+  registry_add.py offline-selftest  # prove no networking module is reachable
 
-Exit codes (stable; CONTRIBUTING.md cites them):
+Exit codes (stable; CONTRIBUTING.md cites them; argparse itself exits 2 on an unknown
+subcommand or a malformed flag, which is not in this table because it never reaches
+this tool's own logic):
   0 row written, or unchanged (idempotent re-run)
   3 unrecognized receipt `schema` string
   4 required provenance missing and no flag supplied
@@ -971,10 +973,27 @@ def adapt_foreign(receipt, path):
 
 
 def _dir(text):
+    """Map a receipt's free-text KL direction onto the registry enum.
+
+    `direction` is one of the seven comparability-key inputs, and KL(P||Q) != KL(Q||P), so
+    a wrong answer here files the row in the wrong ranked table. The old test asked
+    "teacher_to_student first, student_to_teacher second", which made the answer depend on
+    substring ORDER: a string naming both tokens returned whichever was tested first, and
+    the result was not even symmetric in the two operands. Text that names both is
+    ambiguous by construction and now refuses instead of picking."""
     t = (text or "").lower()
-    if "teacher_to_student" in t or t.startswith("kld(brandonmusic_teacher") or "bf16_teacher_to" in t:
+    fwd = ("teacher_to_student" in t or t.startswith("kld(brandonmusic_teacher")
+           or "bf16_teacher_to" in t)
+    rev = "student_to_teacher" in t
+    if fwd and rev:
+        raise Refuse(E_MISSING,
+                     "the receipt's KL direction %r names BOTH teacher_to_student and "
+                     "student_to_teacher. Which one the number is cannot be decided by reading "
+                     "it." % text,
+                     "supply --direction explicitly")
+    if fwd:
         return "reference_to_candidate"
-    if "student_to_teacher" in t:
+    if rev:
         return "candidate_to_reference"
     raise Refuse(E_MISSING, "cannot map the receipt's KL direction %r onto the registry's enum without "
                             "guessing. Supply --direction explicitly." % text)
@@ -1093,12 +1112,28 @@ def _stream_bias(adapted, lane, is_floor=False, floor_ref=None, floor_value=None
 
 
 def _gate(receipt):
+    """The receipt's own quality gate, or None.
+
+    `bool(None)` is False, so a receipt that stated a `quality_gate` block but no verdict
+    published `passed: false` -- a failed gate the receipt never asserted. This module's
+    contract is that nothing is defaulted or inferred into existence; silence about a
+    verdict is not a negative verdict, it is a refusal."""
     q = receipt.get("quality_gate")
     if not isinstance(q, dict):
         return None
+    verdict = None
+    for key in ("quality_gate_passed", "qualified"):
+        if receipt.get(key) is not None:
+            verdict = bool(receipt[key])
+            break
+    if verdict is None:
+        raise Refuse(E_MISSING,
+                     "the receipt states a quality_gate (%r) but no verdict: neither "
+                     "quality_gate_passed nor qualified is present. A missing verdict is not a "
+                     "failed gate." % (q.get("metric") or "unnamed"),
+                     "add quality_gate_passed to the receipt, or drop the quality_gate block")
     return {"metric": q.get("metric"), "threshold_lt": q.get("threshold_lt"),
-            "threshold_gt": q.get("threshold_gt"),
-            "passed": bool(receipt.get("quality_gate_passed", receipt.get("qualified")))}
+            "threshold_gt": q.get("threshold_gt"), "passed": verdict}
 
 
 # --- row assembly -----------------------------------------------------------
@@ -1162,10 +1197,6 @@ def build_row(args, adapted, receipt_sources, registry):
 
     sp = adapted.get("scored_positions")
     total = (pan.get("structure") or {}).get("scored_positions_total")
-    if sp and total and sp != total and args.covers_full_panel:
-        raise Refuse(E_IDENTITY,
-                     "the receipt scored %d positions but panel %s has %d. Use the panel record that "
-                     "matches, or pass --subset-detail." % (sp, args.panel, total))
     if adapted.get("artifact_revision"):
         have = (art.get("huggingface") or {}).get("revision")
         if have and have != adapted["artifact_revision"]:
@@ -1183,6 +1214,44 @@ def build_row(args, adapted, receipt_sources, registry):
                                "table can say whose artifact it is." % (args.artifact, owner))
     if args.attribution != "self-measured" and not (args.reported_by and args.source_url):
         raise Refuse(E_MISSING, "a %s row requires --reported-by and --source-url" % args.attribution)
+
+    # Resolve coverage instead of asserting it. When both counts are known the answer is
+    # arithmetic and no flag is needed; when either is unknown the operator must say,
+    # because a full-panel claim against a panel of unknown size cannot be checked by
+    # anyone -- and that is exactly the row SCOPE-007 lets through today, since it skips
+    # when scored_positions_total is null.
+    covers = args.covers_full_panel
+    if covers is None:
+        if sp and total:
+            # Derivable, so no flag is needed -- and a count that does not match the panel
+            # is a WRONG PANEL, not an undeclared subset. Saying "you forgot
+            # --subset-detail" to someone who filed a single-window receipt under the
+            # 25-window panel points them away from their actual mistake.
+            if sp != total:
+                raise Refuse(E_IDENTITY,
+                             "the receipt scored %d positions but panel %s has %d. Use the panel "
+                             "record that matches, or pass --no-covers-full-panel with "
+                             "--subset-detail if this is deliberately a subset."
+                             % (sp, args.panel, total))
+            covers = True
+        else:
+            raise Refuse(E_MISSING,
+                         "panel %s does not declare scored_positions_total (or the receipt does not "
+                         "declare scored_positions), so whether this row covers the whole panel "
+                         "cannot be derived -- and a full-panel claim against a panel of unknown "
+                         "size is unverifiable by anyone." % args.panel,
+                         "pass --covers-full-panel, or --no-covers-full-panel with --subset-detail")
+    elif covers and sp and total and sp != total:
+        raise Refuse(E_IDENTITY,
+                     "--covers-full-panel was passed, but the receipt scored %d positions and panel "
+                     "%s has %d." % (sp, args.panel, total))
+    if not covers and not args.subset_detail:
+        raise Refuse(E_MISSING,
+                     "--no-covers-full-panel was passed but no --subset-detail says which part of "
+                     "panel %s this row covers (%s of %s positions)."
+                     % (args.panel, sp if sp is not None else "?", total if total is not None else "?"),
+                     "pass --subset-detail \"<which windows/positions>\"")
+    args.covers_full_panel = covers
 
     if adapted.get("reference_revision") is None and schema in REPORT_FAMILIES:
         if not (args.reference_revision and args.reference_revision_evidence):
@@ -1510,7 +1579,20 @@ def add_common(p):
     p.add_argument("--stack-relation", default=None, choices=(None, "same_stack", "cross_stack"))
     p.add_argument("--head-policy", default=None,
                    choices=(None, "native_head", "shared_reference_head", "dequantized_head"))
-    p.add_argument("--covers-full-panel", action="store_true", default=True)
+    # `action="store_true", default=True` can never be False: the flag was inert and every
+    # row this tool wrote claimed full-panel coverage, so --subset-detail produced a
+    # self-contradictory row and the guard below ("... and args.covers_full_panel") was an
+    # unconditional test wearing a conditional. Coverage is now INFERRED when it is
+    # derivable -- scored_positions against the panel's own total -- and must be stated
+    # otherwise, because a full-panel claim against a panel of unknown size is
+    # unverifiable by construction.
+    p.add_argument("--covers-full-panel", dest="covers_full_panel", default=None,
+                   action="store_const", const=True,
+                   help="assert full-panel coverage (only needed when the panel does not "
+                        "declare scored_positions_total)")
+    p.add_argument("--no-covers-full-panel", dest="covers_full_panel",
+                   action="store_const", const=False,
+                   help="declare a SUBSET measurement; requires --subset-detail")
     p.add_argument("--subset-detail", default=None)
     p.add_argument("--deterministic", action="store_true")
     p.add_argument("--disclosure", default=None)
@@ -1577,6 +1659,36 @@ def _identity_conflict(existing, generated):
     return None
 
 
+MEASUREMENT_IDENTITY = (
+    ("metric", "the measured value"),
+    ("panel_ref", "the panel"),
+    ("reference_ref", "the reference capture"),
+    ("artifact_ref", "the artifact measured"),
+    ("estimator", "the estimator"),
+    ("determinism", "the determinism evidence"),
+    ("measurement_scope", "the measurement scope"),
+)
+
+
+def _measurement_conflict(old, new):
+    """Does this receipt describe a DIFFERENT measurement than the catalogued row?
+
+    `_identity_conflict` answers the artifact question -- are these the same weights --
+    and every field it reads is absent from a measurement row, so it returned None for two
+    rows reporting different numbers. This asks the measurement question. Provenance
+    bookkeeping (`provenance.sources[].uri`, `measured_at`) is deliberately NOT compared:
+    the same receipt ingested from a local path and from a CI checkout differs there, and
+    refusing on it would break re-ingest."""
+    for field, label in MEASUREMENT_IDENTITY:
+        a, b = old.get(field), new.get(field)
+        if L.canonical_json(a) != L.canonical_json(b):
+            if field == "metric":
+                return "%s differs (catalogued %r, receipt %r)" % (
+                    label, (a or {}).get("value"), (b or {}).get("value"))
+            return "%s differs" % label
+    return None
+
+
 def ingest_submissions(args):
     """The documented contributor path: sealed submission receipts -> registry records."""
     registry = L.load_registry(os.path.join(args.registry, "data"))
@@ -1585,7 +1697,9 @@ def ingest_submissions(args):
     try:
         for path in args.submissions:
             sub, path, fsha = load_submission(path)
-            row, new = submission_to_records(sub, path, fsha, registry)
+            row, new = submission_to_records(
+                sub, path, fsha, registry,
+                maintainer_attribution=bool(getattr(args, "maintainer_attribution", False)))
             rows.append(row)
             extras.extend(new)
             for rec in new:
@@ -1603,6 +1717,14 @@ def ingest_submissions(args):
     for rec in extras:
         generated[L.collection_of_id(rec["id"])].append(rec["id"])
 
+    # A generated measurement id is handle.repo-tail.panel, so every quant in one HF repo
+    # collapses to ONE id. `_identity_conflict` only inspects artifact-shaped fields
+    # (scope_digest, revision, codec family, bpw) -- all absent from a measurement row --
+    # so a DIFFERENT metric.value was never a contradiction: the second row was discarded
+    # with "= kept existing record (receipt agrees)" and the tool then printed
+    # "wrote <id> / value <NEW>" and exited 0. The operator, and the PR comment built from
+    # --report, were told a number was recorded that was not.
+    kept = set()
     if args.write:
         for coll, recs in (("measurements", rows),
                            ("artifacts", [r for r in extras if r["id"].startswith("artifact--")]),
@@ -1612,6 +1734,25 @@ def ingest_submissions(args):
             path = os.path.join(args.registry, "data", coll + ".jsonl")
             existing = {r["id"]: r for _, r, _ in L.read_jsonl(path)}
             for r in recs:
+                if coll == "measurements" and r["id"] in existing:
+                    contradiction = _measurement_conflict(existing[r["id"]], r)
+                    if contradiction:
+                        print("REFUSED (exit %d): %s already exists and this receipt reports a "
+                              "different measurement: %s"
+                              % (E_COLLISION, r["id"], contradiction), file=sys.stderr)
+                        print("  -> the generated id is <handle>.<repo>.<panel>, so two quants from "
+                              "one repository collide. Pass --id to declare a distinct row, or "
+                              "name the artifact's path so the id can be disambiguated.",
+                              file=sys.stderr)
+                        return E_COLLISION
+                    if L.canonical_json(existing[r["id"]]) != L.canonical_json(r):
+                        # Same measurement, different bookkeeping (the receipt's own path
+                        # differs between a local run and a CI checkout). Keep the
+                        # catalogued row and SAY that nothing was written.
+                        kept.add(r["id"])
+                        print("  = kept existing record  %s (same measurement; only provenance "
+                              "bookkeeping differs)" % r["id"])
+                    continue
                 if r["id"] in existing and L.canonical_json(existing[r["id"]]) != L.canonical_json(r):
                     # An independent measurement of an artifact we ALREADY
                     # catalogue is the flagship case for this registry, and the
@@ -1641,11 +1782,18 @@ def ingest_submissions(args):
                     continue
                 existing[r["id"]] = r
             L.write_jsonl(path, list(existing.values()))
+    if kept:
+        generated["kept_existing"] = sorted(kept)
+        generated["measurements"] = [m for m in generated["measurements"] if m not in kept]
     if args.report:
         with open(args.report, "w", encoding="utf-8") as fh:
             json.dump(generated, fh, indent=2, sort_keys=True)
     for row in rows:
-        print("%s%s" % ("wrote " if args.write else "would write ", row["id"]))
+        if row["id"] in kept:
+            verb = "NOT WRITTEN (kept catalogued row) "
+        else:
+            verb = "wrote " if args.write else "would write "
+        print("%s%s" % (verb, row["id"]))
         print("  value               %r %s" % (row["metric"]["value"], row["metric"]["units"]))
         print("  comparability key   %s  (class %s)"
               % (row["comparability"]["key"], row["comparability"]["class"]))
@@ -1674,6 +1822,13 @@ def main():
     ap.add_argument("--receipt", action="append", dest="submissions", default=None,
                     help="sealed submission receipt (quant-fidelity-registry/submission-receipt.v1)")
     ap.add_argument("--write", action="store_true", help="write the generated records into data/")
+    ap.add_argument("--maintainer-attribution", action="store_true", dest="maintainer_attribution",
+                    help="record a maintainer-identity submission as self-measured. This is an "
+                         "OPERATOR assertion made at the command line on a machine you control; "
+                         "it is deliberately not a field in the receipt, so no pull request and "
+                         "no CI job can mint self-measured attribution. Without it a submission "
+                         "claiming the maintainer's identity is recorded as third-party-reported "
+                         "with an attribution_downgraded disclosure.")
     ap.add_argument("--report", default=None, help="write a JSON summary of what was generated")
     ap.add_argument("--registry", default=L.repo_root(__file__))
     args = ap.parse_args()
@@ -1769,6 +1924,38 @@ def main():
 SUBMISSION_SCHEMA = "quant-fidelity-registry/submission-receipt.v1"
 
 
+def _norm_path(value):
+    """Compare artifact file selectors without tripping over a trailing slash.
+
+    The registry stores MLX builds as directory prefixes ("2-bit/") and GGUF builds as
+    bare filenames ("Qwen3.8-27B-Q8_0.gguf"), so a contributor writing "2-bit" must not be
+    refused for a cosmetic difference."""
+    if value is None:
+        return None
+    value = str(value).strip().strip("/")
+    return value or None
+
+
+def _claims_maintainer(measurer):
+    """Which field, if any, claims the registry maintainer's identity.
+
+    Returns `(field, value)` or None.  Case-folded, and it looks at every field a
+    reader sees: `registry_render.badge()` prints `measurer.name`, so a submission
+    with `name: malaiwah` and a throwaway handle rendered as "reported by malaiwah"
+    in the published Attribution column while every handle-keyed check stayed
+    silent.  The url is checked too, because a hf.co/<maintainer> link is a claim.
+    """
+    m = L.MAINTAINER.lower()
+    for field in ("handle", "name"):
+        value = (measurer.get(field) or "").strip()
+        if value.lower() == m:
+            return field, value
+    url = (measurer.get("url") or "").strip().lower().rstrip("/")
+    if url and ("huggingface.co/" + m) in url:
+        return "url", (measurer.get("url") or "").strip()
+    return None
+
+
 def verify_seal(sub):
     """A submission seals itself: sha256 over its canonical form with receipt_sha256 blanked."""
     claimed = sub.get("receipt_sha256")
@@ -1832,7 +2019,8 @@ def _slug(text):
     return s or "unknown"
 
 
-def submission_to_records(sub, path, fsha, registry, strict_new=False):
+def submission_to_records(sub, path, fsha, registry, strict_new=False,
+                          maintainer_attribution=False):
     """Return (measurement_row, new_records) -- new artifact/pipeline records the
     submission implies. Panels and references must already exist: a contributor cannot
     introduce a panel through a measurement (CONTRIBUTING.md section 6)."""
@@ -1840,23 +2028,42 @@ def submission_to_records(sub, path, fsha, registry, strict_new=False):
     pan_ref = sub["panel"]["panel_ref"]
     ref_ref = sub["reference"]["reference_ref"]
 
-    # A submission may not mint a row attributed to the registry maintainer unless it was
-    # produced by the maintainer's own toolchain. `measured_by: self-measured` is the
-    # registry's highest trust level and `class: strict` follows from it; without this an
-    # inbound file that merely TYPES the maintainer's handle claims both. PROV-008 exists
-    # to catch this but cannot fire here, because the ingest mints the pipeline record from
-    # the same handle it is meant to check against.
-    if (sub.get("measurer") or {}).get("handle") == L.MAINTAINER:
+    # A submission may not mint a row attributed to the registry maintainer on the strength
+    # of anything INSIDE the submission. `measured_by: self-measured` is the registry's
+    # highest trust level and `class: strict` follows from it; the old gate compared two
+    # strings the submitter types (measurer.handle and produced_by.repository) against each
+    # other, so anyone who wrote "malaiwah" in both fields minted a strict, self-measured row
+    # in the flagship comparability group. PROV-008 cannot catch it either, because the
+    # ingest mints the pipeline record from the same handle it is meant to check against.
+    #
+    # Two changes. The identity CLAIM is now recognised however it is spelled -- handle, name
+    # or url, case-folded -- so `name: malaiwah` with a throwaway handle no longer renders as
+    # "reported by malaiwah" in the published Attribution column. And the claim is only
+    # HONOURED when the operator asserts it at the command line (`--maintainer-attribution`),
+    # which is a property of the invocation, not of the file: CI never passes it, so no pull
+    # request can mint self-measured no matter what it contains. An unasserted claim is
+    # DOWNGRADED rather than refused -- the file may be perfectly honest, and the safe
+    # direction is to understate provenance -- and the downgrade is disclosed on the row.
+    claim = _claims_maintainer(sub.get("measurer") or {})
+    attribution_downgraded = None
+    if claim:
         pb_repo = (sub.get("produced_by") or {}).get("repository") or ""
-        if not pb_repo.startswith(L.MAINTAINER + "/"):
+        if not pb_repo.lower().startswith(L.MAINTAINER.lower() + "/"):
             raise Refuse(E_ATTRIB,
-                         "this submission claims measurer.handle=%r -- the registry maintainer -- but "
-                         "produced_by.repository is %r, which is not a repository of theirs. A row "
+                         "this submission claims the registry maintainer's identity (measurer.%s=%r) "
+                         "but produced_by.repository is %r, which is not a repository of theirs. A row "
                          "attributed to us is a row that ran on our stack; a submission cannot assert "
                          "that on our behalf."
-                         % (L.MAINTAINER, pb_repo or None),
-                         "set measurer.handle to your own Hugging Face username; your row will be "
+                         % (claim[0], claim[1], pb_repo or None),
+                         "set measurer.name/handle/url to your own identity; your row will be "
                          "recorded as author-reported or third-party-reported and credited to you")
+        if not maintainer_attribution:
+            attribution_downgraded = (
+                "the submission claims the registry maintainer's identity (measurer.%s=%r), but "
+                "self-measured attribution is asserted by the operator at ingest, never by the "
+                "receipt: recorded as third-party-reported. Re-run registry_add with "
+                "--maintainer-attribution on a machine you control to record it as self-measured."
+                % (claim[0], claim[1]))
 
     if pan_ref not in registry["panels"]:
         raise Refuse(E_MISSING,
@@ -1915,11 +2122,38 @@ def submission_to_records(sub, path, fsha, registry, strict_new=False):
 
     new = []
     art_id = None
-    for aid, a in registry["artifacts"].items():
-        h = a.get("huggingface") or {}
-        if h.get("repository") == art_in.get("repository") and h.get("revision") == art_in.get("revision"):
-            art_id = aid
-            break
+    # A submission is bound to an existing artifact by (repository, revision) and, when a
+    # repo publishes more than one artifact at one revision, by PATH. Taking the first
+    # dict-order hit bound a measurement of orcarouter's `2bit-lite/` weights to the
+    # `2-bit/` record -- different name, different size (145.0 GB vs 102.5 GB) -- and the
+    # scope_digest guard could not catch it, because those two artifacts carry a
+    # byte-identical scope_digest. `_apply_gguf_provenance` already says it out loud: "a
+    # GGUF repo holds many different quants at one revision, so the file list IS the
+    # artifact identity". The submission schema had no way to say which one.
+    candidates = [aid for aid, a in registry["artifacts"].items()
+                  if (a.get("huggingface") or {}).get("repository") == art_in.get("repository")
+                  and (a.get("huggingface") or {}).get("revision") == art_in.get("revision")]
+    if len(candidates) == 1:
+        art_id = candidates[0]
+    elif len(candidates) > 1:
+        want = _norm_path(art_in.get("path"))
+        matched = [aid for aid in candidates
+                   if _norm_path(((registry["artifacts"][aid].get("huggingface") or {})
+                                  .get("path"))) == want]
+        if want is None or len(matched) != 1:
+            raise Refuse(E_IDENTITY,
+                         "%s@%s holds %d catalogued artifacts and this submission does not name "
+                         "which one: %s. Their weights differ; binding to the first would file a "
+                         "measurement against bytes it never read."
+                         % (art_in.get("repository"), (art_in.get("revision") or "")[:12],
+                            len(candidates),
+                            ", ".join("%s (path %r)"
+                                      % (aid, (registry["artifacts"][aid].get("huggingface")
+                                               or {}).get("path"))
+                                      for aid in sorted(candidates))),
+                         "add \"path\" to the artifact block, exactly as the registry records it "
+                         "(a directory prefix like \"4-bit/\" or a filename like \"model-Q8_0.gguf\")")
+        art_id = matched[0]
     if art_id is None:
         owner = (art_in.get("repository") or "unknown/x").split("/")[0]
         art_id = "artifact--%s.%s" % (_slug(owner), _slug((art_in.get("repository") or "x").split("/")[-1]))
@@ -1996,6 +2230,13 @@ def submission_to_records(sub, path, fsha, registry, strict_new=False):
             "name": "%s -- %s (lane %s)" % (pb.get("tool") or "contributed stack",
                                             measurer.get("name"), sub.get("lane")),
             "roles": ["end-to-end"],
+            # PROV-012, BIAS-006 and registry_render.lane_of all read the lane off the
+            # PIPELINE. The submission declares one and the minted record dropped it, so
+            # _row_lane defaulted every contributed row to "sealed-ep8": a streaming-lane
+            # submission was validated as sealed and rendered inside the primary sealed
+            # table, while our own streaming rows sat correctly in the lane sub-table
+            # below it. The same omission made BIAS-006 refuse a CORRECT streaming floor.
+            "lane": {"name": sub["lane"]},
             "implementation": {"repository": pb.get("repository"), "revision": pb.get("revision"),
                                "entrypoint": pb.get("entrypoint"),
                                "file_sha256": pb.get("entrypoint_sha256"),
@@ -2017,7 +2258,8 @@ def submission_to_records(sub, path, fsha, registry, strict_new=False):
                      "basis": (sub.get("cost") or {}).get("basis")},
             "author": {"name": measurer.get("name"), "role": "toolchain-author",
                        "handle": measurer.get("handle"), "url": measurer.get("url"),
-                       "is_registry_maintainer": measurer.get("handle") == L.MAINTAINER},
+                       "is_registry_maintainer": bool(claim)
+                       and maintainer_attribution},
             "cross_refs": {"local_ai_registry": {"model_id": None, "model_instance_id": None,
                                                  "url": None, "match_confidence": "unverified"}},
             "sources": [{"kind": "receipt_file", "uri": path, "sha256": fsha}],
@@ -2026,7 +2268,7 @@ def submission_to_records(sub, path, fsha, registry, strict_new=False):
                                        % sub.get("lane"), "affects_comparability": False}],
         })
 
-    is_ours = measurer.get("handle") == L.MAINTAINER
+    is_ours = bool(claim) and attribution_downgraded is None
     est = sub["estimator"]
     ki = {"panel_id": pan_ref, "reference_id": ref_ref, "metric_name": sub["metric"]["name"],
           "direction": sub["metric"]["direction"],
@@ -2039,6 +2281,9 @@ def submission_to_records(sub, path, fsha, registry, strict_new=False):
     disclosures = [dict(d) for d in sub["disclosures"]]
     for d in disclosures:
         d.setdefault("affects_comparability", False)
+    if attribution_downgraded:
+        disclosures.append({"code": "attribution_downgraded", "severity": "caveat",
+                            "detail": attribution_downgraded, "affects_comparability": True})
     if not is_ours and not any(d["code"] == "author_reported_only" for d in disclosures):
         disclosures.append({"code": "author_reported_only", "severity": "caveat",
                             "detail": "Measured and published by %s; we have not re-run it."
