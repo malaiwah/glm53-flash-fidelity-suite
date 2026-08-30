@@ -112,3 +112,4 @@ mirrors are the user's public record.
 - [`k6/HANDOFF.md`](k6/HANDOFF.md) — twenty operational lessons for running a campaign.
 - [`WHAT-WE-MEASURE.md`](WHAT-WE-MEASURE.md) — what a number actually is.
 - [`docs/`](docs/) — the dataset format spec, card annotation spec, protocol alignment.
+- [`docs/CAPTURE-SCALING-PLAN.md`](docs/CAPTURE-SCALING-PLAN.md) — plan of record for scaling a capture: the parallelism decision (tensor-parallel changes the numbers and is rejected), the cost model, and per-family budgets.

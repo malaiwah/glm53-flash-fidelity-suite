@@ -81,3 +81,4 @@ EOF
 
 That four-line recipe is the same one the registry documents to contributors and the same one that
 seals `reports/stack-provenance-retro.json`.
+- [CAPTURE-SCALING-PLAN.md](CAPTURE-SCALING-PLAN.md): plan of record for scaling captures — why tensor-parallel is rejected on correctness, why pipeline-parallel is adopted, and what each model family costs to measure.
