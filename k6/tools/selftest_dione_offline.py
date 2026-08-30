@@ -141,7 +141,16 @@ def main() -> int:
     passed.append("2 decode identity vs campaign reader: bitwise equal (K4/K6), K3 shape ok")
 
     # ------------------------------------------------------------------ 3
-    scratch = Path(tempfile.mkdtemp(prefix="dione-selftest-", dir=str(TOOLS / "dione-evidence")))
+    # The scratch dir used to be created INSIDE dione-evidence/, which is a
+    # local evidence directory that does not travel in the measurement
+    # bundle -- so this selftest could not run anywhere the source tree is a
+    # subset, which is every measurement instance. Fall back to the system
+    # temp dir when it is absent (the rungs that READ the evidence already
+    # self-skip on the same condition).
+    _scratch_parent = TOOLS / "dione-evidence"
+    scratch = Path(tempfile.mkdtemp(
+        prefix="dione-selftest-",
+        dir=str(_scratch_parent) if _scratch_parent.is_dir() else None))
     mock = scratch / "mock-mini"
     (mock / "layers").mkdir(parents=True)
     bits, tp = 4, 4

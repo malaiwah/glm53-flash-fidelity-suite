@@ -165,12 +165,16 @@ class DioneSurface:
     config_sha256: str
     index_sha256: str
     exl3_manifest_sha256: Optional[str]
-    exl3_manifest_name: Optional[str]
-    exl3_manifest_schema: Optional[str]
     weight_map: Mapping[str, str]
     retained_names: Tuple[str, ...]
     shard_hash_verification: str  # "full" | "skipped"
     text_vocab_size: int
+    # Which manifest spelling and schema this snapshot published.  DEFAULTED,
+    # and last, on purpose: a DioneSurface is constructed positionally by
+    # callers that predate them (selftest_dione_offline builds one by hand), and
+    # a required field in the middle of the record breaks every one of them.
+    exl3_manifest_name: Optional[str] = None
+    exl3_manifest_schema: Optional[str] = None
 
     def checkpoint_identity_sha256(self) -> str:
         return _sha256_bytes(
