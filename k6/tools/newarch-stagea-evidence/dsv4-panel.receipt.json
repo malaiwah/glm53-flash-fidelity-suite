@@ -1,0 +1,84 @@
+{
+  "corpus": {
+    "documents_considered": 2,
+    "documents_selected": 2,
+    "path_prefix": "corpus/text/",
+    "repository": "malaiwah/qwen38-27b-fidelity-suite-v5",
+    "revision": null
+  },
+  "created_utc": "2026-08-30T20:32:47Z",
+  "documents": [
+    {
+      "bytes": 404518,
+      "document": "pg100.txt",
+      "document_sha256": "aea60c52db6edd47d57466ed780f4e91b7fe399a3cb9439879866ecdc445000c",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 107318,
+      "window_id": "final-0000"
+    },
+    {
+      "bytes": 308016,
+      "document": "arxiv5-cs-AI-0000.txt",
+      "document_sha256": "ad29c470c08f5cb0601b9c45c61d229e84cbe798203138845ecd1fb3675be482",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 56837,
+      "window_id": "final-0001"
+    }
+  ],
+  "format_version": 1,
+  "panel_id": "panel--dsv4.stagea.smoke.2w",
+  "panel_name": "DeepSeek-V4-Flash Stage A smoke panel (2 windows) -- NOT A MEASUREMENT PANEL",
+  "parameters": {
+    "context_length": 2048,
+    "prediction_positions_per_window": 2047,
+    "scored_positions_total": 4094,
+    "skip_tokens": 2048,
+    "strata": [
+      "literary",
+      "scientific"
+    ],
+    "windows_per_stratum": 1,
+    "windows_total": 2
+  },
+  "receipt_sha256": "daeae3a8c3bd80783bfdaa43159a4ff4cd41855978538a2924f7e3d656ec1a26",
+  "schema": "malaiwah.token-panel-build-receipt.v1",
+  "selection_rule": "strata sorted ascending; within each stratum documents sorted by file name ascending; each document tokenized whole with add_special_tokens=False; a document is eligible only if it yields at least skip_tokens+context_length tokens; its window is tokens[skip_tokens : skip_tokens+context_length]; the first windows_per_stratum eligible documents are taken; windows are numbered from zero in (stratum, document) order. No RNG is used anywhere.",
+  "separation": {
+    "checked": false,
+    "method": "declaration only; this tool runs no lexical or n-gram scan",
+    "note": null
+  },
+  "suite_token_hash_sha256": "f5d0c20846357d5375aa431d9da7f801f56c9c19e88f6f9917eb255cdfe5e4fe",
+  "tokenizer": {
+    "add_special_tokens": false,
+    "chat_template_applied": false,
+    "files_sha256": {
+      "config.json": "786edffd88675c4849de6ca79e96271c7470c2d746115ffb833506b8ff8358a4",
+      "model-00001-of-00048.safetensors": "f3668ba4cccf1ca6a7eb84e888fb92c1cdc7204d472ba9db771e6fd3abf6b874",
+      "model-00002-of-00048.safetensors": "77b26c939a0e25b3113c8d6bb04e1901a748bd4a7d2589e3bfdaabdf1e9bba14",
+      "model-00003-of-00048.safetensors": "412abf4c906faadc221ef0cb50f90fe20bde8454a08ad4dc2364b6b79e7fda5c",
+      "model-00004-of-00048.safetensors": "9610f56bc587fb0ff9a8b68a60299482ee8c433fe5b5587e4257aca98add4a2e",
+      "model-00005-of-00048.safetensors": "f87a5ac7b8becc31f9c3169afd3a6f33fb82b4af9e21022e3755a10bc28f0180",
+      "model-00045-of-00048.safetensors": "a5be6aed7b84fc87ec42b5d24ba0b0d67f253a3906fcd99c13f4f7be5958fc00",
+      "model.safetensors.index.json": "5034f2d2873db081f0f044c0fec9d0adb21c9061adb11e5a2c0a1fb28257c0e9",
+      "tokenizer.json": "8f9f37ca37fdc4f5fd36d5cf4d3b0e8392edb4e894fd10cc0d70b4957c8633cf",
+      "tokenizer_config.json": "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547"
+    },
+    "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+    "repository": "deepseek-ai/DeepSeek-V4-Flash-0731",
+    "revision": null,
+    "vocab_size": 128000
+  },
+  "tool": "k6/tools/build_token_panel.py",
+  "tool_sha256": "8fc028713b48b19fb9368f833dda61bcfa0dc3be37a8a67352abf1811f255c7e"
+}

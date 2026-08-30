@@ -1,0 +1,22 @@
+{
+  "context_length": 2048,
+  "decoder_layers": null,
+  "device": "cpu",
+  "hidden_size": 6144,
+  "layer_residency": null,
+  "model": "MiniMaxAI/MiniMax-M3",
+  "peak_resident_weight_bytes": 23480811520,
+  "peak_resident_weight_detail": {
+    "buffers": 512,
+    "parameters": 23480811008,
+    "total": 23480811520
+  },
+  "peak_resident_weight_gb": 23.481,
+  "peak_rss_bytes": 43671322624,
+  "peak_rss_gb": 43.671,
+  "resident_weight_note": "the maximum, over the run, of the materialised parameter+buffer bytes. On the CPU path peak_rss_bytes ALSO counts the safetensors mmap page cache, which is evictable and is not held by the schedule; this figure is not confounded by it. On CUDA, peak_cuda_allocated_bytes is the authoritative number because it includes activations and workspace and has no page cache.",
+  "rss_units_source": "Darwin ru_maxrss",
+  "schedule": "window-outer",
+  "vocab_size": 200064,
+  "windows": 2
+}

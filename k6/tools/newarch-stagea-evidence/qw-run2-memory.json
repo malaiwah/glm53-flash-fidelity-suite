@@ -1,0 +1,22 @@
+{
+  "context_length": 2048,
+  "decoder_layers": null,
+  "device": "cpu",
+  "hidden_size": 2560,
+  "layer_residency": null,
+  "model": "Qwen/Qwen3.8-Flash-Next",
+  "peak_resident_weight_bytes": 8641745128,
+  "peak_resident_weight_detail": {
+    "buffers": 328,
+    "parameters": 8641744800,
+    "total": 8641745128
+  },
+  "peak_resident_weight_gb": 8.642,
+  "peak_rss_bytes": 11630985216,
+  "peak_rss_gb": 11.631,
+  "resident_weight_note": "the maximum, over the run, of the materialised parameter+buffer bytes. On the CPU path peak_rss_bytes ALSO counts the safetensors mmap page cache, which is evictable and is not held by the schedule; this figure is not confounded by it. On CUDA, peak_cuda_allocated_bytes is the authoritative number because it includes activations and workspace and has no page cache.",
+  "rss_units_source": "Darwin ru_maxrss",
+  "schedule": "window-outer",
+  "vocab_size": 248320,
+  "windows": 2
+}

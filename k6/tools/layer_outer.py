@@ -397,6 +397,43 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     audit = audit_checkpoint_tree(model_dir)
     log(stage="checkpoint_audit", **audit)
 
+    # QUANTIZED CHECKPOINTS ARE NOT SUPPORTED BY THIS SCHEDULE, and the reason
+    # this is a refusal rather than a comment is that one of the two ways it
+    # fails is silent.
+    #
+    # `from_pretrained` builds an `HfQuantizer`, which (a) replaces the module
+    # tree's Linear/Experts with quantized ones and (b) contributes weight
+    # conversions -- the `*.scale` -> `*.weight_scale_inv` rename and, on a
+    # machine with no FP8 kernel, `Fp8Dequantize`.  `build_streamed_model` does
+    # neither: it calls `cls(config)` directly and takes only the MODEL's
+    # conversion mapping.  What happens next depends on shapes:
+    #
+    #   * FP4-packed experts (deepseek-ai/DeepSeek-V4-Flash-0731): the packed
+    #     tensor's last dim is half the parameter's, so `transformers` reports
+    #     "Reinit due to size mismatch" and raises. Loud, harmless.
+    #   * A plain FP8 E4M3 weight: the shape is IDENTICAL to the bf16 parameter
+    #     it is loaded into. The fp8 values are cast to bf16, the scale tensor
+    #     falls out as `unexpected`, AND THE SCALE IS NEVER APPLIED. That is
+    #     numerically the M1 Qwen3.8-27B-FP8 defect -- a confident number for a
+    #     projection whose weights are off by a per-block factor -- and its only
+    #     signal is `unexpected_keys`, which a Stage-A sparse tree already needs
+    #     `--allow-unexpected-tensors` to get past.
+    #
+    # So: refuse on the config's own `quantization_config`, before any of it.
+    if getattr(config, "quantization_config", None):
+        method = getattr(config.quantization_config, "quant_method", None) or \
+            (config.quantization_config.get("quant_method")
+             if isinstance(config.quantization_config, dict) else None)
+        raise LayerOuterError(
+            "REFUSED: this checkpoint declares quantization_config (quant_method=%r) and "
+            "the layer-outer schedule does not build a quantizer. It instantiates the "
+            "architecture directly and loads with the MODEL's conversion mapping only, so "
+            "the quantizer's module replacement, its `*.scale` -> `*.weight_scale_inv` "
+            "rename and its dequantization op are all absent. For packed formats that "
+            "raises a shape mismatch; for plain FP8 the shapes MATCH and the payload is "
+            "read as bf16 with the block scale never applied, which is silent and wrong. "
+            "Use --schedule window-outer for quantized checkpoints." % (method,))
+
     # Build with the SAME context managers `from_pretrained` uses, so the module
     # tree (kernel patches, dtype, tie-weight suppression) is the one the
     # window-outer path would have built -- on meta, so nothing is allocated.
@@ -444,14 +481,58 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
         for key in pointer.keys():
             lazy[key] = pointer.get_slice(key)
 
+    # ROUTING IS DONE ON THE RENAMED KEY, not the raw one.
+    #
+    # `layer_pattern` is built from the MODEL's stack path. For GLM-5.3 the
+    # checkpoint spells that path the same way and matching the raw key works.
+    # For a VL checkpoint it does not: `MiniMaxAI/MiniMax-M3` ships
+    # `language_model.model.layers.N.` while the model holds
+    # `model.language_model.layers.N.`, so EVERY layer tensor missed the pattern,
+    # every one of them fell into the resident load, and the schedule then
+    # refused with "the checkpoint holds no tensors for
+    # model.language_model.layers.0" -- a true statement about the wrong name.
+    #
+    # The conversion mapping already knows the answer; `convert_and_load` uses it
+    # a few lines below on these same raw keys. Applying only its RENAMES here
+    # (converters collapse several sources into one target, which is fine: they
+    # all carry the same layer index) puts each key in the right bucket while the
+    # subsets still hold the raw names the loader expects.
+    #
+    # Where a rename cannot be computed the raw key is used, which is exactly the
+    # old behaviour -- so an architecture whose names already match is unaffected.
+    renames = list(weight_mapping.values() if isinstance(weight_mapping, dict)
+                   else (weight_mapping or []))
+
+    def routing_key(key: str) -> str:
+        out = key
+        for rename in renames:
+            renamer = getattr(rename, "rename_source_key", None)
+            if renamer is None:
+                continue
+            try:
+                renamed = renamer(out)
+            except Exception:
+                return key
+            out = renamed[0] if isinstance(renamed, tuple) else renamed
+            if not isinstance(out, str):
+                return key
+        return out
+
     base_subset: Dict[str, Any] = {}
     layer_subset: Dict[int, Dict[str, Any]] = {}
+    routed = 0
     for key, value in lazy.items():
-        match = layer_pattern.match(key)
-        if match is None or key in buffer_names:
+        target = routing_key(key)
+        if target != key:
+            routed += 1
+        match = layer_pattern.match(target)
+        if match is None or key in buffer_names or target in buffer_names:
             base_subset[key] = value
         else:
             layer_subset.setdefault(int(match.group(1)), {})[key] = value
+    if routed:
+        log(stage="stream_routing", renamed_checkpoint_keys=routed,
+            total_checkpoint_keys=len(lazy), layers_prefix=layers_prefix)
 
     aggregate = {"missing_keys": set(), "unexpected_keys": set(), "mismatched_keys": [],
                  "error_msgs": [], "conversion_errors": {}}

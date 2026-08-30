@@ -1,0 +1,36 @@
+{
+  "architectures": [
+    "DeepseekV4ForCausalLM"
+  ],
+  "buffers_covered": 4,
+  "bytes_compared": 54801581172,
+  "checkpoint_tensors_compared": 3176,
+  "checkpoint_tensors_dequantized_here": 3105,
+  "checkpoint_tensors_differed": 0,
+  "checkpoint_tensors_matched_exactly": 3176,
+  "checkpoint_tensors_present": 6281,
+  "checkpoint_tensors_unplanned": [],
+  "experts_selected": "all",
+  "failures": [],
+  "load_report": {
+    "conversion_errors": {},
+    "conversion_errors_visible": true,
+    "error_msgs": [],
+    "mismatched_keys": [],
+    "missing_keys": [],
+    "observed": true,
+    "unexpected_keys": []
+  },
+  "model_dir": "/private/tmp/claude-501/-Users-mbelleau-Projects-GLM/1fea9e79-67fe-49f5-8b3c-e462dbfe4e0f/scratchpad/newarch/ck/dsv4-l4",
+  "no_such_parameter": 0,
+  "parallel_plan_dropped": true,
+  "parameters_covered": 108,
+  "parameters_derived_from_config": [],
+  "parameters_not_covered": [],
+  "parameters_total": 108,
+  "plan": "deepseek_v4",
+  "receipt_digest_mismatches": 0,
+  "receipt_digests_rechecked": 3176,
+  "schema": "malaiwah.loaded-weight-decode-check.v1",
+  "verdict": "PASS"
+}

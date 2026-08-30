@@ -6,10 +6,18 @@ destroyed the same hour (§6). **No GLM-5.3 capture was run** — that is Stage 
 a separate budgeted decision, and nothing in this document is a GLM-5.3
 measurement.
 
+> **Amended 2026-08-30.** §7 items 8 and 9 changed after this schedule was run
+> against three new architectures: quantized checkpoints are now a REFUSAL
+> rather than an untested path (the FP8 reading of it was silent), and layer
+> routing now goes through the architecture's conversion renames, which is what
+> a VL checkpoint needs. `minimax_m3_vl` joins the bit-identity table below.
+> Evidence: `docs/NEW-ARCHITECTURES-FEASIBILITY.md` §2.6.
+
 | gate | result |
 |---|---|
 | bit-identical capture, 0.1B `glm5_next` fixture | **yes** — same `capture_content_digest`, at 48 and 2048 tokens |
 | bit-identical capture, Fruit `glm_moe_dsa` (GLM-5.3's architecture) | **yes** — on CPU *and* on CUDA |
+| bit-identical capture, `minimax_m3_vl` 4-layer truncation (added 2026-08-30) | **yes** — same `capture_content_digest` as three window-outer captures |
 | `compare --self-compare --force-compute` across schedules | **exactly 0.0 nats**, max 0.0, top-1 1.0 |
 | measured peak VRAM, Fruit on an L4 | 10.409 GB → **2.167 GB** (4.80×) |
 | regression battery, before → after | **1 passed / 19 failed → 20 / 0** |
@@ -358,9 +366,31 @@ Stated plainly, because a list of limits is part of the deliverable.
    A build that does not expose them gets a refusal naming exactly what is
    missing and pointing at `--layer-residency resident`, not a silent fallback
    to hand-rolled loading.
-8. **Quantized checkpoints are untested on this path.** The loader passes
-   `hf_quantizer=None`. Every checkpoint proven here is BF16.
-9. **It has not been run on GLM-5.3.** That is Stage B, and it is a separate,
+8. **Quantized checkpoints are REFUSED on this path** (amended 2026-08-30,
+   `docs/NEW-ARCHITECTURES-FEASIBILITY.md` §2.6c). This item used to read
+   "untested"; running the schedule at `deepseek-ai/DeepSeek-V4-Flash-0731`
+   showed that "untested" was too kind. The loader passes `hf_quantizer=None`,
+   so the quantizer's module replacement, its `*.scale` ->
+   `*.weight_scale_inv` rename and its dequantization op are all absent. For a
+   packed format that raises a shape mismatch; **for a plain FP8 E4M3 weight the
+   shape MATCHES the bf16 parameter it lands in, the payload is read as bf16 and
+   the block scale is never applied** — the M1 Qwen3.8-27B-FP8 defect, whose
+   only signal is `unexpected_keys`, behind the flag a truncated tree already
+   needs. `build_streamed_model` now refuses on the config's own
+   `quantization_config` before any weight is read. `selftest_layer_outer.py`
+   L15; on the pre-amendment tree that rung captures and says nothing.
+9. **Layer routing is done on the RENAMED checkpoint key** (added 2026-08-30).
+   `layer_pattern` comes from the MODEL's stack path; a VL checkpoint may spell
+   that path differently (`MiniMaxAI/MiniMax-M3` ships
+   `language_model.model.layers.N.` for `model.language_model.layers.N.`), and
+   matching the raw key put every layer tensor in the resident load. Each key is
+   now passed through the architecture's own conversion RENAMES before the
+   pattern is applied — the same mapping `convert_and_load` uses on those keys a
+   few lines later. Architectures whose names already match are unaffected by
+   construction, and `minimax_m3_vl` now reproduces the window-outer capture
+   bit-for-bit (same `capture_content_digest`, `--force-compute` self-compare
+   exactly 0.0).
+10. **It has not been run on GLM-5.3.** That is Stage B, and it is a separate,
    budgeted decision. Nothing in this document is a GLM-5.3 measurement.
 
 ---

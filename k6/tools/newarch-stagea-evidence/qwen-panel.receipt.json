@@ -1,0 +1,86 @@
+{
+  "corpus": {
+    "documents_considered": 2,
+    "documents_selected": 2,
+    "path_prefix": "corpus/text/",
+    "repository": "malaiwah/qwen38-27b-fidelity-suite-v5",
+    "revision": null
+  },
+  "created_utc": "2026-08-30T20:58:04Z",
+  "documents": [
+    {
+      "bytes": 404518,
+      "document": "pg100.txt",
+      "document_sha256": "aea60c52db6edd47d57466ed780f4e91b7fe399a3cb9439879866ecdc445000c",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 115201,
+      "window_id": "final-0000"
+    },
+    {
+      "bytes": 308016,
+      "document": "arxiv5-cs-AI-0000.txt",
+      "document_sha256": "ad29c470c08f5cb0601b9c45c61d229e84cbe798203138845ecd1fb3675be482",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 58653,
+      "window_id": "final-0001"
+    }
+  ],
+  "format_version": 1,
+  "panel_id": "panel--qwen38fn.stagea.smoke.2w",
+  "panel_name": "Qwen3.8-Flash-Next Stage A smoke panel (2 windows) -- NOT A MEASUREMENT PANEL",
+  "parameters": {
+    "context_length": 2048,
+    "prediction_positions_per_window": 2047,
+    "scored_positions_total": 4094,
+    "skip_tokens": 2048,
+    "strata": [
+      "literary",
+      "scientific"
+    ],
+    "windows_per_stratum": 1,
+    "windows_total": 2
+  },
+  "receipt_sha256": "04a3ddb2d3501cc7d3df3e85a94c31b2f1ab5780896b11c74457314c34c03368",
+  "schema": "malaiwah.token-panel-build-receipt.v1",
+  "selection_rule": "strata sorted ascending; within each stratum documents sorted by file name ascending; each document tokenized whole with add_special_tokens=False; a document is eligible only if it yields at least skip_tokens+context_length tokens; its window is tokens[skip_tokens : skip_tokens+context_length]; the first windows_per_stratum eligible documents are taken; windows are numbered from zero in (stratum, document) order. No RNG is used anywhere.",
+  "separation": {
+    "checked": false,
+    "method": "declaration only; this tool runs no lexical or n-gram scan",
+    "note": null
+  },
+  "suite_token_hash_sha256": "afe54b827c27079e3c5b1a8ba9d06856a92ae0afa90ab28319ff3874b9c5ab1c",
+  "tokenizer": {
+    "add_special_tokens": false,
+    "chat_template_applied": false,
+    "files_sha256": {
+      "config.json": "1343e75f695433e8fd1e8967cd792e7726f5998cc81e382a41c5431224cfabc8",
+      "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+      "model-00001-of-00131.safetensors": "3a092d3a9a542093a9c3524023f05f9e1289ccf23324735ce32ae70bf58700ec",
+      "model-00002-of-00131.safetensors": "1da92de7cf72dcca86faf05007925389ceb24427609e8d3b478d53d97fd97a63",
+      "model-00003-of-00131.safetensors": "17ffe56aa091f9da618771677e2e918cdbb94dc6e2ee9f47ad9d126506adb97c",
+      "model-00130-of-00131.safetensors": "4254b24453363f31802c23b7d42aa8b0daa5434f6742fce2f588a0a8fed12181",
+      "model-00131-of-00131.safetensors": "50be0ccd11e4da0c92114600aca321d2c18f795e9e923fd587469587ecfd9df4",
+      "model.safetensors.index.json": "92aca56d2bcc33f0086117b37b632f3794cd74acf75c31c921107a2a7b5f7eb6",
+      "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+      "tokenizer.json": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+      "tokenizer_config.json": "b11349aafa7cdc6a320767cf7ceb29ed82f7eda5d65e8e0819e76f0ce947bf27",
+      "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+    },
+    "id": "Qwen/Qwen3.8-Flash-Next",
+    "repository": "Qwen/Qwen3.8-Flash-Next",
+    "revision": null,
+    "vocab_size": 248044
+  },
+  "tool": "k6/tools/build_token_panel.py",
+  "tool_sha256": "8fc028713b48b19fb9368f833dda61bcfa0dc3be37a8a67352abf1811f255c7e"
+}

@@ -1,0 +1,85 @@
+{
+  "corpus": {
+    "documents_considered": 2,
+    "documents_selected": 2,
+    "path_prefix": "corpus/text/",
+    "repository": "malaiwah/qwen38-27b-fidelity-suite-v5",
+    "revision": null
+  },
+  "created_utc": "2026-08-30T20:58:31Z",
+  "documents": [
+    {
+      "bytes": 404518,
+      "document": "pg100.txt",
+      "document_sha256": "aea60c52db6edd47d57466ed780f4e91b7fe399a3cb9439879866ecdc445000c",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 103850,
+      "window_id": "final-0000"
+    },
+    {
+      "bytes": 308016,
+      "document": "arxiv5-cs-AI-0000.txt",
+      "document_sha256": "ad29c470c08f5cb0601b9c45c61d229e84cbe798203138845ecd1fb3675be482",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 55527,
+      "window_id": "final-0001"
+    }
+  ],
+  "format_version": 1,
+  "panel_id": "panel--minimaxm3.stagea.smoke.2w",
+  "panel_name": "MiniMax-M3 Stage A smoke panel (2 windows) -- NOT A MEASUREMENT PANEL",
+  "parameters": {
+    "context_length": 2048,
+    "prediction_positions_per_window": 2047,
+    "scored_positions_total": 4094,
+    "skip_tokens": 2048,
+    "strata": [
+      "literary",
+      "scientific"
+    ],
+    "windows_per_stratum": 1,
+    "windows_total": 2
+  },
+  "receipt_sha256": "9e1ba9b4fd0970ae79bd00166278c5f3f3a3e4641c07b4ab4be22457ddbf8a4c",
+  "schema": "malaiwah.token-panel-build-receipt.v1",
+  "selection_rule": "strata sorted ascending; within each stratum documents sorted by file name ascending; each document tokenized whole with add_special_tokens=False; a document is eligible only if it yields at least skip_tokens+context_length tokens; its window is tokens[skip_tokens : skip_tokens+context_length]; the first windows_per_stratum eligible documents are taken; windows are numbered from zero in (stratum, document) order. No RNG is used anywhere.",
+  "separation": {
+    "checked": false,
+    "method": "declaration only; this tool runs no lexical or n-gram scan",
+    "note": null
+  },
+  "suite_token_hash_sha256": "73add1c4ba36df2734dc65cde55f1a72decbed252372961aa1cf752aa3543140",
+  "tokenizer": {
+    "add_special_tokens": false,
+    "chat_template_applied": false,
+    "files_sha256": {
+      "config.json": "32ab144b3a12e2985db95c5db07b58d9068eaabdda47690d481cbbaa4b95782a",
+      "configuration_minimax_m3_vl.py": "836c3e4aff06f88bd2891b18292424ed7a90158b508d9235d490a33d9e3cba32",
+      "model-00001-of-00059.safetensors": "dd43571ea444cb0c966f2b2523d437252f81145f204062aea46521e202c32c9f",
+      "model-00002-of-00059.safetensors": "ef01a7ca6a90662532cb58787a44dc92578e6c6a597ca93cc9cb3c568bd1c0ce",
+      "model-00003-of-00059.safetensors": "3bb1d4c76708298f24eb340f18a2cbdd757730864f73d13bce67b7b00fb49b2a",
+      "model-00026-of-00059.safetensors": "333d484346fbfc168c4116fba799e646f4fa3aa597c9fc597fb38aa01ebfd1f5",
+      "model-00059-of-00059.safetensors": "be5974515c92c9d8717263cda20efa5d0f38891a34d2f0c65205bb5a03be1664",
+      "model.safetensors.index.json": "174bee976a55f7a7df2051bf91f9d27082fc956145fa297f2cff325a46b0fb72",
+      "preprocessor_config.json": "36785da1dc7a00324048bd7c537c24247fca97c626884818257fd0b92287de31",
+      "tokenizer.json": "bb1f1626cf01448f1e3b6036d0a061ffc66c91d9046aada14ea23a5441b5ad6e",
+      "tokenizer_config.json": "15caca9f74fbce9b86dc014e9324cbefa56703d81ccd6d56020faa1c41d2eae5"
+    },
+    "id": "MiniMaxAI/MiniMax-M3",
+    "repository": "MiniMaxAI/MiniMax-M3",
+    "revision": null,
+    "vocab_size": 200000
+  },
+  "tool": "k6/tools/build_token_panel.py",
+  "tool_sha256": "8fc028713b48b19fb9368f833dda61bcfa0dc3be37a8a67352abf1811f255c7e"
+}

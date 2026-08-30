@@ -97,7 +97,7 @@ t "hf-transformers capture engine: load-report guards, refusals (A1-A22)" \
 # F4 is the one that matters: a layer regex matching NOTHING used to make the
 # tool plan a fetch of the WHOLE checkpoint and log it as a truncation.
 # Offline -- the HTTP fetcher is replaced by one reading a synthetic repo.
-t "truncation fetcher: three key layouts, config surgery, refusals (F1-F9b)" \
+t "truncation fetcher: three key layouts, config surgery, refusals (F1-F10)" \
                                            0 "$PY" bin/selftest_fetch_truncated.py
 # The layer-outer/window-inner schedule and its streaming residency.  L1-L3 are
 # the deliverable in three assertions: the new loop order must produce the SAME

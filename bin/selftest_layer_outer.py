@@ -492,6 +492,37 @@ def _body(work):
           and doc.get("top1_agreement") == 1.0,
           "rc=%d metric=%r" % (compare.returncode, (doc.get("metric") or {}).get("value")))
 
+    # L15 -- a QUANTIZED checkpoint must be refused by this schedule, up front.
+    # `build_streamed_model` calls `cls(config)` and loads with the MODEL's
+    # conversion mapping; it never builds an `HfQuantizer`, so the quantizer's
+    # module replacement, its `*.scale` -> `*.weight_scale_inv` rename and its
+    # dequantization op are all missing. For a packed format (FP4 experts) that
+    # surfaces as a shape mismatch and raises. For a plain FP8 E4M3 weight the
+    # shape MATCHES the bf16 parameter: the payload is read as bf16, the scale
+    # falls out as `unexpected`, and the block scale is never applied -- the M1
+    # Qwen3.8-27B-FP8 defect, silent, behind a flag a truncated tree already
+    # needs. Observed for real on deepseek-ai/DeepSeek-V4-Flash-0731:
+    # "Reinit due to size mismatch - ckpt: torch.Size([256, 4096, 2048]) vs
+    #  model: torch.Size([256, 4096, 4096])", raised by transformers rather than
+    # by us. Now ours, and now before any weight is read.
+    quantized = os.path.join(work, "quantized")
+    tiny_model(quantized, layers=2)
+    config_path = os.path.join(quantized, "config.json")
+    doc = json.load(open(config_path))
+    doc["quantization_config"] = {"quant_method": "fp8", "fmt": "e4m3",
+                                  "weight_block_size": [128, 128]}
+    json.dump(doc, open(config_path, "w"), indent=2)
+    out = os.path.join(work, "quantized-capture")
+    proc = capture(quantized, panel, out, dataset_id="fidelity--lo.quantized",
+                   name="quantized refusal", extra=("--schedule", "layer-outer"))
+    text = (proc.stdout or "") + (proc.stderr or "")
+    check("L15 layer-outer REFUSES a checkpoint declaring quantization_config, "
+          "naming the missing quantizer and the silent-FP8 reading",
+          proc.returncode != 0
+          and "quantization_config" in text and "window-outer" in text
+          and not os.path.isfile(os.path.join(out, "fidelity-dataset.json")),
+          "rc=%s tail=%s" % (proc.returncode, text[-200:]))
+
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, detail in FAIL:
         print("  FAILED %s: %s" % (name, detail))
