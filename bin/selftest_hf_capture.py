@@ -33,6 +33,9 @@ dataset at all.
         cannot work for a checkpoint bigger than one device
     A23 --allow-unexpected-tensors captures instead, and stamps a BLOCKING disclosure
     A24 the unexpected-tensor branch reads its own flag, not --allow-missing-weights
+    A25 the FP8 quantizer's parallel-plan crash is identified by its own frame
+    A26 neutralize_parallel_plan empties tp+ep plans, sub-configs included
+    A27 load_model refuses that crash by name and points at --drop-parallel-plan
 
 torch and transformers are optional: without them the file prints SKIP and
 exits 0, so `bin/selftest_all.sh` on the numpy-only floor is unaffected.
@@ -615,6 +618,119 @@ def _body(work):
     else:
         check("A22 --device-map dispatches, skips .to(), and still reports the load",
               True, "SKIPPED: accelerate not installed")
+
+    # -- A25/A26/A27 ---------------------------------------------------------
+    # The FP8 parallel-plan defect.  `transformers` 5.16.1's
+    # `FineGrainedFP8HfQuantizer.update_tp_plan` does
+    #
+    #     layer_overrides = FP8Experts._impl_tp_layer_overrides.get(impl)
+    #     updated_plan = {k: layer_overrides.get(v, v) for k, v in base_plan.items()}
+    #
+    # `_impl_tp_layer_overrides` has ONE key (`deepgemm_megamoe`) and `impl` is
+    # always None at that point, so any FP8 config with a non-empty parallel
+    # plan raises `AttributeError: 'NoneType' object has no attribute 'get'`
+    # BEFORE a single weight is read.  Every FP8 `deepseek_v4` repo is in that
+    # set (`DeepseekV4Config.base_model_ep_plan` has 7 entries), i.e.
+    # `deepseek-ai/DeepSeek-V4-Flash-0731` and its 100 quant children were
+    # unloadable and the message the operator saw was a bare NoneType
+    # AttributeError with no repo, no cause and no remedy.
+
+    def _raise_like_transformers():
+        """Reproduce the exception with a frame that looks like the real one."""
+        import types
+
+        source = ("def update_tp_plan(self, config):\n"
+                  "    layer_overrides = None\n"
+                  "    return {k: layer_overrides.get(v, v) for k, v in "
+                  "config.items()}\n")
+        module = types.ModuleType("quantizer_finegrained_fp8")
+        code = compile(source, "/x/transformers/quantizers/quantizer_finegrained_fp8.py",
+                       "exec")
+        exec(code, module.__dict__)
+        try:
+            module.update_tp_plan(None, {"layers.*.mlp.experts": "grouped_gemm"})
+        except AttributeError as exc:
+            return exc
+        return None
+
+    # These four rungs are new in M2; on a tree that predates the fix the names
+    # they exercise do not exist. Resolve them defensively so that tree reports
+    # four honest FAILs instead of an AttributeError that stops the battery.
+    _is_bug = getattr(HC, "_is_fp8_tp_plan_bug", None) or (lambda exc: None)
+    _neutralize = getattr(HC, "neutralize_parallel_plan", None) or (lambda cfg: None)
+
+    real = _raise_like_transformers()
+    other = None
+    try:
+        None.get("x")               # same message, unrelated frame
+    except AttributeError as exc:
+        other = exc
+    check("A25 the FP8 parallel-plan crash is recognised by frame, not by message "
+          "(a lookalike AttributeError elsewhere is NOT it)",
+          real is not None and _is_bug(real) is True
+          and other is not None and _is_bug(other) is False,
+          "real=%r other=%r" % (real, other))
+
+    class _Cfg(object):
+        pass
+
+    cfg = _Cfg()
+    cfg.base_model_ep_plan = {"layers.*.mlp.experts": "grouped_gemm"}
+    cfg.base_model_tp_plan = {}
+    cfg.text_config = _Cfg()
+    cfg.text_config.base_model_tp_plan = {"layers.*.self_attn.q_proj": "colwise"}
+    emptied = _neutralize(cfg)
+    check("A26 neutralize_parallel_plan empties tp AND ep plans, recurses into "
+          "text_config, and names exactly what it emptied",
+          cfg.base_model_ep_plan == {} and cfg.text_config.base_model_tp_plan == {}
+          and sorted(emptied or []) == ["base_model_ep_plan",
+                                        "text_config.base_model_tp_plan"],
+          "emptied=%r" % (emptied,))
+
+    # A27: the refusal is reachable through `load_model` and names the remedy.
+    # Driven by making `_from_pretrained` raise the real exception, so the test
+    # needs neither an FP8 checkpoint nor a GPU.
+    original = HC._from_pretrained
+    seen = {}
+
+    def _boom(cls, model_dir, torch_dtype, **extra):
+        seen["config_passed"] = "config" in extra
+        raise _raise_like_transformers()
+
+    import contextlib
+    import io
+
+    def _refusal_text(**kwargs):
+        """`fail()` prints to stderr and returns SystemExit(1); the MESSAGE is
+        the thing under test, so read stderr rather than the exit code."""
+        buffer = io.StringIO()
+        with contextlib.redirect_stderr(buffer):
+            try:
+                HC.load_model(model, "cpu", "bfloat16", **kwargs)
+            except SystemExit:
+                pass
+            except TypeError as exc:        # pre-M2 signature: no such keyword
+                print("load_model: %s" % exc, file=buffer)
+        return buffer.getvalue()
+
+    HC._from_pretrained = _boom
+    try:
+        message = _refusal_text()
+        check("A27 load_model REFUSES the FP8 parallel-plan crash by name, and points "
+              "at --drop-parallel-plan instead of a bare NoneType AttributeError",
+              "--drop-parallel-plan" in message and "update_tp_plan" in message
+              and "deepgemm_megamoe" in message,
+              message[:240])
+        # ... and under the flag it stops diagnosing and hands the edited config
+        # to from_pretrained, so a real load would get past the quantizer.
+        seen.clear()
+        second = _refusal_text(drop_parallel_plan=True)
+        check("A27b under --drop-parallel-plan the edited config is handed to "
+              "from_pretrained (otherwise config.json is re-read and the edit is lost)",
+              seen.get("config_passed") is True and "--drop-parallel-plan" not in second,
+              "config_passed=%r second=%r" % (seen.get("config_passed"), second[:160]))
+    finally:
+        HC._from_pretrained = original
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, detail in FAIL:

@@ -39,10 +39,44 @@ How
   shard was never fetched).  Binding comes from the pinned revision, the
   recorded index/config digests, and the per-tensor digests in the receipt.
 
+Beyond `model.layers.N.`
+-----------------------
+The first version of this tool hard-coded `^model\\.layers\\.(\\d+)\\.` as the
+decoder-layer key, `num_hidden_layers` as the config knob and "top-level list of
+strings" as the schedule shape.  All three are GLM-5.3's, and none of them is
+universal:
+
+  * `deepseek-ai/DeepSeek-V4-Flash-0731` ships DeepSeek's native names --
+    `layers.N.attn.wq_a.weight`, `embed.weight`, `head.weight` -- with no
+    `model.` prefix, plus a separate `mtp.N.` subtree the architecture does not
+    build.  Under the old regex NOTHING matched, so every layer counted as
+    non-layer and the "truncation" would have fetched all 166.9 GB.
+  * `Qwen/Qwen3.8-Flash-Next` (`qwen4_exp`) and `MiniMaxAI/MiniMax-M3`
+    (`minimax_m3_vl`) are VL models: the decoder is
+    `model.language_model.layers.N.` / `language_model.model.layers.N.`, the
+    layer count lives in `config.text_config.num_hidden_layers`, and there is a
+    vision tower whose OWN `...encoder.layers.N.` keys must NOT be truncated.
+  * MiniMax's per-layer schedules (`moe_layer_freq`,
+    `sparse_attention_config.sparse_attention_freq`, ...) are lists of INTs,
+    nested one level down.  A truncator that only trims top-level string lists
+    leaves them at their full length and `transformers` refuses the config.
+
+So the three assumptions are now flags -- `--layer-key-regex`,
+`--drop-key-regex`, `--config-node` -- whose DEFAULTS reproduce the GLM-5.3
+behaviour exactly (`bin/selftest_fetch_truncated.py` pins that).
+
 Usage:
   fetch_truncated_ckpt.py --repo zai-org/GLM-5.3-BF16 --revision <40-hex> \
       --layers 4 --dest /path/to/ckpt --receipt /path/to/receipt.json \
       [--threads 12] [--token-file ~/.hf_token] [--dry-run]
+
+  fetch_truncated_ckpt.py --repo deepseek-ai/DeepSeek-V4-Flash-0731 \
+      --revision <40-hex> --layers 4 \
+      --layer-key-regex '^layers\\.(\\d+)\\.' --drop-key-regex '^mtp\\.' ...
+
+  fetch_truncated_ckpt.py --repo MiniMaxAI/MiniMax-M3 --revision <40-hex> \
+      --layers 4 --config-node text_config \
+      --layer-key-regex '^language_model\\.model\\.layers\\.(\\d+)\\.' ...
 
 The token is read from `--token-file` or `HF_TOKEN`; it is never printed.
 """
@@ -63,7 +97,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-LAYER_KEY = re.compile(r"^model\.layers\.(\d+)\.")
+# GLM-5.3's decoder-layer key.  The DEFAULT of --layer-key-regex, kept as a
+# module constant so the old behaviour has a name and a regression test.
+DEFAULT_LAYER_KEY = r"^model\.layers\.(\d+)\."
 
 
 def _fail(message: str, code: int = 1) -> "SystemExit":
@@ -163,6 +199,103 @@ def split(ranges: List[Tuple[int, int]], chunk: int) -> List[Tuple[int, int]]:
 
 
 # ---------------------------------------------------------------------------
+# config surgery
+# ---------------------------------------------------------------------------
+
+
+def config_node(config: Dict[str, Any], path: str) -> Dict[str, Any]:
+    """Resolve a dotted path to the sub-dict that owns `num_hidden_layers`.
+
+    "" -> the config itself (GLM-5.3, DeepSeek-V4). "text_config" -> the text
+    tower of a VL config (Qwen3.8-Flash-Next, MiniMax-M3), whose vision tower
+    has its OWN, different, layer count that must be left alone.
+    """
+    node = config
+    if not path:
+        return node
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            raise _fail("--config-node %r: no %r in the config" % (path, part))
+        node = node[part]
+    if not isinstance(node, dict):
+        raise _fail("--config-node %r does not name an object" % path)
+    return node
+
+
+def filter_index_lists(node: Dict[str, Any], specs: Sequence[str],
+                       layers: int) -> Dict[str, List[Any]]:
+    """Drop out-of-range entries from lists that name LAYER INDICES.
+
+    A per-layer *schedule* has one entry per layer and is handled by
+    `truncate_schedules`. A layer-INDEX list is a different animal: it is short,
+    and its entries point AT layers. `Qwen/Qwen3.8-Flash-Next` carries
+    `text_config.ple_layer_ids = [2]` -- one-indexed -- and `Qwen4ExpTextConfig`
+    validates it:
+
+        ValueError: ple_layer_ids must contain one-indexed ids in [1, 1], got [2].
+
+    so a truncation that leaves it alone does not load at all. Each spec is
+    `name[:base]` relative to `--config-node`, `base` being 0 or 1 (default 0).
+    """
+    trimmed: Dict[str, List[Any]] = {}
+    for spec in specs:
+        name, _, base_text = spec.partition(":")
+        base = int(base_text) if base_text else 0
+        if base not in (0, 1):
+            raise _fail("--config-index-list %r: base must be 0 or 1" % spec)
+        target = node
+        parts = name.split(".")
+        for part in parts[:-1]:
+            if not isinstance(target, dict) or part not in target:
+                raise _fail("--config-index-list %r: no %r under the config node"
+                            % (spec, part))
+            target = target[part]
+        leaf = parts[-1]
+        if not isinstance(target, dict) or leaf not in target:
+            raise _fail("--config-index-list %r: no %r under the config node" % (spec, leaf))
+        value = target[leaf]
+        if not isinstance(value, list):
+            raise _fail("--config-index-list %r does not name a list" % spec)
+        kept = [v for v in value if isinstance(v, int) and base <= v < layers + base]
+        target[leaf] = kept
+        trimmed[name] = kept
+    return trimmed
+
+
+def truncate_schedules(node: Any, source_layers: int, layers: int,
+                       prefix: str = "") -> Dict[str, List[Any]]:
+    """Trim every per-layer schedule list under `node` to `layers` entries.
+
+    A "schedule" is any list whose length equals the SOURCE layer count and
+    whose entries are all strings or all ints -- `mlp_layer_types`,
+    `indexer_types`, `layer_types`, `moe_layer_freq`,
+    `sparse_attention_config.sparse_attention_freq`, ... The recursion is what
+    reaches MiniMax-M3's, which sit one dict deeper than the layer count.
+
+    The length test is the whole discriminator, so a config that happened to
+    carry an unrelated list of exactly `num_hidden_layers` entries would be
+    trimmed too.  That is why every trimmed key is RETURNED and logged: the
+    operator sees the list of what was cut, rather than trusting a heuristic
+    silently.  Lists of a different length (DeepSeek-V4's 46-entry
+    `compress_ratios` against 43 layers -- 43 layers plus 3 MTP modules) are
+    left alone, which is correct: `DeepseekV4Config` slices them itself.
+    """
+    trimmed: Dict[str, List[Any]] = {}
+    if not isinstance(node, dict):
+        return trimmed
+    for key, value in list(node.items()):
+        where = prefix + key
+        if isinstance(value, dict):
+            trimmed.update(truncate_schedules(value, source_layers, layers, where + "."))
+        elif isinstance(value, list) and len(value) == source_layers and value and (
+                all(isinstance(v, str) for v in value)
+                or all(isinstance(v, bool) is False and isinstance(v, int) for v in value)):
+            node[key] = value[:layers]
+            trimmed[where] = node[key]
+    return trimmed
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
@@ -180,6 +313,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--coalesce-gap-bytes", type=int, default=8 << 20)
     ap.add_argument("--range-chunk-bytes", type=int, default=256 << 20)
     ap.add_argument("--token-file", type=Path, default=None)
+    ap.add_argument("--layer-key-regex", default=DEFAULT_LAYER_KEY,
+                    help="regex whose group(1) is the DECODER layer index. Keys that do "
+                         "not match are kept unconditionally (embeddings, head, final "
+                         "norm, vision tower). Default is GLM-5.3's %(default)r.")
+    ap.add_argument("--drop-key-regex", action="append", default=[],
+                    help="repeatable: checkpoint keys matching this are excluded "
+                         "entirely, whatever the layer regex says. Use it for subtrees "
+                         "the architecture does not build (e.g. '^mtp\\.').")
+    ap.add_argument("--config-index-list", action="append", default=[],
+                    metavar="NAME[:BASE]",
+                    help="repeatable: a config list (relative to --config-node) whose "
+                         "entries are LAYER INDICES rather than per-layer values; entries "
+                         "outside the kept range are dropped. BASE is 0 or 1 (default 0). "
+                         "e.g. 'ple_layer_ids:1' for Qwen3.8-Flash-Next.")
+    ap.add_argument("--config-node", default="",
+                    help="dotted path to the config object that owns num_hidden_layers "
+                         "and the per-layer schedules ('' = the config itself; "
+                         "'text_config' for a VL config).")
     ap.add_argument("--extra-file", action="append", default=[],
                     help="additional repo file to fetch verbatim (tokenizer.json, ...)")
     ap.add_argument("--dry-run", action="store_true",
@@ -206,23 +357,46 @@ def main(argv: Optional[List[str]] = None) -> int:
     config = json.loads(config_raw)
     index = json.loads(index_raw)
     weight_map: Dict[str, str] = index["weight_map"]
-    source_layers = int(config["num_hidden_layers"])
+    layer_node = config_node(config, args.config_node)
+    if "num_hidden_layers" not in layer_node:
+        raise _fail("no num_hidden_layers under --config-node %r" % args.config_node)
+    source_layers = int(layer_node["num_hidden_layers"])
     if args.layers > source_layers:
         raise _fail("--layers %d exceeds the checkpoint's %d" % (args.layers, source_layers))
+    layer_key = re.compile(args.layer_key_regex)
+    drops = [re.compile(pattern) for pattern in args.drop_key_regex]
     log(stage="source", repo=args.repo, revision=args.revision,
         tensors=len(weight_map), total_size=index.get("metadata", {}).get("total_size"),
-        num_hidden_layers=source_layers,
+        num_hidden_layers=source_layers, config_node=args.config_node,
+        layer_key_regex=args.layer_key_regex, drop_key_regex=list(args.drop_key_regex),
         config_sha256=sha256_bytes(config_raw), index_sha256=sha256_bytes(index_raw))
 
     wanted: Dict[str, str] = {}
+    matched_layer_keys = 0
+    dropped = 0
     for key, shard in weight_map.items():
-        match = LAYER_KEY.match(key)
-        if match is None:
-            wanted[key] = shard          # embed_tokens / norm / lm_head
-        elif int(match.group(1)) < args.layers:
-            wanted[key] = shard
+        if any(pattern.search(key) for pattern in drops):
+            dropped += 1
+            continue
+        match = layer_key.match(key)
+        if match is not None:
+            matched_layer_keys += 1
+            if int(match.group(1)) < args.layers:
+                wanted[key] = shard
+        else:
+            wanted[key] = shard          # embed_tokens / norm / lm_head / vision tower
+    if matched_layer_keys == 0:
+        # Silence here is the dangerous answer: with no match every key looks
+        # like a non-layer key, so the "truncation" quietly becomes the whole
+        # checkpoint. That is a 166.9 GB accident on DeepSeek-V4-Flash.
+        raise _fail(
+            "--layer-key-regex %r matched NONE of this checkpoint's %d tensor names, so "
+            "nothing would be truncated and the fetch would be the WHOLE model. Sample "
+            "names: %s" % (args.layer_key_regex, len(weight_map),
+                           ", ".join(sorted(weight_map)[:4])))
     shards = sorted(set(wanted.values()))
-    log(stage="plan", kept_tensors=len(wanted), shards=len(shards), layers=args.layers)
+    log(stage="plan", kept_tensors=len(wanted), shards=len(shards), layers=args.layers,
+        layer_keys_seen=matched_layer_keys, dropped_by_regex=dropped)
 
     # Published headers fix every offset.  Fetch them first; they are tiny.
     headers: Dict[str, Tuple[int, Dict[str, Any]]] = {}
@@ -327,10 +501,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     (args.dest / "model.safetensors.index.json").write_text(
         json.dumps(pruned_index, indent=2, sort_keys=True))
 
-    truncated_config = dict(config)
-    truncated_config["num_hidden_layers"] = args.layers
-    # Per-layer schedule lists must be truncated with it. `transformers` 5.16.1
-    # validates this and REFUSES the config otherwise:
+    # Per-layer schedule lists must be truncated with the layer count.
+    # `transformers` 5.16.1 validates this and REFUSES the config otherwise:
     #   ValueError: `num_hidden_layers` (4) must be equal to the number of
     #               `mlp_layer_types` (78)
     # so a "change only num_hidden_layers" truncation does not load at all.
@@ -338,14 +510,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     # property that matters: for GLM-5.3 that is dense/dense/dense/sparse and
     # indexer full/full/full/shared -- so layer 3 still consumes layer 2's
     # `prev_topk_indices` exactly as it does in the 78-layer model.
-    trimmed = {}
-    for key, value in list(truncated_config.items()):
-        if isinstance(value, list) and len(value) == source_layers and \
-                all(isinstance(v, str) for v in value):
-            truncated_config[key] = value[:args.layers]
-            trimmed[key] = value[:args.layers]
+    truncated_config = json.loads(json.dumps(config))     # deep copy, not dict()
+    target = config_node(truncated_config, args.config_node)
+    target["num_hidden_layers"] = args.layers
+    trimmed = truncate_schedules(target, source_layers, args.layers)
+    index_lists = filter_index_lists(target, args.config_index_list, args.layers)
     (args.dest / "config.json").write_text(json.dumps(truncated_config, indent=2))
-    log(stage="config", num_hidden_layers=args.layers, truncated_lists=trimmed)
+    log(stage="config", num_hidden_layers=args.layers, config_node=args.config_node,
+        truncated_lists=trimmed, filtered_index_lists=index_lists)
 
     # Per-tensor digests, read back from the file we just wrote.  These are the
     # preimage of the byte-for-byte comparison Stage A performs against the
@@ -370,6 +542,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "repo": args.repo, "revision": args.revision,
         "source_num_hidden_layers": source_layers,
         "kept_num_hidden_layers": args.layers,
+        "config_node": args.config_node,
+        "layer_key_regex": args.layer_key_regex,
+        "drop_key_regex": list(args.drop_key_regex),
+        "dropped_by_regex": dropped,
+        "truncated_schedule_lists": sorted(trimmed),
+        "filtered_layer_index_lists": index_lists,
         "source_tensors": len(weight_map),
         "source_total_size": index.get("metadata", {}).get("total_size"),
         "kept_tensors": len(wanted),

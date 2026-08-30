@@ -91,6 +91,14 @@ t "replay backend: floor is backend-independent, backend is named (T12: R1-R9)" 
 # panel receipt).  It existed and was never wired in here, so nothing ran it.
 t "hf-transformers capture engine: load-report guards, refusals (A1-A22)" \
                                            0 "$PY" bin/selftest_hf_capture.py
+# The truncation fetcher, against three real checkpoint key layouts (GLM-5.3's
+# `model.layers.N.`, DeepSeek-V4's bare `layers.N.` + `mtp.` subtree, MiniMax-M3's
+# VL `language_model.model.layers.N.` with the layer count under `text_config`).
+# F4 is the one that matters: a layer regex matching NOTHING used to make the
+# tool plan a fetch of the WHOLE checkpoint and log it as a truncation.
+# Offline -- the HTTP fetcher is replaced by one reading a synthetic repo.
+t "truncation fetcher: three key layouts, config surgery, refusals (F1-F9b)" \
+                                           0 "$PY" bin/selftest_fetch_truncated.py
 # The layer-outer/window-inner schedule and its streaming residency.  L1-L3 are
 # the deliverable in three assertions: the new loop order must produce the SAME
 # capture_content_digest as the old one, and the default must stay the old one.

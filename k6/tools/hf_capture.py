@@ -348,9 +348,76 @@ def _from_pretrained(cls, model_dir: str, torch_dtype, **extra):
                 {REPORT_OBSERVED: False})
 
 
+# `transformers` 5.16.1 `quantizers/quantizer_finegrained_fp8.py:195`:
+#
+#     layer_overrides = FP8Experts._impl_tp_layer_overrides.get(impl)
+#     ...
+#     updated_plan = {k: layer_overrides.get(v, v) for k, v in base_plan.items()}
+#
+# `_impl_tp_layer_overrides` has exactly one key, `deepgemm_megamoe`, and
+# `config._experts_implementation` is still None when `get_hf_quantizer` runs,
+# so `layer_overrides` is None and the comprehension raises -- but only for a
+# config whose parallel plan is NON-EMPTY.  Every FP8 `deepseek_v4` repo is in
+# that set (`DeepseekV4Config.base_model_ep_plan` has 7 entries), which is why
+# `deepseek-ai/DeepSeek-V4-Flash-0731` -- 4.6M downloads -- does not load at
+# all on this build, on ANY device.
+_FP8_TP_PLAN_BUG = "'NoneType' object has no attribute 'get'"
+
+
+def _is_fp8_tp_plan_bug(exc: BaseException) -> bool:
+    import traceback as _tb
+
+    if not isinstance(exc, AttributeError) or _FP8_TP_PLAN_BUG not in str(exc):
+        return False
+    return any("quantizer_finegrained_fp8.py" in frame.filename
+               and frame.name == "update_tp_plan"
+               for frame in _tb.extract_tb(exc.__traceback__))
+
+
+def neutralize_parallel_plan(config) -> List[str]:
+    """Empty the tensor/expert parallel plans on a config and its sub-configs.
+
+    Those plans are a MAP FROM MODULE PATH TO SHARDING KIND.  They are consulted
+    only when the model is being split across ranks (`tp_plan=`, a device mesh,
+    `accelerate`'s parallel loader); a single-process load -- which is every
+    load this tool performs -- never reads them.  Emptying them is therefore
+    inert for the forward pass, and it is the SMALLEST edit that walks around
+    the FP8 quantizer defect above.
+
+    The alternative that also "works" is a trap and is deliberately not offered:
+    `from_pretrained(..., experts_implementation="deepgemm_megamoe")` makes the
+    load succeed, because that is the one key `_impl_tp_layer_overrides` has --
+    and then the first forward pass dies in
+    `integrations/moe.py:get_interface` with
+
+        KeyError: `deepgemm_megamoe` is not a valid experts implementation
+                  registered in the `ExpertsInterface`
+
+    i.e. it buys a model that loads and cannot run.  Measured, not assumed:
+    `docs/NEW-ARCHITECTURES-FEASIBILITY.md`.
+
+    Returns the dotted names of the plans it actually emptied, for the receipt.
+    """
+    emptied: List[str] = []
+
+    def strip(node, prefix: str) -> None:
+        for attr in ("base_model_tp_plan", "base_model_ep_plan"):
+            if getattr(node, attr, None):
+                setattr(node, attr, {})
+                emptied.append(prefix + attr)
+        for name in ("text_config", "vision_config", "audio_config"):
+            child = getattr(node, name, None)
+            if child is not None and hasattr(child, "__dict__"):
+                strip(child, prefix + name + ".")
+
+    strip(config, "")
+    return emptied
+
+
 def load_model(model_dir: str, device: str, dtype_name: str,
                device_map: Any = None, max_memory: Optional[Dict[Any, str]] = None,
-               offload_folder: Optional[str] = None):
+               offload_folder: Optional[str] = None,
+               drop_parallel_plan: bool = False):
     """Instantiate the checkpoint, optionally without ever materialising it whole.
 
     `device_map` exists for the reason `docs/GLM53-ROOT-FEASIBILITY.md` R2
@@ -370,6 +437,12 @@ def load_model(model_dir: str, device: str, dtype_name: str,
     config = transformers.AutoConfig.from_pretrained(model_dir)
     architectures = list(getattr(config, "architectures", None) or [])
     extra: Dict[str, Any] = {}
+    if drop_parallel_plan:
+        emptied = neutralize_parallel_plan(config)
+        # Pass the edited config explicitly; otherwise `from_pretrained` reads
+        # config.json again and the edit never reaches the quantizer.
+        extra["config"] = config
+        log(stage="parallel_plan_dropped", plans=emptied)
     if device_map is not None:
         extra["device_map"] = device_map
         if max_memory:
@@ -398,12 +471,34 @@ def load_model(model_dir: str, device: str, dtype_name: str,
             model, info = _from_pretrained(cls, model_dir, torch_dtype, **extra)
             break
         except Exception as exc:  # pragma: no cover - depends on the checkpoint
+            if _is_fp8_tp_plan_bug(exc) and not drop_parallel_plan:
+                raise fail(
+                    "REFUSED: this transformers build cannot even BEGIN to load this FP8 "
+                    "checkpoint. `FineGrainedFP8HfQuantizer.update_tp_plan` rewrites the "
+                    "config's tensor/expert parallel plan through "
+                    "`FP8Experts._impl_tp_layer_overrides.get(config._experts_implementation)`, "
+                    "which is None for every implementation except `deepgemm_megamoe` and "
+                    "is ALWAYS None at this point in the load, so the rewrite raises "
+                    "AttributeError on any FP8 config whose parallel plan is non-empty "
+                    "(deepseek_v4 ships 7 entries). This is an upstream defect, not a "
+                    "property of the artifact. The safe walk-around is "
+                    "--drop-parallel-plan, which empties those plans -- they are read "
+                    "only when the model is split across ranks, which this tool never "
+                    "does. Do NOT instead pass experts_implementation=deepgemm_megamoe: "
+                    "that loads and then dies on the first forward pass. (%s: %s: %s)"
+                    % (name, type(exc).__name__, exc))
             errors.append("%s: %s: %s" % (name, type(exc).__name__, exc))
     if model is None:
         try:
             model, info = _from_pretrained(transformers.AutoModelForCausalLM,
                                            model_dir, torch_dtype, **extra)
         except Exception as exc:
+            if _is_fp8_tp_plan_bug(exc) and not drop_parallel_plan:
+                raise fail(
+                    "REFUSED: transformers' FP8 quantizer crashed rewriting this config's "
+                    "parallel plan before any weight was read (upstream defect; see "
+                    "--drop-parallel-plan). AutoModelForCausalLM: %s: %s"
+                    % (type(exc).__name__, exc))
             raise fail("could not instantiate the model (%s); AutoModelForCausalLM: %s: %s"
                        % ("; ".join(errors) or "no architectures declared",
                           type(exc).__name__, exc))
@@ -799,7 +894,8 @@ def run_capture(args: argparse.Namespace) -> int:
     else:
         model, config, loading_info = load_model(
             model_dir, args.device, args.dtype, device_map=args.device_map,
-            max_memory=max_memory, offload_folder=args.offload_folder)
+            max_memory=max_memory, offload_folder=args.offload_folder,
+            drop_parallel_plan=args.drop_parallel_plan)
 
     # CAPTURE-03.  A checkpoint whose tensors this `transformers` build cannot
     # name does not fail to load: `from_pretrained` RANDOMLY INITIALISES the
@@ -1186,6 +1282,10 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                       "sha256": F.sha256_file(os.path.abspath(__file__)),
                       "version": TOOL_VERSION, "wraps": [],
                       "schedule": args.schedule,
+                      # Recorded, never inferred: a reader must be able to see
+                      # that the parallel plan was emptied at load time without
+                      # re-deriving it from the flags.
+                      "parallel_plan_dropped": bool(getattr(args, "drop_parallel_plan", False)),
                       "layer_residency": (args.layer_residency
                                           if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER
                                           else None),
@@ -1420,6 +1520,13 @@ def build_parser() -> argparse.ArgumentParser:
                              "...). When set, the model is DISPATCHED by accelerate and the "
                              "post-load `.to(--device)` is skipped -- the only way to load a "
                              "checkpoint larger than one device's memory.")
+    parser.add_argument("--drop-parallel-plan", action="store_true",
+                        help="empty the config's base_model_tp_plan / base_model_ep_plan "
+                             "before loading. Those plans are read only when the model is "
+                             "split across ranks, which this tool never does, so this is "
+                             "inert for the forward pass -- it exists because transformers "
+                             "5.16.1's FP8 quantizer CRASHES rewriting a non-empty plan "
+                             "(every deepseek_v4 FP8 repo). Recorded in the receipt.")
     parser.add_argument("--max-memory", default=None,
                         help="JSON object passed to from_pretrained as max_memory, e.g. "
                              '\'{"0": "130GiB", "cpu": "250GiB"}\'')
