@@ -1,0 +1,62 @@
+## The hidden-form teacher (~{{HIDDEN_MB}} MB) — the prerequisite is now satisfied
+
+The recipe above produces a **31.7 GB** teacher: 25 windows of fp32 logits over
+a {{VOCAB}}-token vocabulary. The same panel carried as **post-final-RMSNorm
+bf16 hidden states** is **{{HIDDEN_BYTES}} bytes ({{HIDDEN_MB}} MB)** —
+**{{SHRINK}}x smaller** — with the LM head applied at scoring time instead of
+capture time. Same reference, same lane, one matmul moved.
+
+That trade was never blocked by tooling; it was blocked by evidence. Replaying
+hiddens through the head is only equivalent to storing logits if it *measurably*
+is, on this stack. **It now is:** `k6/HIDDEN-REPLAY.md` and the sealed receipt
+`reports/hidden-replay-equivalence.json` (`receipt_sha256`
+`{{RECEIPT_SHA}}`) record, over {{RUNS}} cold runs and {{POSITIONS}} scored
+positions per run:
+
+| Check | Result |
+|---|---:|
+| Mean `KL(live logits \|\| replayed logits)` | `{{MEAN}}` |
+| Max per-token | `{{MAX}}` |
+| p99.9 | `{{P999}}` |
+| Top-1 agreement, live vs replayed | `{{TOP1}}` |
+| **Panel mean KLD delta (replayed − live)** | **`{{PANEL_DELTA}}`** |
+
+The last row is the one that governs this decision: it is how much a published
+panel number would move if the teacher were carried as hiddens. Compare it to
+the quantization signal it has to leave intact — K6's attributable error is
+`0.00220896620326625423` and K8's `0.00087826840410656741`.
+
+### What carries over, and what does not
+
+* **The T1 zero-floor rule extends cleanly.** Today T1 reads: a fresh native
+  run whose per-window logit tensor shas equal the teacher's → floor ≡ 0.0
+  exactly. For a hidden-form teacher the equivalent evidence is the fresh run's
+  **hidden** tensor-content shas equalling the teacher's: the head is a fixed
+  bf16 tensor applied identically to both sides, so bitwise-equal hiddens
+  produce bitwise-equal replayed logits and the fp64 KLD is a sum of exact
+  `+0.0`s. This receipt supplies the missing half of that argument — the
+  hiddens are bitwise identical across all {{RUNS}} cold runs
+  ({{HIDDEN_DIGESTS}} distinct payload digest).
+* **`evidence_kind` changes.** Zero-floor evidence for a hidden-form teacher is
+  `hiddens_tensor_sha256`, not `logits_tensor_sha256`. A floor summary must say
+  which, and the two are not interchangeable in the registry.
+* **The qualification is per-lane, not universal.** This receipt qualifies
+  replay for *this* streaming lane on *this* stack. A teacher captured under a
+  different serving runtime needs its own qualification run before its hiddens
+  may stand in for logits — Festr's interpretation rule, adopted verbatim.
+* **The head becomes a load-bearing published artifact.** A hidden-form teacher
+  is unusable without the exact head it was captured against. The head is
+  pinned by tensor-content sha256 in the receipt
+  (`{{HEAD_SHA}}`) and must be published beside the hiddens.
+* **The cut is part of the contract.** These hiddens sit *after* the final
+  RMSNorm; replay applies the head only. A consumer that also applies
+  `final_norm` (our earlier head bundle shipped one for a norm+head replay)
+  would double-normalize. `k6/HIDDEN-REPLAY.md` states the cut in the terms a
+  consumer needs.
+
+### Cost
+
+Unchanged for capture — the hiddens come out of the *same* forward pass as the
+logits, so a teacher run can emit both and decide later. What changes is what
+gets **published**: {{HIDDEN_MB}} MB instead of 31.7 GB, which is the difference
+between a teacher anyone can download and one nobody will.

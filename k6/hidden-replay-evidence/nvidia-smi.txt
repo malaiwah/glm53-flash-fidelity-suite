@@ -1,0 +1,2 @@
+name, memory.total [MiB], compute_cap
+NVIDIA H200, 143771 MiB, 9.0

@@ -1,0 +1,37 @@
+{
+  "failed": 0,
+  "passed": 6,
+  "rungs": [
+    {
+      "detail": "KL(x||x) all-zero=True, vs-reference max|d|=8.594e-16",
+      "ok": true,
+      "rung": "a-estimator"
+    },
+    {
+      "detail": "positions=8/11, stored==replayed(bitwise)=True",
+      "ok": true,
+      "rung": "b-mask-alignment"
+    },
+    {
+      "detail": "bf16-vs-fp32 mean KLD=1.013e-04 (top1 64/64); permuted-head mean KLD=1.133e+01",
+      "ok": true,
+      "rung": "c-replay-teeth"
+    },
+    {
+      "detail": "delta-of-means=0.000e+00, max-token-delta=0.000e+00, bitwise-equal-fraction=1.000000",
+      "ok": true,
+      "rung": "d-chunk-invariance"
+    },
+    {
+      "detail": "tap fired 3/3; captured==post-norm(bitwise)=True",
+      "ok": true,
+      "rung": "e-hook-mechanism"
+    },
+    {
+      "detail": "payload hashes equal across metadata variants; file hashes differ",
+      "ok": true,
+      "rung": "f-payload-sha"
+    }
+  ],
+  "schema": "malaiwah.glm53-hidden-replay-selftest.v1"
+}

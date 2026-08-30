@@ -1,0 +1,56 @@
+## 2026-08-29 — hidden-replay equivalence: the 31.7 GB teacher becomes {{HIDDEN_MB}} MB
+
+Phaelon asked for the sign-off protocol before any hidden-form teacher ships:
+three cold runs, one forward per window emitting BOTH paths, and the cut stated
+rather than assumed. Festr's kimi-k3 artifact
+(`festr2/kimi-k3-distribution-fidelity-1024x2048-v1@402919ae`) already had the
+metric set; we adopted it verbatim so the two artifacts read side by side.
+
+**Measured** (box 486679, 1x H200 spot IN2, {{RUNS}} cold runs, {{POSITIONS}}
+positions each):
+
+* mean `KL(live logits || replayed logits)` = `{{MEAN}}`
+* max per-token `{{MAX}}`, p99 `{{P99}}`, p99.9 `{{P999}}`
+* top-1 agreement live-vs-replayed `{{TOP1}}`
+* **panel mean KLD delta (replayed − live) `{{PANEL_DELTA}}`** — the number that
+  decides whether a hidden-form teacher may replace a logit teacher
+* vocab-chunk invariance delta `{{INV_DELTA}}`
+* storage: `{{LOGITS_BYTES}}` bytes of fp32 logits vs `{{HIDDEN_BYTES}}` bytes of
+  bf16 hiddens = **{{SHRINK}}x**
+* cross-run: logits AND hiddens bitwise identical across all {{RUNS}} runs
+  (tensor-content digests, never container files)
+* path A reproduced the sealed streaming panel number
+  `0.013714888822596553` {{REPRO}} — the free lane-integrity check that the
+  hidden tap perturbs nothing
+
+**The cut, stated:** the bf16 tensor AFTER the text model's final RMSNorm and
+immediately BEFORE the lm_head matmul, captured as the head's input via a
+forward pre-hook; replay applies the head ONLY. This matches Festr's convention.
+Our earlier head-extraction artifact shipped `final_norm.safetensors` next to the
+head for a *norm+head* replay — a consumer who applies both would double-
+normalize. The receipt and `k6/HIDDEN-REPLAY.md` say so in the consumer's terms.
+
+**Code placement (the constraint that shaped this).** Another workflow owns
+large in-flight changes to `k6/tools/stream_score.py`, so it was NOT edited.
+The hidden emission is a new module, `k6/tools/hidden_replay.py`, which
+monkeypatches `stream_score.build_streaming_model` at run time to attach the
+pre-hook; the sealed capture path itself is untouched, which is exactly why path
+A still reproduces the sealed number bitwise. New files only:
+`hidden_replay.py`, `hidden_replay_selftest.py` (6 rungs, incl. a permuted-head
+negative control), `hidden_replay_stage.sh`, `fetch_nonrouted_sparse.py`.
+
+**On-box-only helpers, disclosed.** `hf download` stalled on the packed store —
+98,878 files (61,711 content-addressed `.bin` + 37,167 `.json`); it plans every
+file before writing one byte and sat at ~18 KB/s of listing traffic for 20
+minutes. Replaced with a pinned-path parallel fetch straight off the resolve
+endpoint (`par_fetch.sh` sha `{{PARFETCH_SHA}}`, `fetch_fast.sh` sha
+`{{FETCHFAST_SHA}}`), objects at P=64 and small files at P=12 after P=96 drew
+HTTP 429s. Sustained ~110 MB/s. These two helpers live on the box only and are
+named by content sha in the receipt; they fetch bytes, they do not touch
+measurement. The store is content-addressed, so object filenames ARE their
+sha256 — verification is free and a sample was verified.
+
+LESSON: `hf download` is the wrong tool for a content-addressed store with ~10^5
+objects. Its planning phase is O(files) before the first byte lands, and the
+per-file request rate it then generates is what trips rate limits. Fetch a
+pinned path list directly and split parallelism by file size.

@@ -1,0 +1,463 @@
+{
+  "aux": {
+    "config.json": {
+      "sha256": "33e63ec7fe607658be712bd6dd3c16c6549960d8e7f0483d34b939881b55f943",
+      "verified_against_inventory": true
+    },
+    "model.safetensors.index.json": {
+      "sha256": "e6007bd58fb7e07f9fe69544257ee2713f252ef5855bbf685b48c991d524ef0f",
+      "verified_against_inventory": true
+    }
+  },
+  "elapsed_seconds": 122.6,
+  "head": {
+    "dtype": "bfloat16",
+    "out": "/home/hr/models/head/lm_head.safetensors",
+    "out_file_sha256": "78abdde7491dec0616c59bab6f1e76e424b631c48fbf90344b77040f7d541058",
+    "published_head_content_equals_live_fetch": true,
+    "published_head_file_sha256": "47eaf729c93346a2394a72a83da2ae4126dadc51155be477d212a3f0fe3085d0",
+    "published_head_sha_matches_receipt": true,
+    "published_head_tensor_name": "weight",
+    "published_head_url": "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/head/head.safetensors",
+    "shape": [
+      154880,
+      4096
+    ],
+    "source_shard": "model-00001-of-00120.safetensors",
+    "tensor": "lm_head.weight",
+    "tensor_content_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4"
+  },
+  "inventory_sha256": "f56e9d6250e2d108f8307322f033e53c0ff26d5b2688ebf12b891c26439fea44",
+  "nonrouted_tensor_count": 1618,
+  "repo": "zai-org/GLM-5.3-Flash-BF16",
+  "revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+  "schema": "malaiwah.glm53-nonrouted-sparse-fetch.v1",
+  "shards": [
+    {
+      "apparent_bytes": 5358221856,
+      "fetched_bytes": 3697277472,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 61,
+      "ranges": 14,
+      "shard": "model-00001-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973096,
+      "fetched_bytes": 329808296,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00004-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5354098288,
+      "fetched_bytes": 304156272,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 27,
+      "ranges": 3,
+      "shard": "model-00007-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362972992,
+      "fetched_bytes": 329808192,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00009-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973008,
+      "fetched_bytes": 329808208,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00012-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973080,
+      "fetched_bytes": 329808280,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00015-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5354098280,
+      "fetched_bytes": 304156264,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 27,
+      "ranges": 3,
+      "shard": "model-00018-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5344548784,
+      "fetched_bytes": 193943472,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 18,
+      "ranges": 2,
+      "shard": "model-00020-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5353623672,
+      "fetched_bytes": 135909496,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 10,
+      "ranges": 1,
+      "shard": "model-00021-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362972992,
+      "fetched_bytes": 329808192,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00023-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973064,
+      "fetched_bytes": 329808264,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00026-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362731784,
+      "fetched_bytes": 883215112,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 53,
+      "ranges": 5,
+      "shard": "model-00029-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973184,
+      "fetched_bytes": 329808384,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00032-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362972992,
+      "fetched_bytes": 329808192,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00034-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973016,
+      "fetched_bytes": 329808216,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00037-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5354098216,
+      "fetched_bytes": 304156200,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 27,
+      "ranges": 3,
+      "shard": "model-00040-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973160,
+      "fetched_bytes": 329808360,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00043-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362972992,
+      "fetched_bytes": 329808192,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00045-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973000,
+      "fetched_bytes": 329808200,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00048-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5354098200,
+      "fetched_bytes": 304156184,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 27,
+      "ranges": 3,
+      "shard": "model-00051-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973152,
+      "fetched_bytes": 329808352,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00054-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5361260904,
+      "fetched_bytes": 126769512,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 16,
+      "ranges": 2,
+      "shard": "model-00056-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5353688600,
+      "fetched_bytes": 203083288,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 12,
+      "ranges": 1,
+      "shard": "model-00057-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5354097856,
+      "fetched_bytes": 304155840,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 27,
+      "ranges": 3,
+      "shard": "model-00059-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973064,
+      "fetched_bytes": 329808264,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00062-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5354098264,
+      "fetched_bytes": 304156248,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 27,
+      "ranges": 3,
+      "shard": "model-00065-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973216,
+      "fetched_bytes": 329808416,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00068-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362972992,
+      "fetched_bytes": 329808192,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00070-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973048,
+      "fetched_bytes": 329808248,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00073-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5354098248,
+      "fetched_bytes": 304156232,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 27,
+      "ranges": 3,
+      "shard": "model-00076-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973200,
+      "fetched_bytes": 329808400,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00079-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362972992,
+      "fetched_bytes": 329808192,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00081-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973032,
+      "fetched_bytes": 329808232,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00084-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5354098040,
+      "fetched_bytes": 304156024,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 27,
+      "ranges": 3,
+      "shard": "model-00087-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973128,
+      "fetched_bytes": 329808328,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00090-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362972992,
+      "fetched_bytes": 329808192,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00092-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973016,
+      "fetched_bytes": 329808216,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00095-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362973096,
+      "fetched_bytes": 329808296,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00098-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5354098280,
+      "fetched_bytes": 304156264,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 27,
+      "ranges": 3,
+      "shard": "model-00101-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5361415448,
+      "fetched_bytes": 395359512,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 25,
+      "ranges": 3,
+      "shard": "model-00103-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5354106360,
+      "fetched_bytes": 304164344,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00106-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362972744,
+      "fetched_bytes": 329807944,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00109-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362972824,
+      "fetched_bytes": 329808024,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00112-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5356708288,
+      "fetched_bytes": 71885248,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 15,
+      "ranges": 2,
+      "shard": "model-00114-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5366143376,
+      "fetched_bytes": 232315280,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 12,
+      "ranges": 1,
+      "shard": "model-00115-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 5362972664,
+      "fetched_bytes": 329807864,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 28,
+      "ranges": 3,
+      "shard": "model-00117-of-00120.safetensors",
+      "sparse": true
+    },
+    {
+      "apparent_bytes": 4173417528,
+      "fetched_bytes": 1455508536,
+      "full_shard_sha256_verifiable": false,
+      "nonrouted_tensors": 369,
+      "ranges": 7,
+      "shard": "model-00120-of-00120.safetensors",
+      "sparse": true
+    }
+  ],
+  "shards_referenced": 47,
+  "sparse_disclosure": "shards are sparse: only the safetensors header and the non-routed tensor byte ranges are materialized; full-shard sha256 cannot be verified on this tree by construction. Binding: config/index verified against the sealed full-shard-sha256 inventory; the loader's exact-load report and the sealed panel-number reproduction gate the content downstream.",
+  "total_fetched_bytes": 19341658936
+}

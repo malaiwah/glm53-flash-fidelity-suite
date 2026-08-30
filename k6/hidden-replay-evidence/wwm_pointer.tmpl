@@ -1,0 +1,7 @@
+- The head can also be moved **out of the capture** entirely: capture the
+  pre-head hidden state and apply the head offline. On this lane that is
+  measurably equivalent to storing logits — mean `KL(live || replayed)`
+  `{{MEAN}}`, top-1 agreement `{{TOP1}}`, panel-mean shift `{{PANEL_DELTA}}`
+  over {{RUNS}} bitwise-identical cold runs — which is what licenses a
+  {{HIDDEN_MB}} MB same-lane teacher in place of {{LOGITS_GIB}} GiB of logits.
+  The qualification is per-stack, not universal: see `k6/HIDDEN-REPLAY.md`.
