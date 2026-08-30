@@ -1,0 +1,23 @@
+{"config_sha256": "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca", "index_sha256": "5fd47a926aefce0f2c917f42523e5e0f3c87e23e389e767c3681536a62f5cf5e", "num_hidden_layers": 78, "repo": "zai-org/GLM-5.3-BF16", "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639", "stage": "source", "tensors": 59585, "total_size": 1506659919872}
+{"kept_tensors": 836, "layers": 4, "shards": 9, "stage": "plan"}
+{"apparent_bytes": 5342821416, "fetch_bytes": 5342817280, "kept_tensors": 35, "requests": 20, "shard": "model-00001-of-00282.safetensors", "stage": "shard_plan"}
+{"apparent_bytes": 5351970840, "fetch_bytes": 67108864, "kept_tensors": 1, "requests": 1, "shard": "model-00002-of-00282.safetensors", "stage": "shard_plan"}
+{"apparent_bytes": 5362896104, "fetch_bytes": 801797632, "kept_tensors": 17, "requests": 3, "shard": "model-00038-of-00282.safetensors", "stage": "shard_plan"}
+{"apparent_bytes": 5366406816, "fetch_bytes": 931147776, "kept_tensors": 38, "requests": 4, "shard": "model-00075-of-00282.safetensors", "stage": "shard_plan"}
+{"apparent_bytes": 5360347104, "fetch_bytes": 5360320512, "kept_tensors": 213, "requests": 20, "shard": "model-00076-of-00282.safetensors", "stage": "shard_plan"}
+{"apparent_bytes": 5360347104, "fetch_bytes": 5360320512, "kept_tensors": 213, "requests": 20, "shard": "model-00077-of-00282.safetensors", "stage": "shard_plan"}
+{"apparent_bytes": 5360346952, "fetch_bytes": 5360320512, "kept_tensors": 213, "requests": 20, "shard": "model-00078-of-00282.safetensors", "stage": "shard_plan"}
+{"apparent_bytes": 5366406816, "fetch_bytes": 2723956736, "kept_tensors": 105, "requests": 11, "shard": "model-00079-of-00282.safetensors", "stage": "shard_plan"}
+{"apparent_bytes": 293618224, "fetch_bytes": 12288, "kept_tensors": 1, "requests": 1, "shard": "model-00282-of-00282.safetensors", "stage": "shard_plan"}
+{"fetch_bytes": 25947802112, "fetch_gb": 25.948, "saved_gb": 17.217, "stage": "budget", "whole_shard_bytes": 43165161376, "whole_shard_gb": 43.165}
+{"bytes": 2684354560, "chunks": 100, "chunks_done": 10, "mb_per_s": 59.2, "stage": "progress"}
+{"bytes": 5141490688, "chunks": 100, "chunks_done": 20, "mb_per_s": 82.4, "stage": "progress"}
+{"bytes": 7679742464, "chunks": 100, "chunks_done": 30, "mb_per_s": 80.4, "stage": "progress"}
+{"bytes": 10364097024, "chunks": 100, "chunks_done": 40, "mb_per_s": 83.1, "stage": "progress"}
+{"bytes": 13040062976, "chunks": 100, "chunks_done": 50, "mb_per_s": 84.8, "stage": "progress"}
+{"bytes": 15724417536, "chunks": 100, "chunks_done": 60, "mb_per_s": 85.4, "stage": "progress"}
+{"bytes": 18400383488, "chunks": 100, "chunks_done": 70, "mb_per_s": 86.4, "stage": "progress"}
+{"bytes": 21084738048, "chunks": 100, "chunks_done": 80, "mb_per_s": 89.6, "stage": "progress"}
+{"bytes": 23492280832, "chunks": 100, "chunks_done": 90, "mb_per_s": 90.3, "stage": "progress"}
+{"bytes": 25947802112, "chunks": 100, "chunks_done": 100, "mb_per_s": 91.6, "stage": "progress"}
+{"dest": "/Users/mbelleau/Projects/glm53-stageA/ckpt", "elapsed_seconds": 293.2, "fetched_bytes": 25947802112, "kept_tensors": 836, "receipt": "/Users/mbelleau/Projects/glm53-stageA/truncated-receipt.json", "stage": "done"}
