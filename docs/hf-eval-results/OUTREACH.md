@@ -15,7 +15,7 @@ PR against
     name: "fidelity-kld",
     description:
         "Distribution-fidelity measurement: full-vocabulary KL divergence between a candidate model and a reference model on frozen token IDs, teacher-forced, fp64. Used to measure what quantization costs. Lower is better.",
-    url: "https://github.com/malaiwah/glm53-flash-fidelity-suite",
+    url: "https://github.com/malaiwah/quant-fidelity-suite",
 },
 ```
 
@@ -92,9 +92,9 @@ token IDs and the reference identity; model repos would carry scores in
 > runs produce identical means) and every number ships with a digest-pinned
 > receipt.
 >
-> Repo: https://github.com/malaiwah/glm53-flash-fidelity-suite (MIT)
+> Repo: https://github.com/malaiwah/quant-fidelity-suite (MIT)
 > Registry: https://huggingface.co/datasets/malaiwah/quant-fidelity-registry
-> Method: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/WHAT-WE-MEASURE.md
+> Method: https://github.com/malaiwah/quant-fidelity-suite/blob/main/WHAT-WE-MEASURE.md
 
 ---
 

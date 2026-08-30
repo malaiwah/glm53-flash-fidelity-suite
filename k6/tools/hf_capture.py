@@ -848,7 +848,7 @@ def default_card_body(args, manifest, scope) -> str:
         "bin/fidelity-dataset verify <this directory>",
         "```",
         "",
-        "Full specification: <https://github.com/malaiwah/glm53-flash-fidelity-suite/"
+        "Full specification: <https://github.com/malaiwah/quant-fidelity-suite/"
         "blob/main/docs/FIDELITY-DATASET-SPEC.md>",
         "",
     ]

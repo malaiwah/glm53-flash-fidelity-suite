@@ -4,7 +4,7 @@
 **His standard:** `eval/kld/` in `huggingface.co/brandonmusic/GLM-5.3-Flash-tr3-4bpw`,
 governed by `kld quantization fidelity report.md`
 (sha256 `692ff9e50bc70e716f1a94f1d9a4f3fb2c6d797f639dc8da84b17b069a20b9fc`)
-**Our side:** `github.com/malaiwah/glm53-flash-fidelity-suite`, `registry/`, `bin/jointstd/`
+**Our side:** `github.com/malaiwah/quant-fidelity-suite`, `registry/`, `bin/jointstd/`
 **Our frozen protocol:** `registry/protocol/glm53-joint-kld-protocol.v1.json`
 file `80df521eb46fba68538dd90aa3f2baf22b1e440b8b560555646ff9bbeb35961b`,
 scoring `20ea68c0c730a9d2444148b234a610a5821a50dfa9980e2446c02723317b5e98`

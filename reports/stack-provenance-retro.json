@@ -1,7 +1,7 @@
 {
   "schema": "malaiwah.glm53-stack-provenance-retro.v1",
   "generated_utc": "2026-08-29T00:00:00Z",
-  "purpose": "Retroactive stack disclosure for the sealed GLM-5.3-Flash fidelity rows, answering a community reviewer's questions ('What vLLM runner is used, do you record what specific kernels are used? Do you enable enforce-eager?') with per-row, per-fact, source-attributed evidence — by digest. Rows measured AFTER 2026-08-29 embed a live stack fingerprint (malaiwah.stack-fingerprint.v1) instead; this file exists because the sealed rows predate it. Method and refusability rule: WHAT-WE-MEASURE.md section 7 in the harness repo (github.com/malaiwah/glm53-flash-fidelity-suite).",
+  "purpose": "Retroactive stack disclosure for the sealed GLM-5.3-Flash fidelity rows, answering a community reviewer's questions ('What vLLM runner is used, do you record what specific kernels are used? Do you enable enforce-eager?') with per-row, per-fact, source-attributed evidence — by digest. Rows measured AFTER 2026-08-29 embed a live stack fingerprint (malaiwah.stack-fingerprint.v1) instead; this file exists because the sealed rows predate it. Method and refusability rule: WHAT-WE-MEASURE.md section 7 in the harness repo (github.com/malaiwah/quant-fidelity-suite).",
   "source_legend": {
     "receipt_field": "the value is a field of a published receipt, named by that receipt's digest",
     "code_default_at_pinned_commit": "the value follows necessarily from the harness code at the named commit (including hard refusal gates), which is invariant over the capture window",

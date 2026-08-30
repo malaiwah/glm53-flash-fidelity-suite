@@ -128,7 +128,7 @@ model-index:
       name: quant-fidelity-registry
       url: https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/viewer/measurements?q=measurement--glm53.k8-8bpw-stream.brandonmusic-final25.clean17
 x_fidelity:
-  spec: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
+  spec: https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
   spec_version: fidelity-provenance/v1
   role: quant
   reference_model: zai-org/GLM-5.3-Flash-BF16
@@ -279,7 +279,7 @@ official FP8 release's footprint, at 1.66× lower divergence.
 >
 > Full recompute, with per-domain tables, paired intervals and provenance:
 > [`reports/clean-scope-recompute.json`](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/blob/main/reports/clean-scope-recompute.json).
-> Working: [PROTOCOL-ALIGNMENT.md](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/PROTOCOL-ALIGNMENT.md) §4.
+> Working: [PROTOCOL-ALIGNMENT.md](https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/PROTOCOL-ALIGNMENT.md) §4.
 >
 > **One protocol note, not a correction.** His protocol masks the 24 padded
 > `lm_head` columns before the log-softmax; ours never has. Measured on his real
@@ -289,7 +289,7 @@ official FP8 release's footprint, at 1.66× lower divergence.
 > significant figure. For scale, our own sealed-vs-streaming bridge is 8.5e-6 and
 > the window-clustered SE on this panel is 3.19e-3. No correction and no bias
 > disclosure is warranted; we are adopting masking anyway. Script and receipts:
-> [`bin/padded_column_study.py`](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/bin/padded_column_study.py).
+> [`bin/padded_column_study.py`](https://github.com/malaiwah/quant-fidelity-suite/blob/main/bin/padded_column_study.py).
 
 
 **Mean KLD(teacher ‖ K8) = 0.012384191023436866** over the full sealed panel
@@ -326,7 +326,7 @@ per-window KLD scatter has sd 7.2e-3 (K6) / 6.9e-3 (K8), and even the paired
 per-window K6−K8 delta has sd 2.0e-3, against an effect of 1.33e-3. On one unlucky window (`window-0000`)
 K8 appeared *worse* than K6; over the full panel it wins decisively. Never
 quote a single-window KLD as a rate comparison —
-[full write-up](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/k6/K8-ANOMALY.md).
+[full write-up](https://github.com/malaiwah/quant-fidelity-suite/blob/main/k6/K8-ANOMALY.md).
 
 ### Quantization-attributable error (the floor removed)
 
@@ -345,7 +345,7 @@ differing expert-combine orders). Two cold runs, identical means. Removing it:
 only 1.11x — K8 removes ~60% of the divergence K6 leaves behind. Raw KLD
 understates differences between good quants because the floor is common to
 both. Method, receipts and the ways this subtraction can be misused:
-[BF16-FLOOR.md](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/k6/BF16-FLOOR.md).
+[BF16-FLOOR.md](https://github.com/malaiwah/quant-fidelity-suite/blob/main/k6/BF16-FLOOR.md).
 
 ## What this is (and is not)
 
@@ -355,7 +355,7 @@ both. Method, receipts and the ways this subtraction can be misused:
   with a disclosed patch series. His published core admits K3/K4/K5, so **K8 is
   a declared rate extension** — our encoder was verified **byte-identical** to
   his sealed core across 120 encodes / 624 MiB / 0 differing bytes
-  ([evidence](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/k6/fallback/closure-comparison.json),
+  ([evidence](https://github.com/malaiwah/quant-fidelity-suite/blob/main/k6/fallback/closure-comparison.json),
   [issue #1](https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw/issues/1)).
 - **Serving runtime:** use
   [`malaiwah/glm52-exl3-vast`](https://github.com/malaiwah/glm52-exl3-vast)
@@ -416,7 +416,7 @@ calibration captures, and teacher panel by
 [collaboration thread](https://huggingface.co/brandonmusic/GLM-5.3-Flash-tr3-4bpw/discussions/1).
 Trellis codec and kernels by [turboderp](https://github.com/turboderp-org/exllamav3).
 Every tool, patch, receipt and the full campaign log:
-[malaiwah/glm53-flash-fidelity-suite](https://github.com/malaiwah/glm53-flash-fidelity-suite).
+[malaiwah/quant-fidelity-suite](https://github.com/malaiwah/quant-fidelity-suite).
 Comparable measurements across quants:
 [quant-fidelity-registry](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry).
 

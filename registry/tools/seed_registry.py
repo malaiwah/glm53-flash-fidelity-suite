@@ -38,7 +38,7 @@ V = L.SCHEMA_VERSION
 # bytes, because those bytes are in the repository and are the same everywhere.
 HARNESS_TOOL_VERSIONS = {"python": "3.9.6", "numpy": "2.0.2", "torch": None}
 HARNESS_REPOSITORY = {
-    "url": "https://github.com/malaiwah/glm53-flash-fidelity-suite",
+    "url": "https://github.com/malaiwah/quant-fidelity-suite",
     # The tree the estimator was read from when these intervals were computed.
     # commit_role=parent, dirty=true: a change cannot record its own sha, so the
     # honest pointer is the commit this work was based on, and the code_digests
@@ -3642,7 +3642,7 @@ PIPELINES += [
              "malaiwah three-step fidelity dataset (capture / capture / compare), "
              "hf-transformers engine",
              ["capture", "scorer", "aggregator"],
-             "https://github.com/malaiwah/glm53-flash-fidelity-suite", None,
+             "https://github.com/malaiwah/quant-fidelity-suite", None,
              "bin/fidelity_dataset.py + k6/tools/hf_capture.py", MAL("toolchain-author"),
              [disc("record_note", "info",
                    "Capture and comparison are separated: each side runs one transformers "
@@ -3663,7 +3663,7 @@ PIPELINES += [
 
 def build_measurements_fruit(artifacts_map):
     M = lambda *a, **k: measurement(*a, artifacts_map=artifacts_map, **k)
-    GH = "https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/registry/protocol/fruit/"
+    GH = "https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/fruit/"
     ds_sources = [
         src("dataset_card", FRUIT_ROOT_DS, None,
             "reference capture: dataset_sha256 f56674f9..., capture_content_digest b417acc2..."),

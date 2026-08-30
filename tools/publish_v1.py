@@ -106,7 +106,7 @@ def build_card(root: Path) -> str:
           "Teacher-force your quant over `suite/tokens/`, capture final-norm hidden",
           "states (one context per forward), replay against `reference-bf16-shard0`",
           "through `head/head.safetensors`. Harness, runbook, and the full",
-          "captain's-log journal: https://github.com/malaiwah/glm53-flash-fidelity-suite",
+          "captain's-log journal: https://github.com/malaiwah/quant-fidelity-suite",
           "",
           "Produced autonomously overnight on rented 8x H200. Contact: malaiwah."]
     return "\n".join(L) + "\n"

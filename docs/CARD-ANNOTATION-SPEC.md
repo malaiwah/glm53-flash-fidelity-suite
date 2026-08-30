@@ -55,7 +55,7 @@ lane, role, head identity, and where the receipt lives:
 
 ```yaml
 x_fidelity:
-  spec: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/CARD-ANNOTATION-SPEC.md
+  spec: https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/CARD-ANNOTATION-SPEC.md
   spec_version: fidelity-provenance/v1
   role: quant                          # or: root
   reference_model: zai-org/GLM-5.3-Flash-BF16
@@ -216,7 +216,7 @@ after community usage — the validator accepts both and the generator emits the
 
 ```yaml
 x_fidelity:
-  spec: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
+  spec: https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
   spec_version: fidelity-provenance/v1
   role: quant                       # root | quant | fidelity-dataset
   reference_model: zai-org/GLM-5.3-Flash-BF16

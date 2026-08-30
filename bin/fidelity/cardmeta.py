@@ -37,7 +37,7 @@ from . import common
 _HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(_HERE))
 
-SPEC_URL = ("https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/"
+SPEC_URL = ("https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/"
             "FIDELITY-DATASET-SPEC.md")
 SPEC_VERSION = "fidelity-provenance/v1"
 REGISTRY_DATASET = "malaiwah/quant-fidelity-registry"

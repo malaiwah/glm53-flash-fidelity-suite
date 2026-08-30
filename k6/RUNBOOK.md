@@ -497,7 +497,7 @@ Repos (exact names, decided):
   `reports/exl3-k6/` (packed-kld, five-run, runtime receipts, tokenwise-KLD
   vectors, comparison table, deviations register, patch series).
 * Tools: patch series + driver tools pushed to the existing
-  `github.com/malaiwah/glm53-flash-fidelity-suite` repo.
+  `github.com/malaiwah/quant-fidelity-suite` repo.
 
 README cards MUST carry the upstream model license verbatim: the weight repos
 are derivatives of zai-org/GLM-5.3-Flash-BF16 — set the HF `license` metadata

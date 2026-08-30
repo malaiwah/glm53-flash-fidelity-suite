@@ -212,7 +212,7 @@ def main() -> int:
     A("## Reproducing it")
     A("")
     A("```bash")
-    A("git clone https://github.com/malaiwah/glm53-flash-fidelity-suite /home/suite")
+    A("git clone https://github.com/malaiwah/quant-fidelity-suite /home/suite")
     A("bash /home/suite/k6/tools/hidden_replay_stage.sh setup     # venv, pinned pipeline, selftest")
     A("bash /home/suite/k6/tools/hidden_replay_stage.sh fetch     # ~305 GB, head sha re-verified")
     A("bash /home/suite/k6/tools/hidden_replay_stage.sh verify    # sealed receipts + L1 ladder")

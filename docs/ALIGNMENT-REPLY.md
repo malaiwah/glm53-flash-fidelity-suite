@@ -4,7 +4,7 @@ Ten messages, each under Discord's 2000-character limit, in order. Message 10 is
 optional (it is the licence question) and can be sent as a DM instead.
 
 Full working: `docs/PROTOCOL-ALIGNMENT.md` in
-`github.com/malaiwah/glm53-flash-fidelity-suite`.
+`github.com/malaiwah/quant-fidelity-suite`.
 
 ---
 

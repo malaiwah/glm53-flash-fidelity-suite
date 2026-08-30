@@ -314,8 +314,8 @@ Attribution is a column, not a footnote: *measured by us*, *measured by us (thei
 
 | Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
 |---|---|---:|---:|---|---:|---|---|---|
-| **GLM-5.2-SIQ-Fruit BF16 (the reference export)** _(measurement floor)_ | `bf16` | 10.1 GB | **0** | -- | 100.00 % | 2 runs, bitwise identical | measured by us | [receipt](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/registry/protocol/fruit/comparison.fruit-bf16-selfcompare-floor.heldout-v1.json) |
-| GLM-5.2-SIQ-Fruit (exl3-trellis K3/K4 routed experts) | `exl3-trellis @3.375` | 3.1 GB | **0.0387375** | -- | 87.98 % | 1 run, unevidenced | measured by us | [receipt](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/registry/protocol/fruit/comparison.fruit-siq-exl3-k3k4.heldout-v1.json) |
+| **GLM-5.2-SIQ-Fruit BF16 (the reference export)** _(measurement floor)_ | `bf16` | 10.1 GB | **0** | -- | 100.00 % | 2 runs, bitwise identical | measured by us | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/fruit/comparison.fruit-bf16-selfcompare-floor.heldout-v1.json) |
+| GLM-5.2-SIQ-Fruit (exl3-trellis K3/K4 routed experts) | `exl3-trellis @3.375` | 3.1 GB | **0.0387375** | -- | 87.98 % | 1 run, unevidenced | measured by us | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/fruit/comparison.fruit-siq-exl3-k3k4.heldout-v1.json) |
 
 <details><summary>Disclosures for the rows above (5)</summary>
 

@@ -144,7 +144,7 @@ model-index:
           name: quant-fidelity-registry
           url: https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/viewer/measurements?q=measurement--glm53.k6-6bpw-stream.brandonmusic-final25
 x_fidelity:
-  spec: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
+  spec: https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
   spec_version: fidelity-provenance/v1
   role: quant
   reference_model: zai-org/GLM-5.3-Flash-BF16

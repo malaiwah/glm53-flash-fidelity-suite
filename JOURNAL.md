@@ -66,7 +66,7 @@ fs-on-VM confirmed empirically (2.0T at /home/jl_fs, writable). Driver
 ## 2026-08-27 ~01:20 — Publishing armed
 HF token verified: malaiwah, write role (rotation after session mandatory —
 token transited chat). GitHub repo created and pushed:
-github.com/malaiwah/glm53-flash-fidelity-suite (pre-flight r4). Publish stage
+github.com/malaiwah/quant-fidelity-suite (pre-flight r4). Publish stage
 generates the dataset card from live receipts at publish time.
 
 ## 2026-08-27 ~23:52–00:11 — Prep downloads (L4, $0.44/h)
@@ -146,7 +146,7 @@ vm_setup green -> heartbeat -> pipeline.sh (BUDGET_USD=450): restore 643 GB at
 1.3 GB/s -> gen_check -> pace probe -> BF16 capture -> sentinels -> qualify ->
 activations -> Brandon cross-check -> free_bf16 (numeric gates) -> FP8 leg ->
 replay (the headline number) -> package -> publish to
-malaiwah/glm53-flash-fidelity-suite-v1 + calibration-activations-v1 ->
+malaiwah/quant-fidelity-suite-v1 + calibration-activations-v1 ->
 deliverables home -> pause. Spend so far: prep ~$1.5, H200 ~$15.
 
 ## 2026-08-27 01:32 — vm_setup GREEN; PIPELINE LAUNCH

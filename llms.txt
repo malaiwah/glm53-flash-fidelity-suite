@@ -40,35 +40,35 @@ wrong; mixing them silently is.
 
 ## Start here
 
-- [WHAT-WE-MEASURE.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/WHAT-WE-MEASURE.md): the definitive answer to *what* a number here is — the measured quantity, whether the lm_head is included (yes in the computation, no in the quantization), the two lanes, floors, and the comparability rules. Read this before citing any number.
-- [README.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/README.md): repository overview and the copy-paste measurement recipes.
-- [registry README](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/registry/README.md): the measurement tables, grouped by comparability key, generated from the data (never hand-written).
+- [WHAT-WE-MEASURE.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/WHAT-WE-MEASURE.md): the definitive answer to *what* a number here is — the measured quantity, whether the lm_head is included (yes in the computation, no in the quantization), the two lanes, floors, and the comparability rules. Read this before citing any number.
+- [README.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/README.md): repository overview and the copy-paste measurement recipes.
+- [registry README](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/registry/README.md): the measurement tables, grouped by comparability key, generated from the data (never hand-written).
 
 ## Measure a quant
 
-- [bin/README.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/bin/README.md): every CLI, its flags, and what each refusal means.
+- [bin/README.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/bin/README.md): every CLI, its flags, and what each refusal means.
 - `bin/measure --model <hf-repo>`: one command. Resolves the revision and lineage, checks whether the artifact is **already measured** (prints the existing rows and exits rather than spending), picks the panel, and runs. Start with `--dry-run`.
 - `bin/measure-cloud`: rents a GPU, measures, tears down, and reports cost four ways. Teardown is guaranteed on success, failure, exception and Ctrl-C, with an on-instance watchdog as backstop.
 - `bin/measure-local`: your own hardware. Works on Apple Silicon via MPS (decode is bitwise identical to CPU) and on a 32 GB consumer CUDA card under a `--vram-budget` that is a hard bound.
 - `bin/registry-view`: query the published registry — filter by model, artifact, panel, lane, or who measured it — against a local clone or the live dataset.
-- [FIDELITY-DATASET-SPEC.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/docs/FIDELITY-DATASET-SPEC.md): the three-step model — capture a reference dataset, capture a candidate dataset, compare them. Captures are publishable artifacts, so a comparison needs no GPU and no access to our infrastructure.
+- [FIDELITY-DATASET-SPEC.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/docs/FIDELITY-DATASET-SPEC.md): the three-step model — capture a reference dataset, capture a candidate dataset, compare them. Captures are publishable artifacts, so a comparison needs no GPU and no access to our infrastructure.
 
 ## Machine-readable data (prefer these over parsing prose)
 
 - [measurements.jsonl](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/data/measurements.jsonl): every measurement with its comparability key, lane, run count, determinism evidence, disclosed deviations and receipt link.
 - [artifacts.jsonl](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/data/artifacts.jsonl), [panels.jsonl](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/data/panels.jsonl), [references.jsonl](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/data/references.jsonl), [pipelines.jsonl](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/raw/main/data/pipelines.jsonl): the records a measurement points at. A measurement cannot exist without a panel and a reference.
-- [JSON Schemas + invariants](https://github.com/malaiwah/glm53-flash-fidelity-suite/tree/main/registry/schema): the rules the validator enforces, including the ones that refuse cross-lane floor subtraction and unbacked determinism claims.
-- [CARD-ANNOTATION-SPEC.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/docs/CARD-ANNOTATION-SPEC.md): how a model card declares its fidelity provenance, as a conformant HF `model-index` result plus an `x_fidelity` block. Read a card's `model-index` to get its KLD without bespoke code.
+- [JSON Schemas + invariants](https://github.com/malaiwah/quant-fidelity-suite/tree/main/registry/schema): the rules the validator enforces, including the ones that refuse cross-lane floor subtraction and unbacked determinism claims.
+- [CARD-ANNOTATION-SPEC.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/docs/CARD-ANNOTATION-SPEC.md): how a model card declares its fidelity provenance, as a conformant HF `model-index` result plus an `x_fidelity` block. Read a card's `model-index` to get its KLD without bespoke code.
 
 ## Contribute a measurement
 
-- [registry/CONTRIBUTING.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/registry/CONTRIBUTING.md): what a receipt must contain, the submission template, and how you are credited. A measurement costs roughly $6–15 of rented GPU time.
+- [registry/CONTRIBUTING.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/registry/CONTRIBUTING.md): what a receipt must contain, the submission template, and how you are credited. A measurement costs roughly $6–15 of rented GPU time.
 - `bin/registry-submit <receipt.json>`: prints the row your receipt generates, its comparability key, and which existing rows it may be ranked against — or exactly which check it failed.
 
 ## Optional
 
-- [JOURNAL.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/JOURNAL.md): the campaign log — every decision, failure, cost, and 30+ numbered lessons. Useful if you are debugging a similar pipeline; most lessons are about ways a measurement can be silently wrong.
-- [k6/BF16-FLOOR.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/k6/BF16-FLOOR.md): how the floor was measured and the ways subtracting it can be misused.
-- [k6/K8-ANOMALY.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/k6/K8-ANOMALY.md): the investigation behind Rule 2 — why an 8-bit quant appeared worse than a 6-bit one on one window.
-- [docs/PROTOCOL-ALIGNMENT.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/docs/PROTOCOL-ALIGNMENT.md): element-by-element alignment with brandonmusic's proposed community standard, including where his protocol is stricter than ours and what we adopted.
-- [k6/HANDOFF.md](https://raw.githubusercontent.com/malaiwah/glm53-flash-fidelity-suite/main/k6/HANDOFF.md): twenty operational lessons for running a quantization or measurement campaign.
+- [JOURNAL.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/JOURNAL.md): the campaign log — every decision, failure, cost, and 30+ numbered lessons. Useful if you are debugging a similar pipeline; most lessons are about ways a measurement can be silently wrong.
+- [k6/BF16-FLOOR.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/k6/BF16-FLOOR.md): how the floor was measured and the ways subtracting it can be misused.
+- [k6/K8-ANOMALY.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/k6/K8-ANOMALY.md): the investigation behind Rule 2 — why an 8-bit quant appeared worse than a 6-bit one on one window.
+- [docs/PROTOCOL-ALIGNMENT.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/docs/PROTOCOL-ALIGNMENT.md): element-by-element alignment with brandonmusic's proposed community standard, including where his protocol is stricter than ours and what we adopted.
+- [k6/HANDOFF.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/k6/HANDOFF.md): twenty operational lessons for running a quantization or measurement campaign.

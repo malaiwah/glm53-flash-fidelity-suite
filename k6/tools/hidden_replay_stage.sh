@@ -11,7 +11,7 @@
 #
 # Layout (all overridable by env):
 #   HR_ROOT   /home/hr          work root
-#   SUITE     /home/suite       git clone of malaiwah/glm53-flash-fidelity-suite
+#   SUITE     /home/suite       git clone of malaiwah/quant-fidelity-suite
 #   PIPE      $HR_ROOT/pipeline brandonmmusic-max/glm-5.3-flash-exl3-4bpw @ pin + patches-v2 0001-0011
 #   BF16      $HR_ROOT/models/bf16       sparse non-routed tree (fetch_nonrouted_sparse.py)
 #   PACKED    $HR_ROOT/packed/k6         published K6 payload store (TR3-partsbin-v1, k6/)

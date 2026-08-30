@@ -220,7 +220,7 @@ model-index:
       name: quant-fidelity-registry
       url: https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/viewer/measurements?q=measurement--glm53.k6-6bpw.brandonmusic-final25.clean17
 x_fidelity:
-  spec: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
+  spec: https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
   spec_version: fidelity-provenance/v1
   role: quant
   reference_model: zai-org/GLM-5.3-Flash-BF16
@@ -422,7 +422,7 @@ FP8's footprint.
 >
 > Full recompute, with per-domain tables, paired intervals and provenance:
 > [`reports/clean-scope-recompute.json`](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/blob/main/reports/clean-scope-recompute.json).
-> Working: [PROTOCOL-ALIGNMENT.md](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/PROTOCOL-ALIGNMENT.md) §4.
+> Working: [PROTOCOL-ALIGNMENT.md](https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/PROTOCOL-ALIGNMENT.md) §4.
 >
 > **One protocol note, not a correction.** His protocol masks the 24 padded
 > `lm_head` columns before the log-softmax; ours never has. Measured on his real
@@ -432,7 +432,7 @@ FP8's footprint.
 > significant figure. For scale, our own sealed-vs-streaming bridge is 8.5e-6 and
 > the window-clustered SE on this panel is 3.19e-3. No correction and no bias
 > disclosure is warranted; we are adopting masking anyway. Script and receipts:
-> [`bin/padded_column_study.py`](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/bin/padded_column_study.py).
+> [`bin/padded_column_study.py`](https://github.com/malaiwah/quant-fidelity-suite/blob/main/bin/padded_column_study.py).
 
 
 **Mean KLD(teacher ‖ K6) = 0.013723 nats over the full sealed panel (25
@@ -477,7 +477,7 @@ differing expert-combine orders). Two cold runs, identical means. Removing it:
 only 1.11x — K8 removes ~60% of the divergence K6 leaves behind. Raw KLD
 understates differences between good quants because the floor is common to
 both. Method, receipts and the ways this subtraction can be misused:
-[BF16-FLOOR.md](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/k6/BF16-FLOOR.md).
+[BF16-FLOOR.md](https://github.com/malaiwah/quant-fidelity-suite/blob/main/k6/BF16-FLOOR.md).
 
 ## What this is (and is not)
 
@@ -521,7 +521,7 @@ inputs came back **120/120 encodes byte-identical — 624 MiB of packed trellis,
 admits only K3/K4/K5, so K6/K8 are a *declared rate extension*, not a
 substitution; driving his sealed primitives past that admission constant
 reproduces our bytes exactly. Fidelity impact is identically zero. Evidence:
-[closure-comparison.json](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/k6/fallback/closure-comparison.json),
+[closure-comparison.json](https://github.com/malaiwah/quant-fidelity-suite/blob/main/k6/fallback/closure-comparison.json),
 [issue #1](https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw/issues/1)), K4-KL gate satisfied via a disclosed bridge
 document carrying his real published K4 receipt hashes, qualification at EP8
 (his reader default EP4). The five-run qualification receipts land here when
@@ -566,7 +566,7 @@ calibration captures, and teacher panel by
 [collaboration thread](https://huggingface.co/brandonmusic/GLM-5.3-Flash-tr3-4bpw/discussions/1)).
 Trellis codec and kernels by [turboderp](https://github.com/turboderp-org/exllamav3).
 Campaign log, tools, and every patch:
-[malaiwah/glm53-flash-fidelity-suite](https://github.com/malaiwah/glm53-flash-fidelity-suite).
+[malaiwah/quant-fidelity-suite](https://github.com/malaiwah/quant-fidelity-suite).
 
 ## Serving — live-qualified turnkey profile
 

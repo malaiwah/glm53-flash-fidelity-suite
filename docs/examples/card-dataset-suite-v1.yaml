@@ -20,7 +20,7 @@ tags:
   - hidden-states
   - glm
 x_fidelity:
-  spec: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
+  spec: https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/FIDELITY-DATASET-SPEC.md
   spec_version: fidelity-provenance/v1
   role: fidelity-dataset
   captured_model:
