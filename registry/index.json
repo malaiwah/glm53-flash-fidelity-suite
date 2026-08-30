@@ -4,7 +4,7 @@
       "file": "data/artifacts.jsonl",
       "record_count": 37,
       "schema": "schema/artifact.schema.json",
-      "sha256": "ff3c3c35086083aff1b1a86f9059acbd7f2101d9791e67aa108bccbd53575846"
+      "sha256": "d94db00138c50c591d691a562fcd6316f4571d7c7b09d952bdf313e6cc1e564c"
     },
     "measurements": {
       "file": "data/measurements.jsonl",
@@ -254,13 +254,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-08-30T07:28:10+00:00",
+  "generated_at": "2026-08-30T08:15:28+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-08-30T07:28:10+00:00",
+    "last_run_at": "2026-08-30T08:15:28+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }

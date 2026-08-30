@@ -69,14 +69,22 @@ DIONE_SUMMARIES = (
     DIONE_SUMMARY,
     "malaiwah.glm53-dione-3.0bpw-packed-kld-summary.v1",
 )
-# Stock-exllamav3 (turboderp) releases scored through the SAME streaming
-# harness, via stream_score.py --source exl3hf.  Shape-identical to the Dione
-# summary; what differs is where the artifact pins live (artifact_repo /
-# artifact_revision rather than dione_repo / dione_revision) and that these
-# artifacts quantize their own lm_head, which the row must disclose.
-TURBO_SUMMARIES = (
+# Releases stored in the STOCK-exllamav3 HF layout, scored through the SAME
+# streaming harness via stream_score.py --source exl3hf.  Shape-identical to the
+# Dione summary; what differs is where the artifact pins live (artifact_repo /
+# artifact_revision rather than dione_repo / dione_revision).
+#
+# The family is a SET and it is keyed on the STORAGE layout, which is what picks
+# the reader -- not on the producer and not on the scope.  turboderp's releases
+# are full-scope with a 6-bit head; vcruz305's K2 pack is the same storage with
+# the MCG codebook, a routed-experts-only scope and a NATIVE BF16 head.  The
+# adapter already reads `declared_head_bits` off the receipt rather than
+# asserting a head policy, so both are described correctly by the same code and
+# neither inherits the other's identity.
+EXL3HF_SUMMARIES = (
     "malaiwah.glm53-turbo-4.05bpw-packed-kld-summary.v1",
     "malaiwah.glm53-turbo-3.05bpw-packed-kld-summary.v1",
+    "malaiwah.glm53-vcruz-k2-2bpw-packed-kld-summary.v1",
 )
 # TR3-published releases (brandonmusic's EXL3/MCG layout and its byte-identical
 # mirrors) scored through the SAME streaming harness, via stream_score.py
@@ -171,7 +179,7 @@ REPORT_FAMILIES = ("glm53flash-fidelity-report/2", "glm53flash-fidelity-report/3
 CROSSCHECK_FAMILIES = ("glm53flash-crosscheck/2",)
 OWN_SCHEMAS = set([PACKED_RECEIPT, FIVE_COLD_RUN, STREAM_VERDICT]
                   + list(DIONE_SUMMARIES)
-                  + list(STREAM_SUMMARIES) + list(TURBO_SUMMARIES)
+                  + list(STREAM_SUMMARIES) + list(EXL3HF_SUMMARIES)
                   + list(TR3_SUMMARIES)
                   + list(REPORT_FAMILIES) + list(CROSSCHECK_FAMILIES))
 FOREIGN_SCHEMAS = {FOREIGN_REPEATED, FOREIGN_WINDOW, FOREIGN_TP2}
@@ -372,13 +380,16 @@ def adapt_turbo(receipt, path):
     Two things this family states that the Dione one does not, and that the row
     must therefore carry rather than lose:
 
-      * declared_head_bits.  These artifacts quantize their own lm_head (stock
-        exllamav3 does; TR3 does not).  head_policy stays "native_head" because
+      * declared_head_bits.  READ, never assumed: turboderp's stock releases
+        quantize their own lm_head, TR3 does not, and vcruz305's K2 pack
+        declares head_bits 16 and keeps it native too.  head_policy stays
+        "native_head" because
         that field describes how the head is APPLIED -- natively, from the
         artifact's own weights, with no shared replay -- and the fact that
         those weights are themselves quantized is ARTIFACT identity. It is
         disclosed here so no reader has to infer it from a bit count.
-      * the codebook (mul1, not mcg) and the exllamav3 version that wrote it.
+      * the codebook -- mul1 on turboderp's releases, mcg on vcruz305's -- and
+        the exllamav3-compatible quantizer version that wrote it.
 
     The lane is not read from the schema string: like K8 and native-BF16, this
     family's name carries no lane marker, so --lane supplies it.
@@ -1923,7 +1934,7 @@ def main():
                 adapted = adapt_stream_summary(loaded)
             elif schemas & set(DIONE_SUMMARIES):
                 adapted = adapt_dione(loaded[0][0], loaded[0][1])
-            elif schemas & set(TURBO_SUMMARIES):
+            elif schemas & set(EXL3HF_SUMMARIES):
                 adapted = adapt_turbo(loaded[0][0], loaded[0][1])
             elif schemas & set(TR3_SUMMARIES):
                 adapted = adapt_tr3(loaded[0][0], loaded[0][1])

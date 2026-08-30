@@ -1158,10 +1158,30 @@ ARTIFACTS = [
              "quant",
              hf("Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw",
                 "024db9f7e9871e8efdf21538ba55af7442be3cd5", "hf_api"),
-             "exl3", "4bpw", 175642157752,
+             # M4 normalization: this is the only rung of the measured GLM-5.3-Flash
+             # ladder that reported a WEIGHT-FILE sum where turboderp's, 0xSero's and
+             # vcruz305's rows report an all-files sum, so the size column was not
+             # like-for-like. It is repo_all_files now (175,715,854,761 over 144 files
+             # at 024db9f7); the safetensors sum stays in the note because THAT is the
+             # quantity byte-identical to brandonmusic's original, and his row keeps
+             # repo_weight_files precisely because his repo is unpinned -- an all-files
+             # sum for a moving revision is not a fact.
+             "exl3", "4bpw", 175715854761,
              codec("exl3-mcg", 4.0, None, tool="exllamav3", version="0.0.43"),
              EXL3_SCOPE_UNIFORM(4.0), BRANDON("quantizer"),
              [src("url",
+                  "https://huggingface.co/api/models/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw"
+                  "?blobs=true&revision=024db9f7e9871e8efdf21538ba55af7442be3cd5",
+                  None,
+                  "the size on this record: 144 files, all-files sum 175,715,854,761 "
+                  "(weights.size_bytes, basis repo_all_files); safetensors sum "
+                  "175,642,157,752, which is the quantity byte-identical to "
+                  "brandonmusic's original and what this row previously reported. "
+                  "Re-based to all-files in M4 so the four MEASURED rungs of this "
+                  "ladder share one axis; brandonmusic's own row keeps "
+                  "repo_weight_files because his repo is not pinned to a revision and "
+                  "an all-files sum for a moving tree is not a fact."),
+              src("url",
                   "https://huggingface.co/api/models/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw"
                   "/revision/024db9f7e9871e8efdf21538ba55af7442be3cd5?blobs=true",
                   None,
@@ -1228,7 +1248,7 @@ ARTIFACTS = [
                    "audited GLM-5.3 TP model load/inference receipt'), not the offline "
                    "single-device decode this registry's measurement performs; its "
                    "storage_checkpoint_verified is true.")],
-             weights_extra={"size_basis": "repo_weight_files", "shard_count": 120},
+             weights_extra={"size_basis": "repo_all_files", "shard_count": 120},
              derived_from_artifact_ref=A_BF16_A6,
              availability={"status": "public",
                            "uri": "https://huggingface.co/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw"},
