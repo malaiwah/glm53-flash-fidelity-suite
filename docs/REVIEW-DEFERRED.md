@@ -68,6 +68,17 @@ has been overtaken by a campaign edit.
 
 ## SEC-01 — command injection into a rented GPU box that holds a live HF token
 
+> **APPLIED 2026-08-30 (M4), after the campaign that locked these files ended.** The
+> `eval` is gone (NUL-delimited bash array, `mapfile -d`), `load_panel_descriptor`
+> validates `repo_id` and `revision` at ingestion, and `hfmeta` carries a comment
+> recording that `repo_meta`/`resolve_revision` are load-bearing for shell safety.
+> Regression: `bin/selftest_shell_guards.sh` drives the REAL `fetch_panel` stage with
+> a hostile `panel.repo_id` and a stub `hf`. Against the unpatched tree the
+> substitution executes and the recorded argv shows only `org/panel`, exactly as filed;
+> against the patched tree nothing runs and the hostile string arrives as ONE literal
+> argument. The rung SKIPS loudly where bash is older than 4.4 rather than passing on a
+> shell that cannot run the code under test.
+
 **File:** `bin/stage_measure.sh:199-201` (`fetch_panel`)
 **Severity:** medium as the code stands (see reachability), but it is an unsafe `eval` one
 refactor away from RCE on a token-bearing paid box.
@@ -142,6 +153,16 @@ is not removed by a future refactor.
 
 ## CLI-01 — the teardown reads "the API call failed" as "the instance was destroyed"
 
+> **APPLIED 2026-08-30 (M4).** `_confirm_gone` (via `list_instances`, which propagates
+> `JLError`) replaces `jl.get(mid) is None`; destruction is accepted only on a positive
+> `True`, unexpected exceptions in the destroy loop fall through to the next attempt,
+> and an exception escaping a destroy STEP now sets `leaked = True` so `_drop_lease`
+> keeps the lease for the reaper. The reviewer's `get_strict()` was NOT used, for the
+> reason recorded below. Regression: `bin/selftest_teardown.py` (new; there was no test
+> for `Teardown` at all) covers healthy destroy, total outage, outage on the confirm
+> only, and a raising destroy step. Against the unpatched tree it reproduces the filed
+> repro: destruction declared on attempt 1 of 5 with zero successful API interaction.
+
 **File:** `bin/measure_cloud.py:291-311` (`Teardown._destroy_instance`), with
 `bin/fidelity/jlapi.py:230-237`
 
@@ -210,6 +231,14 @@ outage). There is no selftest for `Teardown` at all today.
 
 ## CLI-02 (part b) — the teardown marks itself done before it does anything
 
+> **APPLIED 2026-08-30 (M4)**, and it stopped being defence-in-depth on the way: when
+> the harness reaped M4's controller mid-run, the teardown reached `pulling receipts`
+> and stopped, so `_shred_secrets` never ran and the 0600 HF token sat on a rented box
+> for an hour with nothing able to retry it. `_running` is now a separate re-entrancy
+> flag cleared in a `finally`; `done` is set only after the steps loop was attempted, so
+> a second `run()` RETRIES; and the SIG_IGN restore moved inside a try that opens before
+> the handlers are installed, so a raise cannot leave the process immune to `kill`.
+
 **File:** `bin/measure_cloud.py:160-190` (`Teardown.run`)
 
 **Claim.** `self.done = True` is set at line 165, then `con.say("")` / `con.step("teardown
@@ -260,6 +289,14 @@ install the handlers after the announcement.
 ---
 
 ## CLI-11 / SEC-08 — unfiltered `tar.extractall` of an archive built on a rented box
+
+> **APPLIED 2026-08-30 (M4)**, using the explicit member pass as the load-bearing
+> control with `filter="data"` added only where `tarfile.data_filter` exists, and with
+> the link rejection BEFORE the `resolve_inside` check for the reason filed. Regression:
+> `bin/selftest_teardown.py` builds a `receipts.tar.gz` with an absolute member, a `..`
+> member, and a symlink-plus-write-through, and asserts the victim outside `outdir` is
+> untouched while the legitimate member still extracts. Against the unpatched tree the
+> victim's contents become `evil`.
 
 **File:** `bin/measure_cloud.py:256-257` (`_pull_receipts`)
 
@@ -421,6 +458,14 @@ unscoped fetch, wrong globs and revision drift together.
 # MEDIUM
 
 ## CC-07 — the packed_root pre-flight trap is disarmed by any `.materialization/` file
+
+> **APPLIED 2026-08-30 (M4)** — the predicate only. `store_published` now names the five
+> things `stream_score` actually dereferences. Decision 2 in this entry stands and was
+> NOT taken: the outer `if info.surface == "packed"` guard is unchanged, so this fixes
+> the predicate without the live blast radius, and the code says so. Regression:
+> `bin/selftest_teardown.py` runs four repo shapes through the real `sniff_surface` and
+> asserts the trap fires on a bare packed repo, on shard receipts, on a stray
+> `payload_notes.txt` and on a half-store, and stays silent on a complete store.
 
 **File:** `bin/fidelity/hfmeta.py:501-504`
 

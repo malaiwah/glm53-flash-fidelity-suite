@@ -57,8 +57,14 @@ t "jl list envelope (T11: an unreadable answer is not an empty account)" \
 # rental scripts, driven against real fixtures -- a scratch git repo, a truncated
 # patch series, malformed BUDGET_USD values. These guards used to be `A && B`
 # lists, which `set -e` exempts, so they asserted nothing.
-t "shell guards (T10: SH-02/03/14/19/21/23 fixtures)" \
+t "shell guards (T10: SH-02/03/14/19/21/23 + SEC-01 fixtures)" \
                                            0 bash bin/selftest_shell_guards.sh
+# The class that GUARANTEES a rented GPU is destroyed had no test at all, which
+# is how CLI-01 (an API outage read as "destroyed") and CLI-02(b) (a teardown
+# that marks itself done before doing anything) survived a full review cycle.
+# Fake `jl`, no rental, no network.
+t "teardown guarantees (CLI-01/02b/11, CC-07, L52)" \
+                                           0 "$PY" bin/selftest_teardown.py
 t "zero-floor identity (T4; SKIPs inside when numpy/torch absent)" \
                                            0 "$PY" bin/selftest_zero_floor.py
 # The three-step fidelity dataset tool: format+seals+refusals, the comparator's

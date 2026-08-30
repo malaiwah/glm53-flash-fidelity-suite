@@ -52,6 +52,7 @@ from fidelity.common import (                          # noqa: E402
     Console, human_bytes, human_duration, parse_duration, read_json,
     redact, register_secret, sha256_file, utcnow, write_json,
 )
+from fidelity.dsformat import resolve_inside                 # noqa: E402
 from fidelity.engines import EngineUnpinned, build_invocation, load_engines  # noqa: E402
 from fidelity.hfmeta import (                          # noqa: E402
     HFError, RepoMeta, fetch_file, fetch_json, hf_token, load_panel_descriptor,
@@ -114,6 +115,9 @@ class Teardown:
         self.fs_root = "/home/jl_fs/fidelity"
         self.lease_path: Optional[Path] = None
         self.done = False
+        # CLI-02(b): re-entrancy is a SEPARATE flag from completion, so a
+        # teardown that raises mid-way does not mark itself finished.
+        self._running = False
         self.leaked = False
         # --hold-on-failure: on a FAILED exit, pull the receipts and shred the
         # secrets as always, but leave the instance alive so the half-finished
@@ -159,15 +163,30 @@ class Teardown:
                 pass
 
     def run(self, reason: str = "") -> None:
+        # CLI-02(b).  `done` used to be set HERE, before the announcement and
+        # before the steps.  Anything that raised in between -- a console write
+        # to a closed pty raises OSError(EIO), not only BrokenPipeError --
+        # skipped every destroy with `done` already True, so the atexit hook and
+        # the outer `finally` both no-op'd and the instance was never destroyed.
+        # The re-entrancy guard is a SEPARATE flag, cleared in a finally, and
+        # `done` is set only after the steps loop has been attempted.  A second
+        # run() therefore RETRIES rather than no-ops, which is safe:
+        # _destroy_instance clears machine_id on confirmed destruction and
+        # _destroy_fs early-returns once fs_id is None.
         with self._lock:
-            if self.done:
+            if self.done or self._running:
                 return
-            self.done = True
+            self._running = True
         if self.machine_id is None and self.fs_id is None:
             # Nothing to destroy, but a lease may already be on disk: it is
             # written BEFORE `jl create` on purpose. Leaving it behind makes
             # `reaper --list` report a phantom job forever.
-            self._drop_lease()
+            try:
+                self._drop_lease()
+            finally:
+                with self._lock:
+                    self._running = False
+                    self.done = True
             return
         # Printing "do NOT interrupt" is not a defence.  A second ^C re-enters
         # the signal handler, finds done=True, no-ops, and sys.exit()s straight
@@ -175,21 +194,29 @@ class Teardown:
         # instance at the exact moment the user was trying to stop the bill.
         # Take the choice away for the duration instead of asking for it.
         prev = {}
-        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-            try:
-                prev[sig] = signal.signal(sig, signal.SIG_IGN)
-            except (ValueError, OSError):
-                pass
-        hold = bool(self.hold_on_failure and not self.completed)
-        self.con.say("")
-        self.con.step("teardown%s (^C is ignored until this finishes)"
-                      % ((" -- " + reason) if reason else ""))
-        steps = [self._pull_receipts, self._collect_env, self._shred_secrets]
-        if hold:
-            self.held = True
-        else:
-            steps += [self._destroy_instance, self._destroy_fs, self._drop_lease]
+        steps_attempted = False
+        # CLI-02(b), second half.  The SIG_IGN restore used to live in the
+        # `finally` of the steps try, so anything that raised between installing
+        # the handlers and reaching that try left SIGINT/SIGTERM/SIGHUP ignored
+        # for the life of the process -- the process that just leaked a GPU,
+        # immune to ^C and to `kill`.  The try now opens BEFORE the handlers are
+        # installed, so the restore and the flag reset run on every path out.
         try:
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                try:
+                    prev[sig] = signal.signal(sig, signal.SIG_IGN)
+                except (ValueError, OSError):
+                    pass
+            hold = bool(self.hold_on_failure and not self.completed)
+            self.con.say("")
+            self.con.step("teardown%s (^C is ignored until this finishes)"
+                          % ((" -- " + reason) if reason else ""))
+            steps = [self._pull_receipts, self._collect_env, self._shred_secrets]
+            if hold:
+                self.held = True
+            else:
+                steps += [self._destroy_instance, self._destroy_fs, self._drop_lease]
+            steps_attempted = True
             for step in steps:
                 try:
                     step()
@@ -199,12 +226,22 @@ class Teardown:
                     # individually wrapped instead of the block as a whole.
                     self.con.warn("teardown step %s: %s"
                                   % (step.__name__, redact(str(exc))))
+                    # CLI-01, second half: an exception escaping a DESTROY step
+                    # used to leave `leaked` False, and _drop_lease then deleted
+                    # the lease, so the backstop never looked at the box again.
+                    if step in (self._destroy_instance, self._destroy_fs):
+                        self.leaked = True
         finally:
             for sig, handler in prev.items():
                 try:
                     signal.signal(sig, handler)
                 except (ValueError, OSError):
                     pass
+            with self._lock:
+                self._running = False
+                # `done` marks a teardown that RAN its steps. A teardown that
+                # raised before them is not done, and a second run() must retry.
+                self.done = steps_attempted
         if self.held:
             self.con.say("")
             self.con.say("*" * 78)
@@ -253,8 +290,51 @@ class Teardown:
             if local.is_file():
                 import tarfile
 
+                # CLI-11 / SEC-08.  This was `tf.extractall(self.outdir)`,
+                # annotated "our own archive".  It is not: it is built by a
+                # `tar czf` on a RENTED instance and arrives through the vendor
+                # control plane.  On python3.9 -- this tree's stated stock
+                # target -- extractall applies no filter and warns about
+                # nothing, and `outdir` defaults to ./fidelity-runs/<job> under
+                # the CWD the README tells you to run from, so two `..` reach
+                # the suite's own source.  The explicit pass below is the
+                # load-bearing one; `filter="data"` is added only where it
+                # exists (PEP 706 landed in 3.9.17, and passing it on an older
+                # 3.9 raises TypeError).
+                #
+                # ORDER MATTERS: links are rejected BEFORE the realpath check.
+                # realpath runs before extraction, when the symlink does not
+                # exist yet, so both `receipts/link` and `receipts/link/x` test
+                # as inside the root -- and then the extraction follows the link
+                # and overwrites the victim.
+                #
+                # Skip-with-a-warning, never raise: a raise lands in the
+                # `except` below and falls back to `jl download -r`, which this
+                # docstring records as having lost a whole measurement twice.
+                _plain = {tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE}
+                out_root = str(self.outdir.resolve())
                 with tarfile.open(local) as tf:
-                    tf.extractall(self.outdir)          # noqa: S202 - our own archive
+                    safe = []
+                    for m in tf.getmembers():
+                        if m.issym() or m.islnk() or m.type not in _plain:
+                            self.con.warn(
+                                "receipts.tar.gz: refusing %s member %s"
+                                % ("link" if (m.issym() or m.islnk()) else "special",
+                                   redact(m.name)))
+                            continue
+                        if os.path.isabs(m.name) or ".." in Path(m.name).parts:
+                            self.con.warn("receipts.tar.gz: refusing escaping "
+                                          "member %s" % redact(m.name))
+                            continue
+                        try:
+                            resolve_inside(out_root, m.name, "receipts.tar.gz")
+                        except Exception as exc:        # noqa: BLE001
+                            self.con.warn("receipts.tar.gz: refusing member %s (%s)"
+                                          % (redact(m.name), redact(str(exc))))
+                            continue
+                        safe.append(m)
+                    kw = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+                    tf.extractall(self.outdir, members=safe, **kw)  # noqa: S202
                 n = len(list(dest.rglob("*")))
                 self.con.ok("receipts pulled", "%d entries via %s"
                             % (n, local.name))
@@ -288,6 +368,30 @@ class Teardown:
                      % (self.fs_root, self.fs_root), timeout=120)
         self.con.ok("secrets shredded")
 
+    def _confirm_gone(self, mid: int) -> Optional[bool]:
+        """True gone, False alive, None unknown.
+
+        CLI-01.  `jl get` CANNOT answer this.  On a healthy API a destroyed
+        instance is a 404, which `JLApi.get()` turns into None -- and so is
+        every transient outage, because `get()` swallows JLError.  Reading
+        `None` as "destroyed" declared success on attempt 1 of 5 with zero
+        successful API interaction, cleared machine_id, left `leaked` False and
+        deleted the lease, so the reaper never looked at the box again.
+
+        `list_instances()` propagates JLError by contract (see its docstring:
+        it must not answer "none" when it does not know), which is exactly the
+        third state this needs.  Making `get()` strict instead would be worse:
+        `get() -> None` IS the normal, load-bearing signal for a successful
+        destroy, so a strict variant would fire the leak banner on every run.
+        """
+        try:
+            alive = {i.machine_id for i in self.jl.list_instances()}
+        except JLError:
+            return None
+        except Exception:                               # noqa: BLE001
+            return None
+        return mid not in alive
+
     def _destroy_instance(self) -> None:
         if self.machine_id is None:
             return
@@ -296,16 +400,30 @@ class Teardown:
             return
         mid = self.machine_id
         for attempt in range(5):
+            destroy_raised = None
             try:
                 self.jl.destroy(mid)
             except JLError as exc:
+                destroy_raised = exc
                 self.con.warn("destroy attempt %d: %s" % (attempt + 1, redact(str(exc))))
+            except Exception as exc:                    # noqa: BLE001
+                # An unexpected exception must fall through to the next attempt,
+                # never escape with leaked=False.
+                destroy_raised = exc
+                self.con.warn("destroy attempt %d raised %s: %s"
+                              % (attempt + 1, type(exc).__name__, redact(str(exc))))
             time.sleep(min(2 ** attempt, 20))
-            inst = self.jl.get(mid)
-            if inst is None or inst.status.lower() in ("destroyed", "terminated", ""):
+            gone = self._confirm_gone(mid)
+            if gone is True:
                 self.con.ok("instance destroyed", str(mid))
                 self.machine_id = None
                 return
+            if gone is None:
+                self.con.warn("destroy attempt %d: could not READ the account, so "
+                              "destruction is unconfirmed (not assumed)" % (attempt + 1))
+            elif destroy_raised is None:
+                self.con.warn("destroy attempt %d: instance %s is still listed"
+                              % (attempt + 1, mid))
         self.leaked = True
         self.con.say("")
         self.con.say("!" * 78)
@@ -1595,12 +1713,29 @@ def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
         # the local process watching it, and the whole run had to be redone.
         # With setsid the stage keeps going and the controller re-attaches to it
         # by done-marker on the next poll, or on a later resume.
-        run = jl.run_job(
-            td.machine_id,
-            "nohup setsid bash %s/bin/stage_measure.sh %s "
-            ">>%s/logs/stage-%s.log 2>&1 </dev/null & echo launched %s"
-            % (td.fs_root, stage, td.fs_root, stage, stage))
-        run_id = (run or {}).get("run_id") or (run or {}).get("id")
+        # ATTACH BEFORE LAUNCH.  The stage's own guard is its done-marker,
+        # which by definition does not exist while the stage is RUNNING, so a
+        # controller that resumes into a live stage used to start a SECOND copy
+        # of it: two capture processes writing receipts/run-N/logits/ at once,
+        # which is not a crash but a corrupted measurement that looks finished.
+        # The probe that answers this already existed for the launcher's
+        # "succeeded" case (lesson 44, and note the `[s]tage_measure.sh` bracket
+        # class -- `pgrep -f` matches full command lines and the naive pattern
+        # finds the probe's own shell).  It just ran too late.  Observed on M4:
+        # the harness reaped the controller at 00:59 with 19 of 25 windows
+        # captured, and the only safe resume was to wait for the marker by hand.
+        run_id = None
+        if _stage_is_alive(jl, td, stage):
+            con.warn("stage %s is ALREADY RUNNING on %s -- attaching to it "
+                     "instead of launching a second copy"
+                     % (stage, td.machine_id))
+        else:
+            run = jl.run_job(
+                td.machine_id,
+                "nohup setsid bash %s/bin/stage_measure.sh %s "
+                ">>%s/logs/stage-%s.log 2>&1 </dev/null & echo launched %s"
+                % (td.fs_root, stage, td.fs_root, stage, stage))
+            run_id = (run or {}).get("run_id") or (run or {}).get("id")
         outcome = _await_stage(con, jl, td, run_id, stage, deadline)
         if outcome == "done":
             con.ok("stage %s" % stage, human_duration(time.time() - started))
@@ -1642,6 +1777,35 @@ def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
             r = jl.run_job(td.machine_id,
                            "bash %s/bin/stage_measure.sh setup" % td.fs_root)
             _await_stage(con, jl, td, (r or {}).get("run_id"), "setup", deadline)
+
+
+def _stage_is_alive(jl, td, stage: str) -> bool:
+    """Is `stage_measure.sh <stage>` running on the instance right now?
+
+    `[s]tage_measure` and NOT `stage_measure`: `pgrep -f` matches full command
+    lines, and this probe's own shell carries the pattern in ITS command line,
+    so the naive form finds itself and answers "alive" for a stage that never
+    existed (verified against a live instance: `pgrep -f 'stage_measure.sh
+    nosuchstage'` -> alive).  The bracket class matches the real process, whose
+    cmdline holds "stage_measure.sh", and not the probe, whose cmdline holds
+    "[s]tage_measure.sh".  JOURNAL lesson 36 / 44.
+
+    An unreadable instance answers False: the caller then LAUNCHES, and a
+    launch into an already-running stage is caught by the stage's own marker
+    on the next poll.  Answering True on no evidence would hang the controller
+    on a stage that is not there.
+    """
+    if td.machine_id is None or jl.dry:
+        return False
+    try:
+        out = jl.exec_stdout(
+            td.machine_id,
+            "pgrep -f '[s]tage_measure.sh %s' >/dev/null 2>&1 "
+            "&& echo alive || echo gone" % stage,
+            timeout=120, check=False)
+    except JLError:
+        return False
+    return (out or "").strip().splitlines()[-1:] == ["alive"]
 
 
 def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
@@ -1689,6 +1853,16 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
 
         # 2. the managed run's state.
         state, code = "", None
+        if run_id is None:
+            # ATTACHED, not launched: there is no managed run to ask about, so
+            # the marker checked above and the liveness probe are the only
+            # signals.  Do not fall through to the `state == ""` paths, which
+            # read an unknown run state.
+            if _stage_is_alive(jl, td, stage):
+                continue
+            con.warn("stage %s: attached to a live stage that has now exited "
+                     "without writing its done marker" % stage)
+            return "failed"
         if run_id:
             try:
                 st = jl.run_status(run_id)
@@ -1709,26 +1883,10 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
             # alive. Ask the instance, and compare the answer exactly -- a probe
             # whose output can be confused with its own command text answers
             # yes forever (that was M1's lesson 36).
-            alive = ""
-            try:
-                alive = jl.exec_stdout(
-                    td.machine_id,
-                    # `[s]tage_measure` and not `stage_measure`: pgrep -f
-                    # matches full command lines, and the probe's own shell
-                    # carries the pattern in ITS command line, so the naive
-                    # form finds itself and answers "alive" for a stage that
-                    # never existed (verified against the live instance:
-                    # `pgrep -f 'stage_measure.sh nosuchstage'` -> alive).
-                    # The bracket class matches the real process, whose
-                    # cmdline holds "stage_measure.sh", and not the probe,
-                    # whose cmdline holds "[s]tage_measure.sh". This is M1's
-                    # lesson 36 in a second disguise.
-                    "pgrep -f '[s]tage_measure.sh %s' >/dev/null 2>&1 "
-                    "&& echo alive || echo gone" % stage,
-                    timeout=120, check=False)
-            except JLError:
-                alive = ""
-            if alive.strip().splitlines()[-1:] == ["alive"]:
+            # ONE implementation of the probe (see _stage_is_alive): this
+            # used to be a second copy of the same pgrep, and two copies of a
+            # probe are two places for the bracket class to be dropped.
+            if _stage_is_alive(jl, td, stage):
                 continue
             con.warn("stage %s: no done marker and no live stage process "
                      "(launcher exit_code=%s)" % (stage, code))

@@ -45,6 +45,17 @@ class HFError(RuntimeError):
     pass
 
 
+# SECURITY NOTE (SEC-01).  `repo_meta` and `resolve_revision` below are not only
+# metadata helpers: `bin/stage_measure.sh`'s fetch_panel stage interpolates
+# `panel.repo_id` and `panel.revision` from job.json into a shell command on a
+# rented box that holds a live HF token.  The plan path calls `repo_meta` and
+# overwrites the revision with `resolve_revision`'s 40-hex result, which is why
+# an injecting value cannot survive a live run.  That guarantee is LOAD-BEARING;
+# do not make either call optional, cached-only or best-effort without first
+# re-reading docs/REVIEW-DEFERRED.md SEC-01.  `load_panel_descriptor` validates
+# the same two fields at ingestion as a second, independent backstop.
+
+
 def hf_token() -> Optional[str]:
     """Read the token from env or the standard cache, and register it."""
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
@@ -498,9 +509,28 @@ def sniff_surface(meta: RepoMeta) -> SurfaceInfo:
                 # capture time; if the payload store is not in the repo, the
                 # run dies before it touches a GPU.  Detect it here, where it
                 # costs nothing, instead of there, where it costs a rental.
-                store_published = any(
-                    p.startswith(".materialization/") or p.startswith("payload")
-                    for p in names
+                # CC-07.  The old predicate was
+                #   any(p.startswith(".materialization/") or p.startswith("payload"))
+                # and it disarmed the trap two ways.  `.materialization/shards/
+                # *.json` are shard RECEIPTS, not a payload store, and our own
+                # published K6/K8 repos ship 120 of them each; and
+                # `startswith("payload")` is a bare string prefix, so a file
+                # merely named `payload_notes.txt` disarmed it too.  What the
+                # consumer actually dereferences is named here instead
+                # (stream_score.py requires exactly these five things).
+                #
+                # NOTE, so nobody reads more into this than it does: inside
+                # `if info.surface == "packed"` this changes nothing observable
+                # today, because every publisher that ships `.materialization/`
+                # also ships exl3-mcg-storage-abi.json and is classified
+                # `tr3-published` above.  Widening that outer guard to every
+                # surface that dereferences a packed_root is a separate change
+                # with live blast radius; see docs/REVIEW-DEFERRED.md CC-07.
+                store_published = (
+                    any(p.startswith("payload-store/objects/") for p in names)
+                    and any(p.startswith("payload-store/choices/") for p in names)
+                    and {"contract.json", "inventory.json",
+                         "mtp-adapter-receipt.json"} <= set(names)
                 )
                 if info.surface == "packed" and not store_published:
                     info.problems.append(
@@ -640,10 +670,27 @@ def load_panel_descriptor(spec: Optional[str]) -> PanelDescriptor:
     path = Path(spec)
     if path.is_file():
         raw = json.loads(path.read_text(encoding="utf-8"))
+        # SEC-01 (companion).  These two strings travel verbatim into job.json
+        # and from there into a shell command on a rented box that holds a live
+        # HF token.  Validate them where they ENTER the tree, so a hostile value
+        # never reaches the shell at all.  This is a BACKSTOP, not the control:
+        # the control is that stage_measure.sh no longer `eval`s them, and
+        # resolve_revision's 40-hex guarantee is stronger still on the path that
+        # goes through the Hub.  Note the pattern deliberately excludes `/` in a
+        # revision -- a branch name with a slash is refused here rather than
+        # widened, because nothing in this suite pins a panel by branch.
+        repo_id = str(raw["repo_id"])
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$",
+                        repo_id):
+            raise HFError("panel descriptor repo_id %r is not an owner/name pair"
+                          % repo_id)
+        revision = str(raw.get("revision", "main"))
+        if not re.match(r"^[A-Za-z0-9._-]+$", revision):
+            raise HFError("panel descriptor revision %r is not a revision" % revision)
         return PanelDescriptor(
             panel_ref=raw["panel_ref"],
-            repo_id=raw["repo_id"],
-            revision=raw.get("revision", "main"),
+            repo_id=repo_id,
+            revision=revision,
             include=list(raw.get("include") or ["*"]),
             contexts=int(raw["contexts"]),
             positions_per_context=int(raw["positions_per_context"]),

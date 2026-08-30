@@ -205,16 +205,31 @@ fetch_panel)
   log "fetching panel $REPO @ $REV (include-scoped)"
   # Include-scoping is not an optimisation, it is the difference between 32 GB
   # and 1.3 TB. The globs come from the panel descriptor, never from a constant.
-  INCLUDES=$(python3 - "$CONF" <<'PY'
-import json, sys, shlex
+  # SEC-01.  This used to be an `eval`, which existed only to word-split
+  # $INCLUDES -- and gave $REPO and $REV a SECOND round of shell parsing on a
+  # box that holds a live HF token.  `panel.repo_id` reaches here verbatim from
+  # an operator-supplied --panel-descriptor, so a repo id containing $(...) ran
+  # as root, and the logged argv showed only the substituted result: an
+  # injection invisible in fetch_panel.log.  hfmeta.load_panel_descriptor now
+  # validates both fields at ingestion, but that is a backstop in another file
+  # and another language; the shell must not be parsing data at all.
+  #
+  # A NUL-delimited bash array also fixes a second, quieter bug: a newline
+  # inside an include pattern was silently split into two argv entries by word
+  # splitting.  Array elements must NOT be pre-quoted -- shlex.quote here would
+  # make the literal quotes part of the glob.  Needs bash 4.4+ for `mapfile -d`;
+  # the instance is Ubuntu bash 5.  Do not port this idiom to a macOS-local
+  # script, where bash 3.2 has no mapfile at all.
+  mapfile -d '' -t INCLUDES < <(python3 - "$CONF" <<'PY'
+import json, sys
 doc = json.load(open(sys.argv[1]))
 for pattern in doc.get("panel", {}).get("include", ["*"]):
-    print("--include", shlex.quote(pattern), end=" ")
+    sys.stdout.write("--include\0" + pattern + "\0")
 PY
-)
-  eval HF_HUB_ENABLE_HF_TRANSFER=1 HF_HOME="$FS/hf" \
+  )
+  HF_HUB_ENABLE_HF_TRANSFER=1 HF_HOME="$FS/hf" \
     "$VENV/bin/hf" download "$REPO" --repo-type dataset --revision "$REV" \
-      --local-dir "$PANEL" $INCLUDES >>"$LOGS/fetch_panel.log" 2>&1
+      --local-dir "$PANEL" "${INCLUDES[@]}" >>"$LOGS/fetch_panel.log" 2>&1
   du -sh "$PANEL" | tee -a "$LOGS/fetch_panel.log"
   # The sealed token-panel receipt names its 667 artifacts by ABSOLUTE producer
   # path and verifies each by digest. Stage them there now, where a miss is one

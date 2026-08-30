@@ -169,6 +169,90 @@ else
   no "SH-19 selftest_all's staging steps are counted"
 fi
 
+
+# ---------------------------------------------------------------- SEC-01
+# fetch_panel used to `eval` its download line, which existed only to word-split
+# $INCLUDES and gave $REPO/$REV a SECOND round of shell parsing on a rented box
+# holding a live HF token. This drives the REAL stage with a hostile
+# panel.repo_id and a stub `hf`, and asserts (a) nothing was executed and (b)
+# the hostile string arrived at `hf` as one literal argument.
+#
+# The fixed stage needs `mapfile -d`, i.e. bash 4.4+. macOS ships bash 3.2 as
+# /bin/bash, so find a modern one; if there is none, SKIP loudly rather than
+# passing on a shell that cannot run the code under test.
+MODERN_BASH=""
+if [ "${BASH_VERSINFO[0]:-0}" -gt 4 ] || \
+   { [ "${BASH_VERSINFO[0]:-0}" -eq 4 ] && [ "${BASH_VERSINFO[1]:-0}" -ge 4 ]; }; then
+  MODERN_BASH="$(command -v bash)"
+fi
+for cand in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+  [ -n "$MODERN_BASH" ] && break
+  [ -x "$cand" ] || continue
+  if "$cand" -c 'declare -p BASH_VERSINFO >/dev/null; [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 4 ]; }' 2>/dev/null; then
+    MODERN_BASH="$cand"
+  fi
+done
+
+if [ -z "$MODERN_BASH" ]; then
+  printf '  SKIP  %s\n' "SEC-01 needs bash 4.4+ (mapfile -d); none found on this host"
+else
+  S="$TMP/sec01"; FSD="$S/fs"; K6D="$S/k6"
+  mkdir -p "$FSD/.secrets" "$FSD/logs" "$K6D/venv/bin" "$S/bin"
+  PWNED="$S/PWNED.txt"
+  cat > "$K6D/venv/bin/hf" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$S/hf-argv.txt"
+exit 0
+STUB
+  chmod +x "$K6D/venv/bin/hf"
+  ln -sf "$(command -v python3)" "$K6D/venv/bin/python"
+  echo "not-a-real-token" > "$FSD/.secrets/hf_token"
+  cat > "$FSD/job.json" <<JSON
+{"panel": {"repo_id": "org/panel\$(id -un > $PWNED)",
+           "revision": "main\$(touch $PWNED.rev)",
+           "include": ["logits/window-*.safetensors", "*.json"]}}
+JSON
+  cp -R "$ROOT/bin/." "$S/bin/"
+  printf 'import sys\nprint("stage_panel_paths: stub")\n' > "$S/bin/stage_panel_paths.py"
+  FIDELITY_FS_ROOT="$FSD" FIDELITY_K6_ROOT="$K6D" \
+    "$MODERN_BASH" "$S/bin/stage_measure.sh" fetch_panel >"$S/stage.log" 2>&1 || true
+  if [ -e "$PWNED" ] || [ -e "$PWNED.rev" ]; then
+    no "SEC-01 fetch_panel does not execute a hostile panel.repo_id" \
+       "the substitution ran: $(cat "$PWNED" 2>/dev/null)"
+  else
+    ok "SEC-01 fetch_panel does not execute a hostile panel.repo_id"
+  fi
+  if grep -qF 'org/panel$(id -un > ' "$S/hf-argv.txt" 2>/dev/null; then
+    ok "SEC-01 the hostile string reaches hf as ONE literal argument"
+  else
+    no "SEC-01 the hostile string reaches hf as ONE literal argument" \
+       "argv: $(tr '\n' ' ' < "$S/hf-argv.txt" 2>/dev/null)"
+  fi
+  # and the ingestion backstop, in the other language
+  if python3 - "$ROOT" <<'PY'
+import json, sys, tempfile, pathlib
+sys.path.insert(0, sys.argv[1] + "/bin")
+from fidelity.hfmeta import load_panel_descriptor, HFError
+d = tempfile.mkdtemp()
+base = {"panel_ref": "p", "repo_id": "owner/name", "revision": "a" * 40,
+        "contexts": 25, "positions_per_context": 2047, "scored_positions": 51175}
+good = pathlib.Path(d, "g.json"); good.write_text(json.dumps(base))
+bad = pathlib.Path(d, "b.json")
+bad.write_text(json.dumps(dict(base, repo_id="org/panel$(id -un > /tmp/PWNED)")))
+load_panel_descriptor(str(good))          # a valid one must still load
+try:
+    load_panel_descriptor(str(bad))
+except HFError:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
+    ok "SEC-01 load_panel_descriptor refuses a repo_id that is not owner/name"
+  else
+    no "SEC-01 load_panel_descriptor refuses a repo_id that is not owner/name"
+  fi
+fi
+
 echo
 echo "selftest_shell_guards: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
