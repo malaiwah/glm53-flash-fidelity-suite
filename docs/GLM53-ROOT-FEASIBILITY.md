@@ -781,7 +781,23 @@ report, through `load_report()` and `refuse_on_load_report()`:
 | `error_msgs` | **ignored** | refuses, **not** overridable |
 | `conversion_errors` | **not even visible** | refuses, **not** overridable |
 | no report at all | read as a clean report | refuses, not overridable |
-| `unexpected_keys` | never recorded | `checkpoint_tensors_not_loaded` disclosure |
+| `unexpected_keys` | never recorded | **refuses** (`--allow-unexpected-tensors` overrides, forcing a BLOCKING disclosure) |
+
+**`unexpected_keys` was a disclosure and is now a refusal, as of M1.5.** The
+disclosure was written for the benign reading — GLM-5.3-BF16 ships an MTP layer
+`GlmMoeDsaForCausalLM` does not build, 791 tensors of it. M1 found the other
+reading: `Qwen/Qwen3.8-27B-FP8` loads with `unexpected: 64` because the
+producer's `modules_to_not_convert` lists `...mlp.gate` and
+`should_convert_module` matches it with a start-anchored `re.match`, so
+`...mlp.gate_proj` matched too. 65 of 65 `gate_proj` modules skipped FP8
+conversion, their block scales fell out as "unexpected", and the projection ran
+on fp8 bytes read as bf16 with the scale never applied. Nothing raised. The two
+readings are indistinguishable from inside the loader, so the tool refuses and
+makes the operator say which one it is. **Consequence for the GLM-5.3 root
+capture: it will need `--allow-unexpected-tensors` for the MTP layer, and the
+sealed dataset will carry `unexpected_tensors_overridden` at `blocking`.** That
+is a label on the dataset; it does not propagate into a comparison receipt and
+does not block a registry row.
 
 `conversion_errors` is reachable because `_FullLoadingReport` wraps
 `LoadStateDictInfo.to_dict` for the duration of the load — the method whose own

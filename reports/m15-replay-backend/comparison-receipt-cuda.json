@@ -1,0 +1,4955 @@
+{
+  "candidate": {
+    "capture_content_digest": "2376837de2e42561a196a3f33e25ab6e79471bed0f97c5949605656ca97504c3",
+    "dataset_id": "fidelity--qwen38-27b.malaiwah.root.bf16",
+    "dataset_sha256": "8a65836468ee50585d44a387f2a35cfe8a4a6cdb1508c154704b588ca59b280f",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723",
+      "source": "native",
+      "tensor_content_sha256": "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723"
+    },
+    "label": "candidate",
+    "lane": "local-cuda-budget",
+    "lane_identity_sha256": "5903a9ecad5ce1cd7e2f0fd33e9ea7ea7d2d5fe34c1c6fc304ab55b3e6569ea5",
+    "repository": "malaiwah/qwen38-27b-fidelity-root-v1",
+    "revision": null,
+    "role": "root",
+    "scope_digest": "attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "09b9136769e496917b4d0f59f29ddf1d584fb8c6fd792510813bf129ba34b9c2",
+    "weights": {
+      "artifact_ref": null,
+      "checkpoint_identity_sha256": "f28d26c4716affaee9a5bcaf18704c904be3c27b6dfd7ec6d9f13dec6b28be14",
+      "codec": null,
+      "config_sha256": "191e0af232104ed8b65258cf3fb2b842e288008baca7633c11b82a1ac7203aab",
+      "declared_bits": null,
+      "declared_head_bits": 16,
+      "index_sha256": null,
+      "model_ref": "model--qwen.qwen3.8-27b",
+      "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+      "quantized": false,
+      "repository": "Qwen/Qwen3.8-27B",
+      "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+    }
+  },
+  "comparability": {
+    "bias": null,
+    "class": "strict",
+    "key": null,
+    "key_inputs": null,
+    "same_lane": true,
+    "usable_as_floor": true
+  },
+  "comparator": {
+    "accumulation_dtype": "float64",
+    "bf16_reduced_precision_reduction": false,
+    "cublas_workspace_config": null,
+    "deterministic_algorithms": true,
+    "device": "cuda",
+    "estimator_backend": "torch:k6_kld_report._token_kld",
+    "head_applied_tensor_content_sha256": "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723",
+    "logprob_dtype": "float64",
+    "position_block": 128,
+    "replay_backend": "torch:cuda:float32",
+    "replay_env": {
+      "bf16_reduced_precision_reduction": false,
+      "device_capability": "12.0",
+      "device_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      "float32_matmul_precision": "highest",
+      "tf32": false
+    },
+    "replay_peak_device_bytes": 7129923584,
+    "short_circuited": true,
+    "source_file_hashes_verified": false,
+    "tensor_content_digests_verified": false,
+    "tf32": false,
+    "tool": {
+      "entrypoint": "bin/fidelity-dataset compare",
+      "note": "the fp64 estimator is k6_kld_report._token_kld, imported not copied, whenever torch is importable; estimator_backend records which path ran."
+    },
+    "two_pass": true,
+    "vocab_chunk": null
+  },
+  "comparison_kind": "reproduction_confirmation",
+  "context_depth_buckets": null,
+  "created_utc": "2026-08-30T16:33:43Z",
+  "determinism": {
+    "cold_start_per_run": null,
+    "distinct_evidence_hash_count": 1,
+    "evidence_hashes": [
+      "2376837de2e42561a196a3f33e25ab6e79471bed0f97c5949605656ca97504c3"
+    ],
+    "evidence_kind": "hidden_state_tensor_sha256",
+    "identical_across_runs": null,
+    "max_run_mean": 0.0,
+    "min_run_mean": 0.0,
+    "note": "one comparison of two sealed captures. identical_across_runs is null, not true: that claim needs two independently produced captures of the SAME weights (SC-2), which is a different receipt.",
+    "population_stddev_of_run_means": 0.0,
+    "run_count": 1,
+    "run_means": [
+      0.0
+    ]
+  },
+  "disclosures": [
+    {
+      "affects_comparability": false,
+      "code": "shared_reference_head",
+      "detail": "HEAD-1a: both captures declare the same lm_head tensor content digest (d922b751f014); one head applied to both sides is a shared APPLICATION of identical WEIGHTS.",
+      "severity": "info"
+    }
+  ],
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "head_policy": "shared_reference_head",
+    "logits_dtype": "bf16",
+    "softmax_note": "full vocabulary, torch.log_softmax in float64; no truncation, no top-k, no clamp. A non-finite intermediate is a hard refusal.",
+    "stack_relation": "same_stack",
+    "two_pass": true,
+    "vocab_chunk": null,
+    "zero_handling": "exact zero asserted, not rounded"
+  },
+  "format_version": 1,
+  "gates": {
+    "coverage": {
+      "detail": "512 of 512/512 declared records shared",
+      "overridden_by": null,
+      "passed": true
+    },
+    "form": {
+      "detail": "hidden vs hidden",
+      "overridden_by": null,
+      "passed": true
+    },
+    "geometry": {
+      "detail": "vocab_size 248320 equal; hidden_width 5120",
+      "overridden_by": null,
+      "passed": true
+    },
+    "head": {
+      "detail": "HEAD-1a: identical head content digest on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lane": {
+      "detail": "lane=local-cuda-budget vs local-cuda-budget",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lossy": {
+      "detail": "lossy_codec null on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "panel": {
+      "detail": "suite_token_hash_sha256 equal; 512 shared records; per-record token and mask digests equal; scoring_window equal",
+      "overridden_by": null,
+      "passed": true
+    },
+    "seal": {
+      "detail": "both manifests self-seal and checksums.txt verified",
+      "overridden_by": null,
+      "passed": true
+    },
+    "stack": {
+      "detail": "lane_identity equal / stack_fingerprint equal -> same_stack",
+      "overridden_by": null,
+      "passed": true
+    }
+  },
+  "high_kld_contexts": [
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 0,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0000"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 1,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0001"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 2,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0002"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 3,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0003"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 4,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0004"
+    }
+  ],
+  "kl": {
+    "max": 0.0,
+    "mean": 0.0,
+    "median": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "p99_9": 0.0
+  },
+  "kl_macro_stratum_mean": null,
+  "kl_micro_token_mean": 0.0,
+  "measurement_scope": {
+    "contexts": 512,
+    "covers_full_panel": true,
+    "position_filter": "all",
+    "positions_per_context": 2047,
+    "scored_positions": 1048064,
+    "subset_detail": null
+  },
+  "metric": {
+    "direction": "reference_to_candidate",
+    "direction_label": "KL(reference || candidate)",
+    "higher_is_better": false,
+    "name": "mean_tokenwise_kld",
+    "units": "nats",
+    "value": 0.0
+  },
+  "panel": {
+    "context_length": 2048,
+    "contexts": 512,
+    "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m",
+    "panel_token_sha256_legacy": "d0cdd562117373b17f23d6ba0cf9bc8e65200d1b5b06a76704e18bcb49363404",
+    "scored_positions": 1048064,
+    "scoring_window": {
+      "dropped_positions_total": 0,
+      "min_left_context_tokens": 1,
+      "policy": "every causal prediction position of every window is scored; nothing is dropped",
+      "score_from": 0,
+      "windowed": false
+    },
+    "suite_token_hash_sha256": "8847e99a855fab374c3b5fecc1777eabf61307c36782ed48f9fc77e7aca3e42f",
+    "tokenizer": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "Qwen/Qwen3.8-27B",
+      "repository": "Qwen/Qwen3.8-27B",
+      "revision": null,
+      "vocab_size": 248320
+    },
+    "tokenizer_candidate": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "Qwen/Qwen3.8-27B",
+      "repository": "Qwen/Qwen3.8-27B",
+      "revision": null,
+      "vocab_size": 248320
+    },
+    "tokenizer_identity_equal": true,
+    "tokenizer_reference": {
+      "add_special_tokens": false,
+      "chat_template_applied": false,
+      "id": "Qwen/Qwen3.8-27B",
+      "repository": "Qwen/Qwen3.8-27B",
+      "revision": null,
+      "vocab_size": 248320
+    }
+  },
+  "per_context": [
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 0,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0000"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 1,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0001"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 2,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0002"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 3,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0003"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 4,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0004"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0005"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 6,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0006"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 7,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0007"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 8,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0008"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 9,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0009"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 10,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0010"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 11,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0011"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 12,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0012"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 13,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0013"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 14,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0014"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 15,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0015"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 16,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0016"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 17,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0017"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 18,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0018"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 19,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0019"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 20,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0020"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 21,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0021"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 22,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0022"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 23,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0023"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 24,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0024"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 25,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0025"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 26,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0026"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 27,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0027"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 28,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0028"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 29,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0029"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 30,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0030"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 31,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0031"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 32,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0032"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 33,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0033"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 34,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0034"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 35,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0035"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 36,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0036"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 37,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0037"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 38,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0038"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 39,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0039"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 40,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0040"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 41,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0041"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 42,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0042"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 43,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0043"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 44,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0044"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 45,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0045"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 46,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0046"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 47,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0047"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 48,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0048"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 49,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0049"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 50,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0050"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 51,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0051"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 52,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0052"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 53,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0053"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 54,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0054"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 55,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0055"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 56,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0056"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 57,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0057"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 58,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0058"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 59,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0059"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 60,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0060"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 61,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0061"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 62,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0062"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 63,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0063"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 64,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0064"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 65,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0065"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 66,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0066"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 67,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0067"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 68,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0068"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 69,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0069"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 70,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0070"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 71,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0071"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 72,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0072"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 73,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0073"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 74,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0074"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 75,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0075"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 76,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0076"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 77,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0077"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 78,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0078"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 79,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0079"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 80,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0080"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 81,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0081"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 82,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0082"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 83,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0083"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 84,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0084"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 85,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0085"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 86,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0086"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 87,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0087"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 88,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0088"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 89,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0089"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 90,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0090"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 91,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0091"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 92,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0092"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 93,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0093"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 94,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0094"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 95,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0095"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 96,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0096"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 97,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0097"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 98,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0098"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 99,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0099"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 100,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0100"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 101,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0101"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 102,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0102"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 103,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0103"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 104,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0104"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 105,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0105"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 106,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0106"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 107,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0107"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 108,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0108"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 109,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0109"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 110,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0110"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 111,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0111"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 112,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0112"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 113,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0113"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 114,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0114"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 115,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0115"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 116,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0116"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 117,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0117"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 118,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0118"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 119,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0119"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 120,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0120"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 121,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0121"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 122,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0122"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 123,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0123"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 124,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0124"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 125,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0125"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 126,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0126"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 127,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0127"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 128,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0128"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 129,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0129"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 130,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0130"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 131,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0131"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 132,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0132"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 133,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0133"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 134,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0134"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 135,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0135"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 136,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0136"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 137,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0137"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 138,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0138"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 139,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0139"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 140,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0140"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 141,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0141"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 142,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0142"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 143,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0143"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 144,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0144"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 145,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0145"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 146,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0146"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 147,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0147"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 148,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0148"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 149,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0149"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 150,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0150"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 151,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0151"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 152,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0152"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 153,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0153"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 154,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0154"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 155,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0155"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 156,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0156"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 157,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0157"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 158,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0158"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 159,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0159"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 160,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0160"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 161,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0161"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 162,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0162"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 163,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0163"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 164,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0164"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 165,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0165"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 166,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0166"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 167,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0167"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 168,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0168"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 169,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0169"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 170,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0170"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 171,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0171"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 172,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0172"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 173,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0173"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 174,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0174"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 175,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0175"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 176,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0176"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 177,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0177"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 178,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0178"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 179,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0179"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 180,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0180"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 181,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0181"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 182,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0182"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 183,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0183"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 184,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0184"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 185,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0185"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 186,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0186"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 187,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0187"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 188,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0188"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 189,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0189"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 190,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0190"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 191,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0191"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 192,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0192"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 193,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0193"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 194,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0194"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 195,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0195"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 196,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0196"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 197,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0197"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 198,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0198"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 199,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0199"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 200,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0200"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 201,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0201"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 202,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0202"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 203,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0203"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 204,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0204"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 205,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0205"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 206,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0206"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 207,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0207"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 208,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0208"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 209,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0209"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 210,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0210"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 211,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0211"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 212,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0212"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 213,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0213"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 214,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0214"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 215,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0215"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 216,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0216"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 217,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0217"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 218,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0218"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 219,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0219"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 220,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0220"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 221,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0221"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 222,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0222"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 223,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0223"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 224,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0224"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 225,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0225"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 226,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0226"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 227,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0227"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 228,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0228"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 229,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0229"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 230,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0230"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 231,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0231"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 232,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0232"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 233,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0233"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 234,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0234"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 235,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0235"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 236,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0236"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 237,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0237"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 238,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0238"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 239,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0239"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 240,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0240"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 241,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0241"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 242,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0242"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 243,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0243"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 244,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0244"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 245,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0245"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 246,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0246"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 247,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0247"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 248,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0248"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 249,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0249"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 250,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0250"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 251,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0251"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 252,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0252"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 253,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0253"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 254,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0254"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 255,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0255"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 256,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0256"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 257,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0257"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 258,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0258"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 259,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0259"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 260,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0260"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 261,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0261"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 262,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0262"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 263,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0263"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 264,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0264"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 265,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0265"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 266,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0266"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 267,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0267"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 268,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0268"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 269,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0269"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 270,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0270"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 271,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0271"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 272,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0272"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 273,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0273"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 274,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0274"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 275,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0275"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 276,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0276"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 277,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0277"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 278,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0278"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 279,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0279"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 280,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0280"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 281,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0281"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 282,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0282"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 283,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0283"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 284,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0284"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 285,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0285"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 286,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0286"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 287,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0287"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 288,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0288"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 289,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0289"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 290,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0290"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 291,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0291"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 292,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0292"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 293,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0293"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 294,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0294"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 295,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0295"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 296,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0296"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 297,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0297"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 298,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0298"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 299,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0299"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 300,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0300"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 301,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0301"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 302,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0302"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 303,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0303"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 304,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0304"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 305,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0305"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 306,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0306"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 307,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0307"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 308,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0308"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 309,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0309"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 310,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0310"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 311,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0311"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 312,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0312"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 313,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0313"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 314,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0314"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 315,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0315"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 316,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0316"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 317,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0317"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 318,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0318"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 319,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0319"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 320,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0320"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 321,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0321"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 322,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0322"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 323,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0323"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 324,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0324"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 325,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0325"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 326,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0326"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 327,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0327"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 328,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0328"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 329,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0329"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 330,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0330"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 331,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0331"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 332,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0332"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 333,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0333"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 334,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0334"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 335,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0335"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 336,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0336"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 337,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0337"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 338,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0338"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 339,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0339"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 340,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0340"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 341,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0341"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 342,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0342"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 343,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0343"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 344,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0344"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 345,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0345"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 346,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0346"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 347,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0347"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 348,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0348"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 349,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0349"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 350,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0350"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 351,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0351"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 352,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0352"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 353,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0353"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 354,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0354"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 355,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0355"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 356,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0356"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 357,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0357"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 358,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0358"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 359,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0359"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 360,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0360"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 361,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0361"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 362,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0362"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 363,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0363"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 364,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0364"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 365,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0365"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 366,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0366"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 367,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0367"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 368,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0368"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 369,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0369"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 370,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0370"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 371,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0371"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 372,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0372"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 373,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0373"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 374,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0374"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 375,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0375"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 376,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0376"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 377,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0377"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 378,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0378"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 379,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0379"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 380,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0380"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 381,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0381"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 382,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0382"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 383,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0383"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 384,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0384"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 385,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0385"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 386,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0386"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 387,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0387"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 388,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0388"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 389,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0389"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 390,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0390"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 391,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0391"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 392,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0392"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 393,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0393"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 394,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0394"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 395,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0395"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 396,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0396"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 397,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0397"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 398,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0398"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 399,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0399"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 400,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0400"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 401,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0401"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 402,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0402"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 403,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0403"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 404,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0404"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 405,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0405"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 406,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0406"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 407,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0407"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 408,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0408"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 409,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0409"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 410,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0410"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 411,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0411"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 412,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0412"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 413,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0413"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 414,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0414"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 415,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0415"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 416,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0416"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 417,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0417"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 418,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0418"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 419,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0419"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 420,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0420"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 421,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0421"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 422,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0422"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 423,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0423"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 424,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0424"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 425,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0425"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 426,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0426"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 427,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0427"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 428,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0428"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 429,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0429"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 430,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0430"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 431,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0431"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 432,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0432"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 433,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0433"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 434,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0434"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 435,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0435"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 436,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0436"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 437,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0437"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 438,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0438"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 439,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0439"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 440,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0440"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 441,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0441"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 442,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0442"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 443,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0443"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 444,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0444"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 445,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0445"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 446,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0446"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 447,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0447"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 448,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0448"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 449,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0449"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 450,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0450"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 451,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0451"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 452,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0452"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 453,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0453"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 454,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0454"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 455,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0455"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 456,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0456"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 457,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0457"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 458,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0458"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 459,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0459"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 460,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0460"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 461,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0461"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 462,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0462"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 463,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0463"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 464,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0464"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 465,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0465"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 466,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0466"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 467,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0467"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 468,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0468"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 469,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0469"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 470,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0470"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 471,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0471"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 472,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0472"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 473,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0473"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 474,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0474"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 475,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0475"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 476,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0476"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 477,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0477"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 478,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0478"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 479,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0479"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 480,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0480"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 481,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0481"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 482,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0482"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 483,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0483"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 484,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0484"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 485,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0485"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 486,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0486"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 487,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0487"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 488,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0488"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 489,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0489"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 490,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0490"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 491,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0491"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 492,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0492"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 493,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0493"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 494,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0494"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 495,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0495"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 496,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0496"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 497,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0497"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 498,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0498"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 499,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0499"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 500,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0500"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 501,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0501"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 502,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0502"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 503,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0503"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 504,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0504"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 505,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0505"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 506,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0506"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 507,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0507"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 508,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0508"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 509,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0509"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 510,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0510"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 511,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0511"
+    }
+  ],
+  "per_domain": null,
+  "per_stratum": null,
+  "receipt_sha256": "811ae26a62de2f682ce8c75c7c56f27da58d8e4d353d6706503d5e6ff805d438",
+  "reference": {
+    "capture_content_digest": "2376837de2e42561a196a3f33e25ab6e79471bed0f97c5949605656ca97504c3",
+    "dataset_id": "fidelity--qwen38-27b.malaiwah.root.bf16",
+    "dataset_sha256": "8a65836468ee50585d44a387f2a35cfe8a4a6cdb1508c154704b588ca59b280f",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723",
+      "source": "native",
+      "tensor_content_sha256": "d922b751f014ee1139488cb94c0e164a1eb3da5c14048070ed1b784e00f92723"
+    },
+    "label": "reference",
+    "lane": "local-cuda-budget",
+    "lane_identity_sha256": "5903a9ecad5ce1cd7e2f0fd33e9ea7ea7d2d5fe34c1c6fc304ab55b3e6569ea5",
+    "repository": "malaiwah/qwen38-27b-fidelity-root-v1",
+    "revision": null,
+    "role": "root",
+    "scope_digest": "attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "09b9136769e496917b4d0f59f29ddf1d584fb8c6fd792510813bf129ba34b9c2",
+    "weights": {
+      "artifact_ref": null,
+      "checkpoint_identity_sha256": "f28d26c4716affaee9a5bcaf18704c904be3c27b6dfd7ec6d9f13dec6b28be14",
+      "codec": null,
+      "config_sha256": "191e0af232104ed8b65258cf3fb2b842e288008baca7633c11b82a1ac7203aab",
+      "declared_bits": null,
+      "declared_head_bits": 16,
+      "index_sha256": null,
+      "model_ref": "model--qwen.qwen3.8-27b",
+      "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+      "quantized": false,
+      "repository": "Qwen/Qwen3.8-27B",
+      "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+    }
+  },
+  "schema": "malaiwah.fidelity-comparison-receipt.v1",
+  "self_compare": {
+    "asserted_exact_zero": true,
+    "capture_content_digest_equal": true,
+    "expected_tokenwise_bytes": 8384640,
+    "expected_tokenwise_sha256": "8be5dccaf885d7dadca697c4d54cff60d1c8c8333b57761c31d882c9f9ec9e5d",
+    "force_compute_agreed": true,
+    "head_digest_equal": true,
+    "weights_identity_equal": true
+  },
+  "submission": {
+    "emitted": false,
+    "path": null,
+    "receipt_sha256": null,
+    "refusal": "comparison_kind is reproduction_confirmation, not measurement; bin/fidelity/receipt.py::_scan_for_unsubmittable is the second, independent refusal axis.",
+    "submission_schema": null
+  },
+  "tokenwise": {
+    "bytes": 8384640,
+    "path": "tokenwise-kld.npy",
+    "sha256": "8be5dccaf885d7dadca697c4d54cff60d1c8c8333b57761c31d882c9f9ec9e5d"
+  },
+  "top1_agreement": 1.0,
+  "top1_discordant_contexts": [],
+  "uncertainty": {
+    "ci95_high": null,
+    "ci95_low": null,
+    "cluster_unit": null,
+    "clusters": null,
+    "method": "none",
+    "samples": null,
+    "seed": null
+  }
+}

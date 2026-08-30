@@ -1,0 +1,22 @@
+{
+  "box": {
+    "torch": "2.11.0+cu130",
+    "cuda": "13.0",
+    "device": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "capability": "12.0",
+    "cpu_count": 256,
+    "numpy": "2.2.6",
+    "numpy_blas": "scipy-openblas"
+  },
+  "backend_delta": {
+    "windows": 16,
+    "positions": 32752,
+    "mean_kld_nats": 5.237415482772055e-12,
+    "max_kld_nats": 1.791046000352856e-10,
+    "p99_kld_nats": 3.028853263764338e-11,
+    "top1_agreement": 1.0,
+    "max_abs_logit_delta": 3.62396240234375e-05,
+    "max_rel_logit_delta": 1.3602061709833566e-06,
+    "peak_device_bytes": 7001997312
+  }
+}

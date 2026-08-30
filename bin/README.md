@@ -284,6 +284,35 @@ bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-bf16 --out repro
         # answered by hash proof; --force-compute runs the math and asserts
         # bitwise agreement.
 
+# step 3 -- the same comparison, with the head matmul on the GPU (opt-in)
+bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-k6 --out cmp \
+    --device cuda --replay-device cuda
+        # For a HIDDEN-form capture, `compare` reconstructs logits as
+        # hidden @ head.T. By default that runs in numpy on the CPU while the
+        # GPU holds the head for the fp64 estimator and does nothing else --
+        # `nvidia-smi` reads 0% for the whole comparison. --replay-device cuda
+        # moves it. Measured on the published Qwen3.8-27B root (512 windows,
+        # 1,048,064 positions, vocab 248,320, hidden 5,120), one RTX PRO 6000,
+        # same process, same data, only this flag different:
+        #     numpy  1,754.71 s   GPU  0%
+        #     cuda     173.27 s   GPU 88%   peak 7.13 GB device memory
+        # 10.13x, and it reproduced the published floor's tokenwise-kld.npy
+        # digest 8be5dcca... byte for byte.
+        #
+        # IT IS NOT THE DEFAULT, AND THAT IS DELIBERATE. An fp32 GEMM
+        # accumulates in an order the BLAS chooses, so numpy-on-OpenBLAS,
+        # numpy-on-Accelerate and cuBLAS give different last bits from the same
+        # head and the same hidden states. The floor is immune (both sides get
+        # identical logits, so the KLD is exactly 0.0 either way) but a nonzero
+        # row is not. Every receipt now names the backend in
+        # `comparator.replay_backend`; rows measured under different values are
+        # not rankable against each other. Pick one per comparability group and
+        # keep it.
+        #
+        # --replay-dtype float64 accumulates the replay in fp64 instead: more
+        # accurate, and much more reproducible across backends, but a DIFFERENT
+        # measurement from either fp32 path.
+
 # step 3 -- a registry submission (needs identities a dataset cannot know)
 bin/fidelity-dataset provenance-template --out prov.json     # skeleton; fill it in
 bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-k6 --out cmp \
@@ -318,6 +347,9 @@ bin/fidelity-dataset verify-k3-compat ds-bf16
 | `lane_mismatch` | different lanes. `--allow-cross-lane` proceeds and stamps `usable_as_floor: false`, so **BIAS-006** cannot be laundered downstream. |
 | `unlisted_file` / `missing_file` | the tree is not exactly what `checksums.txt` covers. `--allow-partial` narrows this to capture tensors and stamps `covers_full_panel: false`. |
 | `bad_vocab_chunk` | `--vocab-chunk` must divide `vocab_size`. For GLM-5.3-Flash use **9680**; kimi-k3's default 10240 does **not** divide 154880. |
+| `replay_device_mismatch` | `--replay-device` names a device the estimator does not use. The replayed logits would cross the bus twice per position block, which is slower than the numpy path it replaces. Set `--device` to the same value. |
+| `replay_backend_unavailable` | `--replay-device` other than `numpy` needs torch. The default needs nothing. |
+| `bad_replay_dtype` | `--replay-dtype` is `float32` or `float64`. |
 
 `checksums.txt` is `sha256sum --check`-compatible, so a reviewer with none of
 our tooling verifies the payload with one coreutils command.

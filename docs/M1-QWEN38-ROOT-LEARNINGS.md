@@ -64,10 +64,26 @@ cores saturate. Per window the replay is
 costs ~10.8x the capture it consumes**, on identical data and the same box.
 
 *Consequence for M2/M3:* budget compares, not captures. A GLM-5.3 root capture is
-cheap; each candidate comparison against it is not. **This is the single highest-value
-optimization target in the toolchain**: moving `_replay` to the GPU (the head is
-already resident there for the KLD step) should cut compare wall-clock by an order
-of magnitude and directly reduces every future rung's bill.
+cheap; each candidate comparison against it is not.
+
+**FIXED in M1.5, and the projection was right.** `compare --replay-device cuda`
+runs the head matmul on the device the estimator already uses, one position
+block at a time, so the full `[positions x vocab]` fp32 logit array is never
+materialised on the host. Same box, same 512-window comparison, end to end
+through the CLI: **1,754.71 s (29 min 15 s) -> 173.27 s, 10.13x**, peak **7.13 GB**
+of device memory, GPU at 88% where the numpy path leaves it at 0% (watched
+live). The comparison is no longer 10.8x the capture; it is
+0.52x of it.
+
+It is **opt-in**: an fp32 GEMM accumulates in an order the BLAS chooses, so
+switching backends moves the value. Measured on real root data, 32,752
+positions, `KLD(numpy replay || cuda replay)` = **5.237e-12 nats** mean,
+1.791e-10 max, **top-1 agreement 1.000000** — 1.75e-9 relative to the smallest
+published row here, and 2.2e9 below the streaming lane floor. Small, not zero,
+so the 16-digit rows above would not reproduce and the default stays numpy.
+**The floor is immune and was re-verified**: the same self-compare through the
+GPU path returns exactly 0.0 with `tokenwise-kld.npy` digest `8be5dcca...`
+byte for byte. See `docs/CAPTURE-SCALING-PLAN.md` §3.
 
 **3. Fetch is not the bottleneck.** 52 GiB pulled in 85 s ≈ **627 MB/s** with
 `HF_HUB_ENABLE_HF_TRANSFER=1` on a 28-core IN1 box — at or above the top of the
@@ -78,6 +94,14 @@ plan's 430–600 MB/s band. For a 642.7 GB Flash re-capture that projects to
 run 3 was captured while a compare saturated the CPU and still produced a digest
 bitwise identical to runs 1 and 2. Capture is GPU-bound, comparison is CPU-bound;
 packing them is free wall-clock. Do it.
+
+*Amended by M1.5:* the correctness half stands — a concurrent compare did not
+move a capture digest. The **free wall-clock** half was a property of the
+comparison being CPU-bound, and `--replay-device cuda` makes it GPU-bound (88%
+utilisation). Under the fast path they contend. Pack a comparison against a
+*fetch* instead, or leave the comparison on the numpy path while a capture is
+running — which is also the right choice when the comparison belongs to an
+already-published group.
 
 **5. Spot capacity for a named GPU can be zero even when `jl gpus` shows the row
 available.** `jl gpus` showed RTX-PRO6000 IN1 with a green dot; `jl create --spot`
@@ -93,10 +117,21 @@ nothing gates on them.** `hf_capture` refuses on MISSING weights (behind
 `--allow-missing-weights`) but only *logs* unexpected ones. On
 `Qwen/Qwen3.8-27B-FP8` that line — `unexpected: 64`, all
 `mlp.gate_proj.weight_scale_inv` — was the only signal that the model had loaded
-wrong. **Recommend: refuse on unexpected tensors whose names look like
-quantization state, or add `--allow-unexpected-weights` symmetrical to the
-missing-weights flag.** A number taken from that load would have been published
-as a quantization result and would have been a loader artifact.
+wrong. A number taken from that load would have been published as a quantization
+result and would have been a loader artifact.
+
+**FIXED in M1.5.** `refuse_on_load_report` now has a fifth branch: unexpected
+tensors REFUSE the capture, naming a few of the keys and saying what it usually
+means — a quantization path that silently did not engage, leaving its scale
+tensors orphaned. `--allow-unexpected-tensors` is the escape and stamps a
+**blocking** `unexpected_tensors_overridden` disclosure, mirroring
+`--allow-missing-weights`. The benign reading is indistinguishable from inside
+the loader (GLM-5.3-BF16 ships a 791-tensor MTP layer the architecture does not
+build), which is exactly why there is an override and why using it is loud.
+*Consequence for M2:* the GLM-5.3-Flash root capture will need the flag, and its
+sealed dataset will carry a blocking disclosure — a label on the dataset, which
+does not propagate into a comparison receipt and does not block a registry row.
+Regression: `bin/selftest_hf_capture.py` A21/A23/A24.
 
 **7. Producer exclusion lists collide with prefix matching.**
 `transformers.quantizers.quantizers_utils.should_convert_module` tests
@@ -166,11 +201,24 @@ the sealed suite manifest, then the concatenated digest against the registry's
 holds the tokens fixed so a new-lane row and an old-lane row differ by the lane
 alone.
 
-**15. Same panel does NOT mean rankable.** The comparability key binds the
-reference. The 37 existing Qwen3.8 rows are against a vLLM teacher; these are
-against a `transformers` teacher. Same panel makes the difference *interpretable*,
-not *comparable*. Say this on every row rather than letting a reader infer
-otherwise from the shared `panel_id`.
+**15. Same panel does NOT mean rankable, and a same-lane root does NOT
+retroactively upgrade anything.** The comparability key binds the reference. The
+37 existing Qwen3.8 rows are against a vLLM teacher; these are against a
+`transformers` teacher. Same panel makes the difference *interpretable*, not
+*comparable*. Say this on every row rather than letting a reader infer otherwise
+from the shared `panel_id`.
+
+**The plan said this rung would "retroactively upgrade" the 37 existing rows. It
+did not, it could not, and the claim is withdrawn.** Capturing a same-lane root
+creates a NEW comparability group beside the old one — here
+`cmp--05e16411a5932713` beside `cmp--4a93702ded23e01a` — because the key binds
+the reference and the old rows still name the old reference. Their inferred
+floors are untouched. The same holds for M2: **the eight existing
+GLM-5.3-Flash rows will not be fixed by the Flash re-capture.** M2 creates a
+clean group next to them, with a measured 0.0 floor, and the old eight keep
+their 0.011506 inferred floor forever unless every one of them is re-measured
+against the new root. Budget the re-measurements, or say plainly that the old
+rows stay as they are.
 
 **16. Check the architecture before believing the plan's one-line description.**
 Qwen3.8-27B is not a dense text model: it is
@@ -237,9 +285,16 @@ because the panel was held fixed (learning 14); had a fresh panel been minted, t
 two numbers would differ by panel AND lane with no way to separate them. **This is
 the payoff argument for reusing a panel, stated as a number.**
 
-**22. Budget the ladder by comparisons, not by gigabytes.** This rung's bill was
-dominated by three comparisons at 60-104 min each, not by the 55.6 GB model. The
-capture side of a 642.7 GB Flash re-capture will be roughly 12x this model's
-weights to fetch (~17 min at the measured 627 MB/s) and a similar per-window cost
-if it stays resident — but each candidate comparison will cost what one costs
-here, times the panel size. Count comparisons first when sizing the next rung.
+**22. Budget the ladder by comparisons, not by gigabytes — and then M1.5 made
+the comparison cheap.** This rung's bill was dominated by three comparisons at
+60-104 min each, not by the 55.6 GB model. The capture side of a 642.7 GB Flash
+re-capture will be roughly 12x this model's weights to fetch (~17 min at the
+measured 627 MB/s) and a similar per-window cost if it stays resident.
+
+With `--replay-device cuda` the same 512-window comparison runs in **173.27 s**,
+so the term that dominated this rung stops dominating the next one. What is left
+to budget is the **capture** — streaming-regime for a 642.7 GB root, and
+fetch-overlapped under layer-outer — and the **candidate count**, which is now
+bounded by what the engine can load (learning 8) rather than by what the
+comparisons cost. `docs/CAPTURE-SCALING-PLAN.md` §3 carries the revised model
+and the M2/M3 projections.
