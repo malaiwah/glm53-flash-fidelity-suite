@@ -603,6 +603,40 @@ def render_check(reg: RegistrySnapshot, repo: str, rev: Optional[str],
 # --------------------------------------------------------------------------
 
 
+def stale_scope_hint(match: Dict[str, Any]) -> List[str]:
+    """Say so when the STALE rows are scoped to a *part* of a multi-artifact repo.
+
+    "Revision drift" is the right words for a repo whose head moved under a
+    measurement. It is the WRONG words for a repo that publishes several
+    artifacts on several branches: turboderp/GLM-5.3-Flash-exl3 ships 4.05bpw,
+    3.05bpw and 2.05bpw as three branches, the registry models them as three
+    artifacts (`huggingface.path: "branch 4.05bpw"`), and the gate keys on the
+    repo id alone -- so asking about 2.05bpw reports the 4.05bpw row and calls
+    the difference drift. The remedy flag is the same (--force) but the reason
+    is not, and a reader told "drift" reasonably concludes the artifact is
+    already measured and stops. The registry already knows the scope; this
+    prints it.
+    """
+    scopes = []
+    for artifact, tier, _ in match.get("candidates", []):
+        if tier != TIER_STALE:
+            continue
+        path = ((artifact.get("huggingface") or {}).get("path") or "").strip()
+        if path and path not in scopes:
+            scopes.append(path)
+    if not scopes:
+        return []
+    return ["",
+            "        NOTE: the measured row(s) above are scoped to %s of this "
+            "repo." % ", ".join(repr(x) for x in scopes),
+            "        If you are asking about a DIFFERENT branch or subpath, "
+            "this is not drift --",
+            "        it is a separate artifact that has never been measured, "
+            "and --force is",
+            "        the right flag: it records a new artifact rather than "
+            "restating an old one."]
+
+
 def front_gate(*, repo: str, revision: Optional[str], path_hint: Optional[str],
                source: str, force: bool, accept_measured_revision: bool,
                con: Console) -> Dict[str, Any]:
@@ -711,5 +745,7 @@ def front_gate(*, repo: str, revision: Optional[str], path_hint: Optional[str],
             "than the one you asked about (rows above). Either pass "
             "--accept-measured-revision to target the measured commit, or "
             "--force to measure the new commit as a NEW artifact record.")
+    for line in stale_scope_hint(match):
+        con.say(line)
     result["status"] = "stale-refused"
     return result

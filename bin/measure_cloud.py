@@ -668,6 +668,27 @@ class Refusal(RuntimeError):
         super().__init__(reason)
 
 
+def would_refuse(con, plan: Dict[str, Any], refusal: "Refusal") -> None:
+    """Record a dry-run refusal AND print the remedy that goes with it.
+
+    A refusal carries two things: what is wrong, and what to do about it. The
+    six dry-run sites here each decided for themselves how much of the advice
+    to show -- three showed none of it, two truncated it, one showed all of it
+    -- so the site that mattered most in practice (no engine --profile for this
+    surface at this bit rate, whose advice names the files to edit) printed
+    nothing but the complaint. That is exactly backwards: the docs send you to
+    `--dry-run` FIRST, so dry-run is the mode where the remedy matters most,
+    and a reader who never triggers a real refusal never sees it.
+    `measure_local.plan.problem` already did this correctly; this is the same
+    contract on the cloud side, in ONE place so the next site cannot drift.
+    """
+    con.warn("WOULD REFUSE (real run): %s" % refusal.reason)
+    for line in refusal.advice:
+        if line and not line.startswith("Nothing was created"):
+            con.say("           %s" % line)
+    plan.setdefault("would_refuse", []).append(refusal.reason)
+
+
 def _machine_id_of(created: Optional[Dict[str, Any]]) -> Optional[int]:
     """Pull a machine id out of whatever shape `jl create` answered with.
 
@@ -844,6 +865,18 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
            % (passed, len(seal["checks"])))
 
 
+#: Which table in `k6/tools/stream_score.py` holds a surface's profiles. Named
+#: rather than derived: the constants are not a mechanical transform of the
+#: surface string (`tr3-published` lives in TR3_PROFILES), and a refusal that
+#: sends the reader to a constant that does not exist is worse than one that
+#: sends them nowhere.
+PROFILE_TABLE_NAMES = {
+    "exl3hf": "EXL3HF_PROFILES",
+    "tr3-published": "TR3_PROFILES",
+    "dione": "DIONE_PROFILES",
+}
+
+
 def resolve_profile(lane_spec, surface: Optional[str], bits: Optional[float]) -> Optional[str]:
     """The engine --profile for this (surface, bits), or None.
 
@@ -970,10 +1003,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
             raise refusal
         # A dry run's job is to surface EVERY problem in one pass, not to stop
         # at the first one. Record it as a would-refuse and keep validating.
-        con.warn("WOULD REFUSE (real run): %s" % refusal.reason)
-        for line in refusal.advice[:3]:
-            con.say("           %s" % line)
-        plan.setdefault("would_refuse", []).append(refusal.reason)
+        would_refuse(con, plan, refusal)
 
     # -- target ------------------------------------------------------------
     con.say("")
@@ -1068,11 +1098,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                  "Nothing was created. $0.00 spent."])
             if not args.dry_run:
                 raise refusal
-            con.warn("WOULD REFUSE (real run): %s" % refusal.reason)
-            for line in refusal.advice[:2]:
-                if line:
-                    con.say("           %s" % line)
-            plan.setdefault("would_refuse", []).append(refusal.reason)
+            would_refuse(con, plan, refusal)
         # The engine's --profile is part of the plan, not an execute-time
         # afterthought: it names the receipt family, the student label and the
         # bit rate the engine cross-checks against the release's own
@@ -1095,15 +1121,33 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                  "(malaiwah.glm53-<profile>-packed-kld-summary.v1), the student "
                  "label the KLD report expects, and the bit rate the engine "
                  "checks against the release's own declaration.",
-                 "Add it to bin/engines.json lanes.%s.profile_map_by_surface['%s'], "
-                 "and add the matching entry to k6/tools/k6_kld_report.py."
+                 "FOUR files must agree, and a profile added to only some of "
+                 "them fails later and more expensively than this:",
+                 "  1. k6/tools/stream_score.py    %s: profile -> (declared "
+                 "bpw, student label), and the --profile argparse choices"
+                 % PROFILE_TABLE_NAMES.get(surface.surface,
+                                           "the <SURFACE>_PROFILES table"),
+                 "  2. k6/tools/k6_kld_report.py   the run-label map, "
+                 "PROFILE_SURFACE_FAMILY, the student-label map and its "
+                 "--profile choices (the display strings are PER PROFILE -- "
+                 "read head_bits off the release rather than copying a "
+                 "neighbouring rate's line)",
+                 "  3. bin/engines.json            lanes.%s."
+                 "profile_map_by_surface['%s'] -- a surface with its own map is "
+                 "AUTHORITATIVE, so the bits-only profile_map is NOT consulted "
+                 "for it and editing that one has no effect"
                  % (args.lane, surface.surface),
+                 "  4. registry/tools/registry_add.py  the accepted summary "
+                 "schemas, or the row cannot be ingested once you have paid "
+                 "for the number",
+                 "k6/tools/selftest_kld_report_offline.py derives its coverage "
+                 "from stream_score's tables, so run it: a half-added profile "
+                 "fails NUM-15 offline, before any rental.",
                  "",
                  "Nothing was created. $0.00 spent."])
             if not args.dry_run:
                 raise refusal
-            con.warn("WOULD REFUSE (real run): %s" % refusal.reason)
-            plan.setdefault("would_refuse", []).append(refusal.reason)
+            would_refuse(con, plan, refusal)
         artifact_bytes = float(target.total_bytes)
         bits = float(surface.bits or 4.0)
     else:
@@ -1284,11 +1328,10 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
              "re-pin bin/engines.json for lane %s" % args.lane,
              "Nothing was created. $0.00 spent."])
     elif args.dry_run:
-        con.warn("WOULD REFUSE (real run): lane %r has no pinned engine" % args.lane)
-        con.say("           engine %s: %s"
-                % (engine.entrypoint, engine.unpinned_reason))
-        plan.setdefault("would_refuse", []).append(
-            "lane %s engine unpinned (%s)" % (args.lane, engine.entrypoint))
+        would_refuse(con, plan, Refusal(
+            "lane %r has no pinned engine" % args.lane,
+            ["engine %s: %s" % (engine.entrypoint, engine.unpinned_reason),
+             "pin it in bin/engines.json lanes.%s.engine" % args.lane]))
     else:
         raise EngineUnpinned(engine)
 
@@ -1395,8 +1438,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
              "Nothing was created. $0.00 spent."])
         if not args.dry_run:
             raise refusal
-        con.warn("WOULD REFUSE (real run): %s" % refusal.reason)
-        plan.setdefault("would_refuse", []).append(refusal.reason)
+        would_refuse(con, plan, refusal)
 
     if args.max_cost and band_hi > args.max_cost:
         refusal = Refusal(
@@ -1405,8 +1447,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
              "Nothing was created. $0.00 spent."])
         if not args.dry_run:
             raise refusal
-        con.warn("WOULD REFUSE (real run): %s" % refusal.reason)
-        plan.setdefault("would_refuse", []).append(refusal.reason)
+        would_refuse(con, plan, refusal)
 
     # -- teardown plan ------------------------------------------------------
     deadline = time.time() + max_runtime
@@ -2009,11 +2050,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="do NOT destroy the filesystem (it keeps billing)")
     i.add_argument("--keep-student-logits", action="store_true")
 
-    s = p.add_argument_group("safety (all default-on)")
+    s = p.add_argument_group(
+        "safety (default-on except --max-cost, which has no default)")
     s.add_argument("--max-runtime", default="6h")
     s.add_argument("--heartbeat-timeout", type=int, default=900)
     s.add_argument("--max-preemptions", type=int, default=3)
-    s.add_argument("--max-cost", type=float)
+    # NOT default-on, unlike its neighbours in this group, and the --help
+    # heading says "safety (all default-on)". Left off by default deliberately:
+    # a cap the runner picked for you turns a legitimate expensive run into a
+    # refusal the user cannot attribute. But the help text has to say so, or a
+    # reader budgeting a rental believes a cap is in force when none is.
+    s.add_argument("--max-cost", type=float,
+                   help="refuse if the estimated cost BAND HIGH exceeds this "
+                        "many dollars. NO DEFAULT -- without it there is no "
+                        "cost cap, only --max-runtime's ceiling")
     s.add_argument("--on-preempt", default="resume",
                    choices=("resume", "recreate", "fail"))
     s.add_argument("--i-accept-leak-risk", action="store_true")

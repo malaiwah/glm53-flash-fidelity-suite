@@ -1,9 +1,19 @@
-# GLM-5.3-Flash fidelity suite — a receipt-backed yardstick for quantization quality
+# quant-fidelity-suite — a receipt-backed yardstick for quantization quality
 
 > Tools, published measurements, and a schema-enforced registry for measuring how far a
 > quantized model's output distribution has moved from its unquantized reference, using
-> KL divergence over the full vocabulary. Every number links to a JSON receipt with pinned
-> revisions and sha256 digests. MIT licensed. The registry is a public HF dataset.
+> KL divergence over the full vocabulary. Three model families (GLM-5.3-Flash,
+> Qwen3.8-27B, and a 5B MoE CI fixture), six storage formats, 75 published rows. Every
+> number links to a JSON receipt with pinned revisions and sha256 digests. MIT licensed.
+> The registry is a public HF dataset.
+>
+> **If you are about to measure something, read "Before you rent" in the README first.**
+> A measurement needs a panel you can download, a reader for the artifact's storage
+> surface *on the lane you can run*, and a profile for that surface at that bit rate.
+> Only one panel is fetchable today (`panel--glm53.brandonmusic.final25`); the
+> Qwen3.8-27B panels are private; the local lanes read only unquantized or
+> payload-store trees, so `bin/measure` cannot execute a third-party quant measurement
+> and hands off to `bin/measure-cloud`.
 
 If you are an agent asked to compare quantizations, rank them, or produce a fidelity number,
 read the five rules below before you use any number from this project. They are not style

@@ -10,13 +10,68 @@ tools generate the rows from your receipt.
 
 ---
 
+## 0. Pick something that can actually be measured
+
+Two minutes here saves an afternoon. A measurement needs a panel you can
+download, a reader for the artifact's storage surface **on the lane you can
+run**, and a profile for that surface at that bit rate — and the intersection
+is narrower than the repo's feature list suggests. The full picture is
+[README → *Before you rent*](../README.md#before-you-rent-what-is-measurable-today);
+the short version:
+
+* **The panel decides the model.** A measurement may not introduce a panel
+  (§6), and only `panel--glm53.brandonmusic.final25` has a built-in fetch
+  descriptor. The five Qwen3.8-27B panels are `availability.status: private`,
+  so **Qwen3.8-27B quants cannot be measured from outside today** — the runner
+  refuses at plan time with "has no local fetch descriptor in this checkout".
+  In practice that means: a GLM-5.3-Flash quant, on brandonmusic's 25-window
+  panel.
+* **The lane decides the surface.** The cloud lane reads `packed`,
+  `native-bf16`, `exl3hf`, `tr3-published` and `dione`; the local lanes read
+  only `packed` and `native-bf16`. So the local recipe cannot execute a
+  third-party quant measurement today, and MLX / GGUF / NVFP4 / AWQ / GPTQ
+  repos are refused on every lane (the decoders exist under `k6/tools/` but no
+  lane lists them).
+
+**Is it already measured?** The front gate answers this for you, and it is the
+first thing both runners do:
+
+```bash
+bin/measure <hf-repo>                     # prints the rows and exits 0 if so
+bin/registry-view check <hf-repo>         # same question, tiers EXACT/STALE/...
+bin/registry-view rows --model glm        # everything measured for a model
+```
+
+Two traps worth knowing before you conclude "already measured":
+
+* **A multi-artifact repo is measured per branch or subpath.** The registry
+  records `huggingface.path` (e.g. `branch 4.05bpw`), but the gate keys on the
+  repo id, so asking about a *different* branch of a measured repo reports the
+  other branch's row and calls the difference `revision drift`. That is not
+  drift — it is an unmeasured artifact, and `--force` is the correct flag
+  (it records a new artifact rather than restating an old one). The refusal
+  now says which scope the existing rows cover.
+* **Not every unmeasured repo is a gap worth filling.** An abliterated or
+  fine-tuned derivative has different reference weights, so scoring it against
+  the base model's teacher measures the fine-tune, not the quantization.
+
+**Then price it before you commit.** `--dry-run` does every check, creates
+nothing and spends $0.00, and it will tell you things you cannot see from the
+model card — one branch of a well-known EXL3 release is missing 22 of the
+model's 1,618 non-routed tensors, and several "release" repos are two-file
+placeholders. Both are refused for free.
+
+---
+
 ## 1. Produce the receipt
 
 Either runner seals one at the end of a run, under `<out>/receipts/`:
 
 ```bash
 # cloud -- rents a GPU, measures, tears the instance down, prints the real cost
-export JL_API_KEY=...
+# (if you have already run `jl setup`, the runner finds that credential and you
+#  do not need to export anything; the same is true of a cached HF login)
+export JL_API_KEY=...        # optional -- see above
 ./bin/measure-cloud \
     --model  <hf-repo> \
     --panel  brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \

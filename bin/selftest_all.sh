@@ -203,6 +203,43 @@ t "refuses a max-runtime shorter than the work" 3 \
   "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
     --lane sealed-ep8 --spot --max-runtime 2h --i-accept-leak-risk \
     --skip-registry-check --dry-run --out "$TMP/c4"
+# A dry-run refusal must carry its REMEDY, not just its complaint. Five of the
+# six would-refuse sites used to print `refusal.reason` alone, so the advice --
+# which flag to raise, which files a new engine profile needs -- reached nobody,
+# in the one mode the docs tell a newcomer to start with.
+#
+# $MODEL is tr3-published, which the sealed-ep8 lane has no profile for, so the
+# profile would-refuse fires deterministically here. Deliberately NOT keyed on
+# the teardown-backstop refusal: that one depends on whether the reaper happens
+# to be installed on the machine running the suite, which is exactly the kind of
+# environment-dependent assertion that goes green for the wrong reason.
+# The exit code is not asserted -- a dry run may go on to hit a HARD refusal
+# (no instance capacity today) and exit 1 rather than 3. What is asserted is
+# that the advice reached stdout, and that it names a table that exists.
+"$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
+  --lane sealed-ep8 --spot --max-runtime 30h --i-accept-leak-risk \
+  --skip-registry-check --dry-run --out "$TMP/c3b" >"$TMP/c3b.log" 2>&1 || true
+if grep -q 'WOULD REFUSE (real run): .*has no --profile' "$TMP/c3b.log" \
+   && grep -q 'FOUR files must agree' "$TMP/c3b.log" \
+   && grep -q 'TR3_PROFILES' "$TMP/c3b.log" \
+   && ! grep -q 'TR3_PUBLISHED_PROFILES' "$TMP/c3b.log"; then
+  t "a dry-run WOULD-REFUSE prints its remedy, naming tables that exist" 0 true
+else
+  t "a dry-run WOULD-REFUSE prints its remedy, naming tables that exist" 0 false
+  sed 's/^/         /' "$TMP/c3b.log" | grep -i "would refuse" | head -4
+fi
+# and the named tables must actually be there
+"$PY" - <<'PYEOF' && t "every PROFILE_TABLE_NAMES entry exists in stream_score.py" 0 true \
+  || t "every PROFILE_TABLE_NAMES entry exists in stream_score.py" 0 false
+import ast, sys
+sys.path.insert(0, "bin")
+import measure_cloud as MC
+src = open("k6/tools/stream_score.py", encoding="utf-8").read()
+names = {t.id for n in ast.parse(src).body if isinstance(n, ast.Assign)
+         for t in n.targets if hasattr(t, "id")}
+missing = sorted(set(MC.PROFILE_TABLE_NAMES.values()) - names)
+sys.exit(1 if missing else 0)
+PYEOF
 t "cloud front gate: already-measured artifact answers for \$0.00" 0 \
   "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
     --lane sealed-ep8 --spot --max-runtime 30h --i-accept-leak-risk \

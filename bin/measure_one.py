@@ -136,7 +136,9 @@ def run(args: argparse.Namespace, con: Console) -> int:
                     "revision drift: this repo was measured at a different "
                     "commit (rows above).",
                     ["--accept-measured-revision targets the measured commit",
-                     "--force measures the new commit as a NEW artifact record"])
+                     "--force measures the new commit as a NEW artifact record"]
+                    + [line.strip() for line in RC.stale_scope_hint(match)
+                       if line.strip()])
             if args.accept_measured_revision and not args.force:
                 pinned = [(a.get("huggingface") or {}).get("revision")
                           for a, t, _ in match["candidates"] if t == RC.TIER_STALE]
@@ -218,25 +220,54 @@ def run(args: argparse.Namespace, con: Console) -> int:
             surface_name = surface.surface
             con.say("[7/9] surface: %s (codec %s @ %s bpw)"
                     % (surface.surface, surface.codec_family, surface.bits))
-            readable = {"packed", "native-bf16"}
-            if surface.problems or surface.surface not in readable:
+            # WHICH LANE. `bin/measure` never rents (step 8 refuses
+            # --lane streaming), so it always plans a LOCAL lane, and the local
+            # lanes read strictly less than the streaming one. Saying "no lane
+            # can read it" when the cloud lane reads it fine sends the reader
+            # away from the recipe that would have worked -- which is what
+            # happened to the first stranger who tried to measure a stock
+            # exllamav3 release with this tool.
+            readable_here = {"packed", "native-bf16"}
+            readable_streaming = {"packed", "native-bf16", "exl3hf",
+                                  "tr3-published"}
+            if surface.problems or surface.surface not in readable_here:
+                elsewhere = (surface.surface in readable_streaming
+                             and not surface.problems)
                 lines = ["registry rows above stand; measured receipts exist "
                          "for what IS measurable" if rows else
                          "no registry rows exist for it either"]
                 lines += surface.problems
+                if elsewhere:
+                    lines = [
+                        "The CLOUD recipe reads this surface. Run it instead:",
+                        "  bin/measure-cloud --model %s --revision %s \\"
+                        % (target["repo"], resolved or "<40-hex>"),
+                        "      --panel <hf-dataset> --lane streaming --spot "
+                        "--dry-run",
+                        "(--dry-run creates nothing and spends $0.00.)",
+                    ] + lines
+                    reason = ("%s publishes surface '%s'. The local lanes read "
+                              "only %s; the STREAMING (cloud) lane reads it, "
+                              "and bin/measure never rents."
+                              % (target["repo"], surface.surface,
+                                 " and ".join(sorted(readable_here))))
+                else:
+                    reason = ("%s publishes surface '%s'; no lane can read it "
+                              "(engines.json). This tool can (a) report "
+                              "existing rows [%s], (b) plan (--plan-only). "
+                              "Measuring third-party surfaces needs a reader "
+                              "for THIS surface; the streaming lane reads %s "
+                              "today."
+                              % (target["repo"], surface.surface,
+                                 "listed above" if rows else "none",
+                                 ", ".join(sorted(readable_streaming))))
                 if not args.plan_only:
-                    raise Refusal(
-                        "%s publishes surface '%s'; no lane can read it "
-                        "(engines.json). This tool can (a) report existing "
-                        "rows [%s], (b) plan (--plan-only). Measuring "
-                        "third-party surfaces needs a reader for THIS "
-                        "surface; the streaming lane reads packed, native-bf16, "
-                        "exl3hf and tr3-published today."
-                        % (target["repo"], surface.surface,
-                           "listed above" if rows else "none"),
-                        lines)
-                con.warn("surface '%s' has no reader -- planning only, an "
-                         "--execute would refuse" % surface.surface)
+                    raise Refusal(reason, lines)
+                con.warn("surface '%s' has no reader on a LOCAL lane -- "
+                         "planning only, an --execute would refuse%s"
+                         % (surface.surface,
+                            " (the cloud lane reads it: bin/measure-cloud)"
+                            if elsewhere else ""))
         except HFError as exc:
             con.warn("[7/9] cannot sniff the surface: %s" % exc)
     else:

@@ -1,11 +1,17 @@
-# GLM-5.3-Flash fidelity suite & quantization program
+# quant-fidelity-suite — how much quality a quantization costs, with receipts
 
-Tools, receipts, and campaign log for measuring — and then beating — the
-quality cost of quantizing [GLM-5.3-Flash](https://huggingface.co/zai-org/GLM-5.3-Flash)
-(321B-total / A18B MoE, `glm5_next` hybrid KDA/DSA architecture with mHC
-hyper-connections). Everything here was produced within ~48h of the model's
-release and is receipt-driven: every published number links to a JSON receipt
-with pinned revisions and sha256s.
+Tools, a schema-enforced public registry, and the campaign log behind
+full-vocabulary KL-divergence measurements of quantized models against their
+unquantized references. Three model families
+([GLM-5.3-Flash](https://huggingface.co/zai-org/GLM-5.3-Flash),
+[Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B), and a 5B MoE CI
+fixture), six storage formats, 75 published rows. Receipt-driven: every
+published number links to a JSON receipt with pinned revisions and sha256s.
+
+The suite began as a GLM-5.3-Flash program — most of the campaign material
+under [`k6/`](k6/) and [`remote/`](remote/) still is — and the measurement
+tooling in [`bin/`](bin/) and the registry in [`registry/`](registry/) are
+model-agnostic.
 
 ## Measure a quant from an HF link — one command
 
@@ -24,12 +30,70 @@ first** — an already-measured artifact gets its rows and receipt links printed
 and exit 0, nothing spent — then walks `base_model` lineage to the registry's
 model, picks the panel/teacher prior measurements used (alternatives printed
 with override flags), sniffs the repo's packing surface, picks the lane for
-your machine, and hands off to `measure-local --execute`. Refusals name their
+your machine, and hands off to `measure-local --execute`. **`bin/measure` never
+rents**, so it plans a *local* lane — and the local lanes read only `packed`
+and `native-bf16` today, which means a third-party quant gets a costed plan and
+a refusal naming `bin/measure-cloud` rather than a number. See
+[Before you rent](#before-you-rent-what-is-measurable-today). Refusals name their
 arithmetic or remedy: revision drift needs `--force` or
 `--accept-measured-revision`; a surface no lane can read (most third-party
 repos today) is refused for $0.00 with the missing reader named; missing
 torch/transformers/quant_pipeline/teacher/disk are all listed at once with
 their install commands. `--plan-only` stops at the plan.
+
+## Before you rent: what is measurable today
+
+A measurement needs three things to line up, and **the intersection is narrow
+right now**. All three are checked for $0.00 before anything is created — but
+knowing them up front is the difference between one dry-run and an afternoon.
+
+**1. A panel you can download.** A measurement may not introduce a panel
+(CONTRIBUTING §6), so you must score on one the registry already has *and* that
+you can fetch:
+
+| panel | fetchable? |
+|---|---|
+| `panel--glm53.brandonmusic.final25` (+ its subsets) | **yes** — the only one with a built-in fetch descriptor. 25 windows, 51,175 scored positions, ~31.7 GB out of a 1.32 TB repo. This is the panel every recipe here defaults to. |
+| `panel--glm53.malaiwah.suite-v5-10m` | public dataset, but no built-in descriptor — you must write one for `--panel-descriptor`. |
+| the five `panel--qwen38.malaiwah.*` panels | **no.** `availability.status: private`. The whole Qwen3.8-27B family — the cheapest model in the registry — is closed to outside measurement today. `bin/measure` refuses with "has no local fetch descriptor in this checkout". |
+| `panel--fruit.malaiwah.heldout-v1` | **yes**, but by a different route: it ships inside the published root dataset [`malaiwah/fruit-fidelity-root-v1`](https://huggingface.co/datasets/malaiwah/fruit-fidelity-root-v1) and is used through `bin/fidelity-dataset`, not through the two runners. |
+
+**2. A reader for the artifact's storage surface, on a lane you can run.**
+Readers are per-lane (`bin/engines.json`), and the local lanes read strictly
+less than the cloud one:
+
+| lane | surfaces it reads |
+|---|---|
+| `streaming` (cloud, `bin/measure-cloud`) | `packed`, `native-bf16`, `exl3hf`, `tr3-published`, `dione` |
+| `local-mps`, `local-cuda-budget` (`bin/measure`, `bin/measure-local`) | `packed`, `native-bf16` |
+
+`packed` needs a payload store that is not published, and `native-bf16` is an
+unquantized tree. **So the local recipes cannot today execute a measurement of
+a third-party quant**: `bin/measure` will report existing rows, plan, and
+refuse — pointing you at `bin/measure-cloud`, which can. Most third-party
+repos (MLX, GGUF, NVFP4, AWQ, GPTQ) are refused on *every* lane. Decoders for
+MLX, GGUF and NVFP4 exist under [`k6/tools/`](k6/tools/) and are bitwise-tested
+against their upstream libraries, but no lane in `engines.json` lists them yet,
+so the runners will not reach them.
+
+**3. A profile for that surface at that bit rate.** `engines.json` maps
+`(surface, bpw) -> profile`; the profile names the receipt family, the student
+label and the rate the engine cross-checks against the release's own
+declaration. A rate with no entry is refused at plan time, for $0.00, and the
+refusal lists the four files a new profile has to touch.
+
+The fastest way to find out where a specific repo stands is to ask:
+
+```bash
+bin/measure <hf-repo>                       # already measured? readable? which lane?
+bin/measure-cloud --model <hf-repo> --panel brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
+    --lane streaming --spot --dry-run       # full preflight + a costed plan, $0.00
+```
+
+Both are honest about repos that are announcements rather than releases (a
+2-file placeholder) and about releases that are genuinely broken (one branch of
+a well-known EXL3 repo is missing 22 of the model's 1,618 non-routed tensors;
+the dry-run names them and refuses before the rental).
 
 ## Browse the registry
 
@@ -193,11 +257,23 @@ bin/fidelity-card       validate --card README.md                      # provena
 
 The format is versioned and stable at v1
 ([`docs/FIDELITY-DATASET-SPEC.md`](docs/FIDELITY-DATASET-SPEC.md)); the
-three-step rationale is [WHAT-WE-MEASURE §8](WHAT-WE-MEASURE.md). **Read
+three-step rationale is [WHAT-WE-MEASURE §8](WHAT-WE-MEASURE.md).
+
+**One conformant root is published**, and it is the cheapest way to see the
+whole three-step path end to end without renting anything:
+
+```bash
+bin/fidelity-dataset describe hf://malaiwah/fruit-fidelity-root-v1   # 385 MB
+```
+
+[`malaiwah/fruit-fidelity-root-v1`](https://huggingface.co/datasets/malaiwah/fruit-fidelity-root-v1)
+is a sealed `malaiwah.fidelity-dataset.v1` root for the 5B GLM-5.2-SIQ-Fruit CI
+fixture: hidden-form capture, the shared `lm_head`, and — this is the part the
+runners cannot give you — **a token panel and its sealed receipt inside the
+dataset**, so step 1 is a download rather than a GPU booking. Suite-scale roots
+for the big models are still out of scope for v1 (spec §14); see
 [`bin/README.md`](bin/README.md#before-you-start--what-exists-today-and-what-does-not)
-before planning GPU time** — the tooling is complete, but no root dataset and
-no token panel are published yet, and the registry submission path is specified
-rather than wired.
+for what that means when you plan GPU time on GLM-5.3-Flash or Qwen3.8-27B.
 
 ## Headline results
 

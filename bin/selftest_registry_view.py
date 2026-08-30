@@ -95,6 +95,25 @@ def main() -> int:
     note = m["candidates"][0][2]
     check("STALE note quotes both revisions",
           "aaaaaaaaaa" in note and "ffffffffff" in note, note)
+    # A repo that publishes several artifacts on several branches
+    # (turboderp/GLM-5.3-Flash-exl3 ships 4.05/3.05/2.05bpw that way) hits the
+    # STALE path when you ask about a branch other than the measured one -- and
+    # "revision drift" is the wrong story for it: nothing drifted, you named a
+    # different artifact. The registry knows the scope (huggingface.path); the
+    # refusal has to say it, or the reader concludes it is already measured.
+    hint = RC.stale_scope_hint(
+        {"candidates": [({"huggingface": {"path": "branch 4.05bpw"}},
+                         RC.TIER_STALE, "")]})
+    check("a branch-scoped STALE row says WHICH scope was measured",
+          any("branch 4.05bpw" in line for line in hint)
+          and any("not drift" in line for line in hint), repr(hint))
+    check("an unscoped STALE row adds no scope note",
+          RC.stale_scope_hint(
+              {"candidates": [({"huggingface": {}}, RC.TIER_STALE, "")]}) == [])
+    check("a non-STALE candidate never contributes a scope note",
+          RC.stale_scope_hint(
+              {"candidates": [({"huggingface": {"path": "branch x"}},
+                               RC.TIER_EXACT, "")]}) == [])
     m = RC.match_artifacts(fake, "org/unpinned", "f" * 40)
     check("UNPINNED tier when the record has revision null",
           [t for _, t, _ in m["candidates"]] == [RC.TIER_UNPINNED])
