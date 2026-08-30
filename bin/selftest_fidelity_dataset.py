@@ -15,6 +15,7 @@ docs/FIDELITY-DATASET-SPEC.md rather than at an opinion.
     L1-L5    lane and stack           spec 9, 10.1
     C1-C4    coverage                 spec 6.3
     X1-X2    lossy / dtype            spec 4.1, 12.5 D-8
+    SV1-SV2  scope vocabulary         SCOPE-VOCAB (the registry's numeric_format enum)
     R1-R5    real published artifacts (metadata only)
 
 Exit 0 = all pass.
@@ -763,6 +764,31 @@ def section_lane(tmp):
                                           dscompare.load_dataset(x2), {})
     check("X2  dtype_lossless false -> advisory (FORM-1)", findings["class"] == "advisory")
 
+    # SV1/SV2 -- SCOPE-VOCAB. A scope the registry's schema will reject must be
+    # caught while the dataset is being written, not at submission time after
+    # the GPU hours are spent. Real finding: the first candidate this repo
+    # captured on real weights declared format "rtn-int4-per-row" and was
+    # rejected by registry_validate.py --submission on schema alone.
+    allowed = dsvalidate.registry_numeric_formats()
+    check("SV1 the registry numeric_format enum is READ, not copied",
+          bool(allowed) and "exl3-mcg" in allowed and "int4" in allowed,
+          "got %r" % (sorted(allowed)[:4] if allowed else None))
+
+    sv = os.path.join(tmp, "scope-vocab")
+    build_dataset(sv, seed=2, role="quant", quantized=True)
+    manifest = F.read_json(os.path.join(sv, F.MANIFEST_NAME))
+    for assignment in manifest["scope"]["assignments"]:
+        if assignment["treatment"] == "quantized":
+            assignment["format"] = "rtn-int4-per-row"
+    F.write_json(os.path.join(sv, F.MANIFEST_NAME), manifest)
+    reseal(sv)
+    report = dsvalidate.validate_dataset(sv, verify_tensors=False)
+    check("SV2 an off-vocabulary scope format warns (SCOPE-VOCAB), and is not an error",
+          not report.errors
+          and any(w["code"] == "scope_format_unknown" for w in report.warnings),
+          "errors=%d warnings=%s" % (len(report.errors),
+                                     [w["code"] for w in report.warnings]))
+
 
 # ---------------------------------------------------------------------------
 # R -- real published artifacts, metadata only
@@ -1042,6 +1068,85 @@ def section_interop(tmp):
           "; ".join(problems[:2]) or "clean")
 
 
+def section_hostile_fetch(tmp):
+    """A dataset fetched from somebody else's repo is UNTRUSTED INPUT.
+
+    `fetch_dataset` wrote every path listed in the remote `checksums.txt`, and the file
+    named by the remote manifest's `seal.checksums_file`, straight onto the download
+    directory with `os.path.join` -- so `../../../../k6/tools/stream_score.py` landed
+    there, an absolute entry won outright, and the digests beside those paths were parsed
+    and never compared to the bytes. Pointing `fidelity-dataset verify` at a stranger's
+    repo is the documented way to look at their capture, so this was reachable from the
+    front door. These cases drive the parser and the containment proof directly; the
+    network half is exercised by hand against a local endpoint (see the commit).
+    """
+    print("\n== X: a hostile dataset must not be able to write outside the download dir ==")
+    for label, line in (
+            ("relative traversal", "%s  ../../PWNED.txt" % ("0" * 64)),
+            ("absolute path", "%s  /tmp/PWNED.txt" % ("0" * 64)),
+            ("nested traversal", "%s  capture/../../../PWNED.txt" % ("0" * 64)),
+            ("windows drive", "%s  C:/PWNED.txt" % ("0" * 64)),
+    ):
+        try:
+            F.parse_checksums(line + "\n")
+            ok, detail = False, "ACCEPTED -- this path would have been written"
+        except F.FormatError as exc:
+            ok, detail = exc.code == "seal_failed", exc.message[:70]
+        check("X1  checksums.txt %-18s is refused at parse time" % label, ok, detail)
+
+    good = "%s  capture/hidden_0000.safetensors\n%s  panel/tokens/context-0000.json\n" % (
+        "a" * 64, "b" * 64)
+    try:
+        parsed = F.parse_checksums(good)
+        ok, detail = len(parsed) == 2, "parsed %d" % len(parsed)
+    except F.FormatError as exc:
+        ok, detail = False, "legitimate entries REFUSED: " + exc.message
+    check("X2  a legitimate checksums.txt still parses", ok, detail)
+
+    root = os.path.join(tmp, "x-contain")
+    os.makedirs(os.path.join(root, "capture"), exist_ok=True)
+    inside = F.resolve_inside(root, "capture/a.bin", owner="t")
+    ok = inside.startswith(os.path.realpath(root) + os.sep)
+    check("X3  resolve_inside keeps a legitimate path inside the root", ok, inside)
+    escaped = None
+    try:
+        F.resolve_inside(root, "../../etc/passwd", owner="t")
+    except F.FormatError as exc:
+        escaped = exc.code
+    check("X4  resolve_inside refuses a path that leaves the root",
+          escaped == "path_escape", str(escaped))
+
+    # SEC-07. `publish_dataset` called upload_folder with no ignore_patterns, and
+    # `iter_dataset_files` walked dotfiles and dot-directories, so a stray credential
+    # under a dataset root was HASHED INTO the published checksums.txt and then uploaded.
+    # It refuses now rather than filtering: a file dropped from the upload but still
+    # listed in checksums.txt makes the published dataset unverifiable.
+    cred = os.path.join(tmp, "x-cred")
+    build_dataset(cred)
+    for rel in (".hf_token", ".secrets/hf_token", "run/.hf_token", ".env", "deploy.pem"):
+        full = os.path.join(cred, rel)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write("hf_NOTAREALTOKEN000000000000000000000")
+        caught = None
+        try:
+            F.iter_dataset_files(cred)
+        except F.FormatError as exc:
+            caught = exc.code
+        check("X5  %-20s cannot be sealed into a dataset" % rel,
+              caught == "credential_in_tree", str(caught))
+        os.remove(full)
+
+    payload_ok = True
+    try:
+        listed = F.iter_dataset_files(cred)
+        payload_ok = any(p.startswith("panel/tokens/") for p in listed)
+    except F.FormatError as exc:
+        payload_ok = False
+    check("X6  legitimate panel/tokens/ payload is NOT mistaken for a credential",
+          payload_ok, "a *token* pattern here would strip required payload")
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="fidelity-dataset-selftest-")
     try:
@@ -1051,6 +1156,7 @@ def main():
         section_lane(tmp)
         section_interop(tmp)
         section_real(tmp)
+        section_hostile_fetch(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("\nselftest_fidelity_dataset: %d passed, %d failed" % (len(PASS), len(FAIL)))

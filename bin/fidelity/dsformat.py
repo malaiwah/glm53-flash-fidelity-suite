@@ -356,6 +356,37 @@ def strip_host_paths(doc: Any, stripped: Optional[List[str]] = None, prefix: str
 # ---------------------------------------------------------------------------
 
 
+#: Files that must never be sealed into a dataset or uploaded with one. This is a
+#: REFUSAL list, not a filter: `iter_dataset_files` hashes whatever it walks, so a stray
+#: credential under a dataset root was hashed into the published `checksums.txt` and
+#: sealed into the manifest before `upload_folder` -- which passed no ignore_patterns --
+#: sent the file itself. `measure_cloud.py` writes `.hf_token` into a run directory and
+#: the repo's own .gitignore documents the crash window where it survives, so "the token
+#: is a sibling of the dataset dir, not inside it" is a property of one directory layout
+#: rather than a property of the publisher.
+#:
+#: Deliberately NOT here: anything matching `*token*`. `panel/tokens/context-0000.json`
+#: is required dataset payload and `tokenizer.json` is required model payload; a pattern
+#: that broad would have silently stripped them and published an unloadable artifact.
+CREDENTIAL_FILE_PATTERNS = (
+    ".hf_token", "hf_token", ".env", ".netrc", ".npmrc", ".git-credentials",
+    "id_rsa", "id_ed25519", "credentials.json", "service-account.json",
+)
+CREDENTIAL_DIR_NAMES = (".secrets", ".ssh", ".aws", ".gnupg", ".git")
+CREDENTIAL_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
+
+
+def looks_like_a_credential(relpath: str) -> bool:
+    """Would publishing this file disclose a secret? Basename and directory, both."""
+    parts = relpath.split("/")
+    if any(part in CREDENTIAL_DIR_NAMES for part in parts[:-1]):
+        return True
+    name = parts[-1]
+    if name in CREDENTIAL_FILE_PATTERNS or name in CREDENTIAL_DIR_NAMES:
+        return True
+    return any(name.endswith(sfx) for sfx in CREDENTIAL_SUFFIXES)
+
+
 def iter_dataset_files(root: str, exclude: Sequence[str] = SEAL_EXCLUDES) -> List[str]:
     """Every regular file under `root`, as sorted relative POSIX paths.
 
@@ -377,6 +408,13 @@ def iter_dataset_files(root: str, exclude: Sequence[str] = SEAL_EXCLUDES) -> Lis
                 raise FormatError("symlink", "symlink %r (PATH-4)" % rel)
             if rel in excluded:
                 continue
+            if looks_like_a_credential(rel):
+                raise FormatError(
+                    "credential_in_tree",
+                    "%r is under the dataset root. Sealing it would hash a secret into the "
+                    "published checksums.txt and publishing would disclose it. Refusing rather "
+                    "than filtering: a file quietly dropped from the upload but still listed in "
+                    "checksums.txt makes the published dataset unverifiable." % rel)
             found.append(rel)
     return sorted(found)
 
@@ -406,6 +444,18 @@ def parse_checksums(text: str) -> Dict[str, str]:
             raise FormatError("seal_failed", "checksums.txt line %d: bad digest" % lineno)
         if path in out:
             raise FormatError("seal_failed", "checksums.txt lists %r twice" % path)
+        # The digest was validated and the PATH was not, so a remote checksums.txt could
+        # name `../../k6/tools/stream_score.py` or an absolute path and the fetcher joined
+        # it onto the download directory. `write_checksums` derives every entry from
+        # `iter_dataset_files`, which is an os.walk + relpath and hard-errors on symlinks,
+        # so a legitimately generated file can never contain one: rejecting the whole list
+        # here costs nothing and closes the class for every caller at once.
+        try:
+            check_relpath(path, owner="checksums.txt line %d" % lineno)
+        except FormatError as exc:
+            raise FormatError("seal_failed",
+                              "checksums.txt line %d names %r, which does not stay inside the "
+                              "dataset root (%s)" % (lineno, path, exc.message))
         out[path] = digest
     return out
 
