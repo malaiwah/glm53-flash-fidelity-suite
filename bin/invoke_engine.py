@@ -87,6 +87,7 @@ def main() -> int:
         "native-bf16": "native",
         "exl3hf": "exl3hf",
         "tr3-published": "tr3",
+        "dione": "dione",
     }
     if "source" in (engine.flag_map or {}) and surface not in source_by_surface:
         con.err(
@@ -148,6 +149,32 @@ def main() -> int:
         missing = [k for k in ("tr3_repo", "tr3_revision") if not extra[k]]
         if missing:
             con.err("job.json target is missing %s -- a tr3 capture cannot "
+                    "seal its provenance without them" % ", ".join(missing))
+            return 3
+    elif surface == "dione":
+        # A Dione release quantizes the routed experts of layers 3-44 ONLY and
+        # retains everything else -- head included -- at source precision, in
+        # its own retained/ shards.  Those shards hold no routed payloads, but
+        # they DO hold the 864 MTP-layer expert tensors, and the streaming view
+        # filters every `.mlp.experts.N.` name out of the index; transformers
+        # keys its load off the shard FILES, so the measured non-routed set
+        # still needs shards of its own.  --bf16 is the tree
+        # `stage_measure.sh materialize` wrote from THIS snapshot.
+        materialized = os.environ.get(
+            "DIONE_BF16", "%s/models/target-bf16-materialized" % fs)
+        extra.update({
+            "bf16": materialized,
+            "dione_root": "%s/models/target" % fs,
+            "dione_repo": target.get("repo_id", ""),
+            "dione_revision": target.get("revision", ""),
+            # the fetch stage hashes every shard against the release manifest
+            # and writes dione-shards-verified.json; `full` requires that
+            # marker, which is the binding the receipt claims
+            "dione_verify_shards": os.environ.get("DIONE_VERIFY_SHARDS", "full"),
+        })
+        missing = [k for k in ("dione_repo", "dione_revision") if not extra[k]]
+        if missing:
+            con.err("job.json target is missing %s -- a dione capture cannot "
                     "seal its provenance without them" % ", ".join(missing))
             return 3
     try:

@@ -177,6 +177,22 @@ fetch_target)
         >/dev/null 2>>"$LOGS/fetch_target.log"
     log "seal verified; scope written to $RCPT/artifact-scope.json"
   fi
+  if [ "$SURFACE" = "dione" ]; then
+    # A Dione release publishes no seal at all, so there is nothing to
+    # recompute -- but it DOES publish a per-shard sha256 manifest, and the
+    # only cheap moment to hash 149 GB against it is right after it lands.
+    # The marker this writes is what `--dione-verify-shards full` requires at
+    # capture time, four stages and three GPU-hours later.
+    log "hashing every shard against the release manifest (dione)"
+    "$VENV/bin/python" "$FS/k6/tools/dione_surface.py" verify-shards \
+        --root "$DEST" > "$RCPT/artifact-shard-verification.json" \
+        2>>"$LOGS/fetch_target.log"
+    "$VENV/bin/python" "$FS/k6/tools/dione_surface.py" scope \
+        --root "$DEST" --repo "$REPO" --revision "$REV" \
+        --out "$RCPT/artifact-scope.json" \
+        >/dev/null 2>>"$LOGS/fetch_target.log"
+    log "shards verified; scope written to $RCPT/artifact-scope.json"
+  fi
   df -h "$FS" | tee -a "$LOGS/fetch_target.log"
   touch "$marker"
   log "done"
@@ -222,7 +238,7 @@ materialize)
   #              decodes NOTHING: it re-shards the natives verbatim.
   SURFACE="$(jqget target.surface)"
   case "$SURFACE" in
-    exl3hf|tr3-published) ;;
+    exl3hf|tr3-published|dione) ;;
     *) log "surface=$SURFACE needs no materialization -- skipping"
        touch "$marker"; exit 0 ;;
   esac
@@ -230,11 +246,23 @@ materialize)
   REV="$(jqget target.revision)"
   BF16_DIR="${BF16:-/home/jl_fs/models/bf16}"
   log "materializing non-routed BF16 tree from $MODELS/target"
+  if [ "$SURFACE" = "dione" ]; then
+    #   dione -- the retained tensors are already the official ones at source
+    #            precision, so this decodes NOTHING; it exists because those
+    #            shards also carry the 864 MTP expert tensors the streaming
+    #            view filters out of the index.
+    "$VENV/bin/python" "$FS/k6/tools/dione_surface.py" materialize \
+        --root "$MODELS/target" --out "$MODELS/target-bf16-materialized" \
+        --repo "$REPO" --revision "$REV" \
+        --official-index "$BF16_DIR/model.safetensors.index.json" \
+        2>&1 | tee -a "$LOGS/materialize.log"
+  else
   "$VENV/bin/python" "$FS/k6/tools/exl3hf_surface.py" materialize \
       --root "$MODELS/target" --out "$MODELS/target-bf16-materialized" \
       --device cuda --source-repo "$REPO" --source-revision "$REV" \
       --official-index "$BF16_DIR/model.safetensors.index.json" \
       2>&1 | tee -a "$LOGS/materialize.log"
+  fi
   df -h "$FS" | tee -a "$LOGS/materialize.log"
   touch "$marker"
   log "done"

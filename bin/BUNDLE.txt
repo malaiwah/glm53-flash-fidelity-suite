@@ -46,7 +46,16 @@ bin/fidelity/stackprint.py
 # The sealed EP8 lane. Verified present and flag-checked by the planner.
 k6/tools/k6_student_capture.py
 k6/tools/k6_kld_report.py
+# The UNSEALED Dione (0xSero) selective-EXL3 surface. It serves BOTH lanes:
+# k6_student_capture --surface dione (sealed EP8) and stream_score --source
+# dione (streaming), and it owns its own `materialize` stage. Like tr3 it needs
+# official-nonrouted-names.json (listed below): the materializer gates its
+# emitted name set against the official release's 1,618 non-routed names before
+# it reads a tensor. Its selftest ships for the same reason the others' do --
+# the mcg decode-parity rungs can only run where quant_pipeline is.
 k6/tools/dione_surface.py
+k6/tools/selftest_dione_offline.py
+k6/tools/selftest_dione_stream_offline.py
 # The streaming lane. NOT in this checkout at time of writing -- see
 # bin/engines.json, lane "streaming". Listed so it uploads the moment it lands.
 k6/tools/stream_score.py

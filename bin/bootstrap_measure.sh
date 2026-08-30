@@ -227,6 +227,16 @@ if [ -f "$FS/k6/tools/selftest_tr3_offline.py" ]; then
   ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_tr3_offline.py ) \
     | tee "$RCPT/selftest-tr3.txt"
 fi
+if [ -f "$FS/k6/tools/selftest_dione_offline.py" ]; then
+  log "running the dione offline selftest (pack layout + decode identity + real-index census)"
+  ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_dione_offline.py \
+      --pipeline-root "$PIPE" ) | tee "$RCPT/selftest-dione.txt"
+fi
+if [ -f "$FS/k6/tools/selftest_dione_stream_offline.py" ]; then
+  log "running the dione STREAMING front-end selftest (manifests + shards + scope + materializer)"
+  ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_dione_stream_offline.py ) \
+    | tee "$RCPT/selftest-dione-stream.txt"
+fi
 if [ -f "$FS/k6/tools/selftest_exl3hf_offline.py" ]; then
   log "running the exl3hf offline selftest (mcg-parity rung included)"
   ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_exl3hf_offline.py ) \

@@ -54,6 +54,7 @@ class Engine:
     env: Dict[str, str] = field(default_factory=dict)
     fixed_flags: Dict[str, str] = field(default_factory=dict)
     profile_map: Dict[str, str] = field(default_factory=dict)
+    profile_map_by_surface: Dict[str, Dict[str, str]] = field(default_factory=dict)
     receipt_class: str = ""
     pinned_note: str = ""
 
@@ -127,6 +128,8 @@ def load_engines(path: Optional[Path] = None) -> Dict[str, Engine]:
             env=dict(spec.get("env") or {}),
             fixed_flags=dict(spec.get("fixed_flags") or {}),
             profile_map=dict(spec.get("profile_map") or {}),
+            profile_map_by_surface={k: dict(v) for k, v in
+                                    (spec.get("profile_map_by_surface") or {}).items()},
             receipt_class=spec.get("receipt_class", ""),
             pinned_note=spec.get("pinned_note", ""),
         )

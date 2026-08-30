@@ -726,6 +726,45 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
            % (passed, len(seal["checks"])))
 
 
+def resolve_profile(lane_spec, surface: Optional[str], bits: Optional[float]) -> Optional[str]:
+    """The engine --profile for this (surface, bits), or None.
+
+    The surface-scoped map wins over the bits-only one.  Two surfaces publish
+    at the same nominal rate -- a 4.0-bpw TR3 release and a 4.0-bpw Dione
+    release are the same number, a different codec, a different scope and a
+    different receipt family -- so a bits-only key cannot name a profile once
+    both exist.
+    """
+    if lane_spec is None:
+        return None
+    by_surface = getattr(lane_spec, "profile_map_by_surface", None) or {}
+    generic = getattr(lane_spec, "profile_map", None) or {}
+    if surface == "native-bf16":
+        return (by_surface.get(surface) or {}).get("native") or generic.get("native")
+    if bits is None:
+        return None
+    keys = []
+    for candidate in (bits, round(float(bits), 4)):
+        text = ("%g" % float(candidate))
+        if text not in keys:
+            keys.append(text)
+        text2 = str(candidate)
+        if text2 not in keys:
+            keys.append(text2)
+    scoped = by_surface.get(surface or "") or {}
+    for key in keys:
+        if key in scoped:
+            return scoped[key]
+    # A surface with its own map is AUTHORITATIVE for that surface: falling
+    # through to the bits-only map would hand a Dione release a TR3 profile.
+    if scoped:
+        return None
+    for key in keys:
+        if key in generic:
+            return generic[key]
+    return None
+
+
 def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     """Everything that must be true BEFORE money is spent."""
     plan: Dict[str, Any] = {"job_id": job_id_for(args), "created": False}
@@ -916,6 +955,37 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                 if line:
                     con.say("           %s" % line)
             plan.setdefault("would_refuse", []).append(refusal.reason)
+        # The engine's --profile is part of the plan, not an execute-time
+        # afterthought: it names the receipt family, the student label and the
+        # bit rate the engine cross-checks against the release's own
+        # declaration.  Resolving it here means an artifact this suite has no
+        # profile for is refused for $0.00 instead of dying on argparse after
+        # the fetch -- or worse, running under the old `or "k6"` fallback and
+        # sealing a receipt that calls a third-party quant a K6 payload-store
+        # run.
+        resolved_profile = resolve_profile(engines[args.lane], surface.surface,
+                                           surface.bits)
+        plan["profile"] = resolved_profile
+        if resolved_profile:
+            con.kv("engine profile", "%s  (surface %s, bits %s)"
+                   % (resolved_profile, surface.surface, surface.bits))
+        else:
+            refusal = Refusal(
+                "lane '%s' has no --profile for a '%s' artifact at %s bpw"
+                % (args.lane, surface.surface, surface.bits),
+                ["The profile names the receipt family "
+                 "(malaiwah.glm53-<profile>-packed-kld-summary.v1), the student "
+                 "label the KLD report expects, and the bit rate the engine "
+                 "checks against the release's own declaration.",
+                 "Add it to bin/engines.json lanes.%s.profile_map_by_surface['%s'], "
+                 "and add the matching entry to k6/tools/k6_kld_report.py."
+                 % (args.lane, surface.surface),
+                 "",
+                 "Nothing was created. $0.00 spent."])
+            if not args.dry_run:
+                raise refusal
+            con.warn("WOULD REFUSE (real run): %s" % refusal.reason)
+            plan.setdefault("would_refuse", []).append(refusal.reason)
         artifact_bytes = float(target.total_bytes)
         bits = float(surface.bits or 4.0)
     else:
@@ -971,7 +1041,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     # local BF16 tree (~the model's non-routed footprint) before any capture.
     materialized_bytes = (
         cen.nonrouted_bytes
-        if plan["target"].get("surface") in ("exl3hf", "tr3-published") else 0.0
+        if plan["target"].get("surface") in ("exl3hf", "tr3-published", "dione") else 0.0
     )
     need = C.storage_need(artifact_bytes=artifact_bytes, panel_bytes=panel_bytes,
                           keep_student_logits=args.keep_student_logits,
@@ -1118,11 +1188,11 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
         ("bootstrap", 0.42, "apt + cuda13 + torch + exllamav3 build"),
         ("fetch", max(0.05, fetch_gb / 190.0 / 3600.0 * 1000.0), "%.0f GB @ ~190 MB/s" % fetch_gb),
     ]
-    if plan["target"].get("surface") in ("exl3hf", "tr3-published"):
+    if plan["target"].get("surface") in ("exl3hf", "tr3-published", "dione"):
         phases.append(
             ("materialize", 0.06,
-             "%s non-routed -> %s tree (MEASURED 2m06s on exl3hf; a tr3 "
-             "release copies rather than decodes)"
+             "%s non-routed -> %s tree (MEASURED 2m06s on exl3hf; tr3 and "
+             "dione releases copy rather than decode)"
              % ("dequantize" if plan["target"].get("surface") == "exl3hf"
                 else "re-shard", human_bytes(materialized_bytes))))
     phases += [
@@ -1341,15 +1411,20 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
     # was not even a stream_score --profile choice; a streaming measure stage
     # would have died on argparse at hour ~1 of the rental.)
     target = plan_data.get("target") or {}
-    lane_spec = load_engines().get(args.lane)
-    profile_map = lane_spec.profile_map if lane_spec else {}
-    if target.get("surface") == "native-bf16":
-        profile = profile_map.get("native", "native-bf16")
-    else:
-        bits_key = str(target.get("bits")) if target.get("bits") is not None else ""
-        profile = profile_map.get(bits_key)
+    profile = plan_data.get("profile")
     if not profile:
-        profile = "k6"
+        # Offline/adopted plans predate the plan-time resolution; recompute
+        # from the same function rather than from a second expression, and
+        # REFUSE rather than defaulting -- "k6" is a real profile that names a
+        # real receipt family, so falling back to it does not fail loudly, it
+        # publishes a wrong label.
+        profile = resolve_profile(load_engines().get(args.lane),
+                                  target.get("surface"), target.get("bits"))
+    if not profile:
+        raise Refusal(
+            "no engine --profile for surface %r at %r bpw on lane %r"
+            % (target.get("surface"), target.get("bits"), args.lane),
+            ["Add it to bin/engines.json lanes.%s.profile_map_by_surface." % args.lane])
     return {
         "recipe": "cloud",
         "job_id": plan_data["job_id"],
@@ -1473,7 +1548,8 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
                int(args.heartbeat_timeout), td.fs_root, td.fs_root))
 
     stages = ["setup", "fetch_target", "fetch_panel", "measure", "score", "seal"]
-    if (plan_data.get("target") or {}).get("surface") in ("exl3hf", "tr3-published"):
+    if (plan_data.get("target") or {}).get("surface") in ("exl3hf", "tr3-published",
+                                                          "dione"):
         # Both surfaces read --bf16 from a tree of the artifact's own non-routed
         # tensors: exl3hf because they are quantized and must be decoded,
         # tr3-published because they share shards with the routed payloads and

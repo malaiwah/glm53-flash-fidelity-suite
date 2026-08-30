@@ -1019,6 +1019,11 @@ def main() -> int:
                     }
                 )
             else:
+                # Every pin the CAPTURE sealed, republished here so the
+                # headline number carries its own provenance chain.  The four
+                # original keys are the sealed lane's; the rest are what the
+                # streaming capture adds and are simply absent (None) on a
+                # sealed-lane receipt, which is why they are read with .get.
                 summary.update(
                     {
                         "student_receipt_sha256": student_receipt["receipt_sha256"],
@@ -1029,6 +1034,22 @@ def main() -> int:
                         ),
                         "source_repo": student_receipt.get("source_repo"),
                         "source_revision": student_receipt.get("source_revision"),
+                        "artifact_config_sha256": student_receipt.get(
+                            "artifact_config_sha256"),
+                        "artifact_index_sha256": student_receipt.get(
+                            "artifact_index_sha256"),
+                        "exl3_manifest_name": student_receipt.get("exl3_manifest_name"),
+                        "exl3_manifest_sha256": student_receipt.get("exl3_manifest_sha256"),
+                        "exl3_manifest_schema": student_receipt.get("exl3_manifest_schema"),
+                        "codebook": student_receipt.get("codebook"),
+                        "codec_family": student_receipt.get("codec_family"),
+                        "declared_bits": student_receipt.get("declared_bits"),
+                        "declared_head_bits": student_receipt.get("declared_head_bits"),
+                        "tp_size": student_receipt.get("tp_size"),
+                        "materialization_receipt_sha256": student_receipt.get(
+                            "materialization_receipt_sha256"),
+                        "scope_digest": student_receipt.get("scope_digest"),
+                        "scope_census_sha256": student_receipt.get("scope_census_sha256"),
                         "seal_disclosure": student_receipt.get("seal_disclosure"),
                     }
                 )

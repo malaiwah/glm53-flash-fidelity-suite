@@ -154,6 +154,14 @@ EXL3HF_PROFILES = {
 TR3_PROFILES = {
     "tr3-4bpw": (4.0, "tr3-exl3-mcg-4bpw"),
 }
+# Dione (0xSero selective-EXL3, TP4-sliced, routed experts only) profiles.
+# Same rule again: the label must match k6_kld_report's map for the profile,
+# and the profile names the receipt family
+# malaiwah.glm53-<profile>-packed-kld-summary.v1.
+DIONE_PROFILES = {
+    "dione-q4": (4.0, "dione-exl3-k4-tp4"),
+    "dione-3.0bpw": (3.0, "dione-exl3-k3-tp4"),
+}
 TEACHER_CAPTURE_ROLE = "bf16_teacher"
 # --source gguf: a community llama.cpp artifact that quantizes EVERYTHING, so
 # the whole forward (not only the routed experts) is the artifact's weights.
@@ -705,6 +713,7 @@ class ExpertStreamer:
         mlx_source: Any = None,
         gguf_source: Any = None,
         nvfp4_source: Any = None,
+        cache_identity: Optional[Dict[str, Any]] = None,
     ):
         import torch
 
@@ -774,12 +783,67 @@ class ExpertStreamer:
         self.payload_bytes = 0
         self.census: List[Dict[str, Any]] = []
         self._census_layers: set = set()
+        self.cache_served_layers: set = set()
         if cache_mode == "disk":
             if cache_dir is None:
                 raise _fail("--decode-cache disk requires --decode-cache-dir")
             cache_dir.mkdir(parents=True, exist_ok=True)
+            self._bind_disk_cache(cache_identity)
 
     # -- cache layout -----------------------------------------------------
+    #: What a `--decode-cache disk` directory must agree about before its bytes may be
+    #: installed as this run's expert weights.  The cache is keyed ONLY on the layer
+    #: index (`layer-%03d.{gate_up,down}.bf16.bin`) and `_cache_load_into_slab` reads
+    #: raw int16 with nothing but a size check, so pointing a second run at the same
+    #: --decode-cache-dir installed the FIRST artifact's decoded experts and published
+    #: them under the second artifact's identity: a wrong number wearing correct
+    #: provenance.  Every other reusable artifact in this file is identity-stamped
+    #: (`prepare_nonrouted_view` writes .view-source.json; mlx binds config/index/
+    #: census/adapter sha; gguf's non-routed view is fingerprinted) -- this was the
+    #: one that was not.
+    CACHE_STAMP_NAME = "decode-cache-identity.json"
+
+    def _bind_disk_cache(self, identity: Optional[Dict[str, Any]]) -> None:
+        import hashlib
+
+        stamp_path = self.cache_dir / self.CACHE_STAMP_NAME
+        want = dict(identity or {})
+        want["decode_cache_layout"] = "layer-%03d.{gate_up,down}.bf16.bin"
+        blob = json.dumps(want, sort_keys=True, separators=(",", ":"))
+        want["identity_sha256"] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        existing_payload = sorted(self.cache_dir.glob("layer-*.bf16.bin"))
+        if stamp_path.is_file():
+            try:
+                have = json.loads(stamp_path.read_text())
+            except (OSError, ValueError) as exc:
+                raise _fail(
+                    f"decode cache stamp {stamp_path} is unreadable ({exc}). Delete the "
+                    f"cache directory and re-decode; its bytes cannot be attributed."
+                )
+            if have.get("identity_sha256") != want["identity_sha256"]:
+                differing = sorted(
+                    k for k in set(have) | set(want)
+                    if k != "identity_sha256" and have.get(k) != want.get(k))
+                raise _fail(
+                    f"--decode-cache-dir {self.cache_dir} was filled by a DIFFERENT run "
+                    f"(differs on: {', '.join(differing) or 'identity_sha256'}). Its "
+                    f"decoded experts would be installed as this run's weights and "
+                    f"published under this run's identity. Use a fresh directory, or "
+                    f"delete this one."
+                )
+            return
+        if existing_payload:
+            raise _fail(
+                f"--decode-cache-dir {self.cache_dir} already holds "
+                f"{len(existing_payload)} decoded layer file(s) but no "
+                f"{self.CACHE_STAMP_NAME}, so there is nothing that says which artifact "
+                f"they were decoded from. Delete the directory and re-decode."
+            )
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = stamp_path.with_name(stamp_path.name + ".new")
+        tmp.write_text(json.dumps(want, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, stamp_path)
+
     def _cache_path(self, layer: int, which: str) -> Path:
         return self.cache_dir / f"layer-{layer:03d}.{which}.bf16.bin"
 
@@ -841,6 +905,14 @@ class ExpertStreamer:
         if self._cache_ready(layer):
             self._cache_load_into_slab(layer, group)
             self.cache_hits += 1
+            # A cache hit returns BEFORE `record_census` below, so a fully warm cache
+            # left `self.census` empty -- and the receipt still published
+            # `installed_choice_census_sha256`, which then reduces to the digest of the
+            # empty list (37517e5f3dc66819...), the same 64 hex digits for every warm
+            # run of every artifact.  A constant that looks like evidence is worse than
+            # an absent field, so record which layers were served from cache and let the
+            # receipt say the census is partial.
+            self.cache_served_layers.add(layer)
             self.resident = key
             self.decode_seconds += time.monotonic() - started
             return
@@ -890,28 +962,76 @@ class ExpertStreamer:
                           record_census: bool) -> None:
         """Dione surface: one matrix = tp_size decoded slices concatenated.
 
-        Uses dione_surface.load_decoded_module verbatim (the same function
-        install_local_main_experts_dione calls), so the codec path is the one
-        already proven bitwise equal to decode_choice_hf at K4/K6.  Serial by
-        design: safetensors handles in DioneShardReader are not thread-safe.
-        """
+        The packed lane's producer/consumer shape with the IO half replaced by
+        DioneShardReader.payload (thread-local safetensors handles) and the
+        decode half by dione_surface.decode_module_payload -- the same math
+        load_decoded_module and install_local_main_experts_dione run, split so
+        the reads can overlap the decodes.  The install algebra after decode
+        (fuse_gate_up, one fp32->bf16 rounding, copy_ into the slab, the
+        torch.equal close) is shared verbatim with every other surface.
 
+        ``hash_payloads=record_census`` matters: a census is recorded once per
+        layer, but sha256 over every trellis block is ~3.2 MB of hashing per
+        matrix and a cold run decodes 907,200 matrices.  Hashing all of them
+        would add hours of pure CPU for 42 layers' worth of recorded rows.
+        """
         import torch
         import dione_surface as ds
         from quant_pipeline.evaluation.glm53_packed_k4_reader import fuse_gate_up
 
+        reader = self.dione_shards
+        jobs: "queue.Queue[Any]" = queue.Queue(maxsize=max(2, self.decode_threads * 2))
+        error: List[BaseException] = []
+
+        def producer() -> None:
+            try:
+                with ThreadPoolExecutor(max_workers=self.decode_threads) as pool:
+                    pending: List[Any] = []
+                    for offset in range(count):
+                        expert = lo + offset
+                        pending.append(
+                            (
+                                offset,
+                                expert,
+                                [
+                                    pool.submit(reader.payload, layer, expert, proj)
+                                    for proj in ("gate_proj", "up_proj", "down_proj")
+                                ],
+                            )
+                        )
+                        while len(pending) > self.decode_threads:
+                            jobs.put(pending.pop(0))
+                    for item in pending:
+                        jobs.put(item)
+            except BaseException as exc:  # noqa: BLE001 - propagated to the consumer
+                error.append(exc)
+            finally:
+                jobs.put(None)
+
+        thread = threading.Thread(target=producer, daemon=True)
+        thread.start()
         with torch.inference_mode():
-            for offset in range(count):
-                expert = lo + offset
+            while True:
+                item = jobs.get()
+                if item is None:
+                    break
+                offset, expert, futures = item
+                slices = [future.result() for future in futures]
                 decoded = []
                 census = []
-                for projection in ("gate_proj", "up_proj", "down_proj"):
-                    tensor, row = ds.load_decoded_module(
-                        self.surface, self.dione_shards, layer=layer, expert=expert,
+                for payloads, projection in zip(slices, ("gate_proj", "up_proj", "down_proj")):
+                    tensor, row = ds.decode_module_payload(
+                        self.surface, payloads, layer=layer, expert=expert,
                         projection=projection, device=self.device,
+                        hash_payloads=record_census,
                     )
                     decoded.append(tensor)
                     census.append(row)
+                    self.payload_bytes += sum(
+                        int(slice_payload[name].numel() * slice_payload[name].element_size())
+                        for slice_payload in payloads
+                        for name in ("trellis", "suh", "svh")
+                    )
                 gate_up_bf16 = fuse_gate_up(decoded[0], decoded[1]).to(dtype=torch.bfloat16)
                 down_bf16 = decoded[2].to(dtype=torch.bfloat16)
                 self.gate_up[offset].copy_(gate_up_bf16)
@@ -929,7 +1049,10 @@ class ExpertStreamer:
                         {"layer": layer, "global_expert": expert, "local_expert": offset,
                          "slices": census}
                     )
-                del decoded, gate_up_bf16, down_bf16
+                del decoded, gate_up_bf16, down_bf16, slices
+        thread.join()
+        if error:
+            raise error[0]
 
     def _fill_range_exl3hf(self, layer: int, lo: int, count: int, cpu_gate_up, cpu_down,
                            record_census: bool) -> None:
@@ -1637,7 +1760,11 @@ def main() -> int:
                      default="payload-store",
                      help="checkpoint = materialized shards (its receipt names the packed root); "
                           "payload-store = the content-addressed store directly (default); "
-                          "dione = a Dione-style selective-EXL3 tree via dione_surface; "
+                          "dione = a Dione-style selective-EXL3 tree (0xSero) via "
+                          "dione_surface: routed experts only, stored as tp_size EXL3/MCG "
+                          "slices per matrix; the artifact's own retained non-routed tensors "
+                          "serve the rest, materialized VERBATIM into --bf16 by "
+                          "dione_surface materialize; "
                           "native = the official BF16 checkpoint's own routed experts, NO decode "
                           "(the measurement floor of this lane); "
                           "exl3hf = a stock-exllamav3 HF-sharded release (mul1/mcg codebook, "
@@ -1661,9 +1788,19 @@ def main() -> int:
     src.add_argument("--packed-root", type=Path,
                      help="--source payload-store: encode output root (out-k6) carrying "
                           "contract.json, inventory.json, mtp-adapter-receipt.json and payload-store/")
-    src.add_argument("--dione-root", type=Path)
-    src.add_argument("--dione-repo")
-    src.add_argument("--dione-revision")
+    src.add_argument("--dione-root", type=Path,
+                     help="--source dione: local snapshot of the Dione release "
+                          "(config.json + index + layers/ + retained/ + EXL3_MANIFEST.json)")
+    src.add_argument("--dione-repo",
+                     help="--source dione: the HF repo id the snapshot came from")
+    src.add_argument("--dione-revision",
+                     help="--source dione: the immutable 40-hex revision of that snapshot")
+    src.add_argument("--dione-verify-shards", choices=("full", "skip"), default="full",
+                     help="--source dione: how the shard BYTES are bound to the release "
+                          "manifest. full (default) requires the dione-shards-verified.json "
+                          "marker written by `dione_surface.py verify-shards`, which hashes "
+                          "every shard against EXL3_MANIFEST.json; skip is disclosed in the "
+                          "receipt as shard_hash_verification=skipped")
     src.add_argument("--exl3hf-root", type=Path,
                      help="--source exl3hf: local snapshot of the stock-exllamav3 checkpoint")
     src.add_argument("--exl3hf-repo",
@@ -1741,7 +1878,8 @@ def main() -> int:
     parser.add_argument("--cold-run", type=int, required=True)
     parser.add_argument("--profile", default="k6",
                         choices=("k6", "k8", "k6k8", "native-bf16", "mlx", "gguf", "nvfp4",
-                                 "turbo-4.05bpw", "turbo-3.05bpw", "tr3-4bpw"))
+                                 "turbo-4.05bpw", "turbo-3.05bpw", "tr3-4bpw",
+                                 "dione-q4", "dione-3.0bpw"))
     parser.add_argument("--roles", default="final")
     parser.add_argument("--windows", help="comma-separated window ids to score (default: all)")
     parser.add_argument("--pipeline-root")
@@ -1830,19 +1968,12 @@ def main() -> int:
 
     if args.reduce_order not in REDUCE_ORDERS:
         raise _fail(f"--reduce-order must be one of {REDUCE_ORDERS}")
-    if args.source == "dione":
-        # The streamer itself already speaks Dione: ExpertStreamer(dione_shards=...)
-        # fills the slab through dione_surface.load_decoded_module, the same
-        # function install_local_main_experts_dione uses in production.  What is
-        # missing is only the CLI front-end (surface resolution, placement audit,
-        # non-routed verification, Dione receipt fields), and no Dione snapshot was
-        # available on the validation box to exercise it end to end.  Shipping an
-        # unexecuted measurement path would be worse than refusing one.
+    if (args.source == "dione") != (args.profile in DIONE_PROFILES):
         raise _fail(
-            "--source dione is not enabled in this build: the streaming slab fill is wired to "
-            "dione_surface.load_decoded_module (ExpertStreamer(dione_shards=...)), but the CLI "
-            "front-end was never executed against a real Dione tree. Score Dione snapshots with "
-            "k6_student_capture.py --surface dione until this path is validated."
+            "--source dione and a dione profile (%s) must be used together: the profile names "
+            "the receipt family (malaiwah.glm53-<profile>-packed-kld-summary.v1) and selects "
+            "the student label the KLD report expects"
+            % "/".join(sorted(DIONE_PROFILES))
         )
 
     if (args.source == "native") != (args.profile == "native-bf16"):
@@ -1887,8 +2018,9 @@ def main() -> int:
             "(with --source gguf only for config/tokenizer/vision; every measured weight is "
             "decoded from the artifact). --source mlx supplies every tensor, config included, "
             "from the quant snapshot itself, and --source nvfp4 refuses --bf16 outright. "
-            "--source tr3 needs it for the same mechanical reason exl3hf does: the non-routed "
-            "tensors must reach transformers in shards that hold nothing else"
+            "--source tr3 and --source dione need it for the same mechanical reason exl3hf "
+            "does: the non-routed tensors must reach transformers in shards that hold "
+            "nothing else"
         )
 
     # ---- teacher role and preview sampling (both flag-gated; defaults are
@@ -1947,6 +2079,9 @@ def main() -> int:
     nvfp4 = None
     tr3_module = None
     tr3 = None
+    dione_module = None
+    dione = None
+    dione_shards = None
     inventory: Optional[Dict[str, Any]] = None
     if args.source == "mlx":
         import mlx_surface as mlxs
@@ -1973,6 +2108,72 @@ def main() -> int:
         except ValueError as error:
             raise _fail(str(error))
         model_revision = mlx_surface_obj.revision
+    elif args.source == "dione":
+        # A Dione release publishes NO seal: no upstream receipts, no
+        # reconstruction closures, no reader ABI.  What it does publish is a
+        # manifest with a sha256 for every shard, an index whose 583,090 names
+        # close exactly against the declared scope, and a config that states the
+        # recipe in full.  Those are the provenance anchors, and the receipt
+        # says so rather than implying a seal that does not exist.
+        if args.dione_root is None or not args.dione_repo or not args.dione_revision:
+            raise _fail("--source dione requires --dione-root, --dione-repo and --dione-revision")
+        if sealed_capture.REVISION.fullmatch(args.dione_revision) is None:
+            raise _fail("--dione-revision must be the immutable 40-hex commit")
+        import dione_surface as dione_module  # noqa: F811 - sibling tool module
+
+        try:
+            dione = dione_module.load_dione_surface(
+                args.dione_root,
+                repo=args.dione_repo,
+                revision=args.dione_revision,
+                require_shard_hashes=(args.dione_verify_shards == "full"),
+            )
+        except ValueError as error:
+            raise _fail(str(error))
+        want_bits = DIONE_PROFILES[args.profile][0]
+        if abs(float(dione.bits) - want_bits) > 1e-6:
+            raise _fail(
+                f"--profile {args.profile} names a {want_bits} bpw release, but the "
+                f"release declares bits={dione.bits}"
+            )
+        # --bf16 points at the MATERIALIZED non-routed tree for the same
+        # mechanical reason it does for tr3 and exl3hf.  A Dione release keeps
+        # its non-routed tensors in retained/ shards that hold no routed
+        # payloads -- but those shards ALSO carry the 864 MTP-layer expert
+        # tensors, transformers derives its checkpoint key set from the shard
+        # FILES, and the streaming build filters every `.mlp.experts.N.` name
+        # out of the index.  The materializer copies the measured non-routed
+        # set into shards of its own, decoding NOTHING.
+        inventory_path = (
+            args.inventory.resolve() if args.inventory
+            else (args.bf16.resolve() / "inventory.json")
+        )
+        inventory = _sealed_json(inventory_path, RELEASE_INVENTORY_SCHEMA, "inventory_sha256")
+        model_revision = str(inventory.get("model_revision", ""))
+        if model_revision != args.dione_revision:
+            raise _fail(
+                "the materialized tree's inventory binds revision "
+                f"{model_revision!r}, not --dione-revision {args.dione_revision!r}"
+            )
+        if inventory.get("seal_mode") != "full-shard-sha256":
+            raise _fail("streaming capture requires the exact full-shard-hash inventory")
+        materialization = _sealed_json(
+            args.bf16.resolve() / "materialization-receipt.json",
+            dione_module.DIONE_MATERIALIZATION_SCHEMA,
+            "receipt_sha256",
+        )
+        if (
+            materialization.get("source_repo") != args.dione_repo
+            or materialization.get("source_revision") != args.dione_revision
+            or materialization.get("source_config_sha256") != dione.config_sha256
+            or materialization.get("source_index_sha256") != dione.index_sha256
+            or materialization.get("inventory_sha256") != inventory["inventory_sha256"]
+        ):
+            raise _fail(
+                "the --bf16 tree was not materialized from THIS dione snapshot; "
+                "re-run `dione_surface.py materialize` against the same --dione-root"
+            )
+        bits = int(dione.bits)
     elif args.source == "tr3":
         # A TR3-published release is the one third-party surface in this suite
         # that SEALS itself: exl3-mcg-storage-abi.json and
@@ -2293,6 +2494,7 @@ def main() -> int:
     nvfp4_expert_source = None
     tr3_reader = None
     tr3_layout: Optional[Dict[str, Any]] = None
+    dione_layout: Optional[Dict[str, Any]] = None
     if args.source == "mlx":
         import mlx_surface as mlxs
 
@@ -2348,6 +2550,13 @@ def main() -> int:
         # scope and the non-routed source, none of which the fill loop touches.
         exl3hf, tr3_reader = tr3_module.expert_source(tr3)
         tr3_layout = tr3_module.routed_census(tr3)
+    elif args.source == "dione":
+        # The census already closed inside load_dione_surface (every routed
+        # slice present, none stray, MTP native, non-routed name set exactly
+        # the official 1,618).  The reader only adds thread-local safetensors
+        # handles so the fill loop can read payloads from a pool.
+        dione_shards = dione_module.DioneShardReader(dione)
+        dione_layout = dione_module.routed_census(dione)
     elif args.source == "nvfp4":
         # census/geometry already closed inside load_nvfp4_surface; the
         # source object only adds the thread-safe read+decode machinery.
@@ -2466,6 +2675,9 @@ def main() -> int:
     elif args.source == "tr3":
         identity = tr3_module.tr3_reader_identity(Path(__file__).resolve(), tr3)
         checkpoint_identity = tr3.checkpoint_identity_sha256()
+    elif args.source == "dione":
+        identity = dione_module.dione_reader_identity(Path(__file__).resolve(), bits=bits)
+        checkpoint_identity = dione.checkpoint_identity_sha256()
     elif args.source == "nvfp4":
         identity = nvfp4_module.nvfp4_reader_identity(Path(__file__).resolve(), nvfp4)
         checkpoint_identity = nvfp4.checkpoint_identity_sha256()
@@ -2659,6 +2871,49 @@ def main() -> int:
         disclosure["tr3_routed_layout"] = tr3_layout
         disclosure["tr3"] = tr3_module.surface_summary(tr3)
         disclosure["seal_disclosure"] = tr3_module.SEAL_DISCLOSURE
+    elif args.source == "dione":
+        # Two disclosed differences from a packed K6/K8 run: where the routed
+        # bytes come from (an UNSEALED third-party release, decoded per TP
+        # slice and concatenated) and where the non-routed weights come from
+        # (that same artifact's retained tensors, copied verbatim).
+        disclosure["routed_weight_source"] = (
+            "Dione selective-EXL3 payloads, %d TP-rank slices per matrix "
+            "(<module>.rank{R}.{trellis,suh,svh,mcg}) read from the artifact's own "
+            "layers/ shards, decoded with the campaign decode ABI (fp32 hadamards, "
+            "frozen MCG LUT) and concatenated in rank order (dim %s), then one bf16 "
+            "rounding - the identical codec the K6/K8 rows on this lane were measured "
+            "through, at K%d"
+            % (dione.tp_size, json.dumps(dione_module.CONCAT_DIM, sort_keys=True), bits)
+        )
+        disclosure["dtype_policy"] = dict(disclosure["dtype_policy"])
+        disclosure["dtype_policy"]["weights"] = (
+            "bfloat16 decoded from Dione EXL3/MCG TP slices (fp32 decode + rank concat, "
+            "one rounding)"
+        )
+        disclosure["dtype_policy"]["nonrouted"] = (
+            "the ARTIFACT's own retained tensors, copied VERBATIM: the release quantizes "
+            "the routed experts of layers 3-44 only and retains everything else at source "
+            "precision (retained_dtype: source_precision), including the lm_head. Its "
+            "non-routed name set was verified equal to the official release's 1,618 names "
+            "before anything was read; the materializer re-shards them without decoding "
+            "or casting anything. No official-release weight is in the measured path"
+        )
+        disclosure["sealed_path_differences"] = list(disclosure["sealed_path_differences"]) + [
+            "routed surface: a Dione (0xSero) selective-EXL3 release, uniform K%d, stored "
+            "TP%d-sliced. There is no payload store, no contract, no encoder closure and "
+            "NO publisher seal; the provenance anchors are the immutable artifact "
+            "revision, the release manifest's per-shard sha256 (%s), the local "
+            "config/index digests and the consumed-payload sha256 census"
+            % (bits, dione.tp_size, dione.shard_hash_verification),
+            "non-routed weights: the artifact's OWN retained tensors, re-sharded verbatim "
+            "by dione_surface.materialize_nonrouted (no decode -- this release quantizes "
+            "nothing outside the routed experts of layers 3-44). The head is applied "
+            "natively from those weights and is NOT quantized (head_bits 16), unlike a "
+            "stock-exllamav3 release",
+        ]
+        disclosure["dione_routed_layout"] = dione_layout
+        disclosure["dione"] = dione_module.surface_summary(dione)
+        disclosure["seal_disclosure"] = dione_module.SEAL_DISCLOSURE
     elif args.source == "mlx":
         import mlx_surface as mlxs
 
@@ -2847,6 +3102,9 @@ def main() -> int:
             if args.source == "nvfp4"
             else f"streamed_decode_seal_verified_tr3_published_k{bits}_mcg_to_bf16_one_layer_resident"
             if args.source == "tr3"
+            else (f"streamed_decode_hash_verified_dione_tp{dione.tp_size}_slices_k{bits}_mcg"
+                  "_concat_to_bf16_one_layer_resident")
+            if args.source == "dione"
             else f"streamed_decode_hash_verified_packed_k{bits}_mcg_to_bf16_one_layer_resident"
         ),
         "native_routed_layout": native_layout,
@@ -2866,6 +3124,11 @@ def main() -> int:
                 "executed_by_standard_logits" % int(round(tr3.declared_bits))
             )
             if args.source == "tr3"
+            else (
+                "mtp_layer_45_experts_retained_at_source_precision_bf16_but_not_executed_"
+                "by_standard_logits"
+            )
+            if args.source == "dione"
             else "complete_and_receipt_required_but_not_executed_by_standard_logits"
         ),
         "nonrouted_policy": (
@@ -2917,6 +3180,34 @@ def main() -> int:
                 "exl3hf_routed_layout": exl3hf_layout,
             }
         )
+    if args.source == "dione":
+        plan.update(
+            {
+                "dione_repo": args.dione_repo,
+                "dione_revision": args.dione_revision,
+                "dione_root": str(args.dione_root.resolve()),
+                "artifact_config_sha256": dione.config_sha256,
+                "artifact_index_sha256": dione.index_sha256,
+                "codebook": "mcg",
+                "codec_family": "exl3-mcg",
+                "declared_bits": float(dione.bits),
+                "declared_head_bits": 16,
+                "tp_size": dione.tp_size,
+                "source_repo": dione.source_repo,
+                "source_revision": dione.source_revision,
+                "exl3_manifest_name": dione.exl3_manifest_name,
+                "exl3_manifest_sha256": dione.exl3_manifest_sha256,
+                "exl3_manifest_schema": dione.exl3_manifest_schema,
+                "dione_shard_hash_verification": dione.shard_hash_verification,
+                "materialization_receipt_sha256": materialization["receipt_sha256"],
+                "scope_digest": dione_module.scope_digest(dione),
+                "scope_census_sha256":
+                    dione_module.surface_summary(dione)["scope_census_sha256"],
+                "seal_disclosure": dione_module.SEAL_DISCLOSURE,
+                "nonrouted_policy": "artifact_own_retained_natives_rematerialized_verbatim",
+                "dione_routed_layout": dione_layout,
+            }
+        )
     if args.source == "tr3":
         plan.update(
             {
@@ -2943,6 +3234,9 @@ def main() -> int:
                 "tr3_routed_layout": tr3_layout,
             }
         )
+    if args.source == "dione":
+        plan["dione"] = dione_module.surface_summary(dione)
+        plan["dione"]["scope_digest"] = dione_module.scope_digest(dione)
     if args.source == "mlx":
         plan["mlx"] = {
             "mlx_repo": mlx_surface_obj.repo,
@@ -3041,7 +3335,9 @@ def main() -> int:
                            if args.source in ("nvfp4", "tr3") else ()),
     )
     streamer = ExpertStreamer(
-        surface=surface,
+        # the dione fill loop reads geometry (bits, tp_size) off the surface it
+        # is given, so for that source the surface IS the DioneSurface
+        surface=(dione if args.source == "dione" else surface),
         device=decode_device,
         bits=bits,
         layers=layers,
@@ -3056,6 +3352,10 @@ def main() -> int:
         # caller still does fuse_gate_up, the single bf16 rounding and the
         # torch.equal close.
         native_source=native_source,
+        # dione has its own fill loop: one matrix is tp_size independent EXL3
+        # payloads that must be decoded and concatenated in rank order, which
+        # is not the one-payload-per-matrix shape every other surface has.
+        dione_shards=dione_shards,
         # tr3 rides the exl3hf fill loop deliberately: identical payload
         # objects, identical decode ABI, and one implementation to keep correct
         exl3hf_source=((exl3hf, exl3hf_reader) if args.source == "exl3hf"
@@ -3064,6 +3364,18 @@ def main() -> int:
         mlx_source=mlx_expert_source,
         gguf_source=gguf_source,
         nvfp4_source=nvfp4_expert_source,
+        # NUM-04. What the decoded bytes in --decode-cache-dir are OF. Without it the
+        # cache is keyed on the layer index alone, so a second run over a different
+        # artifact reuses the first artifact's decoded experts and publishes them under
+        # its own identity.
+        cache_identity={
+            "checkpoint_identity_sha256": checkpoint_identity,
+            "source": args.source,
+            "bits": bits,
+            "slab_experts": memory["slab_experts"],
+            "routed_layers": list(layers),
+            "reader_identity": identity,
+        },
     )
     if decode_device != device:
         raise _fail(
@@ -3226,6 +3538,8 @@ def main() -> int:
         student_label = EXL3HF_PROFILES[args.profile][1]
     elif args.source == "tr3":
         student_label = TR3_PROFILES[args.profile][1]
+    elif args.source == "dione":
+        student_label = DIONE_PROFILES[args.profile][1]
     elif args.source == "nvfp4":
         student_label = nvfp4_module.NVFP4_STUDENT_LABEL
     else:
@@ -3438,7 +3752,18 @@ def main() -> int:
                 if nvfp4_expert_source is not None
                 else None
             ),
-            "installed_choice_census_sha256": sha256_bytes(canonical_json(streamer.census)),
+            # NULL, not the digest of nothing.  Layers served from the decode cache
+            # never reach the census recorder, so a warm cache produced an EMPTY census
+            # whose digest is the fixed constant 37517e5f3dc66819... -- identical for
+            # every warm run of every artifact, and indistinguishable in the receipt
+            # from a real census.  Say "partial" out loud instead.
+            "installed_choice_census_sha256": (
+                sha256_bytes(canonical_json(streamer.census))
+                if not streamer.cache_served_layers else None
+            ),
+            "installed_choice_census_complete": not streamer.cache_served_layers,
+            "installed_choice_census_layers_served_from_cache": sorted(
+                streamer.cache_served_layers),
             "decode_cache_hits": streamer.cache_hits,
             "decode_cache_fills": streamer.cache_fills,
             "decode_cache_refusals_over_budget": streamer.cache_refusals,
@@ -3539,6 +3864,33 @@ def main() -> int:
         receipt["routed_bits_decode_histogram"] = dict(
             sorted(exl3hf.routed_bits_histogram.items())
         )
+    if args.source == "dione":
+        # Same rule as exl3hf and tr3: k6_kld_report republishes these pins in
+        # the headline summary, so the capture seals them first.  A Dione
+        # release publishes NO seal, so what travels is the release's own
+        # declarations plus the digests THIS run verified: the per-shard hash
+        # verdict, the local config/index digests and the materialization
+        # receipt that binds the non-routed tree to this same snapshot.
+        receipt["dione_repo"] = args.dione_repo
+        receipt["dione_revision"] = args.dione_revision
+        receipt["artifact_config_sha256"] = dione.config_sha256
+        receipt["artifact_index_sha256"] = dione.index_sha256
+        receipt["codebook"] = "mcg"
+        receipt["codec_family"] = "exl3-mcg"
+        receipt["declared_bits"] = float(dione.bits)
+        receipt["declared_head_bits"] = 16
+        receipt["tp_size"] = dione.tp_size
+        receipt["source_repo"] = dione.source_repo
+        receipt["source_revision"] = dione.source_revision
+        receipt["exl3_manifest_name"] = dione.exl3_manifest_name
+        receipt["exl3_manifest_sha256"] = dione.exl3_manifest_sha256
+        receipt["exl3_manifest_schema"] = dione.exl3_manifest_schema
+        receipt["dione_shard_hash_verification"] = dione.shard_hash_verification
+        receipt["materialization_receipt_sha256"] = materialization["receipt_sha256"]
+        receipt["scope_digest"] = dione_module.scope_digest(dione)
+        receipt["scope_census_sha256"] = \
+            dione_module.surface_summary(dione)["scope_census_sha256"]
+        receipt["seal_disclosure"] = dione_module.SEAL_DISCLOSURE
     if args.source == "tr3":
         # Same rule as exl3hf: the summary receipt republishes these, so they are
         # sealed in the capture first.  What is different is that a TR3 release

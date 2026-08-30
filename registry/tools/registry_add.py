@@ -60,6 +60,15 @@ class Refuse(Exception):
 PACKED_RECEIPT = "quant-pipeline.glm53-packed-kld-receipt.v1"
 FIVE_COLD_RUN = "quant-pipeline.glm53-packed-student-kld-five-cold-run.v1"
 DIONE_SUMMARY = "malaiwah.glm53-dione-q4-packed-kld-summary.v1"
+# One producer, one format, one profile per bit rate -- so the family is a SET,
+# not a string.  0xSero publishes a ladder (Q4, 3.0bpw, ...) and each rung's
+# summary names its own profile in its schema; matching only the Q4 spelling
+# would send the next rung to adapt_packed_and_five_run, whose arithmetic is a
+# different receipt's.
+DIONE_SUMMARIES = (
+    DIONE_SUMMARY,
+    "malaiwah.glm53-dione-3.0bpw-packed-kld-summary.v1",
+)
 # Stock-exllamav3 (turboderp) releases scored through the SAME streaming
 # harness, via stream_score.py --source exl3hf.  Shape-identical to the Dione
 # summary; what differs is where the artifact pins live (artifact_repo /
@@ -160,7 +169,8 @@ REPORT_FAMILIES = ("glm53flash-fidelity-report/2", "glm53flash-fidelity-report/3
                    "qwen38-kld-ladder-cumulative/2", "qwen38-kld-ladder-cumulative/3",
                    "qwen38-fidelity-report/2", "qwen38-fidelity-report/3")
 CROSSCHECK_FAMILIES = ("glm53flash-crosscheck/2",)
-OWN_SCHEMAS = set([PACKED_RECEIPT, FIVE_COLD_RUN, DIONE_SUMMARY, STREAM_VERDICT]
+OWN_SCHEMAS = set([PACKED_RECEIPT, FIVE_COLD_RUN, STREAM_VERDICT]
+                  + list(DIONE_SUMMARIES)
                   + list(STREAM_SUMMARIES) + list(TURBO_SUMMARIES)
                   + list(TR3_SUMMARIES)
                   + list(REPORT_FAMILIES) + list(CROSSCHECK_FAMILIES))
@@ -278,10 +288,50 @@ def adapt_dione(receipt, path):
                      % (declared, len(set(means)), len(set(digests)), recomputed))
     if not L.close(value, sum(means) / len(means)):
         raise Refuse(E_INCONSISTENT, "measured_mean_kld != mean(run_means)")
-    disclosure = []
-    for f in ("seal_disclosure", "cold_run_deviation"):
-        if receipt.get(f):
-            disclosure.append("%s (verbatim from the receipt): %s" % (f, receipt[f]))
+    # CODED disclosures.  The untyped `verbatim_disclosure` channel stamps
+    # `unsealed_source` on EVERY entry it holds, so this adapter used to publish
+    # a reduced run count under the code for a missing seal -- two different
+    # facts, one wrong code.  Same fix the turbo and tr3 adapters already got.
+    coded = []
+    if receipt.get("seal_disclosure"):
+        coded.append({"code": "unsealed_source",
+                      "detail": "seal_disclosure (verbatim from the receipt): %s"
+                                % receipt["seal_disclosure"]})
+    if receipt.get("cold_run_deviation"):
+        coded.append({"code": "reduced_run_count",
+                      "detail": "cold_run_deviation (verbatim from the receipt): %s"
+                                % receipt["cold_run_deviation"]})
+    verification = receipt.get("dione_shard_hash_verification")
+    if verification == "full":
+        # Not a caveat: the release publishes a sha256 for every shard and the
+        # measurement hashed all of them before decoding anything.  It is the
+        # strongest binding an unsealed release admits, and coding it as a
+        # caveat would say the opposite of what happened.
+        coded.append({
+            "code": "shard_hashes_verified",
+            "severity": "info", "affects_comparability": False,
+            "detail": ("dione_shard_hash_verification=full (verbatim from the "
+                       "receipt): every shard's sha256 was recomputed and matched "
+                       "the release's own manifest (%s) before any payload was "
+                       "decoded. The release publishes no seal, so this and the "
+                       "immutable revision are the provenance anchors."
+                       % (receipt.get("exl3_manifest_name") or "exl3-manifest.json"))})
+    elif verification is not None:
+        coded.append({
+            "code": "shard_hashes_unverified",
+            "detail": ("dione_shard_hash_verification=%r (verbatim from the "
+                       "receipt): the shard bytes were NOT bound to the release's "
+                       "published per-shard digests." % verification)})
+    head_bits = receipt.get("declared_head_bits")
+    if head_bits is not None and float(head_bits) >= 16:
+        coded.append({
+            "code": "native_head_retained",
+            "severity": "info", "affects_comparability": False,
+            "detail": ("declared_head_bits %s (verbatim from the receipt): this "
+                       "release retains the lm_head at source precision, unlike a "
+                       "stock-exllamav3 release which quantizes it. The head is "
+                       "applied natively from the artifact's own weights."
+                       % head_bits)})
     return {
         "value": value, "metric_name": "mean_of_run_means_tokenwise_kld",
         "direction": "reference_to_candidate", "accumulation": "float64",
@@ -289,12 +339,24 @@ def adapt_dione(receipt, path):
         "identical": recomputed and len(means) >= 2,
         "evidence_kind": "tokenwise_kld_sha256", "evidence_hashes": list(digests),
         "scored_positions": None, "gate": _gate(receipt),
+        # A KL number without top-1 agreement does not say WHICH divergence it
+        # is; the Dione adapter was the one family still dropping it.
+        "top1": receipt.get("top1_agreement"),
         "artifact_repo": receipt.get("dione_repo"), "artifact_revision": receipt.get("dione_revision"),
         "teacher_digest": receipt.get("teacher_receipt_sha256"),
-        "verbatim_disclosure": disclosure,
+        "verbatim_disclosure_coded": coded,
         "field_provenance": {"value": "#/measured_mean_kld", "run_means": "#/run_means",
-                             "evidence_hashes": "#/distinct_tokenwise_kld_sha256"},
-        "receipt_schema": DIONE_SUMMARY,
+                             "evidence_hashes": "#/distinct_tokenwise_kld_sha256",
+                             "artifact_repo": "#/dione_repo",
+                             "artifact_revision": "#/dione_revision",
+                             "head_policy": ("SUPPLIED: how the head is APPLIED "
+                                             "(natively, from the artifact's own "
+                                             "retained weights). #/declared_head_bits "
+                                             "says what the artifact's head IS.")},
+        # The receipt's OWN schema string, not the Q4 constant: two rungs of one
+        # ladder are two families, and copying the first one's name onto the
+        # second would make the row cite a receipt that does not exist.
+        "receipt_schema": receipt.get("schema") or DIONE_SUMMARY,
         "stack_relation": "same_stack", "head_policy": "native_head",
     }
 
@@ -1859,7 +1921,7 @@ def main():
         if args.cmd == "from-receipt":
             if schemas & set(STREAM_SUMMARIES):
                 adapted = adapt_stream_summary(loaded)
-            elif DIONE_SUMMARY in schemas:
+            elif schemas & set(DIONE_SUMMARIES):
                 adapted = adapt_dione(loaded[0][0], loaded[0][1])
             elif schemas & set(TURBO_SUMMARIES):
                 adapted = adapt_turbo(loaded[0][0], loaded[0][1])
