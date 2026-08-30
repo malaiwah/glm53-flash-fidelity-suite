@@ -2388,3 +2388,201 @@ MB/s, materialize 2m06s, two cold runs at 4221.7 s and 4219.5 s, score, seal —
 is 2.6 h, and the planner now prices it at $6.61 rather than $14.38 because the
 7.35 min/window constant finally had its second data point and could be retired.
 M3 should cost about half of M1.
+
+## 2026-08-30 — measurement 3: 0xSero's 3.0bpw, and a scope that was published all along
+
+**THE NUMBER.** 0.050501241465423556 nats, mean of two cold runs whose run means are
+identical to the last bit and whose tokenwise KL arrays share one sha256
+(845617b3). Top-1 agreement 0.9299658036150464, also identical across runs. Against
+this lane's own BF16 floor (0.011505922619330299) the quantization-attributable
+error is 0.038995318846093260 nats.
+
+**The first point below 4 bpw on this panel, and it costs more than the bytes
+it saves.** Every other GLM-5.3-Flash quant measured here sits at 4 bpw or
+above. This one is 149.6 GB against 165.2 GB for turboderp's 4.05bpw and 175.6
+GB for the TR3 4bpw — 9.4 % and 14.8 % fewer bytes — and it pays 1.98x the
+divergence for them (0.050501 against 0.025526 and 0.025503), 2.79x the
+attributable error (0.038995 against 0.014021 and 0.013998), and 2.3 points of
+top-1 agreement (93.00 % against 95.10 % and 95.31 %). It still clears the
+panel's 0.06 gate, and it is still bitwise deterministic through this path,
+which is a real property and not every artifact has it. But the shape of the
+curve between 4 and 3 bpw is now measured rather than assumed, and it is steep:
+about a tenth of the bytes for about twice the divergence.
+
+**Their number and ours disagree by 3x, and that is the point of a panel.**
+0xSero publishes their own held-out figure in `RELEASE_STATUS.json` — forward KL
+0.15251, top-1 0.87285 over 65,504 positions — and marks the release quality:
+FAIL against their own threshold. Ours is 0.050501 at 93.00 %. Neither is wrong.
+Different corpus, different position count, different estimator, different
+reference. That is exactly why the registry records their verdict on the
+ARTIFACT record, where it describes the artifact, and keeps it out of the
+measurement row, where it would be mistaken for a second opinion on the same
+question. Publishing a failing self-assessment at all is more than most
+producers do, and it should be said plainly: this release is honest about
+itself.
+
+**What the ladder now says.** On this panel, this lane, this teacher:
+
+| artifact | bpw | mean KLD | attributable |
+|---|---|---|---|
+| BF16 floor | 16 | 0.011505922619330299 | -- |
+| malaiwah TR3 K8 | 8 | 0.012384191023436866 | 0.000878 |
+| malaiwah TR3 K6 | 6 | 0.013714888822596553 | 0.002209 |
+| Mia-AiLab TR3 4bpw (brandonmusic's bytes) | 4 | 0.025503427634363770 | 0.013998 |
+| turboderp exl3 4.05bpw | 4.05 | 0.025526426915472484 | 0.014021 |
+| **0xSero Dione 3.0bpw** | **3.0** | **0.050501241465423556** | **0.038995318846093260** |
+
+**The scope was published all along; we had not read it.** 0xSero's Q4 row has
+carried `unknown` for embed_tokens, attn.qkv, attn.o and lm_head since it was
+added, under the note that the release "declares a scope policy that was not
+parsed into this registry". It did not need a new source to fix. The release's
+own `config.json` states
+`quantized_scope = model.language_model.layers.3..44.mlp.experts.0..287.{gate_proj,up_proj,down_proj}.weight`
+and `retained_dtype = source_precision`, and a name census of the published
+583,090-entry index closes on exactly that: 580,608 routed payload tensors and a
+non-routed set that bijects the official BF16 release's 1,618 names, with no
+strays either way. So the head is native BF16, not unknown, and the artifact is
+routed-experts-only. Both rungs of the ladder now share one table, the Q4 record
+carries a `scope_record_corrected` disclosure, and the worked example in
+`docs/examples/` was re-sealed over the corrected scope. This is M1's lesson
+turned on a record we wrote ourselves: recording `unknown` when the producer
+published the answer is the same failure as guessing.
+
+The same reading also corrected a claim about WHERE the TP4 slicing lives. The
+old disclosure said "per-layer part-0..part-3 side files". It is not in the
+files: the slices are TENSOR names, `<module>.rank0..rank3.{trellis,suh,svh,mcg}`,
+and the full HF matrix is the rank-ordered concatenation. The
+`layers/layer-NN-part-K` files are a parallel-encoding artifact — in the 3.0bpw
+release layers 3-5 have ONE part holding all 288 experts while layers 6-44 split
+even and odd experts across two, and every part carries all four ranks.
+
+**Eight defects between "the recon says compatible" and a running measurement.**
+
+LESSON 45 (one producer, two releases, two manifest schemas). The recon listed
+"sniff EXL3_MANIFEST.json name" as a small gap. The name was the smaller half.
+0xSero's Q4 ships `exl3-manifest.json` with `quantized_shards`/`retained_shards`
+arrays keyed on `name`; the 3.0bpw ships `EXL3_MANIFEST.json` with
+`schema_version: 1`, one flat `files` array keyed on `path`, and its source
+repo, revision, tp_size and bit rate all moved into nested objects. They share
+no key that matters. Sniffing one name and one shape would have refused the
+3.0bpw release as "not a Dione tree" — after downloading 149 GB of it.
+`find_manifest` folds case and underscores; `parse_manifest` normalizes both and
+REFUSES a third rather than guessing at its shape.
+
+LESSON 46 (a fill loop that hashes what nobody reads). `load_decoded_module`
+defaults to `hash_payloads=True`, and the streaming fill called it that way —
+sha256 over every trellis block, 3.2 MB per matrix, 907,200 matrices per cold
+run. The census it feeds is recorded ONCE PER LAYER: 42 rows. So the run was
+about to hash ~2.9 TB to publish 42 rows' worth of it. The exl3hf loop had
+already got this right (`hash_payload=record_census`); the dione loop, written
+earlier, had not. Splitting `load_decoded_module` into a read half and a decode
+half fixed it and made the loop threadable at the same time — `DioneShardReader`
+kept ONE dict of safetensors handles, which is why that fill was "serial by
+design" while every other surface reads through a pool.
+
+LESSON 47 (a bits-only profile key stops working the moment two surfaces publish
+at the same rate). The runner resolved the engine profile from the sniffed BIT
+RATE alone, and fell back to `"k6"` when the rate was unmapped. A 4.0-bpw TR3
+release and a 4.0-bpw Dione release are the same number and a different codec, a
+different scope and a different receipt family; and `"k6"` is not a safe default
+— it is a real profile that names a real receipt family, so the fallback does not
+fail loudly, it publishes a wrong label. `profile_map_by_surface` resolves
+(surface, bits) at PLAN time and REFUSES for $0.00 when it cannot.
+
+LESSON 48 (the summary republishes what the capture sealed, so the capture has
+to seal it). `k6_kld_report`'s dione branch reads `dione_repo`,
+`dione_revision`, `dione_shard_hash_verification` and the source pins off the
+CAPTURE receipt — fields the sealed-lane capture writes and the streaming one did
+not. The headline summary would have been full of nulls, and the registry row
+would have cited an artifact it could not name, four stages after the money. The
+capture seals them now, plus the config/index digests, the manifest name and
+schema, the materialization receipt and the scope digests.
+
+**Two rehearsals that fired, and one gate that failed on the box for four
+minutes.** The seal and registry stages were rehearsed offline against the real
+artifact metadata and a synthetic number (M2's lesson 39), and both found
+something: `published_scope` asserted `policy: "mixed"` beside a table that says
+otherwise — SCOPE-003 reads the word as "do the QUANTIZED classes share one
+(format, bits)", and exactly one class is quantized here, so the answer is
+`uniform` and the ingest would have been an ERROR; and four disclosure codes the
+enriched adapter emits were not in the known-code list (DISC-004). Both would
+have fired after both cold runs were paid for.
+
+What the rehearsal could NOT catch was a gate that only exists on the instance.
+`selftest_dione_offline.py` — which predates this measurement and had never been
+wired into the bootstrap — created its scratch directory inside
+`k6/tools/dione-evidence/`, a local evidence directory that does not travel in
+the measurement bundle. So it could not run anywhere the source tree is a subset,
+which is every measurement instance. And the two manifest-identity fields added
+to `DioneSurface` were required and sat mid-record, breaking the same selftest's
+hand-built surface. Cost: four minutes and a held box, fixed in two ~30-second
+cycles by running the selftest ON the held instance rather than guessing. Both
+now pass there, which is the only place the rungs that matter can run:
+pack-layout equivalence against the exllamav3 `pack.cu` transliteration at
+K3/K4/K6, decode identity against the campaign reader, and — in the new
+47-rung stream selftest — `decode_module_payload` bitwise equal to
+`load_decoded_module` with `hash_payloads` changing the census and never the
+tensor. That is the K3 codec evidence this measurement needed before it was
+allowed to cost anything.
+
+LESSON 49 (a launcher that swallows its child's output makes a two-hour stage
+unobservable). `invoke_engine.py` runs the engine with captured stdout/stderr and
+writes them only after the process exits, so during a 77-minute capture the log
+holds exactly one line: the argv. There is no way to tell a healthy run from a
+hung one from that file — the progress had to be read out of band, by counting
+`receipts/run-N/logits/window-*.safetensors` and timestamping them. That is how
+3.08 min/window was measured here at all. A stage you cannot watch is a stage
+whose liveness probe is the only thing standing between a stall and the deadline.
+
+LESSON 50 (lesson 36 is a family, and two more members turned up in my own
+monitors). The first watcher's exit condition grepped the controller log for
+`TEARDOWN` — and matched the plan's own `TEARDOWN PLAN` heading, declaring the
+run finished before the box was created. The second grepped for `HELD` over the
+WHOLE log, which is appended to across controller lifetimes, so it matched the
+PREVIOUS lifetime's held banner and declared the resumed run finished about
+fifteen seconds after it started. Both are the M1 shape exactly: a probe whose
+output can be produced by text that is not the answer. The third watcher reads
+only the lines after this lifetime's `adopting existing instance` marker, and its
+done-marker probe was exercised against a file that exists and a file that does
+not before it was believed.
+
+**Cost, four ways.** 1x H200 spot at $1.99/h, IN2, one box (487243)
+across two controller lifetimes; no filesystem survived it. (1) The planner's
+point estimate was $6.53, band $6.53–$9.15, ceiling $18.52 at --max-runtime 9h.
+(2) Measured wall clock: the box lived 04:07 → 07:26 UTC = 3.32 h = $6.60, plus
+a 400 GB filesystem for the same span at an inferred rate, ~$0.22. (3) The
+runner's own reconciliation: computed $6.17, billed $6.65; account balance is
+again not usable as ground truth — it moved $164.46 → $127.89 while another
+session's 4x RTX-PRO6000 on-demand box billed continuously on the same account.
+(4) Attributable to this measurement: about $6.9.
+
+That is 40 % of M2's ~$11.6 and 75 % of M1's ~$9.2, and it is the first
+measurement in this campaign to land inside its own point estimate. The reason
+is that nothing went wrong after the money started: the single failure cost four
+minutes on a HELD box and was fixed by running the failing gate on that box
+rather than guessing at it. Stage timings, for the next planner: setup 2m07s,
+fetch_target 8m26s (149.6 GB plus 135 s hashing all 130 shards), materialize
+2m07s (of which 32 s is the materializer itself; the rest is stage overhead),
+fetch_panel 4m13s, measure 2h42m, score 4m14s, seal 2m07s.
+
+**For M4.** Three fixes shipped with this entry, and one thing to watch.
+
+`invoke_engine.py` streams its child now (lesson 49), so the next 79-minute
+stage is readable while it runs instead of after it ends.
+
+`minutes_per_window` moved from the lane to the SURFACE. The dione figure is
+3.19, tr3's is 2.82 and exl3hf's is 3.12, all on the same lane, the same panel
+and the same teacher — the spread is the storage layout, not the bit rate, and
+one constant cannot say that. The planner prints which basis it used.
+
+The dione scope table is shared by both rungs of 0xSero's ladder, so a fourth
+Dione release needs only its bit rate. The manifest normalizer handles both
+published schemas and REFUSES a third rather than guessing — if 0xSero ships a
+third shape, that refusal is the thing that will fire, for $0.00, at plan time.
+
+To watch: `--source nvfp4` still builds its non-routed view through
+`prepare_nonrouted_view` over the artifact's own snapshot, the path M2 flagged
+as never having been run end to end against a real snapshot. Both surfaces that
+have since been exercised (tr3, dione) needed a materialize stage instead. The
+next NVFP4 measurement should assume it needs one too, and find out at plan time
+rather than at load time.
