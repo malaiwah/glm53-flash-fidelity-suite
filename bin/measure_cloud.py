@@ -1182,8 +1182,20 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     if not timing:
         timing = json.loads((SUITE_ROOT / "bin" / "engines.json").read_text(
             encoding="utf-8"))["lanes"][args.lane].get("timing", {})
+    # A lane-wide minutes/window stopped being expressible once the surfaces on
+    # one lane diverged: a Dione matrix is FOUR TP-rank slices decoded separately
+    # and concatenated, so it runs slower per window than a tr3 matrix at the same
+    # rate on the same lane. Prefer the measured per-surface figure; fall back to
+    # the lane's for a surface nobody has timed yet, and say which was used.
+    by_surface = timing.get("minutes_per_window_by_surface") or {}
+    surface_key = (plan["target"] or {}).get("surface")
     per_window = float(timing.get("minutes_per_window", 9.05))
     measured = bool(timing.get("measured"))
+    timing_basis = "lane"
+    if surface_key in by_surface:
+        per_window = float(by_surface[surface_key])
+        measured = True
+        timing_basis = "surface %s" % surface_key
     phases = [
         ("bootstrap", 0.42, "apt + cuda13 + torch + exllamav3 build"),
         ("fetch", max(0.05, fetch_gb / 190.0 / 3600.0 * 1000.0), "%.0f GB @ ~190 MB/s" % fetch_gb),
@@ -1197,13 +1209,14 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                 else "re-shard", human_bytes(materialized_bytes))))
     phases += [
         ("measure", args.cold_runs * descriptor.contexts * per_window / 60.0,
-         "%d run(s) x %d windows @ ~%.1f min%s"
-         % (args.cold_runs, descriptor.contexts, per_window,
-            "" if measured else " ESTIMATED")),
+         "%d run(s) x %d windows @ ~%.2f min (%s%s)"
+         % (args.cold_runs, descriptor.contexts, per_window, timing_basis,
+            "" if measured else ", ESTIMATED")),
         ("seal + pull", 0.08, ""),
     ]
     total_h = sum(h for _, h, _ in phases)
-    plan["timing"] = dict(timing, minutes_per_window=per_window)
+    plan["timing"] = dict(timing, minutes_per_window=per_window,
+                          minutes_per_window_basis=timing_basis)
     storage_rate = storage_gb * 0.00017      # inferred; see the caveat printed below
     point = rate * total_h + storage_rate * total_h
     con.say("  COST ESTIMATE")

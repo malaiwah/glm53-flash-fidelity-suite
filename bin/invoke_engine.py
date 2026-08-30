@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -209,10 +210,20 @@ def main() -> int:
     con.say("engine argv: %s" % " ".join(argv))
     if args.print_only:
         return 0
-    proc = run(argv, check=False, env=env, timeout=None)
-    sys.stdout.write(proc.stdout or "")
-    sys.stderr.write(proc.stderr or "")
-    return proc.returncode
+    # STREAM the engine's output; do not capture it.
+    #
+    # `run(...)` buffers stdout and stderr and hands them back after the process
+    # EXITS, so a 79-minute capture wrote exactly one line to its stage log --
+    # the argv -- and nothing else until it was over. There is no way to tell a
+    # healthy run from a stalled one from that file, which is precisely the
+    # question a supervising controller has to answer (JOURNAL lesson 43). The
+    # stage driver already tees this process's own stdout into
+    # logs/measure-run-N.log, so inheriting the streams puts the engine's
+    # per-layer progress there, live, at the cost of nothing.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    proc = subprocess.Popen(argv, env=env, stdout=None, stderr=None)
+    return proc.wait()
 
 
 if __name__ == "__main__":
