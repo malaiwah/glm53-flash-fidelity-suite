@@ -1065,6 +1065,31 @@ def section_interop(tmp):
               "digest moves)",
               F.tensor_content_sha256(emitted, "hidden_states") == before_content,
               before_content[:16])
+        # ---- CC-03b: the rewrite must not reach back through the HARDLINK ---------
+        # `link=True` is the DEFAULT (`link=not args.copy`), and the case above ran with
+        # link=False, which is why the defect survived. With a hardlink, `dest` and the
+        # caller's source capture share an inode, so an in-place "wb" rewrite changed the
+        # SOURCE file: its sha256 moved, its own checksums.txt/manifest rows stopped
+        # matching, and a dataset just fetched from the Hub became unverifiable against
+        # the published digests -- silently, as a side effect of reading it.
+        src_before = F.sha256_file(dst_t)
+        lout2 = os.path.join(tmp, "legacy-out-linked")
+        dsadapt.adapt_serving_v2(
+            legacy_src, lout2, suite_dir=os.path.join(published, "suite"),
+            head_dir=os.path.join(published, "head"),
+            dataset_id="fidelity--selftest.legacy-key-linked", name="legacy key linked",
+            role="root", lane="other", limit=1, link=True)
+        man2 = F.read_json(os.path.join(lout2, "capture", "manifest.json"))
+        emitted2 = os.path.join(lout2, "capture", man2["records"][0]["file"])
+        _, ehdr2 = F.read_safetensors_header(emitted2)
+        check("CC-03b adapt --link rewrites the emitted copy and leaves the caller's "
+              "source capture byte-identical (the rewrite must break the hardlink)",
+              F.sha256_file(dst_t) == src_before
+              and [k for k in ehdr2 if k != "__metadata__"] == ["hidden_states"]
+              and os.stat(dst_t).st_nlink == 1,
+              "source moved=%s emitted keys=%r nlink=%d"
+              % (F.sha256_file(dst_t) != src_before,
+                 [k for k in ehdr2 if k != "__metadata__"], os.stat(dst_t).st_nlink))
     else:
         print("  SKIP  I11-I15 published deliverables (not on this machine)")
 

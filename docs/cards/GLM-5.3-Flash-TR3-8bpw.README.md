@@ -321,8 +321,9 @@ the worst single window differing by 2.9e-4. The streaming receipt sets
 is an independent measurement that agrees closely, not a bitwise reproduction.
 
 **Methodology note worth stealing.** A single-window comparison of these two
-rates is *statistically meaningless*: per-window KLD scatter has sd 1.73e-3
-against a K6-vs-K8 effect of 1.22e-3. On one unlucky window (`window-0000`)
+rates is *statistically meaningless*: on the sealed 25-window panel the
+per-window KLD scatter has sd 7.2e-3 (K6) / 6.9e-3 (K8), and even the paired
+per-window K6−K8 delta has sd 2.0e-3, against an effect of 1.33e-3. On one unlucky window (`window-0000`)
 K8 appeared *worse* than K6; over the full panel it wins decisively. Never
 quote a single-window KLD as a rate comparison —
 [full write-up](https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/k6/K8-ANOMALY.md).

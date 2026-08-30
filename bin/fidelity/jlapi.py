@@ -223,9 +223,52 @@ class JL:
             return None
 
     def list_instances(self) -> List[Instance]:
+        """Every instance on the account.
+
+        MUST NOT answer "none" when it does not know.  Four call sites read an empty
+        list as a FACT about the account, and each one spends or leaks money on it:
+
+          * `measure_cloud.reaper_sweep` retires every lease whose machine is "gone" --
+            the last-resort backstop then never looks at those boxes again;
+          * the adopt loop takes "no instance for this job" as licence to CREATE one,
+            which is the double-spend its own comment says it exists to prevent;
+          * `_find_by_name` is last-resort id recovery for an instance that is ALREADY
+            billing, and gives up;
+          * the name-deadline sweep silently degrades to leases only.
+
+        `_call` returns `{}` for an empty body on a zero exit, and returns a parsed
+        object unchanged when the exit code is non-zero as long as the JSON carries no
+        `error` key.  The old `data.get("instances", [])` fallback turned all three of
+        those into "the account is empty".  Reproduced against a stub `jl`: an empty
+        body, an unrecognised envelope (`{"data": [...]}`), and `exit 2` with
+        `{"detail": "authentication failed"}` each retired a live lease.
+
+        The real `jl 0.2.17 list --json` answers with a top-level JSON array, so the
+        `{"instances": [...]}` shape is a speculative fallback that has never run; it is
+        kept, and everything else now raises rather than reporting an empty account.
+        """
         data = self._call(["list"])
-        rows = data if isinstance(data, list) else data.get("instances", [])
-        return [Instance.from_json(r) for r in rows or []]
+        if isinstance(data, list):
+            rows: List[Any] = data
+        elif isinstance(data, dict) and isinstance(data.get("instances"), list):
+            rows = data["instances"]
+        else:
+            raise JLError(
+                "`jl list --json` (jl %s) answered with %s, which is not an instance "
+                "list. Refusing to report an empty account: callers treat that as proof "
+                "that an instance is gone, and act on it by retiring leases, creating a "
+                "second box, or giving up on recovering the id of one that is billing."
+                % (self.version,
+                   "an empty body" if not data
+                   else "an object with keys %r" % (sorted(data)[:8],)
+                   if isinstance(data, dict) else "a %s" % type(data).__name__))
+        bad = [r for r in rows if not isinstance(r, dict)]
+        if bad:
+            raise JLError(
+                "`jl list --json` returned %d row(s) that are not objects (first: %r); "
+                "this client cannot tell which instances are alive from that."
+                % (len(bad), redact(str(bad[0]))[:120]))
+        return [Instance.from_json(r) for r in rows]
 
     def get(self, machine_id: int) -> Optional[Instance]:
         try:

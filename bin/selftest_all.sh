@@ -48,6 +48,11 @@ t "preview estimator coverage (T3)"        0 python3 bin/selftest_preview_stats.
 t "submission refusability (T5)"           0 python3 bin/selftest_submission_refusal.py
 t "stack fingerprint (T9: deterministic, engine-absent, MPS/CUDA-absent)" \
                                            0 python3 bin/selftest_stackprint.py
+# The money chokepoint (T11). `jl list` is the only thing that answers "is this
+# instance alive?", and four call sites spend or leak money on an empty answer.
+# Driven against a stub jl: no network, no account, no rental.
+t "jl list envelope (T11: an unreadable answer is not an empty account)" \
+                                           0 python3 bin/selftest_jlapi.py
 # The shell guards (T10). Every prerequisite/cleanliness/budget/pace guard in the
 # rental scripts, driven against real fixtures -- a scratch git repo, a truncated
 # patch series, malformed BUDGET_USD values. These guards used to be `A && B`
@@ -80,9 +85,9 @@ t "joint standard (known answers, canary FIRE cases, registry invariants)" \
 # wrong numbers reached them through the gap; this is the gate that closes it.
 t "doc-vs-receipt: every alignment/card number re-derived" \
                                            0 python3 bin/check_doc_numbers.py
-t "stream_score ladder rungs g,h,i,j,k (teacher role / preview refusal / \
-sampling / receipt stability / source dispatch)" \
-                                           0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k
+t "stream_score ladder rungs g,h,i,j,k,l (teacher role / preview refusal / \
+sampling / receipt stability / source dispatch / decode-cache identity)" \
+                                           0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k,l
 # The three community-quant weight-decode surfaces.  Each proves its dequant
 # against that ecosystem's own reference implementation on REAL ranged-fetched
 # tensors (replayed here from committed fixtures so the proof runs with no

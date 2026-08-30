@@ -816,6 +816,16 @@ GATED_RECEIPT_KEYS = frozenset({
     "scope_census_sha256", "nonrouted_policy_declared",
     "seal_verification", "shard_verification",
     "artifact_materialization_receipt_sha256",
+    # --source dione (f57f9ae). REVIEWED: all eight sit inside
+    # `if args.source == "dione":` (stream_score.py:3867-3892), so a default run
+    # emits none of them. A Dione release publishes no seal, so what the capture
+    # carries is the release's own declarations plus the digests THIS run verified.
+    # They landed without being registered here, which is what this rung exists to
+    # catch -- it went red the moment that commit landed, and stayed red through the
+    # fixture ladder, which runs the same rung.
+    "dione_repo", "dione_revision", "dione_shard_hash_verification",
+    "exl3_manifest_name", "exl3_manifest_schema", "exl3_manifest_sha256",
+    "scope_digest", "tp_size",
 })
 
 
@@ -982,6 +992,70 @@ def check_source_dispatch() -> None:
     _record("L1.k-source-dispatch", "PASS" if ok else "FAIL", detail)
 
 
+
+def check_decode_cache_identity() -> None:
+    """NUM-04: a --decode-cache disk directory must say WHICH artifact it holds.
+
+    The cache is keyed on the layer index alone -- `layer-%03d.{gate_up,down}.bf16.bin`
+    -- and `_cache_load_into_slab` reads raw int16 with nothing but a size check.  So
+    pointing a second run at the same `--decode-cache-dir` installed the FIRST
+    artifact's decoded experts as the second run's weights and published them under the
+    second run's identity: a wrong number wearing correct provenance, with no warning
+    and no field in the receipt that could show it.
+
+    Every other reusable artifact in stream_score is identity-stamped
+    (`prepare_nonrouted_view` writes `.view-source.json`; the mlx view binds
+    config/index/census/adapter sha; the gguf view is fingerprinted).  This one was not.
+    """
+    import stream_score
+    import tempfile
+
+    ES = stream_score.ExpertStreamer
+    A = {"checkpoint_identity_sha256": "a" * 64, "source": "exl3hf", "bits": 6}
+    B = {"checkpoint_identity_sha256": "b" * 64, "source": "exl3hf", "bits": 6}
+
+    class _Bind:                       # the binding half only; no slab, no torch
+        def __init__(self, directory):
+            self.cache_dir = Path(directory)
+            self.CACHE_STAMP_NAME = ES.CACHE_STAMP_NAME
+
+    fresh = _Bind(tempfile.mkdtemp())
+    ES._bind_disk_cache(fresh, A)
+    stamped = (fresh.cache_dir / ES.CACHE_STAMP_NAME).is_file()
+    ES._bind_disk_cache(fresh, A)                      # same artifact: must rebind
+    (fresh.cache_dir / "layer-003.gate_up.bf16.bin").write_bytes(b"\0" * 8)
+
+    refused_other = False
+    try:
+        ES._bind_disk_cache(fresh, B)
+    except SystemExit:
+        refused_other = True
+
+    legacy = _Bind(tempfile.mkdtemp())
+    (legacy.cache_dir / "layer-003.gate_up.bf16.bin").write_bytes(b"\0" * 8)
+    refused_unstamped = False
+    try:
+        ES._bind_disk_cache(legacy, A)
+    except SystemExit:
+        refused_unstamped = True
+
+    ok = stamped and refused_other and refused_unstamped
+    _record("L1.l.decode_cache_identity", "PASS" if ok else "FAIL",
+            {"stamp_written": stamped, "refuses_other_artifact": refused_other,
+             "refuses_unstamped_cache": refused_unstamped})
+
+    # A cache HIT returns from ensure() before the census recorder, so a fully warm
+    # cache left the census empty while the receipt still published
+    # installed_choice_census_sha256 -- which reduces to the digest of the empty list,
+    # the same 64 hex digits for every warm run of every artifact.
+    body = (_TOOLS / "stream_score.py").read_text(encoding="utf-8")
+    discloses = ('"installed_choice_census_complete"' in body
+                 and "streamer.cache_served_layers" in body
+                 and "self.cache_served_layers.add(layer)" in body)
+    _record("L1.l.warm_cache_census_disclosed", "PASS" if discloses else "FAIL",
+            {"receipt_declares_partial_census": discloses})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1043,7 +1117,8 @@ def main() -> int:
     # so they run on any laptop; SKIP only if an import surprises us.
     for rung, fn in (("g", check_teacher_role), ("h", check_preview_refusal),
                      ("i", check_sampling_indices), ("j", check_receipt_stability),
-                     ("k", check_source_dispatch)):
+                     ("k", check_source_dispatch),
+                     ("l", check_decode_cache_identity)):
         if rung in wanted:
             try:
                 fn()

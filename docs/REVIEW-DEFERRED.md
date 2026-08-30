@@ -967,3 +967,236 @@ interval endpoints.
 Undercoverage makes these intervals too narrow and biased low, so the errors are false
 **separations** (measured 4.2–5.1% at domain level against the ~0.5–1% a reader infers) and
 systematic **understatement** of per-domain divergence.
+
+---
+
+# SECOND-PASS ADDITIONS (independent review, 2026-08-30)
+
+A second reviewer re-tested this file's claims and hunted the areas the first pass
+under-covered: concurrency between the live campaign and the tooling, degraded-network
+behaviour, the rented-instance lifecycle, and the published artifacts. The first pass's
+CLI-01 analysis was re-checked and **stands** — in particular its refusal to make
+`JLApi.get()` strict, which is correct: on a healthy API a 404 for a destroyed instance
+and a 404 from an outage are the same `JLError`, so `get() -> None` is the load-bearing
+"successfully destroyed" signal and making it raise would disarm the leak detector on
+every run. `list_instances()` propagating `JLError` was verified, so the proposed
+`_confirm_gone` helper is sound.
+
+The findings below are new. All four are in `bin/measure_cloud.py`, which the campaign
+owns; the fifth is a published artifact.
+
+The root cause shared by REAP-1 and REAP-2 — `JLApi.list_instances()` reporting an empty
+account when it could not read the answer — **has been fixed** in `bin/fidelity/jlapi.py`,
+which is not locked, with `bin/selftest_jlapi.py` (T11) covering it. The items below are
+what remains inside the locked file.
+
+---
+
+## REAP-1 — the reaper reports success when every destroy failed
+
+**File:** `bin/measure_cloud.py:517-524` (`reaper_sweep`, the destroy loop)
+
+**Claim.** The reaper is the last-resort backstop, meant to be run from cron or a
+systemd timer on a machine that may never have seen the job. Its destroy loop is:
+
+```python
+    for mid, why in sorted(targets.items()):
+        con.say("reaper: destroying %s (%s)" % (mid, why))
+        if not dry:
+            try:
+                jl.destroy(mid)
+            except JLError as exc:
+                con.err("reaper could not destroy %s: %s" % (mid, redact(str(exc))))
+    return EXIT_OK
+```
+
+Three problems, all in five lines:
+
+1. **`EXIT_OK` regardless.** Every destroy can fail and the process still exits 0. Any
+   wrapper, cron mailer or monitor that keys on exit status sees a healthy backstop while
+   an 8×H200 keeps billing.
+2. **One attempt, no retry.** `Teardown._destroy_instance` retries five times; the
+   backstop tries once and gives up.
+3. **No confirmation.** `jl.destroy` returning without raising is not proof the instance
+   is gone — the same gap CLI-01 documents for the primary teardown, here in the thing
+   that is supposed to catch CLI-01.
+
+**Patch.**
+
+```python
+    failed = []
+    for mid, why in sorted(targets.items()):
+        con.say("reaper: destroying %s (%s)" % (mid, why))
+        if dry:
+            continue
+        gone = False
+        for attempt in (1, 2, 3):
+            try:
+                jl.destroy(mid)
+            except JLError as exc:
+                con.err("reaper destroy %s attempt %d: %s" % (mid, attempt, redact(str(exc))))
+            try:                       # `jl list` propagates JLError; `jl get` does not
+                gone = mid not in {i.machine_id for i in jl.list_instances()}
+            except JLError as exc:
+                con.err("reaper cannot confirm %s: %s" % (mid, redact(str(exc))))
+                gone = False
+            if gone:
+                break
+            time.sleep(5)
+        if not gone:
+            failed.append(mid)
+    if failed:
+        con.err("reaper could NOT confirm destruction of %s -- these are still billing"
+                % ", ".join(str(m) for m in failed))
+        return EXIT_LEAK
+    return EXIT_OK
+```
+
+`EXIT_LEAK` (90) already exists and already means exactly this.
+
+---
+
+## REAP-2 — the name-encoded deadline overrides a live lease, with no plausibility bound
+
+**File:** `bin/measure_cloud.py:440-453` (`parse_deadline_name`) and `478-487`
+
+**Claim.** `parse_deadline_name` accepts ANY base36-parsable tail after the last `-x`
+and returns it as an epoch, with no sanity bound. A `fidcloud-`-prefixed instance whose
+name was not produced by `deadline_name()` therefore resolves to a deadline in 1970 and
+is destroyed on the next sweep. Reproduced: `parse_deadline_name("fidcloud-x9zz")`
+returns **12959** (1970-01-01), and `reaper_sweep` printed
+`reaper: destroying 999001 (name deadline 12959 passed)` for an instance whose own lease
+said it had 24 hours left. The lease is not consulted: `targets.setdefault` only stops
+the name path from OVERWRITING a lease-derived reason, never from ADDING a target.
+
+Names this tool creates are safe today — `fidcloud-<8 hex>-x<base36 epoch>`, and hex
+contains no `-` — so this is a trap for anything else wearing the prefix, including a
+hand-named box and a future naming scheme. The cost of the trap is an unrecoverable
+destroyed instance; the cost of the guard is four lines.
+
+**Patch.**
+
+```python
+#: A parsed deadline outside this window is not a deadline, it is a coincidence.
+#: `int("tra", 36)` is 38566 -- epoch 1970 -- and every "expired" test then passes.
+_DEADLINE_FLOOR = 1_750_000_000        # 2025-06; before this project existed
+_DEADLINE_CEIL_SECONDS = 90 * 86400    # no run this tool plans plausibly outlives
+
+def parse_deadline_name(name, now=None):
+    now = time.time() if now is None else now
+    for sep, base in (("-x", 36), ("-exp", 10)):
+        head, found, tail = name.rpartition(sep)
+        if found and tail:
+            try:
+                value = int(tail, base)
+            except ValueError:
+                continue
+            if _DEADLINE_FLOOR <= value <= now + _DEADLINE_CEIL_SECONDS:
+                return value
+            return None                # parsed, implausible: NOT a deadline
+    return None
+```
+
+And in the sweep, do not let a name-derived deadline contradict a live lease:
+
+```python
+        leased = {int(l["machine_id"]): float(l.get("deadline_epoch", 0))
+                  for l in _read_leases() if l.get("machine_id")}
+        ...
+            if deadline is not None and deadline < now:
+                if leased.get(inst.machine_id, 0) > now:
+                    con.warn("reaper: %s's NAME says expired but its lease says %s "
+                             "remain; not destroying, and the mismatch is the bug"
+                             % (inst.machine_id,
+                                human_duration(leased[inst.machine_id] - now)))
+                    continue
+                targets.setdefault(inst.machine_id, "name deadline %d passed" % deadline)
+```
+
+---
+
+## REAP-3 — `reaper --sweep --dry-run` under-reports what the real sweep does
+
+**File:** `bin/measure_cloud.py:496-513`
+
+**Claim.** The whole phantom-lease retirement block is guarded by `if not dry:`, so the
+dry run never says which leases it would delete. An operator who runs the documented
+preview sees `reaper: nothing expired` and then the real run silently removes leases.
+A preview that omits a destructive action is worse than no preview.
+
+**Patch.** Hoist the retirement scan out of `if not dry:` and guard only the `unlink`:
+
+```python
+        if alive is not None:
+            for path in sorted(LEASE_DIR.glob("*.json")) if LEASE_DIR.is_dir() else []:
+                ...
+                if mid and int(mid) not in alive and int(mid) not in targets:
+                    con.say("reaper: %sretiring lease %s (machine %s is gone)"
+                            % ("would be " if dry else "", path.name, mid))
+                    if not dry:
+                        path.unlink(missing_ok=True)
+```
+
+---
+
+## REAP-4 — a `jl list` this client cannot read is no longer "an empty account" (fixed in jlapi)
+
+**File:** `bin/fidelity/jlapi.py` — **FIXED, not deferred.** Recorded here because the
+consequences all land in `measure_cloud.py`.
+
+`JL._call` returns `{}` for an empty body on a zero exit, and returns a parsed object
+unchanged on a NON-zero exit as long as the JSON carries no `error` key. The old
+`data.get("instances", [])` fallback turned all of that into "the account is empty", and
+four call sites spend or leak money on that answer:
+
+| site | what an empty list means there |
+|---|---|
+| `reaper_sweep:499` | every lease is a phantom; retire them all, never look again |
+| adopt loop `:1329` | no instance for this job — create a second one (double-spend) |
+| `_find_by_name:571` | give up recovering the id of an instance that is already billing |
+| `reaper_sweep:480-487` | the L3 name sweep silently degrades to leases only |
+
+Reproduced against a stub `jl`, three ways: an empty body, `{"data": [...]}` (a vendor
+key rename), and `exit 2` with `{"detail": "authentication failed"}` — each retired a
+live lease and exited 0. The live `jl 0.2.17 list --json` answers with a top-level JSON
+array, so the `{"instances": [...]}` branch had never run.
+
+`list_instances()` now raises rather than reporting an empty account, and a genuinely
+empty `[]` still reads as empty. `bin/selftest_jlapi.py` (T11, wired into
+`bin/selftest_all.sh`) covers all seven cases with no network and no account. **Nothing
+in `measure_cloud.py` needs to change for this fix to take effect** — but REAP-1..3 are
+still open inside it.
+
+---
+
+## CC-01 (published) — the K8 model card's power arithmetic is wrong on both numbers
+
+**Artifact:** `https://huggingface.co/malaiwah/GLM-5.3-Flash-TR3-8bpw` → `README.md`,
+lines 324-325. **Not corrected here: publishing to the Hub needs the operator.**
+
+The published card says:
+
+> per-window KLD scatter has sd 1.73e-3 against a K6-vs-K8 effect of 1.22e-3
+
+Both values come from `k6/K8-ANOMALY.json`, where they are the per-window **delta** sd
+(`per_window_delta_stdev` = 0.0017334539428769534) and the pooled delta
+(`pooled_delta_k8_minus_k6` = -0.0012176728196882456) over an **eleven-window subset**.
+They are correctly labelled in that document and were mis-scoped everywhere else.
+
+Recomputed from the committed per-window series (`registry/protocol/per-window/`, n=25):
+
+| quantity | published | actual |
+|---|---|---|
+| per-window KLD sd, K6 sealed | 1.73e-3 | **7.198e-3** |
+| per-window KLD sd, K8 streaming | — | **6.935e-3** |
+| paired per-window K6−K8 delta sd | (mislabelled as the above) | **2.027e-3** |
+| K6-vs-K8 effect | 1.22e-3 | **1.331e-3** |
+
+The card's *conclusion* — a single window has no power to compare quants — survives, and
+is in fact stronger. Only the numbers are wrong.
+
+The repo copy (`docs/cards/GLM-5.3-Flash-TR3-8bpw.README.md`) and the five code/doc sites
+that repeated it are corrected, and `bin/check_doc_numbers.py` section 12 now re-derives
+all three values from the per-window series and fails if any document quotes the retracted
+pair as a live claim. **The Hub card still carries the wrong sentence.** Replacement text
+is the corrected paragraph in the repo card; the 6bpw card does not carry this sentence.

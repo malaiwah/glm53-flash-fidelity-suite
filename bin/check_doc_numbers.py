@@ -587,6 +587,68 @@ def main():
                       % os.path.basename(path)[:22],
                       "P_m %.3e" % study["teacher_padded"]["Pm_mean"])
 
+    # ====================================== 12. the single-window power arithmetic
+    print()
+    print("=" * 78)
+    print("12. THE POWER ARITHMETIC -- re-derived, not quoted")
+    print("=" * 78)
+    # CC-01. Six places in this repo, and the PUBLISHED K8 model card, said
+    # "per-window KLD scatter has sd 1.73e-3 against a K6-vs-K8 effect of 1.22e-3".
+    # Both numbers came from k6/K8-ANOMALY.json, where they are the per-window DELTA
+    # sd (0.0017334539428769534) and the pooled delta (-0.0012176728196882456) over an
+    # ELEVEN-window subset -- correct in that document, mislabelled and mis-scoped
+    # everywhere else. Two selftests asserted the literal strings, which locked them in.
+    # Derive them here instead, from the committed per-window series, so a wrong one
+    # cannot be quoted again.
+    import statistics as _st
+
+    def _series(name):
+        doc = load_json(os.path.join(R, "registry", "protocol", "per-window", name))
+        return {row["window_id"]: float(row["mean"]) for row in doc["per_window"]}
+
+    try:
+        k6s = _series("k6-streaming.json")
+        k8s = _series("k8-streaming.json")
+        k6seal = _series("k6-sealed.json")
+    except (IOError, KeyError, ValueError) as exc:
+        rep.warn("per-window series unreadable (%s); section 12 did not run" % exc)
+    else:
+        common = sorted(set(k6s) & set(k8s))
+        scatter_k6 = _st.stdev([k6seal[w] for w in sorted(k6seal)])
+        scatter_k8 = _st.stdev([k8s[w] for w in sorted(k8s)])
+        deltas = [k8s[w] - k6s[w] for w in common]
+        delta_sd = _st.stdev(deltas)
+        effect = abs(_st.fmean(deltas))
+        print("  per-window KLD sd: k6 %.4e / k8 %.4e | paired delta sd %.4e | "
+              "effect %.4e (n=%d)" % (scatter_k6, scatter_k8, delta_sd, effect, len(common)))
+        rep.check(abs(scatter_k6 - 7.2e-3) < 5e-5,
+                  "per-window KLD scatter (K6 sealed) is the 7.2e-3 the docs quote",
+                  "%.4e" % scatter_k6)
+        rep.check(abs(delta_sd - 2.0e-3) < 5e-5,
+                  "paired per-window K6-K8 delta sd is the 2.0e-3 the docs quote",
+                  "%.4e" % delta_sd)
+        rep.check(abs(effect - 1.33e-3) < 5e-6,
+                  "the K6-vs-K8 effect is the 1.33e-3 the docs quote",
+                  "%.4e" % effect)
+        stale = []
+        for rel in ("bin/kld_preview.py", "bin/fidelity/previewstats.py", "bin/README.md",
+                    "WHAT-WE-MEASURE.md",
+                    "docs/cards/GLM-5.3-Flash-TR3-8bpw.README.md"):
+            full = os.path.join(R, rel)
+            if not os.path.exists(full):
+                continue
+            text = open(full, encoding="utf-8").read()
+            # The corrected passages NAME the retracted pair while explaining it, so
+            # only an occurrence that still reads as a live claim counts.
+            for line in text.splitlines():
+                if ("1.73e-3" in line or "1.7e-3" in line) and "scatter" in line \
+                        and "7.2e-3" not in line:
+                    stale.append("%s: %s" % (rel, line.strip()[:70]))
+        rep.check(not stale,
+                  "no document still quotes the 11-window delta sd as the panel's "
+                  "KLD scatter",
+                  "; ".join(stale) if stale else "clean")
+
     # ======================================================== SWEEP (advisory)
     if args.sweep:
         print()

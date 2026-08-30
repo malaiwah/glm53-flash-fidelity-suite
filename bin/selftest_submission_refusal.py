@@ -150,8 +150,11 @@ def main() -> int:
         check("panel estimate from 11 windows is refused", False)
     except PS.PanelGateError as exc:
         check("panel estimate from 11 windows is refused", True)
-        check("the refusal quotes the power arithmetic (1.73e-3 vs 1.22e-3)",
-              "1.73e-3" in str(exc) and "1.22e-3" in str(exc))
+        # CC-01: the literals asserted here were the 11-window DELTA sd / pooled
+        # delta, not the sealed panel's KLD scatter and effect. Re-derived by
+        # bin/check_doc_numbers.py from registry/protocol/per-window/.
+        check("the refusal quotes the power arithmetic (7.2e-3 / 2.0e-3 vs 1.33e-3)",
+              "7.2e-3" in str(exc) and "1.33e-3" in str(exc))
     doc = PS.build_preview_receipt(
         kind="sampled", per_window=subset, windows_total=25,
         panel_estimate=None, ci95_z=None, ci95_bootstrap=None,

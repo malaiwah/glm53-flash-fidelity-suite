@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -103,12 +104,30 @@ def verify_seal(doc: Dict[str, Any], field: str = "receipt_sha256") -> bool:
 
 
 def write_json(path: str, obj: Any) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, indent=2, sort_keys=True, ensure_ascii=False)
-        fh.write("\n")
-    os.replace(tmp, path)
+    """Write a receipt atomically.
+
+    The temp file used to be the fixed name `path + ".tmp"`, so two processes writing
+    the same output path interleaved into ONE staging file and the survivor's
+    `os.replace` published a mixture; and when the destination was a directory, the
+    replace failed AFTER the temp file had been written, leaving it behind forever.
+    A unique name per writer, removed on failure, fixes both. The fsync matters here
+    specifically: these are receipts, and the machine that writes one is often
+    destroyed minutes later."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
+    handle, tmp = tempfile.mkstemp(dir=directory, prefix=".receipt-", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as fh:
+            json.dump(obj, fh, indent=2, sort_keys=True, ensure_ascii=False)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 def read_json(path: str) -> Any:

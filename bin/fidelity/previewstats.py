@@ -4,9 +4,15 @@ This is the unit-testable math core of bin/kld-preview: no torch, no numpy,
 so its correctness (unbiasedness, FPC, coverage, seeding) is certified by a
 stock-python selftest and the torch tool only feeds it numbers.
 
-THE DESIGN RULE THIS MODULE ENFORCES.  Per-window KLD scatter (sd 1.73e-3)
-exceeds the K6-vs-K8 effect (1.22e-3), so a single window has NO power to
-compare quants (campaign lessons 28/29).  Every estimator here therefore
+THE DESIGN RULE THIS MODULE ENFORCES.  On the sealed 25-window panel the
+per-window KLD scatter is sd 7.2e-3 (K6) / 6.9e-3 (K8) and the PAIRED
+per-window K6-vs-K8 delta has sd 2.0e-3 -- both larger than the 1.33e-3
+effect -- so a single window has NO power to compare quants (campaign lessons
+28/29).  Re-derived from registry/protocol/per-window/ by
+bin/check_doc_numbers.py, so these cannot drift again.  They replace an
+earlier 1.73e-3 / 1.22e-3 pair, which was K8-ANOMALY.json's DELTA sd and
+pooled delta over an 11-WINDOW SUBSET, mislabelled here as the full-panel
+KLD scatter.  Every estimator here therefore
 stratifies over ALL panel windows, and the panel-mean gate refuses to emit an
 estimate unless every window contributed.
 
@@ -54,8 +60,9 @@ SAMPLED_PREVIEW_SCHEMA = "malaiwah.glm53-sampled-kld-preview.v1"
 
 PANEL_GATE_TEXT = (
     "REFUSED: panel estimate requires all %d windows (got %d). Per-window "
-    "scatter (sd 1.73e-3) exceeds the K6-vs-K8 effect (1.22e-3): a single "
-    "window has no power to compare quants (campaign lessons 28/29). "
+    "KLD scatter (sd 7.2e-3), and even the paired per-window K6-vs-K8 delta "
+    "(sd 2.0e-3), exceed the K6-vs-K8 effect (1.33e-3): a single window has "
+    "no power to compare quants (campaign lessons 28/29). "
     "Printing per-window diagnostics only."
 )
 

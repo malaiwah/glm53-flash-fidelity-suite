@@ -406,15 +406,29 @@ def _k3_tokenizer(suite: Dict[str, Any], checkpoint: Dict[str, Any],
 
 
 def _rewrite_tensor_key(path, old_key, new_key):
-    """Rename the single tensor key in a safetensors file, in place.
+    """Rename the single tensor key in a safetensors file at `path`.
 
     CC-03. The payload region is untouched, so tensor_content_sha256 and payload_sha256
     are unchanged; only the container digest moves. The header must stay 8-byte aligned
     or the real safetensors loader rejects the file -- dsformat's pure-python reader does
     NOT check that, so a test written only against it would pass on a file torch cannot
-    open."""
+    open.
+
+    NOT IN PLACE, and that is the whole point. `adapt` HARDLINKS the capture tensor into
+    the dataset by default (`link=not args.copy`), so `dest` and the operator's source
+    capture share an inode; the first version of this function opened `dest` with "wb",
+    which rewrote the SOURCE FILE. That silently changed the bytes of the tree the caller
+    pointed us at -- breaking its own `checksums.txt`/manifest sha256 rows, and, when the
+    source is a dataset just fetched from the Hub, making the local copy permanently
+    unverifiable against the published digests. Reproduced: source sha256 moved and the
+    source header read back `hidden_states`.
+
+    Writing a sibling temp file and `os.replace`-ing it over `dest` breaks the link (the
+    source keeps the old inode untouched) AND makes the rewrite atomic, so an interrupt
+    can no longer leave a truncated tensor behind either."""
     import json as _json
     import struct as _struct
+    import tempfile
     with open(path, "rb") as fh:
         raw = fh.read()
     hlen = _struct.unpack("<Q", raw[:8])[0]
@@ -424,10 +438,19 @@ def _rewrite_tensor_key(path, old_key, new_key):
     header[new_key] = header.pop(old_key)
     blob = _json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8")
     blob += b" " * ((-len(blob)) % 8)          # safetensors requires 8-byte alignment
-    with open(path, "wb") as fh:
-        fh.write(_struct.pack("<Q", len(blob)))
-        fh.write(blob)
-        fh.write(raw[8 + hlen:])
+    directory = os.path.dirname(os.path.abspath(path))
+    handle, tmp = tempfile.mkstemp(dir=directory, prefix=".rewrite-", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "wb") as fh:
+            fh.write(_struct.pack("<Q", len(blob)))
+            fh.write(blob)
+            fh.write(raw[8 + hlen:])
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 def _emit_k3_dataset(root, out_dir, *, translation, suite, top, tensor_manifest, by_index,

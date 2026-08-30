@@ -197,9 +197,15 @@ def main() -> int:
         check("11-window panel estimate refused", False)
     except PS.PanelGateError as exc:
         check("11-window panel estimate refused", True)
-        check("refusal text carries the 1.73e-3 vs 1.22e-3 power arithmetic",
-              "1.73e-3" in str(exc) and "1.22e-3" in str(exc) and
-              "lessons 28/29" in str(exc))
+        # CC-01. This used to assert the literals "1.73e-3" and "1.22e-3", which
+        # LOCKED IN a wrong pair: they are K8-ANOMALY.json's per-window DELTA sd and
+        # pooled delta over an 11-window subset, quoted in the refusal as if they were
+        # the full-panel KLD scatter and effect. bin/check_doc_numbers.py now re-derives
+        # the real values from registry/protocol/per-window/, so this asserts the SHAPE
+        # of the refusal and the derivation gate owns the numbers.
+        check("refusal text carries the power arithmetic (scatter, paired delta, effect)",
+              "7.2e-3" in str(exc) and "2.0e-3" in str(exc) and "1.33e-3" in str(exc)
+              and "lessons 28/29" in str(exc))
 
     print("\n[6] tail disclosure fields exist and are sane")
     tail = PS.tail_disclosure(samples, n_positions)

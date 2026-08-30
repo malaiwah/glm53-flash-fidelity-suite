@@ -848,7 +848,7 @@ measure_stream)
   #   QP_STREAM_ROOT        work + output root          (default /home/glm53-stream)
   #   QP_STREAM_PACKED_ROOT encode output root          (default $OUT_K6)
   #   QP_STREAM_LOCAL_STORE 1 = copy the payload store to local disk first
-  #   QP_STREAM_PROFILE     k6 | k8                     (default k6; match the packed root)
+  #   QP_STREAM_PROFILE     k6                         (only k6 is wired; see NUM-10 below)
   #   QP_STREAM_RUNS        cold runs                   (default 2, escalates to 5)
   #   QP_STREAM_DEVICE      auto|cuda:0|mps|cpu         (default auto)
   #   QP_STREAM_EP          EP size to emulate          (default 8 = the sealed one)
@@ -865,7 +865,28 @@ measure_stream)
   # ------------------------------------------------------------------------
   STREAM_ROOT="${QP_STREAM_ROOT:-/home/glm53-stream}"
   STREAM_PACKED="${QP_STREAM_PACKED_ROOT:-$OUT_K6}"
-  STREAM_PROFILE="${QP_STREAM_PROFILE:-k6}"   # k6 | k8 (payload root must match)
+  STREAM_PROFILE="${QP_STREAM_PROFILE:-k6}"   # k6 (payload root must match)
+  # NUM-10. The knob was documented `k6 | k8` and nothing downstream is
+  # parameterised by it:
+  #   * `k6_kld_report.py --profile k8-stream` is not in that tool's argparse
+  #     choices (only `k6-stream` is), so it exits 2 -- AFTER the full multi-hour
+  #     capture;
+  #   * the report is written to a hardcoded `$RCPT/stream-k6-kld.json`
+  #     regardless of profile;
+  #   * the verdict block below compares against SEALED_MEAN / SEALED_TOKENWISE_SHA /
+  #     SEALED_CHECKPOINT_IDENTITY, all three K6 constants, and would score a K8 run
+  #     against the K6 panel.
+  # Refuse HERE, for $0.00, rather than at the end of a paid capture. Wiring K8
+  # properly means a k8-stream profile, a profile-derived out path and K8 sealed
+  # targets -- three changes, none of which can be tested without a K8 payload store.
+  if [ "$STREAM_PROFILE" != "k6" ]; then
+    echo "measure_stream: QP_STREAM_PROFILE=$STREAM_PROFILE is not implemented." >&2
+    echo "  Only k6 is wired end to end: k6_kld_report.py has no '${STREAM_PROFILE}-stream'" >&2
+    echo "  profile, the receipt path is hardcoded to stream-k6-kld.json, and the verdict" >&2
+    echo "  compares against the K6 sealed mean/tokenwise/checkpoint constants." >&2
+    echo "  Refusing before any GPU time is spent." >&2
+    exit 2
+  fi
   STREAM_RUNS="${QP_STREAM_RUNS:-2}"
   STREAM_DEVICE="${QP_STREAM_DEVICE:-auto}"
   STREAM_EP="${QP_STREAM_EP:-8}"

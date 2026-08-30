@@ -102,6 +102,56 @@ pace_verdict() {  # pace_verdict <contexts_reached> <threshold>
 [ "$(pace_verdict 0 64)" = "HOLD:no-progress" ] && ok "SH-02 zero progress HOLDs (was: silent pass)" \
                                                || no "SH-02 zero progress HOLDs"
 
+# ---------------------------------------------------------------- SH-06 / CC-09
+# The Dione escalation trigger. `tensor_digest` hashed glob(dir + "/logits/*.safetensors")
+# and, on zero matches, printed the sha256 of NOTHING -- the same 64 hex digits for both
+# runs -- so `[ "$H1" != "$H2" ]` was false and the script reported the two runs as
+# identical without ever escalating to five cold runs. The snippet under test is
+# EXTRACTED FROM THE SHIPPED SCRIPT, so this cannot pass on a grep for the fix.
+DIONE_PY="$TMP/tensor_digest.py"
+python3 "$ROOT/bin/_extract_dione_digest.py" \
+        "$ROOT/k6/tools/measure_dione.sh" "$DIONE_PY" >/dev/null 2>&1 \
+  && ok "SH-06 the tensor_digest snippet was extracted from measure_dione.sh" \
+  || no "SH-06 the tensor_digest snippet was extracted from measure_dione.sh" \
+        "extraction failed -- the two cases below would pass for the wrong reason"
+EMPTY="$TMP/dione-empty"; mkdir -p "$EMPTY/logits"
+if python3 "$DIONE_PY" "$EMPTY" >/dev/null 2>&1; then
+  no "SH-06 a digest over zero logits windows must REFUSE" "it printed a digest"
+else
+  ok "SH-06 a digest over zero logits windows refuses (sha256 of nothing is a constant)"
+fi
+MISSING="$TMP/dione-missing"; mkdir -p "$MISSING"
+if python3 "$DIONE_PY" "$MISSING" >/dev/null 2>&1; then
+  no "SH-06 a digest over a missing logits/ must REFUSE" "it printed a digest"
+else
+  ok "SH-06 a digest over a missing logits/ refuses"
+fi
+# And it must still answer for a real window, or the refusal above is just a broken tool.
+GOOD="$TMP/dione-good"; mkdir -p "$GOOD/logits"
+if python3 "$ROOT/bin/_extract_dione_digest.py" --write-window "$GOOD/logits/window-0000.safetensors" \
+   >/dev/null 2>&1 && python3 "$DIONE_PY" "$GOOD" 2>/dev/null | grep -qE '^[0-9a-f]{64} [0-9]+$'; then
+  ok "SH-06 a digest over a real window still answers, with its tensor count"
+else
+  no "SH-06 a digest over a real window still answers, with its tensor count" \
+     "(SKIPs as a FAIL if safetensors is unavailable -- say so rather than passing)"
+fi
+if grep -q 'set -euo pipefail' "$ROOT/k6/tools/measure_dione.sh"; then
+  ok "SH-06 measure_dione runs under set -euo pipefail"
+else
+  no "SH-06 measure_dione runs under set -euo pipefail"
+fi
+
+# ---------------------------------------------------------------- NUM-10
+# Every literal --profile a shell script hands to k6_kld_report.py must be one of
+# that tool's argparse choices. `k6/stage_k6.sh` documented QP_STREAM_PROFILE=k6|k8
+# and composed `--profile "${STREAM_PROFILE}-stream"`, but `k8-stream` is not a
+# choice -- so a K8 streaming run died with argparse exit 2 AFTER the full capture.
+if python3 "$ROOT/bin/_check_kld_profiles.py" "$ROOT"; then
+  ok "NUM-10 every literal --profile handed to k6_kld_report is one of its choices"
+else
+  no "NUM-10 every literal --profile handed to k6_kld_report is one of its choices"
+fi
+
 # ------------------------------------------------------- source-level asserts
 # Two properties that are about the shipped scripts themselves, not extracted
 # logic: every script parses, and the two patched files no longer carry a bare

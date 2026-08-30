@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -132,7 +133,27 @@ def load_hf(quiet: bool = True) -> RegistrySnapshot:
         raise RegistryUnavailable(
             "cannot reach the public registry dataset (%s/datasets/%s): %s"
             % (HF_ENDPOINT, DATASET_ID, exc))
-    sha = meta.get("sha") or "unknown"
+    # CLI-15. The cache is keyed on the commit sha the API just reported, and the
+    # footer reports `snapshot_id = sha[:12]` -- but every file used to be fetched
+    # from `raw/main/`. A push landing between the API call and the file fetches
+    # therefore returned bytes from a DIFFERENT commit, cached permanently under, and
+    # labelled with, the older sha; and a fetch loop spanning a push could mix two
+    # commits inside one snapshot. The index.json cross-check below cannot see it,
+    # because index.json came from main too. This is not hypothetical while a
+    # measurement campaign is pushing rows into this dataset.
+    #
+    # Pin every fetch to the sha the cache is named after. HF serves
+    # `/datasets/<id>/raw/<40-hex>/<path>` (verified 200), so the snapshot is now
+    # genuinely a snapshot.
+    sha = meta.get("sha")
+    if not isinstance(sha, str) or not SHA40.match(sha):
+        # The old code fell back to the literal "unknown", which made the FIRST fetch
+        # the cache entry for every future run: a registry frozen at whatever it
+        # happened to be, with a footer that named no commit.
+        raise RegistryUnavailable(
+            "the public registry dataset (%s/datasets/%s) did not report a commit sha "
+            "(got %r), so a snapshot cannot be pinned or cached honestly"
+            % (HF_ENDPOINT, DATASET_ID, meta.get("sha")))
     cdir = cache_dir() / "registry" / sha
     cdir.mkdir(parents=True, exist_ok=True)
     notes: List[str] = []
@@ -141,11 +162,17 @@ def load_hf(quiet: bool = True) -> RegistrySnapshot:
         local = cdir / rel.replace("/", "__")
         if local.is_file():
             return local.read_bytes()
-        url = "%s/datasets/%s/raw/main/%s" % (HF_ENDPOINT, DATASET_ID, rel)
+        url = "%s/datasets/%s/raw/%s/%s" % (HF_ENDPOINT, DATASET_ID, sha, rel)
         blob = _http_get(url)
-        tmp = local.with_name(local.name + ".tmp")
-        tmp.write_bytes(blob)
-        os.replace(tmp, local)
+        handle, tmp = tempfile.mkstemp(dir=str(cdir), prefix=".fetch-", suffix=".tmp")
+        try:
+            with os.fdopen(handle, "wb") as fh:
+                fh.write(blob)
+            os.replace(tmp, local)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
         return blob
 
     try:

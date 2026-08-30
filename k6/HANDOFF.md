@@ -130,9 +130,12 @@ most surprises.
     before comparing tensor bytes and finding max_abs_diff exactly 0.0. The
     only valid artifacts are raw tensor bytes or a sealed tokenwise hash.
 
-14. **Never quote a single-window KLD as a rate comparison.** Per-window
-    scatter (sd 1.73e-3 here) exceeds the effect between adjacent bit-widths
-    (K6 vs K8 = 1.22e-3). One unlucky window made our K8 look WORSE than K6;
+14. **Never quote a single-window KLD as a rate comparison.** On the sealed
+    25-window panel the per-window KLD scatter is sd 7.2e-3 and the paired
+    per-window delta sd 2.0e-3, against a K6-vs-K8 effect of 1.33e-3. (The
+    1.73e-3 / 1.22e-3 pair in K8-ANOMALY.md is the DELTA sd and pooled delta
+    over that document's 11-window subset; it is correct there and was
+    mis-generalised elsewhere.) One unlucky window made our K8 look WORSE than K6;
     the full 25-window panel showed it winning decisively. Previews are fine
     for "is the pipeline alive" — label them, and never let one stand in for
     the panel. A corollary for any registry: single-window panels belong in

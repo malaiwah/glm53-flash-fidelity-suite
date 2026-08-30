@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 
 SCHEMA_VERSION = "quant-fidelity-registry/v1"
 REGISTRY_ID = "malaiwah/quant-fidelity-registry"
@@ -191,12 +192,38 @@ def load_collection(data_dir, name):
 
 
 def write_jsonl(path, records):
-    """Write records canonically, sorted by id, one per line."""
+    """Write records canonically, sorted by id, one per line.
+
+    ATOMICALLY. `registry_add --write` is a read-modify-write of the WHOLE collection,
+    and this used to truncate the destination in place: an interrupt, an OOM or a
+    watchdog kill between the truncate and the last line left `data/measurements.jsonl`
+    short by however many rows had not been flushed, with nothing that refuses a smaller
+    registry -- `load_collection` simply reads fewer rows, and re-running
+    `registry_render` regenerates `index.json` from the truncation, so CMP-006 (counts
+    vs data) then agrees with the loss. A measurement campaign pushing rows into this
+    file while a reviewer runs the tools is exactly when that window is open.
+
+    A temp file in the same directory plus `os.replace` makes a reader see either the
+    old file or the new one, never a prefix. It does NOT make two concurrent WRITERS
+    safe -- that is a lost update, not a torn file, and it needs a lock this
+    dependency-free tree deliberately does not have; run one `registry_add --write` at
+    a time."""
     records = sorted(records, key=lambda r: r["id"])
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        for r in records:
-            fh.write(canonical_json(r) + "\n")
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    handle, tmp = tempfile.mkstemp(dir=directory, prefix=".jsonl-", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as fh:
+            for r in records:
+                fh.write(canonical_json(r) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
     return len(records)
 
 

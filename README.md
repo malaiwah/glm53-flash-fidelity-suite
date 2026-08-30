@@ -225,7 +225,7 @@ rather than wired.
 
 ## Published datasets
 
-- [malaiwah/GLM-5.3-Flash-fidelity-suite-v1](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1) — the quality reference: BF16 + FP8-as-served hidden states over 10.48M positions, shared lm_head, all receipts.
+- [malaiwah/GLM-5.3-Flash-fidelity-suite-v1](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1) — the quality reference: the full 5,120×2,048 token suite, a **512-context shard** of BF16 and of FP8-as-served hidden states (`reference-bf16-shard0/`, `as-served-fp8-shard0/` — 512 × 2,047 scored positions each, `capture-manifest-shard.json`), the shared lm_head, and all receipts. The 0.028104 headline was measured over the whole 10.48M-position run; the retained hidden states are shard 0 of 10, which is what you can replay against.
 - [malaiwah/GLM-5.3-Flash-calibration-activations-v1](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-calibration-activations-v1) — 147 GB of MoE block-input activations + router logits (natural routing), for calibration-aware quantization work.
 
 ## Credits & lineage

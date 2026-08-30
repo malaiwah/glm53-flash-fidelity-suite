@@ -23,8 +23,12 @@ Mode is auto-detected from the student capture's schema:
     produce the estimate, and the quoted CI is the WIDER of z and bootstrap.
 
 PANEL-ESTIMATE GATE: no panel mean is emitted unless ALL panel windows
-contributed -- per-window scatter (sd 1.73e-3) exceeds the K6-vs-K8 effect
-(1.22e-3), so window subsets get per-window diagnostics only (lessons 28/29).
+contributed -- on the sealed 25-window panel the per-window KLD scatter is
+sd 7.2e-3 and the paired per-window K6-vs-K8 delta has sd 2.0e-3, both larger
+than the 1.33e-3 effect, so window subsets get per-window diagnostics only
+(lessons 28/29).  (The old 1.73e-3 / 1.22e-3 pair was K8-ANOMALY.json's DELTA
+sd and pooled delta over an 11-window subset, quoted here as if it were the
+full-panel KLD scatter.)
 
 Sample sizes (sigma_w = 0.05 DESIGN number; the tool reports the ACHIEVED CI
 from its own s_j, never the plan):

@@ -171,9 +171,10 @@ formats with the *same* scope.
 - Not a serving-quality statement for checkpoint-lane rows: a checkpoint
   can measure superbly and still be served badly by a buggy kernel — the
   checkpoint lane deliberately cannot see that.
-- Not transferable across panels: per-window scatter (sd ≈ 1.7e-3) exceeds
-  the K6-vs-K8 effect (1.2e-3), which is also why **a single window can
-  never compare two quants** (campaign lessons 28/29).
+- Not transferable across panels: on the sealed 25-window panel the
+  per-window KLD scatter is sd 7.2e-3, and the paired per-window K6-vs-K8
+  delta has sd 2.0e-3, against an effect of 1.33e-3 — which is also why
+  **a single window can never compare two quants** (campaign lessons 28/29).
 
 ## 7. The stack fingerprint — answering the kernel question
 

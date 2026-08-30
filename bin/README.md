@@ -86,8 +86,9 @@ on heavy tails both intervals are anti-conservative and the remedy is more
 positions).
 
 The 25-window rule is structural: no panel estimate unless ALL windows
-contributed, because per-window scatter (sd 1.73e-3) exceeds the K6-vs-K8
-effect (1.22e-3) — a single window has no power to compare quants (lessons
+contributed, because per-window KLD scatter (sd 7.2e-3) — and even the paired
+per-window delta (sd 2.0e-3) — exceeds the K6-vs-K8 effect (1.33e-3), so a
+single window has no power to compare quants (lessons
 28/29). Window subsets get per-window diagnostics only.
 
 Preview receipts are **structurally unsubmittable on two independent axes**:
