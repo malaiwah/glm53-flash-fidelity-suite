@@ -967,6 +967,24 @@ def check_references(C, rep):
             if art.get("kind") != "dequantized":
                 rep.err("REFC-001", "%s is a dequantized reference but artifact %s has kind=%r"
                         % (rid, r.get("artifact_ref"), art.get("kind")), rid)
+        elif kind == "quantized_proxy":
+            # The DESIGNATED-reference case: a model family that publishes no
+            # unquantized release at all (every deepseek_v4 repo on the Hub
+            # ships a quantization_config) still has a most-faithful published
+            # artifact, and designating it as the reference is what makes its
+            # children measurable. The designation changes no capture and no
+            # fidelity dataset -- only what the measures are distances FROM --
+            # and it is superseded, not invalidated, if true unquantized
+            # weights are ever released: those rows get a new reference id and
+            # therefore a new comparability group.
+            #
+            # It must be an actually-quantized artifact. A proxy that pointed
+            # at a base artifact would be a native_* reference wearing the
+            # wrong label, and would escape the disclosure below.
+            if art.get("kind") not in ("quant", "requantized"):
+                rep.err("REFC-006", "%s is a quantized_proxy reference but artifact %s has "
+                        "kind=%r (expected quant or requantized)"
+                        % (rid, r.get("artifact_ref"), art.get("kind")), rid)
         elif kind and kind.startswith("native_") and art.get("kind") != "base":
             rep.err("REFC-002", "%s is a %s reference but artifact %s has kind=%r"
                     % (rid, kind, r.get("artifact_ref"), art.get("kind")), rid)
@@ -983,6 +1001,25 @@ def check_references(C, rep):
                 m, "different_reference_kind", affects=True):
             rep.err("REFC-001", "%s measures against a dequantized reference without a "
                                 "different_reference_kind disclosure" % mid, mid)
+        if r.get("reference_kind") == "quantized_proxy":
+            # No row against a designated proxy may read as a floor. The
+            # comparability key already binds reference_id, so these rows can
+            # never SILENTLY be ranked beside native_* rows -- they land in
+            # their own group by construction. What the key cannot do is stop a
+            # reader from quoting the number as if it were divergence from the
+            # model, so the disclosure is required and it makes the row
+            # advisory.
+            if not L.has_disclosure(m, "different_reference_kind", affects=True):
+                rep.err("REFC-006", "%s measures against a quantized_proxy reference without "
+                                    "a different_reference_kind disclosure: its number is a "
+                                    "distance from the designated proxy, not from the model, "
+                                    "and is systematically SMALLER than it would be against "
+                                    "true unquantized weights" % mid, mid)
+            if (m.get("comparability") or {}).get("class") != "advisory":
+                rep.err("REFC-006", "%s measures against a quantized_proxy reference but "
+                                    "declares comparability.class=%r: a designated proxy is "
+                                    "not a measured floor" 
+                        % (mid, (m.get("comparability") or {}).get("class")), mid)
     cross = {}
     for mid, m in C["measurements"].items():
         if (m.get("estimator") or {}).get("stack_relation") == "cross_stack":

@@ -409,6 +409,11 @@
       "statement": "A submission's declared reference.teacher_receipt_sha256 must equal the capture_receipt_sha256 of the reference record it names. Where the reference record carries no capture digest the row is forced to disclose teacher_capture_unverified, which makes it advisory."
     },
     {
+      "id": "REFC-006",
+      "severity": "error",
+      "statement": "reference.reference_kind=quantized_proxy requires artifacts[reference.artifact_ref].kind in {quant,requantized}, and every measurement using that reference carries a different_reference_kind disclosure (affects_comparability) and is comparability.class=advisory. A quantized_proxy is the most-faithful PUBLISHED artifact of a family that releases no unquantized weights, DESIGNATED as the reference so its children are measurable at all; it is not a measured floor, and rows against it are systematically smaller than they would be against true unquantized weights."
+    },
+    {
       "id": "SCOPE-001",
       "severity": "error",
       "statement": "measurement.scope_digest equals the recomputed digest of artifacts[measurement.artifact_ref].scope."

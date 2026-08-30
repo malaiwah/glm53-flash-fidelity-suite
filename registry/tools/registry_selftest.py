@@ -132,6 +132,43 @@ def m_mlx_row_promoted(C):
     return "REFC-001", "a dequantized-reference row must say so"
 
 
+def _make_proxy(C):
+    """Turn the dequantized reference into a DESIGNATED quantized proxy.
+
+    The corpus has no quantized_proxy reference yet -- no family we measure
+    lacks an unquantized release -- so the fixture builds one. A proxy is the
+    most-faithful PUBLISHED artifact of a family that ships no unquantized
+    weights at all, designated as the reference so its children are measurable.
+    """
+    r = C["references"]["reference--orcarouter.glm53-fp8-dequantized.undisclosed"]
+    r["reference_kind"] = "quantized_proxy"
+    r["artifact_ref"] = "artifact--0xsero.glm-5.3-flash-exl3-3.0bpw"
+    return C["measurements"]["measurement--glm53.orcarouter-mlx-6bit.undisclosed"]
+
+
+def m_proxy_reference_undisclosed(C):
+    """A row against a designated proxy that does not say the reference is one."""
+    a = _make_proxy(C)
+    a["disclosures"] = [d for d in a["disclosures"]
+                        if d["code"] != "different_reference_kind"]
+    return "REFC-006", "a designated-proxy row must say its number is not a floor"
+
+
+def m_proxy_reference_marked_strict(C):
+    """A designated proxy is not a measured floor, so no row against one is strict."""
+    a = _make_proxy(C)
+    a["comparability"]["class"] = "strict"
+    return "REFC-006", "a designated-proxy row cannot be strict"
+
+
+def m_proxy_pointing_at_base(C):
+    """A proxy pointing at a BASE artifact is a native reference wearing the wrong label."""
+    _make_proxy(C)
+    C["references"]["reference--orcarouter.glm53-fp8-dequantized.undisclosed"][
+        "artifact_ref"] = "artifact--malaiwah.glm-5.2-siq-fruit-bf16"
+    return "REFC-006", "a quantized_proxy must point at an actually-quantized artifact"
+
+
 def m_scope_digest_edited(C):
     a = C["artifacts"]["artifact--malaiwah.glm-5.3-flash-tr3-6bpw"]
     a["scope"]["assignments"][3]["bits_per_weight"] = 4.0
@@ -439,6 +476,9 @@ MUTATIONS = [
     ("teacher-from-another-panel", m_teacher_from_another_panel),
     ("positions-under-wrong-panel", m_positions_under_wrong_panel),
     ("dequantized-reference-undisclosed", m_mlx_row_promoted),
+    ("proxy-reference-undisclosed", m_proxy_reference_undisclosed),
+    ("proxy-reference-marked-strict", m_proxy_reference_marked_strict),
+    ("proxy-reference-on-base-artifact", m_proxy_pointing_at_base),
     ("scope-digest-not-restated", m_scope_digest_edited),
     ("dangling-panel-ref", m_dangling_panel),
     ("panel-derivation-cycle", m_panel_cycle),
