@@ -724,6 +724,64 @@ def job_id_for(args: argparse.Namespace) -> str:
     return hashlib.sha1(key.encode()).hexdigest()[:8]
 
 
+
+def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any]) -> None:
+    """A reference must be the unquantized thing, or it is not a reference.
+
+    Every measurement in this registry is a distance FROM a root, so a root
+    that is itself quantized silently redefines what every downstream number
+    means: rows would report divergence from somebody's quantization rather
+    than from the model, while still being labelled a floor.
+
+    This is not a theoretical risk. `layer_outer.py` builds no `HfQuantizer`,
+    so for a plain FP8 weight the shape MATCHES the bf16 parameter, the payload
+    is read as bf16 and the block scale is never applied -- a wrong capture
+    that raises nothing (the M1 Qwen3.8-27B-FP8 defect). And it is not rare:
+    every `deepseek_v4` repo on the Hub ships a `quantization_config`, which is
+    exactly why that family has no root.
+
+    Decided from the release's own config, before anything is rented.
+    """
+    # Decide from the checkpoint's OWN config, not from surface classification.
+    # `sniff_surface` returns "unknown" for plenty of perfectly unquantized
+    # roots -- zai-org/GLM-5.3-BF16 and zai-org/GLM-5.2 both do -- and refusing
+    # on "unknown" would block the exact captures this mode exists for. The
+    # authoritative, cheap and unambiguous evidence is whether the release
+    # publishes a `quantization_config` at all.
+    try:
+        cfg = fetch_json(target.repo_id, "config.json", revision=target.revision)
+    except HFError as exc:
+        raise Refusal(
+            "--role root, but this checkpoint's config.json could not be read "
+            "(%s)" % redact(str(exc)),
+            ["A root must be shown to be unquantized before it is captured, and "
+             "that is decided from config.json:quantization_config.",
+             "Nothing was created. $0.00 spent."])
+    qc = cfg.get("quantization_config") or (
+        cfg.get("text_config") or {}).get("quantization_config")
+    if not qc:
+        con.ok("root is unquantized",
+               "surface %s: config.json declares no quantization_config"
+               % surface.surface)
+        plan.setdefault("target", {})["root_unquantized"] = True
+        return
+    method = qc.get("quant_method") or qc.get("fmt") or "declared"
+    raise Refusal(
+        "--role root, but this checkpoint publishes a quantization_config "
+        "(quant_method %s)" % method,
+        ["A root is the thing every later measurement is a distance FROM. "
+         "Capturing a quantized checkpoint as a root would publish "
+         "divergence-from-somebody's-quantization under the name of a floor.",
+         "Worse, it would not fail loudly: the layer-outer schedule builds no "
+         "HfQuantizer, so an FP8 weight has the same SHAPE as the bf16 "
+         "parameter -- the payload is read as bf16 and the block scale is "
+         "never applied.",
+         "Point --model at the unquantized release. If the family publishes "
+         "none -- as no deepseek_v4 repo on the Hub does -- then it has no "
+         "root and no floor can be measured for it.",
+         "Nothing was created. $0.00 spent."])
+
+
 def _refuse_incomplete_exl3hf(con: Console, repo_id: str, revision: str,
                               plan: Dict[str, Any]) -> None:
     """Does this release actually contain the whole model?
@@ -1063,7 +1121,14 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     # -- registry front gate: is this artifact already measured? -----------
     # BEFORE any preflight, because "the answer already exists" is the
     # cheapest possible outcome of a cloud run.
-    if getattr(args, "skip_registry_check", False):
+    if getattr(args, "role", "quant") == "root":
+        # The front gate answers "does a published measurement of this artifact
+        # already exist?".  A root capture produces no measurement row -- it
+        # produces the dataset later rows are measured AGAINST -- so the gate
+        # has nothing to say here and asking it would print rows about a
+        # different question.
+        plan["registry_check"] = "not-applicable-for-root"
+    elif getattr(args, "skip_registry_check", False):
         con.warn("--skip-registry-check: not asking the registry first")
         plan["registry_check"] = "skipped"
     else:
@@ -1203,6 +1268,8 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
             "head_bits": surface.evidence.get("head_bits"),
             "quantized_from": surface.evidence.get("original_quantization_config_fmt"),
         }
+        if getattr(args, "role", "quant") == "root":
+            _refuse_quantized_root(con, target, surface, plan)
         if surface.surface == "exl3hf" and not surface.problems:
             _refuse_incomplete_exl3hf(con, target.repo_id, target.revision, plan)
         if not surface.problems:
@@ -1733,12 +1800,34 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
         # publishes a wrong label.
         profile = resolve_profile(load_engines().get(args.lane),
                                   target.get("surface"), target.get("bits"))
-    if not profile:
+    role = getattr(args, "role", "quant")
+    if not profile and role != "root":
         raise Refusal(
             "no engine --profile for surface %r at %r bpw on lane %r"
             % (target.get("surface"), target.get("bits"), args.lane),
             ["Add it to bin/engines.json lanes.%s.profile_map_by_surface." % args.lane])
+    capture: Dict[str, Any] = {}
+    if role == "root":
+        # A root capture reads no engine profile: there is no quantized surface
+        # to decode and no reference to diverge from. What it needs instead is
+        # the identity of the dataset it will WRITE, because a capture with no
+        # identity cannot be published or cited.
+        pdir = getattr(args, "panel_dir", None)
+        capture = {
+            "role": "root",
+            "form": getattr(args, "form", "hidden"),
+            "schedule": getattr(args, "schedule", "layer-outer"),
+            "panel_dir": (str(Path(pdir).resolve().relative_to(SUITE_ROOT))
+                          if pdir else None),
+            "panel_id": (json.loads((Path(pdir) / "panel.json").read_text())
+                         .get("panel_id") if pdir else None),
+            "dataset_id": args.dataset_id,
+            "dataset_name": args.dataset_name or args.dataset_id,
+            "author": args.measurer,
+        }
     return {
+        "role": role,
+        "capture": capture,
         "recipe": "cloud",
         "job_id": plan_data["job_id"],
         "lane": args.lane,
@@ -1790,6 +1879,28 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
     bundle = SUITE_ROOT / "bin" / "BUNDLE.txt"
     files = [ln.strip() for ln in bundle.read_text(encoding="utf-8").splitlines()
              if ln.strip() and not ln.startswith("#")]
+    # A root capture's panel is chosen per run, so it cannot be a static
+    # BUNDLE.txt entry -- but it is small (tens of tokens files plus one mask)
+    # and it must arrive by the same digest-diff path as everything else, or a
+    # resumed box would silently keep an older panel.
+    panel_dir = getattr(args, "panel_dir", None)
+    if panel_dir:
+        pd = Path(panel_dir).resolve()
+        if not (pd / "panel.json").is_file():
+            raise Refusal("--panel-dir %s has no panel.json" % pd,
+                          ["A panel directory is panel.json + arrays/.",
+                           "Build one with k6/tools/build_token_panel.py."])
+        try:
+            pd.relative_to(SUITE_ROOT)
+        except ValueError:
+            raise Refusal(
+                "--panel-dir must live inside the suite checkout (%s)" % SUITE_ROOT,
+                ["The bundle uploader addresses files by their path RELATIVE to "
+                 "the suite root, so a panel outside it has no remote path.",
+                 "Commit the panel under k6/panels/ and pass that path.",
+                 "Nothing was created. $0.00 spent."])
+        files += sorted(str(f.relative_to(SUITE_ROOT))
+                        for f in pd.rglob("*") if f.is_file())
     present = [rel for rel in files if (SUITE_ROOT / rel).is_file()]
     for rel in files:
         if rel not in present:
@@ -1860,7 +1971,15 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
             % (td.fs_root, int(plan_data["deadline_epoch"]),
                int(args.heartbeat_timeout), td.fs_root, td.fs_root))
 
-    stages = ["setup", "fetch_target", "fetch_panel", "measure", "score", "seal"]
+    if getattr(args, "role", "quant") == "root":
+        # A root capture has no second side: nothing is materialized (the
+        # reference IS the checkpoint) and nothing is scored (there is no
+        # candidate to diverge from). `capture` writes the sealed dataset and
+        # `verify` recomputes its digest chain before the box is destroyed --
+        # the last moment at which a bad capture is free to discard.
+        stages = ["setup", "fetch_target", "capture", "verify"]
+    else:
+        stages = ["setup", "fetch_target", "fetch_panel", "measure", "score", "seal"]
     if (plan_data.get("target") or {}).get("surface") in ("exl3hf", "tr3-published",
                                                           "dione"):
         # Both surfaces read --bf16 from a tree of the artifact's own non-routed
@@ -2158,6 +2277,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="reaper: manage the teardown backstop; adopt: resume a job")
 
     t = p.add_argument_group("target")
+    t.add_argument("--role", default="quant", choices=("quant", "root"),
+                   help="quant (default): measure an artifact's divergence from a "
+                        "reference and seal a submission receipt. root: CAPTURE a "
+                        "reference model's own activations on a panel and seal a "
+                        "publishable fidelity dataset -- no divergence, no "
+                        "reference, nothing to compare against yet. A root is paid "
+                        "for once and read by every later measurement.")
     t.add_argument("--model", help="HF repo id of the artifact to measure")
     t.add_argument("--revision", help="40-hex pin (default: resolve main and show it)")
     t.add_argument("--registry", default="auto",
@@ -2168,6 +2294,25 @@ def build_parser() -> argparse.ArgumentParser:
                    help="measure even though published rows exist")
     t.add_argument("--accept-measured-revision", action="store_true",
                    help="on revision drift, target the registry's measured commit")
+
+    rt = p.add_argument_group("root capture (--role root)")
+    rt.add_argument("--panel-dir",
+                    help="LOCAL panel directory (panel.json + arrays/) shipped to "
+                         "the instance with the bundle. A root capture for a model "
+                         "family with no published panel needs one; build it with "
+                         "k6/tools/build_token_panel.py against that family's OWN "
+                         "tokenizer. Mutually exclusive with --panel.")
+    rt.add_argument("--dataset-id",
+                    help="identity of the fidelity dataset to write, e.g. "
+                         "minimaxm3-fidelity-root-v1")
+    rt.add_argument("--dataset-name", help="human-readable name for that dataset")
+    rt.add_argument("--form", default="hidden", choices=("hidden", "logit"),
+                    help="hidden (default) stores hidden states and applies the "
+                         "head at compare time; logit stores full-vocabulary "
+                         "logits, which for a 200k vocab is ~32x larger and is "
+                         "why published roots are hidden-form")
+    rt.add_argument("--schedule", default="layer-outer",
+                    choices=("layer-outer", "window-outer"))
 
     pl = p.add_argument_group("panel (a parameter, never a constant)")
     pl.add_argument("--panel", help="HF dataset id of the panel/teacher")
@@ -2253,7 +2398,40 @@ def main(argv: Optional[List[str]] = None) -> int:
             return reaper_sweep(con, dry=args.dry_run)
         return reaper_list(con)
 
-    if not args.model or not args.panel:
+    if getattr(args, "role", "quant") == "root":
+        if not args.model or not (args.panel or args.panel_dir):
+            con.err("--role root requires --model and one of --panel / --panel-dir")
+            return EXIT_REFUSED
+        if args.panel and args.panel_dir:
+            con.err("--panel and --panel-dir are mutually exclusive")
+            return EXIT_REFUSED
+        if not args.dataset_id:
+            con.err("--role root requires --dataset-id (the identity of the "
+                    "dataset being written; a capture with no identity cannot "
+                    "be published or cited)")
+            return EXIT_REFUSED
+        if args.panel_dir:
+            # Checked HERE, before the plan and before any spend. The uploader
+            # addresses bundle files by their path RELATIVE to the suite root,
+            # so a panel outside it has no remote path -- and discovering that
+            # inside _bootstrap_and_run means finding out after the instance is
+            # already running.
+            pd = Path(args.panel_dir).resolve()
+            if not (pd / "panel.json").is_file():
+                con.err("--panel-dir %s has no panel.json (a panel directory "
+                        "is panel.json + arrays/; build one with "
+                        "k6/tools/build_token_panel.py)" % pd)
+                return EXIT_REFUSED
+            try:
+                pd.relative_to(SUITE_ROOT)
+            except ValueError:
+                con.err("--panel-dir must live inside the suite checkout (%s): "
+                        "the bundle uploader addresses files by their path "
+                        "relative to the suite root, so a panel outside it has "
+                        "no remote path. Commit it under k6/panels/ and pass "
+                        "that path." % SUITE_ROOT)
+                return EXIT_REFUSED
+    elif not args.model or not args.panel:
         con.err("--model and --panel are required")
         return EXIT_REFUSED
     if args.cold_runs is None:

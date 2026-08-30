@@ -342,9 +342,75 @@ seal)
   log "done"
   ;;
 
+capture)
+  # --role root. There is no candidate and no reference: this stage runs the
+  # reference model itself over the panel and WRITES the sealed dataset that
+  # later measurements are a distance from. hf_capture.py writes the dataset at
+  # --out itself, so there is no separate assembly step.
+  ROLE="$(jqget role quant)"
+  if [ "$ROLE" != "root" ]; then
+    echo "the capture stage is --role root only (job.json says role=$ROLE)" >&2
+    exit 2
+  fi
+  load_token
+  REPO="$(jqget target.repo_id)"
+  REV="$(jqget target.revision)"
+  LANE="$(jqget lane streaming)"
+  FORM="$(jqget capture.form hidden)"
+  SCHED="$(jqget capture.schedule layer-outer)"
+  PANEL_REL="$(jqget capture.panel_dir)"
+  PANEL_ID="$(jqget capture.panel_id)"
+  DSID="$(jqget capture.dataset_id)"
+  DSNAME="$(jqget capture.dataset_name)"
+  AUTHOR="$(jqget capture.author malaiwah)"
+  OUT="$FS/dataset"
+  [ -n "$DSID" ] || { echo "job.json has no capture.dataset_id" >&2; exit 2; }
+  [ -n "$PANEL_REL" ] || { echo "job.json has no capture.panel_dir" >&2; exit 2; }
+  [ -d "$FS/$PANEL_REL" ] || { echo "panel not uploaded: $FS/$PANEL_REL" >&2; exit 2; }
+  if [ -d "$OUT" ]; then
+    log "dataset already written at $OUT -- skipping (receipt-resumable)"
+  else
+    log "capturing $REPO @ $REV  form=$FORM schedule=$SCHED panel=$PANEL_ID"
+    # --model is the LOCAL tree fetch_target already downloaded; --repository
+    # and --model-revision keep the dataset's recorded identity pointing at the
+    # published repo rather than at a path on a machine that will not exist.
+    HF_HOME="$FS/hf" "$PY" "$FS/bin/fidelity_dataset.py" capture \
+        --out "$OUT" --form "$FORM" --role root --lane "$LANE" \
+        --engine hf-transformers -- \
+        --model "$MODELS/target" \
+        --repository "$REPO" --model-revision "$REV" \
+        --panel "$FS/$PANEL_REL" --panel-id "$PANEL_ID" \
+        --schedule "$SCHED" --dtype bfloat16 \
+        --dataset-id "$DSID" --dataset-name "$DSNAME" \
+        --author "$AUTHOR" --role root \
+        2>&1 | tee -a "$LOGS/capture.log"
+  fi
+  du -sh "$OUT" | tee -a "$LOGS/capture.log"
+  touch "$marker"
+  log "done"
+  ;;
+
+verify)
+  # Recompute the dataset's own seal and digest chain BEFORE the box is
+  # destroyed. This is the last moment at which a bad capture is free to throw
+  # away: after teardown the only way to find out is to re-rent and re-capture.
+  # Tensor content is recomputed by default -- the seal covers the manifest and
+  # checksums.txt, so a byte flipped inside a tensor whose checksums were then
+  # refreshed is only ever caught here.
+  OUT="$FS/dataset"
+  log "verifying $OUT (seal + digest chain + tensor content)"
+  "$PY" "$FS/bin/fidelity_dataset.py" verify "$OUT" \
+      2>&1 | tee -a "$LOGS/verify.log"
+  "$PY" "$FS/bin/fidelity_dataset.py" describe "$OUT" \
+      2>&1 | tee -a "$LOGS/verify.log"
+  touch "$marker"
+  log "done"
+  ;;
+
 *)
   echo "unknown stage: $STAGE" >&2
   echo "stages: setup fetch_target fetch_panel materialize measure score seal" >&2
+  echo "        capture verify   (--role root)" >&2
   exit 2
   ;;
 esac

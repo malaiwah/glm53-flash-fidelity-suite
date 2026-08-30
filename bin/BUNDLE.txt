@@ -150,3 +150,19 @@ registry/data/references.jsonl
 registry/data/pipelines.jsonl
 registry/data/measurements.jsonl
 registry/index.json
+
+# --- root capture (--role root) -------------------------------------------
+# A root capture runs hf_capture.py through fidelity_dataset.py, which the
+# measurement path never touches, so none of this shipped before. Ordered by
+# import depth so a missing entry fails at the top rather than three levels in.
+bin/fidelity_dataset.py
+bin/fidelity/dsformat.py
+bin/fidelity/dsmanifest.py
+bin/fidelity/dsvalidate.py
+bin/fidelity/dsadapt.py
+bin/fidelity/dscompare.py
+bin/fidelity/dshub.py
+bin/fidelity/k3compat.py
+bin/fidelity/cardmeta.py
+k6/tools/hf_capture.py
+k6/tools/layer_outer.py

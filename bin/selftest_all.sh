@@ -47,6 +47,7 @@ t "floor-aware stats known answers (T2)"   0 python3 bin/selftest_stats.py
 t "preview estimator coverage (T3)"        0 python3 bin/selftest_preview_stats.py
 t "submission refusability (T5)"           0 python3 bin/selftest_submission_refusal.py
 t "scope must match the release (T5b)"      0 python3 bin/selftest_scope_crosscheck.py
+t "root capture: --role root (T5c)"        0 python3 bin/selftest_root_capture.py
 t "stack fingerprint (T9: deterministic, engine-absent, MPS/CUDA-absent)" \
                                            0 python3 bin/selftest_stackprint.py
 # The money chokepoint (T11). `jl list` is the only thing that answers "is this
