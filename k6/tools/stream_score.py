@@ -148,6 +148,12 @@ NATIVE_CAPTURE_ROLE = "native_bf16_student"
 EXL3HF_PROFILES = {
     "turbo-4.05bpw": (4.05, "turboderp-exl3-mul1-4.05bpw"),
     "turbo-3.05bpw": (3.05, "turboderp-exl3-mul1-3.05bpw"),
+    # 2.05bpw is the same producer, storage layout and codebook as the two
+    # above, at a lower rate AND a lower head: the release declares
+    # head_bits 5, not the 6 that 4.05/3.05 declare.  Nothing here encodes
+    # that -- declared_head_bits is READ off the artifact -- but the display
+    # strings in k6_kld_report do, so they must say 5 for this profile.
+    "turbo-2.05bpw": (2.05, "turboderp-exl3-mul1-2.05bpw"),
     # vcruz305's K2 pack: the same STOCK-exllamav3 HF storage layout (canonical
     # index, per-module {trellis,suh,svh,<codebook>}, official unfused tensor
     # names) as turboderp's releases, and therefore the same reader -- but the
@@ -1885,7 +1891,8 @@ def main() -> int:
     parser.add_argument("--cold-run", type=int, required=True)
     parser.add_argument("--profile", default="k6",
                         choices=("k6", "k8", "k6k8", "native-bf16", "mlx", "gguf", "nvfp4",
-                                 "turbo-4.05bpw", "turbo-3.05bpw", "vcruz-k2-2bpw",
+                                 "turbo-4.05bpw", "turbo-3.05bpw", "turbo-2.05bpw",
+                                 "vcruz-k2-2bpw",
                                  "tr3-4bpw", "dione-q4", "dione-3.0bpw"))
     parser.add_argument("--roles", default="final")
     parser.add_argument("--windows", help="comma-separated window ids to score (default: all)")

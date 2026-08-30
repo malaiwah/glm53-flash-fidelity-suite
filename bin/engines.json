@@ -222,6 +222,7 @@
         "exl3hf": {
           "4.05": "turbo-4.05bpw",
           "3.05": "turbo-3.05bpw",
+          "2.05": "turbo-2.05bpw",
           "2.0": "vcruz-k2-2bpw"
         },
         "native-bf16": {

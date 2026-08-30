@@ -85,6 +85,7 @@ DIONE_SUMMARIES = (
 EXL3HF_SUMMARIES = (
     "malaiwah.glm53-turbo-4.05bpw-packed-kld-summary.v1",
     "malaiwah.glm53-turbo-3.05bpw-packed-kld-summary.v1",
+    "malaiwah.glm53-turbo-2.05bpw-packed-kld-summary.v1",
     "malaiwah.glm53-vcruz-k2-2bpw-packed-kld-summary.v1",
 )
 # TR3-published releases (brandonmusic's EXL3/MCG layout and its byte-identical

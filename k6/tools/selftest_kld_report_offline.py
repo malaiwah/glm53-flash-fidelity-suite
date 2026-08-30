@@ -34,6 +34,41 @@ import tempfile
 import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _declared_capture_profiles() -> dict:
+    """{profile: surface family} read from stream_score's OWN tables.
+
+    stream_score.py is the file that decides which profiles exist; this test
+    asserts k6_kld_report can describe every one of them.  Importing the tables
+    instead of restating them is what makes that assertion stay true when a
+    profile is added.  stream_score imports heavy optionals at call time only,
+    so the module-level tables are readable without torch -- but if that ever
+    changes, parse them out of the source rather than skipping the check.
+    """
+    import ast
+
+    src = open(os.path.join(HERE, "stream_score.py"), encoding="utf-8").read()
+    tree = ast.parse(src)
+    tables = {"EXL3HF_PROFILES": "exl3hf", "TR3_PROFILES": "tr3",
+              "DIONE_PROFILES": "dione"}
+    out: dict = {}
+    seen = set()
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            name = getattr(target, "id", None)
+            if name in tables:
+                seen.add(name)
+                for key in ast.literal_eval(node.value):
+                    out[key] = tables[name]
+    missing = set(tables) - seen
+    if missing:
+        raise AssertionError("stream_score.py no longer defines %s -- this "
+                             "test's derivation is stale, fix it rather than "
+                             "letting it pass vacuously" % sorted(missing))
+    return out
 PASS: list = []
 FAIL: list = []
 
@@ -237,12 +272,13 @@ def main():
         # an exl3hf capture whose headline receipt would then carry no
         # artifact_repo, no artifact_revision, no codebook and no
         # seal_disclosure. Probe both outcomes, not just the one that passes.
-        for profile, want in (("turbo-4.05bpw", "exl3hf"),
-                              ("turbo-3.05bpw", "exl3hf"),
-                              ("vcruz-k2-2bpw", "exl3hf"),
-                              ("dione-q4", "dione"),
-                              ("dione-3.0bpw", "dione"),
-                              ("tr3-4bpw", "tr3")):
+        # The pairs are DERIVED from stream_score's own profile tables, not
+        # retyped here.  A hand-written list is a list that drifts: adding a
+        # profile to stream_score and forgetting this file used to leave the new
+        # profile with no NUM-15 coverage at all, and the suite still went green.
+        # Deriving it means a profile that stream_score can capture but
+        # k6_kld_report cannot describe fails HERE, before it can seal a receipt.
+        for profile, want in sorted(_declared_capture_profiles().items()):
             got = K._profile_surface_family(profile)
             check("NUM-15  %-14s -> surface %s" % (profile, want), got == want, str(got))
         check("NUM-15  a lane-native profile has no surface family",
@@ -256,8 +292,7 @@ def main():
               and K._profile_surface_family("vcruz-k2-2bpw") == "exl3hf")
         # every profile stream_score can capture a third-party artifact with must
         # be declared here, or its provenance silently vanishes
-        for profile in ("turbo-4.05bpw", "turbo-3.05bpw", "vcruz-k2-2bpw",
-                        "dione-q4", "dione-3.0bpw", "tr3-4bpw"):
+        for profile in sorted(_declared_capture_profiles()):
             check("NUM-15  %-14s has a storage label too" % profile,
                   isinstance(K._profile_storage_label(profile), str))
 
