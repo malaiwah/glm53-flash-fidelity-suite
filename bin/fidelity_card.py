@@ -88,6 +88,21 @@ def cmd_annotate(args):
 
         model_index = None
         if args.role in ("quant", "root") and measurement_ids:
+            # CLI-12. model-index[0].name used to come from --base-model, else from the
+            # card's filename. On a quant card that attributed the quant's KLD to the
+            # unquantized BASE model -- and bin/README.md's own copy-paste quickstart
+            # passes --base-model and no --model-name, so the documented command did
+            # exactly that. With neither flag the entry was literally named "README".
+            #
+            # The name is a property of the artifact that was MEASURED, so derive it
+            # from the registry: measurement -> artifact_ref -> huggingface.repository.
+            # An explicit --model-name still wins; an artifact whose repository the
+            # registry does not record refuses rather than guessing.
+            if not args.model_name:
+                args.model_name, args.model_repo = _derive_model_name(
+                    registry, measurement_ids)
+                if args.model_name is None:
+                    return REFUSED
             model_index = cardmeta.build_model_index(registry, measurement_ids, args.model_name)
         fidelity_dataset = None
         if args.fidelity_dataset:
@@ -151,31 +166,51 @@ def cmd_annotate(args):
     return _finish_annotate(args, text, merged, registry, "model", measurement_ids)
 
 
+def _derive_model_name(registry, measurement_ids):
+    """(name, owner/name) of the artifact these measurements were taken ON.
+
+    CLI-12: the model-index name is what attributes the number. Deriving it from the
+    card path or from --base-model attributed a quant's divergence to the reference
+    model. Returns (None, None) after emitting a refusal when it cannot be resolved --
+    guessing is what this is replacing."""
+    refs = {registry["measurements"][mid].get("artifact_ref")
+            for mid in measurement_ids if mid in registry["measurements"]}
+    refs.discard(None)
+    if len(refs) != 1:
+        emit("REFUSED: the cited measurements span %d artifacts (%s), so there is no "
+             "single model this card is about" % (len(refs), ", ".join(sorted(refs))[:120]))
+        emit("  remedy: pass --model-name explicitly, or cite measurements of one artifact")
+        return None, None
+    ref = refs.pop()
+    art = (registry.get("artifacts") or {}).get(ref) or {}
+    repo = ((art.get("huggingface") or {}).get("repository"))
+    if not repo:
+        emit("REFUSED: artifact %s records no huggingface.repository, so the "
+             "model-index name cannot be derived from what was measured" % ref)
+        emit("  remedy: pass --model-name explicitly")
+        return None, None
+    return repo.rsplit("/", 1)[-1], repo
+
+
 def _finish_annotate(args, text, merged, registry, repo_type, measurement_ids=()):
     if args.diff:
         for line in difflib.unified_diff(text.splitlines(True), merged.splitlines(True),
                                          fromfile=args.card, tofile=(args.out or args.card),
                                          n=2):
             emit(line.rstrip("\n"))
-    destination = args.out or (args.card if args.in_place else None)
-    if destination:
-        with open(destination, "w", encoding="utf-8") as handle:
-            handle.write(merged)
-        emit("wrote %s" % destination)
-    if args.eval_results_v2:
-        rows = cardmeta.build_eval_results_v2(registry, measurement_ids,
-                                              args.base_model or args.model_name)
-        path = args.eval_results_v2
-        import yaml
-
-        with open(path, "w", encoding="utf-8") as handle:
-            yaml.dump(rows, handle, sort_keys=False, allow_unicode=True)
-        emit("wrote %s (OFF BY DEFAULT: the format cannot express units or direction, so a "
-             "leaderboard would sort KLD backwards)" % path)
-    # GEN-9: annotate ALWAYS checks its own output. A generator that writes an
-    # invalid card and exits 0 is worse than one that refuses -- the caller only
-    # finds out when the Hub, or a reader, does. `--validate` now controls how
-    # LOUD the check is, not whether it runs.
+    # CLI-06. The card was WRITTEN here and validated below, so a self-check failure
+    # printed "REFUSED ... nothing was published" over a file that had already been
+    # overwritten -- a refusal that does not refuse, and, with --in-place, silent data
+    # loss on the operator's real README.md. Reproduced: a card carrying an unrelated
+    # model-index (an MMLU result) lost it permanently to a run that reported refusal.
+    # validate_card is a pure function of the in-memory text and the loaded registry, and
+    # is already called with offline=True, so hoisting it costs nothing and cannot change
+    # the verdict.
+    #
+    # GEN-9: annotate ALWAYS checks its own output. A generator that writes an invalid
+    # card and exits 0 is worse than one that refuses -- the caller only finds out when
+    # the Hub, or a reader, does. `--validate` controls how LOUD the check is, not
+    # whether it runs.
     our_axis = cardmeta.validate_card(merged, registry, offline=True, repo_type=repo_type)
     self_errors = [e for axis in our_axis["axes"] if axis["axis"] == "ours"
                    for e in (axis.get("errors") or [])]
@@ -183,10 +218,35 @@ def _finish_annotate(args, text, merged, registry, repo_type, measurement_ids=()
         emit("REFUSED: the card this run produced does not satisfy its own validator")
         for error in self_errors:
             emit("          %s" % error)
-        emit("  remedy: nothing was published. Fix the inputs above and re-run; "
-             "`fidelity-card validate --card %s` re-checks all three axes."
-             % (args.out or args.card))
+        emit("  remedy: nothing was written -- %s is untouched. Fix the inputs above "
+             "and re-run; `fidelity-card validate --card %s` re-checks all three axes."
+             % (args.card, args.out or args.card))
         return REFUSED
+
+    destination = args.out or (args.card if args.in_place else None)
+    if destination:
+        # Sibling temp file + os.replace: an interrupted write must not truncate the
+        # card it was meant to update.
+        tmp_path = "%s.new-%d" % (destination, os.getpid())
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                handle.write(merged)
+            os.replace(tmp_path, destination)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        emit("wrote %s" % destination)
+    if args.eval_results_v2:
+        rows = cardmeta.build_eval_results_v2(registry, measurement_ids,
+                                              args.model_repo or args.base_model
+                                              or args.model_name)
+        path = args.eval_results_v2
+        import yaml
+
+        with open(path, "w", encoding="utf-8") as handle:
+            yaml.dump(rows, handle, sort_keys=False, allow_unicode=True)
+        emit("wrote %s (OFF BY DEFAULT: the format cannot express units or direction, so a "
+             "leaderboard would sort KLD backwards)" % path)
     if args.validate:
         return _validate_text(merged, registry, args.offline, repo_type)
     emit("self-check        PASS (ours; run `validate` for the Hub and round-trip axes)")
@@ -285,8 +345,16 @@ def main(argv=None):
     if not getattr(args, "command", None):
         parser.print_help()
         return USAGE
-    if args.command == "annotate" and not args.model_name:
-        args.model_name = (args.base_model or args.card).rsplit("/", 1)[-1].replace(".md", "")
+    if args.command == "annotate":
+        # set unconditionally so _finish_annotate can read it whether or not the
+        # derivation ran (an explicit --model-name skips it).
+        args.model_repo = None
+    # CLI-12: model_name is NOT derived here any more. main() has no registry loaded,
+    # so the only things in scope were --base-model and the card's FILENAME -- which is
+    # how a quant card came to carry the BASE model's name in model-index (the field
+    # every Hub tool, leaderboard and scraper uses to attribute the number), and how a
+    # card with no --base-model was named "README". It is derived from the measured
+    # artifact in cmd_annotate instead, where the registry is available.
     return args.func(args)
 
 

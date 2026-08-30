@@ -218,6 +218,33 @@ def main():
         check("N7  vocab-chunk invariance: two chunk sizes agree to < 1e-12",
               delta < 1e-12, "delta = %.3e" % delta)
 
+        # -- N7b a non-positive --chunk-positions (CLI-05) -------------------
+        # Pre-fix this did NOT refuse: range(0, n, -5) is empty, the per-position loop
+        # never ran, and the np.empty buffer under it was published as the headline
+        # metric, the per_context means and tokenwise-kld.npy -- straight from
+        # uninitialized heap, with both artifacts already written to disk.
+        for bad_block in (-5, 0):
+            outb = os.path.join(tmp, "posblock%s" % bad_block)
+            try:
+                r = dscompare.compare(a, c, outb, {"position_block": bad_block})
+                check("N7b --chunk-positions %d is refused, not published from "
+                      "uninitialized memory" % bad_block, False,
+                      "returned metric %r" % r["metric"]["value"])
+            except dscompare.Refusal as exc:
+                wrote = os.path.isdir(outb) and sorted(os.listdir(outb))
+                check("N7b --chunk-positions %d is refused before anything is written"
+                      % bad_block,
+                      exc.code == "bad_position_block" and not wrote,
+                      "%s; output dir %s" % (exc.code, wrote or "not created"))
+        # a positive block still agrees with the default: the guard is a bound, not a
+        # change to the estimator.
+        outp = os.path.join(tmp, "posblock_ok")
+        rp = dscompare.compare(a, c, outp, {"position_block": 3})
+        rdef = dscompare.compare(a, c, os.path.join(tmp, "posblock_def"), {})
+        check("N7c a valid --chunk-positions is unchanged by the bound",
+              abs(rp["metric"]["value"] - rdef["metric"]["value"]) < 1e-12,
+              "%.12f vs %.12f" % (rp["metric"]["value"], rdef["metric"]["value"]))
+
         # -- N8 bad vocab chunk ---------------------------------------------
         try:
             dscompare.compare(a, c, os.path.join(tmp, "bad"), {"vocab_chunk": 7})

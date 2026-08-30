@@ -682,6 +682,17 @@ def cmd_publish(args):
 # ---------------------------------------------------------------------------
 
 
+def _positive_int(text):
+    """CLI-05. A non-positive --chunk-positions made the position loop empty, and the
+    uninitialized np.empty buffer under it was published as the headline metric. The
+    estimator refuses it too; this refuses it at parse time, where the message can name
+    the flag instead of a gate."""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be >= 1; got %d" % value)
+    return value
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="fidelity-dataset", description=__doc__,
@@ -746,9 +757,9 @@ def build_parser():
     p.add_argument("--candidate", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--device", default="cpu")
-    p.add_argument("--vocab-chunk", type=int,
+    p.add_argument("--vocab-chunk", type=_positive_int,
                    help="must divide vocab_size exactly (9680 for GLM-5.3-Flash)")
-    p.add_argument("--chunk-positions", type=int, default=128)
+    p.add_argument("--chunk-positions", type=_positive_int, default=128)
     p.add_argument("--head", help="head payload; only with --disclose-head-substitution")
     p.add_argument("--self-compare", action="store_true",
                    help="assert A and B are the same capture")

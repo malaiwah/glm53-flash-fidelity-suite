@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import sys
 
@@ -293,6 +294,68 @@ def main(argv):
     check("K15 HOSTPATH-1 does not fire on URLs or a snapshot without a root",
           not any("HOSTPATH-1" in e for e in axis["errors"]),
           "errors=%r" % (axis["errors"],))
+
+    # ---- CLI-06 / CLI-12: the annotate DRIVER, not just the merge helpers --------
+    import subprocess, tempfile, shutil
+    cli = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fidelity_card.py")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = os.path.join(root, "docs/cards/GLM-5.3-Flash-TR3-6bpw.README.md")
+    if os.path.exists(cli) and os.path.exists(src):
+        tmp = tempfile.mkdtemp(prefix="card-cli-")
+
+        def run(argv):
+            r = subprocess.run([sys.executable, cli] + argv, capture_output=True, text=True)
+            return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+        # CLI-12: the documented quickstart passes --base-model and NO --model-name.
+        # Pre-fix that named the quant's model-index entry after the BASE model, so the
+        # quant's KLD was attributed to the unquantized reference.
+        c1 = os.path.join(tmp, "q.md"); shutil.copyfile(src, c1)
+        out1 = os.path.join(tmp, "q.out.md")
+        rc, txt = run(["annotate", "--card", c1, "--role", "quant",
+                       "--artifact-id", "artifact--malaiwah.glm-5.3-flash-tr3-6bpw",
+                       "--base-model", "zai-org/GLM-5.3-Flash-BF16",
+                       "--out", out1, "--offline"])
+        name = None
+        if os.path.exists(out1):
+            for i, line in enumerate(io.open(out1, encoding="utf-8").read().splitlines()):
+                if line.strip().startswith("- name:"):
+                    name = line.split(":", 1)[1].strip(); break
+        check("CLI-12 model-index names the MEASURED artifact, not --base-model",
+              rc == 0 and name == "GLM-5.3-Flash-TR3-6bpw",
+              "rc=%d name=%r (pre-fix: GLM-5.3-Flash-BF16)" % (rc, name))
+
+        # and with neither flag it must not fall back to the card's FILENAME
+        c2 = os.path.join(tmp, "README.md"); shutil.copyfile(src, c2)
+        out2 = os.path.join(tmp, "r.out.md")
+        rc2, _ = run(["annotate", "--card", c2, "--role", "quant",
+                      "--artifact-id", "artifact--malaiwah.glm-5.3-flash-tr3-6bpw",
+                      "--out", out2, "--offline"])
+        name2 = None
+        if os.path.exists(out2):
+            for line in io.open(out2, encoding="utf-8").read().splitlines():
+                if line.strip().startswith("- name:"):
+                    name2 = line.split(":", 1)[1].strip(); break
+        check("CLI-12 a card called README.md is not named \"README\"",
+              rc2 == 0 and name2 == "GLM-5.3-Flash-TR3-6bpw",
+              "rc=%d name=%r (pre-fix: README)" % (rc2, name2))
+
+        # CLI-06: a refused annotate must leave the card BYTE-IDENTICAL. A quant card
+        # with no base_model fails its own validator; pre-fix the file was already
+        # overwritten by the time "nothing was published" printed.
+        c3 = os.path.join(tmp, "inplace.md")
+        io.open(c3, "w", encoding="utf-8").write(
+            "---\nlibrary_name: transformers\n---\n\n# Hello\n\nbody text\n")
+        before = io.open(c3, encoding="utf-8").read()
+        rc3, txt3 = run(["annotate", "--card", c3, "--role", "quant",
+                         "--measurement-id",
+                         "measurement--glm53.k6-6bpw-stream.brandonmusic-final25",
+                         "--in-place", "--offline"])
+        after = io.open(c3, encoding="utf-8").read()
+        check("CLI-06 a REFUSED annotate leaves the card untouched",
+              rc3 != 0 and after == before,
+              "rc=%d, card %s (pre-fix: rewritten, and the refusal said "
+              "'nothing was published')" % (rc3, "unchanged" if after == before else "REWRITTEN"))
 
     print("\nselftest_fidelity_card: %d passed, %d failed, %d skipped"
           % (len(PASS), len(FAIL), len(SKIP)))

@@ -682,7 +682,18 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
         raise Refusal("compute", "bad_vocab_chunk",
                       "--vocab-chunk %d does not divide vocab_size %d; working values: %s"
                       % (vocab_chunk, vocab, F.divisors_hint(vocab)))
-    position_block = int(options.get("position_block") or 128)
+    # CLI-05. `or 128` also swallowed 0, and nothing bounded the value. A negative
+    # --chunk-positions made range() empty, the loop below never ran, and `values` --
+    # allocated with np.empty -- was published as the headline metric, the per_context
+    # means, the kl percentiles AND tokenwise-kld.npy, straight from uninitialized heap.
+    # Measured on a real fixture: metric 2.0 nats against a true 3.688, tokenwise
+    # [3,2,1,3,2,1], backend null, and both artifacts written to disk before the schema's
+    # `minimum: 1` caught it. A plausible-looking wrong number from a typo in a flag.
+    raw_block = options.get("position_block")
+    position_block = 128 if raw_block is None else int(raw_block)
+    if position_block < 1:
+        raise Refusal("compute", "bad_position_block",
+                      "--chunk-positions must be >= 1; got %d" % position_block)
     device = options.get("device") or "cpu"
 
     head32_t = None
@@ -738,12 +749,23 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
         if left.shape != right.shape:
             raise Refusal("compute", "geometry_mismatch",
                           "record %d: %s vs %s" % (index, left.shape, right.shape))
-        values = np.empty(left.shape[0], dtype=np.float64)
+        # np.full(nan), not np.empty: an unwritten slot must be detectable rather than
+        # being whatever the allocator last held. The check after the loop is a Refusal,
+        # not an assert -- asserts vanish under `python -O`.
+        values = np.full(left.shape[0], np.nan, dtype=np.float64)
         for start in range(0, left.shape[0], position_block):
             stop = min(start + position_block, left.shape[0])
             piece, matched, backend = token_kld(left[start:stop], right[start:stop], device)
             values[start:stop] = piece
             matches_total += matched
+        # Belt and braces on the poisoned buffer: token_kld already refuses non-finite
+        # logits on both the torch and numpy paths, and an fp64 log-softmax difference
+        # cannot make a non-finite KLD from finite inputs, so this can only fire on a
+        # genuinely unwritten slot.
+        if values.size and not np.isfinite(values).all():
+            raise Refusal("compute", "incomplete_scan",
+                          "position scan left %d of %d positions unwritten"
+                          % (int((~np.isfinite(values)).sum()), values.size))
         chunks.append(values)
         positions_total += values.size
         record_panel = panel.get(index) or {}
