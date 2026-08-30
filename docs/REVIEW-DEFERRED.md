@@ -32,6 +32,36 @@ This file now covers two different reasons to hold a fix back:
 | `bin/fidelity_dataset.py` | a second session (hf-transformers capture engine, uncommitted) |
 | `bin/fidelity/cardmeta.py` | a second session (uncommitted) |
 
+## Line numbers in this file DRIFT — find the code by these anchors instead
+
+The campaign edits the locked files while this document sits still. Between the first
+pass and the second-pass review, `f57f9ae` moved `bin/stage_measure.sh` by ~16 lines and
+`bin/measure_cloud.py` by ~100, so every `file:line` below is a hint, not an address.
+Each finding was re-verified against the tree at commit `a50d0f4`; locate the code with
+these greps, which are stable across the moves observed so far.
+
+| Finding | `grep -n` anchor |
+|---|---|
+| SEC-01 | `eval HF_HUB_ENABLE_HF_TRANSFER` in `bin/stage_measure.sh` (was :199, now :215) |
+| SEC-01 companion | `def load_panel_descriptor` in `bin/fidelity/hfmeta.py` |
+| CLI-01 | `def _destroy_instance` in `bin/measure_cloud.py` |
+| CLI-02(b) | `def run(self, reason` in `bin/measure_cloud.py` (`self.done = True` is the 4th line) |
+| CLI-11 / SEC-08 | `noqa: S202` in `bin/measure_cloud.py` |
+| SH-05 | `arming on-instance watchdog` in `bin/measure_cloud.py` (was :1469, now :1544) |
+| SH-10 | `get("include", \["\*"\])` in `bin/stage_measure.sh` |
+| SH-22 | `capture-receipt.json" \]; then` in `bin/stage_measure.sh` (was :250, now :278) |
+| CC-07 | `store_published = any(` in `bin/fidelity/hfmeta.py` |
+| CLI-16 | `scored_positions` in `bin/fidelity/hfmeta.py` |
+| CLI-25 | `def fetch_file` in `bin/fidelity/hfmeta.py` |
+| SEC-09 | `os.chmod(tmp, 0o600)` in `bin/measure_cloud.py` (was :1459, now :1534) |
+| NUM-16 | `bf16-floor` in `bin/engines.json`; `extra = {` in `bin/invoke_engine.py` |
+| REAP-1 | `reaper: destroying` in `bin/measure_cloud.py` |
+| REAP-2 | `def parse_deadline_name` in `bin/measure_cloud.py` |
+| REAP-3 | `retiring lease` in `bin/measure_cloud.py` |
+
+Re-verified at `a50d0f4`: every finding below still reproduces, and no proposed patch
+has been overtaken by a campaign edit.
+
 ---
 
 # CRITICAL / HIGH
