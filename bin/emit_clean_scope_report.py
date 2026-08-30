@@ -284,7 +284,12 @@ def main():
                     "mean_diff_se", "ratio_a_over_b", "ci95_diff_bca",
                     "ci95_diff_percentile", "ci95_ratio_percentile",
                     "bca_excludes_zero", "n_windows", "windows_a_better",
-                    "windows_b_better", "sign_test_p", "bootstrap_b", "seed")
+                    # STAT-02: windows_tied and sign_test_n are the reason a reader can
+                    # reproduce sign_test_p. Without them the published table showed
+                    # "9/25" beside p=0.424, and binom(9,25) is 0.2295 -- the number and
+                    # the denominator printed next to it did not agree.
+                    "windows_b_better", "windows_tied", "sign_test_n",
+                    "sign_test_p", "bootstrap_b", "seed")
             missing = [k for k in ("mean_a", "mean_b", "ratio_a_over_b",
                                    "ci95_diff_bca", "sign_test_p") if k not in r]
             if missing:
@@ -414,10 +419,17 @@ def main():
                 v = c["scopes"].get(scope)
                 if not v:
                     continue
-                A("| %s | `%s` | %.3f | [%+.6f, %+.6f] | %d/%d | %.1e |"
+                # The sign test's own denominator, not n_windows: ties carry no sign and
+                # are excluded from both. A None p means every window tied exactly.
+                _sn = v.get("sign_test_n", v["n_windows"])
+                _tied = v.get("windows_tied") or 0
+                _p = v.get("sign_test_p")
+                A("| %s | `%s` | %.3f | [%+.6f, %+.6f] | %d/%d%s | %s |"
                   % (c["comparison"], scope, v["ratio_a_over_b"],
                      v["ci95_diff_bca"][0], v["ci95_diff_bca"][1],
-                     v["windows_a_better"], v["n_windows"], v["sign_test_p"]))
+                     v["windows_a_better"], _sn,
+                     (" (%d tied)" % _tied) if _tied else "",
+                     ("%.1e" % _p) if _p is not None else "n/a (all tied)"))
         A("")
         A("## Credit\n")
         A(doc["provenance"]["credit"] + "\n")

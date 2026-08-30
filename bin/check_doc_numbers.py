@@ -295,15 +295,23 @@ def main():
                   "%s/%s BCa endpoints" % (stem, scope),
                   "doc [%+.6f, %+.6f] vs receipt [%+.6f, %+.6f]"
                   % (lo, hi, r["ci95_diff_bca"][0], r["ci95_diff_bca"][1]))
+        # STAT-02: the sign test's denominator is its own informative-pair count, not
+        # n_windows. They coincide only when nothing tied, which is true of every
+        # currently published pair and is NOT true of the K6 sealed-vs-streaming pair
+        # anyone would compare next (11 of 25 windows tie exactly).
+        want_n = r.get("sign_test_n", r["n_windows"])
         rep.check(int(m.group(9)) == r["windows_a_better"]
-                  and int(m.group(10)) == r["n_windows"],
+                  and int(m.group(10)) == want_n,
                   "%s/%s win count" % (stem, scope),
                   "doc %s/%s vs receipt %d/%d"
-                  % (m.group(9), m.group(10), r["windows_a_better"], r["n_windows"]))
-        rep.check(abs(float(m.group(11)) - r["sign_test_p"])
-                  <= 0.05 * max(r["sign_test_p"], 1e-30),
-                  "%s/%s sign-test p" % (stem, scope),
-                  "doc %s vs receipt %.3g" % (m.group(11), r["sign_test_p"]))
+                  % (m.group(9), m.group(10), r["windows_a_better"], want_n))
+        if r.get("sign_test_p") is None:
+            rep.check(True, "%s/%s sign-test p (all windows tied)" % (stem, scope), "")
+        else:
+            rep.check(abs(float(m.group(11)) - r["sign_test_p"])
+                      <= 0.05 * max(r["sign_test_p"], 1e-30),
+                      "%s/%s sign-test p" % (stem, scope),
+                      "doc %s vs receipt %.3g" % (m.group(11), r["sign_test_p"]))
         # a paired interval that excludes zero is the claim; check the receipt agrees
         rep.check(r["bca_excludes_zero"] == (lo > 0 or hi < 0),
                   "%s/%s excludes-zero agrees with the printed interval" % (stem, scope),

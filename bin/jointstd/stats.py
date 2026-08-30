@@ -187,7 +187,15 @@ def window_block_bootstrap(
             import numpy as np
         except Exception:
             if backend == "numpy":
-                raise
+                # STAT-03. The two backends draw DIFFERENT resample index streams from the
+                # same seed, so a silent fallback changes published CI endpoints by up to
+                # 1.2%. A caller that pins the backend is pinning the numbers; answering
+                # with the other one is worse than not answering.
+                raise RuntimeError(
+                    "backend='numpy' was requested and numpy is not importable. The "
+                    "stdlib backend draws a different resample stream from the same "
+                    "seed, so falling back would silently change the CI endpoints this "
+                    "registry publishes.")
             chosen = "stdlib"
         else:
             chosen = "numpy"
@@ -477,8 +485,23 @@ def paired_windows(
     diffs = [x - y for x, y in zip(da, db)]
     mean_a = statistics.fmean(da)
     mean_b = statistics.fmean(db)
+    # STAT-02. The sign test counted EXACT TIES as wins for B: wins_a counted d < 0 and
+    # the emitted windows_b_better was `n - wins_a`, with n = every common window. Ties
+    # carry no sign and must leave BOTH the count and the binomial denominator (Dixon-Mood
+    # zero-exclusion). Comparing a series with itself reported 25-0 and p = 5.96e-08
+    # alongside a mean difference of exactly 0.0; the two headline K6 numbers -- sealed
+    # 0.013723384665701147 and streaming 0.013714888822596553 -- share 11 EXACT per-window
+    # ties, so the single most natural next comparison gave p = 0.2295 instead of 0.4240.
+    # Worse, the bug made the test ARGUMENT-ORDER DEPENDENT, which no symmetric test may
+    # be: paired(sealed, stream) gave 0.2295 and paired(stream, sealed) gave 0.0041 on the
+    # same data -- the same comparison crossing the 0.05 line depending on which series
+    # was called A. bin/fidelity_stats.py:631 already excluded ties; the repo disagreed
+    # with itself.
     wins_a = sum(1 for d in diffs if d < 0)   # lower KLD is better
+    wins_b = sum(1 for d in diffs if d > 0)
+    ties = sum(1 for d in diffs if d == 0.0)
     n = len(common)
+    sign_n = wins_a + wins_b
 
     # paired bootstrap over the SAME resampled window index for both series
     chosen = backend
@@ -537,8 +560,15 @@ def paired_windows(
         "ratio_a_over_b": mean_a / mean_b if mean_b else float("nan"),
         "ci95_ratio_percentile": [rlo, rhi],
         "windows_a_better": wins_a,
-        "windows_b_better": n - wins_a,
-        "sign_test_p": chi2.binom_sf_two_sided(wins_a, n),
+        "windows_b_better": wins_b,
+        "windows_tied": ties,
+        # The denominator the published p must be reproducible FROM. Emitted explicitly so
+        # a reader is never left to infer it from n_windows, which is not it.
+        "sign_test_n": sign_n,
+        "sign_test_p": (None if sign_n == 0
+                        else chi2.binom_sf_two_sided(wins_a, sign_n)),
+        "sign_test_note": ("every window tied exactly; the sign test has no informative "
+                           "pairs" if sign_n == 0 else None),
         "excludes_zero": (dlo > 0) or (dhi < 0),
         "bca_excludes_zero": (blo > 0) or (bhi < 0),
         "bootstrap_b": boot_b,

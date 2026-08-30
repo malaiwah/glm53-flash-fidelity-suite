@@ -1,4 +1,8 @@
-# Everything here runs OFFLINE on a stock interpreter with no pip install.
+# Everything here runs OFFLINE. `validate`, `render-check`, `selftest` and `joint` run
+# on a stock interpreter with no pip install; `reseed` and `reseed-check` additionally
+# need numpy, because the CI endpoints they re-derive come from a PCG64 resample
+# stream that must match the joint standard's reference implementation bit-for-bit
+# (the stdlib fallback draws a different stream from the same seed -- STAT-03).
 # `make check` is what CI runs and what a contributor should run before submitting.
 
 PY ?= python3

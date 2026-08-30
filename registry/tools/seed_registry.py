@@ -2560,5 +2560,25 @@ def main():
     return 0
 
 
+def _require_numpy():
+    """STAT-03. The CI endpoints this tool re-derives come from a PCG64 stream that
+    reproduces the joint standard's reference implementation bit-for-bit. The stdlib
+    fallback draws a different stream from the same seed, so reseeding without numpy
+    would answer with different endpoints -- which is what made `make check` report a
+    fabricated RESEED DRIFT on the stock interpreter the Makefile advertises."""
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        sys.stderr.write(
+            "seed_registry: numpy is required to RE-DERIVE the rows.\n"
+            "  The uncertainty block is a BCa bootstrap whose resample stream must match\n"
+            "  the joint standard's reference implementation; the stdlib fallback draws a\n"
+            "  different stream from the same seed and would move published CI endpoints\n"
+            "  by up to 1.2%. Validation, rendering and the schema checks need no numpy;\n"
+            "  only `make reseed` and `make reseed-check` do.\n")
+        raise SystemExit(4)
+
+
 if __name__ == "__main__":
+    _require_numpy()
     sys.exit(main())

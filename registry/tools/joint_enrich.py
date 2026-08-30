@@ -166,7 +166,21 @@ def _uncertainty(per_window: List[Dict[str, Any]], run_means: Optional[List[floa
                  sigma_note: Optional[str] = None) -> Dict[str, Any]:
     summary = _stats.se_from_window_summaries(per_window)
     means = {w["window_id"]: float(w["mean"]) for w in per_window}
-    bs = _stats.window_block_bootstrap(means, b=BOOTSTRAP_B, seed=SEED, backend="auto")
+    # STAT-03. backend="auto" made the PUBLISHED CI endpoints depend on whether numpy
+    # happened to be importable: the two backends draw different resample index streams
+    # from the same seed, so on the stock interpreter the registry's own Makefile
+    # advertises ("runs OFFLINE on a stock interpreter with no pip install") `make check`
+    # reported RESEED DRIFT and 12 endpoints moved by up to 1.20% -- the integrity gate
+    # that proves the seeded rows are a function of their receipts, crying wolf at every
+    # contributor without numpy.
+    #
+    # Pinned to numpy, not to stdlib, and that direction matters: the numpy path drives
+    # PCG64 with the reference implementation's own seed and draw pattern, which is what
+    # reproduces brandonmusic's published endpoints bit-for-bit (selftest_joint_standard
+    # asserts 8 of them to 1e-18). Pinning to stdlib would make the registry
+    # self-consistent and permanently incompatible with the standard it is part of.
+    # Missing numpy now REFUSES rather than silently answering differently.
+    bs = _stats.window_block_bootstrap(means, b=BOOTSTRAP_B, seed=SEED, backend="numpy")
     unc: Dict[str, Any] = {
         "method": "window_block_bootstrap_bca",
         "interval_kind": "bca",
@@ -235,7 +249,7 @@ def _uncertainty(per_window: List[Dict[str, Any]], run_means: Optional[List[floa
 def _by_domain(per_window: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     rows = []
     for r in _stats.domain_table(per_window, b=DOMAIN_BOOTSTRAP_B, seed=SEED,
-                                 backend="auto"):
+                                 backend="numpy"):
         row = {
             "domain": r["domain"],
             "windows": r["windows"],

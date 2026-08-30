@@ -427,12 +427,100 @@ def t_paired() -> None:
     else:
         bad("paired vs marginal", "paired %.6f marginal %.6f" % (paired_w, marginal_w))
 
+    # ---- STAT-03: a pinned backend must refuse, never silently substitute ------
+    # The numpy and stdlib backends draw DIFFERENT resample streams from the same
+    # seed (measured: published endpoints move up to 1.20%). A caller that pins the
+    # backend is pinning the numbers, so an unavailable backend has to refuse.
+    # Pre-fix this fell through to stdlib and answered with different endpoints.
+    import builtins as _b
+    _real_import = _b.__import__
+
+    def _no_numpy(name, *a, **k):
+        if name == "numpy" or name.startswith("numpy."):
+            raise ImportError("numpy blocked for this test")
+        return _real_import(name, *a, **k)
+
+    _m = {"a": 0.011, "b": 0.012, "c": 0.013, "d": 0.014}
+    _b.__import__ = _no_numpy
+    try:
+        try:
+            stats_mod.window_block_bootstrap(_m, b=64, seed=20260829, backend="numpy")
+            bad("STAT-03: pinned numpy backend with numpy absent",
+                "returned an answer from the OTHER backend instead of refusing")
+        except RuntimeError as exc:
+            ok("STAT-03: pinned numpy backend refuses when numpy is absent",
+               str(exc).split(".")[0][:64])
+        except ImportError:
+            bad("STAT-03: pinned numpy backend with numpy absent",
+                "raised bare ImportError; the refusal must say WHY falling back "
+                "would move published endpoints")
+        # the stdlib backend must still work with numpy absent -- that is the whole
+        # point of having it, and a refusal here would break the offline contract.
+        r = stats_mod.window_block_bootstrap(_m, b=64, seed=20260829, backend="stdlib")
+        if r and r.get("ci95_percentile"):
+            ok("STAT-03: stdlib backend still runs with numpy absent",
+               "offline path intact")
+        else:
+            bad("STAT-03: stdlib backend with numpy absent", "no result")
+    finally:
+        _b.__import__ = _real_import
+
     # FIRE: fewer than two common windows
     try:
         stats_mod.paired_windows({"a": 1.0}, {"b": 2.0})
         bad("paired with no common windows", "did not refuse")
     except ValueError:
         ok("FIRE: no common windows refuses to pair", "ValueError")
+
+    # ---- STAT-02: exact ties carry no sign -------------------------------------
+    # The sign test counted ties as wins for B and left them in the binomial
+    # denominator, which made a SYMMETRIC test argument-order dependent. Each of
+    # these three assertions fails on the pre-fix tool.
+    selfcmp = stats_mod.paired_windows(dict(b), dict(b), "X", "X",
+                                       boot_b=200, seed=20260829)
+    if (selfcmp.get("windows_tied") == selfcmp["n_windows"]
+            and selfcmp.get("windows_a_better") == 0
+            and selfcmp.get("windows_b_better") == 0
+            and selfcmp.get("sign_test_p", "absent") is None
+            and selfcmp.get("sign_test_n") == 0):
+        ok("STAT-02: a series against ITSELF is all ties, no p",
+           "%d/%d tied, sign_test_p None (pre-fix: 25-0 and p=5.96e-08)"
+           % (selfcmp["windows_tied"], selfcmp["n_windows"]))
+    else:
+        bad("STAT-02: self-comparison",
+            "tied=%r a=%r b=%r p=%r" % (selfcmp.get("windows_tied"),
+                                        selfcmp.get("windows_a_better"),
+                                        selfcmp.get("windows_b_better"),
+                                        selfcmp.get("sign_test_p")))
+
+    # the real pair a reader would compare next: K6 sealed vs K6 streaming share
+    # 11 EXACT per-window ties, so the tie handling is not hypothetical here.
+    k6s = {w["window_id"]: w["mean"] for w in
+           json.load(open(os.path.join(ROOT, "registry/protocol/per-window/k6-sealed.json")))["per_window"]}
+    k6t = {w["window_id"]: w["mean"] for w in
+           json.load(open(os.path.join(ROOT, "registry/protocol/per-window/k6-streaming.json")))["per_window"]}
+    rp = stats_mod.paired_windows(k6s, k6t, "sealed", "stream", boot_b=200, seed=20260829)
+    want_p = chi2_mod.binom_sf_two_sided(9, 14)   # 9 informative wins of 14, NOT of 25
+    if (rp.get("windows_tied") == 11 and rp.get("sign_test_n") == 14
+            and rp.get("sign_test_p") is not None
+            and abs(rp["sign_test_p"] - want_p) < 1e-15):
+        ok("STAT-02: K6 sealed vs streaming, 11 exact ties excluded",
+           "9/14 p=%.10f (pre-fix: 9/25 p=%.10f)"
+           % (rp["sign_test_p"], chi2_mod.binom_sf_two_sided(9, 25)))
+    else:
+        bad("STAT-02: K6 sealed vs streaming",
+            "tied=%r n=%r p=%r" % (rp.get("windows_tied"), rp.get("sign_test_n"),
+                                   rp.get("sign_test_p")))
+
+    # a symmetric test may not depend on which series is called A
+    rev = stats_mod.paired_windows(k6t, k6s, "stream", "sealed", boot_b=200, seed=20260829)
+    if rp.get("sign_test_p") == rev.get("sign_test_p"):
+        ok("STAT-02: sign test is argument-order invariant",
+           "p=%.10f both ways (pre-fix: 0.2295 vs 0.0041, across 0.05)"
+           % (rp.get("sign_test_p") or float("nan")))
+    else:
+        bad("STAT-02: argument-order invariance",
+            "a,b -> %r ; b,a -> %r" % (rp.get("sign_test_p"), rev.get("sign_test_p")))
 
 
 # ======================================================================== 6
