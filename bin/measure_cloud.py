@@ -1624,7 +1624,17 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
             try:
                 alive = jl.exec_stdout(
                     td.machine_id,
-                    "pgrep -f 'stage_measure.sh %s' >/dev/null 2>&1 "
+                    # `[s]tage_measure` and not `stage_measure`: pgrep -f
+                    # matches full command lines, and the probe's own shell
+                    # carries the pattern in ITS command line, so the naive
+                    # form finds itself and answers "alive" for a stage that
+                    # never existed (verified against the live instance:
+                    # `pgrep -f 'stage_measure.sh nosuchstage'` -> alive).
+                    # The bracket class matches the real process, whose
+                    # cmdline holds "stage_measure.sh", and not the probe,
+                    # whose cmdline holds "[s]tage_measure.sh". This is M1's
+                    # lesson 36 in a second disguise.
+                    "pgrep -f '[s]tage_measure.sh %s' >/dev/null 2>&1 "
                     "&& echo alive || echo gone" % stage,
                     timeout=120, check=False)
             except JLError:
