@@ -2389,6 +2389,218 @@ is 2.6 h, and the planner now prices it at $6.61 rather than $14.38 because the
 7.35 min/window constant finally had its second data point and could be retired.
 M3 should cost about half of M1.
 
+## 2026-08-30 — measurement 4: vcruz305's K2, and the first gate this panel has failed
+
+**THE NUMBER.** 0.15520955491423008 nats, mean of two cold runs whose run means
+are identical to the last bit and whose tokenwise KL arrays share one sha256
+(a75500a9). Top-1 agreement 0.8726526624328286, also identical across runs.
+Against this lane's own BF16 floor (0.011505922619330299) the
+quantization-attributable error is 0.143703632294899769 nats. The panel's
+quality gate is mean tokenwise KLD < 0.06, and this is the first row in this
+registry to FAIL it, at 2.6x the threshold.
+
+**Say it plainly: a 2-bit routed-expert quantization of GLM-5.3-Flash diverges
+by 0.155 nats from its own BF16 source, and that is a lot.** It is 3.07x the
+0.050501241465423556 of 0xSero's 3.0bpw and 6.09x the 0.025503427634363770 of
+the 4-bpw rung, for 35 % and 44 % fewer bytes respectively. Top-1 falls from
+95.31 % at 4 bpw to 93.00 % at 3 bpw to 87.27 % here: one token in eight now
+disagrees with the BF16 model's argmax. The curve between 4 and 3 bpw was
+already steep at 2x; between 3 and 2 it steepens again to 3x. Two rungs of
+measured evidence say the same thing, which is more than either says alone.
+
+None of that is a verdict on the run, and the run is not in doubt: two cold
+processes produced one tokenwise KL digest, `run_mean_spread` is exactly 0.0,
+and all 907,200 decoded expert matrices were K2. A failing gate is a fact about
+the artifact. It is published with the gate status on the row, a
+`quality_gate_failed` disclosure beside it, and no softening.
+
+**The single mean hides a 3.7x spread.** Per domain: axis2_legal 0.2509,
+axis1_general 0.1727, axis3_code_agentic 0.1272, axis4_reasoning_termination
+0.0671. The panel mean is the number that ranks, and the per-domain block is
+the number that tells you where the damage went. Both are in the receipt.
+
+**What the ladder now says.** On this panel, this lane, this teacher, one
+comparability key (`cmp--202b717f3219c414`):
+
+| artifact | bpw | size | mean KLD | attributable | top-1 | gate |
+|---|---:|---:|---|---|---|---|
+| BF16 floor | 16 | -- | 0.011505922619330299 | -- | -- | -- |
+| malaiwah TR3 K8 | 8 | 331.4 GB | 0.012384191023436866 | 0.000878 | -- | PASS |
+| malaiwah TR3 K6 | 6 | 253.5 GB | 0.013714888822596553 | 0.002209 | 0.9656 | PASS |
+| Mia-AiLab TR3 4bpw | 4 | 175.7 GB | 0.025503427634363770 | 0.013998 | 0.9531 | PASS |
+| turboderp exl3 4.05bpw | 4.05 | 165.2 GB | 0.025526426915472484 | 0.014021 | 0.9510 | PASS |
+| 0xSero Dione Q4 (sealed lane) | 4.0 | 187.6 GB | 0.027262784814670614 | 0.015757 | -- | PASS |
+| 0xSero Dione 3.0bpw | 3.0 | 149.6 GB | 0.050501241465423556 | 0.038995 | 0.9300 | PASS |
+| **vcruz305 EXL3 K2** | **2.0** | **97.8 GB** | **0.15520955491423008** | **0.143704** | **0.8727** | **FAIL** |
+
+**A storage layout is not a producer, and a scope is not a storage layout.** This
+artifact is read by the `exl3hf` surface, which existed because turboderp
+publishes stock-exllamav3 HF shards -- canonical index, per-module
+`{trellis,suh,svh,<codebook>}`, official tensor names. vcruz305's pack has
+exactly that storage and almost nothing else in common with turboderp's: the
+codebook is MCG rather than mul1, the scope is routed-experts-ONLY rather than
+full-scope, the head is native BF16 rather than K6, the KDA attention is stored
+UNFUSED under the official q/k/v names rather than as a fused `qkv_proj`, and
+the MTP layer's 864 routed experts are quantized INTO THE MAIN INDEX rather than
+into a side `mtp.safetensors`. It is, in scope, a 0xSero-shaped release wearing
+turboderp's storage. Three places in this tree had quietly assumed the two
+questions were one question, and all three would have answered after the money.
+
+**The name census is the scope.** The release's own `config.json` states
+`bits 2, codebook mcg, head_bits 16, quant_method exl3, scope
+glm53_routed_experts_only, non_routed_dtype_policy official_source_native`, and
+its 150,226-entry index closes on exactly that: 148,608 routed payload tensors
+(43 layers x 288 experts x 3 projections x 4 objects) and precisely the official
+BF16 release's 1,618 non-routed names, unfused, no strays either way. Not one
+field on the registry row says `unknown`. That is M1's lesson applied before the
+fact rather than retro-fixed after it.
+
+It also has a defect worth naming, because it is the kind a reader would
+otherwise trust: the standalone `quantization_config.json` sidecar carries a
+`tensor_storage` map that covers 4,180 of the 37,152 quantized modules -- layers
+10 through 13 in full and layer 14 in part, and then it stops. Its
+`serving_reader_qualified` also reads `true` where the inline block in
+`config.json` reads `false`. The header fields agree and are what this
+measurement used; nothing on the record is read from the sidecar. A partial map
+that looks complete is worse than no map, so it is disclosed on the artifact.
+
+**No producer digest list at all, so we brought our own.** Every other
+third-party artifact measured on this panel publishes something to check the
+bytes against: brandonmusic and his mirrors ship `SHA256SUMS`, 0xSero ships an
+`EXL3_MANIFEST.json`. This release ships neither, and `fetch_target` correctly
+recorded "no SHA256SUMS in release" and verified nothing. The only digest list
+that exists for these bytes is the Hub's own per-file LFS content digests, so
+they were captured from the models API BEFORE the rental -- 122 entries, a
+manifest digest of `43a16228...` -- uploaded to the instance, and recomputed
+there against the downloaded tree: 122/122 verified, 97,764,515,699 bytes in
+88 s, zero absent, zero `.safetensors` on disk uncovered by the list. It ran
+concurrently with a GPU-bound stage and cost nothing. It is a weaker anchor than
+a producer seal and a stronger one than nothing, and the disclosure says exactly
+which it is.
+
+**The two teardown layers had opposite theories of the same event, and it took
+an hour of a live capture to notice.** At 00:59 the harness reaped the local
+controller -- lesson 41's exact shape, on the very run that cites it. Lesson 43's
+fix worked perfectly: the measure stage had been launched `nohup setsid`, was
+orphaned to init, and kept capturing through the controller's death and through
+its interrupted teardown. Nineteen windows in, the capture was healthy, the GPU
+was at 60 %, and the box was fine.
+
+LESSON 51 (a liveness signal designed around one failure becomes a hazard when
+another one is fixed). The on-instance watchdog has two triggers: the absolute
+deadline, and a heartbeat the controller touches every 60 s. The heartbeat
+trigger encodes a theory -- "if the controller is dead, nobody is watching, so
+stop the work" -- that was TRUE when it was written and stopped being true the
+day lesson 43 made the work survive the controller by design. So the watchdog
+was seven minutes from `pkill -f 'stage_measure.sh'` on a capture that was
+running exactly as intended, and it would have destroyed 19 of 25 windows to
+protect against a condition the other fix had already removed. Two safety
+mechanisms, each correct alone, disagreeing about what a dead controller means.
+The heartbeat was kept fresh by hand -- bounded to 160 iterations so it can
+expire, and deliberately NOT touching the deadline, which is the trigger that
+still means what it says.
+
+LESSON 52 (a resume that launches is not a resume that attaches). `run_stage`
+calls `jl.run_job("nohup setsid bash stage_measure.sh <stage> ...")` and THEN
+polls; the stage's own guard is its done-marker, which by definition does not
+exist while the stage is running. So re-running the controller during a live
+stage starts a SECOND copy of that stage: two capture processes writing
+`receipts/run-1/logits/` at once, which is not a crash, it is a corrupted
+measurement that looks finished. The liveness probe that would answer this
+already exists -- lesson 44 built it, carefully, with the `[s]tage_measure.sh`
+bracket -- but it is consulted only after the launch, as a way to interpret a
+launcher that already returned. The resume here therefore waited for the marker
+rather than trusting the controller to attach, and the probe now runs BEFORE the
+launch.
+
+LESSON 53 (an interrupted teardown leaves the secret behind). The killed
+controller reached `pulling receipts` and stopped. `--hold-on-failure` did the
+right thing and kept the box, but `_shred_secrets` never ran, so the 0600 HF
+token file was still on a rented instance an hour later -- and because `done`
+was set at the TOP of `Teardown.run`, nothing would have retried it. That is
+CLI-02(b), which had been sitting in `docs/REVIEW-DEFERRED.md` as
+defence-in-depth, arriving as a live consequence: the fix that makes a second
+`run()` retry instead of no-op is the same fix that gets the token shredded.
+
+**Three defects between "the recon says exl3hf" and a number, all of them in
+stages that run after the money.**
+
+The lane had no profile for a 2.0-bpw exl3hf artifact and REFUSED at plan time
+for $0.00, which is the behaviour lesson 47 bought. Adding `vcruz-k2-2bpw` was
+the easy half. The hard half was that `k6_kld_report` republished the capture's
+provenance pins under `profile.startswith(("dione", "turbo"))` — correct for the
+three profiles that existed when it was written, and wrong for the fourth, which
+is captured by the SAME `--source exl3hf` front end and seals the same fields
+and starts with neither prefix. The headline summary would have carried no
+`artifact_repo`, no `artifact_revision`, no codebook and no seal disclosure: a
+registry row citing an artifact it cannot name. That is LESSON 48 recurring one
+profile later, and the answer is the same one M3 reached for the profile map —
+make the mapping DATA (`PROFILE_SURFACE_FAMILY`), not a string test.
+
+`registry_add` had the same shape a layer down: its `TURBO_SUMMARIES` family was
+named after a producer when what it actually keys on is a STORAGE layout. It is
+`EXL3HF_SUMMARIES` now. Its adapter already read `declared_head_bits` off the
+receipt instead of asserting a head policy, so a native-BF16-head release was
+described correctly by the same code — the docstring was the only thing that was
+wrong, and a docstring that lies about which fact is load-bearing is how the next
+person gets it wrong.
+
+And a third, found by the seal rehearsal rather than by reading: an ingested row
+whose quality gate FAILED recorded that in `/quality_gate/passed` and nowhere
+else, so every rendered disclosure list showed it as clean. On the one
+measurement in this registry whose gate actually fails. `registry_add` emits
+`quality_gate_failed` now, and REG-24 probes both outcomes.
+
+**K2 had never been exercised, and a rate nobody has exercised is a rate nobody
+may publish.** Every codec rung in this tree pinned K3/K4/K6/K8. Before any
+money: the dione selftest's numpy transliteration of exllamav3's `quant/pack.cu`
+now packs K2 as well, and the exl3hf selftest asserts that our `anybits` unpack
+inverts that packer BITWISE at K2, agrees with the dione copy, and produces a
+pinned golden digest. A K2-only defect — one lag dropped from the unpack loop
+when `bits == 2` — fails the new rung and passes every pre-existing one. Both
+ran green on the instance during setup, where the campaign reader is importable,
+before the fetch. A real K2 payload was also decoded locally over HTTP range
+requests from the release's own shard 57 before renting anything: marker
+-877912083 as declared, orientation (2048, 4096), std 0.0193, finite.
+
+**Cost, four ways.** 1x H200 spot at $1.99/h, IN2, one box (487502) across two
+controller lifetimes. (1) The planner's point estimate was $6.84, band
+$6.84–$9.57, ceiling $12.25 at `--max-runtime 6h`. (2) Measured wall clock: the
+box lived 08:11 → 11:00 UTC = 2.82 h = $5.61, plus a 300 GB filesystem for the
+same span at the inferred rate, ~$0.19. (3) The runner's own reconciliation:
+`billed_usd` 5.411 from `jl get .cost`, which spans the whole instance lifetime
+and is the honest figure; its `computed_usd` of $0.58 is the SECOND lifetime's
+17 minutes and must not be quoted as the cost of the measurement. The balance
+delta is again unusable — another session's 4x RTX-PRO6000 billed on the same
+account throughout. (4) Attributable to this measurement: about $5.6.
+
+That is 81 % of M3's $6.9, 48 % of M2's ~$11.6 and 61 % of M1's ~$9.2, and the
+second consecutive measurement to land inside its own point estimate. The
+capture was also the fastest per window this lane has seen on any surface:
+3552.81 s and 3645.22 s for 25 windows, 2.368 and 2.430 min/window, against
+3.12 for the same exl3hf surface at K4. Same storage layout, same fill loop,
+half the trellis bytes per matrix. `minutes_per_window_by_surface` keeps 3.12 —
+the conservative direction — because one artifact is not a rate.
+
+Stage timings, for the next planner: setup 6m21s (cold apt/pip cache; M3 saw
+2m07s), fetch_target 4m14s (97.8 GB), materialize 2m07s, fetch_panel 4m14s,
+measure 2h00m for two cold runs, score 4m14s, seal 2m07s. Note that every
+already-done stage still costs 2m07s on a resume, because `_await_stage` sleeps
+its full 120 s poll before consulting the marker for the first time; five
+skipped stages cost about ten minutes of rental to skip.
+
+**For M5.** The five oldest open criticals in `docs/REVIEW-DEFERRED.md` are
+closed — SEC-01, CLI-01, CLI-02(b), CLI-11/SEC-08 and CC-07's predicate — each
+with a regression test that fails against the unpatched tree, and
+`bin/selftest_teardown.py` exists because the class that guarantees a rented GPU
+is destroyed had no test at all. Two things to watch. The Mia-AiLab row was
+re-based to `repo_all_files` so the four measured rungs share one size axis;
+brandonmusic's own row keeps `repo_weight_files` deliberately, because his repo
+is unpinned and an all-files sum over a moving tree is not a fact. And
+`--source nvfp4` still builds its non-routed view through `prepare_nonrouted_view`
+rather than a materialize stage — M2 flagged it, M3 flagged it, and three
+surfaces have now needed materialize instead.
+
 ## 2026-08-30 — measurement 3: 0xSero's 3.0bpw, and a scope that was published all along
 
 **THE NUMBER.** 0.050501241465423556 nats, mean of two cold runs whose run means are
