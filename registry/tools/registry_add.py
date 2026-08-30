@@ -1487,6 +1487,24 @@ def build_row(args, adapted, receipt_sources, registry):
         disclosures.append({"code": "third_party_artifact_self_measured", "severity": "info",
                             "detail": "Someone else's weights, our measurement.",
                             "affects_comparability": False})
+    # A FAILED gate stated only in /quality_gate/passed is a fact that survives in
+    # the record and vanishes from every rendered disclosure list. seed_registry has
+    # emitted this disclosure by hand since the runtime rows; the ingest path did
+    # not, so an externally submitted failing row would read as clean. The gate is
+    # a fact about the ARTIFACT, not a reason to hide the row -- and not a reason to
+    # let it go unsaid either.
+    _gate_block = adapted.get("gate") or {}
+    if _gate_block.get("passed") is False:
+        _thr = _gate_block.get("threshold_lt")
+        disclosures.append({
+            "code": "quality_gate_failed", "severity": "caveat",
+            "detail": ("The gate this receipt declares (%s%s) did NOT pass: the measured "
+                       "value is %r. Recorded because a failing gate is a fact about the "
+                       "artifact, not a reason to hide the row."
+                       % (_gate_block.get("metric") or "quality gate",
+                          (" < %r" % _thr) if _thr is not None else "",
+                          adapted.get("value"))),
+            "affects_comparability": False})
     for key_name, stated, flag_val in overridden:
         disclosures.append({"code": "estimator_overridden", "severity": "caveat",
                             "detail": "%s is recorded as %r although the receipt states %r. "

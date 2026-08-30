@@ -1013,6 +1013,53 @@ def main():
                               "PASS" if ok2 else "FAIL"))
         failed += not ok2
 
+    # REG-24: a FAILED quality gate lived only in /quality_gate/passed on an
+    # ingested row, so every rendered disclosure list showed it as clean.
+    # seed_registry has emitted `quality_gate_failed` by hand since the runtime
+    # rows; the ingest path did not. Probe BOTH outcomes -- a passing gate must
+    # NOT produce the disclosure, or the check is just a constant.
+    if receipts.get("stream_turbo405") or receipts.get("stream_k8"):
+        srcpath = receipts.get("stream_turbo405") or receipts["stream_k8"]
+        with open(srcpath, encoding="utf-8") as fh:
+            base_receipt = json.load(fh)
+        seen = {}
+        for want_pass in (True, False):
+            doc = dict(base_receipt)
+            doc["quality_gate_passed"] = want_pass
+            if isinstance(doc.get("quality_gate"), dict):
+                doc["quality_gate"] = dict(doc["quality_gate"], passed=want_pass)
+            path = os.path.join(tmp, "gate-%s.json" % want_pass)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh)
+            out = subprocess.run(
+                [PY, os.path.join(HERE, "registry_add.py"), "--registry", args.root,
+                 "from-receipt", "--receipt", path,
+                 "--artifact", "artifact--turboderp.glm-5.3-flash-exl3-4.05bpw"
+                 if receipts.get("stream_turbo405")
+                 else "artifact--malaiwah.glm-5.3-flash-tr3-8bpw"] +
+                (["--third-party-artifact"] if receipts.get("stream_turbo405") else []) +
+                [
+                 "--panel", "panel--glm53.brandonmusic.final25",
+                 "--reference", "reference--brandonmusic.glm53-bf16-fp32-logits.final25",
+                 "--pipeline", "pipeline--malaiwah.glm53-stream-packed-kld",
+                 "--lane", "streaming", "--scored-positions", "51175", "--contexts", "25",
+                 "--direction", "reference_to_candidate", "--dry-run"],
+                capture_output=True, text=True)
+            codes = []
+            if out.returncode == 0 and "{" in out.stdout:
+                row = json.loads(out.stdout[out.stdout.index("{"):])
+                codes = [d["code"] for d in row["disclosures"]]
+            seen[want_pass] = codes
+        ok = ("quality_gate_failed" in seen[False]
+              and "quality_gate_failed" not in seen[True])
+        print("  %-58s %s" % ("REG-24 a failed gate becomes a disclosure, a passed one does not",
+                              "PASS" if ok else "FAIL"))
+        if not ok and args.verbose:
+            print("      passed-gate codes: %s" % seen[True])
+            print("      failed-gate codes: %s" % seen[False])
+        passed += ok
+        failed += not ok
+
     print()
     print("=" * 78)
     print("E. the tools import no networking library")
@@ -1059,7 +1106,10 @@ def _find_receipts():
     for key, fn in (("stream_k6", "stream-k6-kld.json"),
                     ("stream_k6_verdict", "stream-k6-verdict.json"),
                     ("stream_k8", "stream-k8-kld.json"),
-                    ("stream_bf16", "stream-bf16-kld.json")):
+                    ("stream_bf16", "stream-bf16-kld.json"),
+                    ("stream_turbo405", "stream-turbo-4.05bpw-kld.json"),
+                    ("stream_tr34", "stream-tr3-4bpw-kld.json"),
+                    ("stream_dione30", "stream-dione-3.0bpw-kld.json")):
         fp = os.path.join(here, fn)
         if os.path.exists(fp):
             out[key] = fp
