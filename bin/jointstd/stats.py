@@ -94,7 +94,21 @@ def se_from_window_summaries(
 
         (N-1) s^2 = sum_w (n_w - 1) s_w^2 + sum_w n_w (m_w - M)^2
     """
-    counts = [int(w["count"]) for w in per_window]
+    # STAT-07. A window may legitimately declare no size (a third-party report that
+    # carries only means). Weighting is then undefined, so rather than inventing a count
+    # -- which is what produced a fabricated scope.scored_positions and a percentile
+    # guard that failed open -- weight every window equally and OMIT the token-count
+    # quantities. `n` is a token total; if there is no token total there is no `n`.
+    unsized = any(w.get("count") is None for w in per_window)
+    if unsized:
+        if not all(w.get("count") is None for w in per_window):
+            raise ValueError(
+                "some windows declare a scored-position count and others do not; a "
+                "half-declared panel has neither a token-weighted nor an equal-weight "
+                "mean that can honestly be called the panel mean")
+        counts = [1] * len(per_window)
+    else:
+        counts = [int(w["count"]) for w in per_window]
     means = [float(w["mean"]) for w in per_window]
     n = sum(counts)
     if n == 0:
@@ -104,8 +118,11 @@ def se_from_window_summaries(
     # 3.12 differed in the last ULP -- enough to make `make reseed-check` report
     # drift on a different interpreter. fsum is exactly rounded on every version.
     grand = math.fsum(c * m for c, m in zip(counts, means)) / n
-    out: Dict[str, Any] = {"n": n, "mean": grand, "n_clusters_window": len(counts)}
-    if all("std" in w and w["std"] is not None for w in per_window):
+    out: Dict[str, Any] = {"n": (None if unsized else n), "mean": grand,
+                           "n_clusters_window": len(counts)}
+    if unsized:
+        out["weighting"] = "equal_per_window (no window declares a position count)"
+    if (not unsized) and all("std" in w and w["std"] is not None for w in per_window):
         within = math.fsum((c - 1) * float(w["std"]) ** 2 for c, w in zip(counts, per_window))
         between = math.fsum(c * (m - grand) ** 2 for c, m in zip(counts, means))
         var = (within + between) / (n - 1) if n > 1 else float("nan")

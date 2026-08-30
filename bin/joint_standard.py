@@ -72,6 +72,18 @@ def _emit(doc: Dict[str, Any], proto: protocol_mod.Protocol,
 
 
 # ------------------------------------------------------------------ loaders
+def _opt_count(w: Dict[str, Any]) -> Optional[int]:
+    """The window's declared scored-position count, or None if it declares none.
+
+    STAT-07: this used to default to 2047. An invented count is not a measurement, and
+    it flowed into the emitted receipt as though it were one."""
+    for key in ("count", "prediction_positions"):
+        v = w.get(key)
+        if v is not None:
+            return int(v)
+    return None
+
+
 def load_per_window(path: str) -> List[Dict[str, Any]]:
     """Accept every per-window shape this repository and his repository emit."""
     with open(path, "r", encoding="utf-8") as fh:
@@ -101,7 +113,14 @@ def load_per_window(path: str) -> List[Dict[str, Any]]:
                 "window_id": w["window_id"],
                 "domain": w.get("domain"),
                 "document_id": w.get("document_id"),
-                "count": int(w.get("count", w.get("prediction_positions", 2047))),
+                # STAT-07. `2047` was invented here for any row that declares no size.
+                # It became scope.scored_positions, summary.n, and the n handed to
+                # percentile_guard -- the guard whose whole job is refusing a quantile
+                # the sample cannot support, asked about 16376 positions when the real
+                # number might be 800. It also made the invented counts all EQUAL, which
+                # silently defeated cmd_analyze's own unequal-window refusal. None means
+                # "not declared"; cmd_analyze decides what to do about that.
+                "count": _opt_count(w),
                 "mean": float(w.get("mean_kld", w.get("mean"))),
                 "std": (float(w["std"]) if w.get("std") is not None else None),
             })
@@ -116,7 +135,7 @@ def load_per_window(path: str) -> List[Dict[str, Any]]:
                 "window_id": wid,
                 "domain": w.get("domain"),
                 "document_id": w.get("document_id"),
-                "count": int(w.get("prediction_positions", 2047)),
+                "count": _opt_count(w),
                 "mean": float(w["mean_kld"]),
                 "std": None,
             })
@@ -124,7 +143,7 @@ def load_per_window(path: str) -> List[Dict[str, Any]]:
 
     # bare mapping {window_id: mean}
     if all(isinstance(v, (int, float)) for v in doc.values()):
-        return [{"window_id": k, "domain": None, "count": 2047,
+        return [{"window_id": k, "domain": None, "count": None,
                  "mean": float(v), "std": None} for k, v in doc.items()]
 
     raise SystemExit("cannot find per-window data in %s" % path)
@@ -190,7 +209,32 @@ def cmd_overlap_scan(args: argparse.Namespace) -> int:
             missing += 1
             continue
         cal_grams |= ngram_mod.token_ngrams(ngram_mod.load_tokens(p), n)
-    cal_docs = {w.get("document_id") for w in cals}
+    # CLI-07. A missing calibration array only incremented `missing` and continued, so
+    # with zero readable arrays cal_grams stayed EMPTY, every final window scored 0.0,
+    # every window was SELECTED as clean, and a stamped publishable selection file was
+    # written with exit 0. "We scanned for contamination and found none" produced by
+    # having looked at nothing -- the strongest possible claim from no evidence, and the
+    # same silent-zero class as the `hf download --include` defect.
+    #
+    # The document-id check is not a fallback: on the real panel it caught 0 of the 8
+    # windows that share 37-39% of their 13-grams, which is exactly why the n-gram scan
+    # exists. Degrading to it silently is degrading to nothing.
+    scanned = len(cals) - missing
+    if scanned <= 0:
+        raise SystemExit(
+            "overlap-scan: %d calibration windows in the panel, %d readable token "
+            "arrays -- a scan of ZERO calibration windows cannot evidence a clean "
+            "scope, and every final window would be reported clean. Point --arrays at "
+            "a directory holding <window_id>.tokens.npy for the calibration windows."
+            % (len(cals), scanned))
+    if missing:
+        sys.stderr.write(
+            "overlap-scan: WARNING %d of %d calibration token arrays are missing; the "
+            "scan below covers %d windows and is NOT the full calibration corpus\n"
+            % (missing, len(cals), scanned))
+    # A calibration window with no document_id must not put None in the set: every final
+    # window with no document_id would then "match" it and be excluded as contaminated.
+    cal_docs = {d for d in (w.get("document_id") for w in cals) if d is not None}
 
     prepared = []
     for w in finals:
@@ -211,7 +255,7 @@ def cmd_overlap_scan(args: argparse.Namespace) -> int:
         })
 
     res = ngram_mod.scan(prepared, cal_grams, cal_docs, n=n, threshold=thr)
-    res["calibration_windows_scanned"] = len(cals) - missing
+    res["calibration_windows_scanned"] = scanned
     res["calibration_windows_missing_arrays"] = missing
     res["threshold_sensitivity"] = ngram_mod.threshold_sensitivity(res["per_window"])
     doc = {
@@ -362,9 +406,26 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         sys.stderr.write("need at least 2 windows, got %d\n" % len(per_window))
         return EXIT_REFUSED
 
-    counts = sorted({w["count"] for w in per_window})
-    equal_windows = len(counts) == 1
-    if not equal_windows and not args.allow_unequal_windows:
+    # STAT-07. A window that declares no size now carries count None instead of an
+    # invented 2047. Three states, not two: all declared (unchanged), none declared
+    # (compute what is size-independent and say the rest is unknown), mixed (refuse --
+    # silently treating that as equal-sized is the same bug wearing a different hat).
+    declared = [w for w in per_window if w["count"] is not None]
+    sizes_declared = len(declared) == len(per_window)
+    if declared and not sizes_declared:
+        sys.stderr.write(
+            "REFUSED: %d of %d windows declare a scored-position count and the rest do "
+            "not (%s...). A scope whose sizes are half known is not a scope: the "
+            "token-weighted mean and the equal-weight mean cannot both be formed, and "
+            "assuming the missing ones match would be inventing the number this "
+            "refusal exists to prevent.\n"
+            % (len(declared), len(per_window),
+               ", ".join(w["window_id"] for w in per_window if w["count"] is None)[:60]))
+        return EXIT_REFUSED
+
+    counts = sorted({w["count"] for w in declared}) if sizes_declared else []
+    equal_windows = len(counts) == 1 if sizes_declared else None
+    if sizes_declared and not equal_windows and not args.allow_unequal_windows:
         # window_block_bootstrap sees only means, so its point estimate is the
         # EQUAL-WEIGHT mean; se_from_window_summaries weights by token count.
         # Those agree only on equal windows. Emitting both would put a BCa
@@ -407,9 +468,14 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             "scope_file": (os.path.abspath(args.scope_file) if args.scope_file else None),
             "windows": sorted(means),
             "n_windows": len(means),
-            "scored_positions": summary["n"],
+            # STAT-07: null, not a fabricated total, when the report declares no sizes.
+            # A reader must be able to tell "16376 positions were scored" from "nobody
+            # said, so we guessed 2047 x 8".
+            "scored_positions": (summary.get("n") if sizes_declared else None),
             "equal_window_sizes": equal_windows,
-            "positions_per_window": (counts[0] if equal_windows else counts),
+            "positions_per_window": ((counts[0] if equal_windows else counts)
+                                     if sizes_declared else None),
+            "window_sizes_declared": sizes_declared,
         },
         "summary": summary,
         "bootstrap": bs,
@@ -419,16 +485,26 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         "by_domain": stats_mod.domain_table(
             per_window, b=args.domain_bootstrap_b, seed=args.seed,
             backend=args.backend),
-        "percentile_guard": stats_mod.percentile_guard(
-            summary["n"], min_exceedances=proto.min_exceedances),
+        # The exceedance guard exists to refuse a quantile the sample cannot support.
+        # Fed an invented n it FAILED OPEN: at a true 100 positions/window the p99 guard
+        # says ok=False, and the invented 2047 turned it green. With no declared sizes
+        # there is no n to test, so it refuses rather than answering.
+        "percentile_guard": (
+            stats_mod.percentile_guard(summary["n"],
+                                       min_exceedances=proto.min_exceedances)
+            if sizes_declared else
+            {"available": False,
+             "reason": ("the report does not declare positions per window, so the "
+                        "exceedance guard cannot be evaluated"),
+             "remedy": "add count or prediction_positions to each per-window record"}),
         "pooled_percentiles": stats_mod.guard_pooled_percentiles(per_window),
         "oracle": oracle_mod.probe(),
     }
     if oracle_bs:
         doc["oracle_agreement"] = {
-            "mean_abs_diff_bca": max(
+            "max_abs_diff_bca": max(
                 abs(a - b) for a, b in zip(bs["ci95_bca"], oracle_bs["ci95_bca"])),
-            "mean_abs_diff_percentile": max(
+            "max_abs_diff_percentile": max(
                 abs(a - b) for a, b in zip(bs["ci95_percentile"],
                                            oracle_bs["ci95_percentile"])),
         }
@@ -445,11 +521,42 @@ def cmd_paired(args: argparse.Namespace) -> int:
         ks = set(keep)
         a = {k: v for k, v in a.items() if k in ks}
         b = {k: v for k, v in b.items() if k in ks}
+    # CLI-20. paired_windows silently intersects the two window sets, so pairing a
+    # 25-window run against a 3-window one emitted a ranking statistic over whatever 3
+    # windows happened to survive -- exit 0, no warning, and the receipt still stamped
+    # `scope: "selected"`, affirmatively misstating its own coverage. The intersection
+    # is not a random subset: it is whatever the failed run left behind. cmd_analyze
+    # already refuses the equivalent, one verb over.
+    #
+    # Checked AFTER the scope filter, because narrowing 25 -> 17 on both sides is the
+    # legitimate `selected` scope, not a shortfall.
+    common = set(a) & set(b)
+    scope_name = args.scope or ("selected" if keep else "panel")
+    dropped_a = sorted(set(a) - common)
+    dropped_b = sorted(set(b) - common)
+    dropped_scope = sorted(set(keep) - common) if keep else []
+    if (dropped_a or dropped_b or dropped_scope) and not args.allow_partial:
+        sys.stderr.write(
+            "REFUSED: the two reports do not cover the same windows. %d common; "
+            "%s carries %d the other does not (%s), %s carries %d (%s)%s. The "
+            "intersection is whatever both runs happen to hold, not a scope -- and a "
+            "ranking over it would still be stamped scope '%s'. Pass --allow-partial "
+            "to rank over the intersection and disclose it.\n"
+            % (len(common), args.label_a, len(dropped_a), ", ".join(dropped_a[:4]) or "-",
+               args.label_b, len(dropped_b), ", ".join(dropped_b[:4]) or "-",
+               ("; the scope names %d neither carries" % len(dropped_scope))
+               if dropped_scope else "",
+               scope_name))
+        return EXIT_REFUSED
+
     res = stats_mod.paired_windows(a, b, args.label_a, args.label_b,
                                    boot_b=args.bootstrap_b, seed=args.seed,
                                    backend=args.backend)
     doc: Dict[str, Any] = {"schema": PAIRED_SCHEMA,
-                           "scope": args.scope or ("selected" if keep else "panel"),
+                           "scope": scope_name,
+                           "scope_complete": not (dropped_a or dropped_b or dropped_scope),
+                           "windows_dropped_a": dropped_a,
+                           "windows_dropped_b": dropped_b,
                            "source_a": os.path.abspath(args.a),
                            "source_b": os.path.abspath(args.b)}
     doc.update(res)
@@ -549,6 +656,9 @@ def build_parser() -> argparse.ArgumentParser:
     q = sub.add_parser("paired", help="paired per-window ranking of two runs")
     q.add_argument("--a", required=True)
     q.add_argument("--b", required=True)
+    q.add_argument("--allow-partial", action="store_true",
+                   help="rank over the intersection when the two reports cover "
+                        "different windows, and disclose the dropped ones (CLI-20)")
     q.add_argument("--label-a", default="a")
     q.add_argument("--label-b", default="b")
     q.add_argument("--scope-file")

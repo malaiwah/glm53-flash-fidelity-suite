@@ -1076,6 +1076,111 @@ def t_cli() -> None:
 
 
 # ======================================================================= 11
+def t_cli_refusals() -> None:
+    section("10b. THE CLI REFUSES WHAT IT CANNOT HONESTLY ANSWER")
+    tmp = tempfile.mkdtemp(prefix="js-refuse-")
+    per = os.path.join(ROOT, "registry/protocol/per-window/k6-sealed.json")
+    per8 = os.path.join(ROOT, "registry/protocol/per-window/k8-streaming.json")
+    cli = os.path.join(ROOT, "bin", "joint_standard.py")
+
+    def run(argv):
+        r = subprocess.run([sys.executable, cli] + argv, capture_output=True, text=True)
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+    # ---- STAT-07: a report that declares no window sizes must not get an invented one
+    rows = json.load(open(per))["per_window"]
+    nocount = os.path.join(tmp, "nocount.json")
+    json.dump({"per_window": [{"window_id": w["window_id"], "domain": w["domain"],
+                               "mean_kld": w["mean"]} for w in rows]},
+              open(nocount, "w"))
+    out = os.path.join(tmp, "a.json")
+    rc, _ = run(["analyze", "--report", nocount, "--out", out, "--bootstrap-b", "200",
+                 "--domain-bootstrap-b", "100"])
+    if rc == 0 and os.path.exists(out):
+        d = json.load(open(out))
+        sc, pg = d["scope"], d.get("percentile_guard") or {}
+        if (sc.get("scored_positions") is None
+                and sc.get("window_sizes_declared") is False
+                and pg.get("available") is False):
+            ok("STAT-07: undeclared window sizes are null, not 2047 each",
+               "scored_positions None, guard refuses "
+               "(pre-fix: 51175 fabricated, guard answered on it)")
+        else:
+            bad("STAT-07: undeclared sizes",
+                "scored_positions=%r declared=%r guard=%r"
+                % (sc.get("scored_positions"), sc.get("window_sizes_declared"),
+                   pg.get("available")))
+    else:
+        bad("STAT-07: undeclared sizes", "analyze exited %d" % rc)
+
+    # a half-declared panel is neither weighting and must refuse outright
+    mixed = os.path.join(tmp, "mixed.json")
+    pw = [{"window_id": w["window_id"], "domain": w["domain"], "mean_kld": w["mean"]}
+          for w in rows]
+    for w in pw[:3]:
+        w["count"] = 2047
+    json.dump({"per_window": pw}, open(mixed, "w"))
+    rc, txt = run(["analyze", "--report", mixed, "--out", os.path.join(tmp, "m.json"),
+                   "--bootstrap-b", "200", "--domain-bootstrap-b", "100"])
+    if rc != 0 and "declare a scored-position count" in txt:
+        ok("STAT-07: a half-declared panel refuses", "exit %d" % rc)
+    else:
+        bad("STAT-07: half-declared panel", "exit %d" % rc)
+
+    # ---- CLI-20: pairing two reports that cover different windows
+    if os.path.exists(per8):
+        short = os.path.join(tmp, "short.json")
+        json.dump({"per_window": json.load(open(per8))["per_window"][:3]},
+                  open(short, "w"))
+        rc, txt = run(["paired", "--a", per, "--b", short, "--out",
+                       os.path.join(tmp, "p.json"), "--bootstrap-b", "200"])
+        if rc != 0 and "do not cover the same windows" in txt:
+            ok("CLI-20: pairing 25 windows against 3 refuses",
+               "exit %d (pre-fix: exit 0, ranked over the 3 that survived)" % rc)
+        else:
+            bad("CLI-20: partial pairing", "exit %d" % rc)
+        # and with the flag it proceeds, but says what it dropped
+        pout = os.path.join(tmp, "p2.json")
+        rc, _ = run(["paired", "--a", per, "--b", short, "--allow-partial",
+                     "--out", pout, "--bootstrap-b", "200"])
+        if rc == 0 and os.path.exists(pout):
+            d = json.load(open(pout))
+            if d.get("scope_complete") is False and len(d.get("windows_dropped_a") or []) == 22:
+                ok("CLI-20: --allow-partial ranks and DISCLOSES the 22 dropped windows",
+                   "scope_complete false")
+            else:
+                bad("CLI-20: --allow-partial disclosure",
+                    "complete=%r dropped_a=%r" % (d.get("scope_complete"),
+                                                  len(d.get("windows_dropped_a") or [])))
+        else:
+            bad("CLI-20: --allow-partial", "exit %d" % rc)
+
+    # ---- CLI-07: an overlap scan of ZERO calibration windows is not evidence
+    panel = {"windows": [
+        {"window_id": "cal-0", "role": "calibration", "document_id": "c0"},
+        {"window_id": "final-0", "role": "final", "document_id": "f0"},
+        {"window_id": "final-1", "role": "final", "document_id": "f1"}]}
+    ppath = os.path.join(tmp, "panel.json")
+    json.dump(panel, open(ppath, "w"))
+    arrays = os.path.join(tmp, "arrays")
+    os.makedirs(arrays)
+    try:
+        import numpy as _np
+        for wid, toks in (("final-0", range(0, 60)), ("final-1", range(500, 700))):
+            _np.save(os.path.join(arrays, "%s.tokens.npy" % wid),
+                     _np.asarray(list(toks), dtype="<i8"))
+        rc, txt = run(["overlap-scan", "--panel", ppath, "--arrays", arrays,
+                       "--out", os.path.join(tmp, "sel.json")])
+        if rc != 0 and "ZERO calibration windows" in txt:
+            ok("CLI-07: a scan with no readable calibration arrays refuses",
+               "exit %d (pre-fix: exit 0, every window SELECTED as clean)" % rc)
+        else:
+            bad("CLI-07: zero-calibration scan",
+                "exit %d -- %s" % (rc, txt.strip()[:80]))
+    except ImportError:
+        skip("CLI-07: zero-calibration scan", "numpy absent")
+
+
 def t_registry_joint_check() -> None:
     section("11. THE REGISTRY'S JOINT INVARIANTS MUST FIRE ON TAMPERED DATA")
     reg = os.path.join(ROOT, "registry")
@@ -1180,7 +1285,7 @@ def main() -> int:
         else "not importable", "" if st["available"] else " -- %s" % st["reason"]))
     for fn in (t_protocol, t_chi2_and_mcnemar, t_stats_refusals, t_clustered_se, t_bootstrap,
                t_paired, t_sigma_run, t_percentile_guard, t_ngram, t_canary,
-               t_cli, t_registry_joint_check, t_no_network):
+               t_cli, t_cli_refusals, t_registry_joint_check, t_no_network):
         fn()
     print()
     print("-" * 78)
