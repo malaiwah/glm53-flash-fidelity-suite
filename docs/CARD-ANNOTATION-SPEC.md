@@ -10,6 +10,88 @@
 
 ---
 
+## 0. Quickstart — put your fidelity number on your card in two minutes
+
+You measured a quant. Here is how to say so machine-readably, so a leaderboard,
+a crawler, or an agent can read the number without parsing your prose.
+
+**Generate it** (needs only a registry measurement id):
+
+```bash
+bin/fidelity-card annotate --card README.md --role quant \
+    --measurement-id measurement--<your-row-id> \
+    --out README.md --diff
+bin/fidelity-card validate --card README.md
+```
+
+**Or paste and edit.** Two blocks go in your card's YAML frontmatter. The first
+is HF's own `model-index` — standardized, already parsed by Hub tooling, and
+completely unused in this space today:
+
+```yaml
+model-index:
+  - name: YOUR-MODEL-NAME
+    results:
+      - task:
+          type: text-generation
+          name: Distribution fidelity (KL divergence vs BF16 reference)
+        dataset:
+          type: brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits   # the panel you measured on
+          name: sealed 25-window panel, 51,175 positions
+          revision: 95f4fdd94bf29989db2e0d1054e4931f55edb6aa
+        metrics:
+          - type: kl_divergence
+            name: Mean tokenwise KLD (reference || candidate), nats
+            value: 0.025526426915472484                          # YOUR number
+            args:
+              units: nats
+              higher_is_better: false
+              direction: reference_to_candidate
+              estimator: full_vocabulary_fp64
+```
+
+The second is `x_fidelity`, for what `model-index` structurally cannot express —
+lane, role, head identity, and where the receipt lives:
+
+```yaml
+x_fidelity:
+  spec: https://github.com/malaiwah/glm53-flash-fidelity-suite/blob/main/docs/CARD-ANNOTATION-SPEC.md
+  spec_version: fidelity-provenance/v1
+  role: quant                          # or: root
+  reference_model: zai-org/GLM-5.3-Flash-BF16
+  reference_revision: a6c167b62691b2bac901344b65cb651a70f53e43
+  fidelity_dataset: null               # REQUIRED for a root, optional for a quant
+  registry:
+    dataset: malaiwah/quant-fidelity-registry
+    measurement_ids: [measurement--<your-row-id>]
+  lane: streaming                      # or: sealed-ep8, serving
+  scope: routed_experts_only           # what you actually quantized
+  head_bits: 16                        # 16 = native; the head trap depends on this
+```
+
+**The three fields people get wrong**, and why they matter:
+
+- **`lane`** — a number measured through a serving engine and one measured
+  through a reference forward are different measurements of different things.
+  Say which you ran.
+- **`scope`** — "4 bpw" alone is not a scope. Whether you quantized the head,
+  the attention path, or only routed experts changes what your number means.
+- **`head_bits`** — if your head is quantized, nobody may replay your hidden
+  states through someone else's head; doing so erases your head's error and
+  flatters the result. This field is what makes that checkable.
+
+**Rules of the road.** Unknown top-level keys survive the Hub's validator
+(verified: `x_fidelity` returns HTTP 200), so this is additive and will not break
+your card. Do not copy a number from one panel into a card that names another —
+the panel, reference and lane travel *with* the number or the number means
+nothing. And if you have not measured it yourself, say who did: `measured_by` is
+an enumerated field in the registry precisely so third-party numbers stay
+visibly third-party.
+
+Full details, worked examples and the validation matrix follow.
+
+---
+
 ## 1. The problem, and what HF already gives us
 
 A model card should be able to say, machine-readably, three things:

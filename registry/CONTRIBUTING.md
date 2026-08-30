@@ -426,3 +426,23 @@ comparability without telling anyone why.
 
 Open a discussion. "Is this comparable to X?" is a good question and the answer
 is usually in the comparability key.
+
+## Put the number on your model card too
+
+A registry row is queryable; a card annotation is what someone sees when they
+land on your model. Both, ideally.
+
+```bash
+bin/fidelity-card annotate --card README.md --role quant \
+    --measurement-id <your-row-id> --out README.md --diff
+bin/fidelity-card validate --card README.md
+```
+
+It emits a conformant HF [`model-index`](https://huggingface.co/docs/hub/model-cards)
+result — so leaderboards and crawlers read your KLD with no bespoke code — plus a
+small additive `x_fidelity` block carrying what `model-index` cannot express
+(lane, scope, head identity, the receipt link). Unknown top-level keys pass the
+Hub validator, so it will not break your card.
+
+Copy-paste template and the three fields people get wrong:
+[`docs/CARD-ANNOTATION-SPEC.md` §0](../docs/CARD-ANNOTATION-SPEC.md).
