@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -77,6 +78,11 @@ def main() -> int:
                              "backend.json, plan.json); repeat per cold run")
     parser.add_argument("--quant", action="append", default=[],
                         help="label:<summary json>:<one run's kld-report.json>")
+    parser.add_argument("--allow-nondeterministic-floor", action="store_true",
+                        help="publish a floor whose cold runs disagree. The receipt is "
+                             "marked not_submittable and the spread is recorded: every "
+                             "attributable number is mean - floor, so a floor that is "
+                             "really one run of N biases all of them.")
     parser.add_argument("--cost", type=Path, help="cost accounting json to embed verbatim")
     parser.add_argument("--out-json", type=Path, required=True)
     parser.add_argument("--out-md", type=Path, required=True)
@@ -99,11 +105,31 @@ def main() -> int:
             }
         )
     run_means = [float(row["kld"]["summary"]["mean"]) for row in runs]
-    if len(set(run_means)) != 1:
-        print(f"WARNING: cold runs disagree: {run_means}", file=sys.stderr)
+    # NUM-15. This printed "WARNING: cold runs disagree" to stderr and CARRIED ON, using
+    # run 1 as the floor -- and BF16-FLOOR.json is a published, quoted document, so every
+    # `attributable = mean - floor` below inherited that bias. A stderr line in a log
+    # nobody re-reads is not a disclosure. The floor is the one number here that must be
+    # right, so a nondeterministic floor now refuses unless the operator says otherwise.
+    if len(set(run_means)) != 1 and not getattr(args, "allow_nondeterministic_floor", False):
+        raise _fail(
+            f"the floor's cold runs disagree: {run_means} (spread "
+            f"{max(run_means) - min(run_means):.3e}). Every attributable number below is "
+            f"mean - floor, so a floor that is really run 1 of N biases all of them. "
+            f"Pass --allow-nondeterministic-floor to publish it anyway; the receipt will "
+            f"be marked not_submittable."
+        )
     floor = float(floor_summary["measured_mean_kld"])
-    if abs(floor - run_means[0]) > 0:
-        raise _fail("summary mean does not equal the per-run mean")
+    # NUM-02 companion. This asserted floor == run_means[0], which hardcoded the very
+    # convention NUM-02 fixes: with the emitter corrected to publish the mean of run
+    # means, an honest summary would have been REFUSED here. math.fsum is order-invariant
+    # (the emitter's run order comes from --runs, this one's from --floor-run), and the
+    # identical-runs case must stay exact -- sum([v]*n)/n != v for the real published
+    # values at n=3 and n=5.
+    expected = (run_means[0] if len(set(run_means)) == 1
+                else math.fsum(run_means) / len(run_means))
+    if not math.isclose(floor, expected, rel_tol=1e-12, abs_tol=0.0):
+        raise _fail(f"summary mean {floor!r} is not the mean of its per-run means "
+                    f"{expected!r} ({len(run_means)} runs)")
 
     reference = runs[0]["kld"]
     floor_windows = window_means(reference)
@@ -170,8 +196,17 @@ def main() -> int:
 
     backend = runs[0]["backend"]
     plan = runs[0]["plan"]
+    nondeterministic_floor = len(set(run_means)) != 1
     receipt = {
         "schema": SCHEMA,
+        # NUM-15. A floor built from runs that disagree is one run of N wearing the name
+        # of the campaign, and every attributable number below is mean - floor.
+        "not_submittable": nondeterministic_floor or None,
+        "floor_determinism_disclosure": (
+            "the floor's cold runs are NOT bitwise identical (spread %.3e); this receipt "
+            "was published with --allow-nondeterministic-floor and every attributable "
+            "number in it carries that bias" % (max(run_means) - min(run_means))
+            if nondeterministic_floor else None),
         "what_this_is": (
             "the measurement floor of the single-device streaming fidelity lane, and each "
             "quant's panel mean with that floor subtracted"
@@ -181,6 +216,7 @@ def main() -> int:
             "student_label": "native-bf16",
             "cold_runs": len(runs),
             "run_means": run_means,
+            "run_mean_spread": (max(run_means) - min(run_means)) if run_means else 0.0,
             "bitwise_deterministic": floor_summary.get("bitwise_deterministic"),
             "distinct_tokenwise_kld_sha256": floor_summary.get("distinct_tokenwise_kld_sha256"),
             "summary": reference["summary"],

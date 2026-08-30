@@ -10,7 +10,7 @@ aggregate_glm53_five_run_kld.py, joined into the single CLI stage_k6.sh pins:
       --comparison-out comparison-table.md
 
 Per run it computes (or resumes) the sealed per-run KLD report
-(quant-pipeline.glm53-packed-student-kld.v1): exact fp64 log-softmax,
+(quant-pipeline.glm53-packed-student-kld.v2): exact fp64 log-softmax,
 teacher->student direction, the sealed 25-window final panel only
 (25 x 2047 = 51,175 positions), mean = upstream's estimator exactly (no
 weighting, no bf16 anywhere).  For profile k6 it then seals the packed-KLD
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import math
 import json
 import os
 import sys
@@ -201,6 +202,55 @@ def _record_map(receipt: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return {row["window_id"]: row for row in receipt["logit_files"]}
 
 
+#: How the artifact this profile measures is STORED. Not the lane, and not the world size.
+#: The old expression suffixed every unrecognised profile "-tp4", so the two published
+#: streaming receipts carry `k6-stream-tp4` and `k8-tp4` -- a claim that the artifact ships
+#: TP4-sliced ranks. k6/DECISIONS.md forbids exactly that ("the checkpoint must not bake in
+#: a TP/EP topology"), and k6/stage_k6.sh hard-asserts `qualified_tp_sizes == []` on those
+#: very releases before publishing them. It is the same defect JOURNAL lesson #10 already
+#: recorded and fixed for `gguf-tp4`, left live in two more receipts.
+PROFILE_STORAGE_LABEL = {
+    "k6": "k6-hf-sharded",
+    "k6-stream": "k6-stream",
+    "k8": "k8-hf-sharded",
+    "k6k8": "k6k8-hf-sharded",
+    "native-bf16": "native-bf16-stream",
+    "mlx": "mlx-stream",
+    "gguf": "gguf-stream",
+    "nvfp4": "nvfp4-stream",
+    "turbo-4.05bpw": "turbo-4.05bpw-hf-sharded",
+    "turbo-3.05bpw": "turbo-3.05bpw-hf-sharded",
+    "tr3-4bpw": "tr3-4bpw-hf-sharded",
+    # genuinely TP4-sliced: dione_surface pins glm53-selective-exl3-tp4-v1
+    "dione-q4": "dione-q4-tp4",
+    "dione-3.0bpw": "dione-3.0bpw-tp4",
+}
+
+
+def _profile_storage_label(profile):
+    """Refuse rather than guess. A new profile must not inherit a storage claim by
+    falling through a default."""
+    try:
+        return PROFILE_STORAGE_LABEL[profile]
+    except KeyError:
+        raise _fail(
+            f"profile {profile!r} has no declared STORAGE label. The old default appended "
+            f"'-tp4' to anything unrecognised, which put a false 'ships TP4-sliced ranks' "
+            f"claim into two published receipts. Add an entry to PROFILE_STORAGE_LABEL "
+            f"saying how this artifact is actually stored."
+        )
+
+
+def _torch_threads():
+    """Recorded beside position_block: the divergent reduction path is thread-count
+    sensitive, so the block size alone does not pin the accumulation order."""
+    try:
+        import torch
+        return int(torch.get_num_threads())
+    except Exception:                                             # noqa: BLE001
+        return None
+
+
 def _load_slice(path: Path, start: int, stop: int) -> Any:
     from safetensors import safe_open
 
@@ -256,6 +306,39 @@ def _measure_run(
             raise _fail(
                 f"resumed {report_path} is labeled {resumed.get('student_label')!r}, "
                 f"not the profile's expected {student_label!r} - wrong --runs/--profile pair"
+            )
+        # The resume branch validated ONLY the label, then returned. Every teacher, panel
+        # and window cross-check lives below it and was skipped, so re-scoring an existing
+        # run dir against a DIFFERENT teacher silently did nothing and the summary then
+        # published the new teacher's receipt_sha256 over means computed against the old
+        # one. teacher_receipt_sha256 is the registry's comparability key, so the row would
+        # be filed in the wrong ranked table -- exactly the conflation _comparison_table's
+        # docstring says the key exists to prevent. The sealed K6 branch was immune only
+        # because build_packed_k6_kld_receipt checks it explicitly.
+        #
+        # The field names are ASYMMETRIC: the report calls it teacher_receipt_sha256, the
+        # teacher receipt calls it receipt_sha256. The obvious symmetric loop raises
+        # KeyError on every resume.
+        for report_field, teacher_field in (("teacher_receipt_sha256", "receipt_sha256"),
+                                            ("token_panel_receipt_sha256",
+                                             "token_panel_receipt_sha256")):
+            if resumed.get(report_field) != teacher.get(teacher_field):
+                raise _fail(
+                    f"resumed {report_path} carries {report_field} "
+                    f"{str(resumed.get(report_field))[:12]}..., but --teacher resolves to "
+                    f"{str(teacher.get(teacher_field))[:12]}... - the resumed number was "
+                    f"measured against a DIFFERENT reference; delete the stale "
+                    f"kld-report.json to re-score"
+                )
+        if chunk_positions is not None and resumed.get("position_block") not in (
+                None, chunk_positions):
+            # NUM-09. Absent on reports written before the field existed, so a missing
+            # value is "unknown" and only an explicit mismatch refuses.
+            raise _fail(
+                f"resumed {report_path} was scored with position_block "
+                f"{resumed.get('position_block')}, not the requested {chunk_positions}. "
+                f"The tokenwise digest is the suite's determinism evidence and the block "
+                f"size can change it bitwise; delete the stale report to re-score"
             )
         return report_path
     _refuse_preview_capture(run_dir)
@@ -367,7 +450,13 @@ def _measure_run(
     except (OSError, ValueError):
         student_lane_identity = None
     report = {
-        "schema": "quant-pipeline.glm53-packed-student-kld.v1",
+        # v2: adds position_block and torch_threads (NUM-09). Both are inside
+        # report_sha256, so a report written by this version cannot be byte-compared with
+        # a v1 report of the same run -- the schema string says which is which rather than
+        # leaving a reader to discover it from a hash mismatch. The MEASURED quantities
+        # (summary.mean, tokenwise_kld_sha256) are unchanged; no published number moves,
+        # and the already-written v1 reports on disk are not rewritten.
+        "schema": "quant-pipeline.glm53-packed-student-kld.v2",
         "teacher_receipt_sha256": teacher["receipt_sha256"],
         "student_receipt_sha256": student["receipt_sha256"],
         "student_label": student_label,
@@ -384,6 +473,16 @@ def _measure_run(
         "metric": "tokenwise KL over exact jointly-valid causal prediction positions",
         "compute_device": device,
         "compute_dtype": "float64",
+        # NUM-09. --chunk-positions changes the tokenwise values bitwise in degenerate
+        # configurations (a single-row batch splits the 154,880-wide reduction instead of
+        # the rows, so the accumulation order changes; measured, and thread-count
+        # sensitive too), and tokenwise_kld_sha256 is the suite's headline determinism
+        # evidence. It was recorded nowhere, so a recompute at a different block size
+        # produced a bare hash mismatch that was unattributable to any artifact. Named
+        # position_block to match docs/FIDELITY-DATASET-SPEC.md's mandatory comparator
+        # field and bin/fidelity_dataset.py, which already emit exactly that.
+        "position_block": chunk_positions,
+        "torch_threads": _torch_threads(),
         "summary": overall,
         "per_domain": domains,
         "per_window": per_window,
@@ -450,8 +549,29 @@ def _comparison_table(
     ):
         receipt_path = receipts_dir / f"{profile}-packed-kld.json"
         if receipt_path.is_file():
-            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            # NUM-14. $RCPT is a long-lived shared receipts directory and this table
+            # deliberately scans eight profiles measured in different lanes and different
+            # sessions, so the siblings arrive by hand/scp/hf-download. A truncated
+            # download raised JSONDecodeError, and a receipt with no measured_mean_kld
+            # raised `TypeError: unsupported format string passed to NoneType.__format__`
+            # -- both AFTER --out was already written, which is the half-committed state
+            # somebody later picks up by hand. A skipped row must be LOUD: a silently
+            # dropped artifact in a public comparison table is worse than the crash.
+            try:
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                print(f"comparison-table: skipping unreadable {receipt_path.name}: {exc}",
+                      file=sys.stderr)
+                continue
             mean = receipt.get("measured_mean_kld")
+            if isinstance(mean, bool) or not isinstance(mean, (int, float)) \
+                    or not math.isfinite(mean):
+                # bool first: isinstance(True, int) is True and f"{True:.6f}" renders
+                # "1.000000", i.e. a silently bogus row.
+                print(f"comparison-table: skipping {receipt_path.name}: "
+                      f"measured_mean_kld is not a finite number ({mean!r})",
+                      file=sys.stderr)
+                continue
             gate = "GREEN" if receipt.get("quality_gate_passed") else "RED"
             label = {
                 "k6": "malaiwah K6",
@@ -525,6 +645,17 @@ def main() -> int:
     parser.add_argument("--chunk-positions", type=int, default=16)
     parser.add_argument("--device", default="cuda:0")
     args = parser.parse_args()
+    # NUM-13. `--five-run-out` is honoured only on the k6 branch; every other profile
+    # accepted the flag, never referenced it, wrote no file and exited 0. Silent-no-op on
+    # an evidence-producing flag is the same failure class as a fetch that matches zero
+    # files. Refused at parse time, before the teacher load, so it costs milliseconds on a
+    # laptop rather than a wasted run.
+    if getattr(args, "five_run_out", None) and args.profile != "k6":
+        raise _fail(
+            f"--five-run-out is implemented only for --profile k6 (the sealed five-run "
+            f"receipt builder is K6-specific and stamps a K6 identity); --profile "
+            f"{args.profile} would write nothing"
+        )
     _import_pipeline(args.pipeline_root)
 
     from quant_pipeline.core.artifacts import sha256_file
@@ -589,6 +720,19 @@ def main() -> int:
         "gguf": "gguf_student",
     }.get(args.profile, "packed_student")
     runs = [path.resolve() for path in args.runs]
+    # NUM-03. `--runs` was never deduplicated and the per-run student_receipt_sha256 values
+    # were never required to be distinct, so passing one run dir twice produced
+    # cold_run_count=2, two identical run_means, ONE distinct tokenwise digest, and
+    # `bitwise_deterministic: true` -- fabricated determinism evidence from a single
+    # capture, which is the strongest claim this suite makes. The sealed five-run builder
+    # gates this; the summary branch did not. Checked BEFORE the measure loop: after it
+    # would burn hours of fp64 GPU scoring before refusing.
+    if len(set(runs)) != len(runs):
+        raise _fail(
+            "--runs lists the same capture directory more than once (after resolving "
+            "symlinks). Two cold runs are two captures; one capture named twice is not "
+            "determinism evidence."
+        )
     if args.profile == "mlx":
         first = runs[0] / "capture-receipt.json"
         if not first.is_file():
@@ -647,15 +791,32 @@ def main() -> int:
         (json.loads(path.read_text(encoding="utf-8")), sha256_file(path))
         for path in report_paths
     ]
+    # NUM-03, second half. Path dedup alone is not sufficient: `cp -r run1 run2` gives two
+    # distinct resolved paths carrying the same capture receipt, and only this catches it.
+    # `.get()` plus a shape check rather than a subscript -- a KeyError is a crash, not a
+    # refusal, and the sibling five-run builder validates the shape too.
+    _receipts = [str(report.get("student_receipt_sha256")) for report, _ in reports]
+    if len(set(_receipts)) != len(_receipts) or any(
+            len(v) != 64 or any(c not in "0123456789abcdef" for c in v) for v in _receipts):
+        raise _fail(
+            f"cold-run evidence does not contain {len(reports)} distinct cold captures "
+            f"(student_receipt_sha256: {_receipts!r}). Two run directories holding one "
+            f"capture are one measurement, and reporting them as two fabricates the "
+            f"determinism claim."
+        )
     means = [float(report["summary"]["mean"]) for report, _ in reports]
     kld_shas = sorted({str(report["tokenwise_kld_sha256"]) for report, _ in reports})
+    # One capture can never evidence determinism, however many times it is hashed. The
+    # summary used to write `bitwise_deterministic: true` from a single run; DET-001 caught
+    # it downstream, but the JSON artifact itself asserted determinism from one run.
+    bitwise_deterministic = len(reports) >= 2 and len(kld_shas) == 1
     print(
         json.dumps(
             {
                 "runs": len(reports),
                 "run_means": means,
                 "distinct_tokenwise_kld_sha256": kld_shas,
-                "bitwise_deterministic": len(kld_shas) == 1,
+                "bitwise_deterministic": bitwise_deterministic,
             },
             sort_keys=True,
         ),
@@ -744,7 +905,19 @@ def main() -> int:
         # K8/K6K8: the sealed receipt builders in glm53_k6_postmtp are
         # K6-specific; these profiles get a transparent malaiwah summary (3
         # cold runs, disclosed) that satisfies the stage gate fields.
-        mean = means[0]
+        # NUM-02. `mean = means[0]` published RUN 1 as the headline of a receipt that
+        # presents itself as an N-cold-run summary (cold_run_count, run_means,
+        # cold_run_deviation), and `bitwise_deterministic` was computed, printed, and
+        # allowed to gate nothing. Every published receipt happens to be bitwise
+        # deterministic so no live number moves -- but the registry's own metric is NAMED
+        # mean_of_run_means_tokenwise_kld and registry_add recomputes it to 1e-12, so the
+        # emitter was the side that was out of step. The identical-runs special case is
+        # required, not cosmetic: plain sum/len shifts a deterministic n=3 or n=5 value by
+        # 1 ULP (0.027262784814670614 -> 0.02726278481467061), which would gratuitously
+        # move a published digit in a project whose docs advertise agreement "to the last
+        # digit".
+        mean = means[0] if len(set(means)) == 1 else sum(means) / len(means)
+        run_mean_spread = (max(means) - min(means)) if means else 0.0
         report_top1 = [report.get("top1_agreement") for report, _ in reports]
         summary = {
             "schema": f"malaiwah.glm53-{args.profile}-packed-kld-summary.v1",
@@ -756,21 +929,20 @@ def main() -> int:
             # (EP8-emulated), and an NVFP4 snapshot ships canonical HF shards.
             # Suffixing every profile "-tp4" put a false storage claim in the
             # headline receipt of an artifact that is not sliced at all.
-            "profile": (
-                "native-bf16-stream" if args.profile == "native-bf16"
-                else "mlx-stream" if args.profile == "mlx"
-                else "gguf-stream" if args.profile == "gguf"
-                else "nvfp4-stream" if args.profile == "nvfp4"
-                else f"{args.profile}-hf-sharded"
-                if args.profile.startswith("turbo") or args.profile.startswith("tr3")
-                else f"{args.profile}-tp4"
-            ),
+            "profile": _profile_storage_label(args.profile),
             "student_label": student_label,
             "cold_run_count": len(reports),
-            "cold_run_deviation": f"{len(reports)} cold runs, not 5 (budget; disclosed)",
+            # "5 cold runs, not 5 (budget; disclosed)" is what the hardcoded 5 emitted for
+            # a genuine five-run campaign, and registry_add copies this string VERBATIM
+            # into a published disclosure.
+            "cold_run_deviation": (
+                f"{len(reports)} cold runs"
+                if len(reports) >= 5
+                else f"{len(reports)} cold runs, not 5 (budget; disclosed)"),
             "run_means": means,
+            "run_mean_spread": run_mean_spread,
             "distinct_tokenwise_kld_sha256": kld_shas,
-            "bitwise_deterministic": len(kld_shas) == 1,
+            "bitwise_deterministic": bitwise_deterministic,
             "measured_mean_kld": mean,
             "quality_gate": {"metric": "mean_tokenwise_kld", "threshold_lt": 0.06},
             "quality_gate_passed": bool(mean < 0.06),
@@ -786,6 +958,32 @@ def main() -> int:
             "teacher_receipt_sha256": teacher["receipt_sha256"],
             "teacher_source": teacher_source,
             "teacher_label": teacher_label,
+            # NUM-06. The per-run report computes a full per_window block -- window_id,
+            # document_id, domain, role, and count/mean/std/p50/p95/p99/cvar95/max -- and
+            # the summary dropped it, keeping only scalars. That block is the ONLY thing
+            # that makes a published row rescoreable on a different window scope without a
+            # GPU: bin/jointstd/stats.py's cluster-robust SE reads per_window[].count/
+            # .mean/.std, and the BCa block bootstrap and the domain table read
+            # window_id/domain/count/mean. Its absence is why the streaming BF16 floor and
+            # the Dione Q4 rows carry uncertainty.method "none" with null endpoints and
+            # why their calibration-clean recompute is permanently impossible -- the run
+            # dirs died with the rented box. Verbatim (nested "summary" shape), because
+            # bin/joint_standard.py::load_per_window normalises it and flattening here
+            # would fork the shape away from the report whose sha this receipt pins.
+            "per_window": reports[0][0].get("per_window"),
+            "per_domain": reports[0][0].get("per_domain"),
+            "qualification_window_count": reports[0][0].get("qualification_window_count"),
+            "token_panel_receipt_sha256": reports[0][0].get("token_panel_receipt_sha256"),
+            "position_block": reports[0][0].get("position_block"),
+            # Asserting that the runs AGREE on per_window when they are bitwise identical
+            # is a tautology (one distinct tokenwise digest implies identical per-window
+            # means). The case that matters is the inverse: shipping run 1's block as
+            # though it described the campaign when the runs are NOT identical.
+            "per_window_source": (
+                "run-1; identical across runs (one distinct tokenwise_kld_sha256)"
+                if bitwise_deterministic else
+                "run-1 ONLY; the runs are not bitwise identical and this block describes "
+                "one of them"),
         }
         if args.profile.startswith(("dione", "turbo")):
             # the headline number's own receipt must carry the unsealed-source
