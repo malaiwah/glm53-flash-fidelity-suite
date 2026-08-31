@@ -91,6 +91,17 @@ t "jl list envelope (T11: an unreadable answer is not an empty account)" \
 # lists, which `set -e` exempts, so they asserted nothing.
 t "shell guards (T10: SH-02/03/14/19/21/23 + SEC-01 fixtures)" \
                                            0 bash bin/selftest_shell_guards.sh
+# T16. The stage driver, EXECUTED. Two of its eleven stages were ever run by a
+# test; the rest were "covered" by grepping the file for a substring -- which is
+# the shape of test all four of the expensive stage bugs walked straight through
+# (QP_PIPELINE_ROOT hardcoded in `measure`, then again in `score`, the roots
+# never exported, and jqget printing a JSON null as the string "None"). This
+# drives every stage under a real bash with argv-logging stubs and asserts, per
+# stage: roots come from the environment, a missing input fails CLOSED, the
+# .done marker appears only on success, and no argument names a path the
+# environment did not supply. Verified by reintroducing all four bugs.
+t "stage driver: every stage executed (T16)" \
+                                           0 python3 bin/selftest_stage_measure.py
 # The class that GUARANTEES a rented GPU is destroyed had no test at all, which
 # is how CLI-01 (an API outage read as "destroyed") and CLI-02(b) (a teardown
 # that marks itself done before doing anything) survived a full review cycle.
