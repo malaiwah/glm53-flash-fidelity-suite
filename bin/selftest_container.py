@@ -364,6 +364,30 @@ def rung_bundle():
         check("C5k ... and the .dockerignore lets them into the image",
               not any(dockerignored(rel) for rel in listed
                       if rel.startswith(schema_rel + "/")))
+        # C5l  A COMMITTED PANEL IS DATA THE ENTRYPOINT IS POINTED AT.
+        # --require-all proves every BUNDLE.txt entry arrived in the stage. It
+        # cannot prove the converse -- that what a container-native capture
+        # NEEDS is listed -- and the two are not the same check. The committed
+        # panels landed under engines/panels/ in one commit and in BUNDLE.txt
+        # two commits later, so container_prune correctly stripped them from
+        # the image built in between, and that image refused its own committed
+        # panel on a rented L4: "--panel-dir ... has no panel.json". Four
+        # minutes and $0.003, but only because the refusal is early; the same
+        # omission behind a fetch stage is an hour of GPU. Found by renting;
+        # this is the static form of the same question.
+        panels_dir = SUITE / "engines" / "panels"
+        panels = sorted(d for d in panels_dir.iterdir() if d.is_dir()) \
+            if panels_dir.is_dir() else []
+        check("C5l there is at least one committed panel to check", bool(panels))
+        for panel in panels:
+            staged_panel = fs / "engines" / "panels" / panel.name
+            arrays = sorted((staged_panel / "arrays").glob("*")) \
+                if (staged_panel / "arrays").is_dir() else []
+            check("C5l %s survives the prune with panel.json + arrays/"
+                  % panel.name,
+                  (staged_panel / "panel.json").is_file() and bool(arrays),
+                  "a container-native --panel-dir would refuse it; "
+                  "add it to bin/BUNDLE.txt")
         check("C5i ... and the 21 MB bundle.tar.gz and the venv",
               dockerignored("bundle.tar.gz") and dockerignored(".venv/bin/python")
               and dockerignored("bin/__pycache__/measure_cloud.cpython-312.pyc"))

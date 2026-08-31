@@ -142,6 +142,14 @@ t "job identity resolved-first + tri-state liveness (T24: J1-J7)" \
 # container-native RunPod launch (our image + dockerArgs; token via env only).
 t "root publish + teardown guard + container-native launch (T25: RP1-RP9)" \
                                            0 python3 bin/selftest_root_publish.py
+# T26. Result sinks. ROOT-1 gave a multi-GB root capture a way home and gave
+# `measure` -- whose 4-40 KB receipt IS the submission object -- none at all.
+# A container-native run ended by naming a path inside a pod-scoped volume, on
+# a provider whose REST API serves no logs and no files and whose image runs no
+# sshd. stdout is unconditional because it is the only channel every platform
+# has; file: and https: are for the caller who can read one.
+t "result sinks: the answer gets off the box (T26: R1-R27)" \
+                                           0 python3 bin/selftest_result_sink.py
 # T14. The progress meter. Both capture engines print one line at the start and
 # one at the end, which on the streaming lane is a 2-3 hour silence in a stage
 # log that looks exactly like a hang. The rungs that matter are the ones about

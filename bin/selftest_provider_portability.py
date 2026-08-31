@@ -422,9 +422,19 @@ try:
     _sleeps.clear()
     got = mc._create_with_retry(Flaky(3), Con(), gpu_type="x")
     check("capacity failures are retried to success", got["machine_id"] == "ok-after-4")
-    check("...with EXPONENTIAL backoff (each wait ~2x the last)",
-          len(_sleeps) == 3 and all(1.5 < _sleeps[i+1]/_sleeps[i] < 2.7
-                                    for i in range(len(_sleeps)-1)))
+    # THIS RUNG USED TO BE FLAKY, AND FLAKY IS WORSE THAN ABSENT. It asserted
+    # 1.5 < s[i+1]/s[i] < 2.7 on two JITTERED samples. The implementation is
+    # wait = base * 2**(n-1) * uniform(0.8, 1.2), so a ratio of two draws
+    # spans 2*0.8/1.2 = 1.33 to 2*1.2/0.8 = 3.0 -- outside that band on
+    # 13.7% of runs (200k trials). A battery that goes red one time in seven
+    # trains people to re-run it until it is green, which costs more than the
+    # rung was ever worth. Assert the CONTRACT rather than a sampled ratio:
+    # every wait lies inside its OWN analytic band. Deterministic, and it
+    # still fails if the exponent or the jitter is dropped.
+    _bands = [(30.0 * (2 ** i) * 0.8, 30.0 * (2 ** i) * 1.2) for i in range(3)]
+    check("...with EXPONENTIAL backoff (each wait inside its own band)",
+          len(_sleeps) == 3
+          and all(lo <= s <= hi for s, (lo, hi) in zip(_sleeps, _bands)))
     check("...and jitter, so fleets do not synchronise",
           all(s % 30 != 0 for s in _sleeps))
 

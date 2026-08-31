@@ -117,6 +117,77 @@ creates nothing; `--job FILE` uses a planner-written document verbatim;
 `--only` / `--stop-after` narrow the sequence; `--image-pin <digest>` tells the
 run which image the launcher pulled.
 
+## Getting the answer back
+
+A container has no controller holding an SSH connection open, so nothing pulls
+`receipts.tar.gz` back the way `measure_cloud.py` does. For a while that was
+only half-solved: `--publish-root-to` gave a multi-GB **root capture** a way
+home, and the verb this project exists to serve had none. `measure` seals
+`receipts/measurement-receipt.json` — 4–40 KB, and *the* object the registry
+ingests — and a container-native run ended by naming the path it was written
+to, inside a pod-scoped volume on a provider whose REST API
+(`/v1/pods`, `/v1/pods/{id}`, `/billing/pods`) serves no logs and no files, in
+an image that runs no sshd. The same was true of `stage`, and of a **failed**
+run, whose receipts and logs are the evidence you most want and can least often
+reach.
+
+So the product is not "a dataset". It is *whatever this run sealed*, and the
+caller picks the channel, because only the caller knows what they can read.
+
+```bash
+# stdout: always on, needs no flag. The only channel every platform has.
+docker run --gpus all --rm -v /data/run:/workspace <image> measure ...
+
+# a second copy onto a mount you control
+... <image> measure ... --result-sink file:/workspace/out
+
+# PUT the bundle somewhere you can read: presigned S3/R2/GCS, a collector,
+# or an ntfy topic (which you can poll back with ?poll=1)
+... <image> measure ... --result-sink https://ntfy.sh/<your-topic>
+```
+
+| sink | carries | use it when |
+|---|---|---|
+| `stdout` (always) | the summary + the receipt inline under 256 KB | any provider whose console or `docker logs` you can read |
+| `file:PATH` | receipts + `job.json` + summary | a bind mount or a VM you own (Lambda, your own box) |
+| `https://URL` | the same, as `tar.gz`, by **PUT** | automation; the pod cannot read anything back |
+| `--publish-root-to` | the sealed **dataset** | a root/preview capture — multi-GB does not belong in a log frame |
+
+Four properties worth stating, because each one is a defect that happened:
+
+* **stdout is unconditional and delivered first.** If a later sink is
+  misconfigured or its collector is down, the answer has already been printed.
+  A failing sink is reported and **never changes the run's exit code** — the
+  measurement either happened or it did not, and a collector being down is not
+  a measurement result.
+* **Delivery is in the `finally`**, so a run that fails at stage three still
+  reports what it has. On RunPod the run root dies with the pod.
+* **The HF token is shredded *before* any sink runs**, and `.secrets/` and the
+  multi-GB `.stream-work/` scratch tree are excluded from every bundle.
+* **A sink URL is often itself the credential** (a presigned PUT), so it is
+  registered for redaction, `FIDELITY_RESULT_SINK` is the preferred channel —
+  providers echo `dockerArgs` back in their consoles and API listings, and
+  environment variables they do not — and a failure names the host and path
+  but never the query string.
+
+The frame is greppable on purpose:
+
+```
+===== FIDELITY-RESULT BEGIN =====
+{ "schema": "malaiwah.fidelity-result-summary.v1", "verb": "measure",
+  "status": "ok", "files": [ {"path": "...", "sha256": "..."} ] }
+----- measurement-receipt.json -----
+{ ... }
+===== FIDELITY-RESULT END =====
+```
+
+Over the 256 KB cap the receipt is **withheld rather than dumped** — the frame
+still carries its sha256, so the artifact stays identifiable and the summary
+does not get pushed out of a provider's log buffer by bytes nobody can use in
+that form.
+
+---
+
 ### What it refuses rather than guesses
 
 `measure` without `--profile` is refused, naming
@@ -238,6 +309,42 @@ A RunPod or Vast pod must **pull** the image, so it has to exist in a registry
 they can reach. A Lambda instance does not: it is a real VM with Docker, so the
 image can be built and run on the box itself, which is also the cheapest way to
 get the two arms of the acceptance test onto one GPU.
+
+**A worked RunPod launch.** `fidelity.runpodapi.RunPod.create` takes `image`,
+`docker_args` and `env`; there is no `measure-cloud --image` flag yet, so this
+is Python today:
+
+```python
+from fidelity import runpodapi
+rp = runpodapi.RunPod(key_file="~/.runpod_key")
+rp.create(
+    gpu_type="NVIDIA L4", name="fid-fruit", storage=60, region="secure",
+    image="ghcr.io/malaiwah/quant-fidelity-measure@sha256:<digest>",
+    docker_args=("capture --model malaiwah/GLM-5.2-SIQ-Fruit-bf16 "
+                 "--revision ef68013a... "
+                 "--panel-dir /opt/fidelity/suite/engines/panels/panel--fruit.malaiwah.heldout-v1 "
+                 "--dataset-id fidelity--malaiwah.fruit-bf16.root.container-v1 "
+                 "--lane streaming --host runpod --image-pin sha256:<digest>"),
+    env={"FIDELITY_RESULT_SINK": "https://ntfy.sh/<your-topic>"},
+)
+```
+
+Three things that cost real money to learn:
+
+* **The panel can come from the image.** `engines/panels/` ships two committed
+  panels, so a container-native capture fetches no panel at all — but only if
+  they are in `bin/BUNDLE.txt`. They landed in `engines/panels/` two commits
+  before they landed in that list, and the image built in between refused its
+  own committed panel on a rented L4: *"--panel-dir ... has no panel.json"*.
+  `--require-all` proves every listed entry arrived; it cannot prove that what
+  a capture needs was listed. `selftest_container.py` rung **C5l** now does.
+* **`docker_args` is one flat string**, so an argument containing a space
+  depends on how the provider splits it. Prefer flags without spaces; `--gpu`
+  is optional anyway, because the receipt's device name is read from torch by
+  `fidelity/stackprint.py`, not from that flag.
+* **Configuration and secrets travel in `env`, never in `docker_args`** — the
+  args string is argv and RunPod returns it verbatim from
+  `query { pod { dockerArgs } }`.
 
 **Nested containers do not work on RunPod.** Probed on a live pod
 (`NVIDIA RTX A4000`, community cloud, driver 580.126.20): running as uid 0 but

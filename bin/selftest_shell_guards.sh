@@ -259,9 +259,14 @@ fi
 # public repo that hardcodes its operator's channel ships that channel to
 # every reader (peer review 2026-08-31, "hard-coded public notification
 # topic"). This file is exempt: the pattern below is the detector.
+# A DOCUMENTED PLACEHOLDER IS NOT A PINNED TOPIC. `ntfy.sh/<your-topic>`
+# names nobody's channel and is how the result-sink docs show the scheme; a
+# real topic is [A-Za-z0-9_-] and can never contain '<'. So the detector
+# strips angle-bracket placeholders first and then looks for a literal topic,
+# which keeps the guard's teeth without making the docs write around it.
 LITERALS="$(cd "$ROOT" && git ls-files 2>/dev/null \
   | grep -v '^bin/selftest_shell_guards.sh$' \
-  | xargs grep -l 'ntfy\.sh/' 2>/dev/null || true)"
+  | xargs grep -l 'ntfy\.sh/[A-Za-z0-9_-]' 2>/dev/null || true)"
 if [ -z "$LITERALS" ]; then
   ok "SEC-02 no tracked file hardcodes a ntfy.sh topic"
 else

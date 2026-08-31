@@ -68,6 +68,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from fidelity import resultsink as RS
+
 from fidelity.common import shred_secret_file, write_secret_file  # noqa: E402
 from fidelity.stages import KNOWN_STAGES, stage_sequence  # noqa: E402
 
@@ -556,6 +558,13 @@ def add_common(p) -> None:
                                         "(HF_TOKEN is also accepted)")
     p.add_argument("--image-pin", help="the registry digest of this image, as "
                                        "known to whoever pulled it")
+    p.add_argument("--result-sink", action="append", default=[], metavar="URI",
+                   help="where the answer goes: file:PATH or https://URL (PUT). "
+                        "Repeatable. stdout is ALWAYS delivered and needs no "
+                        "flag -- it is the only channel every provider has. "
+                        "A URL that carries its own credential belongs in the "
+                        "FIDELITY_RESULT_SINK environment variable instead: "
+                        "providers echo argv back in their consoles.")
     p.add_argument("--dry-run", action="store_true",
                    help="print the job document and the stage list; run nothing")
     p.add_argument("--only", action="append", default=[],
@@ -627,7 +636,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name", choices=list(KNOWN_STAGES))
     add_common(s)
 
-    sub.add_parser("doctor", help="print what this image is and what it can see")
+    d = sub.add_parser("doctor",
+                       help="print what this image is and what it can see")
+    # WHY doctor takes the common flags. "Rent a pod, check the image sees the
+    # GPU" is the cheapest useful thing this image does, and on RunPod its
+    # answer was console-only: no logs in the REST API, no sshd, nothing to
+    # read. A probe whose result you cannot retrieve is not a probe.
+    add_common(d)
     sub.add_parser("version", help="print the baked pins")
     return ap
 
@@ -670,7 +685,29 @@ def main(argv=None) -> int:
         print(json.dumps(build_manifest(), indent=2, sort_keys=True))
         return EXIT_OK
     if args.verb == "doctor":
-        return cmd_doctor(con)
+        lines = []
+
+        def tee(text):
+            lines.append(text)
+            con(text)
+
+        code = cmd_doctor(tee)
+        try:
+            sinks = RS.parse_sinks(getattr(args, "result_sink", []))
+            fs_root = Path(getattr(args, "fs_root", DEFAULT_FS_ROOT))
+            (fs_root / "receipts").mkdir(parents=True, exist_ok=True)
+            (fs_root / "receipts" / "doctor.json").write_text(
+                json.dumps({"schema": "malaiwah.fidelity-doctor.v1",
+                            "status": "ok" if code == EXIT_OK else "failed",
+                            "report": lines}, indent=2) + "\n",
+                encoding="utf-8")
+            summary = RS.build_summary(
+                fs_root, "doctor", "ok" if code == EXIT_OK else "failed",
+                [], image_pin(getattr(args, "image_pin", None)))
+            RS.deliver(fs_root, sinks, summary, con)
+        except Exception as exc:
+            con("doctor report not delivered: %s" % exc.__class__.__name__)
+        return code
 
     suite = Path(os.environ.get("FIDELITY_SUITE_ROOT")
                  or str(IMAGE_ROOT / "suite"))
@@ -709,6 +746,13 @@ def main(argv=None) -> int:
             doc = job_document(args, suite, fs_root, con)
 
         pin = image_pin(args.image_pin)
+        # Parsed before the first stage, never after: an unreadable sink is a
+        # typo the caller can fix for free now, and a Refusal three hours into
+        # a paid capture instead.
+        try:
+            sinks = RS.parse_sinks(getattr(args, "result_sink", []))
+        except RS.SinkError as exc:
+            raise Refusal(str(exc), ["Known schemes: file:PATH, https://URL."])
         if args.verb == "stage":
             stages = [args.name]
         else:
@@ -748,19 +792,39 @@ def main(argv=None) -> int:
         # token outlived the run on the host filesystem, forever, on success
         # AND on failure (peer review 2026-08-31).  Success, a failed stage,
         # an exception and ^C all pass through here.
+        failed = None
         try:
             env = stage_env(fs_root, engine_root, pin)
             for name in stages:
                 code = run_stage(name, fs_root, env, con)
                 if code != 0:
                     con("run failed at stage %s" % name)
-                    return EXIT_FAILED
-            con("all stages complete; receipts under %s/receipts" % fs_root)
-            return EXIT_OK
+                    failed = name
+                    break
+        except BaseException:
+            failed = failed or "exception"
+            raise
         finally:
+            # ORDER IS THE POINT. The token is destroyed BEFORE any result
+            # leaves the box, so no sink can carry it even if a future
+            # `_relevant()` stopped excluding .secrets. And delivery sits in
+            # the finally because a FAILED run's receipts and logs are the
+            # evidence you most want and least often can reach: on RunPod the
+            # run root dies with the pod.
             if wrote_token:
                 shred_secret_file(str(fs_root / ".secrets" / "hf_token"))
                 con("HF token shredded from the run root")
+            try:
+                summary = RS.build_summary(
+                    fs_root, args.verb, "failed" if failed else "ok",
+                    stages, pin, failed)
+                RS.deliver(fs_root, sinks, summary, con)
+            except Exception as exc:
+                con("result delivery failed: %s" % exc.__class__.__name__)
+        if failed:
+            return EXIT_FAILED
+        con("all stages complete; receipts under %s/receipts" % fs_root)
+        return EXIT_OK
     except Refusal as exc:
         sys.stderr.write("REFUSED: %s\n" % exc)
         for line in exc.advice:

@@ -34,6 +34,7 @@ bin/engines.json
 bin/fidelity/__init__.py
 bin/fidelity/census.py
 bin/fidelity/common.py
+bin/fidelity/resultsink.py
 bin/fidelity/engines.py
 bin/fidelity/hfmeta.py
 bin/fidelity/receipt.py

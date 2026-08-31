@@ -215,6 +215,29 @@ bin/measure-cloud reaper --install    # the backstop; the runner asks for it
 bin/measure-cloud reaper --sweep      # clean up from any machine, after a laptop dies
 ```
 
+### Recipe 1, as a container — no SSH, no bundle upload
+
+The same stage sequence ships as a multi-arch image (`linux/amd64` and
+`linux/arm64`), public, no login required:
+
+```bash
+docker run --gpus all --rm -v /data/run:/workspace \
+    ghcr.io/malaiwah/quant-fidelity-measure:main doctor
+```
+
+The entrypoint mirrors this CLI (`measure`, `capture`, `stage`, `doctor`,
+`version`; `--dry-run` everywhere), so a provider that runs a custom image —
+RunPod, Vast — runs the measurement directly, with no machine to create, no
+state to poll, no disk to size and no filesystem root to guess. It reuses
+`bin/stage_measure.sh` verbatim rather than reimplementing a stage, so the two
+transports cannot drift apart.
+
+Results come back through a **sink you choose**, because a pod's filesystem is
+not yours to read: `stdout` always (framed and greppable), `file:PATH` onto a
+mount, `https://URL` as a `tar.gz` by PUT, and `--publish-root-to` for a sealed
+multi-GB dataset. The full contract, the RunPod worked example, and what each
+sink refuses to carry: [`docs/CONTAINER.md`](docs/CONTAINER.md).
+
 ### Recipe 2 — local: your own hardware
 
 Three things to know before pasting, because this runner is deliberately
