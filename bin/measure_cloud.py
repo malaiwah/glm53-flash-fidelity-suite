@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import signal
 import sys
 import threading
@@ -112,7 +113,18 @@ class Teardown:
         self.machine_id: Optional[int] = None
         self.fs_id: Optional[int] = None
         self.keep_fs = False
-        self.fs_root = "/home/jl_fs/fidelity"
+        # Where the run lives on the instance. JarvisLabs mounts its
+        # persistent filesystem at /home/jl_fs; a RunPod volume mounts at
+        # /workspace. Both stage scripts already honour FIDELITY_FS_ROOT and
+        # FIDELITY_K6_ROOT -- what was missing is that nothing ever SET them,
+        # so a non-JarvisLabs box would have written the whole run into the
+        # container's ephemeral layer and lost it on the first restart.
+        self.fs_root = ("/workspace/fidelity"
+                        if getattr(jl, "provider", "jarvislabs") == "runpod"
+                        else "/home/jl_fs/fidelity")
+        self.k6_root = ("/workspace/glm53-k6"
+                        if getattr(jl, "provider", "jarvislabs") == "runpod"
+                        else "/home/jl_fs/glm53-k6")
         self.lease_path: Optional[Path] = None
         self.done = False
         # CLI-02(b): re-entrancy is a SEPARATE flag from completion, so a
@@ -385,12 +397,18 @@ class Teardown:
         destroy, so a strict variant would fire the leak banner on every run.
         """
         try:
-            alive = {i.machine_id for i in self.jl.list_instances()}
+            # str(): ids are ints on one provider and opaque strings on
+            # another, and a mixed-type set silently never matches.
+            alive = {str(i.machine_id) for i in self.jl.list_instances()}
         except JLError:
             return None
         except Exception:                               # noqa: BLE001
             return None
-        return mid not in alive
+        # str() on BOTH sides. This is the "is it really gone?" check that
+        # decides whether the leak banner fires, so a silent type mismatch
+        # here would report a live, billing instance as destroyed -- the worst
+        # possible direction for this particular comparison to fail in.
+        return str(mid) not in alive
 
     def _destroy_instance(self) -> None:
         if self.machine_id is None:
@@ -614,7 +632,7 @@ def reaper_sweep(con: Console, *, dry: bool = False) -> int:
     # the live instance list, and say which.
     if not dry:
         try:
-            alive = {i.machine_id for i in jl.list_instances()}
+            alive = {str(i.machine_id) for i in jl.list_instances()}
         except JLError:
             alive = None
         if alive is not None:
@@ -624,7 +642,7 @@ def reaper_sweep(con: Console, *, dry: bool = False) -> int:
                 except (OSError, ValueError):
                     continue
                 mid = lease.get("machine_id")
-                if mid and int(mid) not in alive and int(mid) not in targets:
+                if mid and str(mid) not in alive and str(mid) not in targets:
                     con.say("reaper: retiring lease %s (machine %s is gone)"
                             % (path.name, mid))
                     path.unlink(missing_ok=True)
@@ -689,18 +707,66 @@ def would_refuse(con, plan: Dict[str, Any], refusal: "Refusal") -> None:
     plan.setdefault("would_refuse", []).append(refusal.reason)
 
 
-def _machine_id_of(created: Optional[Dict[str, Any]]) -> Optional[int]:
-    """Pull a machine id out of whatever shape `jl create` answered with.
+
+
+
+# Providers spell the same state differently: JarvisLabs "Running", RunPod
+# "RUNNING". A hardcoded exact match read every healthy RunPod poll as
+# not-running, and after two of those the controller declared a PREEMPTION and
+# tore down a box that was busy building exllamav3. Compared case-folded, in
+# one place, so a third provider cannot reintroduce it.
+_RUNNING_STATES = frozenset({"running", "run", "active", "ready"})
+
+
+def _is_running(inst) -> bool:
+    return inst is not None and str(getattr(inst, "status", "")).strip().lower() \
+        in _RUNNING_STATES
+
+
+def _stage_env(td: "Teardown") -> str:
+    """The two roots every stage script reads, as an inline env prefix.
+
+    Both scripts default to the JarvisLabs paths, which is correct there and
+    silently wrong anywhere else. Exporting them explicitly costs nothing on
+    JarvisLabs (the values are identical to the defaults) and is the whole
+    difference between a working and a lost run on any other provider.
+    """
+    return ("FIDELITY_FS_ROOT=%s FIDELITY_K6_ROOT=%s"
+            % (shlex.quote(td.fs_root), shlex.quote(getattr(td, "k6_root",
+                                                            "/home/jl_fs/glm53-k6"))))
+
+
+def _make_provider(name: str, *, dry: bool = False):
+    """The provider is one object with eighteen methods; everything else in
+    this file -- fit, cost band, lease, all four teardown layers, every stage
+    -- is written against that surface rather than against a vendor."""
+    if name == "runpod":
+        from fidelity.runpodapi import RunPod
+        return RunPod(dry=dry)
+    return JL(dry=dry)
+
+
+def _machine_id_of(created: Optional[Dict[str, Any]]) -> Optional[Any]:
+    """Pull a machine id out of whatever shape the provider answered with.
 
     A vendor that renames `machine_id` to `id` must not turn into a leaked
     instance, so this accepts either and returns None rather than raising.
+
+    It must also accept a NON-NUMERIC id. JarvisLabs machine ids are integers;
+    RunPod pod ids are opaque strings like `k2j9xq1abc`. The old
+    `str(value).isdigit()` test rejected those, returned None, and the
+    controller would have read that as "creation failed" -- while a pod was
+    running and billing. That is precisely the leak this function exists to
+    prevent, so the id is returned as-is when it is not an integer.
     """
     if not isinstance(created, dict):
         return None
-    for key in ("machine_id", "id", "instance_id"):
+    for key in ("machine_id", "pod_id", "id", "instance_id"):
         value = created.get(key)
-        if isinstance(value, (int, str)) and str(value).isdigit():
-            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.strip():
+            return int(value) if value.strip().isdigit() else value.strip()
     return None
 
 
@@ -1766,7 +1832,7 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
     # identity; the suffix is only the L3 expiry stamp.
     job_prefix = "fidcloud-%s-" % plan_data["job_id"]
     for inst in jl.list_instances():
-        if (inst.name or "").startswith(job_prefix) and inst.status == "Running":
+        if (inst.name or "").startswith(job_prefix) and _is_running(inst):
             con.step("adopting existing instance %d for this job (name %s)"
                      % (inst.machine_id, inst.name))
             td.adopt(inst.machine_id, fs_id=inst.fs_id)
@@ -1801,7 +1867,11 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
                     con.warn("`jl create` did not return a usable machine id; "
                              "recovered %s by name from `jl list`" % mid)
             if mid is not None:
-                td.adopt(int(mid))
+                # NOT int(): RunPod pod ids are opaque strings, and the
+                # cast raised AFTER the pod was created -- the controller died
+                # holding a running, billing instance it had not adopted, which
+                # is the one state teardown cannot cover.
+                td.adopt(mid)
         if td.machine_id is None:
             raise RuntimeError(
                 "`jl create` returned no machine id and no instance named %s "
@@ -2092,9 +2162,9 @@ def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
         else:
             run = jl.run_job(
                 td.machine_id,
-                "nohup setsid bash %s/bin/stage_measure.sh %s "
+                "%s nohup setsid bash %s/bin/stage_measure.sh %s "
                 ">>%s/logs/stage-%s.log 2>&1 </dev/null & echo launched %s"
-                % (td.fs_root, stage, td.fs_root, stage, stage))
+                % (_stage_env(td), td.fs_root, stage, td.fs_root, stage, stage))
             run_id = (run or {}).get("run_id") or (run or {}).get("id")
         outcome = _await_stage(con, jl, td, run_id, stage, deadline)
         if outcome == "done":
@@ -2135,7 +2205,8 @@ def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
         if stage != "setup":
             con.step("re-running setup after recovery (idempotent)")
             r = jl.run_job(td.machine_id,
-                           "bash %s/bin/stage_measure.sh setup" % td.fs_root)
+                           "%s bash %s/bin/stage_measure.sh setup"
+                           % (_stage_env(td), td.fs_root))
             _await_stage(con, jl, td, (r or {}).get("run_id"), "setup", deadline)
 
 
@@ -2186,7 +2257,7 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
             return "deadline"
         time.sleep(120)
         inst = jl.get(td.machine_id) if td.machine_id else None
-        if inst is None or inst.status not in ("Running",):
+        if not _is_running(inst):
             # Not running is not automatically preemption -- confirm before
             # acting, because a transient API blip should not trigger a rebuild.
             quiet += 1
@@ -2281,7 +2352,7 @@ def _recover(args, con, jl, td, plan_data) -> None:
         new_id = (res or {}).get("machine_id")
     if new_id is None:
         raise RuntimeError("could not recover the instance after preemption")
-    td.adopt(int(new_id))
+    td.adopt(new_id)   # opaque string on some providers; never int()
     con.ok("adopted machine", str(td.machine_id))
 
 
@@ -2334,6 +2405,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("subcommand", nargs="?", default=None,
                    choices=(None, "reaper", "adopt"),
                    help="reaper: manage the teardown backstop; adopt: resume a job")
+    p.add_argument("--provider", default="jarvislabs",
+                   choices=("jarvislabs", "runpod"),
+                   help="which cloud to rent from. The measurement is the same "
+                        "on any of them -- fp64 KLD is not vendor-specific -- "
+                        "but BITWISE determinism is a per-device property, so a "
+                        "row measured on one provider's silicon reproducing on "
+                        "another's is a RESULT, not an assumption.")
 
     t = p.add_argument_group("target")
     t.add_argument("--role", default="quant", choices=("quant", "root"),
@@ -2511,7 +2589,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return EXIT_REFUSED
 
     register_secret(os.environ.get("JL_API_KEY"))
-    jl = JL(dry=args.dry_run)
+    jl = _make_provider(getattr(args, "provider", "jarvislabs"), dry=args.dry_run)
     td = Teardown(jl, con, Path(args.out or ".").resolve())
     td.keep_fs = args.keep_fs
     td.hold_on_failure = bool(getattr(args, "hold_on_failure", False))
