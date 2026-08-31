@@ -664,6 +664,48 @@ def rung_release():
     check("C11o it runs this battery before building",
           "selftest_container.py" in text)
 
+    # The rungs above are string checks, because `bin/` runs on stock
+    # python3.9 with no installs and PyYAML is not stdlib. A workflow that does
+    # not PARSE fails only on GitHub, which is the one place this project
+    # cannot test -- so when a yaml is importable anywhere on this machine, use
+    # it, and SKIP loudly when it is not rather than pretending the string
+    # checks covered it.
+    #
+    # Finding the interpreter and PARSING THE FILE are two questions, asked
+    # separately on purpose: fold them together and an unparseable workflow
+    # comes back as "no yaml module here" -- a SKIP where a FAIL belongs, which
+    # is the fail-open shape this repository keeps paying for.
+    interp = None
+    for candidate in (sys.executable, str(SUITE / ".venv" / "bin" / "python"),
+                      "/opt/homebrew/bin/python3.14", "python3"):
+        if subprocess.run([candidate, "-c", "import yaml"],
+                          capture_output=True).returncode == 0:
+            interp = candidate
+            break
+    if interp is None:
+        print("  SKIP  C11o2 workflow YAML parse (no yaml module on any "
+              "interpreter here; the string rungs above are what ran)")
+    else:
+        probe = subprocess.run(
+            [interp, "-c",
+             "import yaml,json,sys;d=yaml.safe_load(open(sys.argv[1]));"
+             "print(json.dumps({'jobs':sorted(d['jobs']),"
+             "'platforms':[m['platform'] for m in "
+             "d['jobs']['build']['strategy']['matrix']['include']]}))",
+             str(wf)], capture_output=True, text=True)
+        check("C11o2 the workflow parses at all (%s)" % Path(interp).name,
+              probe.returncode == 0,
+              (probe.stderr or "").strip().splitlines()[-1:] and
+              (probe.stderr or "").strip().splitlines()[-1])
+        if probe.returncode == 0:
+            doc = json.loads(probe.stdout.strip().splitlines()[-1])
+            check("C11o3 ... with the four jobs",
+                  doc["jobs"] == ["build", "changelog", "manifest", "plan"],
+                  "%s" % doc["jobs"])
+            check("C11o4 ... and one matrix job per architecture",
+                  doc["platforms"] == ["linux/amd64", "linux/arm64"],
+                  "%s" % doc["platforms"])
+
     print("[C11p] the changelog groups by the topic convention, not by any token")
     known = [
         ("container: run the measurement as an IMAGE", ("container",
