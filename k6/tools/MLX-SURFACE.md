@@ -135,7 +135,7 @@ $PY stream_score.py --source mlx --profile mlx \
     --teacher $TEACH --cold-run 1 --out $ROOT/runs/mlx-1 --pipeline-root $PIPE
 
 # 6. aggregate -> malaiwah.glm53-mlx-packed-kld-summary.v1
-$PY k6_kld_report.py --profile mlx --teacher $TEACH \
+$PY kld_report.py --profile mlx --teacher $TEACH \
     --runs $ROOT/runs/mlx-1 $ROOT/runs/mlx-2 --out $RCPT/mlx-packed-kld.json
 
 # 7. registry row (the family does not name a lane, so --lane must)
@@ -149,7 +149,7 @@ reused.
 
 `--profile mlx` and `--source mlx` must be used together. The student label is
 derived from the artifact (`mlx-affine-b4-gs64-mixed-<hash of the bit
-histogram>`), so `k6_kld_report` gates the family prefix on the first run and
+histogram>`), so `kld_report` gates the family prefix on the first run and
 then requires that exact label of every other run.
 
 ## 5. Named exclusions (refused by name, never skipped silently)

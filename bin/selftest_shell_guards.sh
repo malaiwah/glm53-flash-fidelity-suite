@@ -142,14 +142,14 @@ else
 fi
 
 # ---------------------------------------------------------------- NUM-10
-# Every literal --profile a shell script hands to k6_kld_report.py must be one of
+# Every literal --profile a shell script hands to kld_report.py must be one of
 # that tool's argparse choices. `k6/stage_k6.sh` documented QP_STREAM_PROFILE=k6|k8
 # and composed `--profile "${STREAM_PROFILE}-stream"`, but `k8-stream` is not a
 # choice -- so a K8 streaming run died with argparse exit 2 AFTER the full capture.
 if python3 "$ROOT/bin/_check_kld_profiles.py" "$ROOT"; then
-  ok "NUM-10 every literal --profile handed to k6_kld_report is one of its choices"
+  ok "NUM-10 every literal --profile handed to kld_report is one of its choices"
 else
-  no "NUM-10 every literal --profile handed to k6_kld_report is one of its choices"
+  no "NUM-10 every literal --profile handed to kld_report is one of its choices"
 fi
 
 # ------------------------------------------------------- source-level asserts

@@ -8,7 +8,7 @@ Checks:
   1. every symbol the four tools import lazily exists in the patched pipeline;
   2. k6_driver's sealed-document builders round-trip through the pipeline's own
      verifiers (profile selection, preflight geometry);
-  3. k6_kld_report end-to-end on a fabricated sealed 25-window teacher/student
+  3. kld_report end-to-end on a fabricated sealed 25-window teacher/student
      pair (k6k8 summary path, CPU fp64) - the KLD of identical logits is 0 and
      the summary receipt/gate/comparison table are written;
   4. k6_driver's missing-r10-closure error path (exit 6 + closure_status.json).
@@ -204,7 +204,7 @@ def check_kld_report(python: str, pipeline_src: Path, workdir: Path) -> None:
     out = receipts / "k6k8-packed-kld.json"
     result = subprocess.run(
         [
-            python, str(TOOLS / "k6_kld_report.py"),
+            python, str(TOOLS / "kld_report.py"),
             "--profile", "k6k8",
             "--teacher", str(teacher_root),
             "--runs", *[str(run) for run in runs],
@@ -219,7 +219,7 @@ def check_kld_report(python: str, pipeline_src: Path, workdir: Path) -> None:
     )
     if result.returncode != 0:
         raise SystemExit(
-            f"k6_kld_report failed rc={result.returncode}\n{result.stdout}\n{result.stderr}"
+            f"kld_report failed rc={result.returncode}\n{result.stdout}\n{result.stderr}"
         )
     summary = json.loads(out.read_text())
     assert summary["quality_gate_passed"] is True
@@ -230,7 +230,7 @@ def check_kld_report(python: str, pipeline_src: Path, workdir: Path) -> None:
     # resume: reports must be reused, not recomputed
     result2 = subprocess.run(
         [
-            python, str(TOOLS / "k6_kld_report.py"),
+            python, str(TOOLS / "kld_report.py"),
             "--profile", "k6k8",
             "--teacher", str(teacher_root),
             "--runs", *[str(run) for run in runs],
@@ -240,7 +240,7 @@ def check_kld_report(python: str, pipeline_src: Path, workdir: Path) -> None:
         capture_output=True, text=True,
     )
     assert result2.returncode == 0, result2.stderr
-    print("k6_kld_report end-to-end OK (identical logits -> mean KLD 0, gate GREEN, resume OK)")
+    print("kld_report end-to-end OK (identical logits -> mean KLD 0, gate GREEN, resume OK)")
 
 
 def check_closure_error(python: str, pipeline_src: Path, workdir: Path) -> None:

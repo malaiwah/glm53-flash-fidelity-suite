@@ -9,7 +9,7 @@ first-time contributor pointing `bin/measure-cloud` at it got
 
 which was not true. `k6/tools/gguf_surface.py` had been bitwise-proven against
 `gguf-py` for months, `stream_score.py --source gguf` existed,
-`k6_kld_report.py --profile gguf` existed, and `registry_add.py` already had a
+`kld_report.py --profile gguf` existed, and `registry_add.py` already had a
 GGUF adapter that refuses a row with no scope census. What was missing was the
 lane wiring, so none of it was reachable. A capability nothing can invoke is
 indistinguishable from a missing one.

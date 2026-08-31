@@ -83,7 +83,7 @@ def main() -> int:
         if m.get("value") is None:
             con.err(
                 "the runs under %s carry no mean tokenwise KLD (the capture stage "
-                "writes LOGITS; the `score` stage runs k6_kld_report.py over them). "
+                "writes LOGITS; the `score` stage runs kld_report.py over them). "
                 "Run `stage_measure.sh score` before sealing, or pass --metrics-json."
                 % receipts)
             return 2
@@ -251,7 +251,7 @@ def main() -> int:
 def _run_mean(doc: Dict[str, Any]) -> Optional[float]:
     """The run's mean tokenwise KLD, wherever this engine puts it.
 
-    k6_kld_report's per-run `kld-report.json` nests it as summary.mean -- a
+    kld_report's per-run `kld-report.json` nests it as summary.mean -- a
     flat-key-only search found nothing there and sealed a NULL metric after a
     fully paid measurement.
     """
@@ -291,7 +291,7 @@ def _rollup(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
 def _aggregate(receipts: Path, con: Console) -> Optional[Dict[str, Any]]:
     """The lane scorer's OWN aggregate receipt, when the score stage ran.
 
-    `k6_kld_report.py --out <profile>-packed-kld.json` already computed the
+    `kld_report.py --out <profile>-packed-kld.json` already computed the
     mean of run means, the distinct tokenwise-kld hashes and the determinism
     verdict in fp64.  Recomputing them here from the per-run files would be a
     second implementation of the same arithmetic; read the sealed one instead

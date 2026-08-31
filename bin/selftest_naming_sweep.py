@@ -6,11 +6,15 @@ the code is being swept to follow.  A sweep like that is a global rewrite of
 identifiers, which is exactly the operation that can silently destroy a
 published number:
 
-  N1  a registry id or a receipt schema string is a HASHED, PUBLISHED
-      identity.  `COMPARABILITY_KEY_FIELDS` hashes `panel_id` and
-      `reference_id`, so renaming one regroups every measurement that
-      referenced it -- with no error anywhere.  `bin/published-identity.json`
-      freezes all of them; this file refuses a tree where one has vanished.
+  N1  a registry id, a receipt schema string, or a provenance PATH is a
+      HASHED, PUBLISHED identity.  `COMPARABILITY_KEY_FIELDS` hashes
+      `panel_id` and `reference_id`, so renaming one regroups every
+      measurement that referenced it -- with no error anywhere.  `harness_id`
+      is a sha256 over {boundary, [{role, PATH, sha256}], tool_versions}, so a
+      code path a published row names is inside that hash and must keep the
+      spelling the tree had WHEN THE NUMBER RAN, however the tree is arranged
+      today.  `bin/published-identity.json` freezes all of them; this file
+      refuses a tree where one has vanished.
 
   N2  a filesystem ROOT on rented hardware with a MODEL or CAMPAIGN name
       baked into it.  This is the same defect as a root with a PROVIDER name
@@ -73,6 +77,8 @@ for key, what in (
          "schema strings inside sealed receipts"),
         ("code_schema_literals",
          "schema literals the code emits into receipts"),
+        ("provenance_paths",
+         "code paths a published row names as its provenance"),
 ):
     gone = sorted(set(frozen[key]) - set(live[key]))
     check("every frozen %s still exists (%d frozen, %d live)"

@@ -39,7 +39,7 @@ Python: `bin/` tools run on **py3.9** (system `python3`) with **stdlib only**; t
 | `bin/fidelity/dsformat.py` | 3.9 | stdlib | Format constants, path rules, the five digest preimages, `capture_content_digest`, seal/verify, `checksums.txt` read/write, manifest read/write. **No torch at import.** |
 | `bin/fidelity/dsmanifest.py` | 3.9 | stdlib | Manifest builders: `from_stream_capture()`, `from_hidden_capture()`, `from_serving_manifest()`, `panel_binding()`, `head_block()`, `runtime_block()`, `coverage_block()`. |
 | `bin/fidelity/dsvalidate.py` | 3.9 | stdlib | Structural + seal validator: JSON Schema via the registry's vendored `_minischema`, plus the ~40 rules the schema cannot express. |
-| `bin/fidelity/dscompare.py` | torch | torch, safetensors | The gate ladder and the fp64 estimator. Imports from `k6_kld_report` and `hidden_replay`; reimplements nothing. |
+| `bin/fidelity/dscompare.py` | torch | torch, safetensors | The gate ladder and the fp64 estimator. Imports from `kld_report` and `hidden_replay`; reimplements nothing. |
 | `bin/fidelity/dsadapt.py` | 3.9 | stdlib | Foreign-format adapters: `k3v1`, `k3v0_window`, `llamacpp_kld`, `malaiwah_serving_v2`. |
 | `bin/fidelity/dshub.py` | 3.9 | stdlib (+ `huggingface_hub` when importable) | Fetch / publish / list. Token read from `HF_TOKEN` or a file path; registered with `common.register_secret()` **before** anything can print. |
 | `bin/fidelity/cardmeta.py` | 3.9 | `PyYAML` when present, else a refusal | Card generator + validator (Layers 1 and 2), the three validation axes, `.eval_results/` v2 emitter behind a flag. |
@@ -229,7 +229,7 @@ Then computes (spec §10.2), then writes `<out>/comparison-receipt.json` and
 
 Two behaviours worth naming because they are easy to get wrong:
 
-* **`k6_kld_report` resume semantics.** If `<run>/kld-report.json` already exists it is returned
+* **`kld_report` resume semantics.** If `<run>/kld-report.json` already exists it is returned
   as-is after a `student_label` check. The comparator must either respect that (and say so in the
   receipt) or write into a fresh directory. Silently reusing a stale report is the failure mode.
 * **`glm53_logits.load_capture_receipt` enforces an exact 10-key set** on every `logit_files[]` row
@@ -516,7 +516,7 @@ Beyond spec §14, which lists the format-level exclusions:
 
 | # | item | default |
 |---|---|---|
-| 1 | `quant_pipeline` is not installed on this Mac (only scratchpad checkouts). Tools importing `glm53_logits` need a path. | Accept `--pipeline-root` / `QP_PIPELINE_ROOT` exactly as `stream_score.py` and `k6_kld_report.py` do. Do **not** vendor `glm53_logits.py`. |
+| 1 | `quant_pipeline` is not installed on this Mac (only scratchpad checkouts). Tools importing `glm53_logits` need a path. | Accept `--pipeline-root` / `QP_PIPELINE_ROOT` exactly as `stream_score.py` and `kld_report.py` do. Do **not** vendor `glm53_logits.py`. |
 | 2 | No sealed token-panel receipt exists locally; the only real one is a scratchpad copy whose `artifacts[]` are `/workspace/...` absolute paths. | Synthetic panels for all fixtures; the remap path (§7.4) is exercised with a synthetic sealed receipt. |
 | 3 | Two head-digest conventions live in our published receipts (`47eaf729…` file vs `aa21c427…` content). | Content is normative; the generator carries both; comparing across conventions is a hard error (H11). |
 | 4 | Our two lanes disagree on the hidden tensor key (`hidden` vs `hidden_states`). | `hidden_states` is normative; readers accept `hidden` from pre-v1 artifacts and rewrite on ingest with a disclosure. |
@@ -534,7 +534,7 @@ the plan:
 | # | planned | built | why |
 |---|---|---|---|
 | 1 | `registry/` gains a `registry_add` adapter, two disclosure codes and four invariants | **nothing under `registry/` was touched**; the changes are specified in [`REGISTRY-INTEGRATION.md`](REGISTRY-INTEGRATION.md) | the sequential measurement workflow holds `registry/schema/invariants.json`, `registry/data/*.jsonl`, `registry/index.json`, `registry/Makefile` and `registry/tools/seed_registry.py` open in the working tree, and `make check` passed through an intermediate 11-error state during this work. Editing a 90-invariant file another workflow is editing is how you get a conflict in the one place correctness is enforced. `make check` ends at 62 passed / 0 failed with none of this work in it. |
-| 2 | `bin/fidelity/dscompare.py` is a torch module | the **gate ladder is stdlib + numpy** and torch is imported lazily inside the estimator | every refusal (head, panel, lane, coverage, lossy) is then testable on the system python3 with no GPU, which is where the whole synthetic matrix runs. `k6_kld_report._token_kld` is still imported and called whenever torch is present, and `comparator.estimator_backend` records which path ran (addendum A-3). |
+| 2 | `bin/fidelity/dscompare.py` is a torch module | the **gate ladder is stdlib + numpy** and torch is imported lazily inside the estimator | every refusal (head, panel, lane, coverage, lossy) is then testable on the system python3 with no GPU, which is where the whole synthetic matrix runs. `kld_report._token_kld` is still imported and called whenever torch is present, and `comparator.estimator_backend` records which path ran (addendum A-3). |
 | 3 | `adapt` always emits a conformant dataset | `adapt --source k3v1 / k3v0-window / llamacpp-kld` emits a **translation report** when the tensors are not local | a sealed dataset requires the bytes: `capture_content_digest` and `checksums.txt` cannot be computed from metadata. Saying so is better than inventing a digest. `adapt --source malaiwah-serving-v2` emits a full sealed dataset, because those tensors ARE local. |
 | 4 | `capture` builds the dataset from a live capture tree | `capture` runs the pre-flight refusals, execs the wrapped scorer, and `--dry-run` works end to end; **assembling from a live tree is the one path this machine cannot exercise** | no GPU. The builders (`dsmanifest.DatasetWriter`) and the tree reader (`dsadapt.adapt_serving_v2`) are both exercised against real published tensors, so the untested seam is narrow and named. |
 | 5 | `validate` writes `validation/structural-validation.json` into the dataset | it is written by `capture`/`adapt` **before** the seal; `validate` writes to `--json OUT` | a post-seal write is an `unlisted_file` refusal, and resealing would change `dataset_sha256` and break the external anchor (addendum A-2). |

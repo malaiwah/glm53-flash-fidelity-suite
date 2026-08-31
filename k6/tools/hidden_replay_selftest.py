@@ -61,7 +61,7 @@ def main() -> int:
     import torch
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import k6_kld_report
+    import kld_report
 
     results = []
 
@@ -73,10 +73,10 @@ def main() -> int:
 
     # ---- [a] estimator identity + direction ------------------------------
     x = torch.randn(5, 33, dtype=torch.float64) * 3
-    same, matches = k6_kld_report._token_kld(x.clone(), x.clone(), "cpu")
+    same, matches = kld_report._token_kld(x.clone(), x.clone(), "cpu")
     y = x.clone()
     y[:, 0] += 1.5  # boost one logit in the STUDENT -> teacher-weighted penalty
-    diff, _ = k6_kld_report._token_kld(x, y, "cpu")
+    diff, _ = kld_report._token_kld(x, y, "cpu")
     ref = kl_reference(x.numpy(), y.numpy())
     a_ok = (
         bool((same == 0.0).all())
@@ -112,9 +112,9 @@ def main() -> int:
     head_c = (torch.randn(vocab_c, hid_c) / math.sqrt(hid_c)).to(torch.bfloat16)
     live = (hidden_c @ head_c.t()).float() * 4.0        # bf16 matmul, upcast (the serving-ish path)
     replay = (hidden_c.float() @ head_c.float().t()) * 4.0  # fp32 replay of the same bf16 inputs
-    kld_close, match_close = k6_kld_report._token_kld(live, replay, "cpu")
+    kld_close, match_close = kld_report._token_kld(live, replay, "cpu")
     perm = torch.randperm(vocab_c)
-    kld_perm, _ = k6_kld_report._token_kld(live, replay[:, perm], "cpu")
+    kld_perm, _ = kld_report._token_kld(live, replay[:, perm], "cpu")
     c_ok = (
         float(kld_close.mean()) < 5e-3
         and float(kld_perm.mean()) > 100 * float(kld_close.mean())
@@ -128,8 +128,8 @@ def main() -> int:
     mono = hidden_replay._replay_logits(hidden_c, head_c.float().t().contiguous(), "cpu")
     chunked = hidden_replay._replay_logits(hidden_c, head_c.float().t().contiguous(), "cpu",
                                            vocab_chunk=100)
-    kld_mono, _ = k6_kld_report._token_kld(live, mono * 4.0, "cpu")
-    kld_chunk, _ = k6_kld_report._token_kld(live, chunked * 4.0, "cpu")
+    kld_mono, _ = kld_report._token_kld(live, mono * 4.0, "cpu")
+    kld_chunk, _ = kld_report._token_kld(live, chunked * 4.0, "cpu")
     delta_means = abs(float(kld_mono.mean()) - float(kld_chunk.mean()))
     bitwise_fraction = float((mono == chunked).float().mean())
     d_ok = delta_means < 1e-9 and float(np.abs(kld_mono - kld_chunk).max()) < 1e-9

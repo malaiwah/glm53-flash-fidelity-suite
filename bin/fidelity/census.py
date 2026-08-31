@@ -197,7 +197,7 @@ class Census:
 
 # GLM-5.3-Flash geometry, pinned so `--dry-run` works with no network at all.
 # Values are the authoritative config's, cross-checked against dione_surface.py
-# (MAIN_ROUTED_LAYERS = range(3,45), NUM_EXPERTS = 288) and k6_kld_report.py
+# (MAIN_ROUTED_LAYERS = range(3,45), NUM_EXPERTS = 288) and kld_report.py
 # (vocab 154880, 25 windows x 2047 positions).
 GLM53_FLASH_CONFIG: Dict[str, Any] = {
     "architectures": ["Glm5NextForConditionalGeneration"],

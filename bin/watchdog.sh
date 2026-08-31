@@ -31,6 +31,10 @@ stop_work() {  # stop_work <reason>
   # Kill the measurement, not the whole box: the seal step below still needs a
   # working shell, and a half-written receipt is worse than none.
   pkill -f 'stage_measure.sh' 2>/dev/null || true
+  pkill -f 'student_capture.py' 2>/dev/null || true
+  # The pre-2026-08-31 name. A box bootstrapped from an older bundle is still
+  # running a process called k6_student_capture.py, and a watchdog that cannot
+  # stop the workload it was hired to stop is a billing leak.
   pkill -f 'k6_student_capture.py' 2>/dev/null || true
   pkill -f 'stream_score.py' 2>/dev/null || true
   pkill -f 'torchrun' 2>/dev/null || true

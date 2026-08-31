@@ -2,7 +2,7 @@
 """T13 -- the GGUF LANE wiring: shelf -> plan -> argv -> fetch -> receipt.
 
 `k6/tools/gguf_surface.py` could already read a llama.cpp container, and
-`stream_score.py` could already score one, and `k6_kld_report.py` and
+`stream_score.py` could already score one, and `kld_report.py` and
 `registry_add.py` already knew the family.  None of that was reachable: the
 lane did not classify a GGUF repo as anything, so `bin/measure-cloud` refused
 `unsloth/GLM-5.3-Flash-GGUF` -- the largest quant audience this model has --

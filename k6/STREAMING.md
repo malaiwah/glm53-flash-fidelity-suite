@@ -10,7 +10,7 @@ dtypes, with one residency change.
 
 ## 1. Why one GPU is enough
 
-The sealed scorer (`tools/k6_student_capture.py`) calls
+The sealed scorer (`tools/student_capture.py`) calls
 `glm53_packed_k4_reader.load_complete_surface()` and then
 `install_local_main_experts()`, which decodes **every** routed expert to BF16 up
 front and holds it resident for the whole run. Measured from the sealed
@@ -277,7 +277,7 @@ materialization pass).
 | **L1.b EP emulation** | `ep_router_remap` matches `transformers.distributed.tensor_parallel.EpRouterParallel.transform_output_post_forward` **exactly** on random routing tables; every `--reduce-order` lands within **0.69 bf16 ULP** of the single-device call (budget 4 ULP) |
 | **L1.c forward plumbing** | streaming build vs stock `from_pretrained` on the 0.1B architecturally-complete fixture: **`bitwise_equal: true`, `max_abs_logit_delta: 0.0`**, `missing_keys 0` |
 | **L1.d receipt schema** | the emitted `capture-receipt.json` shape is accepted by `quant_pipeline…glm53_logits.load_capture_receipt` |
-| **L1.e KLD estimator** | `k6_kld_report._token_kld` vs closed-form fp64 KL: max abs **8.5e-16**; KL(p‖p) exactly **0.0**; the sealed `tokenwise-kld.npy` reshapes to (25, 2047) with per-window means matching the sealed report to **exactly 0.0** |
+| **L1.e KLD estimator** | `kld_report._token_kld` vs closed-form fp64 KL: max abs **8.5e-16**; KL(p‖p) exactly **0.0**; the sealed `tokenwise-kld.npy` reshapes to (25, 2047) with per-window means matching the sealed report to **exactly 0.0** |
 
 **L1.c is the load-bearing result: the streaming machinery itself contributes
 zero error.** The filtered-index build, the slab binding and the plain-attribute
@@ -347,7 +347,7 @@ preflights every input and fails closed, stages the payload store locally, runs 
 `QP_STREAM_RUNS` (default 2) cold streaming runs, checks cross-run determinism on
 the **tensor payload region** (whole-file sha differs by design: `__metadata__`
 carries `cold_run`), auto-escalates to 5 cold runs if they differ, produces the
-fp64 report through the unmodified `k6_kld_report.py --profile k6-stream`, writes
+fp64 report through the unmodified `kld_report.py --profile k6-stream`, writes
 `receipts/stream-verdict.json`, and sends one ntfy. It publishes nothing.
 
 ---
@@ -572,7 +572,7 @@ python tools/stream_score_selftest.py --packed-root … --fixture … --pipeline
 
 `capture-receipt.json` is schema-identical to the sealed one — same
 `capture_role`, same `student_label` (`uniform-k6`), same ten-key `logit_files`
-rows — so `k6_kld_report.py` consumes a streaming run unmodified. Use
+rows — so `kld_report.py` consumes a streaming run unmodified. Use
 `--profile k6-stream`: it keeps the `uniform-k6` label (so the per-run
 `kld-report.json` is directly comparable to the sealed one) and takes the
 `malaiwah.*` summary branch, because the sealed K6 receipt chain requires a
@@ -686,12 +686,12 @@ separate step that hashes them.
 
 * `--source native` and `--profile native-bf16` must be used together; either
   one alone is a hard error, because the profile is what tells
-  `k6_kld_report.py` which `student_label` to expect.
+  `kld_report.py` which `student_label` to expect.
 * A routed tensor absent from the BF16 index fails before a GPU is touched
   (`routed_tensor_census`), naming the first missing tensor.
 * The load report still requires `missing_keys 0 / mismatched_keys 0 /
   error_msgs 0` and refuses if a single NON-routed tensor was left unloaded.
-* `k6_kld_report.py --profile native-bf16` expects `capture_role:
+* `kld_report.py --profile native-bf16` expects `capture_role:
   native_bf16_student` and refuses a packed receipt (and vice versa).
 
 ### Offline validation — rung L1.f
@@ -944,7 +944,7 @@ layer 45.
 ### Fail-closed behaviour
 
 * `--source nvfp4` and `--profile nvfp4` must be used together (the profile is
-  what tells `k6_kld_report.py` which `student_label` to expect).
+  what tells `kld_report.py` which `student_label` to expect).
 * `--bf16` is refused with an explanation, not ignored.
 * `--nvfp4-revision` must be an immutable 40-hex commit.
 * Every expert tensor in the index must be a KNOWN component of a KNOWN module;
@@ -1176,7 +1176,7 @@ gguf_student`, `bits: null`, the file list, the measured ggml type census, the
 quantizer's own metadata (including unsloth's imatrix keys), a
 `seal_disclosure`, and a `scope_policy` block **measured from the artifact's
 own tensor table** — which tensors carry a quantized ggml type — never
-asserted from the format's name. `k6_kld_report.py --profile gguf` lifts all of
+asserted from the format's name. `kld_report.py --profile gguf` lifts all of
 it into `malaiwah.glm53-gguf-packed-kld-summary.v1`, and `registry_add.py`
 turns it into `unsealed_source` + `quantization_scope_whole_model` disclosures.
 A GGUF summary without `gguf_files` or without `scope_policy` is refused, not

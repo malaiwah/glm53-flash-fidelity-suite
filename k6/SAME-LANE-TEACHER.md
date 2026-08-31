@@ -58,7 +58,7 @@ run's tree is then the teacher: 31.7 GB of fp32 logits + 4 receipts.
 What `--capture-role teacher` changes, and only this:
 
 * `capture_role` becomes `bf16_teacher` (the exact predicate
-  `k6_kld_report._find_teacher_receipt` discovers teachers by — schema stays
+  `kld_report._find_teacher_receipt` discovers teachers by — schema stays
   `quant-pipeline.glm53-logit-capture.v1`, verified by ladder rung L1.g);
 * the receipt gains a sealed additive block `teacher_provenance`
   (`schema: malaiwah.glm53-same-lane-teacher-provenance.v1`, carrying
@@ -133,7 +133,7 @@ Consequences, by the registry's own arithmetic:
 ## Portability rule (already implemented)
 
 A teacher tree moved off its capture box keeps the receipt's absolute logit
-paths. `k6_kld_report.py` and `bin/kld-preview` fall back to
+paths. `kld_report.py` and `bin/kld-preview` fall back to
 `<teacher_root>/logits/<basename>` and, **in the fallback path only**, verify
 the file's sha256 against the receipt row before use — hash content, not
 containers. The sealed fast path (recorded path exists) is byte-identical to

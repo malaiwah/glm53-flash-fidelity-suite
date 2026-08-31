@@ -374,7 +374,7 @@ def run_compare(args: argparse.Namespace) -> int:
     import torch
 
     import stream_score  # for resolve_device / apply_numeric_policy (reuse, not reimplementation)
-    import k6_kld_report  # for _token_kld / teacher resolution (the sealed estimator, reused)
+    import kld_report  # for _token_kld / teacher resolution (the sealed estimator, reused)
 
     device = stream_score.resolve_device(args.device)
     numeric_policy = stream_score.apply_numeric_policy(device)
@@ -406,12 +406,12 @@ def run_compare(args: argparse.Namespace) -> int:
 
     # ---- teacher ---------------------------------------------------------
     teacher_root = args.teacher.resolve()
-    teacher_receipt_path = k6_kld_report._find_teacher_receipt(teacher_root)
+    teacher_receipt_path = kld_report._find_teacher_receipt(teacher_root)
     from quant_pipeline.evaluation.glm53_logits import load_capture_receipt
 
     teacher = load_capture_receipt(teacher_receipt_path, expected_role="bf16_teacher")
-    teacher_rows = k6_kld_report._record_map(teacher)
-    teacher_paths = k6_kld_report._resolve_teacher_paths(teacher_rows, teacher_root, sha256_file)
+    teacher_rows = kld_report._record_map(teacher)
+    teacher_paths = kld_report._resolve_teacher_paths(teacher_rows, teacher_root, sha256_file)
     vocab = int(teacher["vocab_size"])
     if vocab != EXPECTED_VOCAB:
         raise _fail(f"teacher vocab {vocab} != {EXPECTED_VOCAB}")
@@ -469,15 +469,15 @@ def run_compare(args: argparse.Namespace) -> int:
             window_top1 = 0
             for start in range(0, count, chunk):
                 stop = min(start + chunk, count)
-                live = k6_kld_report._load_slice(student_path, start, stop)
-                teacher_logits = k6_kld_report._load_slice(teacher_paths[window_id], start, stop)
+                live = kld_report._load_slice(student_path, start, stop)
+                teacher_logits = kld_report._load_slice(teacher_paths[window_id], start, stop)
                 replay_chunk = replayed[start:stop]
-                values, matches = k6_kld_report._token_kld(live, replay_chunk, device_str)
+                values, matches = kld_report._token_kld(live, replay_chunk, device_str)
                 window_replay[start:stop] = values
                 window_top1 += matches
-                values_a, _ = k6_kld_report._token_kld(teacher_logits, live, device_str)
+                values_a, _ = kld_report._token_kld(teacher_logits, live, device_str)
                 window_live_teacher[start:stop] = values_a
-                values_b, _ = k6_kld_report._token_kld(teacher_logits, replay_chunk, device_str)
+                values_b, _ = kld_report._token_kld(teacher_logits, replay_chunk, device_str)
                 window_replay_teacher[start:stop] = values_b
             del replayed
 
@@ -580,8 +580,8 @@ def run_compare(args: argparse.Namespace) -> int:
                 window_alt = np.empty(count, dtype=np.float64)
                 for start in range(0, count, chunk):
                     stop = min(start + chunk, count)
-                    live = k6_kld_report._load_slice(student_path, start, stop)
-                    values, _ = k6_kld_report._token_kld(live, replay_alt[start:stop], device_str)
+                    live = kld_report._load_slice(student_path, start, stop)
+                    values, _ = kld_report._token_kld(live, replay_alt[start:stop], device_str)
                     window_alt[start:stop] = values
                 alt_values.append(window_alt)
                 del replay_default, replay_alt
@@ -629,7 +629,7 @@ def run_compare(args: argparse.Namespace) -> int:
         "cut_statement": CUT_STATEMENT,
         "kld_definition": "per-token KL(live_logits || replayed_logits) over the full vocabulary, fp64",
         "panel_kld_definition": "KL(teacher || student) over the full vocabulary, fp64 -- "
-                                "the sealed estimator (k6_kld_report._token_kld), reused not reimplemented",
+                                "the sealed estimator (kld_report._token_kld), reused not reimplemented",
         "replay_definition": "logits' = hidden @ head^T computed in fp32 (bf16 hidden and bf16 head "
                              "upcast to fp32; TF32 off; float32_matmul_precision highest)",
         "hidden_dtype": "bfloat16",
@@ -650,7 +650,10 @@ def run_compare(args: argparse.Namespace) -> int:
         "code_identity": {
             "hidden_replay_sha256": sha256_file(Path(__file__).resolve()),
             "stream_score_sha256": sha256_file(TOOLS_DIR / "stream_score.py"),
-            "k6_kld_report_sha256": sha256_file(TOOLS_DIR / "k6_kld_report.py"),
+            # The KEY keeps its 2026-08 spelling: it is a field of the
+            # sealed malaiwah.glm53-hidden-replay-equivalence.v1 receipt, whose
+            # receipt_sha256 covers it. Only the FILE moved (kld_report.py).
+            "k6_kld_report_sha256": sha256_file(TOOLS_DIR / "kld_report.py"),
         },
     }
     out_path = args.out.resolve()

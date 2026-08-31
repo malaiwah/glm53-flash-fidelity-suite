@@ -290,7 +290,7 @@ Running `_token_kld` **verbatim** confirms it end-to-end:
 | **640** | **1** |
 | 1024 | **1** |
 
-`k6_kld_report.py`'s own default is 16 (`--chunk-positions`, line 685), which is
+`kld_report.py`'s own default is 16 (`--chunk-positions`, line 685), which is
 deeper inside the split regime still.
 
 **How much of the 2.973e-04 is this?** Almost none. At chunk 512 the two groups'

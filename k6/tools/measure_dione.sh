@@ -38,7 +38,7 @@ run_one() {
   fi
   QP_GLM53_EP_SIZE=8 QP_PIPELINE_ROOT=$PIPE PYTHONPATH=$PIPE/src:$R/shapleymcg:$R/sqg-mcg NVIDIA_TF32_OVERRIDE=0 \
   $V/torchrun --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 \
-    $R/tools/k6_student_capture.py --surface dione --profile dione \
+    $R/tools/student_capture.py --surface dione --profile dione \
     --dione-root $Q4 --dione-repo 0xSero/GLM-5.3-Flash-EXL3-Q4 --dione-revision $REV \
     --bf16 $BF16 --teacher $TEACH --cold-run $n \
     --out $RCPT/dione-q4-student-run$n --pipeline-root $PIPE
@@ -94,11 +94,11 @@ if [ "$H1" != "$H2" ]; then
 fi
 
 QP_PIPELINE_ROOT=$PIPE PYTHONPATH=$PIPE/src:$R/shapleymcg:$R/sqg-mcg \
-  # `dione` is not a profile k6_kld_report accepts -- its choices are dione-q4 /
+  # `dione` is not a profile kld_report accepts -- its choices are dione-q4 /
   # dione-3.0bpw -- so this line exited 2 as committed, after both captures. And
   # the report was written without a .json suffix while the find below looks for
   # `*dione-q4*kld*.json`, so the search could never have matched it.
-  $V/python $R/tools/k6_kld_report.py --profile dione-q4 --teacher $TEACH \
+  $V/python $R/tools/kld_report.py --profile dione-q4 --teacher $TEACH \
     --runs $RUNS --out $RCPT/dione-q4-kld.json || { echo REPORT_FAILED; exit 1; }
 echo Q4_REPORT_DONE
 find $RCPT -maxdepth 2 -name "*dione-q4*kld*.json" | head -3

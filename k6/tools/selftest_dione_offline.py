@@ -19,7 +19,7 @@ Proves, on this machine:
      (dione-evidence/index-q4.json, repo revision 99cccdf0) closes at
      580,608 packed / 2,482 retained, and the retained set + routed originals
      exactly biject the REAL official BF16 index (a6c167b6).
-  5. DRY-RUN - `dione_surface.py dry-run` and `k6_student_capture.py
+  5. DRY-RUN - `dione_surface.py dry-run` and `student_capture.py
      --surface dione --dry-run` run to plan-print against a mock snapshot
      carrying the real config/index/manifest plus a synthetic sealed panel.
 
@@ -321,7 +321,7 @@ def main() -> int:
 
         run = subprocess.run(
             [
-                sys.executable, str(TOOLS / "k6_student_capture.py"),
+                sys.executable, str(TOOLS / "student_capture.py"),
                 "--surface", "dione", "--profile", "dione",
                 "--dione-root", str(mock_q4),
                 "--dione-repo", "0xSero/GLM-5.3-Flash-EXL3-Q4",
@@ -342,7 +342,7 @@ def main() -> int:
         assert plan["bits"] == 4 and plan["windows"] == 2
         assert plan["seal_disclosure"] == ds.SEAL_DISCLOSURE
         passed.append(
-            "5 dry-run: dione_surface CLI + k6_student_capture --surface dione "
+            "5 dry-run: dione_surface CLI + student_capture --surface dione "
             "reach plan-print on the REAL config/index"
         )
     else:

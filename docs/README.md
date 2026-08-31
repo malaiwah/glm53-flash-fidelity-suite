@@ -33,7 +33,7 @@ bin/fidelity-card         annotate | validate
 bin/fidelity/dsformat.py     the five digest preimages, the seal, checksums.txt, path rules
 bin/fidelity/dsmanifest.py   builders + the DatasetWriter that lays out the tree in seal order
 bin/fidelity/dsvalidate.py   JSON Schema (via the registry's vendored _minischema) + ~40 rules
-bin/fidelity/dscompare.py    the gate ladder + the fp64 estimator (k6_kld_report._token_kld)
+bin/fidelity/dscompare.py    the gate ladder + the fp64 estimator (kld_report._token_kld)
 bin/fidelity/dsadapt.py      k3v1 | k3v0-window | malaiwah-serving-v2 | llamacpp-kld
 bin/fidelity/dshub.py        digest-driven fetch, refusing publish
 bin/fidelity/cardmeta.py     the card generator and its three validation axes

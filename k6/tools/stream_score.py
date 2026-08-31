@@ -3,7 +3,7 @@
 
 Why this exists
 ---------------
-The sealed measurement (``tools/k6_student_capture.py``) calls
+The sealed measurement (``tools/student_capture.py``) calls
 ``glm53_packed_k4_reader.load_complete_surface`` and then
 ``install_local_main_experts``, which decodes EVERY routed expert to BF16 up
 front (~609 GB across 42 executed layers) and runs an ``torchrun`` EP8 forward
@@ -73,7 +73,7 @@ Outputs
 -------
 ``<out>/{plan,reader-identity,backend,capture-receipt}.json`` and
 ``<out>/logits/window-%04d.safetensors`` in the SAME schema family as
-``k6_student_capture.py``, so ``k6_kld_report.py`` consumes this run unmodified
+``student_capture.py``, so ``kld_report.py`` consumes this run unmodified
 (use ``--profile k6-stream``; the ``student_label`` stays ``uniform-k6`` so the
 per-run ``kld-report.json`` is directly comparable to the sealed one).
 ``backend.json`` and ``capture-receipt.json`` additionally carry a
@@ -136,7 +136,7 @@ STREAM_BACKEND_SCHEMA = "malaiwah.glm53-streaming-offline-reader-backend.v1"
 # artifact-specific.  backend_identity_sha256 hashes checkpoint identity and
 # per-quant dtypes alongside the lane, so it differs between two quants on
 # the SAME lane and cannot answer "same lane?" -- this hash can (statistical
-# review, 2026-08-28).  Emitted in backend.json; k6_kld_report copies it
+# review, 2026-08-28).  Emitted in backend.json; kld_report copies it
 # into future reports so fidelity-stats can gate on its equality.
 STREAM_LANE_IDENTITY_SCHEMA = "malaiwah.glm53-streaming-lane-identity.v1"
 CAPTURE_SCHEMA = "quant-pipeline.glm53-logit-capture.v1"
@@ -150,7 +150,7 @@ NATIVE_STUDENT_IDENTITY_SCHEMA = "malaiwah.glm53-native-bf16-student-identity.v1
 NATIVE_STUDENT_LABEL = "native-bf16"
 NATIVE_CAPTURE_ROLE = "native_bf16_student"
 # stock-exllamav3 (exl3hf) profiles: profile -> (declared bpw, student label).
-# The label must match k6_kld_report's map for the same profile.
+# The label must match kld_report's map for the same profile.
 EXL3HF_PROFILES = {
     "turbo-4.05bpw": (4.05, "turboderp-exl3-mul1-4.05bpw"),
     "turbo-3.05bpw": (3.05, "turboderp-exl3-mul1-3.05bpw"),
@@ -158,7 +158,7 @@ EXL3HF_PROFILES = {
     # above, at a lower rate AND a lower head: the release declares
     # head_bits 5, not the 6 that 4.05/3.05 declare.  Nothing here encodes
     # that -- declared_head_bits is READ off the artifact -- but the display
-    # strings in k6_kld_report do, so they must say 5 for this profile.
+    # strings in kld_report do, so they must say 5 for this profile.
     "turbo-2.05bpw": (2.05, "turboderp-exl3-mul1-2.05bpw"),
     # vcruz305's K2 pack: the same STOCK-exllamav3 HF storage layout (canonical
     # index, per-module {trellis,suh,svh,<codebook>}, official unfused tensor
@@ -169,12 +169,12 @@ EXL3HF_PROFILES = {
     "vcruz-k2-2bpw": (2.0, "vcruz305-exl3-mcg-2bpw"),
 }
 # TR3-published (sealed EXL3/MCG, routed-experts-only) profiles.  Same shape as
-# EXL3HF_PROFILES and the same rule: the label must match k6_kld_report's map.
+# EXL3HF_PROFILES and the same rule: the label must match kld_report's map.
 TR3_PROFILES = {
     "tr3-4bpw": (4.0, "tr3-exl3-mcg-4bpw"),
 }
 # Dione (0xSero selective-EXL3, TP4-sliced, routed experts only) profiles.
-# Same rule again: the label must match k6_kld_report's map for the profile,
+# Same rule again: the label must match kld_report's map for the profile,
 # and the profile names the receipt family
 # malaiwah.glm53-<profile>-packed-kld-summary.v1.
 DIONE_PROFILES = {
@@ -229,7 +229,7 @@ def preview_position_indices(seed: int, window_id: str, n_positions: int,
 
 
 # --------------------------------------------------------------------------
-# pipeline import (identical resolution order to k6_student_capture.py)
+# pipeline import (identical resolution order to student_capture.py)
 # --------------------------------------------------------------------------
 def _pipeline_src(pipeline_root: Path) -> Path:
     for candidate in ("runtime/src", "src", "."):
@@ -342,7 +342,7 @@ def probe_grouped_mm_kernel(device) -> Dict[str, Any]:
 
 
 def apply_numeric_policy(device) -> Dict[str, Any]:
-    """Reproduce k6_student_capture.py:381-383 plus the environment it ran in."""
+    """Reproduce student_capture.py:381-383 plus the environment it ran in."""
 
     import torch
 
@@ -2000,7 +2000,7 @@ def main() -> int:
                         help="teacher: emit this run's capture as a SAME-LANE bf16 teacher "
                              "(capture_role bf16_teacher + a sealed teacher_provenance block). "
                              "Legal only with --source native, full census. The output tree is "
-                             "then a valid --teacher for k6_kld_report.py, and the lane's floor "
+                             "then a valid --teacher for kld_report.py, and the lane's floor "
                              "against it is exactly 0 once T1 hash evidence exists "
                              "(k6/SAME-LANE-TEACHER.md)")
     stream.add_argument("--store-positions", default="all",
@@ -2039,7 +2039,7 @@ def main() -> int:
         stored_encoder_closure,
     )
 
-    import k6_student_capture as sealed_capture  # helper reuse, not a re-implementation
+    import student_capture as sealed_capture  # helper reuse, not a re-implementation
 
     if args.reduce_order not in REDUCE_ORDERS:
         raise _fail(f"--reduce-order must be one of {REDUCE_ORDERS}")
@@ -3665,7 +3665,7 @@ def main() -> int:
     }.get(args.source, "packed_student")
     if args.capture_role == "teacher":
         # the label stays native-bf16 (it IS the native forward); only the ROLE
-        # flips, which is exactly what k6_kld_report's teacher discovery keys on
+        # flips, which is exactly what kld_report's teacher discovery keys on
         capture_role = TEACHER_CAPTURE_ROLE
     capture_started = time.monotonic()
     forward_seconds = 0.0
@@ -3970,7 +3970,7 @@ def main() -> int:
     # default receipts field-identical to the sealed layout (asserted by
     # stream_score_selftest rung L1.j).
     if args.source == "exl3hf":
-        # The summary receipt (k6_kld_report) republishes these pins; they are
+        # The summary receipt (kld_report) republishes these pins; they are
         # sealed here first so the headline number's provenance chain starts in
         # the capture itself.  Default receipts are field-identical to the
         # sealed layout (L1.j) - these keys exist only on exl3hf runs.
@@ -3988,7 +3988,7 @@ def main() -> int:
             sorted(exl3hf.routed_bits_histogram.items())
         )
     if args.source == "dione":
-        # Same rule as exl3hf and tr3: k6_kld_report republishes these pins in
+        # Same rule as exl3hf and tr3: kld_report republishes these pins in
         # the headline summary, so the capture seals them first.  A Dione
         # release publishes NO seal, so what travels is the release's own
         # declarations plus the digests THIS run verified: the per-shard hash
@@ -4043,7 +4043,7 @@ def main() -> int:
         )
     if args.source == "mlx":
         # The provenance a community artifact CAN carry, at the top level where
-        # k6_kld_report lifts it into the headline summary (mirrors the Dione
+        # kld_report lifts it into the headline summary (mirrors the Dione
         # capture receipt's dione_* block).  There is no contract and no payload
         # digest to record here, which is exactly what seal_disclosure says.
         receipt.update(

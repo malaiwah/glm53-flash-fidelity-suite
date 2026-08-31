@@ -3859,6 +3859,13 @@ Q38_SUITE_DS = "https://huggingface.co/datasets/malaiwah/qwen38-27b-fidelity-sui
 # main, and re-digesting it now would stamp these rows with the identity of code
 # that did not produce them -- exactly the failure harness_id.py exists to
 # prevent. Anyone can re-derive them: `git show <pin>:<path> | sha256sum`.
+# The paths below keep their 2026-08 spelling on purpose. k6_kld_report.py was
+# renamed kld_report.py (and k6_student_capture.py -> student_capture.py) on
+# 2026-08-31; `harness_id` is a sha256 over {boundary, [{role, PATH, sha256}],
+# tool_versions}, so the path is INSIDE the hash. Rewriting it here would give
+# these rows the identity of a file whose bytes are not the ones that ran --
+# the exact failure harness_id.py exists to prevent -- and would change
+# published harness ids. bin/selftest_naming_sweep.py freezes them.
 FIDELITY_COMPARE_PIN = "9133f4288838a3333b25b575f4d5e4e8ab3b419a"
 FIDELITY_COMPARE_DIGESTS = [
     {"role": "capture", "path": "k6/tools/hf_capture.py",

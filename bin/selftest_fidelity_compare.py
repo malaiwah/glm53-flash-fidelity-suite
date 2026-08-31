@@ -2,7 +2,7 @@
 """T8 -- the comparator's numerics: known answers and exactness.
 
 Runs on any interpreter with numpy.  When torch is importable the estimator
-under test IS `k6_kld_report._token_kld` (imported, not copied); otherwise the
+under test IS `kld_report._token_kld` (imported, not copied); otherwise the
 numpy fp64 fallback runs and the receipt says so.  Both paths are asserted
 against the SAME analytic answers, which is the point: a backend swap must not
 move a number.

@@ -110,7 +110,7 @@ encode/contract/materialize campaign driver, so write:
 | `tools/k6_driver.py seal-main / release-dead-claims` | main receipt `quant-pipeline.glm53-exl3-mcg-main-k6-receipt.v1` (fields: contract_sha256, complete, matrix_count 36,288 — no upstream builder, driver-authored); requeue dead worker claims |
 | `tools/k6_driver.py mtp` | `glm53_mtp_k4.build_contract/build_work_units/claim_next/...`, MTP work-unit **telemetry writer** (`quant-pipeline.glm53-mtp45-exl3-mcg-work-unit-telemetry.v1` — read by `seal_mtp_layer`, written nowhere upstream), `seal_mtp_layer` |
 | `tools/k6_driver.py materialize` | reader-ABI receipt (bits 6, `tp_sizes [4]`, exact_reconstruction_checked), `build_materialization_plan`, `materialize_checkpoint` (per-shard resume), `seal_materialization_receipt` |
-| `tools/k6_student_capture.py` | EP8 stock-transformers Glm5Next (eager, tf32 off, use_cache off, fp32 logits) + patched offline reader install; capture receipt `quant-pipeline.glm53-logit-capture.v1`; run 1 also dumps the decoded reference parity panel (metadata schema **verbatim** `quant-pipeline.glm53-decoded-k4-tp2-reference-panel.v1` + predeclared tolerances) |
+| `tools/student_capture.py` | EP8 stock-transformers Glm5Next (eager, tf32 off, use_cache off, fp32 logits) + patched offline reader install; capture receipt `quant-pipeline.glm53-logit-capture.v1`; run 1 also dumps the decoded reference parity panel (metadata schema **verbatim** `quant-pipeline.glm53-decoded-k4-tp2-reference-panel.v1` + predeclared tolerances) |
 | `tools/k6_kld_report.py` | fp64 `token_kld_chunk` over 25x2047=51,175 positions, report schema `quant-pipeline.glm53-packed-student-kld.v1`, `glm53_k6_postmtp.build_packed_k6_kld_receipt` + `build_five_run_kld_receipt` (patches-v2 0005), comparison table |
 | `tools/k6_publish.py` | HF `upload_large_folder`, README cards, `MANIFEST.json` + `SHA256SUMS` closed tree, checkpoint gate receipt, discussion draft |
 
@@ -460,7 +460,7 @@ profile k6-tp4, qualified true), `k6-five-run-kld.json`, `k6-tp4-runtime-receipt
 (schema `...-tp4-runtime.v1`, rank logit-sha identity + parity + census
 36,288 packed matrices), `comparison-table.md`.
 
-Comparison table skeleton (filled by `k6_kld_report.py`):
+Comparison table skeleton (filled by `kld_report.py`):
 
 | model | routed bpw | size | mean tokenwise KLD vs BF16 teacher (25 sealed windows, 51,175 pos, fp64) | provenance |
 |---|---|---|---|---|

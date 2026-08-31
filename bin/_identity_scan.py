@@ -82,6 +82,46 @@ def receipt_schemas(root):
     return out
 
 
+def provenance_paths(root):
+    """Every repo-relative code path a PUBLISHED row names as provenance.
+
+    Two kinds, and both are identity rather than configuration:
+
+    * `harness.code_digests[].path` -- `harness_id` is a sha256 over
+      {boundary, [{role, path, sha256}], tool_versions}, so the PATH is inside
+      the hash. Two rows share an id exactly when they share this list.
+    * `implementation.entrypoint` -- the published statement of which tool
+      computed the row.
+
+    They name the tree AS IT WAS when the number was produced. A rename sweep
+    that "fixes" them retro-stamps rows with the identity of code that did not
+    run, which is the exact failure `registry/tools/harness_id.py` exists to
+    prevent -- and `seed_registry.py` transcribes these digests rather than
+    re-reading today's checkout for the same reason.
+    """
+    out = set()
+    data = os.path.join(root, "registry", "data")
+    if not os.path.isdir(data):
+        return out
+    for name in ("measurements.jsonl", "pipelines.jsonl"):
+        path = os.path.join(data, name)
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                for cd in ((rec.get("harness") or {}).get("code_digests") or []):
+                    if isinstance(cd, dict) and isinstance(cd.get("path"), str):
+                        out.add(cd["path"])
+                ep = (rec.get("implementation") or {}).get("entrypoint")
+                if isinstance(ep, str) and ep:
+                    out.add(ep)
+    return out
+
+
 def code_schema_literals(root):
     """Schema-namespace string literals anywhere in the tree's code and data.
 
@@ -106,6 +146,7 @@ def snapshot(root):
         "registry_ids": sorted(registry_ids(root)),
         "receipt_schemas": sorted(receipt_schemas(root)),
         "code_schema_literals": sorted(code_schema_literals(root)),
+        "provenance_paths": sorted(provenance_paths(root)),
     }
 
 

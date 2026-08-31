@@ -20,7 +20,7 @@ Evidence: `tools/dione-evidence/real-payload-placement-audit.json`.
 
 ```bash
 # sync tools atomically (upload as .new, then mv - same convention as stage_k6.sh)
-for f in k6_student_capture.py k6_kld_report.py dione_surface.py selftest_dione_offline.py; do
+for f in student_capture.py kld_report.py dione_surface.py selftest_dione_offline.py; do
   scp tools/$f box:$ROOT/tools/$f.new && ssh box "mv $ROOT/tools/$f.new $ROOT/tools/$f"
 done
 # also sync tools/dione-evidence/{index-q4,bf16-index,config-q4,exl3-manifest}.json
@@ -67,7 +67,7 @@ $VENV/bin/python $ROOT/tools/dione_surface.py probe \
 
 # d) dry-run, then the capture (1 cold run; add runs 2/3 only if budget allows -
 #    the stack already proved bitwise determinism on K4/K6)
-$VENV/bin/python $ROOT/tools/k6_student_capture.py \
+$VENV/bin/python $ROOT/tools/student_capture.py \
   --surface dione --profile dione \
   --dione-root $ROOT/dione-q4 --dione-repo 0xSero/GLM-5.3-Flash-EXL3-Q4 \
   --dione-revision $REV_Q4 \
@@ -75,7 +75,7 @@ $VENV/bin/python $ROOT/tools/k6_student_capture.py \
   --out $RCPT/dione-q4-student-run1 --pipeline-root $PIPE --dry-run
 
 QP_GLM53_EP_SIZE=8 $VENV/bin/torchrun --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 \
-  $ROOT/tools/k6_student_capture.py \
+  $ROOT/tools/student_capture.py \
   --surface dione --profile dione \
   --dione-root $ROOT/dione-q4 --dione-repo 0xSero/GLM-5.3-Flash-EXL3-Q4 \
   --dione-revision $REV_Q4 \

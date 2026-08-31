@@ -685,7 +685,7 @@ receipt digest in `|| true`, so a failed `sha256sum` leaves an empty `RECEIPT.sh
 - `stream_score.py` writes `capture-receipt.json` EXACTLY ONCE (line 3652), as the last write
   in `main()`, after sealing. It is never written incrementally, so a valid-JSON receipt
   implies the capture ran to completion; the only torn state reachable is invalid JSON.
-- The `score` stage runs before `seal` and `k6_kld_report.py:262` calls
+- The `score` stage runs before `seal` and `kld_report.py:262` calls
   `load_capture_receipt`, which raises on invalid JSON. Under `set -euo pipefail` that aborts
   the stage, the marker is never touched, and `seal` is never reached.
 - `RECEIPT.sha256` has ZERO readers: `grep -rn 'RECEIPT.sha256'` over the whole repo returns

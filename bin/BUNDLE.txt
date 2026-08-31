@@ -23,7 +23,7 @@ bin/verify_published_sums.py
 bin/bootstrap_measure.sh
 bin/watchdog.sh
 bin/invoke_engine.py
-# The scorer stage: stream_score CAPTURES logits, k6_kld_report turns them into
+# The scorer stage: stream_score CAPTURES logits, kld_report turns them into
 # the divergence. Without this the seal stage has nothing to seal.
 bin/invoke_scorer.py
 # The token-panel receipt names its artifacts by the PRODUCER's absolute paths
@@ -55,10 +55,10 @@ bin/fidelity/stackprint.py
 # module-scope imports so the pairing cannot silently drift.
 k6/tools/progress.py
 # The sealed EP8 lane. Verified present and flag-checked by the planner.
-k6/tools/k6_student_capture.py
-k6/tools/k6_kld_report.py
+k6/tools/student_capture.py
+k6/tools/kld_report.py
 # The UNSEALED Dione (0xSero) selective-EXL3 surface. It serves BOTH lanes:
-# k6_student_capture --surface dione (sealed EP8) and stream_score --source
+# student_capture --surface dione (sealed EP8) and stream_score --source
 # dione (streaming), and it owns its own `materialize` stage. Like tr3 it needs
 # official-nonrouted-names.json (listed below): the materializer gates its
 # emitted name set against the official release's 1,618 non-routed names before

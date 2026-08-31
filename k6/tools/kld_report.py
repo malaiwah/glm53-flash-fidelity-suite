@@ -4,7 +4,7 @@
 Adapted from brandonmusic's measure_glm53_packed_student_kld.py and
 aggregate_glm53_five_run_kld.py, joined into the single CLI stage_k6.sh pins:
 
-  k6_kld_report.py --profile k6 --teacher <tree> --runs run1 ... run5 \
+  kld_report.py --profile k6 --teacher <tree> --runs run1 ... run5 \
       --fp8-baseline 0.020615 --k4-baseline 0.024555 \
       --out k6-packed-kld.json --five-run-out k6-five-run-kld.json \
       --comparison-out comparison-table.md
@@ -44,7 +44,7 @@ MLX_STUDENT_LABEL_PREFIX = "mlx-affine-"
 
 
 def _fail(message: str, code: int = 1) -> "SystemExit":
-    print(f"k6_kld_report: ERROR: {message}", file=sys.stderr, flush=True)
+    print(f"kld_report: ERROR: {message}", file=sys.stderr, flush=True)
     return SystemExit(code)
 
 

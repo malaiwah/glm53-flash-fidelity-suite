@@ -16,7 +16,7 @@ three disclosed changes only:
     the decoded reference parity panel for the TP4 runtime qualification with
     the upstream schema string VERBATIM and predeclared tolerances.
 
-Launch:  QP_GLM53_EP_SIZE=8 torchrun --nproc-per-node=8 k6_student_capture.py ...
+Launch:  QP_GLM53_EP_SIZE=8 torchrun --nproc-per-node=8 student_capture.py ...
 Everything else (eager attention, tf32 off, use_cache off, fp32 stored logits,
 non-routed parameters untouched, receipt schema
 quant-pipeline.glm53-logit-capture.v1) is upstream-verbatim.
@@ -45,7 +45,7 @@ REFERENCE_MEAN_ABS_TOLERANCE = "0.005"
 
 
 def _fail(message: str, code: int = 1) -> "SystemExit":
-    print(f"k6_student_capture: ERROR: {message}", file=sys.stderr, flush=True)
+    print(f"student_capture: ERROR: {message}", file=sys.stderr, flush=True)
     return SystemExit(code)
 
 

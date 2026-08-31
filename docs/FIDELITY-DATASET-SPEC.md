@@ -636,7 +636,7 @@ Upstream sealed receipts carry absolute paths (`quant-pipeline.glm53-token-panel
 `artifacts[]` rows are `{path, bytes, sha256}` with paths like
 `/workspace/artifacts/dataset/calibration/panel-v1/...`). Rewriting them breaks their seal;
 shipping them unmodified breaks portability. The only correct answer is a **sidecar remap keyed by
-digest**, which is exactly what `k6_kld_report._resolve_teacher_paths` already does for logits:
+digest**, which is exactly what `kld_report._resolve_teacher_paths` already does for logits:
 sealed absolute path first, `<root>/logits/<basename>` fallback **with sha256 verified before use**.
 
 ```json
@@ -1022,7 +1022,7 @@ Fixed, not configurable except where noted:
   `154880 = 2^7 × 5 × 11 × 22`; working values include **9,680** (154880/16), 15,488, 7,744.
   Ship 9,680 in the README of any k3-compat dataset.
 * Statistics block shape `{mean, median, p95, p99, p99_9, max}` — identical to what
-  `k6_kld_report.py` already emits and to Festr's, so the numbers line up field-for-field.
+  `kld_report.py` already emits and to Festr's, so the numbers line up field-for-field.
 * Aggregation: `kl_micro_token_mean` (the headline), plus `kl_macro_*_mean` per declared stratum, per
   domain, and per context-depth bucket.
 
@@ -1557,7 +1557,7 @@ outside it (`validate --json OUT`). Resealing after validation would change
 
 **A-3 — `estimator_backend` is recorded.** §10.2 fixes the estimator as
 `torch.log_softmax` in float64. The implementation calls
-`k6_kld_report._token_kld` — imported, not copied — whenever torch is
+`kld_report._token_kld` — imported, not copied — whenever torch is
 importable, and falls back to the identical fp64 formula in numpy when it is
 not. Which path ran is recorded in `comparator.estimator_backend`, because a
 silent backend swap is exactly the class of undeclared difference this format

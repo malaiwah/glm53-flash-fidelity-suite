@@ -72,7 +72,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--floor-kld", type=Path, required=True,
-                        help="the native-bf16 profile summary from k6_kld_report.py")
+                        help="the native-bf16 profile summary from kld_report.py")
     parser.add_argument("--floor-run", type=Path, action="append", required=True,
                         help="a cold-run directory (kld-report.json, capture-receipt.json, "
                              "backend.json, plan.json); repeat per cold run")

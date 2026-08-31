@@ -622,7 +622,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--decode-cache-dir",
                    help="forwarded to the engine's --decode-cache-dir")
     d.add_argument("--kld-device", default="cpu", choices=("cpu", "cuda", "mps"),
-                   help="device for the SCORER (k6_kld_report/kld_preview); "
+                   help="device for the SCORER (kld_report/kld_preview); "
                         "mps is refused: fp64 accumulation cannot run on MPS")
     d.add_argument("--simulate-device", metavar="NAME:VRAM_GB[:count][:unified]",
                    help="plan for hardware you do not have in front of you, e.g. "

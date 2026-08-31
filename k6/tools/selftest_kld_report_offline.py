@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline regression tests for k6/tools/k6_kld_report.py.  No GPU, no network, no
+"""Offline regression tests for k6/tools/kld_report.py.  No GPU, no network, no
 `quant_pipeline` checkout.
 
 `selftest_offline.py` needs a real quant_pipeline tree, which a public clone does not
@@ -40,7 +40,7 @@ def _declared_capture_profiles() -> dict:
     """{profile: surface family} read from stream_score's OWN tables.
 
     stream_score.py is the file that decides which profiles exist; this test
-    asserts k6_kld_report can describe every one of them.  Importing the tables
+    asserts kld_report can describe every one of them.  Importing the tables
     instead of restating them is what makes that assertion stay true when a
     profile is added.  stream_score imports heavy optionals at call time only,
     so the module-level tables are readable without torch -- but if that ever
@@ -80,7 +80,7 @@ def check(name, condition, detail=""):
 
 
 def _stub_pipeline(root):
-    """The minimum of `quant_pipeline` that k6_kld_report imports at call time."""
+    """The minimum of `quant_pipeline` that kld_report imports at call time."""
     import hashlib
 
     def canonical_json(obj):
@@ -149,7 +149,7 @@ def _report(teacher_sha, panel_sha, mean, tokenwise, student_sha, label, block=1
 def main():
     _stub_pipeline(HERE)
     sys.path.insert(0, HERE)
-    import k6_kld_report as K
+    import kld_report as K
 
     tmp = tempfile.mkdtemp(prefix="kld-report-selftest-")
     try:
@@ -218,7 +218,7 @@ def main():
 
         def cli(*argv):
             return subprocess.run(
-                [sys.executable, os.path.join(HERE, "k6_kld_report.py")] + list(argv),
+                [sys.executable, os.path.join(HERE, "kld_report.py")] + list(argv),
                 capture_output=True, text=True)
 
         # driven in-process: the CLI would need a real teacher tree
@@ -277,7 +277,7 @@ def main():
         # profile to stream_score and forgetting this file used to leave the new
         # profile with no NUM-15 coverage at all, and the suite still went green.
         # Deriving it means a profile that stream_score can capture but
-        # k6_kld_report cannot describe fails HERE, before it can seal a receipt.
+        # kld_report cannot describe fails HERE, before it can seal a receipt.
         for profile, want in sorted(_declared_capture_profiles().items()):
             got = K._profile_surface_family(profile)
             check("NUM-15  %-14s -> surface %s" % (profile, want), got == want, str(got))
@@ -347,7 +347,7 @@ def _stderr_of(fn):
 def K_summary(K, teacher, run_dirs, label, out, expect_fail=False):
     """Drive main()'s summary branch in-process with argv, capturing the refusal."""
     import pathlib
-    argv = ["k6_kld_report.py", "--profile", "k8", "--teacher", "/unused",
+    argv = ["kld_report.py", "--profile", "k8", "--teacher", "/unused",
             "--runs"] + [str(d) for d in run_dirs] + ["--out", out, "--device", "cpu"]
     import io, contextlib
     saved_argv, saved_find = sys.argv, K._find_teacher_receipt

@@ -10,8 +10,8 @@
   "version": 1,
   "lanes": {
     "sealed-ep8": {
-      "name": "k6_student_capture + k6_kld_report (sealed EP8 lane)",
-      "entrypoint": "k6/tools/k6_student_capture.py",
+      "name": "student_capture + kld_report (sealed EP8 lane)",
+      "entrypoint": "k6/tools/student_capture.py",
       "pinned": true,
       "launcher": [
         "torchrun",
@@ -42,7 +42,7 @@
         "attention_backend": "--attention-backend"
       },
       "scorer": {
-        "entrypoint": "k6/tools/k6_kld_report.py",
+        "entrypoint": "k6/tools/kld_report.py",
         "flag_map": {
           "profile": "--profile",
           "panel": "--teacher",
@@ -88,7 +88,7 @@
         "packed",
         "dione"
       ],
-      "surfaces_note": "k6_student_capture.py --surface {packed,dione}, verified against the file. 'packed' additionally needs the payload store to be PUBLISHED in the repo; sniff_surface traps the case where the receipt's packed_root points at the producer's machine. There is no 'tr3-published' reader on THIS lane; the streaming lane gained one in M2 (stream_score --source tr3)."
+      "surfaces_note": "student_capture.py --surface {packed,dione}, verified against the file. 'packed' additionally needs the payload store to be PUBLISHED in the repo; sniff_surface traps the case where the receipt's packed_root points at the producer's machine. There is no 'tr3-published' reader on THIS lane; the streaming lane gained one in M2 (stream_score --source tr3)."
     },
     "streaming": {
       "name": "stream_score (single-GPU streaming lane)",
@@ -160,10 +160,10 @@
         "3.05": "turbo-3.05bpw",
         "4.0": "tr3-4bpw"
       },
-      "profile_map_note": "4.0-bpw now maps to tr3-4bpw: a SEALED TR3-published EXL3/MCG release (brandonmusic's layout and its byte-identical mirrors) read by stream_score --source tr3. 4.05/3.05 map to the stock-exllamav3 (exl3hf) profiles turbo-4.05bpw/turbo-3.05bpw. Dione 4-bpw snapshots are a DIFFERENT surface at the same nominal rate and remain sealed-lane only. stream_score --profile choices: k6,k8,k6k8,native-bf16,turbo-4.05bpw,turbo-3.05bpw,tr3-4bpw,mlx,gguf,nvfp4. k6k8 is reachable only by explicit --profile, never by bpw inference (6.68 is not a bpw key). || M3: profile_map_by_surface now resolves the profile from (surface, bits) before the bpw-only map is consulted. A 4.0-bpw Dione release and a 4.0-bpw TR3 release are the same number and different everything else; keying on bits alone would have labelled one as the other, and the old `or 'k6'` fallback would have labelled an unmapped rate as a K6 payload-store run. || M4: exl3hf gains 2.0 -> vcruz-k2-2bpw (vcruz305/GLM-5.3-Flash-EXL3-K2). Same stock-exllamav3 HF STORAGE layout as turboderp's releases -- which is what picks the reader -- but the MCG codebook, a routed-experts-ONLY scope and a native BF16 head, so it gets its own profile and its own student label rather than a turbo-* one. || M5: gguf is the first surface whose map is RATE-INDEPENDENT, and the '*' key says so. EXL3HF_PROFILES/TR3_PROFILES/DIONE_PROFILES are {profile: (declared bpw, student label)} tables because each of those releases pins one rate and the engine cross-checks it against the release's own declaration. A GGUF has no such declaration and no single rate: stream_score carries GGUF_STUDENT_LABEL / GGUF_CAPTURE_ROLE as FORMAT-wide constants, k6_kld_report maps profile 'gguf' -> student label 'gguf-llamacpp' for the same reason, and the plan's bits field is None. The rate lives in the artifact record (bits_per_weight_nominal, from the build name) and in the receipt's gguf_type_census (from the build's own headers), which is where a mixed-type 'UD' build can be honest about being mixed. Keying the profile on bits would have meant twelve identical entries claiming twelve different receipt families.",
+      "profile_map_note": "4.0-bpw now maps to tr3-4bpw: a SEALED TR3-published EXL3/MCG release (brandonmusic's layout and its byte-identical mirrors) read by stream_score --source tr3. 4.05/3.05 map to the stock-exllamav3 (exl3hf) profiles turbo-4.05bpw/turbo-3.05bpw. Dione 4-bpw snapshots are a DIFFERENT surface at the same nominal rate and remain sealed-lane only. stream_score --profile choices: k6,k8,k6k8,native-bf16,turbo-4.05bpw,turbo-3.05bpw,tr3-4bpw,mlx,gguf,nvfp4. k6k8 is reachable only by explicit --profile, never by bpw inference (6.68 is not a bpw key). || M3: profile_map_by_surface now resolves the profile from (surface, bits) before the bpw-only map is consulted. A 4.0-bpw Dione release and a 4.0-bpw TR3 release are the same number and different everything else; keying on bits alone would have labelled one as the other, and the old `or 'k6'` fallback would have labelled an unmapped rate as a K6 payload-store run. || M4: exl3hf gains 2.0 -> vcruz-k2-2bpw (vcruz305/GLM-5.3-Flash-EXL3-K2). Same stock-exllamav3 HF STORAGE layout as turboderp's releases -- which is what picks the reader -- but the MCG codebook, a routed-experts-ONLY scope and a native BF16 head, so it gets its own profile and its own student label rather than a turbo-* one. || M5: gguf is the first surface whose map is RATE-INDEPENDENT, and the '*' key says so. EXL3HF_PROFILES/TR3_PROFILES/DIONE_PROFILES are {profile: (declared bpw, student label)} tables because each of those releases pins one rate and the engine cross-checks it against the release's own declaration. A GGUF has no such declaration and no single rate: stream_score carries GGUF_STUDENT_LABEL / GGUF_CAPTURE_ROLE as FORMAT-wide constants, kld_report maps profile 'gguf' -> student label 'gguf-llamacpp' for the same reason, and the plan's bits field is None. The rate lives in the artifact record (bits_per_weight_nominal, from the build name) and in the receipt's gguf_type_census (from the build's own headers), which is where a mixed-type 'UD' build can be honest about being mixed. Keying the profile on bits would have meant twelve identical entries claiming twelve different receipt families.",
       "receipt_class": "submittable",
       "scorer": {
-        "entrypoint": "k6/tools/k6_kld_report.py",
+        "entrypoint": "k6/tools/kld_report.py",
         "flag_map": {
           "profile": "--profile",
           "panel": "--teacher",
@@ -475,7 +475,7 @@
         "--profile": "native-bf16"
       },
       "scorer": {
-        "entrypoint": "k6/tools/k6_kld_report.py",
+        "entrypoint": "k6/tools/kld_report.py",
         "flag_map": {
           "profile": "--profile",
           "panel": "--teacher",

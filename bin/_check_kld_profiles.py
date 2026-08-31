@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Every literal `--profile` a shell script hands to k6_kld_report.py must be a choice.
+"""Every literal `--profile` a shell script hands to kld_report.py must be a choice.
 
 Test-support for bin/selftest_shell_guards.sh (NUM-10). `k6/stage_k6.sh` documented
 `QP_STREAM_PROFILE=k6|k8` and composed `--profile "${STREAM_PROFILE}-stream"`, but
-`k8-stream` is not one of k6_kld_report's argparse choices -- so a K8 streaming run
+`k8-stream` is not one of kld_report's argparse choices -- so a K8 streaming run
 exited 2 AFTER the whole multi-hour capture. `k6/tools/measure_dione.sh` passed the
 equally non-existent `--profile dione`.
 
-Only `k6_kld_report.py` invocations are inspected: `k6_driver.py` and
-`k6_student_capture.py` have their own, different `--profile` vocabularies.
+Only `kld_report.py` invocations are inspected: `k6_driver.py` and
+`student_capture.py` have their own, different `--profile` vocabularies.
 
 A value that interpolates a shell variable cannot be checked here; it is reported as
 UNCHECKABLE so a reader knows the gate did not cover it, and the script itself is
@@ -25,7 +25,7 @@ CHOICES = re.compile(r'--profile",\s*required=True,\s*\n?\s*choices=\(([^)]*)\)'
 # Shell line continuations are joined first, so a flag and its value can be on
 # different physical lines (they usually are).
 CONTINUED = re.compile(r"\\\n\s*")
-INVOKE = re.compile(r"k6_kld_report\.py(?P<args>.*)")
+INVOKE = re.compile(r"kld_report\.py(?P<args>.*)")
 PROFILE = re.compile(r"--profile\s+\"?([^\s\"]+)\"?")
 
 
@@ -34,7 +34,7 @@ def main(argv):
         sys.stderr.write(__doc__)
         return 2
     root = Path(argv[1])
-    report = root / "k6" / "tools" / "k6_kld_report.py"
+    report = root / "k6" / "tools" / "kld_report.py"
     found = CHOICES.search(report.read_text(encoding="utf-8"))
     if not found:
         sys.stderr.write("could not read --profile choices from %s\n" % report)

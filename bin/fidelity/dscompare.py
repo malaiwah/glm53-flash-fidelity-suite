@@ -6,7 +6,7 @@ Two halves, deliberately separable:
     named refusal id.  Pure stdlib + numpy, no torch, so every refusal is
     testable on a stock py3.9 interpreter with no GPU;
   * the ESTIMATOR (spec section 10.2) -- full vocabulary, fp64 log_softmax.
-    When torch is importable this is `k6_kld_report._token_kld`, imported and
+    When torch is importable this is `kld_report._token_kld`, imported and
     called, never reimplemented, so a number produced here is the same number
     the sealed pipeline produces.  Without torch it falls back to the identical
     fp64 formula in numpy and SAYS SO in the receipt
@@ -666,7 +666,7 @@ def _as_tensor(array):
 def token_kld(reference_logits, candidate_logits, device: str = "cpu"):
     """The fp64 full-vocabulary estimator.
 
-    With torch present this IS `k6_kld_report._token_kld` -- imported, not
+    With torch present this IS `kld_report._token_kld` -- imported, not
     copied, so a number here equals a number from the sealed pipeline.  Without
     torch, the identical fp64 formula in numpy, and the receipt says which.
     """
@@ -677,7 +677,7 @@ def token_kld(reference_logits, candidate_logits, device: str = "cpu"):
 
         if _K6_TOOLS not in sys.path:
             sys.path.insert(0, _K6_TOOLS)
-        import k6_kld_report  # noqa: WPS433
+        import kld_report  # noqa: WPS433
 
         # Already-resident tensors pass straight through: the GPU replay path
         # hands this function logits that are ALREADY on the device, and a
@@ -686,16 +686,23 @@ def token_kld(reference_logits, candidate_logits, device: str = "cpu"):
         a = reference_logits if torch.is_tensor(reference_logits) else _as_tensor(reference_logits)
         b = candidate_logits if torch.is_tensor(candidate_logits) else _as_tensor(candidate_logits)
         try:
-            values, matches = k6_kld_report._token_kld(a, b, device)
+            values, matches = kld_report._token_kld(a, b, device)
         except SystemExit as exc:
-            # `k6_kld_report._fail` returns a SystemExit -- correct for a CLI,
+            # `kld_report._fail` returns a SystemExit -- correct for a CLI,
             # wrong for a library call.  Convert it into our own refusal so a
             # non-finite logit refuses the COMPARISON rather than killing the
             # process, and so the reason survives into the caller.
             raise Refusal("compute", "non_finite",
-                          "the fp64 estimator refused these logits (see the k6_kld_report "
+                          "the fp64 estimator refused these logits (see the kld_report "
                           "message above; the usual cause is a non-finite value, which is "
                           "never clamped): %s" % exc)
+        # PUBLISHED IDENTITY, not a stale name. This string is the
+        # `estimator_backend` value inside every sealed comparison receipt this
+        # tool has written -- registry/protocol/*/comparison.*.json carry it
+        # verbatim, covered by their receipt_sha256. The MODULE was renamed
+        # k6_kld_report.py -> kld_report.py on 2026-08-31; the backend id was
+        # not, because renaming it would say a different estimator produced
+        # numbers that are already out in the world.
         return np.asarray(values, dtype=np.float64), int(matches), "torch:k6_kld_report._token_kld"
 
     a = np.asarray(reference_logits, dtype=np.float64)
@@ -1257,6 +1264,9 @@ def build_receipt(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
             "estimator_backend": result.get("estimator_backend"),
             "tool": {
                 "entrypoint": "bin/fidelity-dataset compare",
+                # Same reason as the estimator_backend literal above: this
+                # note is inside sealed receipts, so it keeps the module's
+                # 2026-08 spelling. Today the file is k6/tools/kld_report.py.
                 "note": "the fp64 estimator is k6_kld_report._token_kld, imported not copied, "
                         "whenever torch is importable; estimator_backend records which path ran.",
             },

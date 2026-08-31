@@ -373,8 +373,8 @@ pathlib.Path("$RCPT/closure_status.json").write_text(json.dumps(status, indent=2
 print(f"closure gate: source={source} OK" + (f" ({len(staged)} staged files)" if staged else ""))
 PYEOF
   # Fail fast on the rest of the control-session uploads the stages depend on.
-  for need in "$TOOLS/k6_driver.py" "$TOOLS/k6_student_capture.py" \
-              "$TOOLS/k6_kld_report.py" "$TOOLS/k6_publish.py" \
+  for need in "$TOOLS/k6_driver.py" "$TOOLS/student_capture.py" \
+              "$TOOLS/kld_report.py" "$TOOLS/k6_publish.py" \
               "$ROOT/recipes/k6.json" "$ROOT/recipes/k8.json" "$ROOT/recipes/k6k8.json"; do
     test -f "$need" || { echo "missing on fs: $need - upload the k6-program tree first" >&2; exit 1; }
   done
@@ -740,12 +740,12 @@ qualify_k6)
   test -d "$TEACH" || { echo "teacher final-window logits missing at $TEACH" >&2; exit 1; }
   for run in 1 2 3 4 5; do
     [ -f "$RCPT/k6-student-run$run/capture-receipt.json" ] && continue
-    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 "$TOOLS/k6_student_capture.py" \
+    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 "$TOOLS/student_capture.py" \
       --checkpoint "$CKPT_K6" --bf16 "$BF16" --teacher "$TEACH" \
       --profile k6 --cold-run "$run" --out "$RCPT/k6-student-run$run" \
       $( [ "$run" = 1 ] && echo --emit-reference-panel "$RCPT/k6-reference-panel.safetensors" )
   done
-  "$PY" "$TOOLS/k6_kld_report.py" --profile k6 \
+  "$PY" "$TOOLS/kld_report.py" --profile k6 \
     --teacher "$TEACH" --runs "$RCPT"/k6-student-run{1,2,3,4,5} \
     --fp8-baseline 0.020615 --k4-baseline 0.024555 \
     --out "$RCPT/k6-packed-kld.json" --five-run-out "$RCPT/k6-five-run-kld.json" \
@@ -792,12 +792,12 @@ qualify_k8)
   test -d "$TEACH" || { echo "teacher final-window logits missing at $TEACH" >&2; exit 1; }
   for run in 1 2 3; do
     [ -f "$RCPT/k8-student-run$run/capture-receipt.json" ] && continue
-    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 "$TOOLS/k6_student_capture.py" \
+    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 "$TOOLS/student_capture.py" \
       --checkpoint "$CKPT_K8" --bf16 "$BF16" --teacher "$TEACH" \
       --profile k8 --cold-run "$run" --out "$RCPT/k8-student-run$run" \
       $( [ "$run" = 1 ] && echo --emit-reference-panel "$RCPT/k8-reference-panel.safetensors" )
   done
-  "$PY" "$TOOLS/k6_kld_report.py" --profile k8 \
+  "$PY" "$TOOLS/kld_report.py" --profile k8 \
     --teacher "$TEACH" --runs "$RCPT"/k8-student-run{1,2,3} \
     --fp8-baseline 0.020615 --k4-baseline 0.024555 \
     --out "$RCPT/k8-packed-kld.json" \
@@ -821,11 +821,11 @@ qualify_k6k8)
   # Descoped to THREE cold runs (budget); disclosed in the receipt tree.
   for run in 1 2 3; do
     [ -f "$RCPT/k6k8-student-run$run/capture-receipt.json" ] && continue
-    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 "$TOOLS/k6_student_capture.py" \
+    QP_GLM53_EP_SIZE=8 "$VENV/bin/torchrun" --master-port $((29500 + RANDOM % 2000)) --nproc-per-node=8 "$TOOLS/student_capture.py" \
       --checkpoint "$CKPT_K6K8" --bf16 "$BF16" --teacher "$TEACH" \
       --profile k6k8 --cold-run "$run" --out "$RCPT/k6k8-student-run$run"
   done
-  "$PY" "$TOOLS/k6_kld_report.py" --profile k6k8 \
+  "$PY" "$TOOLS/kld_report.py" --profile k6k8 \
     --teacher "$TEACH" --runs "$RCPT"/k6k8-student-run{1,2,3} \
     --fp8-baseline 0.020615 --k4-baseline 0.024555 \
     --out "$RCPT/k6k8-packed-kld.json" \
@@ -868,7 +868,7 @@ measure_stream)
   STREAM_PROFILE="${QP_STREAM_PROFILE:-k6}"   # k6 (payload root must match)
   # NUM-10. The knob was documented `k6 | k8` and nothing downstream is
   # parameterised by it:
-  #   * `k6_kld_report.py --profile k8-stream` is not in that tool's argparse
+  #   * `kld_report.py --profile k8-stream` is not in that tool's argparse
   #     choices (only `k6-stream` is), so it exits 2 -- AFTER the full multi-hour
   #     capture;
   #   * the report is written to a hardcoded `$RCPT/stream-k6-kld.json`
@@ -881,7 +881,7 @@ measure_stream)
   # targets -- three changes, none of which can be tested without a K8 payload store.
   if [ "$STREAM_PROFILE" != "k6" ]; then
     echo "measure_stream: QP_STREAM_PROFILE=$STREAM_PROFILE is not implemented." >&2
-    echo "  Only k6 is wired end to end: k6_kld_report.py has no '${STREAM_PROFILE}-stream'" >&2
+    echo "  Only k6 is wired end to end: kld_report.py has no '${STREAM_PROFILE}-stream'" >&2
     echo "  profile, the receipt path is hardcoded to stream-k6-kld.json, and the verdict" >&2
     echo "  compares against the K6 sealed mean/tokenwise/checkpoint constants." >&2
     echo "  Refusing before any GPU time is spent." >&2
@@ -1174,7 +1174,7 @@ PYEOF
   RUN_DIRS=""
   for n in $(seq 1 "$STREAM_RUNS"); do RUN_DIRS="$RUN_DIRS $STREAM_OUT/stream-run$n"; done
   # shellcheck disable=SC2086
-  "$PY" "$TOOLS/k6_kld_report.py" --profile "${STREAM_PROFILE}-stream" \
+  "$PY" "$TOOLS/kld_report.py" --profile "${STREAM_PROFILE}-stream" \
       --teacher "$TEACH" --runs $RUN_DIRS \
       --fp8-baseline 0.020615 --k4-baseline 0.024555 \
       --device "$STREAM_KLD_DEVICE" --chunk-positions 16 \

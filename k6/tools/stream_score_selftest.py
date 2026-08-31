@@ -24,8 +24,8 @@ qualification; L2/L3/L4 need the real surface and live in
                            floor) comparable to the packed lanes.  Needs --fixture.
   L1.d  receipt schema     a synthetic capture receipt in stream_score's own shape is
                            accepted by quant_pipeline's load_capture_receipt and by
-                           k6_kld_report's per-window field comparison.
-  L1.e  KLD estimator      k6_kld_report._token_kld against a closed-form KL between
+                           kld_report's per-window field comparison.
+  L1.e  KLD estimator      kld_report._token_kld against a closed-form KL between
                            two categorical distributions, fp64, plus the sealed
                            tokenwise vector's reshape identity when it is available.
   L1.g  teacher role       a --capture-role teacher receipt (sealed schema, role
@@ -33,7 +33,7 @@ qualification; L2/L3/L4 need the real surface and live in
                            teacher-discovery predicate (schema+role, reimplemented
                            here so the rung runs without quant_pipeline).
   L1.h  preview refusal    a --store-positions preview capture is refused BOTH as a
-                           teacher (predicate) and by k6_kld_report's pre-check.
+                           teacher (predicate) and by kld_report's pre-check.
   L1.i  sampling indices   preview_position_indices is deterministic per seed,
                            per-window randomized, in-bounds and evenly spread.
   L1.j  receipt stability  the receipt dict stream_score builds for a DEFAULT
@@ -553,13 +553,13 @@ def check_receipt_schema() -> None:
 # --------------------------------------------------------------------------
 def check_kld_estimator(sealed_tokenwise: Optional[Path], sealed_report: Optional[Path]) -> None:
     import torch
-    import k6_kld_report
+    import kld_report
 
     torch.manual_seed(0)
     vocab = 512
     teacher = torch.randn(64, vocab, dtype=torch.float32) * 3.0
     student = teacher + torch.randn(64, vocab, dtype=torch.float32) * 0.5
-    values, matches = k6_kld_report._token_kld(teacher, student, "cpu")
+    values, matches = kld_report._token_kld(teacher, student, "cpu")
     # closed form in numpy float128-free fp64
     t64 = teacher.double().numpy()
     s64 = student.double().numpy()
@@ -570,7 +570,7 @@ def check_kld_estimator(sealed_tokenwise: Optional[Path], sealed_report: Optiona
     closed = (np.exp(tlp) * (tlp - slp)).sum(axis=-1)
     max_abs = float(np.abs(values - closed).max())
     # exact identity: KL(p||p) == 0
-    zero, _ = k6_kld_report._token_kld(teacher, teacher.clone(), "cpu")
+    zero, _ = kld_report._token_kld(teacher, teacher.clone(), "cpu")
     self_kl = float(np.abs(zero).max())
     detail: Dict[str, Any] = {
         "max_abs_vs_closed_form": max_abs,
@@ -602,7 +602,7 @@ SEALED_CAPTURE_SCHEMA = "quant-pipeline.glm53-logit-capture.v1"
 
 
 def _teacher_discovery_predicate(doc: Any) -> bool:
-    """Reimplementation of k6_kld_report._find_teacher_receipt's acceptance
+    """Reimplementation of kld_report._find_teacher_receipt's acceptance
     test (schema equality + role), so this rung runs without quant_pipeline.
     The real function's behaviour is asserted by L1.d when the pipeline is
     present; this predicate is the laptop-side guard against drift."""
@@ -674,7 +674,7 @@ def check_teacher_role() -> None:
 
 def check_preview_refusal() -> None:
     import stream_score
-    import k6_kld_report
+    import kld_report
 
     preview = _teacher_receipt_fixture()
     preview["schema"] = stream_score.PREVIEW_CAPTURE_SCHEMA
@@ -685,7 +685,7 @@ def check_preview_refusal() -> None:
                                   "positions_per_window": 256, "seed": 0}
     not_a_teacher = not _teacher_discovery_predicate(preview)
     # The refusal being demonstrated here is EXPECTED: capture its stderr so
-    # a raw "k6_kld_report: ERROR: REFUSED" line never leaks unprefixed into
+    # a raw "kld_report: ERROR: REFUSED" line never leaks unprefixed into
     # a passing run's output (a stranger reads that as a failure of THEIR
     # run -- usability review, 2026-08-28).  The captured text is re-emitted
     # inside this rung's [ok] record instead.
@@ -698,7 +698,7 @@ def check_preview_refusal() -> None:
         captured = io.StringIO()
         try:
             with contextlib.redirect_stderr(captured):
-                k6_kld_report._refuse_preview_capture(run_dir)
+                kld_report._refuse_preview_capture(run_dir)
             refused, message = False, None
         except SystemExit:
             refused = True
@@ -710,7 +710,7 @@ def check_preview_refusal() -> None:
                        sort_keys=True), encoding="utf-8")
         try:
             with contextlib.redirect_stderr(io.StringIO()):
-                k6_kld_report._refuse_preview_capture(run_dir)
+                kld_report._refuse_preview_capture(run_dir)
         except SystemExit:
             sealed_dir_ok = False
     _record(

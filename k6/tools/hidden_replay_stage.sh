@@ -249,7 +249,7 @@ run1|run2|run3)
 
 report)
   farm
-  "$PY" "$TOOLS/k6_kld_report.py" --profile k6-stream \
+  "$PY" "$TOOLS/kld_report.py" --profile k6-stream \
       --teacher "$TEACH" --runs "$RUNS/hidden-run1" "$RUNS/hidden-run2" "$RUNS/hidden-run3" \
       --fp8-baseline 0.020615 --k4-baseline 0.024555 \
       --device cuda:0 --chunk-positions 16 \

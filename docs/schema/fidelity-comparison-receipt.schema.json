@@ -461,7 +461,7 @@
       "type": "object",
       "required": ["mean", "median", "p95", "p99", "p99_9", "max"],
       "additionalProperties": false,
-      "description": "The statistic block shape kimi-k3 uses and k6_kld_report.py already emits, so numbers line up field-for-field.",
+      "description": "The statistic block shape kimi-k3 uses and kld_report.py already emits, so numbers line up field-for-field.",
       "properties": {
         "mean": { "type": "number" },
         "median": { "type": "number" },
