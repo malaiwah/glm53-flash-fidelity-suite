@@ -97,6 +97,10 @@ RUN apt-get update -qq \
 COPY bin/       /tmp/stage/bin/
 COPY engines/tools/  /tmp/stage/engines/tools/
 COPY engines/patches-v2/ /tmp/stage/engines/patches-v2/
+# Committed panels: a container-native root capture reads its panel from
+# the image itself (BUNDLE.txt lists the files; --require-all makes a
+# missing one a BUILD error, not a mid-rental one).
+COPY engines/panels/ /tmp/stage/engines/panels/
 COPY registry/  /tmp/stage/registry/
 # docs/schema/ is DATA, not documentation: `fidelity_dataset.py capture` ends in
 # a postcondition that validates the manifest it just wrote, and dsvalidate

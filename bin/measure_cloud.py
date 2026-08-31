@@ -155,6 +155,17 @@ class Teardown:
         # deadline, so a held box is bounded, not leaked.
         self.hold_on_failure = False
         self.held = False
+        # ROOT-1: a sealed, twice-validated root dataset was destroyed at
+        # teardown because nothing preserved it. When this run is a root
+        # capture, a VERIFIED-but-unpublished dataset on the box makes
+        # teardown HOLD the instance (same bounded shape as
+        # --hold-on-failure: lease kept, reaper still expires it) unless
+        # --allow-unpublished-root explicitly says to destroy the only copy.
+        self.allow_unpublished_root = False
+        self.root_publish_expected = False   # this run is --role root
+        self.root_verified = False           # the verify stage completed
+        self.root_published = False          # the publish_root stage completed
+        self.held_for_unpublished_root = False
         # Set to True only when the measurement actually completed. The hold
         # used to key off the teardown REASON string ("failed: ..."), which
         # never matched: a stage failure raises a bare RuntimeError, main()
@@ -236,11 +247,21 @@ class Teardown:
                 except (ValueError, OSError):
                     pass
             hold = bool(self.hold_on_failure and not self.completed)
+            # getattr, not attribute access: selftest_teardown (and any
+            # embedder) builds Teardown via __new__ without __init__, and the
+            # guard must degrade to "off" there, never to an AttributeError
+            # inside the one code path that must not raise.
+            hold_root = bool(getattr(self, "root_publish_expected", False)
+                             and getattr(self, "root_verified", False)
+                             and not getattr(self, "root_published", False)
+                             and not getattr(self, "allow_unpublished_root",
+                                             False))
             self.con.say("")
             self.con.step("teardown%s (^C is ignored until this finishes)"
                           % ((" -- " + reason) if reason else ""))
             steps = [self._pull_receipts, self._collect_env, self._shred_secrets]
-            if hold:
+            self.held_for_unpublished_root = hold_root
+            if hold or hold_root:
                 self.held = True
             else:
                 steps += [self._destroy_instance, self._destroy_fs, self._drop_lease]
@@ -270,7 +291,23 @@ class Teardown:
                 # `done` marks a teardown that RAN its steps. A teardown that
                 # raised before them is not done, and a second run() must retry.
                 self.done = steps_attempted
-        if self.held:
+        if self.held and getattr(self, "held_for_unpublished_root", False):
+            self.con.say("")
+            self.con.say("*" * 78)
+            self.con.say("**  HELD: instance %s holds a sealed+VERIFIED root dataset that"
+                         % self.machine_id)
+            self.con.say("**  was NEVER PUBLISHED. Destroying it would destroy the only")
+            self.con.say("**  copy of the evidence (that already happened once: $6.59).")
+            self.con.say("**    publish it:  re-run with --publish-root-to <hf-dataset-repo>")
+            self.con.say("**                 (the run adopts this box and only the publish")
+            self.con.say("**                 stage remains), or pull %s/dataset by hand"
+                         % self.fs_root)
+            self.con.say("**    destroy   :  re-run with --allow-unpublished-root, or")
+            self.con.say("**                 jl destroy %s --yes" % self.machine_id)
+            self.con.say("**  The instance is STILL BILLING. Its lease is kept, so the")
+            self.con.say("**  reaper still destroys it at the deadline -- publish before then.")
+            self.con.say("*" * 78)
+        elif self.held:
             self.con.say("")
             self.con.say("*" * 78)
             self.con.say("**  HELD (--hold-on-failure): instance %s is STILL RUNNING and"
@@ -2653,6 +2690,9 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
             # '' means "run the probe, record it, do not enforce it"; the stage
             # script passes the value through verbatim.
             "sanity_expect": getattr(args, "sanity_expect", "Paris"),
+            # ROOT-1: when set, stage_sequence appends `publish_root` and the
+            # stage uploads the sealed dataset from the instance.
+            "publish_root_to": getattr(args, "publish_root_to", None) or None,
             # hf_capture REFUSES a checkpoint carrying tensors the architecture
             # has no home for, because that is what a quantization path silently
             # failing to engage looks like. A speculative-decoding block is the
@@ -2855,7 +2895,9 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
     # `materialize` and measures a tree nothing decoded.
     stages = stage_sequence(getattr(args, "role", "quant"),
                             race=bool(getattr(args, "race", False)),
-                            surface=(plan_data.get("target") or {}).get("surface"))
+                            surface=(plan_data.get("target") or {}).get("surface"),
+                            publish_root=bool(getattr(args, "publish_root_to",
+                                                      None)))
     for stage in stages:
         _run_stage(args, con, jl, td, plan_data, stage)
         if stage == "setup":
@@ -2968,6 +3010,12 @@ def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
             run_id = (run or {}).get("run_id") or (run or {}).get("id")
         outcome = _await_stage(con, jl, td, run_id, stage, deadline)
         if outcome == "done":
+            # ROOT-1 bookkeeping: teardown's unpublished-root guard keys off
+            # which of these two stages completed on this box.
+            if stage == "verify":
+                td.root_verified = True
+            elif stage == "publish_root":
+                td.root_published = True
             con.ok("stage %s" % stage, human_duration(time.time() - started))
             return
         if outcome == "failed":
@@ -3402,6 +3450,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="identity of the fidelity dataset to write, e.g. "
                          "minimaxm3-fidelity-root-v1")
     rt.add_argument("--dataset-name", help="human-readable name for that dataset")
+    rt.add_argument("--publish-root-to", metavar="HF_DATASET_REPO",
+                    help="ROOT-1: after `verify` passes on the instance, "
+                         "upload the sealed root dataset to this Hub dataset "
+                         "repo FROM the instance (the bytes and the token are "
+                         "both already there), fetch the published copy back "
+                         "to re-verify it, and record the uploaded revision "
+                         "in receipts/publish-root.json. A sealed root that "
+                         "exists only on a rented box is one teardown away "
+                         "from not existing.")
     rt.add_argument("--form", default="hidden", choices=("hidden", "logit"),
                     help="hidden (default) stores hidden states and applies the "
                          "head at compare time; logit stores full-vocabulary "
@@ -3514,6 +3571,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "file's content is copied verbatim into job.json and into "
                         "the artifact record -- so it must be READ off the release, "
                         "never assumed.")
+    s.add_argument("--allow-unpublished-root", action="store_true",
+                   help="ROOT-1 override: let teardown destroy a box that "
+                        "holds a sealed+VERIFIED root dataset that was never "
+                        "published. Without this flag such a box is HELD "
+                        "(like --hold-on-failure: lease kept, reaper still "
+                        "bounds it) because destroying the only copy of a "
+                        "verified root is how $6.59 of evidence vanished.")
     s.add_argument("--hold-on-failure", action="store_true",
                         help="on a FAILED stage, keep the instance alive (receipts "
                              "pulled, secrets shredded, lease kept so the reaper "
@@ -3557,6 +3621,23 @@ def main(argv: Optional[List[str]] = None) -> int:
             con.err("--role root requires --dataset-id (the identity of the "
                     "dataset being written; a capture with no identity cannot "
                     "be published or cited)")
+            return EXIT_REFUSED
+        if args.publish_root_to and not re.match(
+                r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$",
+                args.publish_root_to):
+            con.err("--publish-root-to %r is not an owner/name Hub repo id"
+                    % args.publish_root_to)
+            return EXIT_REFUSED
+        if args.publish_root_to and getattr(args, "preview_of", None) and \
+                args.publish_root_to.rsplit("/", 1)[-1] == args.preview_of:
+            con.err("--publish-root-to %r wears the FINAL dataset's name while "
+                    "--preview-of says this capture is its PREVIEW. A preview "
+                    "and a final are two datasets with two identities "
+                    "(docs/RACE-MODE.md); publish the preview under its own "
+                    "repo (convention: %s-preview) and the final under %s "
+                    "after run 2 + verify + self-compare."
+                    % (args.publish_root_to, args.publish_root_to,
+                       args.preview_of))
             return EXIT_REFUSED
         if args.race and args.schedule != "layer-outer":
             con.err("--race needs --schedule layer-outer: every other schedule "
@@ -3608,6 +3689,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif not args.model or not args.panel:
         con.err("--model and --panel are required")
         return EXIT_REFUSED
+    if getattr(args, "publish_root_to", None) and             getattr(args, "role", "quant") != "root":
+        con.err("--publish-root-to is --role root only: a quant measurement "
+                "publishes through the registry, not as a dataset repo")
+        return EXIT_REFUSED
     if args.cold_runs is None:
         # 2, not 1. The registry's measurement schema requires run_count >= 2
         # for a published row, so a single-run receipt is a number you cannot
@@ -3630,6 +3715,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     td = Teardown(jl, con, Path(args.out or ".").resolve())
     td.keep_fs = args.keep_fs
     td.hold_on_failure = bool(getattr(args, "hold_on_failure", False))
+    td.root_publish_expected = (getattr(args, "role", "quant") == "root")
+    td.allow_unpublished_root = bool(getattr(args, "allow_unpublished_root",
+                                             False))
 
     def _signal(signum, _frame):
         con.say("")

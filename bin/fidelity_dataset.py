@@ -678,6 +678,22 @@ def cmd_publish(args):
         _print_report(report, verbose=False)
         return refuse("publish_verify_failed", "the fetched copy does not verify")
     emit("the fetched copy verifies")
+    if getattr(args, "receipt", None):
+        # ROOT-1: the run's receipts must be able to say WHICH revision of
+        # the public repo holds this dataset -- written only after the
+        # fetched-back copy verified, so the receipt never precedes the proof.
+        from fidelity import common as _common
+        doc = _common.seal({
+            "schema": "fidelity.publish-root-receipt.v1",
+            "repository": result["repository"],
+            "revision": result.get("revision"),
+            "dataset_sha256": result["dataset_sha256"],
+            "published_at": _common.utcnow(),
+            "verified_after_publish": True,
+        })
+        _common.write_json(args.receipt, doc)
+        emit("publish receipt written to %s (revision %s)"
+             % (args.receipt, result.get("revision")))
     return OK
 
 
@@ -854,6 +870,9 @@ def build_parser():
     p.add_argument("--repo", required=True)
     p.add_argument("--private", action="store_true")
     p.add_argument("--revision-message", default="publish fidelity dataset")
+    p.add_argument("--receipt", help="write a sealed publish receipt (repo, "
+                                     "uploaded revision, dataset_sha256) here "
+                                     "AFTER the fetched-back copy verifies")
     common_dataset_flags(p)
     p.set_defaults(func=cmd_publish)
     return parser

@@ -376,6 +376,9 @@ def job_document(args, suite: Path, fs_root: Path, con) -> dict:
             "race_workers": int(args.race_workers),
             "preview_of": args.preview_of or None,
             "sanity_expect": args.sanity_expect,
+            # ROOT-1: when set, stage_sequence appends `publish_root` and the
+            # stage uploads the sealed dataset from inside the container.
+            "publish_root_to": getattr(args, "publish_root_to", None) or None,
             # Same field, same spelling, same default as the controller's --
             # C3c asserts the two capture blocks carry identical keys, because
             # a knob that exists on one transport and not the other is a run
@@ -587,6 +590,12 @@ def add_job_flags(p, *, root: bool) -> None:
         p.add_argument("--sanity-expect", default="Paris")
         p.add_argument("--allow-unexpected-tensors", action="store_true")
         p.add_argument("--capture-device", default="cuda")
+        p.add_argument("--publish-root-to", metavar="HF_DATASET_REPO",
+                       help="ROOT-1: after `verify` passes, upload the sealed "
+                            "root dataset to this Hub dataset repo from inside "
+                            "the container, re-verify the published copy, and "
+                            "record the uploaded revision in "
+                            "receipts/publish-root.json")
     else:
         p.add_argument("--surface")
         p.add_argument("--bits", type=float)
@@ -706,7 +715,9 @@ def main(argv=None) -> int:
             stages = stage_sequence(
                 doc.get("role", "quant"),
                 race=bool((doc.get("capture") or {}).get("race")),
-                surface=(doc.get("target") or {}).get("surface"))
+                surface=(doc.get("target") or {}).get("surface"),
+                publish_root=bool((doc.get("capture") or {})
+                                  .get("publish_root_to")))
         if args.only:
             unknown = [s for s in args.only if s not in stages]
             if unknown:

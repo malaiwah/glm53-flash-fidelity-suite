@@ -239,11 +239,29 @@ class RunPod(SSHTransport):
         kp = self.ssh_key + ".pub"
         if os.path.isfile(kp):
             pubkey = open(kp, encoding="utf-8").read().strip()
+        # Container-native launch (ROOT-1): the pod can run OUR image with
+        # OUR command -- the image's entrypoint IS the driver, no SSH and no
+        # bundle upload. `docker_args` is the container command string
+        # (podFindAndDeployOnDemand's dockerArgs); `env` is a dict of
+        # environment variables. Configuration and the HF token travel via
+        # `env` (that is the contract container_entry.write_token honors) and
+        # NEVER via docker_args: the args string is argv, visible in the
+        # provider's console and API listings.
+        def _q(value):
+            return str(value).replace("\\", "\\\\").replace('"', '\\"')
+
+        env_pairs = [("PUBLIC_KEY", pubkey.replace('"', ""))]
+        for key in sorted(kw.get("env") or {}):
+            env_pairs.append((key, (kw.get("env") or {})[key]))
+        env_gql = ", ".join('{key:"%s", value:"%s"}' % (_q(k), _q(v))
+                            for k, v in env_pairs)
+        docker_args = kw.get("docker_args") or ""
+        docker_gql = ('dockerArgs:"%s", ' % _q(docker_args)) if docker_args else ""
         q = ('mutation { podFindAndDeployOnDemand(input:{'
              'cloudType:%s, gpuCount:%d, volumeInGb:%d, containerDiskInGb:%d, '
              'minVcpuCount:%d, minMemoryInGb:%d, gpuTypeId:"%s", name:"%s", '
-             'imageName:"%s", ports:"22/tcp", volumeMountPath:"/workspace", '
-             'env:[{key:"PUBLIC_KEY", value:"%s"}] '
+             'imageName:"%s", %sports:"22/tcp", volumeMountPath:"/workspace", '
+             'env:[%s] '
              '}) { id name costPerHr } }'
              % ("SECURE" if secure else "COMMUNITY", int(kw.get("num_gpus") or 1),
                 disk, min(disk, 200),
@@ -253,7 +271,7 @@ class RunPod(SSHTransport):
                 # overridable rather than hard-coded at 8/32.
                 int(kw.get("min_vcpu") or 4), int(kw.get("min_ram_gb") or 16),
                 gpu, name,
-                kw.get("image") or DEFAULT_IMAGE, pubkey.replace('"', '')))
+                kw.get("image") or DEFAULT_IMAGE, docker_gql, env_gql))
         d = self._gql(q, timeout=180)
         pod = d.get("podFindAndDeployOnDemand")
         if not pod:

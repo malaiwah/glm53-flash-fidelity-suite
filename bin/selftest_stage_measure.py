@@ -778,6 +778,88 @@ def main():
         check("L2b the lock is released when the stage exits",
               not lock.exists())
 
+        # ---------------------------------------------------------------
+        # ROOT-1: the publish_root stage. A sealed, twice-validated root was
+        # destroyed at teardown because nothing published it; when job.json
+        # names capture.publish_root_to the sealed dataset is uploaded from
+        # the box -- but only AFTER verify passed there.
+        print("\n== publish_root: only after verify, correct argv (ROOT-1) ==")
+
+        def job_pub():
+            job = job_root()
+            job["capture"]["publish_root_to"] = "malaiwah/mm3-root-v1"
+            job["job_id"] = "ab12cd34"
+            return job
+
+        # PR1: verify has not passed -> refusal, nothing runs, no marker.
+        sb = Sandbox(td / "pub1", job_pub())
+        (sb.fs / "dataset").mkdir()
+        proc, calls = sb.run("publish_root", bash)
+        check("PR1 publish_root REFUSES before verify passed (exit 3, "
+              "no upload attempted)",
+              proc.returncode == 3 and not calls
+              and not sb.marker("publish_root").is_file()
+              and "verify has not completed" in proc.stderr,
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+
+        # PR2: verify.done present -> publish argv, receipt path, marker.
+        sb.marker("verify").write_text("")
+        proc, calls = sb.run("publish_root", bash)
+        pub = [c for c in calls if c[0] == "PY"
+               and any("fidelity_dataset.py" in a for a in c[1])]
+        check("PR2 publish_root exits 0 and drives fidelity_dataset publish",
+              proc.returncode == 0 and len(pub) == 1,
+              proc.stdout + proc.stderr)
+        if pub:
+            argv = pub[0][1]
+            check("PR2b argv: the sealed dataset, the destination repo, and "
+                  "a receipt under receipts/",
+                  "publish" in argv
+                  and str(sb.fs / "dataset") in argv
+                  and "--repo" in argv
+                  and argv[argv.index("--repo") + 1] == "malaiwah/mm3-root-v1"
+                  and "--receipt" in argv
+                  and argv[argv.index("--receipt") + 1]
+                  == str(sb.fs / "receipts" / "publish-root.json"), argv)
+        check("PR2c S-MARK publish_root writes its marker",
+              sb.marker("publish_root").is_file())
+        check("PR2d S-ARGV no foreign path", not sb.foreign_paths(calls),
+              sb.foreign_paths(calls))
+
+        # PR4/PR5: race-mode identity separation. A PREVIEW must never be
+        # published under the FINAL repo name (the in-place update race mode
+        # forbids); its own -preview repo is fine.
+        def job_prev(repo):
+            job = job_root()
+            job["capture"]["preview_of"] = "mm3-root-v1"
+            job["capture"]["dataset_id"] = "mm3-root-v1.preview"
+            job["capture"]["race"] = True
+            job["capture"]["publish_root_to"] = repo
+            return job
+
+        sb = Sandbox(td / "pub4", job_prev("malaiwah/mm3-root-v1"))
+        (sb.fs / "dataset").mkdir()
+        sb.marker("verify").write_text("")
+        proc, calls = sb.run("publish_root", bash)
+        check("PR4 a PREVIEW is refused the FINAL repo name (exit 3)",
+              proc.returncode == 3 and not calls
+              and "wears the FINAL name" in proc.stderr,
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+        sb = Sandbox(td / "pub5", job_prev("malaiwah/mm3-root-v1-preview"))
+        (sb.fs / "dataset").mkdir()
+        sb.marker("verify").write_text("")
+        proc, calls = sb.run("publish_root", bash)
+        check("PR5 a preview publishes under its OWN repo",
+              proc.returncode == 0 and len(calls) == 1
+              and "malaiwah/mm3-root-v1-preview" in calls[0][1],
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+
+        # PR3: quant jobs have no root to publish.
+        sb = Sandbox(td / "pub3", job_quant())
+        proc, calls = sb.run("publish_root", bash)
+        check("PR3 publish_root refuses a quant job (exit 2)",
+              proc.returncode == 2 and not calls, proc.stderr)
+
     print()
     if FAILED:
         print("selftest_stage_measure: %d FAILED" % len(FAILED))

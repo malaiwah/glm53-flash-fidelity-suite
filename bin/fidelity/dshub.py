@@ -238,7 +238,15 @@ def publish_dataset(root: str, repo: str, *, token: Optional[str] = None,
         ignore += [d + "/*", d + "/**", "**/" + d + "/**"]
     for sfx in F.CREDENTIAL_SUFFIXES:
         ignore += ["*" + sfx, "**/*" + sfx]
-    api.upload_folder(folder_path=root, repo_id=repo, repo_type=repo_type,
-                      commit_message=message, ignore_patterns=ignore)
+    commit = api.upload_folder(folder_path=root, repo_id=repo, repo_type=repo_type,
+                               commit_message=message, ignore_patterns=ignore)
+    # The uploaded REVISION, so a receipt can pin exactly what was published
+    # (ROOT-1): upload_folder returns a CommitInfo whose oid is the new commit.
+    revision = getattr(commit, "oid", None)
+    if not revision:
+        try:
+            revision = api.repo_info(repo_id=repo, repo_type=repo_type).sha
+        except Exception:                                # noqa: BLE001
+            revision = None
     return {"repository": repo, "dataset_sha256": manifest[F.SEAL_FIELD],
-            "private": bool(private)}
+            "private": bool(private), "revision": revision}

@@ -777,6 +777,54 @@ race_capture)
   log "done"
   ;;
 
+publish_root)
+  # ROOT-1. A sealed, twice-validated MiniMax root was destroyed at teardown
+  # because nothing published it -- the $6.59 the deferred review predicted.
+  # When job.json names capture.publish_root_to, the sealed dataset is
+  # uploaded to the Hub HERE, on the instance, where the bytes already are.
+  #
+  # Ordering: `verify` must have PASSED on this box first -- its marker is
+  # the receipt that the seal and the digest chain recompute. The publish
+  # tool then refuses anything unverifiable itself, uploads, FETCHES THE
+  # PUBLISHED COPY BACK and re-validates it (success is checked, never
+  # assumed), and records the uploaded revision into $RCPT/publish-root.json.
+  #
+  # Token lifecycle: publish is a NETWORKED phase, so load_token is
+  # legitimate here (a capture phase must not hold it; this stage may).
+  ROLE="$(jqget role quant)"
+  if [ "$ROLE" != "root" ]; then
+    echo "the publish_root stage is --role root only (job.json says role=$ROLE)" >&2
+    exit 2
+  fi
+  DEST_REPO="$(jqget capture.publish_root_to)"
+  [ -n "$DEST_REPO" ] || { echo "job.json has no capture.publish_root_to" >&2; exit 2; }
+  # Race-mode identity separation (docs/RACE-MODE.md, non-negotiable): a
+  # PREVIEW (capture.preview_of names the final id) and the FINAL are two
+  # DATASETS with two identities. Publishing preview bytes under the final
+  # repo name would be the in-place update race mode exists to forbid --
+  # reference_id is a comparability-key field, so rows measured against the
+  # one-run bytes and the full-evidence bytes would silently share a group.
+  PREVIEW_OF="$(jqget capture.preview_of)"
+  REPO_BASE="${DEST_REPO##*/}"
+  if [ -n "$PREVIEW_OF" ] && [ "$REPO_BASE" = "$PREVIEW_OF" ]; then
+    echo "publish_root REFUSES: this dataset is a PREVIEW of '$PREVIEW_OF' and the destination repo wears the FINAL name ($DEST_REPO)." >&2
+    echo "  Publish the preview under its own repo (e.g. ${DEST_REPO}-preview); the final publishes as $PREVIEW_OF after run 2 + verify + self-compare." >&2
+    exit 3
+  fi
+  OUT="$FS/dataset"
+  [ -d "$OUT" ] || { echo "no dataset at $OUT (capture has not run)" >&2; exit 2; }
+  if [ ! -f "$DONE/verify.done" ]; then
+    echo "publish_root REFUSES: verify has not completed on this box ($DONE/verify.done absent)." >&2
+    echo "  Publishing an unverified root would put an unchecked dataset under a public name." >&2
+    exit 3
+  fi
+  load_token
+  log "publishing the sealed root dataset -> $DEST_REPO"
+  HF_HOME="$FS/hf" "$VENV/bin/python" "$FS/bin/fidelity_dataset.py" publish       "$OUT" --repo "$DEST_REPO"       --revision-message "root capture $(jqget capture.dataset_id) (job $(jqget job_id))"       --receipt "$RCPT/publish-root.json"       2>&1 | tee -a "$LOGS/publish_root.log"
+  write_marker
+  log "done -- $DEST_REPO holds the root; receipt at $RCPT/publish-root.json"
+  ;;
+
 verify)
   # Recompute the dataset's own seal and digest chain BEFORE the box is
   # destroyed. This is the last moment at which a bad capture is free to throw

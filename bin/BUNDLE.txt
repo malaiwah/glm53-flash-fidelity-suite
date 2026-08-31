@@ -246,3 +246,71 @@ engines/tools/exl3hf-evidence/scope-turbo-4.05bpw.json
 # prevents; shipping the two it opens costs kilobytes.
 engines/tools/dione-evidence/bf16-config.json
 engines/tools/dione-evidence/bf16-index.json
+
+# --- committed panels (ROOT-1) -------------------------------------------
+# A root capture needs its panel ON the machine. The SSH path uploads
+# --panel-dir as part of the bundle; the container image carries the same
+# files via BUNDLE->COPY, so `capture --panel-dir` can point inside the
+# image (no bind mount needed for a committed panel).
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0000.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0000.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0001.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0001.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0002.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0002.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0003.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0003.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0004.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0004.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0005.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0005.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0006.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0006.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0007.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0007.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0008.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0008.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0009.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0009.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0010.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0010.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0011.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0011.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0012.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0012.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0013.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0013.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0014.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0014.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0015.mask.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0015.tokens.npy
+engines/panels/panel--fruit.malaiwah.heldout-v1/panel.json
+engines/panels/panel--fruit.malaiwah.heldout-v1/panel.receipt.json
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/causal-mask-2048.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0000.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0001.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0002.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0003.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0004.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0005.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0006.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0007.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0008.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0009.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0010.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0011.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0012.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0013.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0014.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0015.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0016.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0017.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0018.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0019.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0020.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0021.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0022.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0023.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0024.tokens.npy
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/panel.json
+engines/panels/panel--minimaxm3.malaiwah.corpus5x5/panel.receipt.json

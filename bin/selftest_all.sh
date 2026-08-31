@@ -135,6 +135,13 @@ t "seal gates fail closed, offline dry-run is estimate-only (T23: G1-G5)" \
 # tri-state and unknown never authorizes a launch. Stub provider, $0.00.
 t "job identity resolved-first + tri-state liveness (T24: J1-J7)" \
                                            0 python3 bin/selftest_job_identity.py
+# T25. ROOT-1: a sealed root gets PUBLISHED (publish_root stage after verify,
+# receipt pins the uploaded revision) and teardown refuses to destroy a
+# verified-but-unpublished root without an explicit override -- a sealed,
+# twice-validated root was destroyed at teardown for $6.59. Also the
+# container-native RunPod launch (our image + dockerArgs; token via env only).
+t "root publish + teardown guard + container-native launch (T25: RP1-RP9)" \
+                                           0 python3 bin/selftest_root_publish.py
 # T14. The progress meter. Both capture engines print one line at the start and
 # one at the end, which on the streaming lane is a 2-3 hour silence in a stage
 # log that looks exactly like a hang. The rungs that matter are the ones about

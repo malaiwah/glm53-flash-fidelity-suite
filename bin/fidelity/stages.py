@@ -39,11 +39,12 @@ ROOT_RACE_STAGES = ("setup", "race_bootstrap", "race_capture", "verify")
 # "unknown stage" and exit 2.
 KNOWN_STAGES = ("setup", "fetch_target", "fetch_panel", "materialize", "measure",
                 "score", "seal", "capture", "verify", "race_bootstrap",
-                "race_capture")
+                "race_capture", "publish_root")
 
 
 def stage_sequence(role: str = "quant", *, race: bool = False,
-                   surface: Optional[str] = None) -> List[str]:
+                   surface: Optional[str] = None,
+                   publish_root: bool = False) -> List[str]:
     """The ordered stage list for one job.
 
     role="root"  -- there is no candidate and no divergence: the reference IS
@@ -55,10 +56,21 @@ def stage_sequence(role: str = "quant", *, race: bool = False,
                     thread inside the capture, so `fetch_target` is replaced by
                     `race_bootstrap` (the kilobytes that make the rest
                     plannable) plus `race_capture`.
+    publish_root -- root only: append `publish_root`, which uploads the sealed
+                    dataset to the Hub AFTER `verify` passes and records the
+                    published revision (ROOT-1).
     surface      -- only consulted for role="quant"; see MATERIALIZING_SURFACES.
     """
     if role == "root":
-        return list(ROOT_RACE_STAGES if race else ROOT_STAGES)
+        stages = list(ROOT_RACE_STAGES if race else ROOT_STAGES)
+        if publish_root:
+            # ROOT-1: a sealed, twice-validated root was destroyed at teardown
+            # because nothing published it -- $6.59 of GPU time and the only
+            # copy of the evidence. When the job names a destination repo the
+            # publish is a STAGE, after `verify`, on the instance, where the
+            # dataset and the (networked-phase) token both already are.
+            stages.append("publish_root")
+        return stages
     stages = list(QUANT_STAGES)
     if surface in MATERIALIZING_SURFACES:
         # After fetch_target, before fetch_panel: the tree it writes is what the
