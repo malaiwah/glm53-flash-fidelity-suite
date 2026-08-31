@@ -479,6 +479,16 @@
           ],
           "minimum": 0
         },
+        "per_run_evidence_hashes": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              { "$ref": "common.schema.json#/$defs/sha256" },
+              { "type": "null" }
+            ]
+          },
+          "description": "P1-07: one entry per claimed run, IN RUN ORDER, null where that run supplied no valid digest. evidence_hashes stores the distinct set; this vector is the evidence that every claimed run actually contributed one. identical_across_runs=true requires a digest for every run, all equal -- one digest plus four missing digests is unknown, not identity."
+        },
         "note": {
           "type": "string"
         }

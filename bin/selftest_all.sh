@@ -47,6 +47,10 @@ t "decode parity + timing (needs torch)"   0 "$PY" bin/selftest_decode_parity.py
 # near-equal 50k-vocab distributions while its receipts declared fp64.
 t "fidelity reducer: fp64 known answers (P1-06)" 0 "$VPY" bin/selftest_fidelity_reducer.py
 t "registry client/viewer/matcher (T1)"    0 python3 bin/selftest_registry_view.py
+# P1-07. identical_across_runs=true needs one valid digest PER claimed run, all
+# equal. The old ingest collapsed digests to a set first, so one digest plus
+# four missing digests manufactured "five runs, bitwise identical".
+t "determinism ingest: per-run digests (P1-07)" 0 python3 bin/selftest_registry_determinism.py
 t "floor-aware stats known answers (T2)"   0 python3 bin/selftest_stats.py
 t "preview estimator coverage (T3)"        0 python3 bin/selftest_preview_stats.py
 t "submission refusability (T5)"           0 python3 bin/selftest_submission_refusal.py

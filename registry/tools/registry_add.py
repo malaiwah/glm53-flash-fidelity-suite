@@ -303,6 +303,46 @@ def _need(receipt, pointer, path, ctx=""):
     return node
 
 
+def _determinism_from_run_digests(runs, key="tokenwise_kld_sha256"):
+    """P1-07: the per-run digest vector, and the ONLY predicate that may call a
+    run set bitwise identical.
+
+    The old reduction collapsed the digests to a set first, so five claimed runs
+    with ONE digest and four missing digests produced `identical: true` backed by
+    one hash -- "five runs, bitwise identical" manufactured from "one of five runs
+    supplied a digest". Rules, in order:
+
+      * a digest is VALID only if it is a 64-hex sha256 string; anything else
+        (absent, null, malformed) is missing evidence, never a wildcard;
+      * two DISTINCT valid digests refute identity: identical = False;
+      * identical = True requires one valid digest PER CLAIMED RUN, all equal,
+        and at least two runs;
+      * anything else is identical = None (unknown) with a missing-evidence note.
+
+    Returns a dict: per_run (digest-or-None, in run order), distinct (sorted
+    unique valid digests), missing (count), identical (True/False/None), note.
+    """
+    per_run = [x.get(key) for x in runs]
+    valid = [d for d in per_run if isinstance(d, str) and L.SHA256_RE.match(d)]
+    distinct = sorted(set(valid))
+    missing = len(per_run) - len(valid)
+    note = None
+    if len(distinct) > 1:
+        identical = False
+        note = ("%d DISTINCT per-run tokenwise digests: this measurement is not bitwise "
+                "reproducible." % len(distinct))
+    elif len(per_run) >= 2 and missing == 0 and len(distinct) == 1:
+        identical = True
+    else:
+        identical = None
+        if missing and per_run:
+            note = ("%d of %d claimed runs supplied no valid per-run digest; bitwise identity "
+                    "cannot be asserted from partial evidence and is recorded as unknown."
+                    % (missing, len(per_run)))
+    return {"per_run": per_run, "distinct": distinct, "missing": missing,
+            "identical": identical, "note": note}
+
+
 def adapt_packed_and_five_run(receipts):
     """F1 + F2 fused: the packed receipt supplies the value and the seals, the five-run
     receipt supplies the determinism evidence. The two must agree or it is exit 5."""
@@ -328,10 +368,8 @@ def adapt_packed_and_five_run(receipts):
     positions = {x.get("prediction_positions") for x in runs}
     if len(positions) != 1:
         raise Refuse(E_INCONSISTENT, "runs disagree on prediction_positions: %s" % sorted(positions))
-    digests = sorted({x.get("tokenwise_kld_sha256") for x in runs if x.get("tokenwise_kld_sha256")})
-    if len(digests) != len(runs) and len(digests) != 1:
-        pass  # partial digests: reported below as not-identical
-    identical = len(digests) == 1 and len(digests) == len({d for d in digests})
+    det = _determinism_from_run_digests(runs)
+    digests, identical = det["distinct"], det["identical"]
     if packed:
         pr, ppath, _ = packed
         pv = _need(pr, "/measured_mean_kld", ppath)
@@ -348,9 +386,10 @@ def adapt_packed_and_five_run(receipts):
         "scored_positions": positions.pop() * len(runs) if False else sum(
             x["prediction_positions"] for x in runs) // len(runs),
         "runs": len(runs), "run_means": means, "cold": True,
-        "identical": bool(identical and len(runs) >= 2),
+        "identical": identical,
         "evidence_kind": "tokenwise_kld_sha256" if digests else "run_mean_equality_only",
-        "evidence_hashes": digests if identical else (digests or None),
+        "evidence_hashes": digests or None,
+        "evidence_hashes_per_run": det["per_run"],
         "panel_digest": fr.get("token_panel_receipt_sha256"),
         "teacher_digest": fr.get("teacher_receipt_sha256"),
         "gate": _gate(fr),
@@ -361,9 +400,15 @@ def adapt_packed_and_five_run(receipts):
         "receipt_schema": FIVE_COLD_RUN,
         "stack_relation": "same_stack", "head_policy": "native_head",
     }
-    if not identical and len(digests) > 1:
-        out["det_note"] = ("%d DISTINCT per-run tokenwise digests: this measurement is not bitwise "
-                           "reproducible." % len(digests))
+    if det["note"]:
+        out["det_note"] = det["note"]
+    if det["identical"] is None and det["missing"]:
+        out["det_disclosure"] = {
+            "code": "determinism_evidence_incomplete", "severity": "caveat",
+            "detail": "%d of %d claimed runs carry no valid per-run tokenwise digest, so "
+                      "identical_across_runs is recorded as unknown rather than asserted."
+                      % (det["missing"], len(runs)),
+            "affects_comparability": False}
     return out
 
 
@@ -1086,8 +1131,8 @@ def adapt_foreign(receipt, path):
         if sd is not None and not L.close(sd, L.population_stddev(means)):
             raise Refuse(E_INCONSISTENT, "population_stddev_of_run_means %r but recomputing gives %r"
                          % (sd, L.population_stddev(means)))
-        digests = sorted({x.get("tokenwise_kld_sha256") for x in runs if x.get("tokenwise_kld_sha256")})
-        identical = len(digests) == 1
+        det = _determinism_from_run_digests(runs)
+        digests, identical = det["distinct"], det["identical"]
         pos = {x.get("prediction_positions") for x in runs}
         return {
             "value": value, "metric_name": "mean_of_run_means_tokenwise_kld",
@@ -1100,10 +1145,18 @@ def adapt_foreign(receipt, path):
             "top1": receipt.get("mean_top1_agreement"),
             "scored_positions": (pos.pop() if len(pos) == 1 else None),
             "contexts": 1, "runs": len(runs), "run_means": means, "cold": True,
-            "identical": identical and len(runs) >= 2,
+            "identical": identical,
             "evidence_kind": "tokenwise_kld_sha256" if digests else "run_mean_equality_only",
-            "evidence_hashes": digests if identical else None,
-            "det_note": ("%d distinct per-run tokenwise digests" % len(digests)) if not identical else None,
+            "evidence_hashes": digests or None,
+            "evidence_hashes_per_run": det["per_run"],
+            "det_note": det["note"],
+            "det_disclosure": ({
+                "code": "determinism_evidence_incomplete", "severity": "caveat",
+                "detail": "%d of %d claimed runs carry no valid per-run tokenwise digest, so "
+                          "identical_across_runs is recorded as unknown rather than asserted."
+                          % (det["missing"], len(runs)),
+                "affects_comparability": False}
+                if identical is None and det["missing"] else None),
             "gate": {"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
                      "passed": bool(receipt.get("all_quality_gates_passed"))},
             "regime": receipt.get("regime"),
@@ -1598,6 +1651,8 @@ def build_row(args, adapted, receipt_sources, registry):
     if args.disclosure:
         disclosures.append({"code": args.disclosure_code, "severity": "caveat",
                             "detail": args.disclosure, "affects_comparability": True})
+    if adapted.get("det_disclosure"):
+        disclosures.append(dict(adapted["det_disclosure"]))
     if not disclosures:
         disclosures.append({"code": "no_known_deviations", "severity": "info",
                             "detail": "No deviation from this registry's default protocol is known "
@@ -1609,6 +1664,8 @@ def build_row(args, adapted, receipt_sources, registry):
            "evidence_hashes": adapted.get("evidence_hashes") or [],
            "distinct_evidence_hash_count": len(adapted.get("evidence_hashes") or [])
            if adapted.get("evidence_hashes") is not None else None}
+    if adapted.get("evidence_hashes_per_run") is not None:
+        det["per_run_evidence_hashes"] = list(adapted["evidence_hashes_per_run"])
     if adapted.get("run_means"):
         rm = adapted["run_means"]
         det.update({"run_means": rm, "min_run_mean": min(rm), "max_run_mean": max(rm),
