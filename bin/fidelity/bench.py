@@ -44,6 +44,111 @@ PAYLOAD = Path(__file__).with_name("cardbench_payload.py")
 # Measured on the reference card, so an estimate has something real to scale.
 REFERENCE = {"gpu": "NVIDIA A100 80GB PCIe", "stream_matrix_ms": 0.899}
 
+# Same set, and for the same reason, as measure_cloud._RUNNING_STATES: every
+# provider spells "this box will accept work now" differently.
+_READY_STATES = frozenset({"running", "run", "active", "ready"})
+
+
+def wait_ready(provider, machine_id: Any, *, wait: float = 900,
+               poll: float = 10.0) -> None:
+    """Block until the instance will accept an exec -- on ANY backend.
+
+    The three SSH backends expose `_endpoint`, which waits for a reachable
+    host:port. That is the only honest readiness signal when the next call
+    opens a socket, so it is used whenever it exists.
+
+    JarvisLabs has no endpoint at all: it execs through its own CLI, so there
+    is no host and no port to wait for. Calling `_endpoint` on it raised
+    AttributeError -- and it raised *after* `create` had already started the
+    meter, which is the expensive half. `--provider jarvislabs` is one of the
+    four choices this tool advertises in `--help`, and on that one choice it
+    rented a box, failed on the next line, and tore it down again every single
+    time. Nothing offline caught it because nothing offline asks a provider
+    object for a method it does not have.
+
+    So: endpoint where there is one, instance state where there is not.
+    """
+    ep = getattr(provider, "_endpoint", None)
+    if callable(ep):
+        ep(machine_id, wait=wait)
+        return
+    deadline = time.time() + wait
+    seen = None
+    while time.time() < deadline:
+        inst = provider.get(machine_id)
+        seen = getattr(inst, "status", None) if inst is not None else None
+        if str(seen or "").strip().lower() in _READY_STATES:
+            return
+        time.sleep(poll)
+    raise RuntimeError(
+        "instance %s never became ready within %ds (last state: %r)"
+        % (machine_id, int(wait), seen))
+
+
+def _catalogue_rate(provider, inst) -> Optional[float]:
+    """The listed rate for the offer this instance corresponds to, or None.
+
+    Second best, and labelled as such by living in its own function: it is the
+    price the catalogue advertises rather than the price the contract carries.
+    Used only where the provider genuinely publishes no per-instance rate.
+    """
+    try:
+        offers = provider.gpus()
+    except Exception:                                     # noqa: BLE001
+        return None
+    want = (getattr(inst, "gpu_type", "") or "").strip().lower()
+    spot = bool(getattr(inst, "is_spot", False))
+    region = (getattr(inst, "region", "") or "").strip().lower()
+    cands = [o for o in offers
+             if (o.gpu_type or "").strip().lower() == want
+             and bool(getattr(o, "spot", False)) == spot]
+    if region:
+        exact = [o for o in cands if (o.region or "").strip().lower() == region]
+        cands = exact or cands
+    prices = [float(o.price) for o in cands if o.price]
+    return round(min(prices), 4) if prices else None
+
+
+def rented_rate(provider, machine_id: Any) -> Dict[str, Any]:
+    """What the box that was actually rented costs per hour, from its record.
+
+    The point of this benchmark is dollars per MEASUREMENT, and that number is
+    `minutes_per_window x $/hour`. Reading the rate off a catalogue afterwards
+    is not the same thing: on a marketplace the ask you searched and the
+    contract you got are different objects, and a rate typed into a table by
+    hand cannot be re-derived from the artifact. So the rate is read back from
+    the instance that is billing, and stored beside the timing it explains.
+
+    Providers spell it four ways and one does not report it at all; a missing
+    rate is recorded as null rather than guessed.
+    """
+    try:
+        inst = provider.get(machine_id)
+    except Exception:                                     # noqa: BLE001
+        return {}
+    if inst is None:
+        return {}
+    raw = getattr(inst, "raw", None) or {}
+    rate, source = None, "none"
+    for key, scale in (("cost_per_hr", 1.0), ("dph_total", 1.0),
+                       ("price_cents_per_hour", 0.01)):
+        if raw.get(key) is not None:
+            rate, source = round(float(raw[key]) * scale, 4), "contract:" + key
+            break
+    if rate is None:
+        # JarvisLabs reports a running TOTAL and no rate. Its catalogue does
+        # carry one, so the rate is still derived from the provider rather
+        # than typed into a table by a human -- matched on the GPU, the region
+        # and the billing mode of the instance that exists. It is labelled
+        # `catalogue` because it is the advertised price, not the contract.
+        rate = _catalogue_rate(provider, inst)
+        source = "catalogue" if rate is not None else "none"
+    return {"usd_per_hour": rate,
+            "rate_source": source,
+            "gpu_type_billed": getattr(inst, "gpu_type", None),
+            "region": getattr(inst, "region", None),
+            "is_spot": bool(getattr(inst, "is_spot", False))}
+
 
 def run_bench(provider, *, gpu: Optional[str] = None, ask_id: Optional[Any] = None,
               storage: int = 30, name: str = "fidbench",
@@ -72,8 +177,9 @@ def run_bench(provider, *, gpu: Optional[str] = None, ask_id: Optional[Any] = No
         if mid is None:
             raise RuntimeError("provider returned no machine id: %r" % (created,))
         say("rented %s" % mid)
-        provider._endpoint(mid, wait=900)
-        say("ssh up after %.0fs" % (time.time() - started))
+        wait_ready(provider, mid, wait=900)
+        say("ready after %.0fs" % (time.time() - started))
+        rate = rented_rate(provider, mid)
         provider.upload(mid, str(PAYLOAD), "/tmp/cardbench.py")
         out = provider.exec_stdout(mid, "python3 /tmp/cardbench.py 2>&1 | tail -30",
                                    timeout=900)
@@ -83,6 +189,11 @@ def run_bench(provider, *, gpu: Optional[str] = None, ask_id: Optional[Any] = No
             raise RuntimeError("benchmark produced no JSON:\n%s" % out[-600:])
         doc["provider"] = getattr(provider, "provider", "?")
         doc["wall_seconds"] = round(time.time() - started, 1)
+        doc["rental"] = dict(rate, machine_id=str(mid),
+                             requested_gpu=gpu, requested_ask_id=(
+                                 str(ask_id) if ask_id is not None else None),
+                             at_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                                  time.gmtime()))
         return doc
     finally:
         if mid is not None and not keep:
@@ -123,6 +234,13 @@ def gate(doc: Dict[str, Any], *, min_h2d_gbps: Optional[float] = None,
 
     It is checked AFTER setup and BEFORE the fetch, because setup is minutes
     and the fetch is the first expensive thing.
+
+    Note what is NOT gated: the link width. A Lambda GH200 reports Gen4 x1 at
+    idle and under load -- the oversubscription signature exactly -- and moves
+    379 GB/s host-to-device, because its host memory reaches the die over
+    NVLink-C2C rather than over PCIe. Gating on width would refuse the fastest
+    machine this suite has measured. Bandwidth is the fact; the link is the
+    explanation printed beside it.
     """
     bad = []
     h2d = doc.get("h2d_GBps")
@@ -149,13 +267,22 @@ def estimate(doc: Dict[str, Any], *, matrices_per_window: int) -> Dict[str, Any]
     if not per_matrix_ms:
         return {}
     win_min = per_matrix_ms * matrices_per_window / 1000.0 / 60.0
-    return {
+    out = {
         "matrices_per_window": matrices_per_window,
         "minutes_per_window": round(win_min, 2),
         "relative_to_reference": round(
             per_matrix_ms / REFERENCE["stream_matrix_ms"], 2),
         "reference": REFERENCE["gpu"],
     }
+    # Dollars per hour is the wrong axis and dollars per WINDOW is the right
+    # one: a card at three times the rate that finishes in a third of the time
+    # is a wash. The two halves are only comparable when they come from the
+    # same rental, so the rate is the one read back off the billing instance.
+    rate = (doc.get("rental") or {}).get("usd_per_hour")
+    if rate:
+        out["usd_per_hour"] = rate
+        out["usd_per_window"] = round(win_min / 60.0 * float(rate), 5)
+    return out
 
 
 def render(doc: Dict[str, Any], est: Optional[Dict[str, Any]] = None) -> str:
@@ -176,6 +303,17 @@ def render(doc: Dict[str, Any], est: Optional[Dict[str, Any]] = None) -> str:
         "  per-matrix step        %8.3f ms    (upload + cast + matmul)"
         % doc.get("stream_matrix_ms", 0),
     ]
+    rent = doc.get("rental") or {}
+    # The rate of the CONTRACT, not of the ask -- and the GPU name comes from
+    # nvidia-smi above, never from the provider's own instance record, which
+    # on one provider is an opaque machine id and on another was simply wrong.
+    if rent:
+        lines += [
+            "  billed rate            %s"
+            % ("not reported by this provider"
+               if rent.get("usd_per_hour") is None
+               else "$%.4f/h" % rent["usd_per_hour"]),
+        ]
     if est:
         lines += [
             "",
@@ -184,6 +322,12 @@ def render(doc: Dict[str, Any], est: Optional[Dict[str, Any]] = None) -> str:
             "    %.2f min/window, %.2fx the %s reference"
             % (est["minutes_per_window"], est["relative_to_reference"],
                est["reference"]),
+        ]
+        if est.get("usd_per_window") is not None:
+            lines.append("    $%.5f per window at $%.4f/h  <- the axis that "
+                         "actually ranks providers"
+                         % (est["usd_per_window"], est["usd_per_hour"]))
+        lines += [
             "    This scales the inner loop only. It does NOT include fetch,",
             "    materialize or the panel -- `measure-cloud --dry-run` does.",
         ]

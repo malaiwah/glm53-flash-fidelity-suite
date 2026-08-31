@@ -205,6 +205,13 @@ class Vast(SSHTransport):
         inst.machine_id = d.get("id")
         inst.raw["ssh_host"] = d.get("ssh_host")
         inst.raw["ssh_port"] = d.get("ssh_port")
+        # The CONTRACT rate, not the ask's. On a marketplace those are two
+        # different objects: the ask you searched can be gone by the time the
+        # rental lands, and an ask id is not a durable name for one machine --
+        # one that advertised a B200 handed back an H100. Anything that prices
+        # a run must read what is billing, not what was listed.
+        inst.raw["dph_total"] = d.get("dph_total")
+        inst.raw["gpu_name"] = d.get("gpu_name")
         return inst
 
     def list_instances(self) -> List[Instance]:

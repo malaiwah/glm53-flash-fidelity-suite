@@ -24,7 +24,17 @@ def _pcie_state():
     This is what makes "the card was asleep" and "the host is oversubscribed"
     distinguishable instead of a matter of opinion: a Gen1 x1 link at idle that
     becomes Gen4 x16 under load was parked, and a link that stays narrow under
-    sustained traffic is genuinely what the machine offers.
+    sustained traffic is *usually* what the machine offers.
+
+    Usually, not always -- and the exception is the fastest machine in the
+    survey. A Lambda GH200 reports **Gen4 x1 of Gen4 x1** at idle and under
+    load, the exact signature of the oversubscribed host this field exists to
+    expose, while measuring **379 GB/s** host-to-device: fourteen times a
+    Gen4 x16 A100. Its PCIe link is vestigial because the host memory does not
+    travel over PCIe at all, it travels over NVLink-C2C. So the LINK is
+    context for the bandwidth number and never a substitute for it. Anything
+    that gates on width rather than on measured GB/s will refuse the best card
+    it can rent; `bench.gate` deliberately gates on `h2d_GBps` alone.
     """
     import subprocess
     q = ("pcie.link.gen.current,pcie.link.width.current,"

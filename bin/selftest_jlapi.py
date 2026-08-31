@@ -33,9 +33,23 @@ STUB = """#!/bin/sh
 case "$1" in
   --version) echo "jl, version 0.2.17"; exit 0;;
   list) printf '%s' "$JL_LIST_OUT"; exit ${JL_LIST_RC:-0};;
+  gpus) printf '%s' "$JL_GPUS_OUT"; exit 0;;
   *) echo '{}'; exit 0;;
 esac
 """
+
+# Verbatim rows from `jl 0.2.17 gpus --json` on a live account, 2026-08-31.
+# The first is spot+on-demand, the second is on-demand ONLY (spot_price null),
+# which is how the whole EU1 region is shaped.
+REAL_GPUS = (
+    '[{"gpu_type":"H200","region":"IN2","num_free_devices":6,'
+    '"effective_num_free_devices":8,"price_per_hour":3.99,"spot_price":1.99,'
+    '"vram":"141","cpus_per_gpu":28,"ram_per_gpu":300,'
+    '"workload_type":"container"},'
+    '{"gpu_type":"H200","region":"EU1","num_free_devices":1,'
+    '"effective_num_free_devices":27,"price_per_hour":3.99,"spot_price":null,'
+    '"vram":"141","cpus_per_gpu":16,"ram_per_gpu":200,"workload_type":null}]'
+)
 
 PASS = FAIL = 0
 
@@ -100,6 +114,31 @@ def main():
     rows, err = listing(tmp, '["999001","483634"]')
     check("J7 rows that are not objects raise -- liveness cannot be read from them",
           err is not None and "not objects" in str(err), "%s %s" % (err, rows))
+
+    print("\n== T11b jl gpus: an on-demand row must not vanish ==")
+    # `gpus()` looked for `price` / `on_demand_price`; the CLI writes
+    # `price_per_hour`. Every JarvisLabs on-demand offer was therefore missing
+    # from the catalogue, `select_offer(..., spot=False)` had nothing to pick,
+    # and `--on-demand` refused "no available instance fits this lane" on the
+    # reference provider. A region with no spot price at all was invisible in
+    # both modes.
+    from fidelity.jlapi import select_offer                # noqa: E402
+    os.environ["JL_GPUS_OUT"] = REAL_GPUS
+    os.environ["PATH"] = tmp + os.pathsep + os.environ["PATH"]
+    offers = JL().gpus()
+    spot = [o for o in offers if o.spot]
+    od = [o for o in offers if not o.spot]
+    check("J8 the spot rate is read (it always was)",
+          len(spot) == 1 and spot[0].price == 1.99, [(o.price, o.spot) for o in offers])
+    check("J9 the on-demand rate is read from `price_per_hour`",
+          len(od) == 2 and all(o.price == 3.99 for o in od),
+          [(o.gpu_type, o.region, o.price, o.spot) for o in offers])
+    check("J10 an on-demand-ONLY row still produces an offer",
+          any(not o.spot and o.region == "EU1" for o in offers),
+          [(o.region, o.spot) for o in offers])
+    picked, _ = select_offer(offers, required_vram_bytes=63e9, gpus=1, spot=False)
+    check("J11 --on-demand can therefore be planned at all",
+          picked is not None and picked.price == 3.99, picked)
 
     print("\nselftest_jlapi: %d passed, %d failed" % (PASS, FAIL))
     return 1 if FAIL else 0

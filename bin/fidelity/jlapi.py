@@ -302,7 +302,21 @@ class JL:
                 "workload_type": r.get("workload_type"),
                 "raw": r,
             }
-            on_demand = r.get("price") or r.get("on_demand_price")
+            # `jl 0.2.17 gpus --json` spells the on-demand rate
+            # **price_per_hour**, and neither of the two names this used to
+            # look for exists in that payload. The effect was total and silent:
+            # every JarvisLabs on-demand row produced NO offer, so
+            # `select_offer(..., spot=False)` had nothing to choose from and
+            # `--on-demand` refused "no available instance fits this lane" on
+            # the one provider this suite treats as its reference. Rows with no
+            # spot price at all -- the whole EU1 region -- were invisible in
+            # both modes. Proven against the live account: 12 offers came back,
+            # every one of them spot, and the $3.99 H200 in the printed table
+            # was in none of them.
+            on_demand = (r.get("price_per_hour") if r.get("price_per_hour")
+                         is not None else
+                         (r.get("price") if r.get("price") is not None
+                          else r.get("on_demand_price")))
             if on_demand is not None:
                 offers.append(GpuOffer(price=float(on_demand), spot=False, **base))
             if spot_price is not None:
