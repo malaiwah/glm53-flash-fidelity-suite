@@ -156,7 +156,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/digests
-          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+          # The digest travels as a FILENAME (docker's own multi-arch recipe),
+          # and upload-artifact@v4 refuses colons in filenames (NTFS rule) --
+          # so `sha256:` must be stripped here. Unstripped, the second armed
+          # publish run died at artifact upload with "Contains the following
+          # character: Colon". The manifest job re-adds the prefix.
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
       - uses: actions/upload-artifact@v4
         if: needs.plan.outputs.push == 'true'
         with:

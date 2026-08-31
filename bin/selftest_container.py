@@ -796,6 +796,19 @@ def rung_github_output():
     check("C11s nothing to stderr for a caller's redirect to lose",
           "push=" not in (p.stderr or ""))
 
+    print("[C11t] a digest never becomes a filename with a colon in it")
+    # upload-artifact@v4 refuses ':' in filenames; buildx digests are
+    # `sha256:<hex>`. The workflow must strip the prefix when it writes the
+    # digest AS a file, and the manifest job re-adds it. Run two died on this.
+    wf = (SUITE / ".github" / "workflows" / "container-image.yml").read_text(
+        encoding="utf-8")
+    check("C11t the digest file strips the sha256: prefix",
+          '${digest#sha256:}' in wf)
+    check("C11t no raw digest expression is used as a path",
+          'digests/${{ steps.build.outputs.digest }}' not in wf)
+    check("C11t the manifest job re-adds the prefix when reading",
+          "@sha256:%s" in wf)
+
 
 if __name__ == "__main__":
     sys.exit(main())

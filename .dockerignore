@@ -31,3 +31,8 @@ engines/tools/hidden-replay-evidence
 **/__pycache__
 **/*.pyc
 **/.DS_Store
+
+# Panels are measurement inputs, not evidence: the container-native root
+# capture reads them FROM the image (the SSH-era --panel-dir upload does not
+# exist there). C5g asserts every BUNDLE.txt file survives this ignore file.
+!engines/panels/**
