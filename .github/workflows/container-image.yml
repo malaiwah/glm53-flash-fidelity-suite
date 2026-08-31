@@ -51,6 +51,12 @@ jobs:
       image_reference: ${{ steps.plan.outputs.image_reference }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # C11r verifies every CHANGELOG entry against `git log`. A shallow
+          # clone hides most of history, so the generator "loses" entries that
+          # exist and the gate fails on a phantom drift -- which is exactly how
+          # the first armed publish run died.
+          fetch-depth: 0
       - name: what this build would tag, build and push
         id: plan
         run: |
