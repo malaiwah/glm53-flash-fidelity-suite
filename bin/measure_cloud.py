@@ -508,12 +508,17 @@ class Teardown:
 
 
 def write_lease(job_id: str, *, name: str, deadline: float,
-                machine_id: Optional[int], fs_id: Optional[int]) -> Path:
+                machine_id: Optional[int], fs_id: Optional[int],
+                provider: str = "jarvislabs") -> Path:
     LEASE_DIR.mkdir(parents=True, exist_ok=True)
     path = LEASE_DIR / ("%s.json" % job_id)
     write_json(str(path), {
         "job_id": job_id,
         "name": name,
+        # The sweep can only drive ONE backend (the jl CLI); a lease must say
+        # whose instance it names, or an expired RunPod lease could aim
+        # `jl destroy <id>` at whatever JarvisLabs machine wears that number.
+        "provider": provider,
         "machine_id": machine_id,
         "fs_id": fs_id,
         "deadline_epoch": deadline,
@@ -605,75 +610,206 @@ def parse_deadline_name(name: str) -> Optional[int]:
     return None
 
 
-def reaper_sweep(con: Console, *, dry: bool = False) -> int:
-    """Destroy anything past its deadline, from leases AND from instance names.
+#: How far a deadline may sit from "now" and still be believed.  A base36
+#: suffix in a HUMAN-chosen or future-schema name can parse to any integer at
+#: all -- decades expired, or centuries out -- and an implausible number must
+#: never steer a destroy (P1-03).
+REAPER_PLAUSIBLE_WINDOW = 90 * 86400
 
-    The name-encoded path matters more than it looks: it needs no local state
-    at all, so it still works from a machine that has never seen this job.
+_TERMINAL_STATES = ("destroyed", "terminated", "deleted", "exited")
+
+
+def _confirm_destroyed(jl, mid, con: Console, *, attempts: int = 5,
+                       sleep=time.sleep, base: float = 2.0) -> bool:
+    """After a destroy: absent from the listing, or in a terminal state.
+
+    A destroy call returning is NOT the instance being gone -- providers are
+    eventually consistent and the call can silently no-op.  Retry with
+    backoff; an unreadable listing is UNKNOWN, not confirmation either way.
     """
-    jl = JL(dry=dry)
-    try:
-        jl.require()
-    except (JLNotInstalled, JLError) as exc:
-        con.err(str(exc))
-        return 1
-    now = time.time()
-    targets: Dict[int, str] = {}
+    for attempt in range(attempts):
+        if attempt:
+            sleep(min(60.0, base * (2 ** (attempt - 1))))
+        try:
+            listing = jl.list_instances()
+        except JLError as exc:
+            con.warn("reaper: cannot list to confirm %s is gone (attempt "
+                     "%d/%d): %s" % (mid, attempt + 1, attempts,
+                                     redact(str(exc))[:120]))
+            continue
+        inst = next((i for i in listing
+                     if str(i.machine_id) == str(mid)), None)
+        if inst is None:
+            return True
+        status = str(getattr(inst, "status", "")).strip().lower()
+        if status in _TERMINAL_STATES:
+            return True
+        con.warn("reaper: %s is still '%s' after destroy (attempt %d/%d)"
+                 % (mid, status or "?", attempt + 1, attempts))
+    return False
 
+
+def reaper_sweep(con: Console, *, dry: bool = False, jl=None,
+                 sleep=time.sleep, confirm_attempts: int = 5) -> int:
+    """Destroy what an EXPIRED LEASE authorizes; only report everything else.
+
+    Authorization model (P1-03): a destroy target must come from a provider
+    instance ID recorded in a lease THIS TOOL wrote.  Instance names and the
+    deadlines parsed out of them are discovery only -- they surface a
+    candidate for the operator, they never authorize destruction, because a
+    name is guessable, reusable, and parseable into nonsense.  The two
+    failure modes this shape prevents are opposite and both severe: billing
+    that continues behind a false-success cleanup, and destroying a machine
+    this tool did not create (AGENTS.md: never destroy a machine you did not
+    create).
+
+    Every destroy is confirmed against provider state with retry/backoff; an
+    unconfirmed destroy keeps the lease and makes the sweep exit EXIT_LEAK,
+    because "I told the API to delete it" is a claim, not a receipt.
+
+    --dry-run enumerates EXACTLY what the real run would mutate -- destroys
+    AND lease retirements -- and mutates nothing.
+    """
+    if jl is None:
+        jl = JL(dry=dry)
+        try:
+            jl.require()
+        except (JLNotInstalled, JLError) as exc:
+            con.err(str(exc))
+            return 1
+    now = time.time()
+
+    leases = []
     for path in sorted(LEASE_DIR.glob("*.json")) if LEASE_DIR.is_dir() else []:
         try:
-            lease = read_json(str(path))
+            leases.append((path, read_json(str(path))))
         except (OSError, ValueError):
             continue
-        if lease.get("machine_id") and float(lease.get("deadline_epoch", 0)) < now:
-            targets[int(lease["machine_id"])] = "lease %s expired" % path.name
 
+    _drive_memo: Dict[str, bool] = {}
+
+    def can_drive(path, lease) -> bool:
+        """This sweep drives the jl CLI only.  A lease naming another
+        provider's instance is INVISIBLE to it and must be left entirely
+        alone: not destroyed (`jl destroy` would aim at whatever JarvisLabs
+        machine wears that number), and not retired as a phantom (the
+        instance is alive on a cloud jl cannot list)."""
+        if path.name in _drive_memo:
+            return _drive_memo[path.name]
+        verdict = True
+        provider = str(lease.get("provider") or "").strip().lower()
+        mid = lease.get("machine_id")
+        if provider and provider != "jarvislabs":
+            con.warn("reaper: lease %s names a %s instance; this sweep "
+                     "drives only the jl CLI -- leaving it alone"
+                     % (path.name, provider))
+            verdict = False
+        elif mid is not None and not str(mid).isdigit():
+            con.warn("reaper: lease %s has a non-numeric machine id %r, "
+                     "which cannot be a JarvisLabs machine -- leaving it "
+                     "alone" % (path.name, mid))
+            verdict = False
+        _drive_memo[path.name] = verdict
+        return verdict
+
+    # -- authorized targets: expired leases with a provider instance id ----
+    targets: Dict[str, Any] = {}   # str(mid) -> (mid, reason)
+    for path, lease in leases:
+        mid = lease.get("machine_id")
+        if not mid:
+            continue
+        if not can_drive(path, lease):
+            continue
+        deadline = float(lease.get("deadline_epoch", 0) or 0)
+        if deadline <= 0 or deadline > now + REAPER_PLAUSIBLE_WINDOW:
+            con.warn("reaper: lease %s carries an implausible deadline %r -- "
+                     "skipping it (a nonsense deadline is not authorization)"
+                     % (path.name, lease.get("deadline_epoch")))
+            continue
+        if deadline < now:
+            targets[str(mid)] = (mid, "lease %s expired" % path.name)
+
+    # -- one listing serves discovery, phantom retirement and reporting ----
     try:
-        for inst in jl.list_instances():
-            name = inst.name or ""
-            if not name.startswith("fidcloud-"):
-                continue
-            deadline = parse_deadline_name(name)
-            if deadline is not None and deadline < now:
-                targets.setdefault(inst.machine_id,
-                                   "name deadline %d passed" % deadline)
+        instances = jl.list_instances()
     except JLError as exc:
         con.warn("could not list instances: %s" % redact(str(exc)))
+        instances = None
 
-    # A lease whose instance no longer exists is a phantom: `reaper --list`
-    # keeps reporting a job that is already destroyed, which is exactly the
-    # noise that makes an operator stop reading the list. It happens whenever a
-    # box is torn down by hand -- the case --hold-on-failure creates on purpose,
-    # since holding KEEPS the lease. Retire those here, where we already have
-    # the live instance list, and say which.
-    if not dry:
-        try:
-            alive = {str(i.machine_id) for i in jl.list_instances()}
-        except JLError:
-            alive = None
-        if alive is not None:
-            for path in sorted(LEASE_DIR.glob("*.json")) if LEASE_DIR.is_dir() else []:
-                try:
-                    lease = read_json(str(path))
-                except (OSError, ValueError):
-                    continue
-                mid = lease.get("machine_id")
-                if mid and str(mid) not in alive and str(mid) not in targets:
-                    con.say("reaper: retiring lease %s (machine %s is gone)"
-                            % (path.name, mid))
-                    path.unlink(missing_ok=True)
+    if instances is not None:
+        lease_mids = {str(lease.get("machine_id"))
+                      for _, lease in leases if lease.get("machine_id")}
+        for inst in instances:
+            name = inst.name or ""
+            if not name.startswith("fidcloud-") or str(inst.machine_id) in lease_mids:
+                continue
+            deadline = parse_deadline_name(name)
+            if deadline is None:
+                continue
+            if abs(deadline - now) > REAPER_PLAUSIBLE_WINDOW:
+                con.warn("reaper: instance %s (%s) has an implausible name "
+                         "deadline %d -- ignored" % (inst.machine_id, name,
+                                                     deadline))
+                continue
+            if deadline < now:
+                # DISCOVERED, never destroyed: no lease of this tool names it.
+                con.warn(
+                    "reaper: instance %s (%s) LOOKS expired by its name but "
+                    "no lease of this tool authorizes destroying it. Verify "
+                    "and destroy it yourself: jl destroy %s"
+                    % (inst.machine_id, name, inst.machine_id))
 
-    if not targets:
+    # -- phantom leases: instance gone, lease still on disk ----------------
+    retire = []
+    if instances is not None:
+        alive = {str(i.machine_id) for i in instances}
+        for path, lease in leases:
+            mid = lease.get("machine_id")
+            if (mid and str(mid) not in alive and str(mid) not in targets
+                    and can_drive(path, lease)):
+                retire.append((path, mid, "machine %s is gone" % mid))
+
+    if not targets and not retire:
         con.say("reaper: nothing expired")
         return EXIT_OK
-    for mid, why in sorted(targets.items()):
+
+    failures = []
+    for key in sorted(targets):
+        mid, why = targets[key]
+        lease_paths = [path for path, lease in leases
+                       if str(lease.get("machine_id")) == str(mid)]
+        if dry:
+            con.say("reaper: WOULD destroy %s (%s), confirm it terminal, and "
+                    "then retire %s" % (mid, why,
+                                        ", ".join(p.name for p in lease_paths)))
+            continue
         con.say("reaper: destroying %s (%s)" % (mid, why))
-        if not dry:
-            try:
-                jl.destroy(mid)
-            except JLError as exc:
-                con.err("reaper could not destroy %s: %s" % (mid, redact(str(exc))))
-    return EXIT_OK
+        try:
+            jl.destroy(mid)
+        except JLError as exc:
+            con.err("reaper could not destroy %s: %s -- the lease is KEPT and "
+                    "this sweep exits non-zero" % (mid, redact(str(exc))))
+            failures.append(mid)
+            continue
+        if not _confirm_destroyed(jl, mid, con, attempts=confirm_attempts,
+                                  sleep=sleep):
+            con.err("reaper: destroy of %s was NOT confirmed terminal -- it "
+                    "may still be billing. The lease is KEPT so the next "
+                    "sweep retries, and this sweep exits non-zero." % mid)
+            failures.append(mid)
+            continue
+        con.say("reaper: %s confirmed gone" % mid)
+        for path in lease_paths:
+            path.unlink(missing_ok=True)
+
+    for path, mid, why in retire:
+        if dry:
+            con.say("reaper: WOULD retire lease %s (%s)" % (path.name, why))
+            continue
+        con.say("reaper: retiring lease %s (%s)" % (path.name, why))
+        path.unlink(missing_ok=True)
+
+    return EXIT_LEAK if failures else EXIT_OK
 
 
 def reaper_list(con: Console) -> int:
@@ -2167,7 +2303,8 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
     # the name, which is decided here.
     td.lease_path = write_lease(plan_data["job_id"], name=plan_data["instance_name"],
                                 deadline=plan_data["deadline_epoch"],
-                                machine_id=None, fs_id=None)
+                                machine_id=None, fs_id=None,
+                                provider=getattr(args, "provider", "jarvislabs"))
     con.step("lease written  %s" % td.lease_path)
 
     # Adopt an existing instance for this exact job rather than creating a

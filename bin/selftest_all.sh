@@ -108,6 +108,12 @@ t "secret file creation + transport + cleanup (T20: S1-S9)" \
 # the accepted fingerprint recorded for the cost receipt.
 t "ssh per-run TOFU host keys (T21: K1-K6)" \
                                            0 python3 bin/selftest_sshbase.py
+# T22. The reaper (P1-03). Destruction requires a provider id from a lease
+# THIS tool wrote; names only discover; every destroy is confirmed terminal
+# with retry/backoff or the sweep exits EXIT_LEAK; dry-run enumerates exactly
+# the real run's mutations. Mocked provider, $0.00.
+t "reaper: lease-authorized, confirmed, faithful dry-run (T22: P1-P8)" \
+                                           0 python3 bin/selftest_reaper.py
 # T14. The progress meter. Both capture engines print one line at the start and
 # one at the end, which on the streaming lane is a 2-3 hour silence in a stage
 # log that looks exactly like a hang. The rungs that matter are the ones about
