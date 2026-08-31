@@ -186,6 +186,67 @@ reconstruction closures or a sealed reader ABI. Every GGUF row therefore carries
 the `unsealed_source` disclosure, the same treatment the Dione family gets, and
 the same one the sealed TR3 family does *not* need.
 
+## What it costs, measured — and why the first attempt did not finish
+
+The wiring works. The first real run got as far as capturing window 1 of 25 and
+was then **stopped deliberately**, because it could not finish inside its
+budget. That is a result, not a failure to report, so here is the number and the
+reason.
+
+Measured on `unsloth/GLM-5.3-Flash-GGUF` `UD-Q4_K_XL` @ `2975ab41`, one
+A100-SXM4-80GB (RunPod secure, $1.59/h), 49 layer-fills spanning window 1 and
+the start of window 2:
+
+| quantity | measured |
+|---|---|
+| cumulative decode | 1656.2 s over 42,336 expert matrices |
+| per matrix | **39.12 ms** |
+| per window (36,288 matrices) | **23.7 min** of decode alone |
+| per cold run (25 windows) | **9.86 h** |
+| two cold runs (a submittable receipt needs ≥2) | **19.7 h** |
+| peak device memory | 45.7 GB, against 47.07 GB predicted |
+
+For comparison, the same lane measures **3.12 min/window** on `exl3hf` and
+**2.82** on `tr3-published`. GGUF is **7.6x** slower per window.
+
+**It is not I/O and it is not the GPU**, and both of those were checked rather
+than assumed:
+
+* Window 2 (mean 37.2 s/fill) was **not** faster than window 1 (33.2 s/fill),
+  on a host with 1,007 GB of RAM and 919 GB of warm page cache — more than
+  enough to hold the whole 185 GB routed payload. So it is not a cold-read
+  effect, and no amount of faster storage fixes it.
+* `nvidia-smi` read 2–4% utilization with 45.7 GB resident. The process took
+  1,055–1,380% CPU on a 128-core host that was 74% idle.
+
+It is the **dequant**. `gguf_surface`'s kernels are deliberately plain,
+MPS-safe PyTorch — uint8-level unpack, fp32 accumulation, no float64, no int64
+beyond gather indices. That choice is exactly what makes them *bitwise* provable
+against `gguf-py` 0.19.0's reference `dequantize()`, which is the property the
+whole surface rests on. The same choice costs ~7.5x per matrix against the exl3
+path's fused decode (5.2 ms). The proof and the speed are trading against each
+other, and v1 chose the proof.
+
+So the honest planning number is now in `engines.json`
+(`minutes_per_window_by_surface.gguf = 23.7`), which means `measure-cloud` will
+price a GGUF run at ~20 h and refuse a shorter `--max-runtime` rather than
+discovering it at hour nine. Raw per-fill timings:
+`k6/tools/gguf-evidence/udq4kxl-decode-timings-a100.jsonl`.
+
+**What would make a GGUF row affordable**, in the order a future run should try
+them:
+
+1. A batched/vectorised dequant for Q4_K/Q5_K/Q6_K/Q8_0 that decodes many
+   matrices per call instead of one, keeping the bitwise-vs-`gguf-py` proof as
+   the acceptance test. The idle 114 cores say most of the headroom is here.
+2. `--decode-cache disk`/`ram` — the view is re-decoded every window today, and
+   the box had 900 GB of free RAM. This is a lane knob, not new code.
+3. A faster GPU changes almost nothing while utilization is 3%.
+
+Until one of those lands, a GGUF measurement is ~20 GPU-hours (~$32 on an A100
+at $1.59/h), which is more than the ~$6–15 a routed-experts-only row costs and
+should be budgeted deliberately rather than discovered.
+
 ## Where the wiring lives
 
 Adding a surface means several files agreeing, and the refusal text in
