@@ -53,8 +53,30 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}\Z")
 
 
 def canonical_json(obj):
-    """The registry's single canonical JSON serialization."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    """The registry's single canonical JSON serialization.
+
+    P1-08: allow_nan=False. Python's json would otherwise emit the tokens NaN /
+    Infinity / -Infinity, which are not JSON (RFC 8259): "canonical" bytes that a
+    conforming parser rejects, sealed under a sha256. A non-finite number is a
+    ValueError here, never a wire token. bin/fidelity/common.py must match this
+    byte for byte AND refusal for refusal (bin/selftest_canonical_json.py)."""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                      allow_nan=False)
+
+
+def reject_nonfinite_token(token):
+    """parse_constant hook: refuse NaN/Infinity/-Infinity at ingestion.
+
+    json.loads accepts these non-RFC tokens by default, the minischema's bound
+    checks fail open on NaN (every comparison is False), and the value would
+    later crash canonical serialization -- so the gate is at the parse."""
+    raise ValueError("non-finite JSON token %r: NaN/Infinity are not valid JSON (RFC 8259) "
+                     "and may not enter the registry" % token)
+
+
+def parse_json(text):
+    """json.loads with the registry's ingestion rules (non-finite refused)."""
+    return json.loads(text, parse_constant=reject_nonfinite_token)
 
 
 def sha256_hex(text):
@@ -74,10 +96,13 @@ def sha256_file(path):
 # ---------------------------------------------------------------------------
 # comparability.key
 # ---------------------------------------------------------------------------
-# The whole registry hangs off this function. Two measurement values may be
-# compared IF AND ONLY IF their comparability.key values are equal. The key is
-# a hash over the seven things that must be identical for two fidelity numbers
-# to mean the same thing.
+# The whole registry hangs off this function. The key is a NECESSARY partition:
+# two measurement values with different comparability.key values are never
+# comparable. It is NOT a sufficient certificate -- it deliberately omits lane,
+# candidate pipeline, hardware and artifact scope, and the like-for-like
+# predicate over those lives in tools/registry_predicate.py (CMP-007). The key
+# is a hash over the seven things that must be identical for two fidelity
+# numbers to even be candidates for comparison.
 
 COMPARABILITY_KEY_FIELDS = (
     "panel_id",
@@ -180,7 +205,7 @@ def read_jsonl(path):
             if not line.strip():
                 continue
             try:
-                rows.append((lineno, json.loads(line), line))
+                rows.append((lineno, parse_json(line), line))
             except ValueError as exc:
                 raise ValueError("%s:%d: not valid JSON: %s" % (path, lineno, exc))
     return rows

@@ -25,7 +25,11 @@
     },
     "comparability_rule": {
       "type": "string",
-      "description": "The one-sentence contract: two measurement values may be compared if and only if their comparability.key values are equal; a table that mixes keys is malformed."
+      "description": "The contract: the seven-field comparability.key is a NECESSARY partition key, never a sufficient certificate. Different keys are never comparable; equal keys make rows candidates whose comparability_keys[].comparability predicate must also pass before they are ranked as like-for-like."
+    },
+    "comparability_predicate_rule": {
+      "type": "string",
+      "description": "How to read comparability_keys[].comparability: comparable=true/false/unknown over the secondary dimensions the key deliberately omits (lane, pipeline, scope coverage, hardware). Recomputed by the validator (CMP-007)."
     },
 
     "collections": {
@@ -78,7 +82,32 @@
           "stack_relation": { "type": "string" },
           "head_policy": { "type": "string" },
           "member_count": { "type": "integer", "minimum": 0 },
-          "label": { "type": "string", "description": "Human table heading for this group." }
+          "label": { "type": "string", "description": "Human table heading for this group." },
+          "comparability": {
+            "type": "object",
+            "description": "The like-for-like predicate over the secondary dimensions the key omits. Computed by tools/registry_predicate.py, written by the renderer, recomputed and enforced by the validator (CMP-007) -- a hand-edited predicate is rejected.",
+            "required": ["predicate_version", "comparable", "reasons", "secondary", "live_member_count"],
+            "properties": {
+              "predicate_version": { "type": "string", "const": "comparability-predicate/v1" },
+              "comparable": { "type": "string", "enum": ["true", "false", "unknown"] },
+              "reasons": { "type": "array", "items": { "type": "string" } },
+              "secondary": {
+                "type": "object",
+                "required": ["lane", "pipeline", "scope", "hardware"],
+                "additionalProperties": {
+                  "type": "object",
+                  "required": ["status", "values"],
+                  "properties": {
+                    "status": { "type": "string", "enum": ["pass", "fail", "unknown"] },
+                    "values": { "type": "array", "items": { "type": "string" } }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "live_member_count": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
         },
         "additionalProperties": false
       }

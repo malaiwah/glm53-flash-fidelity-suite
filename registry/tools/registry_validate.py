@@ -1347,6 +1347,49 @@ def check_index(root, C, groups, rep):
             rep.err("CMP-006", "index.json counts.%s = %s, data has %d" % (name, c, len(C[name])))
 
 
+def check_index_predicate(root, C, groups, rep):
+    """CMP-007: the like-for-like predicate in index.json is recomputed, never trusted.
+
+    P1-01. The seven-field key is a NECESSARY partition key; the sufficiency
+    half of the old "iff" claim was false, and the predicate is the
+    machine-readable replacement. A group that mixes lanes, pipelines, scope
+    coverage or hardware must carry comparable=false in the published index --
+    a caveat that exists only in prose is not enforcement, and a hand-edited
+    predicate (a mixed-lane group promoted to comparable=true) must be
+    rejected exactly like a forged comparability key (CMP-001).
+    """
+    import registry_predicate as PRED
+    path = os.path.join(root, "index.json")
+    if not os.path.exists(path):
+        return  # CMP-006 already reports the missing index
+    with open(path, encoding="utf-8") as fh:
+        idx = json.load(fh)
+    declared = {k.get("key"): k for k in idx.get("comparability_keys", [])}
+    for key, members in sorted(groups.items()):
+        entry = declared.get(key)
+        if entry is None:
+            continue  # CMP-006 reports set mismatches
+        expected = PRED.group_predicate(C, members)
+        got = entry.get("comparability")
+        if got is None:
+            rep.err("CMP-007", "index.json entry for %s carries no comparability predicate. "
+                               "The key alone is a partition, not a certificate; re-run "
+                               "tools/registry_render.py." % key)
+            continue
+        if got != expected:
+            diff = []
+            for f in ("comparable", "reasons", "secondary", "live_member_count",
+                      "predicate_version"):
+                if got.get(f) != expected.get(f):
+                    diff.append(f)
+            rep.err("CMP-007", "index.json comparability predicate for %s does not match the "
+                               "one recomputed from the data (differs in: %s). Declared "
+                               "comparable=%r, recomputed %r. A predicate is a pure function "
+                               "of the rows; edit the rows, then re-render."
+                    % (key, ", ".join(diff) or "?", got.get("comparable"),
+                       expected.get("comparable")))
+
+
 def check_prose_keys(root, groups, rep):
     """T5: a comparability key quoted in authored prose must exist in the data.
 
@@ -1671,6 +1714,7 @@ def main():
         check_harness(args.root, C, rep)
         check_provenance_assertions(C, rep)
         check_index(args.root, C, groups, rep)
+        check_index_predicate(args.root, C, groups, rep)
         check_prose_keys(args.root, groups, rep)
         if args.assert_only_touched:
             check_only_touched(args.root, C, args.assert_only_touched, rep)

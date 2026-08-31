@@ -39,7 +39,26 @@ as verified unless it has been.
 
 ## The rule this registry exists to enforce
 
-> **Two fidelity numbers may be compared if and only if their `comparability.key` values are equal.**
+> **Two fidelity numbers with different `comparability.key` values are NEVER comparable. Equal keys
+> make two rows *candidates* for comparison — a necessary condition, not a certificate. Before
+> ranking rows as like-for-like, check the group's machine-readable `comparability` predicate in
+> `index.json`.**
+
+(Until 2026-08-31 this rule was stated as an "if and only if". The *only-if* half was always true
+and still is. The *if* half was never true, and an independent peer review said so with this
+registry's own receipts: the key deliberately omits the measurement **lane** — one artifact in
+group `cmp--202b717f3219c414` is measured on two lanes, differing in the fourth decimal; the
+candidate **pipeline** — the same checkpoint/panel/teacher has measured ~24% apart through two
+pipelines; **hardware** — a measured A100-vs-H200 term of 2.97e-4 nats is ~13x the gap between two
+published 4-bit quantizers ([ARCHITECTURE-DETERMINISM](https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/ARCHITECTURE-DETERMINISM.md));
+and artifact **scope** — a routed-experts-only quant and a full-forward GGUF at "the same" bpw are
+different interventions. The omission is deliberate — hashing hardware into the key was considered
+and rejected, because it would explode the partition into single-row groups — but deliberate is not
+the same as sufficient, and the contract now says which it is. The key itself is **unchanged and
+unversioned**: rehashing it would regroup every published row and orphan every key a third party
+has cited. What changed is the claim made about it, plus a machine-readable predicate per group:
+`comparable: true/false/unknown` with reasons, in `index.json`, recomputed by the validator
+(`CMP-007`) so a hand-edited predicate is rejected exactly like a forged key.)
 
 A bare `kld: 0.027` is worse than nothing. A KL divergence is only meaningful relative to a specific
 set of tokens, measured against a specific teacher capture, in a specific direction, at a specific

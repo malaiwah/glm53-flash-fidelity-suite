@@ -118,11 +118,25 @@ Same **panel** (corpus, windows, positions, tokenizer), same **teacher**
 (weights *and* the runtime that captured its logits, by hash), same
 **direction**, same **estimator precision**, same **scope policy** (what is
 quantized vs native), same **lane** — or a disclosed, *measured* bridge
-between lanes (ours: streaming vs sealed = −8.5e-6, receipt-backed). The
-[registry](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry)
-encodes all of this as a comparability key and renders rows from different
-keys in separate tables. If a number you meet in the wild does not pin
-these, it is an anecdote, not a measurement.
+between lanes (ours: streaming vs sealed = −8.5e-6, receipt-backed, one
+artifact on one panel, not a constant). If a number you meet in the wild
+does not pin these, it is an anecdote, not a measurement.
+
+The [registry](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry)
+encodes this in **two layers, because one hash cannot carry it all**. Its
+seven-field `comparability.key` (panel, teacher capture, metric, direction,
+estimator precision, stack relation, head policy) is a **necessary partition
+key**: rows under different keys are never comparable and render in separate
+tables. It is *not* a sufficient certificate — the key deliberately omits the
+measurement lane, the candidate pipeline, hardware, and the artifact's scope,
+each of which this project has **measured** moving results by more than the
+gaps it publishes between quantizers. The rest of the contract is a
+machine-readable per-group predicate in the registry's `index.json`
+(`comparable: true/false/unknown`, with reasons), recomputed by the validator
+(`CMP-007`) so it cannot be hand-promoted. Before 2026-08-31 this document and
+the registry stated the key rule as an "if and only if"; an independent peer
+review correctly rejected the *if* half, and the claim is withdrawn — see
+`docs/PEER-REVIEW-RESPONSE.md`.
 
 ### 5a. Scope policy is not a footnote
 

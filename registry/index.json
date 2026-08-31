@@ -40,6 +40,38 @@
   "comparability_keys": [
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "true",
+        "live_member_count": 3,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "1x NVIDIA RTX PRO 6000 Blackwell Server Edition"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.fidelity-dataset-hf.rtxpro6000"
+            ]
+          },
+          "scope": {
+            "status": "pass",
+            "values": [
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
       "key": "cmp--05e16411a5932713",
@@ -52,6 +84,42 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 5,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.qwen38-kld-ladder"
+            ]
+          },
+          "scope": {
+            "status": "fail",
+            "values": [
+              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
+              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
       "key": "cmp--12bfc6ec82b47678",
@@ -64,6 +132,42 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 5,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.qwen38-kld-ladder"
+            ]
+          },
+          "scope": {
+            "status": "fail",
+            "values": [
+              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
+              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
       "key": "cmp--1669ccf7958fb75c",
@@ -76,6 +180,45 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 2,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "pipeline: members span {pipeline--brandonmusic.glm53-custom-tp2-runtime, pipeline--brandonmusic.sm120-runtime.v44} -- the candidate pipeline is not a key input, and a measured pipeline effect of ~24% exists on this registry's own data",
+          "scope: unrecorded for 1 member; homogeneity cannot be certified",
+          "hardware: unrecorded for 1 member; homogeneity cannot be certified"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "unknown",
+            "values": [
+              "2x SM120",
+              "unrecorded"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "fail",
+            "values": [
+              "pipeline--brandonmusic.glm53-custom-tp2-runtime",
+              "pipeline--brandonmusic.sm120-runtime.v44"
+            ]
+          },
+          "scope": {
+            "status": "unknown",
+            "values": [
+              "moe.experts+mtp|head=native|kv=bf16",
+              "unrecorded"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "native_head",
       "key": "cmp--18990ab191ea7a67",
@@ -88,6 +231,42 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 5,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.qwen38-kld-ladder"
+            ]
+          },
+          "scope": {
+            "status": "fail",
+            "values": [
+              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
+              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
       "key": "cmp--1ef6a9b5901f8e2a",
@@ -100,6 +279,50 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 11,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "lane: members span {sealed-ep8, streaming} -- lanes are not interchangeable: where one artifact appears on two lanes it is one set of weights measured twice, not two quants, and the renderer tables non-sealed lanes apart (a same-stack pipeline with no lane declaration is the sealed-ep8 lane, per BIAS-006)",
+          "pipeline: members span {pipeline--brandonmusic.glm53-packed-kld, pipeline--malaiwah.glm53-dione-packed-kld, pipeline--malaiwah.glm53-packed-kld, pipeline--malaiwah.glm53-stream-packed-kld} -- the candidate pipeline is not a key input, and a measured pipeline effect of ~24% exists on this registry's own data",
+          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+moe.experts+moe.shared_expert+mtp+other|head=quantized|kv=not_applicable, moe.experts+mtp|head=native|kv=bf16, moe.experts|head=native|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)",
+          "hardware: unrecorded for 3 members; homogeneity cannot be certified"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "unknown",
+            "values": [
+              "1x H200",
+              "unrecorded"
+            ]
+          },
+          "lane": {
+            "status": "fail",
+            "values": [
+              "sealed-ep8",
+              "streaming"
+            ]
+          },
+          "pipeline": {
+            "status": "fail",
+            "values": [
+              "pipeline--brandonmusic.glm53-packed-kld",
+              "pipeline--malaiwah.glm53-dione-packed-kld",
+              "pipeline--malaiwah.glm53-packed-kld",
+              "pipeline--malaiwah.glm53-stream-packed-kld"
+            ]
+          },
+          "scope": {
+            "status": "fail",
+            "values": [
+              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+moe.experts+moe.shared_expert+mtp+other|head=quantized|kv=not_applicable",
+              "moe.experts+mtp|head=native|kv=bf16",
+              "moe.experts|head=native|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "native_head",
       "key": "cmp--202b717f3219c414",
@@ -112,6 +335,46 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 4,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "lane: members span {sealed-ep8, streaming} -- lanes are not interchangeable: where one artifact appears on two lanes it is one set of weights measured twice, not two quants, and the renderer tables non-sealed lanes apart (a same-stack pipeline with no lane declaration is the sealed-ep8 lane, per BIAS-006)",
+          "pipeline: members span {pipeline--brandonmusic.glm53-packed-kld, pipeline--malaiwah.glm53-packed-kld, pipeline--malaiwah.glm53-stream-packed-kld} -- the candidate pipeline is not a key input, and a measured pipeline effect of ~24% exists on this registry's own data",
+          "hardware: unrecorded for 2 members; homogeneity cannot be certified"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "unknown",
+            "values": [
+              "1x H200",
+              "unrecorded"
+            ]
+          },
+          "lane": {
+            "status": "fail",
+            "values": [
+              "sealed-ep8",
+              "streaming"
+            ]
+          },
+          "pipeline": {
+            "status": "fail",
+            "values": [
+              "pipeline--brandonmusic.glm53-packed-kld",
+              "pipeline--malaiwah.glm53-packed-kld",
+              "pipeline--malaiwah.glm53-stream-packed-kld"
+            ]
+          },
+          "scope": {
+            "status": "pass",
+            "values": [
+              "moe.experts+mtp|head=native|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "native_head",
       "key": "cmp--2b9c401d13806d7e",
@@ -124,6 +387,41 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "unknown",
+        "live_member_count": 4,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "lane: unrecorded for 4 members; homogeneity cannot be certified",
+          "scope: unrecorded for 3 members; homogeneity cannot be certified"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "unknown",
+            "values": [
+              "unrecorded"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.qwen38-gguf-cross-engine"
+            ]
+          },
+          "scope": {
+            "status": "unknown",
+            "values": [
+              "unrecorded"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
       "key": "cmp--46a8a19f0fa33bed",
@@ -136,6 +434,41 @@
     },
     {
       "accumulation_dtype": "unknown",
+      "comparability": {
+        "comparable": "unknown",
+        "live_member_count": 5,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "scope: unrecorded for 5 members; homogeneity cannot be certified",
+          "hardware: unrecorded for 5 members; homogeneity cannot be certified"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "unknown",
+            "values": [
+              "unrecorded"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--orcarouter.mlx-eval"
+            ]
+          },
+          "scope": {
+            "status": "unknown",
+            "values": [
+              "unrecorded"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "unknown",
       "key": "cmp--492e9b16e8bd6fbd",
@@ -148,6 +481,40 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "unknown",
+        "live_member_count": 2,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "lane: unrecorded for 2 members; homogeneity cannot be certified"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "unknown",
+            "values": [
+              "unrecorded"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.glm53-crosscheck"
+            ]
+          },
+          "scope": {
+            "status": "pass",
+            "values": [
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts|head=native|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "native_head",
       "key": "cmp--4a8630bdcadab97f",
@@ -160,6 +527,43 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 12,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16, unrecorded} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.qwen38-kld-ladder"
+            ]
+          },
+          "scope": {
+            "status": "fail",
+            "values": [
+              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
+              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16",
+              "unrecorded"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
       "key": "cmp--4a93702ded23e01a",
@@ -172,6 +576,43 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 6,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16, unrecorded} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.qwen38-kld-ladder"
+            ]
+          },
+          "scope": {
+            "status": "fail",
+            "values": [
+              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
+              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16",
+              "unrecorded"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
       "key": "cmp--5f556b50b25762a2",
@@ -184,6 +625,38 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "true",
+        "live_member_count": 1,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.glm53-fidelity-replay"
+            ]
+          },
+          "scope": {
+            "status": "pass",
+            "values": [
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts|head=native|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
       "key": "cmp--9b009314102d9e8b",
@@ -196,6 +669,44 @@
     },
     {
       "accumulation_dtype": "unknown",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 6,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "pipeline: members span {pipeline--brandonmusic.sm120-runtime.v44, pipeline--brandonmusic.sm120-runtime.v71, pipeline--brandonmusic.sm120-runtime.v75} -- the candidate pipeline is not a key input, and a measured pipeline effect of ~24% exists on this registry's own data",
+          "scope: unrecorded for 3 members; homogeneity cannot be certified"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "2x SM120"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "fail",
+            "values": [
+              "pipeline--brandonmusic.sm120-runtime.v44",
+              "pipeline--brandonmusic.sm120-runtime.v71",
+              "pipeline--brandonmusic.sm120-runtime.v75"
+            ]
+          },
+          "scope": {
+            "status": "unknown",
+            "values": [
+              "attn.o+attn.qkv+kv_cache+mlp.down+mlp.gate+mlp.up+moe.experts|head=native|kv=fp8_e4m3",
+              "unrecorded"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "native_head",
       "key": "cmp--b55c2d693d127f20",
@@ -208,6 +719,38 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "true",
+        "live_member_count": 2,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "1x NVIDIA L4"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.fidelity-dataset-hf"
+            ]
+          },
+          "scope": {
+            "status": "pass",
+            "values": [
+              "moe.experts+mtp|head=native|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
       "key": "cmp--e21ff3b61b1bb2ec",
@@ -220,6 +763,38 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "true",
+        "live_member_count": 1,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.glm53-fidelity-replay"
+            ]
+          },
+          "scope": {
+            "status": "pass",
+            "values": [
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts|head=native|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
       "key": "cmp--e6cdd07242bdde05",
@@ -232,6 +807,40 @@
     },
     {
       "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "unknown",
+        "live_member_count": 2,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "lane: unrecorded for 2 members; homogeneity cannot be certified"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "unknown",
+            "values": [
+              "unrecorded"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.glm53-crosscheck"
+            ]
+          },
+          "scope": {
+            "status": "pass",
+            "values": [
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts|head=native|kv=bf16"
+            ]
+          }
+        }
+      },
       "direction": "reference_to_candidate",
       "head_policy": "native_head",
       "key": "cmp--eee09298c558ab21",
@@ -243,7 +852,8 @@
       "stack_relation": "cross_stack"
     }
   ],
-  "comparability_rule": "Two measurement values may be compared IF AND ONLY IF their comparability.key values are equal. A table that mixes keys is malformed.",
+  "comparability_predicate_rule": "Per group: comparable='true' means lane, pipeline, scope coverage and hardware are recorded and homogeneous across live members; 'false' means a recorded dimension differs (ranking across it attributes a lane/pipeline/hardware/scope effect to quantization quality); 'unknown' means no recorded difference but at least one dimension is unrecorded. Recomputed by the validator (CMP-007); a hand-edited predicate is rejected.",
+  "comparability_rule": "The seven-field comparability.key is a NECESSARY partition key, not a sufficient certificate: two measurement values with different keys are NEVER comparable, and a table that mixes keys is malformed. Equal keys make two rows candidates for comparison ONLY -- the key deliberately omits measurement lane, candidate pipeline, hardware and artifact scope, all of which this project has MEASURED moving results by more than the gaps it publishes between quantizers. Before ranking rows as like-for-like, a consumer must also check each group's comparability_keys[].comparability predicate: comparable=true/false/unknown with machine-readable reasons.",
   "counts": {
     "artifacts": 40,
     "measurements": 76,
@@ -266,13 +876,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-08-31T13:59:07+00:00",
+  "generated_at": "2026-08-31T18:11:05+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-08-31T13:59:07+00:00",
+    "last_run_at": "2026-08-31T18:11:05+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }

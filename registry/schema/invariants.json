@@ -87,6 +87,11 @@
       "statement": "index.json comparability_keys is exactly the set of distinct keys present in measurements, with correct member_count, panel_id, reference_id and metric_name."
     },
     {
+      "id": "CMP-007",
+      "severity": "error",
+      "statement": "index.json comparability_keys[].comparability -- the like-for-like predicate over the secondary dimensions the seven-field key deliberately omits (measurement lane, candidate pipeline, artifact scope coverage, hardware) -- equals the predicate recomputed from the data by tools/registry_predicate.py. comparable='false' whenever a recorded secondary dimension differs across a group's live members, 'unknown' when one is unrecorded, 'true' only when all four are recorded and homogeneous. The key is a NECESSARY partition, never a sufficient certificate; this predicate is the machine-readable rest of the contract, and a hand-edited one is rejected exactly like a forged key."
+    },
+    {
       "id": "DET-001",
       "severity": "error",
       "statement": "determinism.identical_across_runs=true requires evidence_kind in {tokenwise_kld_sha256, logits_tensor_sha256, hidden_state_tensor_sha256, sealed_tokenwise_digest}, distinct_evidence_hash_count == 1, len(evidence_hashes) == 1, and run_count >= 2. Receipt-file and archive hashes are never acceptable evidence: report files embed run indices, paths and timestamps and differ across bit-identical runs (see the five-run K6 receipt, where report_file_sha256 differs per run while tokenwise_kld_sha256 is constant)."

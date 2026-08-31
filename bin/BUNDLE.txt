@@ -130,6 +130,7 @@ engines/patches-v2/0008-v31-allowed-bits-k6-k8.patch
 # instance by the SAME code the validator runs on the caller's machine. Two
 # implementations of one hash is two chances to disagree.
 registry/tools/registry_lib.py
+registry/tools/registry_predicate.py
 registry/tools/_minischema.py
 registry/tools/registry_validate.py
 # registry_validate.py --submission imports registry_add at runtime;

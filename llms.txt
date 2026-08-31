@@ -23,9 +23,14 @@ or nearly published, and each is enforced mechanically by the tooling.
 **Rule 1 — a KLD number is meaningless without its tuple.** Two numbers are comparable only
 if they share panel, reference/teacher (weights *and* the runtime that captured its logits),
 KL direction, estimator precision, scope policy (what was quantized vs left native), and
-measurement lane. The registry encodes this as a `comparability.key`; rows with different
-keys render in separate tables and must never be ranked against each other. If you cannot
-state the tuple for a number you found in the wild, it is an anecdote, not a measurement.
+measurement lane. The registry encodes this in two layers: the seven-field
+`comparability.key` is a NECESSARY partition key -- rows with different keys render in
+separate tables and must never be ranked against each other -- and a per-group
+machine-readable predicate in the registry's `index.json` (`comparable: true/false/unknown`
+plus reasons) covers what the key deliberately omits: lane, candidate pipeline, hardware,
+artifact scope. Equal keys alone are NOT a license to rank; check the predicate. If you
+cannot state the tuple for a number you found in the wild, it is an anecdote, not a
+measurement.
 
 **Rule 2 — never quote a single window as a rate comparison.** Per-window KLD scatter on our
 panel (sd ≈ 1.7e-3) exceeds the difference between adjacent bit-widths (K6 vs K8 ≈ 1.2e-3).

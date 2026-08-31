@@ -22,6 +22,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import registry_lib as L  # noqa: E402
+import registry_predicate as PRED  # noqa: E402
 
 BEGIN = "<!-- BEGIN GENERATED: tables -->"
 END = "<!-- END GENERATED: tables -->"
@@ -142,8 +143,10 @@ def not_comparable_note(C, key, members, groups):
     out = []
     out.append("> **What this table is.** Every row here shares the comparability key above: the same tokens, "
                "the same teacher capture, the same metric and direction, the same estimator precision, the same "
-               "stack relation and the same head policy. Ranking them against each other is the one thing this "
-               "registry says you may do.")
+               "stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a "
+               "necessary partition, not a certificate. Whether they are also like-for-like on the dimensions "
+               "the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above "
+               "answers.")
     out.append(">")
     out.append("> **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a "
                "larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the "
@@ -436,9 +439,27 @@ def render_group(C, key, members, groups):
     # first is worse than no retraction at all. The counts and the derived prose below use
     # the same partition, or the page contradicts its own table.
     all_members = list(members)
-    members = _live(C, members) or members
+    live = _live(C, members)
+    members = live or members
     out = []
     out += caption(C, key, members)
+    pred = PRED.group_predicate(C, all_members)
+    dims_failed = sorted(d for d, v in pred["secondary"].items() if v["status"] == "fail")
+    dims_unknown = sorted(d for d, v in pred["secondary"].items() if v["status"] == "unknown")
+    verdict_gloss = {
+        "true": "every secondary dimension (lane, pipeline, scope coverage, hardware) is "
+                "recorded and homogeneous",
+        "false": "a RECORDED secondary dimension differs across members: %s. Equal keys make "
+                 "these rows candidates for comparison, not certified like-for-like; ranking "
+                 "across the differing dimension attributes a lane/pipeline/hardware/scope "
+                 "effect to quantization quality" % ", ".join(dims_failed),
+        "unknown": "no recorded difference, but %s %s unrecorded for at least one member, so "
+                   "homogeneity cannot be certified"
+                   % (", ".join(dims_unknown), "is" if len(dims_unknown) == 1 else "are"),
+    }[pred["comparable"]]
+    out.append("**Like-for-like predicate** `comparable: %s` -- %s. Machine-readable form with "
+               "per-dimension values: this key's `comparability` block in `index.json`."
+               % (pred["comparable"], verdict_gloss))
     out.append("")
     out += not_comparable_note(C, key, members, groups)
     out.append("")
@@ -671,19 +692,40 @@ def build_index(C, groups):
     for key, members in sorted(groups.items()):
         m = C["measurements"][members[0]]
         ki = g(m, "comparability", "key_inputs")
+        pred = PRED.group_predicate(C, members)
         keys.append({"key": key, "panel_id": ki["panel_id"], "reference_id": ki["reference_id"],
                      "metric_name": ki["metric_name"], "direction": ki["direction"],
                      "accumulation_dtype": ki["accumulation_dtype"],
                      "stack_relation": ki["stack_relation"], "head_policy": ki["head_policy"],
                      "member_count": len(members),
                      "label": "%s on %s (%s, %s)" % (ki["metric_name"], ki["panel_id"],
-                                                     ki["stack_relation"], ki["head_policy"])})
+                                                     ki["stack_relation"], ki["head_policy"]),
+                     # P1-01: the key is a NECESSARY partition, never a sufficient
+                     # certificate. This predicate is the machine-readable rest of
+                     # the contract; the validator recomputes it (CMP-007).
+                     "comparability": pred})
     return {
         "schema_version": L.SCHEMA_VERSION, "registry_id": L.REGISTRY_ID, "generated_at": now,
         "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id "
                          "prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
-        "comparability_rule": "Two measurement values may be compared IF AND ONLY IF their comparability.key "
-                              "values are equal. A table that mixes keys is malformed.",
+        "comparability_rule": "The seven-field comparability.key is a NECESSARY partition key, not a "
+                              "sufficient certificate: two measurement values with different keys are "
+                              "NEVER comparable, and a table that mixes keys is malformed. Equal keys "
+                              "make two rows candidates for comparison ONLY -- the key deliberately "
+                              "omits measurement lane, candidate pipeline, hardware and artifact "
+                              "scope, all of which this project has MEASURED moving results by more "
+                              "than the gaps it publishes between quantizers. Before ranking rows as "
+                              "like-for-like, a consumer must also check each group's "
+                              "comparability_keys[].comparability predicate: comparable=true/false/"
+                              "unknown with machine-readable reasons.",
+        "comparability_predicate_rule": "Per group: comparable='true' means lane, pipeline, scope "
+                                        "coverage and hardware are recorded and homogeneous across "
+                                        "live members; 'false' means a recorded dimension differs "
+                                        "(ranking across it attributes a lane/pipeline/hardware/"
+                                        "scope effect to quantization quality); 'unknown' means no "
+                                        "recorded difference but at least one dimension is "
+                                        "unrecorded. Recomputed by the validator (CMP-007); a "
+                                        "hand-edited predicate is rejected.",
         "collections": {name: {"file": "data/%s.jsonl" % name, "schema": "schema/%s" % sf,
                                "record_count": len(C[name]),
                                "sha256": None}

@@ -609,6 +609,34 @@ def main():
     passed += ok
     failed += not ok
 
+    # CMP-007: a mixed-lane group's like-for-like predicate hand-promoted to
+    # comparable=true must be rejected. The key is a necessary partition, not a
+    # certificate (P1-01); the predicate is the machine-readable rest of the
+    # contract, and it is recomputed, never trusted -- same doctrine as CMP-001.
+    dest = os.path.join(tmp, "predicate-promoted-by-hand")
+    shutil.copytree(os.path.join(args.root, "schema"), os.path.join(dest, "schema"))
+    shutil.copytree(os.path.join(args.root, "data"), os.path.join(dest, "data"))
+    with open(os.path.join(args.root, "index.json"), encoding="utf-8") as fh:
+        idx = json.load(fh)
+    promoted = 0
+    for entry in idx.get("comparability_keys", []):
+        pred = entry.get("comparability") or {}
+        if pred.get("comparable") == "false":
+            pred["comparable"] = "true"
+            pred["reasons"] = []
+            promoted += 1
+    with open(os.path.join(dest, "index.json"), "w", encoding="utf-8") as fh:
+        json.dump(idx, fh, indent=2, sort_keys=True, ensure_ascii=False)
+    rep, code = run_validator(dest)
+    errs = [f for f in rep.get("findings", []) if f["severity"] == "error"]
+    ok = promoted > 0 and code == 1 and any(f["check"] == "CMP-007" for f in errs)
+    print("  %-42s %-16s %s" % ("predicate-promoted-by-hand", "CMP-007", "PASS" if ok else "FAIL"))
+    if not ok:
+        print("      promoted %d groups; errors seen: %s"
+              % (promoted, sorted({f["check"] for f in errs})))
+    passed += ok
+    failed += not ok
+
     print()
     print("=" * 78)
     print("C. registry_add must REFUSE, with the documented exit code")

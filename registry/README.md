@@ -39,7 +39,26 @@ as verified unless it has been.
 
 ## The rule this registry exists to enforce
 
-> **Two fidelity numbers may be compared if and only if their `comparability.key` values are equal.**
+> **Two fidelity numbers with different `comparability.key` values are NEVER comparable. Equal keys
+> make two rows *candidates* for comparison — a necessary condition, not a certificate. Before
+> ranking rows as like-for-like, check the group's machine-readable `comparability` predicate in
+> `index.json`.**
+
+(Until 2026-08-31 this rule was stated as an "if and only if". The *only-if* half was always true
+and still is. The *if* half was never true, and an independent peer review said so with this
+registry's own receipts: the key deliberately omits the measurement **lane** — one artifact in
+group `cmp--202b717f3219c414` is measured on two lanes, differing in the fourth decimal; the
+candidate **pipeline** — the same checkpoint/panel/teacher has measured ~24% apart through two
+pipelines; **hardware** — a measured A100-vs-H200 term of 2.97e-4 nats is ~13x the gap between two
+published 4-bit quantizers ([ARCHITECTURE-DETERMINISM](https://github.com/malaiwah/quant-fidelity-suite/blob/main/docs/ARCHITECTURE-DETERMINISM.md));
+and artifact **scope** — a routed-experts-only quant and a full-forward GGUF at "the same" bpw are
+different interventions. The omission is deliberate — hashing hardware into the key was considered
+and rejected, because it would explode the partition into single-row groups — but deliberate is not
+the same as sufficient, and the contract now says which it is. The key itself is **unchanged and
+unversioned**: rehashing it would regroup every published row and orphan every key a third party
+has cited. What changed is the claim made about it, plus a machine-readable predicate per group:
+`comparable: true/false/unknown` with reasons, in `index.json`, recomputed by the validator
+(`CMP-007`) so a hand-edited predicate is rejected exactly like a forged key.)
 
 A bare `kld: 0.027` is worse than nothing. A KL divergence is only meaningful relative to a specific
 set of tokens, measured against a specific teacher capture, in a specific direction, at a specific
@@ -305,8 +324,9 @@ Attribution is a column, not a footnote: *measured by us*, *measured by us (thei
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
 **Comparability key** `cmp--e21ff3b61b1bb2ec`
+**Like-for-like predicate** `comparable: true` -- every secondary dimension (lane, pipeline, scope coverage, hardware) is recorded and homogeneous. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -345,8 +365,9 @@ Attribution is a column, not a footnote: *measured by us*, *measured by us (thei
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
 **Comparability key** `cmp--5f556b50b25762a2`
+**Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -417,8 +438,9 @@ Derived from `panel--qwen38.malaiwah.suite-v5-10m` by **shard_subset**: shards 0
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
 **Comparability key** `cmp--1669ccf7958fb75c`
+**Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -484,8 +506,9 @@ This panel carries **3 separate comparability groups**. They are different measu
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
 **Comparability key** `cmp--4a93702ded23e01a`
+**Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -571,8 +594,9 @@ This panel carries **3 separate comparability groups**. They are different measu
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `cross_stack`, head_policy `shared_reference_head`
 **Comparability key** `cmp--46a8a19f0fa33bed`
+**Like-for-like predicate** `comparable: unknown` -- no recorded difference, but lane, scope are unrecorded for at least one member, so homogeneity cannot be certified. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -629,8 +653,9 @@ This panel carries **3 separate comparability groups**. They are different measu
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
 **Comparability key** `cmp--05e16411a5932713`
+**Like-for-like predicate** `comparable: true` -- every secondary dimension (lane, pipeline, scope coverage, hardware) is recorded and homogeneous. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -679,8 +704,9 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
 **Comparability key** `cmp--1ef6a9b5901f8e2a`
+**Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -744,8 +770,9 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
 **Comparability key** `cmp--12bfc6ec82b47678`
+**Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -812,8 +839,9 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
 **Comparability key** `cmp--9b009314102d9e8b`
+**Like-for-like predicate** `comparable: true` -- every secondary dimension (lane, pipeline, scope coverage, hardware) is recorded and homogeneous. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -855,8 +883,9 @@ Derived from `panel--glm53.malaiwah.suite-v5-10m` by **scoring_window_change**: 
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
 **Comparability key** `cmp--e6cdd07242bdde05`
+**Like-for-like predicate** `comparable: true` -- every secondary dimension (lane, pipeline, scope coverage, hardware) is recorded and homogeneous. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -899,8 +928,9 @@ This panel carries **2 separate comparability groups**. They are different measu
 **Metric** mean_of_run_means_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `native_head`
 **Comparability key** `cmp--202b717f3219c414`
+**Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: lane, pipeline, scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -1021,8 +1051,9 @@ This panel carries **2 separate comparability groups**. They are different measu
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `cross_stack`, head_policy `native_head`
 **Comparability key** `cmp--4a8630bdcadab97f`
+**Like-for-like predicate** `comparable: unknown` -- no recorded difference, but lane is unrecorded for at least one member, so homogeneity cannot be certified. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -1077,8 +1108,9 @@ This panel carries **2 separate comparability groups**. They are different measu
 **Metric** mean_of_run_means_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `native_head`
 **Comparability key** `cmp--2b9c401d13806d7e`
+**Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: lane, pipeline. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -1153,8 +1185,9 @@ This panel carries **2 separate comparability groups**. They are different measu
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `cross_stack`, head_policy `native_head`
 **Comparability key** `cmp--eee09298c558ab21`
+**Like-for-like predicate** `comparable: unknown` -- no recorded difference, but lane is unrecorded for at least one member, so homogeneity cannot be certified. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -1212,8 +1245,9 @@ This panel carries **2 separate comparability groups**. They are different measu
 **Metric** mean_of_run_means_tokenwise_kld, direction reference_to_candidate, accumulation unknown
 **Estimation surface** stack_relation `same_stack`, head_policy `native_head`
 **Comparability key** `cmp--b55c2d693d127f20`
+**Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: pipeline. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -1264,8 +1298,9 @@ This panel carries **2 separate comparability groups**. They are different measu
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
 **Estimation surface** stack_relation `same_stack`, head_policy `native_head`
 **Comparability key** `cmp--18990ab191ea7a67`
+**Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: pipeline. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
@@ -1310,8 +1345,9 @@ This panel carries **2 separate comparability groups**. They are different measu
 **Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation unknown
 **Estimation surface** stack_relation `same_stack`, head_policy `unknown`
 **Comparability key** `cmp--492e9b16e8bd6fbd`
+**Like-for-like predicate** `comparable: unknown` -- no recorded difference, but hardware, scope are unrecorded for at least one member, so homogeneity cannot be certified. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
-> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. Ranking them against each other is the one thing this registry says you may do.
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
 >
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
