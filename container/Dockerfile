@@ -50,6 +50,13 @@ ARG DEBIAN_FRONTEND=noninteractive
 # An arm64 run that ever needs exllamav3 will have to build it; the image says
 # so rather than pretending, and container_manifest records `arch` as a PIN so
 # the two images of one tag carry different content digests.
+#
+# Both have been built (suite b76fb79, one Lambda A10 box): amd64 natively in
+# ~1.5 min, arm64 under QEMU in ~19 min -- the bootstrap layer alone is 73 s
+# against 933 s, 12.8x, which is the whole case for a native arm64 runner once
+# it is worth the switch. Same torch, same transformers, same pipeline commit;
+# different `pins.arch` and therefore a different image_content_sha256, which
+# is correct.
 
 # Where the image bakes itself.  IMAGE_ROOT is FIDELITY_ENGINE_ROOT: the bootstrap
 # builds its venv at $ROOT/venv and clones the pipeline at $ROOT/pipeline, so

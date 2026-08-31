@@ -276,6 +276,32 @@ exllamav3 branch — which is not taken, because the measurement path imports th
 pipeline without it. An arm64 run that ever *does* need exllamav3 will have to
 build it. That is stated here rather than papered over.
 
+**Both images have been built.** On one Lambda A10 box, from suite revision
+`b76fb79`:
+
+| | amd64 (native) | arm64 (QEMU on the same x86 box) |
+|---|---|---|
+| bootstrap layer | 73 s | **933 s** (12.8x) |
+| whole build | ~1.5 min | ~19 min |
+| image size | 6.45 GB | 6.12 GB |
+| `torch` | `2.11.0+cu130` | `2.11.0+cu130` — same string |
+| `transformers` | `5.16.1` | `5.16.1` |
+| pipeline commit | `ce1bf970` | `ce1bf970` |
+| `pins.arch` | `x86_64` | `aarch64` |
+| `image_content_sha256` | `8045406b…` | `ec55d704…` |
+
+`docker run --platform linux/arm64 <image> doctor` under emulation reports
+`torch 2.11.0+cu130 cuda 13.0 | transformers 5.16.1` and
+`cuda_available False` — correct, since QEMU has no GPU. What that run proves
+is that the arm64 stack **installs and imports**; whether a GH200 produces
+usable numbers with it is a question for a GH200, and the qualification of that
+card is a separate piece of work.
+
+12.8x on the bootstrap layer is the whole case for native arm64 runners
+(`runs-on: ubuntu-24.04-arm`) once they are worth the switch. It is not a
+blocker: nineteen minutes is a CI build, and the two architectures are separate
+matrix jobs so the amd64 leg does not wait for it.
+
 **The architecture is a pin, not a label.** `container_manifest.py` records
 `arch` and `platform` among the pins, so the two images behind one multi-arch
 tag carry **different** `image_content_sha256` values. That is correct: they
