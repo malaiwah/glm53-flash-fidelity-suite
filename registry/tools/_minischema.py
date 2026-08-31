@@ -9,10 +9,27 @@ allOf, anyOf, oneOf, not, if/then/else, propertyNames, dependentRequired.
 `format` is treated as an annotation, exactly as draft 2020-12 specifies by default.
 
 Why this exists: the registry must validate on a stock interpreter with no
-network and no pip. macOS ships Python 3.9 without `jsonschema`. registry_validate
-runs this by default and cross-checks against the real library whenever it is
-importable (--jsonschema-lib both), so the vendored implementation cannot quietly
-drift from the reference.
+network and no pip. macOS ships Python 3.9 without `jsonschema` (verified: the
+system interpreter here is 3.9.6, and `make check` runs clean under it).
+
+It is also what keeps OFFLINE-002 honest. registry_validate asserts that none of
+FORBIDDEN_NET_MODULES is loaded, and registry_selftest section E re-checks it;
+the real `jsonschema`'s optional dependency closure is exactly what that
+assertion is designed to exclude -- registry_validate:check_offline already has
+to carve out an exception for it.
+
+Drift protection is DIFFERENTIAL, not aspirational: `_external_validator` builds
+a real jsonschema.Draft202012Validator over the same schema set and
+`--jsonschema-lib both` runs both and compares. Note the split between the tool
+and the gate -- the flag DEFAULTS to `both`, but `make check` -> `validate`
+passes `--jsonschema-lib mini` explicitly, so the cross-check is not part of the
+default gate. Run it deliberately, under an interpreter that has the library:
+
+    make validate-both          # or: python3 tools/registry_validate.py --jsonschema-lib both
+
+Last run 2026-08-31 against jsonschema 4.26.0: 0 errors over all 157 records.
+It degrades gracefully (returns None) where the library is absent, so the command
+is safe on a stock interpreter -- it simply has nothing to compare against.
 
 Not a general-purpose validator. It raises on any keyword it does not implement
 rather than ignoring it, so a schema that grows a new keyword fails loudly here

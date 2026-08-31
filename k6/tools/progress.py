@@ -16,10 +16,42 @@ silence it replaced.  So this module has two rendering modes and picks by
   status.  ``tail -f`` on the stage log reads like a heartbeat, and the whole
   file stays a few hundred lines.
 
-It is also not `tqdm` because `tqdm` is not in the bundle.  `bin/BUNDLE.txt` is
-an explicit, auditable upload list; adding a third-party package to a rented
-instance to print a percentage is not a trade this project makes.  The meter is
-sixty lines.
+Why NOT `tqdm`, for the right reason
+------------------------------------
+This docstring used to say "because `tqdm` is not in the bundle" and that a
+rented instance gets no pip install.  **That was false**, and the audit in
+``docs/DEPENDENCIES.md`` retired it: ``bin/bootstrap_measure.sh`` installs
+``transformers==5.16.1`` and ``huggingface_hub``, and BOTH hard-require ``tqdm``
+(``tqdm>=4.60`` and ``tqdm>=4.42.1`` respectively).  tqdm is already on every
+measurement instance, unconditionally, before the measure stage starts; ``rich``
+is installed explicitly on the same pip line.  The incremental dependency cost
+of using either is exactly zero, and "avoid a dependency that is already
+transitively present" is not a reason.
+
+The real reason is the one above, and it is structural: **tqdm has no newline
+mode.**  In ``tqdm/std.py`` the write is ``fp_write('\\r' + s + ...)`` --
+unconditional -- and the class's only ``isatty()`` branch decides whether to
+*disable*, never how to *render*.  So into a file tqdm offers exactly two
+behaviours, both measured rather than assumed:
+
+* default (also with ``ascii=True, mininterval=...``): 40 iterations become ONE
+  line with 7 embedded ``\\r``.  Configuring it fixes the block glyphs and the
+  update count and does not touch the ``\\r``.
+* ``disable=None``, tqdm's own non-TTY affordance: complete silence -- which is
+  the two-to-three-hour void this meter was written to end.
+
+Getting throttled, newline-terminated lines out of tqdm means passing a custom
+``file=`` object that rewrites ``\\r`` to ``\\n`` -- writing code anyway, and
+then owning a shim wrapped around a dependency instead of sixty readable lines.
+It would also still lack the ``every``-N-items throttle, which is the knob that
+matters when one item is a multi-minute window.
+
+And the output here is a CONTRACT, not decoration: ``measure_cloud``'s
+``_progress_counter`` parses ``progress: <label> <n>/<total>`` out of the log
+tail (see the note at the end of this docstring).  ``bin/`` cannot even import
+this module -- it runs on stock python3.9 with no torch and no ``k6/tools`` on
+``sys.path`` -- so the prefix is duplicated there and
+``bin/selftest_progress.py`` asserts the two agree.
 
 What it must not do
 -------------------

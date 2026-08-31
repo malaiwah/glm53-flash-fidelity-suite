@@ -48,6 +48,13 @@ by reverting it in a scratch copy, not by assuming.
 - Torch-dependent code (the scorer, decode surfaces) may use the homebrew
   python3.14 environment. Keep the split clean.
 - MPS cannot do float64 at all — it raises. KLD accumulation pins to CPU.
+- The rule above is about `bin/` and `registry/`. It is **not** a licence to
+  argue "no dependencies" anywhere else: `bin/bootstrap_measure.sh` installs
+  torch, transformers, accelerate and `rich` on the instance, so `k6/tools/`
+  engines already run inside a stack. Before rejecting a library, check whether
+  it is *already transitively installed* — that argument has been made here and
+  been wrong. [`docs/DEPENDENCIES.md`](docs/DEPENDENCIES.md) is the audit of
+  every hand-rolled component, with the verdict and the reason for each.
 
 ## Numerical rules that are not negotiable
 

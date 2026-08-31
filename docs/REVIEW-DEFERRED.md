@@ -1310,3 +1310,200 @@ that repeated it are corrected, and `bin/check_doc_numbers.py` section 12 now re
 all three values from the per-window series and fails if any document quotes the retracted
 pair as a live claim. **The Hub card still carries the wrong sentence.** Replacement text
 is the corrected paragraph in the repo card; the 6bpw card does not carry this sentence.
+
+---
+
+# DEPENDENCY-AUDIT ADDITIONS (2026-08-31)
+
+From the reinvented-wheel audit in [`DEPENDENCIES.md`](DEPENDENCIES.md). Every finding
+below lands in a **provider backend or the shared SSH transport**, which a live
+measurement campaign owns (a run was on RunPod while this was written), so none was
+applied. Each is a docstring or a three-flag change; none needs a redesign.
+
+Owners for this batch:
+
+| File | Owner while the audit ran |
+|---|---|
+| `bin/fidelity/runpodapi.py` | live RunPod measurement |
+| `bin/fidelity/vastapi.py` | live RunPod measurement (shared controller) |
+| `bin/fidelity/lambdaapi.py` | live RunPod measurement (shared controller) |
+| `bin/fidelity/sshbase.py` | live RunPod measurement |
+| `bin/fidelity/bench.py`, `bin/selftest_provider_portability.py` | a second session (uncommitted at audit time) |
+
+## DEP-01 — `vastapi._req` retries 429 and nothing else, which is the incident it was written to stop
+
+**Anchor:** `bin/fidelity/vastapi.py`, `def _req`, the `except urllib.error.HTTPError` arm
+(`if exc.code == 429 and _tries > 1`).
+
+The docstring records the original incident correctly: Vast rate-limits to ~1 req/s, the
+banded catalogue search tripped it *"INSIDE the run, after the lease was written, so a rate
+limit read as a failed run."* The fix paces at `_MIN_INTERVAL = 1.1` and retries 429.
+
+**The gap:** `status_forcelist` is effectively `[429]`. A 502/503/504 — and every
+`ConnectTimeout`/`ReadTimeout`/connection reset — falls through to `except Exception` and
+raises hard, mid-run, after the lease is written. That is the *same shape* as the failure
+the 429 handling exists to prevent, on a marketplace host the journal already describes as
+flaky.
+
+Two halves are genuinely custom and must survive any rewrite: `retry_after` arrives **in the
+JSON body**, not the `Retry-After` header (`urllib3`'s `respect_retry_after_header` would
+not find it), and the 1.1 s client-side pacing is not something `requests` provides.
+
+**Patch (stdlib, no dependency):** widen the retried set and add the network-error arm.
+
+```python
+_RETRY_STATUS = (429, 500, 502, 503, 504)
+...
+    except urllib.error.HTTPError as exc:
+        payload = exc.read()[:300].decode("utf-8", "replace")
+        if exc.code in self._RETRY_STATUS and _tries > 1:
+            wait = 2.0
+            if exc.code == 429:
+                try:
+                    wait = max(1.0, float(json.loads(payload).get("retry_after") or 1)) + 1.0
+                except Exception:                       # noqa: BLE001
+                    pass
+            else:
+                wait = min(30.0, 2.0 ** (5 - _tries))   # 5xx: back off, body carries no hint
+            time.sleep(wait)
+            return self._req(method, path, body, timeout=timeout, _tries=_tries - 1)
+        raise VastError(...)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        if _tries > 1:
+            time.sleep(min(30.0, 2.0 ** (5 - _tries)))
+            return self._req(method, path, body, timeout=timeout, _tries=_tries - 1)
+        raise VastError("Vast request failed: %s" % redact(str(exc)))
+```
+
+**Also note, not urgent:** `Vast._last_call` is a mutable **class** attribute assigned via
+`Vast._last_call = ...`, so the pacing state is process-global and not thread-safe. Fine
+for the single-threaded controller; a trap if the catalogue search is ever parallelised.
+
+**Test:** none exists. `selftest_provider_portability.py` reaches `Vast` only to read
+`separable_storage`; nothing in the repo patches `urllib.request.urlopen`. A rung that
+monkeypatches `urlopen` to raise `HTTPError(502)` twice then succeed would fail without the
+patch above and pass with it — worth adding **with** the fix, since its absence is why the
+429 case had to be found on a live lease.
+
+## DEP-02 — the Cloudflare User-Agent workaround should say it was a `urllib` tax
+
+**Anchor:** `bin/fidelity/runpodapi.py`, `def _gql`, the `"User-Agent"` header.
+
+The inline comment is already excellent and should not change. What is missing is at the
+**module docstring** level: this file's transport choice has a measured cost, and the next
+person deciding "urllib or requests" should see it without reading commit archaeology.
+
+Add to the docstring, after the "There is no CLI" paragraph:
+
+```
+WHAT urllib COSTS HERE, so the trade is visible.  Cloudflare fronts
+api.runpod.io and answers urllib's DEFAULT User-Agent with HTTP 403 "error
+code: 1010".  requests sends its own UA and would never have hit it; this was
+found by smoking it on a $1.59/h pod for six minutes, and the header at _gql is
+not optional.  Two further costs are unpaid rather than fixed: there is NO
+retry (a Cloudflare 502 raises hard, mid-run, after the pod is billing), and
+there is no connection pooling -- gpus() issues 100+ sequential urlopen calls,
+each a fresh TCP+TLS handshake, and _endpoint() polls every 10 s for up to
+900 s.  The surface used is one verb against one endpoint, so urllib remains
+defensible; it is a trade, not a free choice.
+```
+
+**Cargo-cult note worth a one-liner in each:** the same `"User-Agent":
+"quant-fidelity-suite/0.1"` was copied into `vastapi.py` and `lambdaapi.py`, neither of
+which is behind Cloudflare. Harmless, but it reads as required when it is not.
+
+## DEP-03 — `sshbase` opens a fresh handshake per exec and per scp; ControlMaster is three flags
+
+**Anchor:** `bin/fidelity/sshbase.py`, `def _ssh_opts`.
+
+`JOURNAL.md` already carries *"ControlMaster from minute one"* as a lesson, and records it
+being configured by hand in `~/.ssh/config` for the JarvisLabs box. It never reached the
+shared transport, where it would serve RunPod, Vast **and** Lambda. Combined with the
+per-file `scp` delta uploader, that is one full SSH handshake per file.
+
+**Patch:**
+
+```python
+def _ssh_opts(self) -> List[str]:
+    # ControlMaster: every exec and every scp otherwise pays a full handshake,
+    # and the delta uploader sends one file per scp.  JOURNAL: "ControlMaster
+    # from minute one".  ControlPath lives in a per-process temp dir so two
+    # concurrent controllers cannot collide on one socket.
+    return ["-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR",
+            "-o", "ConnectTimeout=30",
+            "-o", "ServerAliveInterval=30",
+            "-o", "ControlMaster=auto",
+            "-o", "ControlPath=%s/cm-%%C" % self._control_dir,
+            "-o", "ControlPersist=120"]
+```
+
+with `self._control_dir = tempfile.mkdtemp(prefix="fidelity-ssh-")` in `__init__` and an
+`atexit`/teardown `shutil.rmtree`. **Verify before adopting** that the socket path stays
+under the 104-byte `sun_path` limit on macOS — `%C` is a hash, which is why it is used here
+rather than `%h-%p-%r`.
+
+**Also undocumented, same file:** `StrictHostKeyChecking=no` +
+`UserKnownHostsFile=/dev/null` on the channel that carries the HF token. TOFU on ephemeral
+marketplace instances is genuinely hard and the endpoint is discovered over an authenticated
+TLS API, so the choice is defensible — but in a file this heavily commented the silence is
+conspicuous. One sentence naming the threat model would settle it.
+
+## DEP-04 — `sshbase.run_status` uses the naive `pgrep -f` this project has already paid for twice
+
+**Anchor:** `bin/fidelity/sshbase.py`, `def run_status`, the
+`elif pgrep -f %s >/dev/null 2>&1; then echo RUNNING` branch.
+
+`JOURNAL.md` lesson 44 records this exact bug: *"the probe reported a stage that has never
+existed as running, because `pgrep -f` matches full command lines and the probe's own shell
+carries the pattern in its own."* `measure_cloud._stage_is_alive` carries the fix and
+explains it at length — `[s]tage_measure` rather than `stage_measure`, verified against a
+live instance.
+
+`sshbase.run_status` did not get it. The pattern is `shlex.quote(run_id)`, and the run id
+appears in the probe's own command line twice over (the `%s/exit_code` path is built from
+it), inside `sh -lc '<script>'`.
+
+**Effect if it triggers:** the `GONE` branch becomes unreachable, so a stage killed without
+writing `exit_code` — OOM-kill, `kill -9`, host reboot — reads `RUNNING` until
+`--max-runtime`. That burns a billing instance, which is precisely the cost lesson 44
+records. Note this is the RunPod/Vast/Lambda path; JarvisLabs uses `jl` and is unaffected.
+
+**Patch** (bracket-class the first character, as `measure_cloud` does):
+
+```python
+# [r]un-id and NOT run-id: pgrep -f matches full command lines and this probe's
+# own shell carries the id in ITS command line (twice -- the exit_code path is
+# built from it).  JOURNAL lesson 36 / 44, and the same fix measure_cloud.py's
+# _stage_is_alive carries.
+_pat = shlex.quote("[%s]%s" % (run_id[0], run_id[1:]))
+```
+
+**EVIDENCE IS PARTIAL — verify on Linux before treating this as confirmed.** On macOS/BSD
+`pgrep` the probe did **not** self-match in testing (`sh -lc 'pgrep -f r_9999'` → rc=1,
+while `ps` confirmed the pattern was in the parent's args). The remote is Linux/procps,
+where this project's own live verification says it *does*. The asymmetry — fixed in
+`measure_cloud.py`, not in `sshbase.py`, same author, same lesson — is the finding
+regardless of which `pgrep` is in play.
+
+**Test:** none. No selftest imports `sshbase`, and the two bugs its docstring exists to
+memorialize (the detached-job exit code, the pid-based liveness) have no offline regression
+test either — they were verified live on rented hardware only. `selftest_teardown.py` tests
+`measure_cloud`'s *other* pgrep probe. A rung driving `run_status` against a fake
+`exec_stdout` would cover all three cheaply.
+
+## DEP-05 — `lambdaapi.create()` fetches `/instance-types` twice in one call
+
+**Anchor:** `bin/fidelity/lambdaapi.py`, `def create`, the two `_req("GET", "/instance-types")`
+call sites.
+
+Two full TLS handshakes for a catalogue already held in a local variable, on the critical
+path before launch. Not a correctness bug and not a library problem — hoist the first
+result. Mentioned here only so it is not rediscovered.
+
+**Related, and worth a comment rather than a fix:** VRAM is parsed out of Lambda's free-text
+`gpu_description` by `.split("(")[-1].split("GB")[0]`. The vendor publishes no structured
+field, so no library helps; but it is fragile and untested, and this file's one historical
+bug was also a data-shape bug (`_KNOWN_DISK_GB` guessed 200 GB for a box whose `df -h /`
+said 1.4T).

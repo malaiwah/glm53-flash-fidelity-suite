@@ -15,11 +15,16 @@ The two failure modes this battery holds the line on:
          carriage-return spinner into a file is one unreadable megabyte-long
          line.  The meter must emit newline-terminated lines when
          `isatty()` is false and the live in-place form only when it is true.
-  P5-P7  **it must not become log spam, or a dependency.**  Throttled by time
-         and by item count; a unit that finishes faster than one tick stays
-         silent (the exl3 lane fills a layer in 4.5 s and already logs a JSON
-         record per fill); stdlib only, no tqdm, because `bin/BUNDLE.txt` is an
-         explicit upload list and a rented instance gets no pip install.
+  P5-P7  **it must not become log spam.**  Throttled by time and by item count;
+         a unit that finishes faster than one tick stays silent (the exl3 lane
+         fills a layer in 4.5 s and already logs a JSON record per fill).
+         NOT tqdm -- but not for the reason this file used to give.  tqdm IS
+         already on every instance (`transformers` and `huggingface_hub` both
+         hard-require it), so "no pip install on a rented box" was never true.
+         The real reason is that tqdm writes `\\r` unconditionally and its only
+         isatty() branch decides whether to DISABLE, not how to render: into a
+         file it gives either one megabyte-long line or, with `disable=None`,
+         silence.  See `docs/DEPENDENCIES.md`.
   P8-P10 **it has to be WIRED, and it has to ship.**  A meter nothing calls is
          indistinguishable from no meter (the same lesson the GGUF lane taught:
          "a capability nothing can invoke is indistinguishable from a missing
