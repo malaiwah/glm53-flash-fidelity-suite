@@ -381,6 +381,20 @@ def rung_bundle():
                        "engines/tools/progress.py"], "%s" % kept)
         check("C6c an absent entry is reported, not silently dropped",
               "absent_engine.py" in proc.stdout)
+        # Fail-open is right for the SSH uploader (a lane whose engine is not
+        # in this checkout must not break the upload) and wrong for a build,
+        # where the only way an entry goes missing is a COPY the Dockerfile
+        # does not make. That shipped an image which died validating the
+        # manifest it had just written, on rented hardware.
+        strict = subprocess.run(
+            [sys.executable, str(HERE / "container_prune.py"),
+             "--stage", str(stage), "--out", str(Path(td) / "out2"),
+             "--require-all"], capture_output=True, text=True)
+        check("C6e --require-all REFUSES the same tree (exit 3)",
+              strict.returncode == 3, "rc=%s" % strict.returncode)
+        check("C6f ... and names every entry that did not arrive",
+              "absent_engine.py" in strict.stderr
+              and "did not COPY" in strict.stderr)
         check("C6d the stage script stays executable",
               os.access(str(out / "bin" / "stage_measure.sh"), os.X_OK))
 
@@ -492,6 +506,26 @@ def rung_dockerfile():
           not any(k in body for k in ("HF_TOKEN", "RUNPOD", "hf_", "API_KEY")))
     check("C9e the entrypoint is the CLI",
           "container_entry.py" in body and "ENTRYPOINT" in body)
+
+    # The general rule, not the instance: every top-level directory BUNDLE.txt
+    # draws from has to be COPYed into the build stage. docs/schema/ was in the
+    # list and in no COPY line, and nothing anywhere said so.
+    copied = set()
+    for line in lines:
+        parts = line.split()
+        if parts and parts[0] == "COPY":
+            copied.add(parts[1].rstrip("/"))
+    needed = sorted({rel.split("/")[0] if "/" not in rel.rstrip("/")
+                     else "/".join(rel.split("/")[:2])
+                     for rel in CE.bundle_entries(SUITE)})
+    uncopied = [d for d in needed
+                if not any(d == c or d.startswith(c + "/") or c.startswith(d + "/")
+                           for c in copied)]
+    check("C9j every directory BUNDLE.txt draws from is COPYed by the build",
+          not uncopied, "not in any COPY: %s  (COPY has: %s)"
+          % (uncopied, sorted(copied)))
+    check("C9k the build refuses a bundle entry that did not arrive",
+          "--require-all" in body)
 
     boot = (SUITE / "bin" / "bootstrap_measure.sh").read_text(encoding="utf-8")
     guard = boot.find("FIDELITY_BOOTSTRAP_INSTALL_ONLY")

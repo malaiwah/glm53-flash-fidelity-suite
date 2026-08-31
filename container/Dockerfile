@@ -73,8 +73,15 @@ COPY bin/       /tmp/stage/bin/
 COPY engines/tools/  /tmp/stage/engines/tools/
 COPY engines/patches-v2/ /tmp/stage/engines/patches-v2/
 COPY registry/  /tmp/stage/registry/
+# docs/schema/ is DATA, not documentation: `fidelity_dataset.py capture` ends in
+# a postcondition that validates the manifest it just wrote, and dsvalidate
+# os.listdirs this directory to build its schema registry. Leaving it out does
+# not fail the build -- it ships an image that dies at the end of the capture
+# stage, after the bootstrap, the fetch and the capture are all paid for.
+# --require-all below is what turns that class of omission into a build error.
+COPY docs/schema/ /tmp/stage/docs/schema/
 RUN python3.12 /tmp/stage/bin/container_prune.py \
-        --stage /tmp/stage --out /opt/fidelity/suite \
+        --stage /tmp/stage --out /opt/fidelity/suite --require-all \
  && rm -rf /tmp/stage
 
 # The patch series has to sit at $ROOT/patches-v2, which is where the runtime
