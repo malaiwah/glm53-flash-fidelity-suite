@@ -731,9 +731,10 @@ def _stage_env(td: "Teardown") -> str:
     JarvisLabs (the values are identical to the defaults) and is the whole
     difference between a working and a lost run on any other provider.
     """
-    return ("FIDELITY_FS_ROOT=%s FIDELITY_K6_ROOT=%s"
-            % (shlex.quote(td.fs_root), shlex.quote(getattr(td, "k6_root",
-                                                            "/home/jl_fs/glm53-k6"))))
+    k6 = getattr(td, "k6_root", "/home/jl_fs/glm53-k6")
+    return ("FIDELITY_FS_ROOT=%s FIDELITY_K6_ROOT=%s QP_PIPELINE_ROOT=%s"
+            % (shlex.quote(td.fs_root), shlex.quote(k6),
+               shlex.quote("%s/pipeline" % k6)))
 
 
 def _make_provider(name: str, *, dry: bool = False):

@@ -105,7 +105,7 @@ def main() -> int:
     # this same snapshot -- never at the official BF16 metadata skeleton.
     extra = {
         "source": source,
-        "bf16": os.environ.get("BF16", "/home/jl_fs/models/bf16"),
+        "bf16": os.environ.get("BF16") or ("%s/models/bf16" % fs),
         # The THIRD root that defaults to a JarvisLabs path, and the one nobody
         # exported. FIDELITY_FS_ROOT and FIDELITY_K6_ROOT are set explicitly by
         # the controller for exactly this reason; QP_PIPELINE_ROOT was left on a

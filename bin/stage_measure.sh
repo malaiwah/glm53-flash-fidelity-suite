@@ -93,7 +93,7 @@ setup)
   # materializer checks its produced non-routed name set against the official
   # index.  Both need the ORIGINAL bytes -- at the PINNED revision, not main,
   # which can move under us between two measurements of the same artifact.
-  BF16_DIR="${BF16:-/home/jl_fs/models/bf16}"
+  BF16_DIR="${BF16:-$FS/models/bf16}"
   # For every other surface this tree is 16 MB of config + index, and living on
   # the container's own layer is harmless. A GGUF run also stores the ~4.2 GB
   # vision-carrying shard here, and THAT is not harmless on a provider whose
@@ -411,7 +411,7 @@ materialize)
   esac
   REPO="$(jqget target.repo_id)"
   REV="$(jqget target.revision)"
-  BF16_DIR="${BF16:-/home/jl_fs/models/bf16}"
+  BF16_DIR="${BF16:-$FS/models/bf16}"
   log "materializing non-routed BF16 tree from $MODELS/target"
   if [ "$SURFACE" = "dione" ]; then
     #   dione -- the retained tensors are already the official ones at source

@@ -140,6 +140,44 @@ check("a non-separable provider is sized from the plan, not 100 GB",
       open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "measure_cloud.py")).read())
 
+print("\n== no path may assume JarvisLabs except the two exported roots ==")
+# Every hardcoded /home/jl_fs literal in the on-instance tools is a run that
+# silently does the wrong thing somewhere else. Three of them were found one at
+# a time, each by a paid run: FIDELITY_FS_ROOT and FIDELITY_K6_ROOT (a run
+# written into a container's ephemeral layer), then QP_PIPELINE_ROOT -- which
+# stalled a box at 0% GPU for two hours, at $1.59/h, AFTER the bootstrap, a
+# 200 GB fetch and the panel were all paid for. This is the rule that finds the
+# fourth one without renting anything.
+EXPORTED_ROOTS = ("FIDELITY_FS_ROOT", "FIDELITY_K6_ROOT", "QP_PIPELINE_ROOT")
+ON_INSTANCE = ("invoke_engine.py", "invoke_scorer.py", "stage_measure.sh",
+               "bootstrap_measure.sh")
+here = os.path.dirname(os.path.abspath(__file__))
+offenders = []
+for fname in ON_INSTANCE:
+    path = os.path.join(here, fname)
+    if not os.path.isfile(path):
+        continue
+    lines = open(path, encoding="utf-8").read().splitlines()
+    for n, line in enumerate(lines, 1):
+        if "/home/jl_fs" not in line or line.lstrip().startswith("#"):
+            continue
+        # Allowed ONLY as the fallback of a root the controller exports. The
+        # name and its literal are often on different lines (an os.environ.get
+        # call wrapped across three), so the window is what is checked.
+        window = "\n".join(lines[max(0, n - 4):n + 1])
+        if not any(r in window for r in EXPORTED_ROOTS):
+            offenders.append("%s:%d %s" % (fname, n, line.strip()[:88]))
+for o in offenders:
+    print("      %s" % o)
+check("every /home/jl_fs literal is the default of an EXPORTED root",
+      not offenders)
+
+env = mc._stage_env(rp)
+for r in EXPORTED_ROOTS:
+    check("the stage env exports %s" % r, (r + "=") in env)
+check("...and none of them point at /home/jl_fs on a runpod box",
+      "/home/jl_fs" not in env)
+
 print()
 if FAILED:
     print("selftest_provider_portability: %d FAILED" % len(FAILED))

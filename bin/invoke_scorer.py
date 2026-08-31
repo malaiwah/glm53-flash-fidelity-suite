@@ -90,7 +90,12 @@ def main() -> int:
             flag.get("out", "--out"), str(out),
             flag.get("device", "--device"), args.device,
             flag.get("chunk_positions", "--chunk-positions"), args.chunk_positions]
-    pipeline_root = os.environ.get("QP_PIPELINE_ROOT", "/home/jl_fs/glm53-k6/pipeline")
+    # Derived from the k6 root the controller sets, not from a JarvisLabs
+    # literal. The engine-side twin of this line stalled a paid run at 0% GPU
+    # for two hours; this one had the same shape and had simply not been
+    # reached yet.
+    pipeline_root = os.environ.get("QP_PIPELINE_ROOT") or (
+        "%s/pipeline" % os.environ.get("FIDELITY_K6_ROOT", "/home/jl_fs/glm53-k6"))
     if pipeline_root:
         argv += [flag.get("pipeline_root", "--pipeline-root"), pipeline_root]
 
