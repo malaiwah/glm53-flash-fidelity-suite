@@ -300,8 +300,16 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
     artifact_bytes, bits, offline = 176.0 * GB, 4.0, False
     try:
         meta = repo_meta(args.artifact, "model", args.revision or "main")
-        surface = sniff_surface(meta)
-        artifact_bytes = float(meta.total_bytes)
+        # --path is not only a registry-gate hint: a repo that publishes
+        # several artifacts at one revision (a GGUF shelf) is unreadable
+        # WITHOUT it, and priced 12x too large with it ignored. This runner
+        # used to pass it to the front gate and not to the sniffer, so
+        # `bin/measure unsloth/GLM-5.3-Flash-GGUF` refused with "this artifact
+        # cannot be read by any available surface adapter" -- which was false,
+        # and sent the reader off to write an adapter that exists -- and priced
+        # the 2.55 TB shelf rather than the 200 GB build.
+        surface = sniff_surface(meta, getattr(args, "path", None))
+        artifact_bytes = float(surface.artifact_bytes or meta.total_bytes)
         bits = float(surface.bits or 4.0)
         con.kv("artifact", meta.repo_id)
         con.kv("revision", "%s  (from %s)" % (meta.revision, meta.requested_revision))
@@ -415,8 +423,19 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
     # The full 643 GB BF16 checkpoint is NOT needed: both the TR3 and Dione
     # surfaces ship non-routed tensors natively in-repo. Say so, because
     # assuming otherwise turns a 208 GB recipe into an 850 GB one.
-    con.kv("BF16 base", "NOT required -- non-routed tensors ship in the artifact "
-                        "(pass --bf16 only for full inventory verification)")
+    #
+    # A GGUF is the exception, and in the direction that surprises people: it
+    # ships MORE of the model (it quantizes the whole forward) and yet still
+    # needs part of the official tree, because a llama.cpp container carries no
+    # HF tokenizer and no vision tower.
+    if out.get("artifact", {}).get("surface") == "gguf":
+        con.kv("BF16 base", "PARTIALLY required -- the artifact supplies every "
+                            "measured weight, but the official config/tokenizer "
+                            "and the vision tower (~4.2 GB, one shard of 120) "
+                            "are not in a GGUF container")
+    else:
+        con.kv("BF16 base", "NOT required -- non-routed tensors ship in the artifact "
+                            "(pass --bf16 only for full inventory verification)")
 
     ram_need = cen.nonrouted_bytes + 4 * GB + 6 * GB
     if device.unified:

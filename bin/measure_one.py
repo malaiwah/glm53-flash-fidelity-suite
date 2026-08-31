@@ -41,6 +41,7 @@ from typing import List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fidelity.common import Console                       # noqa: E402
+from fidelity.engines import load_engines                 # noqa: E402
 from fidelity import registry_client as RC                # noqa: E402
 from fidelity import lineage as LIN                       # noqa: E402
 from fidelity.hfmeta import (                             # noqa: E402
@@ -216,7 +217,11 @@ def run(args: argparse.Namespace, con: Console) -> int:
     if hf_ok:
         try:
             meta = repo_meta(target["repo"], "model", resolved or "main")
-            surface = sniff_surface(meta)
+            # path_hint, not None: this is the same repo-is-a-shelf case the
+            # two runners have. Without it a GGUF repo sniffs as "12 builds,
+            # pick one" even when the caller already did, and step 7 prints a
+            # null codec for an artifact it has in hand.
+            surface = sniff_surface(meta, path_hint)
             surface_name = surface.surface
             con.say("[7/9] surface: %s (codec %s @ %s bpw)"
                     % (surface.surface, surface.codec_family, surface.bits))
@@ -228,9 +233,32 @@ def run(args: argparse.Namespace, con: Console) -> int:
             # happened to the first stranger who tried to measure a stock
             # exllamav3 release with this tool.
             readable_here = {"packed", "native-bf16"}
-            readable_streaming = {"packed", "native-bf16", "exl3hf",
-                                  "tr3-published"}
-            if surface.problems or surface.surface not in readable_here:
+            # READ from engines.json, not retyped. This set was a literal and
+            # went stale twice: `dione` and `gguf` readers both landed on the
+            # streaming lane while this list still said they did not exist, so
+            # the one tool a newcomer is told to start with sent them away from
+            # a recipe that would have worked.
+            readable_streaming = set(
+                (load_engines().get("streaming").surfaces if
+                 load_engines().get("streaming") else [])
+                or ["packed", "native-bf16", "exl3hf", "tr3-published"])
+            # A repo that publishes SEVERAL artifacts at one revision is not
+            # unreadable; it is unchosen, and those are different verdicts with
+            # different remedies. Answer the second one before the first.
+            builds = surface.evidence.get("gguf_builds") or {}
+            if builds and surface.path is None:
+                reason = ("%s publishes %d artifacts at this revision and a "
+                          "measurement describes ONE of them"
+                          % (target["repo"], len(builds)))
+                lines = ["pass --path <build>, for example:",
+                         "  bin/measure %s --path %s"
+                         % (target["repo"], sorted(builds)[0]),
+                         "",
+                         "builds: " + ", ".join(sorted(builds))]
+                if not args.plan_only:
+                    raise Refusal(reason, lines)
+                con.warn(reason + " -- planning without one")
+            elif surface.problems or surface.surface not in readable_here:
                 elsewhere = (surface.surface in readable_streaming
                              and not surface.problems)
                 lines = ["registry rows above stand; measured receipts exist "
@@ -242,8 +270,11 @@ def run(args: argparse.Namespace, con: Console) -> int:
                         "The CLOUD recipe reads this surface. Run it instead:",
                         "  bin/measure-cloud --model %s --revision %s \\"
                         % (target["repo"], resolved or "<40-hex>"),
-                        "      --panel <hf-dataset> --lane streaming --spot "
-                        "--dry-run",
+                        # carry the build through: a copy-pasted line that
+                        # dropped it would hit the shelf refusal one step later
+                        "      %s--panel <hf-dataset> --lane streaming "
+                        "--dry-run" % (("--path %s " % surface.path)
+                                       if surface.path else ""),
                         "(--dry-run creates nothing and spends $0.00.)",
                     ] + lines
                     reason = ("%s publishes surface '%s'. The local lanes read "

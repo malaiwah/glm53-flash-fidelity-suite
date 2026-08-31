@@ -238,7 +238,26 @@ def rung_argv(tmp: Path) -> None:
 
 # ---------------------------------------------------------------- rung 5
 def rung_structural() -> None:
+    import ast
     import re
+
+    # 5a. BOTH runners must hand the sniffer the path hint. measure_local used
+    # to pass --path to the registry front gate and NOT to sniff_surface, so
+    # `bin/measure <a GGUF repo>` -- the documented starting point -- refused
+    # with "this artifact cannot be read by any available surface adapter",
+    # which was false, and priced the 2.55 TB shelf instead of the 200 GB
+    # build. A shared helper cannot enforce this; a structural check can.
+    for runner in ("measure_cloud.py", "measure_local.py"):
+        src = (ROOT / "bin" / runner).read_text(encoding="utf-8")
+        calls = [n for n in ast.walk(ast.parse(src))
+                 if isinstance(n, ast.Call)
+                 and getattr(n.func, "id", None) == "sniff_surface"]
+        check(calls and all(len(c.args) + len(c.keywords) >= 2 for c in calls),
+              "5a %s passes the --path hint to sniff_surface (a repo that "
+              "publishes many artifacts at one revision is unreadable without "
+              "it, and mispriced by 12x if it is dropped)" % runner,
+              "%d call(s), arg counts %s"
+              % (len(calls), [len(c.args) + len(c.keywords) for c in calls]))
 
     src = (ROOT / "bin" / "invoke_engine.py").read_text(encoding="utf-8")
     body = src.split("source_by_surface = {", 1)[1].split("}", 1)[0]
@@ -248,7 +267,7 @@ def rung_structural() -> None:
             continue
         missing = sorted(set(lane.surfaces) - spelled)
         check(not missing,
-              "5 every surface lane %r declares has a --source spelling "
+              "5b every surface lane %r declares has a --source spelling "
               "(a surface with none reaches the GPU and dies on argparse)"
               % lane_name,
               "unspelled: %s" % ", ".join(missing))
