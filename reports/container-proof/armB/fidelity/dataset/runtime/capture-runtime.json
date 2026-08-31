@@ -1,0 +1,76 @@
+{
+  "capture_tool": {
+    "file": "engines/tools/hf_capture.py",
+    "layer_residency": "stream",
+    "mechanism": "transformers forward pass, layer-outer/window-inner schedule: for each decoder layer the model's own forward is run once per window with the layers below replaying their memoised output and the layers above suspending, so each layer's weights are materialised once for the whole panel. Windows are pushed through sequentially, never batched. Forward pre-hook on model.get_output_embeddings(), fired by the model's own epilogue after the last layer",
+    "parallel_plan_dropped": false,
+    "schedule": "layer-outer",
+    "sha256": "eac6e7dc29e297997f659c60d3fa24d4908474579c06b07de257e90fff6e4331",
+    "version": "hf_capture/1",
+    "wraps": []
+  },
+  "container": {
+    "image_digest": "sha256:372d542ccf7e4deb8908ad3949b515200dfb66fdff3980690bf7ad8e5f457d5a",
+    "image_reference": null,
+    "image_repository_digest": null,
+    "source": "env:STACKPRINT_IMAGE_PIN"
+  },
+  "format_version": 1,
+  "lane": "streaming",
+  "lane_identity_inputs": [
+    "torch_version",
+    "cuda_runtime_version",
+    "device_name",
+    "grouped_mm_kernel",
+    "numeric_policy",
+    "attention_backend",
+    "experts_implementation",
+    "parallelism",
+    "ep_emulate",
+    "reduce_order"
+  ],
+  "lane_identity_sha256": "2d0992fc5dbbf694f458d97486dfadab9f7ad2c0cb8ce089f4373c078a85eff8",
+  "lane_inferred": false,
+  "receipt_sha256": "26c74de579ad8e1530883df80f7141b7bd9d59e4e89431627cb676fb9512bb9a",
+  "runtime_environment": {
+    "cold_run": "20260831T151206Z-688",
+    "python": "3.12.3"
+  },
+  "schema": "malaiwah.fidelity-capture-runtime.v1",
+  "source_files": {
+    "engines/tools/hf_capture.py": "eac6e7dc29e297997f659c60d3fa24d4908474579c06b07de257e90fff6e4331",
+    "engines/tools/layer_outer.py": "6a763b7a9c5bdc6716b08fff2369023284adaabd73eb9daca00e8ce5d64b3e05"
+  },
+  "stack_fingerprint": {
+    "attention_backend": "model default",
+    "cuda_runtime_version": null,
+    "device": "cpu",
+    "device_name": null,
+    "engine": "transformers-eager",
+    "numeric_policy": "default torch matmul precision; no TF32 override applied",
+    "schema": "malaiwah.stack-fingerprint.v1",
+    "torch_version": "2.11.0+cu130",
+    "transformers_version": "5.16.1"
+  },
+  "stack_fingerprint_sha256": "18735425224674010b93195cf2260ee9ebe1e813e6e902957c6b649ce4778746",
+  "upstream_receipts": [],
+  "weights": {
+    "checkpoint_files": [
+      {
+        "name": "config.json",
+        "sha256": "6f22cc97eceb0ddff73aff4bc3c23d38361843f186f5cded2d8981d8ed8c13b2",
+        "size": 3202
+      },
+      {
+        "name": "model.safetensors",
+        "sha256": "0f0645f3da199f6c2f381c4f50f2729d6e455dbd3e87f91974202807ee1e5df8",
+        "size": 168778084
+      }
+    ],
+    "checkpoint_identity_algorithm": "sha256 over the canonical JSON {\"algorithm\": <this string>, \"files\": [{\"name\", \"size\", \"sha256\"}, ...]} of every *.safetensors shard plus config.json in the checkpoint directory, sorted by name",
+    "checkpoint_identity_sha256": "0823dded5e2b593824ff50234cb280087c924e576fd7548406f194eb377377f4",
+    "model_revision": "7c3a6d3dc51732dd8ab230888e06ba8c93a381ac",
+    "repository": "/workspace/fidelity/models/target",
+    "revision": "7c3a6d3dc51732dd8ab230888e06ba8c93a381ac"
+  }
+}

@@ -1,0 +1,234 @@
+# Build the measurement image, multi-arch, and (once enabled) publish it.
+#
+# NOTHING IS PUBLISHED UNTIL A MAINTAINER SAYS SO. The registry push is gated
+# on the repository variable PUBLISH_CONTAINER; with it unset this workflow
+# builds both architectures, prints the plan and the digests, and pushes
+# nothing. Landing this file is not a decision to publish -- enabling it is one
+# switch (Settings -> Secrets and variables -> Actions -> Variables ->
+# PUBLISH_CONTAINER=true), which is the point.
+#
+# The rules that decide what gets built and tagged live in bin/release_plan.py,
+# not in `${{ }}` expressions. A workflow expression is untestable anywhere
+# except GitHub: you find out it was wrong by pushing a tag and reading a red
+# run. bin/selftest_container.py drives that script with known inputs and known
+# answers, offline, before any of this runs.
+name: container image
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: >-
+          Push to GHCR. Ignored unless the repository variable
+          PUBLISH_CONTAINER is also true -- two switches, deliberately.
+        type: boolean
+        default: false
+  release:
+    types: [published]
+  # Pull requests BUILD and never push, so a change to the Dockerfile is
+  # verified by the thing it changes rather than by review alone.
+  pull_request:
+    paths:
+      - 'container/**'
+      - '.github/workflows/container-image.yml'
+      - 'bin/BUNDLE.txt'
+      - 'bin/bootstrap_measure.sh'
+      - 'bin/container_*.py'
+      - 'bin/release_plan.py'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.plan.outputs.tags }}
+      platforms: ${{ steps.plan.outputs.platforms }}
+      push: ${{ steps.plan.outputs.push }}
+      suite_revision: ${{ steps.plan.outputs.suite_revision }}
+      image_reference: ${{ steps.plan.outputs.image_reference }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: what this build would tag, build and push
+        id: plan
+        run: |
+          set -euo pipefail
+          python3 bin/release_plan.py \
+            --event "${{ github.event_name }}" \
+            --ref "${{ github.ref }}" \
+            --sha "${{ github.sha }}" \
+            --image "ghcr.io/${{ github.repository_owner }}/quant-fidelity-measure" \
+            --publish "${{ vars.PUBLISH_CONTAINER }}" \
+            --github-output \
+            | tee "$GITHUB_STEP_SUMMARY" 2> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      # The same offline battery that guards the transport locally. It costs
+      # seconds and it is what catches a BUNDLE.txt entry the Dockerfile does
+      # not COPY -- statically, instead of on a billing box at the end of a
+      # capture stage.
+      - name: container transport selftest
+        run: python3 bin/selftest_container.py
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      # One job per architecture rather than one job building both: under QEMU
+      # the arm64 leg is several times the wall clock of the amd64 one, and
+      # serialising them inside a single job means the fast one waits. Each
+      # pushes by digest; `manifest` below joins them into one tag.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      # QEMU is the starting point, not the destination. Cross-building the
+      # CUDA wheel set for aarch64 is emulated I/O and unpacking rather than
+      # emulated compilation (every pinned wheel publishes an aarch64 build --
+      # see container/Dockerfile's MULTI-ARCH note), so it is slow but not
+      # pathological. If it becomes the bottleneck, the upgrade is a native
+      # arm64 runner (`runs-on: ubuntu-24.04-arm`), which needs no change here
+      # beyond the label.
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.arch != 'amd64'
+      - uses: docker/setup-buildx-action@v3
+
+      - name: log in to GHCR
+        if: needs.plan.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build ${{ matrix.platform }}
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: container/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: ${{ needs.plan.outputs.push == 'true' }}
+          # By digest, not by tag: two architectures cannot both own one tag.
+          # The manifest job below is what makes the tag mean both.
+          outputs: >-
+            ${{ needs.plan.outputs.push == 'true'
+                && format('type=image,name=ghcr.io/{0}/quant-fidelity-measure,push-by-digest=true,name-canonical=true,push=true', github.repository_owner)
+                || 'type=docker' }}
+          build-args: |
+            SUITE_REVISION=${{ needs.plan.outputs.suite_revision }}
+            IMAGE_REFERENCE=${{ needs.plan.outputs.image_reference }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      # The image records what it resolved; print it into the run summary so a
+      # receipt citing this build can be traced back without pulling anything.
+      - name: what got built
+        run: |
+          set -euo pipefail
+          {
+            echo "### ${{ matrix.platform }}"
+            echo ''
+            echo "digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "imageid: \`${{ steps.build.outputs.imageid }}\`"
+            echo "revision: \`${{ needs.plan.outputs.suite_revision }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: export the digest for the manifest job
+        if: needs.plan.outputs.push == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+      - uses: actions/upload-artifact@v4
+        if: needs.plan.outputs.push == 'true'
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    needs: [plan, build]
+    if: needs.plan.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: join the per-arch images under every tag
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${{ github.repository_owner }}/quant-fidelity-measure"
+          TAGARGS=""
+          IFS=',' read -ra TAGS <<< "${{ needs.plan.outputs.tags }}"
+          for t in "${TAGS[@]}"; do TAGARGS="$TAGARGS -t $t"; done
+          # shellcheck disable=SC2046
+          docker buildx imagetools create $TAGARGS \
+            $(printf "${IMAGE}@sha256:%s " $(ls /tmp/digests | sed 's/^sha256://'))
+      # THE FIELD THIS WHOLE THING EXISTS TO FILL. A receipt's
+      # produced_by.container_digest has been null on every row this repository
+      # has published; this is the value a run cites with `--image-pin`.
+      - name: the digest a receipt should cite
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${{ github.repository_owner }}/quant-fidelity-measure"
+          FIRST="$(echo '${{ needs.plan.outputs.tags }}' | cut -d, -f1)"
+          DIGEST="$(docker buildx imagetools inspect "$FIRST" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          {
+            echo '### cite this'
+            echo ''
+            echo '```'
+            echo "docker run --gpus all -v /data:/workspace \\"
+            echo "  ${FIRST} capture ... --image-pin ${DIGEST}"
+            echo '```'
+            echo ''
+            echo "That value lands in the capture receipt as"
+            echo "\`runtime.container.image_digest\` and in"
+            echo "\`produced_by.container_digest\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  changelog:
+    # Generated from the commit subjects, never hand-written: this repo's
+    # commits are long-form prose whose FIRST LINE is already a changelog
+    # entry, which is why bin/changelog.py exists instead of a Conventional
+    # Commits tool that would need a second convention to work.
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: regenerate and diff
+        run: |
+          set -euo pipefail
+          python3 bin/changelog.py --all --out /tmp/CHANGELOG.md
+          {
+            echo '### changelog since the last tag'
+            echo ''
+            python3 bin/changelog.py
+          } >> "$GITHUB_STEP_SUMMARY"
+          if ! diff -q CHANGELOG.md /tmp/CHANGELOG.md >/dev/null 2>&1; then
+            echo "::warning::CHANGELOG.md is stale; run bin/changelog.py --all --out CHANGELOG.md"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: /tmp/CHANGELOG.md
+          retention-days: 30

@@ -54,11 +54,12 @@ ARG DEBIAN_FRONTEND=noninteractive
 # Where the image bakes itself.  IMAGE_ROOT is FIDELITY_ENGINE_ROOT: the bootstrap
 # builds its venv at $ROOT/venv and clones the pipeline at $ROOT/pipeline, so
 # pointing that root at an image directory is what puts them in a layer.
-# FIDELITY_K6_ROOT is the pre-2026-08-31 spelling, exported alongside the new
-# one for one release so a stage script from either checkout resolves it.
+# FIDELITY_ENGINE_ROOT only: the pre-2026-08-31 spelling FIDELITY_K6_ROOT is
+# still accepted as a fallback by the stage scripts, but an image and the stage
+# scripts inside it ship together, so a NEW surface has no reason to be born
+# carrying a deprecated name it would then have to be migrated off.
 ENV FIDELITY_IMAGE_ROOT=/opt/fidelity \
     FIDELITY_ENGINE_ROOT=/opt/fidelity \
-    FIDELITY_K6_ROOT=/opt/fidelity \
     FIDELITY_SUITE_ROOT=/opt/fidelity/suite \
     QP_PIPELINE_ROOT=/opt/fidelity/pipeline \
     PYTHONDONTWRITEBYTECODE=1 \

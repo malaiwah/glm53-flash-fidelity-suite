@@ -370,6 +370,12 @@ def job_document(args, suite: Path, fs_root: Path, con) -> dict:
             "race_workers": int(args.race_workers),
             "preview_of": args.preview_of or None,
             "sanity_expect": args.sanity_expect,
+            # Same field, same spelling, same default as the controller's --
+            # C3c asserts the two capture blocks carry identical keys, because
+            # a knob that exists on one transport and not the other is a run
+            # that behaves differently depending on how it was launched.
+            "allow_unexpected_tensors": bool(
+                getattr(args, "allow_unexpected_tensors", False)),
         }
     elif not getattr(args, "profile", None):
         raise Refusal(
@@ -457,13 +463,15 @@ def stage_env(fs_root: Path, engine_root: Path, pin: dict) -> dict:
     """
     env = dict(os.environ)
     env["FIDELITY_FS_ROOT"] = str(fs_root)
+    # FIDELITY_ENGINE_ROOT only. The pre-2026-08-31 spelling FIDELITY_K6_ROOT
+    # is still ACCEPTED by the stage scripts as a fallback, and the SSH
+    # controller still exports both for one release, because a controller and
+    # an instance can come from different checkouts. This transport has no such
+    # history: the image and the stage scripts inside it ship together, so
+    # emitting the deprecated name here would bake a migration into new
+    # surface for no compatibility anyone needs.
     env["FIDELITY_ENGINE_ROOT"] = str(engine_root)
-    # The pre-2026-08-31 spelling, exported alongside the new one for one
-    # release: a stage script from an older checkout reads only the old name,
-    # and a root that resolves to nothing is a run written into the
-    # container's ephemeral layer -- which is exactly the defect class this
-    # transport exists to delete.
-    env["FIDELITY_K6_ROOT"] = str(engine_root)
+    env.pop("FIDELITY_K6_ROOT", None)
     env["QP_PIPELINE_ROOT"] = str(engine_root / "pipeline")
     # Read by hf_capture (through the same convention stackprint uses) so the
     # capture's own runtime receipt records which image produced it.
@@ -502,12 +510,11 @@ def add_common(p) -> None:
                    help="the run root: models, panel, receipts, logs, job.json. "
                         "Bind-mount it (default %s)." % DEFAULT_FS_ROOT)
     p.add_argument("--engine-root",
-                   default=(os.environ.get("FIDELITY_ENGINE_ROOT")
-                            or os.environ.get("FIDELITY_K6_ROOT")
-                            or str(IMAGE_ROOT)),
-                   help="where the baked venv and patched pipeline live "
-                        "(default the image's own %s). FIDELITY_K6_ROOT is the "
-                        "pre-2026-08-31 spelling and is still read." % IMAGE_ROOT)
+                   default=os.environ.get("FIDELITY_ENGINE_ROOT") or str(IMAGE_ROOT),
+                   help="where the baked venv and patched pipeline live. The "
+                        "default is the image's own %s, and that is not the run "
+                        "root on purpose: the venv and the patched pipeline are "
+                        "immutable image content, while /workspace is a mount." % IMAGE_ROOT)
     p.add_argument("--job", help="use this job document verbatim instead of "
                                  "building one from the flags")
     p.add_argument("--token-file", help="0600 file holding the HF token "
@@ -546,6 +553,7 @@ def add_job_flags(p, *, root: bool) -> None:
         p.add_argument("--race-workers", type=int, default=8)
         p.add_argument("--preview-of")
         p.add_argument("--sanity-expect", default="Paris")
+        p.add_argument("--allow-unexpected-tensors", action="store_true")
     else:
         p.add_argument("--surface")
         p.add_argument("--bits", type=float)
@@ -592,8 +600,7 @@ def cmd_doctor(con) -> int:
     con("built                  %s" % build.get("built_utc"))
     for key, value in sorted((build.get("pins") or {}).items()):
         con("  pin %-18s %s" % (key, value))
-    engine = Path(os.environ.get("FIDELITY_ENGINE_ROOT")
-                  or os.environ.get("FIDELITY_K6_ROOT") or str(IMAGE_ROOT))
+    engine = Path(os.environ.get("FIDELITY_ENGINE_ROOT") or str(IMAGE_ROOT))
     py = engine / "venv" / "bin" / "python"
     if not py.is_file():
         con("venv                   MISSING at %s" % py)

@@ -162,30 +162,66 @@ does not get to shift because we added a container.
 
 ---
 
-## The acceptance test
+## The acceptance test, and its result
 
 **Bit-identical output.** A containerised capture must produce the same
 `capture_content_digest` as the current path on the same GPU. If it does not,
 the image changed the arithmetic — that is a failure, not a variance.
 
-```bash
-# same box, same GPU, same panel, same checkpoint
-#   arm A: the current path      -- bin/stage_measure.sh setup && ... capture
-#   arm B: the container         -- docker run ... capture
-jq -r '.capture.capture_content_digest' A/fidelity-dataset.json
-jq -r '.capture.capture_content_digest' B/fidelity-dataset.json
-```
+**Run, 2026-08-31, Lambda `gpu_1x_a10` (NVIDIA A10, one box, one GPU):**
 
-`dataset_sha256` is *expected* to differ between the two: arm B's runtime
-receipt records the image it ran in and arm A's does not. That is the honest
-answer, not a discrepancy — the tensors are the claim, and
-`fidelity-dataset compare --self-compare` over the two trees is the exact-0.0
-reproduction confirmation.
+| | arm A — host bootstrap | arm B — the image |
+|---|---|---|
+| `capture_content_digest` | `b42ffe8f1d1dfcfdd784…a960549` | **identical** |
+| per-window tensor digests | `552af179…`, `abd137ac…` | **identical** |
+| `head.tensor_content_sha256` | `58b4b967…` | **identical** |
+| `stack_fingerprint_sha256` | `18735425…` | **identical** |
+| `lane_identity_sha256` | `2d0992fc…` | **identical** |
+| `dataset_sha256` | `4d8eaae9…` | `587cbd6f…` — **differs, by design** |
+| `runtime.container.image_digest` | `null` | `sha256:372d542c…` |
+| `setup` stage | 134 s cold | 53–70 s (bootstrap all-no-op) |
+
+Both arms captured `inference-optimization/GLM-5.3-Flash-0.1B-A0.1B` @
+`7c3a6d3d` over a 2×256 panel built on the box from this repository's own docs
+(510 scored positions), driven by the same `bin/container_entry.py` so that the
+only variable between them was the environment. Evidence, including both
+manifests and both runtime receipts:
+[`reports/container-proof/`](../reports/container-proof/).
+
+`dataset_sha256` differs for exactly one reason, and it is the right one: arm B's
+runtime receipt records the image it ran in and arm A's does not. Every other
+field above is equal, including `stack_fingerprint_sha256` — which is what
+`dscompare` reads to decide `stack_relation`, so the two captures are
+same-stack and one can serve as the other's floor.
+
+One detail worth keeping: the two arms did **not** have identical interpreters.
+The host bootstrap installed python **3.12.13** from deadsnakes; the image has
+Ubuntu 24.04's **3.12.3**. The tensors are still bit-identical, and the
+fingerprint does not include the patch version — so this is evidence about how
+much of the stack the digest actually pins, not a claim that patch versions
+never matter.
+
+`fidelity-dataset compare --self-compare` was **refused** on this pair, and
+correctly: `PANEL-D6` compares the two captures' tokenizer identity, which is
+recorded as the local path of the model tree (`/home/ubuntu/…/models/target`
+vs `/workspace/…/models/target`). On the SSH path both arms always share a
+root, so this never surfaced; a container has a different mount root by
+construction. Written up in
+[`REVIEW-DEFERRED.md`](REVIEW-DEFERRED.md) rather than fixed here, because it
+changes a published manifest field.
 
 Determinism is a **per-device** property (`docs/ARCHITECTURE-DETERMINISM.md`:
 two A100s in two clouds agree bitwise; an H200 is 2.973e-04 nats away, 13× the
 gap this registry publishes between two 4-bit quantizers). The comparison above
-is only meaningful on **one** GPU.
+is only meaningful on **one** GPU, which is why both arms ran on one box.
+
+### One operational wart
+
+The container runs as root, so everything it writes into the mount is
+root-owned and a later `rm -rf` from the login user fails file by file. Either
+run it with `--user "$(id -u):$(id -g)"` or clean up with `sudo`. It is not a
+correctness problem and it is exactly the kind of thing that only shows up the
+second time you use the mount.
 
 ---
 
@@ -211,3 +247,119 @@ with `CapEff 0x00000000a80425fb` — the Docker default set, no `CAP_SYS_ADMIN` 
 `CLONE_NEWUSER`, which the default seccomp profile blocks without
 `CAP_SYS_ADMIN`) are both out. Building the image *on* a RunPod pod is not a
 route; the image has to arrive from a registry.
+
+---
+
+## Two architectures, and why arm64 is not decoration
+
+The image targets `linux/amd64` **and** `linux/arm64`. The reason is a
+measurement, not a preference: benchmarking eleven cards across four providers
+found Lambda's `gpu_1x_gh200` — Grace, so **aarch64** — the cheapest per
+measurement of anything measured anywhere, 0.098 ms/matrix against an A100
+PCIe's 0.891, because this lane is host-bandwidth-bound and NVLink-C2C is not
+PCIe ([`CLOUD-COMPARISON.md`](CLOUD-COMPARISON.md)). An arm64 image is what
+makes that turnkey instead of a hand-built ARM stack.
+
+**The pins hold on both.** Checked against the real indexes rather than
+assumed:
+
+| | aarch64 |
+|---|---|
+| `torch==2.11.0+cu130` | `manylinux_2_28_aarch64` published alongside `_x86_64` — the *same version string* |
+| `kbnf`, `hf_transfer`, `tokenizers`, `safetensors` | aarch64 wheels published |
+| `pydantic==2.5.3`, `formatron==0.5.0` | pure python |
+
+Nothing in the wheel set falls back to a source build, so the arm64 image pins
+what the amd64 one pins. **The one x86-only artefact in the recipe** is the
+flash-attn wheel URL, and `bootstrap_measure.sh` fetches it only inside the
+exllamav3 branch — which is not taken, because the measurement path imports the
+pipeline without it. An arm64 run that ever *does* need exllamav3 will have to
+build it. That is stated here rather than papered over.
+
+**The architecture is a pin, not a label.** `container_manifest.py` records
+`arch` and `platform` among the pins, so the two images behind one multi-arch
+tag carry **different** `image_content_sha256` values. That is correct: they
+are different stacks that happen to share a tag. This repository has already
+measured that the GPU *model* alone moves a number by 13× the gap it publishes
+between two 4-bit quantizers; a receipt that cannot say which architecture
+produced it is missing a fact of the same class.
+
+---
+
+## Releasing it
+
+[`.github/workflows/container-image.yml`](../.github/workflows/container-image.yml)
+builds both architectures and, once enabled, publishes to GHCR.
+
+**Nothing is published until a maintainer says so.** The registry push is gated
+on the repository variable `PUBLISH_CONTAINER`; unset, the workflow builds both
+architectures, prints the plan and the digests into the run summary, and pushes
+nothing. Landing the file is not a decision to publish — enabling it is one
+switch (Settings → Secrets and variables → Actions → Variables →
+`PUBLISH_CONTAINER=true`).
+
+**The rules live in a script, not in `${{ }}`.** `bin/release_plan.py` decides
+the tags, the platforms and the publish gate; the workflow calls it and builds
+what it said. A workflow expression is untestable anywhere except GitHub — you
+find out it was wrong by pushing a tag and reading a red run — so
+`bin/selftest_container.py` rung C11 drives that script with known inputs and
+known answers, offline:
+
+```bash
+python3 bin/release_plan.py --event release --ref refs/tags/v1.2.3 \
+    --sha "$(git rev-parse HEAD)" --publish true
+```
+
+| ref | tags |
+|---|---|
+| `refs/tags/v1.2.3` | `sha-<12>`, `1.2.3`, `1.2`, `1`, `latest` |
+| `refs/tags/v1.2.3-rc1` | `sha-<12>`, `1.2.3` — a prerelease never moves the series tags or `latest` |
+| `refs/heads/main` | `sha-<12>`, `main` |
+| `workflow_dispatch` | `sha-<12>`, `dev` |
+
+The `sha-<12>` tag is always first and is what the image records as its own
+`IMAGE_REFERENCE`, because a receipt needs a reference that still means these
+bytes tomorrow and `latest` never does.
+
+**QEMU now, native runners later.** The arm64 leg cross-builds under QEMU. That
+is emulated I/O and unpacking rather than emulated compilation — every pinned
+wheel publishes an aarch64 build — so it is slow but not pathological, and each
+architecture is a separate matrix job so the fast one does not wait for the slow
+one. If it becomes the bottleneck the upgrade is `runs-on: ubuntu-24.04-arm`,
+which needs no other change.
+
+**The digest is the point.** `produced_by.container_digest` has been `null` on
+every row this repository has published. The `manifest` job prints the digest of
+the multi-arch tag it just created, together with the exact command that cites
+it:
+
+```
+docker run --gpus all -v /data:/workspace \
+  ghcr.io/malaiwah/quant-fidelity-measure:sha-<12> capture ... --image-pin sha256:<digest>
+```
+
+That value lands in the capture receipt as `runtime.container.image_digest` and
+in `produced_by.container_digest`.
+
+---
+
+## The changelog is generated
+
+```bash
+bin/changelog.py                 # since the last tag
+bin/changelog.py --all --out CHANGELOG.md
+bin/changelog.py --check         # what CI (and rung C11q) runs
+```
+
+Not git-cliff, not release-drafter — both assume Conventional Commits: a short
+subject, a machine-readable type, and a body nobody reads. This repository's
+commits are the opposite, long-form prose explaining what failed and why, and
+by a convention that has held across the whole history the **first line is
+already a changelog entry**. So the generator takes that line, splits the topic
+off at the first colon, and groups by topic; adding a tool would add a
+dependency, a config file and a second convention to produce the same list.
+
+The topic rule is deliberately strict about the leading lowercase letter, since
+a subject can also open with a file (`AGENTS.md:`), an identifier (`REFC-006:`)
+or a flag (`--pipeline-root:`) — grouping by those gives one section per commit,
+which is a list with extra headings rather than a changelog.

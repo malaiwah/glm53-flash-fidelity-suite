@@ -174,7 +174,8 @@ def rung_job_document():
             panel_dir=str(panel_dir),
             dataset_id="fidelity--t.malaiwah.root.bf16", dataset_name=None,
             form="hidden", schedule="layer-outer", race=False, race_workers=8,
-            preview_of=None, sanity_expect="Paris")
+            preview_of=None, sanity_expect="Paris",
+            allow_unexpected_tensors=True)
         cont_root = CE.job_document(rargs, SUITE, fs, quiet)
 
     for label, cloud, cont in (("quant", cloud_quant, cont_quant),
@@ -248,8 +249,17 @@ def rung_token():
         check("C4f the roots are exported, never left to a /home/jl_fs default",
               env["FIDELITY_FS_ROOT"] == str(fs)
               and env["QP_PIPELINE_ROOT"].endswith("/pipeline"))
-        check("C4g both engine-root spellings are exported for one release",
-              env["FIDELITY_ENGINE_ROOT"] == env["FIDELITY_K6_ROOT"] == str(td))
+        # The image and the stage scripts inside it ship together, so the
+        # container emits ONLY the current spelling. The deprecated one is
+        # still READ by those scripts (and still exported by the SSH
+        # controller, where a controller and an instance can come from
+        # different checkouts) -- but baking it into new surface just creates
+        # a migration nobody needs.
+        check("C4g the engine root is exported under its current name",
+              env["FIDELITY_ENGINE_ROOT"] == str(td))
+        check("C4g2 ... and the deprecated spelling is not emitted, even when "
+              "it was in the caller's environment",
+              "FIDELITY_K6_ROOT" not in env)
     # The DEFAULTS are the thing worth testing, not the values a caller passed:
     # a root that names a model or a campaign is how `/home/jl_fs/glm53-k6`
     # ended up baked into a path on rented hardware, and a root that resolves
@@ -588,6 +598,108 @@ def rung_cli():
               unknown.returncode != 0)
 
 
+# --------------------------------------------------------------------------
+# C11  the release path: decided in a script, tested offline, default-off
+# --------------------------------------------------------------------------
+
+def rung_release():
+    print("[C11] what a release build would tag, build and push")
+    import release_plan as RP                               # noqa: E402
+    import changelog as CL                                  # noqa: E402
+
+    sha = "a" * 40
+
+    def plan(**kw):
+        base = dict(event="workflow_dispatch", ref="refs/heads/main", sha=sha,
+                    image="ghcr.io/x/y", publish="false")
+        base.update(kw)
+        return RP.plan(argparse.Namespace(**base))
+
+    rel = plan(event="release", ref="refs/tags/v1.2.3", publish="true")
+    check("C11a a release tags the series and latest",
+          rel["tags"] == ["ghcr.io/x/y:sha-aaaaaaaaaaaa", "ghcr.io/x/y:1.2.3",
+                          "ghcr.io/x/y:1.2", "ghcr.io/x/y:1",
+                          "ghcr.io/x/y:latest"], "%s" % rel["tags"])
+    pre = plan(event="release", ref="refs/tags/v1.2.3-rc1", publish="true")
+    check("C11b a PRERELEASE does not move latest or the series tags",
+          pre["tags"] == ["ghcr.io/x/y:sha-aaaaaaaaaaaa", "ghcr.io/x/y:1.2.3"],
+          "%s" % pre["tags"])
+    check("C11c the immutable sha- tag is always first, and is what the image "
+          "records as its own reference",
+          rel["tags"][0].startswith("ghcr.io/x/y:sha-")
+          and rel["build_args"]["IMAGE_REFERENCE"] == rel["tags"][0])
+    check("C11d SUITE_REVISION is the full commit the receipt must name",
+          rel["build_args"]["SUITE_REVISION"] == sha)
+
+    off = plan(event="release", ref="refs/tags/v1.2.3")
+    check("C11e publishing is DEFAULT-OFF: landing the workflow publishes "
+          "nothing", off["push"] is False)
+    check("C11f ... and the plan says which switch turns it on",
+          any("PUBLISH_CONTAINER" in r for r in off["push_blocked_because"]))
+    pr = plan(event="pull_request", ref="refs/pull/7/merge", publish="true")
+    check("C11g a pull request never pushes, even with the gate on",
+          pr["push"] is False
+          and any("pull request" in r for r in pr["push_blocked_because"]))
+    check("C11h both architectures are in every plan",
+          rel["platforms"] == ["linux/amd64", "linux/arm64"])
+
+    try:
+        plan(sha="deadbeef")
+        check("C11i a short sha is refused", False, "it planned anyway")
+    except SystemExit as exc:
+        check("C11i a short sha is refused, naming why the schema needs it",
+              "produced_by.revision" in str(exc))
+
+    wf = SUITE / ".github" / "workflows" / "container-image.yml"
+    text = wf.read_text(encoding="utf-8") if wf.is_file() else ""
+    check("C11j the workflow exists", bool(text))
+    check("C11k it asks the script rather than deciding in an expression",
+          "bin/release_plan.py" in text)
+    check("C11l the push is gated on the repository variable",
+          "vars.PUBLISH_CONTAINER" in text)
+    check("C11m it builds both platforms",
+          "linux/amd64" in text and "linux/arm64" in text)
+    check("C11n it passes the build args the image records",
+          "SUITE_REVISION=" in text and "IMAGE_REFERENCE=" in text)
+    check("C11o it runs this battery before building",
+          "selftest_container.py" in text)
+
+    print("[C11p] the changelog groups by the topic convention, not by any token")
+    known = [
+        ("container: run the measurement as an IMAGE", ("container",
+                                                        "run the measurement as an IMAGE")),
+        ("bundle: a bundled script's DATA is a dependency too",
+         ("bundle", "a bundled script's DATA is a dependency too")),
+        # A FILE, an identifier and a flag can all open a subject; grouping by
+        # those gives one section per commit, which is a list with extra
+        # headings rather than a changelog.
+        ("AGENTS.md: how to work on this repo", ("", "AGENTS.md: how to work on this repo")),
+        ("REFC-006: a family that publishes no weights",
+         ("", "REFC-006: a family that publishes no weights")),
+        ("--pipeline-root: the third default", ("", "--pipeline-root: the third default")),
+        ("Merge branch 'main'", None),
+        ("no colon at all", ("", "no colon at all")),
+    ]
+    for subject, want in known:
+        got = CL.split_subject(subject)
+        check("C11p %s" % subject[:44], got == want, "got %r want %r" % (got, want))
+    # NOT a staleness check. CHANGELOG.md is generated from the commits, so
+    # it is one commit behind for as long as it takes to commit it -- making
+    # that fatal here would fail the battery immediately after every commit,
+    # which trains people to ignore it. What must hold is that the file is
+    # GENERATED (not hand-edited) and that the generator still produces every
+    # line it contains. CI keeps the staleness check, as a warning.
+    text = (SUITE / "CHANGELOG.md").read_text(encoding="utf-8")
+    check("C11q CHANGELOG.md exists and says it is generated",
+          "bin/changelog.py" in text.splitlines()[2] if len(text.splitlines()) > 2
+          else False)
+    regenerated = set(CL.full_changelog().splitlines())
+    orphans = [ln for ln in text.splitlines()
+               if ln.startswith("- ") and ln not in regenerated]
+    check("C11r every entry in it is one the generator still produces",
+          not orphans, "hand-edited or lost: %s" % orphans[:3])
+
+
 def main() -> int:
     rung_sequence()
     rung_job_document()
@@ -597,6 +709,7 @@ def main() -> int:
     rung_capture_identity()
     rung_dockerfile()
     rung_cli()
+    rung_release()
     print("")
     if FAILED:
         print("FAILED %d:" % len(FAILED))

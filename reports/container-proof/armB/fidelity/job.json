@@ -1,0 +1,71 @@
+{
+  "capture": {
+    "author": "malaiwah",
+    "dataset_id": "fidelity--containerproof.malaiwah.root.bf16",
+    "dataset_name": "container-proof root capture",
+    "form": "hidden",
+    "panel_dir": "panel-src/panel",
+    "panel_id": "panel--containerproof.malaiwah.suitedocs2",
+    "preview_of": null,
+    "race": false,
+    "race_workers": 8,
+    "role": "root",
+    "sanity_expect": "Paris",
+    "schedule": "layer-outer"
+  },
+  "cold_runs": 1,
+  "disclosures": [],
+  "environment": {
+    "container_content_sha256": "8045406b4a6911e76fda0afcb9c2e85107cf729c077869597281520da9b79df5",
+    "container_digest": "sha256:372d542ccf7e4deb8908ad3949b515200dfb66fdff3980690bf7ad8e5f457d5a",
+    "container_image": "quant-fidelity-measure:proof",
+    "gpu": "NVIDIA A10",
+    "gpu_count": 1,
+    "host": "lambda",
+    "tensor_parallel": 1
+  },
+  "job_id": "ctrproof",
+  "keep_student_logits": false,
+  "lane": "streaming",
+  "measurer": {
+    "handle": "malaiwah",
+    "is_artifact_author": false,
+    "name": "malaiwah",
+    "url": "https://huggingface.co/malaiwah"
+  },
+  "panel": {},
+  "produced_by": {
+    "container_digest": "sha256:372d542ccf7e4deb8908ad3949b515200dfb66fdff3980690bf7ad8e5f457d5a",
+    "container_image": "quant-fidelity-measure:proof",
+    "dependencies": {
+      "hf_transfer": "0.1.9",
+      "numpy": "2.5.2",
+      "pipeline_commit": "ce1bf9706b6aa18435e2baccab63bdd72299257c",
+      "python": "3.12.3",
+      "safetensors": "0.8.0",
+      "torch": "2.11.0+cu130",
+      "torch_cuda": "13.0",
+      "transformers": "5.16.1"
+    },
+    "entrypoint": "bin/container_entry.py",
+    "entrypoint_sha256": "d87d4727827625415d9b055282afc34382b5f0ae28cbbb087c0a52196ef60348",
+    "repository": "malaiwah/quant-fidelity-suite",
+    "revision": "f45a8be70aff49d969a6981d21e14dd2567991a6",
+    "runtime_reader_sha256": null,
+    "tool": "quant-fidelity-suite/bin"
+  },
+  "profile": null,
+  "recipe": "container",
+  "reduce_order": "fp32",
+  "reference": {
+    "reference_ref": null,
+    "teacher_backend_identity_sha256": null,
+    "teacher_receipt_sha256": null
+  },
+  "role": "root",
+  "scope": null,
+  "target": {
+    "repo_id": "inference-optimization/GLM-5.3-Flash-0.1B-A0.1B",
+    "revision": "7c3a6d3dc51732dd8ab230888e06ba8c93a381ac"
+  }
+}

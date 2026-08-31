@@ -245,3 +245,31 @@ The honest test that a backend works is **not** that it ran. It is
 re-measuring an artifact that already has a sealed receipt and getting the same
 number: for `turboderp/GLM-5.3-Flash-exl3` @ 2.05bpw that is
 `0.12163767673339457` and its tokenwise-KLD tensor hash.
+
+## 7. Or skip the machine and run the image
+
+Everything above orchestrates a *machine*. Section 6 lists what that cost:
+five defects from three ports, none of them about the measurement, three of
+which could have leaked a billing instance.
+
+There is now a second transport that deletes the whole category — no id to
+parse, no state to poll, no disk to size, and a filesystem root that is a mount
+the caller chose:
+
+```bash
+docker run --gpus all --rm -v /data/run:/workspace -v $PWD/panel:/panel:ro -e HF_TOKEN \
+    <image> capture --model <repo> --revision <40-hex> \
+        --panel-dir /panel --dataset-id <id> --lane streaming
+```
+
+It runs the same `bin/stage_measure.sh` stages from the same `job.json`
+contract, is receipt-resumable in the same way, and bakes the ~4 minutes of
+apt/pip/git every rental used to pay. Verified bit-identical to the path above
+on one A10: same `capture_content_digest`, same `stack_fingerprint_sha256`.
+
+**The SSH path is not going anywhere.** JarvisLabs has no custom-image path at
+all, and RunPod cannot build one on a pod (no `CAP_SYS_ADMIN`, no `/dev/fuse` —
+probed on a live pod), so a pod has to *pull* the image from a registry.
+
+See [`CONTAINER.md`](CONTAINER.md) for the image, how it is driven, what it
+records about itself, and the release workflow.

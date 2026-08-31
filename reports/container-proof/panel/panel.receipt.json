@@ -1,0 +1,76 @@
+{
+  "corpus": {
+    "documents_considered": 2,
+    "documents_selected": 2,
+    "path_prefix": "",
+    "repository": null,
+    "revision": null
+  },
+  "created_utc": "2026-08-31T14:44:18Z",
+  "documents": [
+    {
+      "bytes": 2059,
+      "document": "a-license.txt",
+      "document_sha256": "64878a66fca49da0191e8295d4c7177d10c62ecdd5073dffd96e71ad6d6e4d00",
+      "selected": true,
+      "stratum": "prose",
+      "token_slice": [
+        0,
+        256
+      ],
+      "tokens_total": 450,
+      "window_id": "final-0000"
+    },
+    {
+      "bytes": 5835,
+      "document": "b-runbook.txt",
+      "document_sha256": "f23c30455d715875babc6f77e436a27c401a8e290bc9f26544feec94c730f27e",
+      "selected": true,
+      "stratum": "prose",
+      "token_slice": [
+        0,
+        256
+      ],
+      "tokens_total": 1835,
+      "window_id": "final-0001"
+    }
+  ],
+  "format_version": 1,
+  "panel_id": "panel--containerproof.malaiwah.suitedocs2",
+  "panel_name": "container-proof panel (2 x 256, suite docs)",
+  "parameters": {
+    "context_length": 256,
+    "prediction_positions_per_window": 255,
+    "scored_positions_total": 510,
+    "skip_tokens": 0,
+    "strata": [
+      "prose"
+    ],
+    "windows_per_stratum": 2,
+    "windows_total": 2
+  },
+  "receipt_sha256": "235cc1d2ef0867d7f4cff31910b4e82af7f4b3e1e0d569631295ca48c1eda144",
+  "schema": "malaiwah.token-panel-build-receipt.v1",
+  "selection_rule": "strata sorted ascending; within each stratum documents sorted by file name ascending; each document tokenized whole with add_special_tokens=False; a document is eligible only if it yields at least skip_tokens+context_length tokens; its window is tokens[skip_tokens : skip_tokens+context_length]; the first windows_per_stratum eligible documents are taken; windows are numbered from zero in (stratum, document) order. No RNG is used anywhere.",
+  "separation": {
+    "checked": false,
+    "method": "declaration only; this tool runs no lexical or n-gram scan",
+    "note": null
+  },
+  "suite_token_hash_sha256": "52445ebe8732000c3338b2f3f775c3bded1231f633a2b90d189f1191980f831e",
+  "tokenizer": {
+    "add_special_tokens": false,
+    "chat_template_applied": false,
+    "files_sha256": {
+      "config.json": "6f22cc97eceb0ddff73aff4bc3c23d38361843f186f5cded2d8981d8ed8c13b2",
+      "tokenizer.json": "55b76819093dcba02342d7cd282b85a9ee48784ee0df1ac1f18a6c3198ea7ad8",
+      "tokenizer_config.json": "21848631f494177b449db5fab804cfb52e38077e0802dd4a8568978c010c3d3b"
+    },
+    "id": "fixture-glm53-0.1b",
+    "repository": null,
+    "revision": null,
+    "vocab_size": 154820
+  },
+  "tool": "k6/tools/build_token_panel.py",
+  "tool_sha256": "8fc028713b48b19fb9368f833dda61bcfa0dc3be37a8a67352abf1811f255c7e"
+}

@@ -1507,3 +1507,43 @@ result. Mentioned here only so it is not rediscovered.
 field, so no library helps; but it is fragile and untested, and this file's one historical
 bug was also a data-shape bug (`_KNOWN_DISK_GB` guessed 200 GB for a box whose `df -h /`
 said 1.4T).
+
+## PANEL-D6 — a capture records its tokenizer as a filesystem PATH, so two
+## captures of one panel on two mount roots are refused as different tokenizers
+
+**Anchor:** `engines/tools/hf_capture.py`, the panel block's tokenizer identity — it takes
+`--model`, which is the local checkpoint tree, rather than `--repository`, which is the
+published repo id the same invocation already passes.
+
+**Found by** the container transport's acceptance test, 2026-08-31: two captures of the
+*same* checkpoint at the *same* revision over the *same* panel on the *same* GPU, whose
+tensors are bit-identical (`capture_content_digest`
+`b42ffe8f1d1dfcfdd78452339cdcd913c8be9ceae13f88f6348f19b43a960549` on both). Comparing them
+is refused:
+
+```
+REFUSED [panel_mismatch]: gate panel: the two captures declare different tokenizers
+(PANEL-D6); the token id digest cannot see this because it hashes integers.
+Differing field(s): id '/home/ubuntu/armA/fidelity/models/target'
+                 vs '/workspace/fidelity/models/target'
+```
+
+The gate is right to exist — a token id digest hashes integers and cannot see a tokenizer
+change — and it is right to have no override (PANEL-D3). What is wrong is the *value* it
+compares: a path on a machine that will not exist, where a published repo id was available
+in the same argv. On the SSH path every arm shares a root (`/home/jl_fs/...`), so this could
+not surface; a container has a different mount root by construction, and so does any second
+machine.
+
+**Why it is deferred rather than fixed here:** the tokenizer id is a field of a published
+manifest. Changing what it holds changes the bytes of every future capture and makes new
+captures compare unequal to already-published ones on that field — a comparability decision,
+not a bug fix, and it belongs to whoever owns the dataset format.
+
+**Suggested shape:** record `repository` (already passed as `--repository`) as the identity
+and keep the local path as a separate, non-compared `source_path`; treat a legacy
+path-valued id as "unknown" rather than as a mismatch, so old and new captures compare on
+what they actually share.
+
+**Test:** a rung that captures the same fixture twice under two different `--out`/model-tree
+roots and asserts `compare --self-compare` succeeds. It fails today.
