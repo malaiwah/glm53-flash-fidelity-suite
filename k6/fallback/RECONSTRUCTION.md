@@ -149,7 +149,7 @@ requires. The kernels are instantiated for K=1..8, so K6 and K8 (the
    `provenance.fallback_reconstruction = {schema, reconstructed_from,
    sealed_core_files_absent, bit_identity_with_sealed_core: "UNVERIFIED"}` —
    emitted automatically by `_finalize_unit`; do not strip it.
-2. `stage_k6.sh` must, in fallback mode: (a) record the staged closure
+2. `stage_campaign.sh` must, in fallback mode: (a) record the staged closure
    `{relpath: sha256}` map (from `stage_r7_encoder`) plus the shim and
    extension hashes in the campaign receipts; (b) copy this RECONSTRUCTION.md
    and VALIDATION.md into the published receipts tree; (c) put a
@@ -167,7 +167,7 @@ requires. The kernels are instantiated for K=1..8, so K6 and K8 (the
 
 ## Amendment (adversarial re-review, 2026-08-27): inference 12 — reader-exact closure
 
-The first end-to-end `k6_driver.py rehearse` run on the L4 (through the real
+The first end-to-end `campaign_driver.py rehearse` run on the L4 (through the real
 adapter + staged fallback + pinned reader) produced `k6_roundtrip_exact:
 false`: the original-domain reconstruction computed through the extension's
 fp16 `reconstruct` kernel differs from the reader's independent

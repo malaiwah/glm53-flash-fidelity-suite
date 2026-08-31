@@ -92,7 +92,7 @@ def payload_sha256(path: Path) -> str:
 
     Whole-file hashes differ between bit-identical runs because __metadata__
     carries cold_run and backend identity; determinism is defined on tensor
-    content (campaign lesson 27).  Same convention as stage_k6.sh's
+    content (campaign lesson 27).  Same convention as stage_campaign.sh's
     payload-shas.json.
     """
     with open(path, "rb") as handle:

@@ -650,7 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "refuses with remedies, never a stack trace")
     r.add_argument("--pipeline-root",
                    help="patched quant_pipeline tree for --execute preflight "
-                        "(clone PIPE_REPO per k6/stage_k6.sh + patches-v2)")
+                        "(clone PIPE_REPO per k6/stage_campaign.sh + patches-v2)")
     r.add_argument("--teacher-tree",
                    help="LOCAL teacher logits tree for --execute (default "
                         "<work>/teacher)")

@@ -2,7 +2,7 @@
 """fp64 tokenwise KLD vs the fp32 teacher + five-cold-run aggregation (K6/K6K8).
 
 Adapted from brandonmusic's measure_glm53_packed_student_kld.py and
-aggregate_glm53_five_run_kld.py, joined into the single CLI stage_k6.sh pins:
+aggregate_glm53_five_run_kld.py, joined into the single CLI stage_campaign.sh pins:
 
   kld_report.py --profile k6 --teacher <tree> --runs run1 ... run5 \
       --fp8-baseline 0.020615 --k4-baseline 0.024555 \
@@ -206,7 +206,7 @@ def _record_map(receipt: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 #: The old expression suffixed every unrecognised profile "-tp4", so the two published
 #: streaming receipts carry `k6-stream-tp4` and `k8-tp4` -- a claim that the artifact ships
 #: TP4-sliced ranks. k6/DECISIONS.md forbids exactly that ("the checkpoint must not bake in
-#: a TP/EP topology"), and k6/stage_k6.sh hard-asserts `qualified_tp_sizes == []` on those
+#: a TP/EP topology"), and k6/stage_campaign.sh hard-asserts `qualified_tp_sizes == []` on those
 #: very releases before publishing them. It is the same defect JOURNAL lesson #10 already
 #: recorded and fixed for `gguf-tp4`, left live in two more receipts.
 PROFILE_STORAGE_LABEL = {

@@ -143,7 +143,7 @@ fi
 
 # ---------------------------------------------------------------- NUM-10
 # Every literal --profile a shell script hands to kld_report.py must be one of
-# that tool's argparse choices. `k6/stage_k6.sh` documented QP_STREAM_PROFILE=k6|k8
+# that tool's argparse choices. `k6/stage_campaign.sh` documented QP_STREAM_PROFILE=k6|k8
 # and composed `--profile "${STREAM_PROFILE}-stream"`, but `k8-stream` is not a
 # choice -- so a K8 streaming run died with argparse exit 2 AFTER the full capture.
 if python3 "$ROOT/bin/_check_kld_profiles.py" "$ROOT"; then

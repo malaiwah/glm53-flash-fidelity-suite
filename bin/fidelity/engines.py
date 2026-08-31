@@ -298,11 +298,11 @@ def preflight(engine: Engine, *, suite_root: Path,
             problems.append({
                 "missing": "quant_pipeline package under --pipeline-root %s" % pipeline_root,
                 "remedy": "point --pipeline-root at the patched tree (clone "
-                          "PIPE_REPO per k6/stage_k6.sh + apply patches-v2)"})
+                          "PIPE_REPO per k6/stage_campaign.sh + apply patches-v2)"})
     elif _can_import(python, "quant_pipeline") is None:
         problems.append({
             "missing": "quant_pipeline (the engine's reader package)",
-            "remedy": "clone PIPE_REPO per k6/stage_k6.sh + apply patches-v2, "
+            "remedy": "clone PIPE_REPO per k6/stage_campaign.sh + apply patches-v2, "
                       "then pass --pipeline-root PATH (or pip-install it into "
                       "FIDELITY_PYTHON)"})
     _ = qp_env

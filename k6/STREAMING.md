@@ -333,7 +333,7 @@ auto-escalates to 5 runs if it ever fails.
 ```
 QP_STREAM_LOCAL_STORE=1 QP_STREAM_CACHE=disk \
 QP_STREAM_SWEEP=ep8:reverse,ep8:fp32,ep1:none \
-bash /home/jl_fs/glm53-k6/stage_k6.sh measure_stream
+bash /home/jl_fs/glm53-k6/stage_campaign.sh measure_stream
 ```
 
 The fail-closed path is **validated**: pointing `QP_STREAM_PACKED_ROOT` at a
@@ -342,7 +342,7 @@ writes `receipts/stream-verdict.json` with `verdict: INPUT_MISSING` and the
 reason, and exits **6** without touching a GPU.
 
 That stage bootstraps (no encoder toolchain needed — it needs neither exllamav3
-nor nvcc, so it runs on a container where `stage_k6.sh setup` cannot complete),
+nor nvcc, so it runs on a container where `stage_campaign.sh setup` cannot complete),
 preflights every input and fails closed, stages the payload store locally, runs the L1 ladder, captures
 `QP_STREAM_RUNS` (default 2) cold streaming runs, checks cross-run determinism on
 the **tensor payload region** (whole-file sha differs by design: `__metadata__`
@@ -612,7 +612,7 @@ $PY $ROOT/tools/stream_score.py \
 #   add:  --slab-experts 288 --sweep "ep8:reverse,ep8:sequential,ep1:none"
 
 # L3 + L4, the whole panel, one command
-QP_STREAM_LOCAL_STORE=1 bash $ROOT/stage_k6.sh measure_stream
+QP_STREAM_LOCAL_STORE=1 bash $ROOT/stage_campaign.sh measure_stream
 ```
 
 Everything above reads the shared filesystem read-only and writes only under

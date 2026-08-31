@@ -3,12 +3,17 @@
 #
 #   stage_measure.sh <setup|fetch_target|fetch_panel|measure|seal>
 #
-# The bootstrap is NOT reimplemented here.  `k6/stage_k6.sh setup` already owns
-# the proven container bootstrap -- deadsnakes python3.12, CUDA 13.0, torch
-# 2.11.0+cu130, transformers 5.16.1, the flash-attn wheel, pydantic/formatron/
-# kbnf, and exllamav3 @ c5d9c657 with a rebuild guard -- and it is idempotent
-# and sudo-aware, which matters because containers lose apt state across a
-# pause.  This script arranges the layout that stage_k6.sh expects and calls it.
+# The bootstrap is NOT reimplemented here: `setup` arranges the layout and then
+# runs bin/bootstrap_measure.sh, which owns the proven container recipe --
+# deadsnakes python3.12, CUDA 13.0, torch 2.11.0+cu130, transformers 5.16.1,
+# the flash-attn wheel, pydantic/formatron/kbnf, and exllamav3 @ c5d9c657 with
+# a rebuild guard -- and is idempotent and sudo-aware, which matters because
+# containers lose apt state across a pause.
+#
+# It used to delegate to `k6/stage_campaign.sh setup` (then called stage_k6.sh)
+# instead; see bootstrap_measure.sh's header for the two reasons that could
+# never work.  These lines said otherwise for weeks while the code below
+# already called bootstrap_measure.sh.
 #
 # Every stage writes a marker into $DONE, so a stage that already finished is a
 # no-op.  That is what makes a spot preemption cost one stage instead of the
@@ -94,7 +99,7 @@ case "$STAGE" in
 
 setup)
   # The measurement lane owns its bootstrap (bin/bootstrap_measure.sh).  It
-  # used to call k6/stage_k6.sh, which (a) was never in the upload bundle and
+  # used to call k6/stage_campaign.sh, which (a) was never in the upload bundle and
   # (b) hard-stops a decode-only run on an ENCODER closure gate.  See that
   # script's header for the full reasoning.
   #

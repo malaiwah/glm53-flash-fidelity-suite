@@ -18,7 +18,7 @@ bin/stage_measure.sh
 # fail-closed, entries naming files this repo does not publish REPORTED.
 bin/verify_published_sums.py
 # The measurement-only container bootstrap. The recipe used to delegate to
-# k6/stage_k6.sh, which was never uploaded (so `setup` ran a file that did not
+# k6/stage_campaign.sh, which was never uploaded (so `setup` ran a file that did not
 # exist) and gates a decode-only run on an ENCODER closure it never needs.
 bin/bootstrap_measure.sh
 bin/watchdog.sh

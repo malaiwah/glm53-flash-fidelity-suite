@@ -1,6 +1,6 @@
 #!/bin/sh
 # overlap_smoke.sh - single-unit control-vs-overlap measurement for
-# k6_driver.py encode-worker --overlap-seal, on the K8 campaign (out-k8).
+# campaign_driver.py encode-worker --overlap-seal, on the K8 campaign (out-k8).
 #
 # Runs ON the box (jl machine 484853), e.g.:
 #   jl upload 484853 tools/overlap_smoke.sh /home/jl_fs/glm53-k6/tools/overlap_smoke.sh
@@ -28,7 +28,7 @@
 set -eu
 
 ROOT=${ROOT:-/home/jl_fs/glm53-k6}
-DRIVER=${DRIVER:-$ROOT/tools/k6_driver.py}
+DRIVER=${DRIVER:-$ROOT/tools/campaign_driver.py}
 PY=${PY:-$ROOT/venv/bin/python}
 OUT=$ROOT/out-k8
 SMOKE_GPU=${SMOKE_GPU:-3}

@@ -5,7 +5,7 @@ family), NEVER 'EXL3' — these are not loadable by stock exllamav3 (no
 glm5_next arch); cards must state codec vs runtime distinction explicitly.
 HF publication for the K6/K6K8 campaign: weights, receipts, discussion draft.
 
-Subcommands (interface pinned by stage_k6.sh):
+Subcommands (interface pinned by stage_campaign.sh):
 
   weights   --checkpoint --repo --recipe --receipts --card
             Stages quantization/recipe.json, provenance, the publication-gate
@@ -50,7 +50,7 @@ UPSTREAM_CREDITS = {
 
 
 def _fail(message: str, code: int = 1) -> "SystemExit":
-    print(f"k6_publish: ERROR: {message}", file=sys.stderr, flush=True)
+    print(f"publish_release: ERROR: {message}", file=sys.stderr, flush=True)
     return SystemExit(code)
 
 
@@ -432,7 +432,7 @@ def cmd_receipts(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="k6_publish.py",
+        prog="publish_release.py",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

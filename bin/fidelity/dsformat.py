@@ -150,7 +150,7 @@ def payload_sha256(path: str) -> str:
     """Preimage 2: the safetensors DATA REGION, header skipped.
 
     Byte-identical to `k6/tools/hidden_replay.py::payload_sha256` and to
-    `k6/stage_k6.sh` L4's payload-shas.json: read the `<Q` header length at
+    `k6/stage_campaign.sh` L4's payload-shas.json: read the `<Q` header length at
     offset 0, seek past `8 + header_len`, hash the rest.  Survives
     `__metadata__` churn.
     """

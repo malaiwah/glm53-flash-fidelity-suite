@@ -8,7 +8,7 @@ record: `JOURNAL.md` (27+ lessons), `k6/DECISIONS.md` (9 operator decisions),
    (`inference-optimization/GLM-5.3-Flash-0.1B-A0.1B`) validated the entire
    chain in minutes and its per-matrix bench set the fleet plan. For a new
    model, find or build the tiny-random fixture FIRST and run
-   `k6_driver.py rehearse` end-to-end on a $2 GPU-hour before renting anything
+   `campaign_driver.py rehearse` end-to-end on a $2 GPU-hour before renting anything
    big. If no fixture exists, make one (tiny dims, full architecture, stock-
    transformers-loadable) — it pays for itself the same day.
 
@@ -36,7 +36,7 @@ record: `JOURNAL.md` (27+ lessons), `k6/DECISIONS.md` (9 operator decisions),
    the bundle, sync, relaunch — the resume machinery eats the retry.
 
 5. **Prep and encode want different parallelism.** The contract's prep loop is
-   single-GPU serial: fan `k6_driver.py prepare --layers A-B` range workers
+   single-GPU serial: fan `campaign_driver.py prepare --layers A-B` range workers
    across idle GPUs (3× faster) — but DRAIN them before rerunning the
    contract sweep. We hit a staging-dir race at layer 20 because cache-warm
    prep closed a "comfortable" margin. Wish: make the prep loop claim-based
@@ -166,7 +166,7 @@ most surprises.
     instead of once per window (a 25x difference on identical hardware).
 
 18. **Sync is a two-way street.** The repo copy and the box copy of
-    `stage_k6.sh` diverged for hours — the box gained an entire stage the repo
+    `stage_campaign.sh` diverged for hours — the box gained an entire stage the repo
     never received, so a downstream agent "verified" a CLI that did not exist
     and wrote a runner against a guessed contract. After every on-box fix,
     pull it back to git the same way you push. Pin engine CLIs by PROBING the

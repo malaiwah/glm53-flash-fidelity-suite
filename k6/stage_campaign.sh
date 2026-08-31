@@ -1,6 +1,6 @@
 #!/bin/bash
 # Stage driver for the GLM-5.3-Flash K6 / K6K8 EXL3-MCG quantization campaign.
-# Usage: stage_k6.sh <stage-name>
+# Usage: stage_campaign.sh <stage-name>
 #
 # Runs on JarvisLabs GPU containers (IN2) with filesystem 3394 mounted at
 # /home/jl_fs.  All state lives on the fs, so spot preemption + re-create
@@ -8,8 +8,8 @@
 # stages resume at per-expert granularity through the pipeline's own receipt
 # files (encode_work_unit skips experts whose sealed receipt already exists).
 #
-# Atomic self-update convention (control session): upload as stage_k6.sh.new,
-# then `mv stage_k6.sh.new stage_k6.sh`.  This script refuses to run while a
+# Atomic self-update convention (control session): upload as stage_campaign.sh.new,
+# then `mv stage_campaign.sh.new stage_campaign.sh`.  This script refuses to run while a
 # half-synced .new file exists.
 #
 # Stages:
@@ -27,7 +27,7 @@ BF16=/home/jl_fs/models/bf16              # pinned zai-org/GLM-5.3-Flash-BF16 (w
 # Overridable so a dry validation of a stage (e.g. proving measure_stream
 # fails closed) does not page the operator on the campaign topic.
 NTFY_URL="${QP_NTFY_URL:-https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33}"
-STAGE="${1:?usage: stage_k6.sh <stage>}"
+STAGE="${1:?usage: stage_campaign.sh <stage>}"
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 [ -e "$SELF.new" ] && { echo "half-synced $SELF.new exists - finish the mv first" >&2; exit 3; }
 
@@ -42,7 +42,7 @@ PIPE=$ROOT/pipeline                        # glm-5.3-flash-exl3-4bpw @ pin + pat
 SHAPLEY=$ROOT/shapleymcg                   # public ShapleyMCG @ pin (scripts/run_qwen_fast_encode.py closure)
 SQGEXP=$ROOT/sqg-mcg                       # glm52-sqg-mcg-experiments sparse @ pin (bmmlaw_r7_encoder pkg)
 EXL3=$ROOT/exllamav3                       # exllamav3 @ c5d9c657 (v0.0.43), built in-place
-TOOLS=$ROOT/tools                          # our driver tools (k6_driver.py etc.)
+TOOLS=$ROOT/tools                          # our driver tools (campaign_driver.py etc.)
 VENV=$ROOT/venv
 CAL=$ROOT/calibration                      # main-ep4-full/ mtp45-ep4-full/ panel-v1/
 TEACH=$ROOT/teacher-final                  # 25 sealed final-window fp32 logits
@@ -166,7 +166,7 @@ require_free_gb() {  # require_free_gb <gb> <why>
 run_workers() {  # run_workers <profile: k6|k8|k6k8> <output_root>
   local profile="$1" out="$2" pids=() i rcs=0
   for i in 0 1 2 3; do
-    CUDA_VISIBLE_DEVICES=$i "$PY" "$TOOLS/k6_driver.py" encode-worker \
+    CUDA_VISIBLE_DEVICES=$i "$PY" "$TOOLS/campaign_driver.py" encode-worker \
       --profile "$profile" --worker "h200-$i" \
       $( [ "$profile" = k8 ] && echo --overlap-seal ) \
       --pipeline-root "$PIPE" --shapley-root "$SHAPLEY" --exllama-root "$EXL3" \
@@ -373,8 +373,8 @@ pathlib.Path("$RCPT/closure_status.json").write_text(json.dumps(status, indent=2
 print(f"closure gate: source={source} OK" + (f" ({len(staged)} staged files)" if staged else ""))
 PYEOF
   # Fail fast on the rest of the control-session uploads the stages depend on.
-  for need in "$TOOLS/k6_driver.py" "$TOOLS/student_capture.py" \
-              "$TOOLS/kld_report.py" "$TOOLS/k6_publish.py" \
+  for need in "$TOOLS/campaign_driver.py" "$TOOLS/student_capture.py" \
+              "$TOOLS/kld_report.py" "$TOOLS/publish_release.py" \
               "$ROOT/recipes/k6.json" "$ROOT/recipes/k8.json" "$ROOT/recipes/k6k8.json"; do
     test -f "$need" || { echo "missing on fs: $need - upload the k6-program tree first" >&2; exit 1; }
   done
@@ -390,7 +390,7 @@ fixture_rehearsal)
   # run without it.
   test -d "$ROOT/fixture/GLM-5.3-Flash-0.1B-A0.1B" \
     || { echo "fixture missing: download inference-optimization/GLM-5.3-Flash-0.1B-A0.1B to $ROOT/fixture/ first" >&2; exit 1; }
-  "$PY" "$TOOLS/k6_driver.py" rehearse \
+  "$PY" "$TOOLS/campaign_driver.py" rehearse \
     --fixture "$ROOT/fixture/GLM-5.3-Flash-0.1B-A0.1B" \
     --pipeline-root "$PIPE" --shapley-root "$SHAPLEY" --exllama-root "$EXL3" \
     --bench-full-size-matrices 24 --probe-k8 \
@@ -425,7 +425,7 @@ shared_vector_ab)
   # (out-k6/transform-seed.json) so its verdict is measured under the exact
   # sign vectors the fleet encode will use.
   mkdir -p "$OUT_K6"
-  CUDA_VISIBLE_DEVICES=0 "$PY" "$TOOLS/k6_driver.py" shared-vector-ab \
+  CUDA_VISIBLE_DEVICES=0 "$PY" "$TOOLS/campaign_driver.py" shared-vector-ab \
     --pipeline-root "$PIPE" --shapley-root "$SHAPLEY" --exllama-root "$EXL3" \
     --bf16 "$BF16" --calibration "$CAL" --layers 3,20,44 \
     --output-root "$OUT_K6" \
@@ -479,7 +479,7 @@ convert_k6)
   # from brandonmusic's published K4 receipts; the driver refuses to fabricate.
   test -f "$OUT_K6/k4-authorized-state.json" \
     || { echo "K4 gate state receipt missing at $OUT_K6/k4-authorized-state.json - author the disclosed bridge doc (RUNBOOK P1 step 0) before convert_k6" >&2; exit 1; }
-  "$PY" "$TOOLS/k6_driver.py" contract --profile k6 \
+  "$PY" "$TOOLS/campaign_driver.py" contract --profile k6 \
     --pipeline-root "$PIPE" --shapley-root "$SHAPLEY" --exllama-root "$EXL3" \
     --bf16 "$UPSTREAM_BF16_PATH" --calibration "$CAL" --output-root "$OUT_K6" \
     --recipe "$ROOT/recipes/k6.json" \
@@ -490,14 +490,14 @@ convert_k6)
   for attempt in 1 2 3; do
     run_workers k6 "$OUT_K6" || true
     [ -f "$OUT_K6/main-receipt.json" ] && break
-    "$PY" "$TOOLS/k6_driver.py" seal-main --profile k6 --output-root "$OUT_K6" || true
+    "$PY" "$TOOLS/campaign_driver.py" seal-main --profile k6 --output-root "$OUT_K6" || true
     [ -f "$OUT_K6/main-receipt.json" ] && break
     echo "main not sealed after attempt $attempt; requeueing dead claims"
-    "$PY" "$TOOLS/k6_driver.py" release-dead-claims --profile k6 --output-root "$OUT_K6" || true
+    "$PY" "$TOOLS/campaign_driver.py" release-dead-claims --profile k6 --output-root "$OUT_K6" || true
   done
   test -f "$OUT_K6/main-receipt.json"
   # 3) MTP layer 45 (separate contract, only after main is complete+sealed).
-  "$PY" "$TOOLS/k6_driver.py" mtp --profile k6 \
+  "$PY" "$TOOLS/campaign_driver.py" mtp --profile k6 \
     --pipeline-root "$PIPE" --bf16 "$BF16" --calibration "$CAL" --output-root "$OUT_K6"
   test -f "$OUT_K6/mtp-adapter-receipt.json"
   # 4) Free the calibration captures before materializing (disk ledger:
@@ -505,7 +505,7 @@ convert_k6)
   #    captures on the 2 TB fs).  They are re-downloadable from the Hub.
   du -sh "$CAL" && rm -rf "$CAL/main-ep4-full"
   # 5) Materialize (per-shard receipts -> resumable).
-  "$PY" "$TOOLS/k6_driver.py" materialize --profile k6 \
+  "$PY" "$TOOLS/campaign_driver.py" materialize --profile k6 \
     --output-root "$OUT_K6" --bf16 "$BF16" --checkpoint "$CKPT_K6"
   "$PY" - <<'PYEOF'
 import json
@@ -551,7 +551,7 @@ convert_k8)
   # (pre-0007 by design).  Re-probe now on the idle fleet + K8 timing bench
   # (K8 trellis edges > K6: seconds/matrix must be measured, not assumed).
   if [ ! -f "$RCPT/rehearsal-k8.json" ]; then
-    CUDA_VISIBLE_DEVICES=0 "$PY" "$TOOLS/k6_driver.py" rehearse \
+    CUDA_VISIBLE_DEVICES=0 "$PY" "$TOOLS/campaign_driver.py" rehearse \
       --fixture "$ROOT/fixture/GLM-5.3-Flash-0.1B-A0.1B" \
       --pipeline-root "$PIPE" --shapley-root "$SHAPLEY" --exllama-root "$EXL3" \
       --bench-full-size-matrices 6 --bench-bits 8 \
@@ -635,7 +635,7 @@ JSON
     ln -sfn "$BF16" "$UPSTREAM_BF16_PATH"
   fi
   # contract (K8-specific GSS preparations run inside) -> encode -> seal -> MTP
-  "$PY" "$TOOLS/k6_driver.py" contract --profile k8 \
+  "$PY" "$TOOLS/campaign_driver.py" contract --profile k8 \
     --pipeline-root "$PIPE" --shapley-root "$SHAPLEY" --exllama-root "$EXL3" \
     --bf16 "$UPSTREAM_BF16_PATH" --calibration "$CAL" --output-root "$OUT_K8" \
     --recipe "$ROOT/recipes/k8.json" \
@@ -643,13 +643,13 @@ JSON
   for attempt in 1 2 3; do
     run_workers k8 "$OUT_K8" || true
     [ -f "$OUT_K8/main-receipt.json" ] && break
-    "$PY" "$TOOLS/k6_driver.py" seal-main --profile k8 --output-root "$OUT_K8" --pipeline-root "$PIPE" || true
+    "$PY" "$TOOLS/campaign_driver.py" seal-main --profile k8 --output-root "$OUT_K8" --pipeline-root "$PIPE" || true
     [ -f "$OUT_K8/main-receipt.json" ] && break
     echo "K8 main not sealed after attempt $attempt; requeueing dead claims"
-    "$PY" "$TOOLS/k6_driver.py" release-dead-claims --profile k8 --output-root "$OUT_K8" --pipeline-root "$PIPE" || true
+    "$PY" "$TOOLS/campaign_driver.py" release-dead-claims --profile k8 --output-root "$OUT_K8" --pipeline-root "$PIPE" || true
   done
   test -f "$OUT_K8/main-receipt.json"
-  "$PY" "$TOOLS/k6_driver.py" mtp --profile k8 \
+  "$PY" "$TOOLS/campaign_driver.py" mtp --profile k8 \
     --pipeline-root "$PIPE" --bf16 "$UPSTREAM_BF16_PATH" --calibration "$CAL" --output-root "$OUT_K8"
   test -f "$OUT_K8/mtp-adapter-receipt.json"
   df -h /home/jl_fs
@@ -673,7 +673,7 @@ materialize_k8)
   du -sh "$CAL" 2>/dev/null || true
   rm -rf "$CAL/main-ep4-full"
   require_free_gb 340 "K8 materialized checkpoint (331 GB) - if short: upload ckpt-k6, delete it, re-run"
-  "$PY" "$TOOLS/k6_driver.py" materialize --profile k8 \
+  "$PY" "$TOOLS/campaign_driver.py" materialize --profile k8 \
     --pipeline-root "$PIPE" --output-root "$OUT_K8" --bf16 "$BF16" --checkpoint "$CKPT_K8"
   "$PY" - <<'PYEOF'
 import json
@@ -709,7 +709,7 @@ PYEOF
   # that requirement is enforced.
   require_free_gb 400 "K6K8 payload + hessian transient (delete ckpt-k6 after verified publication to free 254 GB)"
   mkdir -p "$OUT_K6K8"
-  "$PY" "$TOOLS/k6_driver.py" contract --profile k6k8 \
+  "$PY" "$TOOLS/campaign_driver.py" contract --profile k6k8 \
     --pipeline-root "$PIPE" --shapley-root "$SHAPLEY" --exllama-root "$EXL3" \
     --bf16 "$BF16" --calibration "$CAL" --output-root "$OUT_K6K8" \
     --recipe "$ROOT/recipes/k6k8.json" \
@@ -717,14 +717,14 @@ PYEOF
   for attempt in 1 2 3; do
     run_workers k6k8 "$OUT_K6K8" || true
     [ -f "$OUT_K6K8/main-receipt.json" ] && break
-    "$PY" "$TOOLS/k6_driver.py" seal-main --profile k6k8 --output-root "$OUT_K6K8" || true
+    "$PY" "$TOOLS/campaign_driver.py" seal-main --profile k6k8 --output-root "$OUT_K6K8" || true
     [ -f "$OUT_K6K8/main-receipt.json" ] && break
-    "$PY" "$TOOLS/k6_driver.py" release-dead-claims --profile k6k8 --output-root "$OUT_K6K8" || true
+    "$PY" "$TOOLS/campaign_driver.py" release-dead-claims --profile k6k8 --output-root "$OUT_K6K8" || true
   done
   test -f "$OUT_K6K8/main-receipt.json"
-  "$PY" "$TOOLS/k6_driver.py" mtp --profile k6k8 \
+  "$PY" "$TOOLS/campaign_driver.py" mtp --profile k6k8 \
     --pipeline-root "$PIPE" --bf16 "$BF16" --calibration "$CAL" --output-root "$OUT_K6K8"
-  "$PY" "$TOOLS/k6_driver.py" materialize --profile k6k8 \
+  "$PY" "$TOOLS/campaign_driver.py" materialize --profile k6k8 \
     --output-root "$OUT_K6K8" --bf16 "$BF16" --checkpoint "$CKPT_K6K8"
   test -f "$CKPT_K6K8/materialization-receipt.json"
   df -h /home/jl_fs
@@ -1288,23 +1288,23 @@ upload_weights)
     exit 5
   fi
   # Fail fast: the README card is authored by the operator during P3/P4 prep
-  # (license read off the pinned source revision - k6_publish enforces credits).
+  # (license read off the pinned source revision - publish_release enforces credits).
   test -f "$ROOT/cards/K6-README.md" \
     || { echo "README card missing at $ROOT/cards/K6-README.md - author it before upload_weights (RUNBOOK P4)" >&2; exit 1; }
-  "$PY" "$TOOLS/k6_publish.py" weights \
+  "$PY" "$TOOLS/publish_release.py" weights \
     --checkpoint "$CKPT_K6" --repo malaiwah/GLM-5.3-Flash-TR3-6bpw \
     --recipe "$ROOT/recipes/k6.json" --receipts "$RCPT" \
     --card "$ROOT/cards/K6-README.md"
   if [ -f "$CKPT_K8/materialization-receipt.json" ] && [ -f "$DONE/qualify_k8.done" ]; then
     test -f "$ROOT/cards/K8-README.md" \
       || { echo "README card missing at $ROOT/cards/K8-README.md - author it before the K8 upload" >&2; exit 1; }
-    "$PY" "$TOOLS/k6_publish.py" weights \
+    "$PY" "$TOOLS/publish_release.py" weights \
       --checkpoint "$CKPT_K8" --repo malaiwah/GLM-5.3-Flash-TR3-8bpw \
       --recipe "$ROOT/recipes/k8.json" --receipts "$RCPT" \
       --card "$ROOT/cards/K8-README.md"
   fi
   if [ -f "$CKPT_K6K8/materialization-receipt.json" ] && [ -f "$DONE/qualify_k6k8.done" ]; then
-    "$PY" "$TOOLS/k6_publish.py" weights \
+    "$PY" "$TOOLS/publish_release.py" weights \
       --checkpoint "$CKPT_K6K8" --repo malaiwah/GLM-5.3-Flash-TR3-6bpwK8-mixed \
       --recipe "$ROOT/recipes/k6k8.json" --receipts "$RCPT" \
       --card "$ROOT/cards/K6K8-README.md"
@@ -1316,7 +1316,7 @@ publish_receipts)
   hf_env
   # Receipts + tokenwise-KLD vectors + comparison table into the existing
   # fidelity dataset under reports/exl3-k6/.
-  "$PY" "$TOOLS/k6_publish.py" receipts \
+  "$PY" "$TOOLS/publish_release.py" receipts \
     --receipts "$RCPT" --repo malaiwah/GLM-5.3-Flash-fidelity-suite-v1 \
     --prefix reports/exl3-k6 \
     --discussion-draft "$RCPT/discussion-comment.md"

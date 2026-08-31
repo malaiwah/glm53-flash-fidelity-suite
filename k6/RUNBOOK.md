@@ -104,22 +104,22 @@ encode/contract/materialize campaign driver, so write:
 
 | tool | wraps (all published, sealed library calls) |
 |---|---|
-| `tools/k6_driver.py rehearse` | fixture roundtrip at K6 + K8 codec probe + full-size per-matrix timing bench |
-| `tools/k6_driver.py contract` | sealed full-shard inventory builder (`quant-pipeline.glm-release-inventory.v1`), preflight seal, upstream `glm53_uniform_k6.build_launch_plan` (NOTE: K4-KL-gated — needs his sealed K4 launch plan + a `k6_authorized` K4 state receipt as inputs; source them from his published receipts or rebuild via `glm53_uniform_k4` state machine; patches-v2 0003 admits H200 workers, 0004 fixes upstream `state_sha256` KeyError), bits=6 profile-selection receipt, `glm53_direct_k4.build_contract(bits=6)`, work units + hash-chained work state on fs |
-| `tools/k6_driver.py encode-worker` | claim → `build_layer_preparation(bits=6)` → `encode_work_unit` → `seal_layer` → prune layer hessians; per-expert receipt resume is native to `encode_work_unit` |
-| `tools/k6_driver.py seal-main / release-dead-claims` | main receipt `quant-pipeline.glm53-exl3-mcg-main-k6-receipt.v1` (fields: contract_sha256, complete, matrix_count 36,288 — no upstream builder, driver-authored); requeue dead worker claims |
-| `tools/k6_driver.py mtp` | `glm53_mtp_k4.build_contract/build_work_units/claim_next/...`, MTP work-unit **telemetry writer** (`quant-pipeline.glm53-mtp45-exl3-mcg-work-unit-telemetry.v1` — read by `seal_mtp_layer`, written nowhere upstream), `seal_mtp_layer` |
-| `tools/k6_driver.py materialize` | reader-ABI receipt (bits 6, `tp_sizes [4]`, exact_reconstruction_checked), `build_materialization_plan`, `materialize_checkpoint` (per-shard resume), `seal_materialization_receipt` |
+| `tools/campaign_driver.py rehearse` | fixture roundtrip at K6 + K8 codec probe + full-size per-matrix timing bench |
+| `tools/campaign_driver.py contract` | sealed full-shard inventory builder (`quant-pipeline.glm-release-inventory.v1`), preflight seal, upstream `glm53_uniform_k6.build_launch_plan` (NOTE: K4-KL-gated — needs his sealed K4 launch plan + a `k6_authorized` K4 state receipt as inputs; source them from his published receipts or rebuild via `glm53_uniform_k4` state machine; patches-v2 0003 admits H200 workers, 0004 fixes upstream `state_sha256` KeyError), bits=6 profile-selection receipt, `glm53_direct_k4.build_contract(bits=6)`, work units + hash-chained work state on fs |
+| `tools/campaign_driver.py encode-worker` | claim → `build_layer_preparation(bits=6)` → `encode_work_unit` → `seal_layer` → prune layer hessians; per-expert receipt resume is native to `encode_work_unit` |
+| `tools/campaign_driver.py seal-main / release-dead-claims` | main receipt `quant-pipeline.glm53-exl3-mcg-main-k6-receipt.v1` (fields: contract_sha256, complete, matrix_count 36,288 — no upstream builder, driver-authored); requeue dead worker claims |
+| `tools/campaign_driver.py mtp` | `glm53_mtp_k4.build_contract/build_work_units/claim_next/...`, MTP work-unit **telemetry writer** (`quant-pipeline.glm53-mtp45-exl3-mcg-work-unit-telemetry.v1` — read by `seal_mtp_layer`, written nowhere upstream), `seal_mtp_layer` |
+| `tools/campaign_driver.py materialize` | reader-ABI receipt (bits 6, `tp_sizes [4]`, exact_reconstruction_checked), `build_materialization_plan`, `materialize_checkpoint` (per-shard resume), `seal_materialization_receipt` |
 | `tools/student_capture.py` | EP8 stock-transformers Glm5Next (eager, tf32 off, use_cache off, fp32 logits) + patched offline reader install; capture receipt `quant-pipeline.glm53-logit-capture.v1`; run 1 also dumps the decoded reference parity panel (metadata schema **verbatim** `quant-pipeline.glm53-decoded-k4-tp2-reference-panel.v1` + predeclared tolerances) |
 | `tools/k6_kld_report.py` | fp64 `token_kld_chunk` over 25x2047=51,175 positions, report schema `quant-pipeline.glm53-packed-student-kld.v1`, `glm53_k6_postmtp.build_packed_k6_kld_receipt` + `build_five_run_kld_receipt` (patches-v2 0005), comparison table |
-| `tools/k6_publish.py` | HF `upload_large_folder`, README cards, `MANIFEST.json` + `SHA256SUMS` closed tree, checkpoint gate receipt, discussion draft |
+| `tools/publish_release.py` | HF `upload_large_folder`, README cards, `MANIFEST.json` + `SHA256SUMS` closed tree, checkpoint gate receipt, discussion draft |
 
 Estimated authoring effort: the dominant non-GPU work item (~1 focused day) unless
 his GitHub repo ships adaptable drivers — **fetch it first**.
 
 ## Phase G0 — free preflight (local, $0, 2–4 h; overlaps nothing)
 
-1. DONE (2026-08-27). Fetched and pinned all three source trees (`stage_k6.sh`
+1. DONE (2026-08-27). Fetched and pinned all three source trees (`stage_campaign.sh`
    setup clones them on the box):
    `glm-5.3-flash-exl3-4bpw` @ `ce1bf9706b6aa18435e2baccab63bdd72299257c` (new
    base, see BASE CHANGE above); public `shapleymcg` @
@@ -131,7 +131,7 @@ his GitHub repo ships adaptable drivers — **fetch it first**.
    **STILL OPEN — ABORT-LEVEL**: `r7_encoder/r10_codec.py` (R10TrellisCodec) and
    `encode_tr3_v31.py` are in NO public tree; asked upstream in
    glm-5.3-flash-exl3-4bpw issue #1 (answer pending). **CLOSURE GATE**
-   (`stage_k6.sh setup` + every driver invocation): encode proceeds ONLY IF
+   (`stage_campaign.sh setup` + every driver invocation): encode proceeds ONLY IF
    (a) his files land upstream (`closure_status.json: closure_source
    upstream`), or (b) the OPERATOR explicitly accepts the disclosed
    reconstruction (`fallback/r10_codec_reconstructed.py`, L4-validated) by
@@ -152,7 +152,7 @@ his GitHub repo ships adaptable drivers — **fetch it first**.
    hard-requires equality; a fresh inventory can never match (it seals our
    local checkpoint path — his declares
    `/workspace/models/zai-org/GLM-5.3-Flash-BF16` per the published capture
-   plan). Download it to `calibration/upstream-inventory.json`; `stage_k6.sh
+   plan). Download it to `calibration/upstream-inventory.json`; `stage_campaign.sh
    convert_k6` adopts it verbatim (`--inventory`) and symlinks the declared
    path to the fs BF16 tree. Without the document the captures cannot bind and
    P1 is NO-GO as designed (fallback: self-capture, out of budget).
@@ -188,14 +188,14 @@ Rental: `jl create --gpu H200 --num-gpus 1 --spot --region IN2 --storage 100 --f
 (spot is fine: the rehearsal is minutes-resumable; container because `--spot`
 requires containers).
 
-Commands (via `jl run --on <id> -- bash /home/jl_fs/glm53-k6/stage_k6.sh <stage>`):
+Commands (via `jl run --on <id> -- bash /home/jl_fs/glm53-k6/stage_campaign.sh <stage>`):
 
-1. `stage_k6.sh setup` — venv (torch 2.11.0+cu130, transformers==5.16.1 exact),
+1. `stage_campaign.sh setup` — venv (torch 2.11.0+cu130, transformers==5.16.1 exact),
    exllamav3 @ c5d9c657 clean-tree in-place build with `TORCH_CUDA_ARCH_LIST="9.0;10.0"`,
    pipeline import smoke, ShapleyMCG pin check.
    In parallel, start the calibration + teacher-panel download to fs (~507 GB; at
    200–400 MB/s ≈ 30–60 min-per-100GB → runs during the rehearsal).
-2. `stage_k6.sh fixture_rehearsal` — on `inference-optimization/GLM-5.3-Flash-0.1B-A0.1B`
+2. `stage_campaign.sh fixture_rehearsal` — on `inference-optimization/GLM-5.3-Flash-0.1B-A0.1B`
    (caveats: F32 dtype, no MTP tensors, tiny dims — the driver casts to BF16 and
    synthesizes an MTP-free contract for the roundtrip): contract → preparation →
    encode → seal → materialize → offline-reader decode, bit-exact reconstruction
@@ -224,11 +224,11 @@ most one in-flight batch is lost per preemption), idempotent per-layer preparati
 work state with dead-claim requeue. Fall back to on-demand ($3.99/GPU-h) only if
 preemptions exceed ~2/hour sustained.
 
-Commands: `stage_k6.sh setup` (idempotent re-run on the new instance), then
-`stage_k6.sh shared_vector_ab` (operator directive 2: down_suh shared-vs-private
+Commands: `stage_campaign.sh setup` (idempotent re-run on the new instance), then
+`stage_campaign.sh shared_vector_ab` (operator directive 2: down_suh shared-vs-private
 A/B on 2–3 layers against the captured activations, ~1 h on one of the four GPUs;
 its receipt fixes the vector topology for the whole campaign BEFORE any fleet
-encode), then `stage_k6.sh convert_k6`, which drives:
+encode), then `stage_campaign.sh convert_k6`, which drives:
 
 0. **K4 gate bridge (control session, before the stage runs)**: upstream's
    `glm53_uniform_k6.build_launch_plan` is K4-KL-gated — it demands a sealed
@@ -297,12 +297,12 @@ refuses bits=6 AND bits=8 — K6's own preparation would crash at layer 3.
 `patches-v2/0008-v31-allowed-bits-k6-k8.patch` widens it to (3,4,5,6,8); the
 constant is metadata/consistency-only in both v31 modules (audited; no per-K
 constants or branches).  Unlike 0007 it touches no reader/closure-hashed file
-and may land at ANY time; `stage_k6.sh ensure_0008` applies + receipts it in
+and may land at ANY time; `stage_campaign.sh ensure_0008` applies + receipts it in
 setup, convert_k6 and convert_k8.  The P1 fleet fs already carries this
 widening as a hot-edit (verified byte-identical to 0008's output on 484853);
 its `receipts/patches-v2-applied.txt` line is back-filled by `ensure_0008`.
 
-Commands: `stage_k6.sh convert_k8` then `stage_k6.sh materialize_k8`, driving:
+Commands: `stage_campaign.sh convert_k8` then `stage_campaign.sh materialize_k8`, driving:
 
 0. patch 0007 top-up + import check; K8 re-probe (`receipts/rehearsal-k8.json`
    — the P0 `rehearsal.json` recorded `k8_probe.admitted=false` pre-0007 BY
@@ -419,7 +419,7 @@ with the P1b parts bin sealed, P2 can also be replaced by offline assembly
 
 Rental: same shape as P1 (4x H200 spot, IN2, fs 3394).
 
-Command: `stage_k6.sh convert_k6k8`. Key economy (from the allocation analysis,
+Command: `stage_campaign.sh convert_k6k8`. Key economy (from the allocation analysis,
 justified by upstream's five-run bitwise determinism): gate/up K6 payloads are
 **verified-reused** from the sealed K6 payload store (copy + decode + hash
 re-verification under the K6K8 contract) — only the 12,384 down_proj matrices are
@@ -441,7 +441,7 @@ Rental: `jl create --gpu H200 --num-gpus 8 --spot --region IN2 --storage 100 --f
 (8 GPUs: the EP8 student capture needs all eight ~98 GB/rank; the TP4 runtime
 qualify uses 4 of them afterwards. Spot: each cold run is independent and short.)
 
-Commands: `stage_k6.sh qualify_k6` (and later `qualify_k6k8`):
+Commands: `stage_campaign.sh qualify_k6` (and later `qualify_k6k8`):
 
 1. 5 cold EP8 student captures (`QP_GLM53_EP_SIZE=8`, eager, tf32 off, fp32
    logits over the 25 windows; run 1 also emits the decoded reference parity
@@ -521,7 +521,7 @@ KLD <X> vs your fp32 teacher on the same 25 windows (your K4: 0.024555, FP8:
 0.020615). Weights + full receipt chain: <links>. Thank you for publishing the
 entire evidence chain — it made an independent reproduction at a new rate possible."
 
-Commands: `stage_k6.sh upload_weights`, `stage_k6.sh publish_receipts`
+Commands: `stage_campaign.sh upload_weights`, `stage_campaign.sh publish_receipts`
 (HF token read from `/home/jl_fs/glm53-k6/.hf_token`, never echoed).
 
 Receipts: HF commit URLs; re-download spot-check of 3 random shards vs SHA256SUMS.
@@ -547,7 +547,7 @@ The 2 TB fs closes at every step ONLY IF `ckpt-k6` is deleted after its
 publication spot-check and before P2: the K8 down encode needs the calibration
 captures resident while the K6K8 payload store grows, so cal (464) + both
 payload stores (254 + 280) + hessians (≤60) coexist at the P2 peak. With
-ckpt-k6 still resident the peak is ~2,070 GB and busts the fs. `stage_k6.sh
+ckpt-k6 still resident the peak is ~2,070 GB and busts the fs. `stage_campaign.sh
 convert_k6k8` enforces this with a 400 GB free-space guard. Delete
 `out-k6/payload-store` only AFTER K6K8 finishes (gate/up reuse source).
 

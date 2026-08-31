@@ -19,7 +19,7 @@ Evidence: `tools/dione-evidence/real-payload-placement-audit.json`.
 ## 0. Preflight (no GPU, ~5 min)
 
 ```bash
-# sync tools atomically (upload as .new, then mv - same convention as stage_k6.sh)
+# sync tools atomically (upload as .new, then mv - same convention as stage_campaign.sh)
 for f in student_capture.py kld_report.py dione_surface.py selftest_dione_offline.py; do
   scp tools/$f box:$ROOT/tools/$f.new && ssh box "mv $ROOT/tools/$f.new $ROOT/tools/$f"
 done
@@ -37,7 +37,7 @@ $RCPT=$ROOT/receipts, $VENV=$ROOT/venv.
 ## 1. qualify_k8 (3 cold runs, existing stage, unchanged)
 
 ```bash
-./stage_k6.sh qualify_k8
+./stage_campaign.sh qualify_k8
 ```
 
 Three EP8 cold captures + fp64 KLD + K8 TP4 runtime receipt.  Uses

@@ -4,15 +4,15 @@
 #   bootstrap_measure.sh            (called by stage_measure.sh setup)
 #
 # WHY THIS EXISTS.  The cloud recipe used to delegate its bootstrap to
-# `k6/stage_k6.sh setup`, on the reasoning that the campaign script's container
-# recipe is the proven one.  Two facts made that unrunnable, and both only show
+# `k6/stage_campaign.sh setup` (called stage_k6.sh until 2026-08-31), on the
+# reasoning that the campaign script's container recipe is the proven one.  Two facts made that unrunnable, and both only show
 # up on a cold box:
 #
-#   1. stage_k6.sh was never in bin/BUNDLE.txt, so it -- and the patches-v2
+#   1. stage_campaign.sh was never in bin/BUNDLE.txt, so it -- and the patches-v2
 #      series it applies -- never reached the instance at all.  Its first line
-#      of work is `bash $ROOT/stage_k6.sh setup` against a file that is not
+#      of work is `bash $ROOT/stage_campaign.sh setup` against a file that is not
 #      there.
-#   2. stage_k6.sh setup is an ENCODING campaign bootstrap.  It clones
+#   2. stage_campaign.sh setup is an ENCODING campaign bootstrap.  It clones
 #      ShapleyMCG and the sparse sqg-mcg encoder, then hard-stops on a CLOSURE
 #      GATE demanding the r10 codec closure or an operator-signed
 #      RECONSTRUCTION-ACCEPTED.json.  A measurement decodes; it never encodes.
@@ -46,7 +46,7 @@ EXL3="$ROOT/exllamav3"
 RCPT="$FS/receipts"
 PATCHES="$ROOT/patches-v2"
 
-# Pins, verbatim from k6/stage_k6.sh (the tree that produced the sealed rows).
+# Pins, verbatim from k6/stage_campaign.sh (the tree that produced the sealed rows).
 PIPE_REPO=https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw
 PIPE_PIN=ce1bf9706b6aa18435e2baccab63bdd72299257c
 EXL3_REPO=https://github.com/turboderp-org/exllamav3

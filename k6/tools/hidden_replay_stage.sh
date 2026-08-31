@@ -71,7 +71,7 @@ load_token() {
 }
 
 # The sealed artifact rows record the producer's /workspace paths; the identity
-# check refuses symlinked FILES, so link DIRECTORIES (same rule as stage_k6.sh).
+# check refuses symlinked FILES, so link DIRECTORIES (same rule as stage_campaign.sh).
 farm() {
   SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
   $SUDO mkdir -p /workspace/artifacts/dataset /workspace/artifacts/evaluation /workspace/models/zai-org 2>/dev/null || true

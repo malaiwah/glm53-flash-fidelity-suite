@@ -6,12 +6,12 @@ Run on a box with the patched pipeline + venv:
 
 Checks:
   1. every symbol the four tools import lazily exists in the patched pipeline;
-  2. k6_driver's sealed-document builders round-trip through the pipeline's own
+  2. campaign_driver's sealed-document builders round-trip through the pipeline's own
      verifiers (profile selection, preflight geometry);
   3. kld_report end-to-end on a fabricated sealed 25-window teacher/student
      pair (k6k8 summary path, CPU fp64) - the KLD of identical logits is 0 and
      the summary receipt/gate/comparison table are written;
-  4. k6_driver's missing-r10-closure error path (exit 6 + closure_status.json).
+  4. campaign_driver's missing-r10-closure error path (exit 6 + closure_status.json).
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def check_symbols() -> None:
 
 def check_builders(workdir: Path) -> None:
     sys.path.insert(0, str(TOOLS))
-    import k6_driver
+    import campaign_driver
 
     # profile-selection builder must satisfy the pipeline's own verifier;
     # fabricate a shapley tree whose driver file carries the pinned sha? No -
@@ -118,11 +118,11 @@ def check_builders(workdir: Path) -> None:
     # closure is present.  Verify the seal helper against the direct module.
     from quant_pipeline.campaign.glm53_direct_k4 import _verify_seal
 
-    doc = k6_driver._seal({"schema": "test.v1", "value": 7}, "seal_sha256")
+    doc = campaign_driver._seal({"schema": "test.v1", "value": 7}, "seal_sha256")
     assert _verify_seal(doc, "test.v1", "seal_sha256")
     print("driver _seal round-trips through the pipeline verifier OK")
 
-    layers = k6_driver._parse_layers("3-5,20,44")
+    layers = campaign_driver._parse_layers("3-5,20,44")
     assert layers == [3, 4, 5, 20, 44], layers
     print("_parse_layers OK")
 
@@ -249,7 +249,7 @@ def check_closure_error(python: str, pipeline_src: Path, workdir: Path) -> None:
     out = workdir / "rehearsal.json"
     result = subprocess.run(
         [
-            python, str(TOOLS / "k6_driver.py"), "rehearse",
+            python, str(TOOLS / "campaign_driver.py"), "rehearse",
             "--pipeline-root", str(pipeline_src.parent),
             "--shapley-root", str(empty),
             "--exllama-root", str(empty),
@@ -261,7 +261,7 @@ def check_closure_error(python: str, pipeline_src: Path, workdir: Path) -> None:
     assert "r7_encoder" in result.stderr and "closure_status.json" in result.stderr
     status = json.loads((workdir / "closure_status.json").read_text())
     assert status["r10_codec_present"] is False
-    print("k6_driver missing-closure path OK (exit 6, actionable, status file written)")
+    print("campaign_driver missing-closure path OK (exit 6, actionable, status file written)")
 
 
 def main() -> int:

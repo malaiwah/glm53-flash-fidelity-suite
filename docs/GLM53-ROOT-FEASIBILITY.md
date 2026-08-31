@@ -607,7 +607,7 @@ bookkeeping change, not a compute change) and hold `--max-runtime` low.
 disk-offload lane needs ~3.0 TB across two volumes and the campaign has hit
 "Disk quota exceeded" twice. *Mitigation:* provision 1,700 GB, keep the
 checkpoint on a shared filesystem so the fetch survives an instance restart,
-and apply the existing free-space guard pattern from `stage_k6.sh`.
+and apply the existing free-space guard pattern from `stage_campaign.sh`.
 
 **R6 — `hf_capture.py` has only ever run on 0.1B and 5B models.** True, and
 the gap to 753 B is four orders of magnitude. But the specific things that

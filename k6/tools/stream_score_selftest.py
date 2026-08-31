@@ -3,7 +3,7 @@
 
 Every check here runs on a laptop.  Ladder rung L1 of the streaming
 qualification; L2/L3/L4 need the real surface and live in
-``stage_k6.sh measure_stream``.
+``stage_campaign.sh measure_stream``.
 
   L1.a  decode parity      decode_from_payload(load_payload_cpu(...)) is BITWISE
                            equal to the reader's own load_decoded_choice(...),

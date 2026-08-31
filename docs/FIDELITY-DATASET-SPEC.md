@@ -286,7 +286,7 @@ lm_head module's *input* via a forward **pre**-hook, which is the same tensor.
 | name | preimage | notes |
 |---|---|---|
 | `file_sha256` | sha256 of the whole file bytes | the container digest. What `checksums.txt` carries. **Never determinism evidence** (§11). |
-| `payload_sha256` | sha256 of the safetensors data region: read `<Q` header length at offset 0, skip `8 + header_len`, hash the rest | survives `__metadata__` churn; implemented today in `k6/tools/hidden_replay.py::payload_sha256` and `k6/stage_k6.sh` L4 |
+| `payload_sha256` | sha256 of the safetensors data region: read `<Q` header length at offset 0, skip `8 + header_len`, hash the rest | survives `__metadata__` churn; implemented today in `k6/tools/hidden_replay.py::payload_sha256` and `k6/stage_campaign.sh` L4 |
 | `tensor_content_sha256` | sha256 of the raw little-endian bytes of the **named tensor only** | container-independent. bf16 is hashed via its `uint16` view. Implemented today in `k6/tools/hidden_replay.py::tensor_content_sha256` |
 | `token_ids_json_sha256` | `sha256(json.dumps(ids, separators=(",",":")).encode("utf-8"))` | **compact separators — kimi-k3's preimage, ADOPTED.** Our historical preimage used default separators (`", "`); it is preserved as `token_ids_sha256_legacy`. |
 | `suite_token_hash_sha256` | `sha256("\n".join(per_record_token_ids_json_sha256_hex).encode("ascii"))`, records in ascending index order | **newline join — kimi-k3's preimage, ADOPTED.** Our historical aggregate joined with `""`; preserved as `panel_token_sha256_legacy`. |

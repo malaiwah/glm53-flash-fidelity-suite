@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GLM-5.3-Flash K6/K8/K6K8 EXL3-MCG encode-campaign driver (malaiwah).
 
-Interface pinned by stage_k6.sh.  Subcommands:
+Interface pinned by stage_campaign.sh.  Subcommands:
 
     rehearse             P0 fixture/codec roundtrip + K8 probe + timing bench
     contract             sealed inventory -> preflight -> launch plan ->
@@ -77,7 +77,7 @@ RECONSTRUCTION_ACCEPTANCE_HELP = (
 # --------------------------------------------------------------------------- #
 
 def _fail(message: str, code: int = 1) -> "SystemExit":
-    print(f"k6_driver: ERROR: {message}", file=sys.stderr, flush=True)
+    print(f"campaign_driver: ERROR: {message}", file=sys.stderr, flush=True)
     return SystemExit(code)
 
 
@@ -214,7 +214,7 @@ def _find_extension(exllama_root: Path, override: Optional[str]) -> Path:
     if not candidates:
         raise _fail(
             f"no built extension (*.so) under {exllama_root} or the "
-            "torch_extensions cache; run stage_k6.sh setup (in-place exllamav3 "
+            "torch_extensions cache; run stage_campaign.sh setup (in-place exllamav3 "
             "build) first, or pass --extension"
         )
     return candidates[0].resolve()
@@ -2225,7 +2225,7 @@ def _common(parser: argparse.ArgumentParser, *, gpu: bool = True) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="k6_driver.py",
+        prog="campaign_driver.py",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
