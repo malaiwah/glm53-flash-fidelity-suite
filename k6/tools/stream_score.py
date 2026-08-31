@@ -1963,6 +1963,14 @@ def main() -> int:
         help="how often to print a progress line when stdout is a FILE (default 30; "
              "0 disables). On a TTY the meter updates in place instead and this is "
              "ignored. Env override: FIDELITY_PROGRESS_SECONDS.")
+    stream.add_argument(
+        "--gguf-decode-device", choices=("auto", "device", "cpu"), default="auto",
+        help="--source gguf only: where the ggml block dequant runs. auto (default) "
+             "= the run's --device when it is an accelerator, else cpu; `cpu` forces "
+             "the reference path. The two are BITWISE identical (same kernels, same "
+             "op order, elementwise fp32 only) and selftest_gguf_offline rung 1b "
+             "proves it on real bytes on whatever accelerator the host has. cpu costs "
+             "~39 ms/matrix with the GPU at 2-4%%; see docs/GGUF-MEASUREMENT.md.")
     stream.add_argument("--decode-cache", choices=("none", "ram", "disk"), default="none")
     stream.add_argument("--decode-cache-dir", type=Path)
     stream.add_argument("--work-dir", type=Path,
@@ -3337,6 +3345,26 @@ def main() -> int:
     numeric = apply_numeric_policy(device)
     decode_device = device if args.decode_device == "same" else resolve_device(args.decode_device)
     unpack_device = None if args.unpack_device == "same" else resolve_device(args.unpack_device)
+    # --- where the GGUF block dequant runs --------------------------------
+    # The source object was built before the device was resolved (it has to be:
+    # its census gates the plan, which --dry-run prints without touching a
+    # GPU), so the decision is bound here, once, before the first fill.
+    #
+    # This is the ONLY knob in this file that moves arithmetic between devices,
+    # and it is safe to move because the arithmetic it moves has no
+    # device-dependent operation in it: integer unpack plus elementwise fp32
+    # multiply and subtract, no reduction, no matmul, no fusion.  Everything
+    # AFTER the decode -- fuse_gate_up, the single fp32->bf16 rounding, the
+    # copy_ into the slab, the torch.equal close -- already ran on `device` and
+    # is untouched.  The receipt records which path ran.
+    gguf_decode_device = None
+    if args.source == "gguf":
+        if args.gguf_decode_device == "cpu" or decode_device.type == "cpu":
+            gguf_decode_device = None
+        else:
+            gguf_decode_device = decode_device
+        if gguf_source is not None:
+            gguf_source.decode_device = gguf_decode_device
     if device.type == "cuda":
         torch.cuda.set_device(device)  # sealed capture: torch.cuda.set_device(local_rank)
         torch.cuda.reset_peak_memory_stats(device)
@@ -3571,6 +3599,22 @@ def main() -> int:
         "ep_emulate": args.ep_emulate,
         "reduce_order": args.reduce_order,
     }
+    if args.source == "gguf":
+        # WHERE the ggml block dequant ran.  Recorded because it is a measurable
+        # difference in COST (39 ms/matrix on cpu while the GPU sat at 2-4%) and
+        # a claimed non-difference in VALUE -- the two paths produce
+        # bitwise-identical tensors.  A field a reader can check beats a
+        # property a document asserts, and a run that took the fast path should
+        # say so on its own receipt rather than in a commit message.
+        #
+        # Added under the source test rather than as an unconditional key so
+        # that every OTHER lane's backend dict -- and therefore its
+        # backend_identity_sha256 -- is byte-identical to what it was before
+        # this flag existed.  A new field is a new hash, and a hash that moved
+        # for a lane that did not is a false signal waiting to be investigated.
+        backend["gguf_decode_device"] = (
+            str(gguf_decode_device) if gguf_decode_device is not None else "cpu"
+        )
     backend["lane_identity"] = lane_fields
     backend["lane_identity_sha256"] = sha256_bytes(canonical_json(lane_fields))
 

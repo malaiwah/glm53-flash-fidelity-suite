@@ -233,6 +233,51 @@ def main() -> int:
            " (and recomputed live from gguf-py)" if have_gguf
            else " (gguf-py absent: live recompute SKIPPED)"))
 
+    # ---- 1b. accelerator decode parity -------------------------------------
+    # The GGUF lane costs 23.7 min/window because the dequant runs on the CPU at
+    # ~39 ms/matrix while the GPU sits at 2-4% (docs/GGUF-MEASUREMENT.md).
+    # `dequant_bytes(..., device=)` moves the QUANTIZED bytes instead of the
+    # 7.1x-larger fp32 result and runs the same kernels there.  That is only
+    # allowed if it changes nothing, so this rung demands `torch.equal` -- not
+    # allclose, not a tolerance -- against the CPU output rung 1 just proved
+    # bitwise-equal to gguf-py, on the same REAL ranged-fetched UD-Q4_K_XL
+    # bytes.
+    #
+    # It runs on whatever accelerator the host has: MPS on the laptop, CUDA on
+    # the rented box.  bin/BUNDLE.txt ships this file precisely so the CUDA case
+    # is checked ON THE INSTANCE, before the capture is paid for, rather than
+    # inferred from the MPS case -- the same reason the exl3hf and mlx offline
+    # selftests travel with their surfaces.
+    accel = None
+    if torch.cuda.is_available():
+        accel = "cuda"
+    elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        accel = "mps"
+    if accel is None:
+        passed.append(
+            "1b accelerator decode parity: SKIPPED (no CUDA and no MPS on this "
+            "host; the check RUNS on the instance, which is where it counts)")
+    else:
+        checked = []
+        for qtype, spec in sorted(manifest["dequant_fixtures"].items()):
+            raw = np.load(EVIDENCE / ("dequant_%s_blocks.npy" % qtype.lower())).tobytes()
+            n = spec["rows"] * spec["cols"]
+            reference = gs.dequant_bytes(qtype, raw, n)
+            fast = gs.dequant_bytes(qtype, raw, n, device=accel)
+            assert str(fast.device).split(":")[0] == accel, (
+                "%s: device= did not decode on %s (got %s)" % (qtype, accel, fast.device))
+            assert fast.dtype == torch.float32
+            assert torch.equal(fast.cpu(), reference), (
+                "%s decoded on %s is NOT bitwise equal to the cpu reference "
+                "(max|d| %g) -- the fast path may not ship"
+                % (qtype, accel, float((fast.cpu() - reference).abs().max())))
+            checked.append(qtype)
+        passed.append(
+            "1b accelerator decode parity: %s decoded on %s are torch.equal to "
+            "the cpu reference on real UD-Q4_K_XL bytes (%d elements)"
+            % (", ".join(checked), accel,
+               sum(s["rows"] * s["cols"] for s in manifest["dequant_fixtures"].values())))
+
     # ---- 2. independent scalar scale unpack --------------------------------
     raw_q4k = np.load(EVIDENCE / "dequant_q4_k_blocks.npy").tobytes()
     mine = gs.dequant_bytes("Q4_K", raw_q4k, len(raw_q4k) // 144 * 256).numpy()

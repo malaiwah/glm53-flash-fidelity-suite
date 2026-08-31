@@ -293,8 +293,32 @@ def dequant_q6_k(blocks):
     return (dd * q).reshape(nb, QK_K)
 
 
-def dequant_bytes(ggml_type: str, raw: bytes, n_elements: int):
-    """Decode a block-aligned byte string of `ggml_type` to a flat fp32 tensor."""
+def dequant_bytes(ggml_type: str, raw: bytes, n_elements: int, device=None):
+    """Decode a block-aligned byte string of `ggml_type` to a flat fp32 tensor.
+
+    ``device`` moves the raw UINT8 BUFFER before any kernel runs, so the whole
+    decode happens there and the result is already resident.  The kernels above
+    are not rewritten for it -- they are the same lines, in the same order, on a
+    tensor that happens to live somewhere else.
+
+    Why that keeps the bitwise property.  Every operation in these kernels is
+    either an integer op on uint8/int8 (shift, mask, or, reinterpret) or an IEEE
+    754 binary32 multiply or subtract on an elementwise-shaped operand.  Both
+    classes are exactly specified and device-independent: there is no reduction,
+    no matmul (so no TF32 path), and in eager mode no fusion that could turn the
+    ``dd * q - dm`` pair into an FMA with a different rounding.  Proven, not
+    assumed: `k6/tools/selftest_gguf_offline.py` rung 1b re-decodes the same
+    committed REAL ranged-fetched bytes on whatever accelerator the host has and
+    demands ``torch.equal`` against the CPU output that rung 1 already proved
+    bitwise-equal to gguf-py 0.19.0.  On this laptop that is MPS; on the rented
+    box it is CUDA, and it runs there BEFORE the capture, which is the only
+    place the check is worth anything.
+
+    Speed is the point.  Measured on the box (docs/GGUF-MEASUREMENT.md), the CPU
+    path costs ~39 ms per expert matrix while the GPU sits at 2-4% -- and the
+    fp32 result it then has to hand over is 33.5 MB per matrix, 7.1x the 4.7 MB
+    of quantized bytes this path sends instead.
+    """
     import torch
 
     if ggml_type not in SUPPORTED_TYPES:
@@ -310,6 +334,10 @@ def dequant_bytes(ggml_type: str, raw: bytes, n_elements: int):
     if len(raw) != expected:
         raise _fail(f"{ggml_type}: got {len(raw)} bytes, expected {expected}")
     buf = torch.frombuffer(bytearray(raw), dtype=torch.uint8)
+    if device is not None and str(device) != "cpu":
+        # The reinterpreting `.view(torch.float16)` inside `_f16cast` needs a
+        # contiguous source; `.to()` of a contiguous uint8 tensor stays one.
+        buf = buf.to(device)
     if ggml_type == "F32":
         return buf.view(torch.float32).clone()
     if ggml_type == "F16":
@@ -1246,8 +1274,14 @@ def load_decoded_tensor(container: GgufContainer, gguf_name: str):
 
 
 def load_decoded_expert(container: GgufContainer, census: GgufCensus, *,
-                        layer: int, expert: int, projection: str):
-    """One routed expert -> (fp32 [out, in] tensor, census row)."""
+                        layer: int, expert: int, projection: str, device=None):
+    """One routed expert -> (fp32 [out, in] tensor, census row).
+
+    ``device`` is handed straight to ``dequant_bytes``: the quantized slice is
+    what crosses the bus, and the decode lands the tensor where the slab
+    already is.  Bitwise-identical to ``device=None`` by construction (same
+    kernels, same order) and by test.
+    """
     name = census.routed.get((layer, projection))
     if name is None:
         raise _fail(f"no fused tensor for layer {layer} {projection}")
@@ -1255,7 +1289,7 @@ def load_decoded_expert(container: GgufContainer, census: GgufCensus, *,
     rel, nbytes = expert_slice_range(row, expert)
     out_features, in_features = PROJECTION_SHAPE[projection]
     flat = dequant_bytes(row["type"], container.read_tensor_range(name, rel, nbytes),
-                         out_features * in_features)
+                         out_features * in_features, device=device)
     tensor = flat.reshape(out_features, in_features)
     return tensor, {
         "tensor": official_expert_name(layer, expert, projection),
@@ -1433,15 +1467,26 @@ def audit_mla_placement(container: GgufContainer, census: GgufCensus, *,
 class GgufExpertSource:
     """Routed experts decoded per (layer, expert, projection) from the GGUF.
 
-    Mirrors NativeCheckpointSource's contract: ``load`` returns a CPU tensor
-    ready for the shared install algebra (device move, fuse_gate_up, ONE bf16
-    rounding, torch.equal close) plus a census row.  Decode runs on CPU inside
-    the caller's thread pool (a LUT/scale multiply; the payload is the IO).
-    os.pread-based reads are thread-safe without per-thread handles.
+    Mirrors NativeCheckpointSource's contract: ``load`` returns a tensor ready
+    for the shared install algebra (device move, fuse_gate_up, ONE bf16
+    rounding, torch.equal close) plus a census row.  os.pread-based reads are
+    thread-safe without per-thread handles.
+
+    ``decode_device`` decides WHERE the block dequant runs.  ``None`` is the
+    reference: the pool thread decodes on CPU and the consumer moves 33.5 MB of
+    fp32 per matrix to the accelerator.  Anything else sends the 4.7 MB
+    quantized slice instead and decodes there, which is the difference between
+    23.7 min/window and something a contributor can afford (see the module
+    docstring on `dequant_bytes` and docs/GGUF-MEASUREMENT.md).  The two produce
+    bitwise-identical tensors; that is the acceptance test, not a hope.
+
+    The consumer's ``payload_cpu.to(self.device)`` is a no-op when the decode
+    already landed on that device, so the fill loop needs no branch.
     """
 
-    def __init__(self, surface: GgufSurface):
+    def __init__(self, surface: GgufSurface, decode_device=None):
         self.surface = surface
+        self.decode_device = decode_device
         self._lock = threading.Lock()
         self.bytes_read = 0
         self.files_read: set = set()
@@ -1488,6 +1533,7 @@ class GgufExpertSource:
         tensor, row = load_decoded_expert(
             self.surface.container, self.surface.census,
             layer=layer, expert=expert, projection=projection,
+            device=self.decode_device,
         )
         with self._lock:
             self.bytes_read += int(row["bytes"])

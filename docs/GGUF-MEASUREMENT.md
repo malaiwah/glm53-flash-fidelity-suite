@@ -188,6 +188,12 @@ the same one the sealed TR3 family does *not* need.
 
 ## What it costs, measured — and why the first attempt did not finish
 
+> **Superseded below.** The 23.7 min/window in this section was real and is kept
+> because the diagnosis in it is what led to the fix. The dequant now runs on the
+> accelerator and measures **0.98 min/window** on the same box and the same
+> artifact, bitwise-identical to the path below. Read this section for *why* it
+> was slow; read "The fix" for what it costs today.
+
 The wiring works. The first real run got as far as capturing window 1 of 25 and
 was then **stopped deliberately**, because it could not finish inside its
 budget. That is a result, not a failure to report, so here is the number and the
@@ -227,25 +233,140 @@ whole surface rests on. The same choice costs ~7.5x per matrix against the exl3
 path's fused decode (5.2 ms). The proof and the speed are trading against each
 other, and v1 chose the proof.
 
-So the honest planning number is now in `engines.json`
-(`minutes_per_window_by_surface.gguf = 23.7`), which means `measure-cloud` will
-price a GGUF run at ~20 h and refuse a shorter `--max-runtime` rather than
-discovering it at hour nine. Raw per-fill timings:
-`k6/tools/gguf-evidence/udq4kxl-decode-timings-a100.jsonl`.
+Raw per-fill timings: `k6/tools/gguf-evidence/udq4kxl-decode-timings-a100.jsonl`.
 
-**What would make a GGUF row affordable**, in the order a future run should try
-them:
+## The fix: decode where the GPU already is
 
-1. A batched/vectorised dequant for Q4_K/Q5_K/Q6_K/Q8_0 that decodes many
-   matrices per call instead of one, keeping the bitwise-vs-`gguf-py` proof as
-   the acceptance test. The idle 114 cores say most of the headroom is here.
-2. `--decode-cache disk`/`ram` — the view is re-decoded every window today, and
-   the box had 900 GB of free RAM. This is a lane knob, not new code.
-3. A faster GPU changes almost nothing while utilization is 3%.
+The diagnosis above named the dequant, and it was right. The fix follows from
+one observation the diagnosis did not draw out: **the CPU path sends the wrong
+thing across the bus.** It decodes a 4.7 MB quantized expert slice into 33.5 MB
+of fp32 on the host and then copies *that* to the accelerator — 7.1x more
+traffic than the input, to hand over a tensor the accelerator could have
+produced itself while it was idle at 2–4%.
 
-Until one of those lands, a GGUF measurement is ~20 GPU-hours (~$32 on an A100
-at $1.59/h), which is more than the ~$6–15 a routed-experts-only row costs and
-should be budgeted deliberately rather than discovered.
+`dequant_bytes(..., device=)` moves the raw uint8 buffer first and runs the
+kernels there. **Not a rewrite: the same lines, in the same order, on a tensor
+that lives somewhere else.** That is what makes it defensible. Every operation
+in those kernels is either an integer op on uint8/int8 (shift, mask, or,
+reinterpret) or an IEEE 754 binary32 multiply or subtract on an
+elementwise-shaped operand. Both classes are exactly specified and
+device-independent: no reduction, no matmul (so no TF32 path), and in eager mode
+no fusion that could turn the `dd * q - dm` pair into an FMA with a different
+rounding.
+
+Measured on the same artifact and the same box class — `UD-Q4_K_XL` @
+`2975ab41`, one A100-SXM4-80GB (RunPod secure, $1.59/h), 128 cores, real fused
+expert tensors for routed layers 3 and 4 (Q4_K gate/up, Q5_K down), full
+288-expert fills:
+
+| | layer 3 | layer 4 | min/window | two cold runs | at $1.59/h |
+|---|---|---|---|---|---|
+| dequant on **cpu** (the v1 path) | 35.66 ms/matrix | 32.11 ms/matrix | 21.6 / 19.4 | ~18 h | ~$28 |
+| dequant on **cuda** | **1.613 ms/matrix** | **1.509 ms/matrix** | **0.98 / 0.91** | **~0.8 h** | **~$1.3** |
+
+**22x**, and the CPU column reproduces the 39.12 ms/matrix of the run that
+raised the alarm (this harness runs fills without a forward competing for the
+box, which accounts for the difference). Three repeats of the layer-3 fill on
+the accelerator path spread 1.718 / 1.913 / 2.021 ms/matrix, so **1.5–2.0
+ms/matrix, ~0.9–1.2 min/window** is the honest range rather than the single best
+number.
+
+Device memory: a 288-expert accelerator-decoded fill peaked at **19.7 GB** —
+the 14.5 GB slab plus ~5.2 GB of decode transients at the default 16 decode
+threads. That is new headroom the CPU path did not need, and it is ~5 GB against
+the 47.07 GB the fit check already predicts for this lane. The GPU pool sweep
+says 8 threads is the knee (1.80 ms/matrix, and less transient memory than 16);
+32 is worse on both counts (2.64 ms and 11.7 GB on a 96-expert slab). The
+default of 16 is left alone: 16% off the best rate is not worth a second knob.
+
+**The bitwise property held, and that is the acceptance test.** Not "the decoded
+fp32 matched" — the whole fill was run twice, once per path, and the two
+resulting **BF16 slabs** were compared: 7,247,757,312 bf16 elements per layer,
+`torch.equal`, on real UD-Q4_K_XL weights. Those slabs are literally the bytes
+the expert forward reads. If every installed weight is bit-identical then the
+forward is the same function on the same lane, and the tokenwise KLD tensor it
+produces is the same tensor. Harness: `k6/tools/gguf_decode_bench.py --verify`; raw rows, including every sweep below: `k6/tools/gguf-evidence/udq4kxl-decode-device-a100.jsonl`.
+
+The check that guards it from here on is `selftest_gguf_offline.py` rung 1b,
+which re-decodes the committed real ranged-fetched bytes on whatever
+accelerator the host has and demands `torch.equal` against the CPU output rung 1
+proved equal to `gguf-py` 0.19.0. It runs on MPS on a laptop — and, since
+`bootstrap_measure.sh` now invokes it, on **CUDA on the rented box, before the
+fetch and before any GPU-hour is spent**. A laptop's MPS pass is evidence for
+CUDA, not proof of it.
+
+`stream_score --gguf-decode-device {auto,device,cpu}` selects the path; `auto`
+(the default) uses the run's device when it is an accelerator. The CPU path is
+kept, unchanged, as the reference, and the receipt's backend record carries
+`gguf_decode_device` so a reader can see which one produced their number.
+
+### What was refuted along the way, and what the CPU path was actually doing
+
+The commit that measured 23.7 min/window guessed that "the idle 114 cores say
+most of the headroom is here". **They do not.** Sweeping the decode pool on the
+same box, same layer, same bytes:
+
+| `--decode-threads` | 8 | 16 (the default) | 32 | 64 | 96 |
+|---|---|---|---|---|---|
+| ms/matrix, cpu path | 35.4 | 35.7 | 41.0 | 54.4 | >1187 † |
+
+† killed after 342 s without finishing 288 matrices, at 12% CPU.
+
+More threads makes it *worse*, catastrophically so at the top. The CPU path is
+already at its knee at 8, so "parallelise across the demonstrably idle cores"
+was the wrong lever.
+
+The right diagnosis is the opposite one, and it fell out of the same sweep.
+`torch.get_num_threads()` on this host is **128**, and `stream_score` runs 16
+Python decode threads, each of whose torch ops asks for that 128-wide intra-op
+pool: **2,048 threads on 128 cores**, spending most of their time in OMP
+barriers. Pinning torch to one intra-op thread, changing nothing else:
+
+| `torch.set_num_threads` | 1 | 4 | 128 (the default) |
+|---|---|---|---|
+| ms/matrix, cpu path, 16 decode threads | **13.0** | 23.8 | 35.7 |
+
+So the CPU reference path is **2.7x faster** with `OMP_NUM_THREADS=1` in the
+environment — 7.9 min/window instead of 21.6 — and the 96-thread collapse above
+is the same effect at 12,288 threads. The cores were idle because the work does
+not scale onto them; the *time* went to contending for them anyway.
+
+That is documented here rather than hard-coded, deliberately.
+`torch.set_num_threads` is global and the model forward shares it, and intra-op
+width can move reduction order in CPU kernels — which is exactly the class of
+silent change this project refuses to make casually. The dequant itself has no
+reduction and could not be affected, but the forward is not this file's to
+bargain with. **If you are running the CPU decode path, export
+`OMP_NUM_THREADS=1`;** on the accelerator path it is moot.
+
+### What is still on the table
+
+1. `--decode-cache ram` — the routed view is re-decoded every window, and the
+   decoded slabs are 14.5 GB/layer, 609 GB for all 42. On a box with the RAM
+   (this one had 2 TB) that turns 25 decodes of each layer into one. It is a
+   lane knob, not new code, and it is now the *largest* remaining lever because
+   the dequant is no longer the dominant term.
+2. Batching several experts per dequant call. Worth much less than it was:
+   1.6 ms for 8.4M elements is kernel-bound, not launch-bound.
+3. A faster GPU now matters where it did not before.
+
+### What the planner does with this
+
+`engines.json` `minutes_per_window_by_surface.gguf` moves from **23.7 to 3.19**,
+and the second number is deliberately *not* the measured 0.98. Decode-only was
+an honest total only while decode was 7.6x everything else on the lane; it is
+not any more, so the per-window remainder — the forward, the logit save — now
+dominates and has never been measured for this surface. Rather than invent it,
+the planner prices GGUF at the **slowest measured per-window total on this
+lane** (dione's 3.19). GGUF's measured decode is now below the decode implied by
+every other surface here, so its total cannot reasonably exceed the lane's
+slowest. It is a placeholder with a floor under it, not a GGUF measurement, and
+it says so in `engines.json`; the first GGUF capture that *finishes* must
+replace it with its own `elapsed_seconds / 25`.
+
+At 3.19 min/window a submittable two-cold-run GGUF receipt prices at ~2.7 h and
+~$4.20 on this A100 — inside the $6–15 band a routed-experts-only row costs,
+where before it was ~20 h and ~$32.
 
 ## Where the wiring lives
 
@@ -255,6 +376,7 @@ Adding a surface means several files agreeing, and the refusal text in
 | file | what it holds |
 |---|---|
 | `k6/tools/gguf_surface.py` | the reader, the dequant kernels, and `scope` — the per-class recipe measured from the container's own table |
+| `k6/tools/gguf_decode_bench.py` | the fill-rate harness and the `--verify` bitwise acceptance test between the two decode paths |
 | `k6/tools/stream_score.py` | `--source gguf` / `--profile gguf`, and the view materialization |
 | `k6/tools/k6_kld_report.py` | profile `gguf` → student label `gguf-llamacpp` (format-wide, not per-rate) |
 | `bin/fidelity/hfmeta.py` | the shelf: build grouping, `--path` selection, nominal rate from the name |

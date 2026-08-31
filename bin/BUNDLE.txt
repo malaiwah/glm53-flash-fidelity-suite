@@ -95,6 +95,12 @@ k6/tools/mlx-evidence/bf16-shape-census.json.gz
 # measuring the wrong model).
 k6/tools/gguf_surface.py
 k6/tools/selftest_gguf_offline.py
+# The fill-rate harness. It ships because the number in engines.json came from
+# it and the next person to doubt that number should be able to re-derive it on
+# their own box for a few minutes of rental, instead of taking a table on faith.
+# `--verify` is also the bitwise acceptance test between the cpu and accelerator
+# decode paths, on whole 288-expert fills of a real layer rather than a fixture.
+k6/tools/gguf_decode_bench.py
 # Community NVFP4 snapshots (stream_score.py --source nvfp4). The evidence dir
 # travels with it: official-nonrouted-names.json is what turns the non-routed
 # census from a COUNT into a name BIJECTION. Without it the adapter still runs

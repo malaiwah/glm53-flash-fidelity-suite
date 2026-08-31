@@ -242,5 +242,22 @@ if [ -f "$FS/k6/tools/selftest_exl3hf_offline.py" ]; then
   ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_exl3hf_offline.py ) \
     | tee "$RCPT/selftest-exl3hf.txt"
 fi
+# The GGUF surface's offline battery has been in bin/BUNDLE.txt since the lane
+# landed -- "so the refusals and the two layout audits can be re-run on the
+# instance before a paid capture" -- and nothing here ever ran it. A capability
+# nothing invokes is indistinguishable from a missing one, which is the lesson
+# the GGUF lane itself was written from.
+#
+# Rung 1b is why it matters now: it re-decodes the committed REAL UD-Q4_K_XL
+# bytes on THIS BOX'S CUDA device and demands torch.equal against the CPU output
+# that rung 1 proved bitwise-equal to gguf-py. That is the acceptance test for
+# the accelerator dequant the capture is about to use by default, and a laptop's
+# MPS pass is evidence for CUDA, not proof of it. It runs here, before the fetch
+# and before any GPU-hour is spent on a number.
+if [ -f "$FS/k6/tools/selftest_gguf_offline.py" ]; then
+  log "running the gguf offline selftest (gguf-py parity + CUDA decode parity)"
+  ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_gguf_offline.py \
+      --pipeline-root "$PIPE" ) | tee "$RCPT/selftest-gguf.txt"
+fi
 
 log "bootstrap complete"
