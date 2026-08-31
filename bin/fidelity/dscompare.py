@@ -306,6 +306,19 @@ def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
     ra = {int(r["index"]): r for r in reference.records}
     rb = {int(r["index"]): r for r in candidate.records}
     shared = sorted(set(ra) & set(rb))
+    # P1-09: an EMPTY intersection is refused before any computation, with no
+    # override. --allow-partial covers a partial overlap; two datasets that share
+    # no context index have nothing to score, and letting them through turned
+    # empty reductions into a plausible metric=0.0 / positions=0 / contexts=0
+    # receipt -- a perfect-fidelity artifact about nothing.
+    if not shared:
+        gates["coverage"] = _gate(False, "no shared context indices")
+        raise Refusal("coverage", "empty_intersection",
+                      "the two datasets share NO context indices (reference %d records, "
+                      "candidate %d); there is nothing to score. --allow-partial covers a "
+                      "partial overlap, never a disjoint pair." % (len(ra), len(rb)),
+                      remedy="check that the two captures were taken over the same panel "
+                             "(or overlapping shards of it)")
     for index in shared:
         if ra[index]["token_ids_json_sha256"] != rb[index]["token_ids_json_sha256"]:
             gates["panel"] = _gate(False, "record %d token digest differs" % index)
@@ -1406,7 +1419,6 @@ def compare(reference_root: str, candidate_root: str, out_dir: str,
     import numpy as np
 
     options = dict(options or {})
-    os.makedirs(out_dir, exist_ok=True)
 
     # Tensor verification is ON unless the caller says otherwise, in the library
     # as well as the CLI. Recomputing checksums.txt and the seal does NOT catch a
@@ -1453,11 +1465,39 @@ def compare(reference_root: str, candidate_root: str, out_dir: str,
     else:
         result = compute(reference, candidate, findings, options)
 
-    tokenwise_path = os.path.join(out_dir, "tokenwise-kld.npy")
-    tokenwise_meta = save_tokenwise(tokenwise_path, result["tokenwise"])
-    receipt = build_receipt(reference, candidate, gates, findings, result,
-                            tokenwise_meta, options, kind)
-    F.write_json(os.path.join(out_dir, "comparison-receipt.json"), receipt)
+    # P1-09: outputs are staged in a private temporary directory and renamed
+    # into out_dir only after the receipt passes its own schema/seal validation.
+    # The old order wrote the array and the receipt first and validated later
+    # (in the CLI), so a refused comparison still left a plausible receipt on
+    # disk for any library caller or shell script to pick up.
+    import shutil
+    import tempfile
+
+    parent = os.path.dirname(os.path.abspath(out_dir)) or "."
+    os.makedirs(parent, exist_ok=True)
+    tmp_dir = tempfile.mkdtemp(prefix=".compare-staging-", dir=parent)
+    try:
+        tokenwise_meta = save_tokenwise(os.path.join(tmp_dir, "tokenwise-kld.npy"),
+                                        result["tokenwise"])
+        receipt = build_receipt(reference, candidate, gates, findings, result,
+                                tokenwise_meta, options, kind)
+        report = dsvalidate.validate_receipt(receipt, out_dir)
+        if report.errors:
+            raise Refusal(
+                "publish", "receipt_invalid",
+                "the computed receipt fails its own schema/seal validation and is NOT "
+                "written: %s"
+                % "; ".join("%(rule)s %(code)s: %(message)s" % e for e in report.errors[:5]))
+        F.write_json(os.path.join(tmp_dir, "comparison-receipt.json"), receipt)
+        os.makedirs(out_dir, exist_ok=True)
+        # The array lands first, the receipt last: at no instant does a receipt
+        # exist whose tokenwise file is missing.
+        os.replace(os.path.join(tmp_dir, "tokenwise-kld.npy"),
+                   os.path.join(out_dir, "tokenwise-kld.npy"))
+        os.replace(os.path.join(tmp_dir, "comparison-receipt.json"),
+                   os.path.join(out_dir, "comparison-receipt.json"))
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
     return receipt
 
 

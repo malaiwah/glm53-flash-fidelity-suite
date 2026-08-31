@@ -481,6 +481,44 @@ def main():
         args.out = os.path.join(tmp, "same-root")
         check("N19 one directory passed as BOTH sides is refused, not scored as 0.0",
               fidelity_dataset.cmd_compare(args) == 3)
+
+        # -- N20 P1-09: a DISJOINT pair is refused and leaves NO files --------
+        # With --allow-partial, two captures sharing no context index used to
+        # pass the differing-set coverage gate, reduce over nothing, and WRITE a
+        # metric=0.0 / positions=0 / contexts=0 receipt before the CLI's later
+        # validation rejected it -- a perfect-fidelity artifact about nothing,
+        # left on disk for any library caller to pick up.
+        d1, d2 = os.path.join(tmp, "dj-a"), os.path.join(tmp, "dj-b")
+        fixtures.build_dataset(d1, seed=1, records=6, capture_indices=[0, 1, 2],
+                               declared_records=6, subset_detail="shard 0-2")
+        fixtures.build_dataset(d2, seed=3, role="quant", quantized=True, stack="stack-b",
+                               lane_identity="lane-b", model_revision="c" * 40,
+                               checkpoint_identity="d" * 64,
+                               records=6, capture_indices=[3, 4, 5],
+                               declared_records=6, subset_detail="shard 3-5")
+        dj_out = os.path.join(tmp, "dj-out")
+        try:
+            dscompare.compare(d1, d2, dj_out, {"vocab_chunk": 8, "allow_partial": True})
+            check("N20 disjoint index sets are refused, never scored (P1-09)", False,
+                  "no refusal: an empty comparison went through")
+        except dscompare.Refusal as exc:
+            check("N20 disjoint index sets are refused, never scored (P1-09)",
+                  exc.code == "empty_intersection" and exc.override is None,
+                  "code=%s override=%r" % (exc.code, exc.override))
+        check("N20b the refusal leaves NO files behind",
+              not os.path.exists(dj_out) or not os.listdir(dj_out),
+              repr(os.listdir(dj_out) if os.path.exists(dj_out) else []))
+        check("N20c no staging directory survives the refusal",
+              not [n for n in os.listdir(tmp) if n.startswith(".compare-staging-")])
+
+        # -- N21 P1-09: outputs are staged and only published after validation.
+        # A good comparison must still land both files atomically in out_dir.
+        good_out = os.path.join(tmp, "publish-out")
+        dscompare.compare(sa, sd, good_out, {"vocab_chunk": 8, "allow_partial": True})
+        check("N21 a valid comparison publishes receipt + array and no staging leftovers",
+              sorted(os.listdir(good_out)) == ["comparison-receipt.json", "tokenwise-kld.npy"]
+              and not [n for n in os.listdir(tmp) if n.startswith(".compare-staging-")],
+              repr(sorted(os.listdir(good_out))))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
