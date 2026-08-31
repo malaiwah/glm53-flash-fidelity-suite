@@ -17,12 +17,16 @@ surface/seal/lane/profile gate and still returned a confident success.
       on a real run.
   G4  _verify_tr3_seal with the Hub unreachable: not_checked, refusal on a
       real run; estimate-only on a dry run.
-  G5  end-to-end offline --dry-run: exits 0, prints ESTIMATE ONLY, does NOT
-      print "all checks passed", and plan.json carries
-      estimate_only=true + the unchecked gate list.
+  G5  end-to-end fully-offline --dry-run (Hub unreachable AND provider CLI
+      absent -- the field tester's exact scenario): exits 0, the verdict is
+      "INCOMPLETE -- this dry run CANNOT AUTHORIZE a run", it never prints
+      "all checks passed", it refuses to price (UNPRICEABLE, no $0.00/h, no
+      dollar total), and plan.json carries estimate_only=true, the unchecked
+      gate list (target-resolution AND instance-pricing), and a null
+      point_usd.
 
-G5 forces offline by pointing HF_ENDPOINT at a closed local port; nothing
-here touches the network or an account.
+G5 forces offline by pointing HF_ENDPOINT at a closed local port and
+stripping PATH of the jl CLI; nothing here touches the network or an account.
 """
 import argparse
 import importlib.util
@@ -136,10 +140,11 @@ def main():
     check("G4b ...and estimate-only on a dry run",
           plan.get("estimate_only") is True, plan)
 
-    # G5: the whole planner, offline, dry.
+    # G5: the whole planner, fully offline (Hub AND provider), dry.
     with tempfile.TemporaryDirectory() as td:
         env = dict(os.environ)
         env["HF_ENDPOINT"] = "http://127.0.0.1:9"     # closed port -> URLError
+        env["PATH"] = "/usr/bin:/bin"                 # no jl CLI -> no offers
         env.pop("HF_TOKEN", None)
         env.pop("HUGGING_FACE_HUB_TOKEN", None)
         proc = subprocess.run(
@@ -155,15 +160,25 @@ def main():
         plan = json.loads(plan_file.read_text()) if plan_file.is_file() else {}
         check("G5 offline dry-run exits 0 (estimate mode may continue)",
               proc.returncode == 0, out[-1500:])
-        check("G5b it says ESTIMATE ONLY and never 'all checks passed'",
-              "ESTIMATE ONLY" in out and "all checks passed" not in out,
-              out[-1500:])
-        check("G5c plan.json records estimate_only and the unchecked gates",
+        check("G5b the verdict is INCOMPLETE/cannot-authorize, never "
+              "'all checks passed'",
+              "INCOMPLETE" in out and "CANNOT AUTHORIZE" in out
+              and "all checks passed" not in out, out[-1500:])
+        check("G5c plan.json records estimate_only and BOTH unchecked gates",
               plan.get("estimate_only") is True
-              and "target-resolution" in (plan.get("gates_not_checked") or []),
+              and "target-resolution" in (plan.get("gates_not_checked") or [])
+              and "instance-pricing" in (plan.get("gates_not_checked") or []),
               json.dumps({k: plan.get(k) for k in
                           ("estimate_only", "gates_not_checked", "gates")},
                          indent=1))
+        cost = plan.get("cost_estimate") or {}
+        check("G5d no rate exists -> the plan refuses to price "
+              "(UNPRICEABLE, no $0.00/h, null point_usd)",
+              "UNPRICEABLE" in out and "$0.00/h" not in out
+              and cost.get("unpriceable") is True
+              and cost.get("point_usd") is None
+              and cost.get("rate_per_hour") is None,
+              json.dumps(cost, indent=1)[:600])
 
     print()
     if FAILED:

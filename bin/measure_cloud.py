@@ -2190,7 +2190,12 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     if offer is None:
         if not table:
             if args.dry_run:
-                con.warn("no availability data (jl unreachable); dry run continues")
+                # No offers means NO RATE EXISTS: pricing below refuses to
+                # invent one, and the verdict is INCOMPLETE (a field tester
+                # got "an UNKNOWN GPU at $0.00/h" and a $0.21 "plan").
+                gate_not_checked(con, plan, args, "instance-pricing",
+                                 "provider offers unreachable; no rate "
+                                 "exists for this plan")
                 offer = None
             else:
                 raise Refusal("could not enumerate GPU offers", [
@@ -2325,33 +2330,59 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     plan["timing"] = dict(timing, minutes_per_window=per_window,
                           minutes_per_window_basis=timing_basis)
     storage_rate = storage_gb * 0.00017      # inferred; see the caveat printed below
-    point = rate * total_h + storage_rate * total_h
-    con.say("  COST ESTIMATE")
-    con.kv("rate", "%d x %s %s  $%.2f/h"
-           % (req.gpus, offer.gpu_type if offer else "?",
-              "spot" if args.spot else "on-demand", rate), indent=4)
-    for name, hours, why in phases:
-        con.say("    %-14s %-34s %5.2f h  $%6.2f" % (name, why, hours, rate * hours))
-    con.say("    %-14s %-34s %5.2f h  $%6.2f"
-            % ("storage", "%d GB fs (rate INFERRED, +/-100%%)" % storage_gb,
-               total_h, storage_rate * total_h))
-    con.say("    %s" % ("-" * 66))
-    con.say("    %-50s POINT   $%6.2f" % ("", point))
-    band_hi = point * 1.40
-    con.say("    %-50s BAND    $%6.2f - $%6.2f" % ("", point, band_hi))
-    ceiling = (rate + storage_rate) * (max_runtime / 3600.0)
-    con.say("    %-50s CEILING $%6.2f   (--max-runtime %s)"
-            % ("", ceiling, args.max_runtime))
-    plan["cost_estimate"] = {
-        "rate_per_hour": rate, "phases": [{"name": n, "hours": h, "note": w}
-                                          for n, h, w in phases],
-        "point_usd": point, "band_high_usd": band_hi, "ceiling_usd": ceiling,
-        "storage_rate_per_hour": storage_rate,
-        "storage_rate_provenance":
-            "INFERRED from reconciling one live instance against its list rate; "
-            "JarvisLabs publishes no storage line. Treat as +/-100% and rely on "
-            "the balance delta for ground truth.",
-    }
+    if offer is None:
+        # NO RATE EXISTS.  Printing "$0.00/h" and a storage-only dollar total
+        # is not an estimate, it is an invented number wearing one's clothes;
+        # a third party read exactly that as a $0.21 plan.  Refuse to price:
+        # hours are still shown (they come from the timing model), dollars
+        # are not.
+        con.say("  COST ESTIMATE: UNPRICEABLE -- provider offers were not "
+                "readable, so no rate exists")
+        for name, hours, why in phases:
+            con.say("    %-14s %-34s %5.2f h  $   ?" % (name, why, hours))
+        con.say("    %-14s %-34s %5.2f h  $   ?"
+                % ("storage", "%d GB fs (rate INFERRED, +/-100%%)" % storage_gb,
+                   total_h))
+        point = band_hi = ceiling = None
+        plan["cost_estimate"] = {
+            "rate_per_hour": None, "unpriceable": True,
+            "phases": [{"name": n, "hours": h, "note": w}
+                       for n, h, w in phases],
+            "point_usd": None, "band_high_usd": None, "ceiling_usd": None,
+            "storage_rate_per_hour": storage_rate,
+            "storage_rate_provenance":
+                "INFERRED from reconciling one live instance against its list "
+                "rate; JarvisLabs publishes no storage line. Treat as +/-100% "
+                "and rely on the balance delta for ground truth.",
+        }
+    else:
+        point = rate * total_h + storage_rate * total_h
+        con.say("  COST ESTIMATE")
+        con.kv("rate", "%d x %s %s  $%.2f/h"
+               % (req.gpus, offer.gpu_type,
+                  "spot" if args.spot else "on-demand", rate), indent=4)
+        for name, hours, why in phases:
+            con.say("    %-14s %-34s %5.2f h  $%6.2f" % (name, why, hours, rate * hours))
+        con.say("    %-14s %-34s %5.2f h  $%6.2f"
+                % ("storage", "%d GB fs (rate INFERRED, +/-100%%)" % storage_gb,
+                   total_h, storage_rate * total_h))
+        con.say("    %s" % ("-" * 66))
+        con.say("    %-50s POINT   $%6.2f" % ("", point))
+        band_hi = point * 1.40
+        con.say("    %-50s BAND    $%6.2f - $%6.2f" % ("", point, band_hi))
+        ceiling = (rate + storage_rate) * (max_runtime / 3600.0)
+        con.say("    %-50s CEILING $%6.2f   (--max-runtime %s)"
+                % ("", ceiling, args.max_runtime))
+        plan["cost_estimate"] = {
+            "rate_per_hour": rate, "phases": [{"name": n, "hours": h, "note": w}
+                                              for n, h, w in phases],
+            "point_usd": point, "band_high_usd": band_hi, "ceiling_usd": ceiling,
+            "storage_rate_per_hour": storage_rate,
+            "storage_rate_provenance":
+                "INFERRED from reconciling one live instance against its list rate; "
+                "JarvisLabs publishes no storage line. Treat as +/-100% and rely on "
+                "the balance delta for ground truth.",
+        }
     if args.cold_runs < 2:
         con.warn(
             "--cold-runs %d produces a receipt the registry will REJECT: a "
@@ -2386,7 +2417,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
             raise refusal
         would_refuse(con, plan, refusal)
 
-    if args.max_cost and band_hi > args.max_cost:
+    if args.max_cost and band_hi is not None and band_hi > args.max_cost:
         refusal = Refusal(
             "estimated band high $%.2f exceeds --max-cost $%.2f" % (band_hi, args.max_cost),
             ["raise --max-cost, or pick a cheaper lane/GPU",
@@ -3658,10 +3689,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         not_checked = plan_data.get("gates_not_checked") or []
         if plan_data.get("estimate_only") or not_checked:
             con.say("")
-            con.say("ESTIMATE ONLY -- %d mandatory gate(s) went UNCHECKED: %s"
+            con.say("INCOMPLETE -- this dry run CANNOT AUTHORIZE a run.")
+            con.say("%d mandatory gate(s) were NOT CHECKED: %s"
                     % (len(not_checked), ", ".join(not_checked) or "?"))
-            con.say("The numbers above are estimates, not approvals. A real "
-                    "run REFUSES until every mandatory gate verifies.")
+            con.say("The numbers above are estimates from fallbacks, not "
+                    "verdicts about your artifact. A real run REFUSES until "
+                    "every mandatory gate verifies.")
             return EXIT_OK
         con.say("all checks passed; a real run would proceed to the confirmation prompt.")
         return EXIT_OK
