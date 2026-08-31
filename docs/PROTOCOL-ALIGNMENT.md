@@ -44,7 +44,7 @@ it under another name. **DIVERGENT** — we differ, with a measured reason.
 | 11 | **Calibration-overlap scan: document hash AND 13-gram** | yes | document/shingle scan on OUR panels, none on his | **ADOPTED** — §4 | our scan reproduces his 25/25 exactly |
 | 12 | **One frozen protocol file, hash in every output** | yes — but it broke, §6 | no protocol file at all | **ADOPTED, with a fix** — §6 | two hashes: file + scoring-subset |
 | 13 | **Rank by paired differences + McNemar, never by overlapping CIs** | yes | paired per-window t-interval | **ADOPTED** — §5.6 | his 5 published McNemar p-values reproduced; ours upgraded to BCa + sign test |
-| 14 | Measured BF16 **floor** and attributable error | no equivalent; §5.3 of his report argues against subtraction | yes | **OURS — divergent, §7** | the floor framing is scope-stable where its inputs are not (+1.4% vs −9% / −16%) |
+| 14 | Measured BF16 **floor** and excess over control (formerly "attributable error", P1-05) | no equivalent; §5.3 of his report argues against subtraction | yes | **OURS — divergent, §7** | the floor framing is scope-stable where its inputs are not (+1.4% vs −9% / −16%) |
 | 15 | Schema-enforced registry with mechanical refusals | no | yes | **OURS** | 90 invariants, 8 new; CMP-003 caught a real error in this very work (§4.3) |
 | 16 | Lane separation (`same_stack` / `cross_stack`) | no field | yes, on the teacher-vs-student axis only | **OURS, but narrower than we first claimed — §8** | our two BF16 floors, 0.011506 vs 0.012712, same panel and teacher. It does **not** separate his 0.0305 from his 0.024555: that is a pipeline difference and `pipeline_ref` is not a key input |
 | 17 | Multi-format decode surfaces (TR3/EXL3, dione, MLX, GGUF, NVFP4) | EXL3 + NVFP4 | 5 surfaces | OURS | `engines/tools/stream_score.py --source` |
@@ -649,8 +649,8 @@ unstamped receipt, a foreign schema, and a stale scoring hash, and every verb of
 ## 7. Divergence 3 — floors and subtraction
 
 §5.3 of his report ranks "Subtraction (not recommended)" third and says *"Do not
-publish subtracted numbers."* Our headline attributable-error framing **is** a
-subtraction. This is a real disagreement and we are not going to paper over it.
+publish subtracted numbers."* Our excess-over-control framing (formerly
+"attributable error", renamed 2026-08-31 per P1-05) **is** a subtraction. This is a real disagreement and we are not going to paper over it.
 
 Our position, and what we changed:
 
@@ -668,7 +668,7 @@ Our position, and what we changed:
    whether the *difference* may be quoted as a headline, not about whether the
    floor should be measured.
 3. **New evidence, from §4.5.** Across the panel25→clean17 scope change, the
-   cross-stack FP8 attributable error moves **+1.44 %** while its two inputs move
+   cross-stack FP8 excess over control moves **+1.44 %** while its two inputs move
    **−9.46 %** and **−16.24 %**. The subtraction is the quantity that survives a
    contamination correction; the raw numbers are the ones that do not. That is an
    argument *for* publishing the decomposition, and it is measured rather than
@@ -864,8 +864,10 @@ answer removes the ambiguity entirely.
 3. No protocol file — **fixed** (`registry/protocol/glm53-joint-kld-protocol.v1.json`).
 4. No masking policy recorded — **fixed** (`estimator.vocab_masking_policy`,
    invariant JOINT-007); the numbers themselves need no correction (§3).
-5. Attributable-error headline (2.52×) is a **panel25** number; the clean-scope
-   version needs a re-measured streaming BF16 floor with per-window output.
+5. The excess-over-control residuals (K6 0.002209 / K8 0.000878) are
+   **panel25** numbers, their once-published ratio ("2.52×") is withdrawn
+   (P1-05), and the clean-scope version needs a re-measured streaming BF16
+   floor with per-window output.
 6. Our published rows quoted no interval at all. Anyone who inferred one from
    `std/sqrt(N)` was off by 4.6–10× (the design effect, §5.3).
 

@@ -227,8 +227,8 @@ def _attributable(registry, measurement, lane) -> Optional[Dict[str, Any]]:
     floor_lane = lane_of(registry, floor)
     value = measurement["metric"]["value"] - floor["metric"]["value"]
     return {
-        "type": "kl_divergence_quantization_attributable",
-        "name": "KLD attributable to quantization (same-lane floor removed), nats",
+        "type": "kl_divergence_excess_over_control",
+        "name": "KLD excess over same-lane unquantized control, nats",
         "value": value,
         "args": {
             "units": "nats",
@@ -385,8 +385,8 @@ def build_x_fidelity(registry: Dict[str, Any], *, role: str,
                 "evidence_hashes": [str(h) for h in determinism.get("evidence_hashes") or []],
             },
             "floor_measurement_id": floor_ref,
-            "quantization_attributable": attributable,
-            "quantization_attributable_withheld": refusal,
+            "excess_over_control": attributable,
+            "excess_over_control_withheld": refusal,
             "measured_by": (measurement.get("provenance") or {}).get("measured_by"),
             "disclosures": [d["code"] for d in measurement.get("disclosures") or []],
         })
@@ -902,12 +902,12 @@ def _our_axis(text: str, registry: Dict[str, Any]) -> Dict[str, Any]:
                           % (measurement_id, entry.get("lane"),
                              (result.get("dataset") or {}).get("split")))
         # XC-4 floor_lane == lane
-        if entry.get("quantization_attributable") is not None:
+        if entry.get("excess_over_control") is not None:
             attributable = [m for m in result.get("metrics") or []
-                            if m.get("type") == "kl_divergence_quantization_attributable"]
+                            if m.get("type") == "kl_divergence_excess_over_control"]
             if not attributable:
-                errors.append("XC-4: %s declares quantization_attributable but the result "
-                              "carries no attributable metric" % measurement_id)
+                errors.append("XC-4: %s declares excess_over_control but the result "
+                              "carries no excess-over-control metric" % measurement_id)
             else:
                 args = attributable[0].get("args") or {}
                 if args.get("floor_lane") != entry.get("lane"):
@@ -915,7 +915,7 @@ def _our_axis(text: str, registry: Dict[str, Any]) -> Dict[str, Any]:
                                   % (args.get("floor_lane"), entry.get("lane")))
                 expected = entry["value"] - (args.get("floor_value") or 0.0)
                 if abs(attributable[0]["value"] - expected) > 1e-15:
-                    errors.append("XC-4: attributable %r != value - floor_value (%r)"
+                    errors.append("XC-4: excess_over_control %r != value - floor_value (%r)"
                                   % (attributable[0]["value"], expected))
         # registry agreement
         row = registry["measurements"].get(measurement_id) if registry else None

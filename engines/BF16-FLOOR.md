@@ -18,18 +18,27 @@ logits were captured on a different stack (brandonmusic's EP4 runtime) than the
 replay lane, and because bf16 arithmetic is not associative across differing
 expert-combine orders. That is the FLOOR: the price of the comparison itself.
 
-## Quantization-attributable error
+## Excess over control
 
-| | panel KLD | minus floor | = attributable |
+(Renamed from "quantization-attributable error" on 2026-08-31, peer-review
+P1-05: the difference `D(P‖Q_quant) − D(P‖Q_control)` is an estimate of the
+excess divergence over the unquantized control, not a causal attribution — it
+is not itself a divergence, can be negative, and isolates quantization only if
+the two paths differ by nothing else.)
+
+| | panel KLD | minus floor | = excess over control |
 |---|---:|---:|---:|
 | BF16 (floor) | 0.011506 | — | 0 |
 | K6 (6 bpw, 254 GB) | 0.013715 | -0.011506 | **0.002209** |
 | K8 (8 bpw, 331 GB) | 0.012384 | -0.011506 | **0.000878** |
 
-**K8's quantization error is 2.52x smaller than K6's** — against a raw
-panel-mean ratio of only 1.11x. Put the other way: **K8 removes 60% of
-the divergence K6 still leaves on the table.** That is the number that belongs
-next to "13.2x tighter weights", and it is invisible if you read raw KLD alone.
+K8's residual is smaller than K6's — 0.000878 against 0.002209 nats — where
+the raw panel means sit only 1.11x apart. The floor is what hides that: it is
+common to both rows and dominates both. **The once-published ratio of the two
+residuals ("2.52x") is withdrawn**: a ratio of small residuals magnifies
+control error, and no uncertainty was ever attached to it. Read the two excess
+values beside their raw values, with the floor named — that is the honest form
+of the comparison, and it is still invisible if you read raw KLD alone.
 
 ## How to use this (and how not to)
 
@@ -37,7 +46,7 @@ next to "13.2x tighter weights", and it is invisible if you read raw KLD alone.
   universal constant. Re-measure it whenever any of those change.
 - Subtracting a floor measured on a DIFFERENT lane is invalid. Our official-FP8
   figure (0.020615) was captured cross-stack, and its matching cross-stack floor
-  is 0.012712 — so FP8's attributable cost is ~0.0079 against THAT floor, never
+  is 0.012712 — so FP8's excess over THAT control is ~0.0079, never computed
   against this one.
 - The subtraction is an approximation: KL is not additive, and it is meaningful
   only because both terms are small and share the same reference.

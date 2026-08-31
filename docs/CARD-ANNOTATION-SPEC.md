@@ -191,7 +191,7 @@ Layer 2 alone is invisible to every HF tool. Both, cross-checked against each ot
 | metric | `metrics[].type: kl_divergence`, `.value` | full float64 precision, never rounded |
 | estimator / determinism / registry ids | `metrics[].args` | `units`, `higher_is_better`, `direction`, `estimator`, `accumulation_dtype`, `logits_dtype`, `head_policy`, `stack_relation`, `lane`, `run_count`, `population_stddev_of_run_means`, `determinism`, `measurement_id`, `comparability_key` |
 | registry row | `source: {name, url}` | `source.url` required when `source:` present; the dataset-viewer search URL is a real deep link |
-| floor-subtracted number | a **second** metric `kl_divergence_quantization_attributable`, **same-lane result only** | carries `floor_measurement_id`, `floor_lane` and the non-additivity caveat; enforces **BIAS-006** structurally |
+| floor-subtracted number | a **second** metric `kl_divergence_excess_over_control`, **same-lane result only** | carries `floor_measurement_id`, `floor_lane` and the non-additivity caveat; enforces **BIAS-006** structurally |
 | top-1 | `top1_agreement` metric, `higher_is_better: true` | registry **STAT-005** wants it on every published KL row |
 
 Plus, top level: `base_model` + `base_model_relation: quantized`; `datasets:` listing the panel repo
@@ -257,7 +257,7 @@ x_fidelity:
         identical_across_runs: true
         evidence_hashes: ['52e35723…']
       floor_measurement_id: null
-      quantization_attributable: null
+      excess_over_control: null
       measured_by: self-measured
       disclosures: [no_known_deviations]
 ```
@@ -270,7 +270,7 @@ x_fidelity:
 **XC-3** Every `measurement_id` in Layer 2 appears in exactly one Layer-1 result, and vice versa —
 one `model-index` result per registry measurement, no more. (K8 has **no** `sealed-ep8` row in the
 registry, so its card MUST NOT carry a `split: sealed-ep8` result.)
-**XC-4** `floor_lane == lane` on any `quantization_attributable` value — BIAS-006 at card level.
+**XC-4** `floor_lane == lane` on any `excess_over_control` value — BIAS-006 at card level.
 **XC-5** `head.replay_permitted: true` requires `lm_head_tensor_content_sha256` non-null. A null
 content digest **forbids** cross-artifact hidden replay (spec HEAD-4).
 
@@ -356,7 +356,7 @@ model-index:
         dataset: {…same panel…, split: streaming}
         metrics:
           - {type: kl_divergence, value: 0.013714888822596553, args: {lane: streaming, run_count: 2, …}}
-          - type: kl_divergence_quantization_attributable
+          - type: kl_divergence_excess_over_control
             value: 0.0022089662032662542
             args: {derived: true, derivation: candidate_minus_same_lane_floor,
                    floor_value: 0.011505922619330299,
@@ -374,7 +374,7 @@ x_fidelity:
 
 **K8 is the same template** with one result at `split: streaming`, `value: 0.012384191023436866`,
 `measurement_id: measurement--glm53.k8-8bpw-stream.brandonmusic-final25`, `run_count: 2`, plus the
-attributable metric against the same streaming floor. K8 has **no** `sealed-ep8` registry row, so its
+excess-over-control metric against the same streaming floor. K8 has **no** `sealed-ep8` registry row, so its
 card carries no `sealed-ep8` result (XC-3).
 
 ### 4.1 Verification results
@@ -523,7 +523,7 @@ alongside the Festr conversation.
 * **A naive leaderboard cannot tell our headline number from our derived number.** Measured, not
   supposed: a generic `model-index` walk over the K6 card (PyYAML, no knowledge of this spec) yields
   six rows, of which **four** are `kl_divergence` — two lanes x two scopes — plus one
-  `kl_divergence_quantization_attributable` at **0.00221** sitting in the same `metrics[]` list as
+  `kl_divergence_excess_over_control` at **0.00221** sitting in the same `metrics[]` list as
   the raw **0.01371**. `model-index` has no concept of a *primary* metric, and everything that
   disambiguates these rows (`lane`, `derived: true`, `floor_measurement_id`, `higher_is_better:
   false`) lives in `metrics[].args`, which — per §4.1 — **no published card in the wild uses and no
@@ -534,7 +534,7 @@ alongside the Festr conversation.
 
   Three consequences we accept deliberately. (1) The value is still in the standard slot, because a
   wrong-but-findable number that we can correct beats a right number nobody can parse. (2) The metric
-  `type` strings are self-describing (`kl_divergence_quantization_attributable` is not going to be
+  `type` strings are self-describing (`kl_divergence_excess_over_control` is not going to be
   mistaken for `kl_divergence` by a *human*), which is why the derived metric got a distinct type
   rather than an `args` flag on the same one. (3) **This is the strongest argument for the
   `.eval_results/` v2 path in §6**, whose per-benchmark scoping would let the headline row be named
@@ -582,8 +582,8 @@ refuses any two results that still collide (GEN-4), which is how this was found.
 
 **XC-6 — a floor must match on scope as well as lane.** XC-4 checks
 `floor_lane == lane`. The generator additionally withholds the
-`kl_divergence_quantization_attributable` metric — and records the reason in
-`x_fidelity.measurements[].quantization_attributable_withheld` — when the floor
+`kl_divergence_excess_over_control` metric — and records the reason in
+`x_fidelity.measurements[].excess_over_control_withheld` — when the floor
 row does not resolve, was measured on another lane, or was measured over another
 **scope**. Withholding an unverifiable number is the correct behaviour; printing
 it is not. Case K8b.

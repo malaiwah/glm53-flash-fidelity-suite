@@ -340,20 +340,28 @@ def bias_callouts(C, rows):
 
 
 def attributable_note(rows):
-    """Explain the Attributable column once per table, rather than trusting the header
-    alone to carry it. `rows` is unused beyond confirming the caller only calls this when
-    at least one row in the table actually names a floor (table_header's own test)."""
+    """Explain the Excess-over-control column once per table, rather than trusting the
+    header alone to carry it. `rows` is unused beyond confirming the caller only calls
+    this when at least one row in the table actually names a floor (table_header's own
+    test)."""
     return [
-        "> **Attributable (nats)** = this row's value minus its named floor's value "
-        "(`comparability.bias.floor_measurement_ref`) -- the raw number with this "
-        "lane's own measurement floor netted out. It is an estimate, not an identity: KL "
-        "is not additive, and the subtraction is only meaningful because both terms are "
-        "small and share the same reference and the same lane. A row with no floor named "
-        "shows `--`, not zero: absence of a floor is not evidence the floor is zero. "
-        "BIAS-002/004/006 guarantee any floor named here shares this row's comparability "
-        "key, measures unquantized weights, and was measured on this row's own lane -- so "
-        "this column can never mix a floor from a different panel, a different kind of "
-        "thing, or a different lane into the subtraction.",
+        "> **Excess over control (nats)** = this row's value minus its named floor's "
+        "value (`comparability.bias.floor_measurement_ref`) -- the raw number with this "
+        "lane's own measurement floor netted out. Until 2026-08-31 this column was named "
+        "*Attributable (nats)*; the rename is peer-review P1-05, and it is a claim "
+        "change, not a cosmetic one: the difference D(P||Q_quant) - D(P||Q_control) "
+        "is not itself a divergence, can be negative, and isolates quantization only if "
+        "the two paths differ by nothing else -- an assumption this project's own "
+        "pipeline and hardware studies show is non-trivial. It is an estimate, not an "
+        "identity: KL is not additive, and the subtraction is only meaningful because "
+        "both terms are small and share the same reference and the same lane. Do not "
+        "quote a RATIO of two of these numbers without uncertainty: a ratio of small "
+        "residuals magnifies control error. A row with no floor named shows `--`, not "
+        "zero: absence of a floor is not evidence the floor is zero. BIAS-002/004/006 "
+        "guarantee any floor named here shares this row's comparability key, measures "
+        "unquantized weights, and was measured on this row's own lane -- so this column "
+        "can never mix a floor from a different panel, a different kind of thing, or a "
+        "different lane into the subtraction.",
         "",
     ]
 
@@ -479,7 +487,7 @@ def render_group(C, key, members, groups):
     metric_name = C["measurements"][members[0]]["metric"]["name"]
 
     def table_header(mids, allow_attributable):
-        # The Attributable column is added ONLY to a non-sealed-LANE sub-table that has a
+        # The Excess-over-control column is added ONLY to a non-sealed-LANE sub-table that has a
         # row naming a floor (comparability.bias.floor_measurement_ref); `allow_attributable`
         # is False for the primary table. This registry has an older, deliberately more
         # cautious convention for a CROSS-STACK floor -- "the naive difference is X, do not
@@ -494,9 +502,9 @@ def render_group(C, key, members, groups):
             for mid in mids)
         cols = ["Artifact", "Codec", "Size", "%s (nats)" % metric_name]
         if show:
-            cols.append("Attributable (nats)")
+            cols.append("Excess over control (nats)")
         cols += ["CI95", "Top-1", "Runs", "Attribution", "Receipt"]
-        right = {"Size", "%s (nats)" % metric_name, "Attributable (nats)", "Top-1"}
+        right = {"Size", "%s (nats)" % metric_name, "Excess over control (nats)", "Top-1"}
         header = "| " + " | ".join(cols) + " |"
         rule = "|" + "|".join("---:" if c in right else "---" for c in cols) + "|"
         return show, header, rule

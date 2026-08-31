@@ -139,7 +139,7 @@
           },
           "floor_measurement_id": { "type": ["string", "null"], "pattern": "^measurement--" },
           "floor_lane": { "enum": ["sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other", null] },
-          "quantization_attributable": { "type": ["number", "null"] },
+          "excess_over_control": { "type": ["number", "null"] },
           "measured_by": { "enum": ["self-measured", "author-reported", "third-party-reported"] },
           "disclosures": { "type": "array", "items": { "type": "string" } }
         },
@@ -147,8 +147,8 @@
           {
             "description": "XC-4 / BIAS-006 at card level: a subtracted floor must come from the SAME lane.",
             "if": {
-              "properties": { "quantization_attributable": { "type": "number" } },
-              "required": ["quantization_attributable"]
+              "properties": { "excess_over_control": { "type": "number" } },
+              "required": ["excess_over_control"]
             },
             "then": {
               "required": ["floor_measurement_id", "floor_lane"],

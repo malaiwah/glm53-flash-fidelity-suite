@@ -2438,11 +2438,7 @@ def build_measurements(artifacts_map):
                                  "0.00028735280093581186 on any one of 25 windows). The tokenwise KL array "
                                  "does NOT match the sealed one, and the runner's own verdict is "
                                  "publishable_as_reproduction=False, so this number stands beside the sealed "
-                                 "one rather than replacing it. This lane's own measurement floor (%s) is "
-                                 "%r nats; netting it out gives an estimated quantization-attributable error "
-                                 "of %r nats here -- an estimate, not an identity, because KL is not "
-                                 "additive, and it is only meaningful because both terms are small and share "
-                                 "the same reference and lane."
+                                 "one rather than replacing it. This lane's own measurement floor (%s) is %r nats; netting it out gives an estimated excess_over_control of %r nats here (called 'quantization-attributable error' before 2026-08-31, renamed per peer-review P1-05: the difference estimates excess divergence over the same-lane unquantized control and is not a causal attribution) -- an estimate, not an identity, because KL is not additive, and it is only meaningful because both terms are small and share the same reference and lane."
                                  % (M_BF16_FLOOR, BF16_FLOOR, SK6 - BF16_FLOOR)},
                  gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
                        "passed": True},
@@ -2488,11 +2484,7 @@ def build_measurements(artifacts_map):
                                  "is known to be non-zero but was NOT measured for this artifact: no "
                                  "sealed-lane row for it exists to bridge against. The lane offset measured "
                                  "for a sibling artifact on this panel is not transferable -- it is a "
-                                 "property of the routing, not a constant. This lane's own measurement floor "
-                                 "(%s) is %r nats; netting it out gives an estimated quantization-"
-                                 "attributable error of %r nats here -- an estimate, not an identity, "
-                                 "because KL is not additive, and it is only meaningful because both terms "
-                                 "are small and share the same reference and lane."
+                                 "property of the routing, not a constant. This lane's own measurement floor (%s) is %r nats; netting it out gives an estimated excess_over_control of %r nats here (called 'quantization-attributable error' before 2026-08-31, renamed per peer-review P1-05: the difference estimates excess divergence over the same-lane unquantized control and is not a causal attribution) -- an estimate, not an identity, because KL is not additive, and it is only meaningful because both terms are small and share the same reference and lane."
                                  % (M_BF16_FLOOR, BF16_FLOOR, SK8 - BF16_FLOOR)},
                  gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
                        "passed": True},
@@ -2584,12 +2576,7 @@ def build_measurements(artifacts_map):
                                  "(measurement--glm53.dione-q4.brandonmusic-final25, "
                                  "0.027262784814670614 on the sealed lane), but a lane "
                                  "offset is a property of the routing, not a constant, so "
-                                 "it does not transfer between rungs of a ladder. This "
-                                 "lane's own measurement floor (%s) is %r nats; netting "
-                                 "it out gives an estimated quantization-attributable "
-                                 "error of %r nats here -- an estimate, not an identity, "
-                                 "because KL is not additive, and it is only meaningful "
-                                 "because both terms share the same reference and lane."
+                                 "it does not transfer between rungs of a ladder. This lane's own measurement floor (%s) is %r nats; netting it out gives an estimated excess_over_control of %r nats here (called 'quantization-attributable error' before 2026-08-31, renamed per peer-review P1-05: the difference estimates excess divergence over the same-lane unquantized control and is not a causal attribution) -- an estimate, not an identity, because KL is not additive, and it is only meaningful because both terms are small and share the same reference and lane."
                                  % (M_BF16_FLOOR, BF16_FLOOR, D30 - BF16_FLOOR)},
                  gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06,
                        "threshold_gt": None, "passed": True},
@@ -2637,7 +2624,7 @@ def build_measurements(artifacts_map):
                           "artifact's own weights, which is why estimator.head_policy is "
                           "native_head."),
                  ],
-                 notes=("Third rung of 0xSero's ladder measured here. His Q4 reads 0.027262784814670614 on the SEALED lane and this 3.0bpw reads 0.050501241465423556 on the STREAMING lane; the two are not directly comparable (different lane, different comparability key) and the registry refuses to net them. Within this lane the attributable error against the BF16 floor is 0.03899531884609326 nats. The producer's own RELEASE_STATUS.json marks this release quality: FAIL at their own threshold (their held-out forward KL 0.15251, top-1 0.87285 over 65,504 positions of THEIR panel) -- their number, their panel, their estimator, recorded on the artifact record rather than mixed into this one.")))
+                 notes=("Third rung of 0xSero's ladder measured here. His Q4 reads 0.027262784814670614 on the SEALED lane and this 3.0bpw reads 0.050501241465423556 on the STREAMING lane; the two are not directly comparable (different lane, different comparability key) and the registry refuses to net them. Within this lane the excess over the BF16-floor control (formerly: attributable error; P1-05) is 0.03899531884609326 nats. The producer's own RELEASE_STATUS.json marks this release quality: FAIL at their own threshold (their held-out forward KL 0.15251, top-1 0.87285 over 65,504 positions of THEIR panel) -- their number, their panel, their estimator, recorded on the artifact record rather than mixed into this one.")))
     # ---- M4 measured values, transcribed from receipts/malaiwah/
     # stream-vcruz-k2-2bpw-kld.json, whose sha256 this row cites and whose
     # bytes `make reseed-check` re-reads.
@@ -2703,7 +2690,7 @@ def build_measurements(artifacts_map):
         "at 93.00 % for the 3.0-bpw rung and 0.025503427634363770 at 95.31 % for 4 bpw: "
         "3.07x the divergence of 3 bpw for 35 % fewer bytes (97.8 GB against 149.6 GB), "
         "and 6.09x the divergence of 4 bpw for 44 % fewer bytes. Against this lane's own "
-        "BF16 floor the quantization-attributable error is 0.143703632294899769 nats. "
+        "BF16 floor the excess over control (formerly: quantization-attributable error; P1-05) is 0.143703632294899769 nats. "
         "Both cold runs produced identical run means and ONE tokenwise KL digest, so the "
         "path is bitwise deterministic; the divergence is the codec, not the harness. "
         "Every one of the 907,200 decoded expert matrices was K2 "
@@ -2744,12 +2731,7 @@ def build_measurements(artifacts_map):
                                  "the sealed-ep8 lane is known to be non-zero and is NOT "
                                  "measured for this artifact: it has no sealed-lane row "
                                  "to bridge against, and no sibling of its own on either "
-                                 "lane. This lane's own measurement floor (%s) is %r "
-                                 "nats; netting it out gives an estimated "
-                                 "quantization-attributable error of %r nats here -- an "
-                                 "estimate, not an identity, because KL is not additive, "
-                                 "and it is only meaningful because both terms share the "
-                                 "same reference and lane."
+                                 "lane. This lane's own measurement floor (%s) is %r nats; netting it out gives an estimated excess_over_control of %r nats here (called 'quantization-attributable error' before 2026-08-31, renamed per peer-review P1-05: the difference estimates excess divergence over the same-lane unquantized control and is not a causal attribution) -- an estimate, not an identity, because KL is not additive, and it is only meaningful because both terms are small and share the same reference and lane."
                                  % (M_BF16_FLOOR, BF16_FLOOR, VCRUZK2 - BF16_FLOOR)},
                  gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06,
                        "threshold_gt": None, "passed": M4_GATE_PASSED},
@@ -2788,11 +2770,7 @@ def build_measurements(artifacts_map):
                                  "+0.000948863 nats from it -- a LANE-PLUS-STACK offset, "
                                  "not a lane offset, because the reader digests differ too "
                                  "(1fb3be87... vs 1ccce446...). This lane's own measurement "
-                                 "floor (%s) is %r nats; netting it out gives an estimated "
-                                 "quantization-attributable error of %r nats here -- an "
-                                 "estimate, not an identity, because KL is not additive, and "
-                                 "it is only meaningful because both terms share the same "
-                                 "reference and lane."
+                                 "floor (%s) is %r nats; netting it out gives an estimated excess_over_control of %r nats here (called 'quantization-attributable error' before 2026-08-31, renamed per peer-review P1-05: the difference estimates excess divergence over the same-lane unquantized control and is not a causal attribution) -- an estimate, not an identity, because KL is not additive, and it is only meaningful because both terms are small and share the same reference and lane."
                                  % (M_BF16_FLOOR, BF16_FLOOR, TR34 - BF16_FLOOR)},
                  gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06,
                        "threshold_gt": None, "passed": True},
@@ -2876,10 +2854,7 @@ def build_measurements(artifacts_map):
                        "detail": "Measured on the 'streaming' lane, whose offset against the sealed-ep8 "
                                  "lane is known to be non-zero but was NOT measured for this artifact: no "
                                  "sealed-lane row for it exists to bridge against. This lane's own "
-                                 "measurement floor (%s) is %r nats; netting it out gives an estimated "
-                                 "quantization-attributable error of %r nats here -- an estimate, not an "
-                                 "identity, because KL is not additive, and it is only meaningful because "
-                                 "both terms share the same reference and lane."
+                                 "measurement floor (%s) is %r nats; netting it out gives an estimated excess_over_control of %r nats here (called 'quantization-attributable error' before 2026-08-31, renamed per peer-review P1-05: the difference estimates excess divergence over the same-lane unquantized control and is not a causal attribution) -- an estimate, not an identity, because KL is not additive, and it is only meaningful because both terms are small and share the same reference and lane."
                                  % (M_BF16_FLOOR, BF16_FLOOR, STURBO405 - BF16_FLOOR)},
                  gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
                        "passed": True},
@@ -2940,10 +2915,7 @@ def build_measurements(artifacts_map):
                        "estimated_magnitude": None,
                        "detail": "Measured on the 'streaming' lane, whose offset against the sealed-ep8 "
                                  "lane is known to be non-zero but was NOT measured for this artifact. "
-                                 "This lane's own measurement floor (%s) is %r nats; netting it out "
-                                 "gives an estimated quantization-attributable error of %r nats here -- "
-                                 "an estimate, not an identity, because KL is not additive, and it is "
-                                 "only meaningful because both terms share the same reference and lane."
+                                 "This lane's own measurement floor (%s) is %r nats; netting it out gives an estimated excess_over_control of %r nats here (called 'quantization-attributable error' before 2026-08-31, renamed per peer-review P1-05: the difference estimates excess divergence over the same-lane unquantized control and is not a causal attribution) -- an estimate, not an identity, because KL is not additive, and it is only meaningful because both terms are small and share the same reference and lane."
                                  % (M_BF16_FLOOR, BF16_FLOOR, STURBO205 - BF16_FLOOR)},
                  gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
                        "passed": False},
@@ -3015,7 +2987,8 @@ def build_measurements(artifacts_map):
                           "against the sealed lane is NOT measured for this artifact: no sealed-lane row "
                           "for it exists to bridge against. This row is itself the streaming lane's "
                           "measurement floor -- the zero-point the K6-stream and K8-stream rows in this "
-                          "same table subtract to obtain their own quantization-attributable error (see "
+                          "same table subtract to obtain their own excess_over_control (formerly: "
+                          "quantization-attributable error; P1-05) (see "
                           "their bias blocks).", True),
                      disc("third_party_artifact_self_measured", "info",
                           "Someone else's weights, our measurement.")],
@@ -3866,11 +3839,11 @@ PIPELINES += [
 # M1: Qwen3.8-27B same-lane root capture (hf-transformers lane, RTX PRO 6000)
 #
 # The 37 Qwen3.8-27B rows above are scored against a vLLM-captured teacher, so
-# each carries an unmeasured cross-stack term and its attributable error is
+# each carries an unmeasured cross-stack term and its excess over control is
 # inferred by subtraction. The rows below are scored against a teacher captured
 # by the SAME engine on the SAME lane as the candidates, so the floor is 0.0 by
 # construction -- MEASURED, not assumed -- and a candidate's raw KLD IS its
-# attributable error, with nothing subtracted.
+# excess over control, with nothing subtracted.
 #
 # They are NOT rankable against the 37 older rows. The comparability key binds
 # the reference and the references differ. The panel is deliberately the SAME
@@ -4313,7 +4286,8 @@ def build_measurements_qwen38_hf(artifacts_map):
                    "comparison: when both sides are captured by one engine on one lane, "
                    "comparison overhead is structurally zero and never has to be "
                    "subtracted from anything. Every candidate row on this reference "
-                   "therefore reports attributable error EQUAL to its raw KLD."),
+                   "therefore reports an excess over control (formerly: attributable error; "
+                   "P1-05) EQUAL to its raw KLD."),
               disc("shared_reference_head", "info",
                    "One head (d922b751...) applied to both sides' hidden states."),
               disc("reduced_run_count", "info",

@@ -8,7 +8,7 @@
     K5   lane only in dataset.args is refused
     K6   an all-digit unquoted revision is refused
     K7   replay_permitted: true with a null head content digest is refused
-    K8   quantization_attributable whose floor_lane != lane is refused
+    K8   excess_over_control whose floor_lane != lane is refused
     K9   a result for a measurement the registry does not have is refused
     K10  base_model_relation: fidelity-reference is refused (the enum has 4 values)
     K11  pre-existing unknown top-level keys survive annotate
@@ -190,14 +190,14 @@ def main(argv):
     result = one_result("streaming")
     result["metrics"][0]["args"]["measurement_id"] = "measurement--x"
     result["metrics"].append({
-        "type": "kl_divergence_quantization_attributable", "value": 0.5,
+        "type": "kl_divergence_excess_over_control", "value": 0.5,
         "args": {"floor_lane": "sealed-ep8", "floor_value": 0.5,
                  "floor_measurement_id": "measurement--floor"}})
     front = dict(base_front)
     front["model-index"] = [{"name": "A", "results": [result]}]
     fidelity = json.loads(json.dumps(minimal_fidelity))
     fidelity["measurements"] = [{"id": "measurement--x", "lane": "streaming", "value": 1.0,
-                                 "quantization_attributable": 0.5,
+                                 "excess_over_control": 0.5,
                                  "comparability_key": None, "determinism": {}}]
     front["x_fidelity"] = fidelity
     axis = cardmeta._our_axis(card_text(front), registry)

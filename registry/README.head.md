@@ -162,9 +162,12 @@ scored through this SAME streaming harness rather than the cross-stack replay pi
 **0.011506** nats -- the cost of comparing across capture stacks plus bf16 non-associativity, with
 zero quantization involved -- and it is emphatically NOT the cross-stack floor above (0.012712,
 a different pipeline, a different lane, a different comparability key). Unlike the cross-stack case,
-this registry DOES publish the netted-out number here, as an *Attributable (nats)* column in the
-lane's own sub-table: K6-stream nets to 0.002209, K8-stream to 0.000878, a 2.52x spread against a
-raw ratio of only 1.11x. It is still an estimate, not an identity -- KL is not additive -- but both
+this registry DOES publish the netted-out number here, as an *Excess over control (nats)* column in
+the lane's own sub-table (named *Attributable (nats)* until 2026-08-31; renamed per peer-review
+P1-05, because the difference is not a causal attribution): K6-stream nets to 0.002209, K8-stream
+to 0.000878. No ratio of those two residuals is published -- the old "2.52x" headline is withdrawn,
+because a ratio of small residuals magnifies control error and carried no uncertainty. It is still
+an estimate, not an identity -- KL is not additive -- but both
 terms are small, share the same reference, and now also share the same lane, which the cross-stack
 pair does not. `BIAS-006` is what keeps the two floors from ever crossing: a floor's
 `floor_measurement_ref` must have been measured on the SAME lane as the row naming it, so the

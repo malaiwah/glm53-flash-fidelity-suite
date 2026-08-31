@@ -70,8 +70,8 @@ model-index:
               determinism: bitwise_identical_across_runs
               measurement_id: measurement--glm53.k8-8bpw-stream.brandonmusic-final25
               comparability_key: cmp--202b717f3219c414
-          - type: kl_divergence_quantization_attributable
-            name: KLD attributable to quantization (same-lane floor removed), nats
+          - type: kl_divergence_excess_over_control
+            name: KLD excess over same-lane unquantized control, nats
             value: 0.0008782684041065674
             args:
               units: nats
@@ -138,7 +138,7 @@ x_fidelity:
           - '763bc4a56a371e11a0f96469885b920deb6acb2c7c576d1268fb0907577f0942'
       floor_measurement_id: measurement--glm53.bf16-stream-floor.brandonmusic-final25
       floor_lane: streaming
-      quantization_attributable: 0.0008782684041065674
+      excess_over_control: 0.0008782684041065674
       measured_by: self-measured
       disclosures:
         - reduced_run_count

@@ -104,9 +104,15 @@ logits were captured on a different runtime than the student replay, and
 bf16 addition is not associative — expert-combine order alone moves logits
 materially. Consequences:
 
-- **Attributable error** = row − *same-lane* floor. That is the number that
-  ranks quants fairly: K6 = 0.002209, K8 = 0.000878 (2.52× apart, where the
-  raw means are only 1.11× apart).
+- **Excess over control** = row − *same-lane* floor (called "attributable
+  error" before 2026-08-31; renamed per peer-review P1-05). K6 = 0.002209,
+  K8 = 0.000878 on the streaming lane. The difference is an *estimate of the
+  excess divergence over the unquantized control*, not a causal attribution:
+  algebraically it is `E_P[log Q_control − log Q_quant]`, which is not itself
+  a divergence, can be negative, and isolates quantization only if the two
+  paths differ by nothing else. Do not quote a ratio of two of these residuals
+  without uncertainty — the withdrawn "2.52×" headline was exactly that
+  mistake: a ratio of small residuals that magnifies control error.
 - **Cross-lane floor subtraction is invalid** and the registry's validator
   refuses it mechanically (invariant BIAS-006).
 - A quant scoring *at* the floor is not "perfect" — the panel has simply
@@ -361,7 +367,8 @@ Card annotation: [`docs/CARD-ANNOTATION-SPEC.md`](docs/CARD-ANNOTATION-SPEC.md).
 4. Publish run count and determinism evidence (content hashes, never
    container hashes — receipts embed timestamps and metadata that differ
    between bit-identical runs).
-5. Measure and publish **your lane's floor**; report attributable error.
+5. Measure and publish **your lane's floor**; report the excess over that
+   control beside the raw value, never a residual ratio without uncertainty.
 6. Disclose every deviation before anyone asks.
 7. Never quote a single window as a rate comparison.
 8. Fingerprint the stack — engine build, eager/graph state, attention

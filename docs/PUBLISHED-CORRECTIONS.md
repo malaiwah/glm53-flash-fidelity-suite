@@ -608,6 +608,55 @@ still finds it — under a label that now says what it is.
 
 ---
 
+## 8. "quantization-attributable" renamed `excess_over_control`, and the 2.52x ratio withdrawn (P1-05)
+
+**Published 2026-08-31.** A terminology-and-claim correction: no measured value
+moves, and `reseed_delta` over the full collection confirms it (0 metric
+values, 0 uncertainty numbers, 0 domain endpoints changed; the only moved
+fields are `comparability.bias.detail`, two `notes`, and two disclosure
+strings, on 11 rows).
+
+### What was wrong
+
+The registry, the model cards, `WHAT-WE-MEASURE.md`, `llms.txt` and
+`engines/BF16-FLOOR.md` called the floor-subtracted number
+"quantization-attributable error". Algebraically the quantity is
+`D(P‖Q_quant) − D(P‖Q_control) = E_P[log Q_control − log Q_quant]`: not itself
+a divergence, capable of being negative, and equal to the quantization effect
+only if the two paths differ by nothing else — an assumption this project's
+own pipeline (~24%) and hardware (2.97e-4 nats) studies show is non-trivial.
+"Attributable" asserted causality the design does not isolate.
+
+Worse, two of these residuals were published as a ratio — **"K8's quantization
+error is 2.52x smaller than K6's"** — with no uncertainty. A ratio of two
+small residuals magnifies control error; the same data read 1.11x in raw
+means.
+
+### What changed
+
+* Name, everywhere user-facing: `excess_over_control`. Rendered registry
+  column "Excess over control (nats)"; card metric type
+  `kl_divergence_excess_over_control` and `x_fidelity` field
+  `excess_over_control` (spec, schema, generator, validator, examples);
+  `WHAT-WE-MEASURE.md` §4, `llms.txt` Rules 3–4, `engines/BF16-FLOOR.md`,
+  `registry/README.head.md`.
+* The **2.52x ratio is withdrawn** wherever it appeared without uncertainty.
+  The two residuals themselves (K6-stream 0.002209, K8-stream 0.000878 nats,
+  panel25, streaming lane) still stand, printed beside their raw values with
+  the floor named.
+* The 11 registry rows whose `bias.detail` / `notes` carried the old term now
+  carry the corrected sentence, which names the old term and the rename date
+  inline, so a reader landing on the row sees both. Old wording, verbatim, for
+  the record: *"…netting it out gives an estimated quantization-attributable
+  error of R nats here — an estimate, not an identity, because KL is not
+  additive, and it is only meaningful because both terms are small and share
+  the same reference and lane."* New emissions from `registry_add.py` use the
+  new sentence.
+* No registry id, receipt, digest, or `metric.value` changed. The
+  comparability keys are untouched.
+
+---
+
 ## Not published, deliberately
 
 Nothing from `docs/REVIEW-DEFERRED.md` is now held back for an operator decision on

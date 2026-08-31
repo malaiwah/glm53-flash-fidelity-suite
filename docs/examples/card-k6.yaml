@@ -120,8 +120,8 @@ model-index:
           # The floor-subtracted number lives ONLY in the same-lane result.
           # Putting it anywhere else would be a cross-lane subtraction, which
           # registry invariant BIAS-006 forbids.
-          - type: kl_divergence_quantization_attributable
-            name: KLD attributable to quantization (same-lane floor removed), nats
+          - type: kl_divergence_excess_over_control
+            name: KLD excess over same-lane unquantized control, nats
             value: 0.0022089662032662542
             args:
               units: nats
@@ -198,7 +198,7 @@ x_fidelity:
           - '52e35723dacd0314acb85bcee86d2faefd5c12ff9d82c6e026e05d35ee15db4b'
       floor_measurement_id: null
       floor_lane: null
-      quantization_attributable: null
+      excess_over_control: null
       measured_by: self-measured
       disclosures:
         - no_known_deviations
@@ -222,7 +222,7 @@ x_fidelity:
           - '9657ede36b9f4b09a2c74916239c6d9a3baebce5f3fa64af7af388b0686aa284'
       floor_measurement_id: measurement--glm53.bf16-stream-floor.brandonmusic-final25
       floor_lane: streaming
-      quantization_attributable: 0.0022089662032662542
+      excess_over_control: 0.0022089662032662542
       measured_by: self-measured
       disclosures:
         - reduced_run_count

@@ -39,13 +39,17 @@ showed it winning decisively. Previews are for "is the pipeline alive", never fo
 
 **Rule 3 — subtract only a same-lane floor.** Scoring the *unquantized* weights against the
 teacher already costs 0.011506 nats on our streaming lane (0.012712 cross-stack): that is the
-price of the comparison itself, not quantization error. Attributable error = row − same-lane
-floor. Subtracting a floor measured on a different lane is invalid and the validator refuses
-it (invariant BIAS-006).
+price of the comparison itself, not quantization error. Excess over control = row − same-lane
+floor (renamed from "attributable error" 2026-08-31, peer-review P1-05: the difference is an
+estimate of excess divergence over the control, not a causal attribution — it is not itself a
+divergence and can be negative). Subtracting a floor measured on a different lane is invalid
+and the validator refuses it (invariant BIAS-006).
 
 **Rule 4 — raw KLD understates differences between good quants.** Because the floor is common
-to both, two strong quants look closer than they are. Ours differ 1.11× raw and 2.52× in
-attributable error. Report both, or report attributable and name the floor.
+to both, two strong quants look closer than they are: ours read 1.11× apart raw, while their
+excess-over-control residuals are 0.002209 vs 0.000878 nats. Report the raw value and the
+excess together and name the floor; never quote a RATIO of two residuals without uncertainty
+(the once-published "2.52×" is withdrawn for exactly that reason).
 
 **Rule 5 — measure the artifact or the serving stack, and say which.** The *checkpoint lane*
 runs a reference `transformers` forward and characterizes the weights (it is bitwise

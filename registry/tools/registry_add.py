@@ -1274,13 +1274,16 @@ def _stream_bias(adapted, lane, is_floor=False, floor_ref=None, floor_value=None
         "is not transferable -- it is a property of the routing, not a constant." % lane)
     floor_sentence = ""
     if floor_ref is not None and floor_value is not None:
-        attributable = adapted["value"] - floor_value
+        excess = adapted["value"] - floor_value
         floor_sentence = (
             " This lane's own measurement floor (%s) is %r nats; netting it out gives an "
-            "estimated quantization-attributable error of %r nats here -- an estimate, not "
-            "an identity, because KL is not additive, and it is only meaningful because both "
-            "terms are small and share the same reference and lane."
-            % (floor_ref, floor_value, attributable))
+            "estimated excess_over_control of %r nats here (called 'quantization-"
+            "attributable error' before 2026-08-31, renamed per peer-review P1-05: the "
+            "difference estimates excess divergence over the same-lane unquantized control "
+            "and is not a causal attribution) -- an estimate, not an identity, because KL "
+            "is not additive, and it is only meaningful because both terms are small and "
+            "share the same reference and lane."
+            % (floor_ref, floor_value, excess))
     if is_floor:
         detail = (
             "THIS ROW IS THE FLOOR for the %r lane: it replays the reference's own "
