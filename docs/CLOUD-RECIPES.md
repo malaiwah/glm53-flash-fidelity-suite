@@ -65,6 +65,25 @@ Prices are what these accounts were actually quoted, and they move.
 | transport | `jl` CLI | SSH | SSH | SSH (`ubuntu@`) |
 | first SSH | — | ~12 s | **~99 s** (image pull) | — |
 
+**The same measurement, priced on each** (turboderp GLM-5.3-Flash-exl3 2.05bpw,
+brandonmusic's 25-window panel, 2 cold runs, streaming lane — the point
+estimate each provider's own plan produced):
+
+| provider | GPU | point | band high | ceiling |
+|---|---|---|---|---|
+| Vast.ai | A100 PCIe $0.575/h | **$2.08** | $2.92 | $3.75 |
+| RunPod | A100-SXM4 $1.59/h | $4.80 | $6.72 | $11.53 |
+| JarvisLabs | H200 spot $1.99/h | $6.80 | $9.52 | $16.33 |
+| Lambda | H100 SXM5 $4.29/h | **$14.46** | $20.24 | $26.05 |
+
+Seven times between the cheapest and the dearest for an identical measurement.
+Lambda's backend here is fully exercised — create with the disk guard, boot in
+164 s, exec with exit-code propagation, upload, download, detached jobs in all
+three states, destroy — but the full measurement was **deliberately not run on
+it**, because $14.46 to re-derive a number two cheaper providers were already
+producing is not a good use of the budget. The backend works; the bill is the
+reason to reach for it only when predictability is worth four times the price.
+
 **Which to use.** Vast is the cheapest by a wide margin and the least
 predictable — it is a marketplace, so you rent one specific person's machine.
 RunPod is the best-behaved API and had high stock on A100-SXM4. JarvisLabs is
