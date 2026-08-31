@@ -158,14 +158,15 @@ def _measure(provider, machine_id: Any, say, *, attempts: int = 4,
     tabulates, and nothing about it says the card was missing. This raises
     instead, naming what the payload said.
 
-    The one error worth retrying is `no cuda`. Lambda reports an instance
-    `active` with an IP, and sshd accepts a connection, several minutes before
-    the driver stack is usable -- a gpu_1x_h100_sxm5 rented on 2026-08-31
-    answered `torch.cuda.is_available() == False` 238 s in and wrote a receipt
-    of zeros for a card that was fine. That is the same lesson as
-    "watch run STATE, not output counts": the API's readiness and the machine's
-    are different claims. Everything else fails at once, because a box that
-    cannot import torch will not learn to.
+    The one error worth retrying is `no cuda`, because it is the one that can
+    be a race: an API can call an instance `active`, and sshd can accept a
+    connection, before the machine has a usable GPU. Three Lambda
+    `gpu_1x_h100_sxm5` rentals on 2026-08-31 answered
+    `torch.cuda.is_available() == False` -- one of them still doing so after
+    four probes across three and a half minutes, so on that type it was not a
+    race at all. Retrying costs a few minutes and distinguishes the two;
+    writing a receipt either way distinguishes nothing. Every other error fails
+    at once, because a box that cannot import torch will not learn to.
     """
     last = ""
     for attempt in range(1, attempts + 1):
@@ -181,8 +182,9 @@ def _measure(provider, machine_id: Any, say, *, attempts: int = 4,
         last = err or "no stream_matrix_ms in %r" % (sorted(doc),)
         if err != "no cuda" or attempt == attempts:
             break
-        say("payload says 'no cuda' (%d/%d) -- the driver stack is not up yet, "
-            "waiting %ds" % (attempt, attempts, int(settle)))
+        say("payload says 'no cuda' (%d/%d) -- torch is there and the GPU is "
+            "not; waiting %ds in case the box is still coming up"
+            % (attempt, attempts, int(settle)))
         time.sleep(settle)
     raise RuntimeError(
         "the benchmark did not measure anything on %s: %s. A receipt of zeros "

@@ -1,6 +1,6 @@
 # Which GPU cloud, and what a measurement actually costs on it
 
-**Snapshot: 2026-08-31 UTC.** Prices and stock move fast; every number below is
+**Snapshot: 2026-08-31 UTC. 32 measured rentals across four providers.** Prices and stock move fast; every number below is
 dated, and every number is derived from a committed benchmark receipt under
 [`reports/provider-bench/`](../reports/provider-bench/) rather than typed into
 prose. Regenerate the tables at any time:
@@ -128,14 +128,14 @@ reason is structural rather than a matter of a few percent.
 
 **1. The ceiling on this lane is a PCIe generation, and it is low.** Measured
 host-to-device bandwidth, warm, grouped by the link `nvidia-smi` reports under
-load, across all 28 rentals:
+load, across all 32 measured rentals:
 
 | link, under load | rentals | h2d, warm |
 |---|---|---|
 | Gen3 x16 | 2 | 12.3 – 12.4 GB/s |
-| Gen4 x16 | 10 | 23.3 – 27.9 GB/s |
-| Gen5 x16 | 14 | 38.3 – 57.7 GB/s |
-| **Gen4 x1** (GH200; the link is not the path) | 2 | **378.6 – 379.4 GB/s** |
+| Gen4 x16 | 11 | 23.3 – 27.9 GB/s |
+| Gen5 x16 | 16 | 38.3 – 57.7 GB/s |
+| **Gen4 x1** (GH200; the link is not the path) | 3 | **378.6 – 403.9 GB/s** |
 
 Ignore the last row for a moment. Everything attached over PCIe spans 12 to 58
 GB/s, and from the A100 80GB PCIe's 26.7 the most any card reaches is 57.7 —
@@ -148,16 +148,16 @@ against Vast's A100 80GB PCIe at $0.581/h requires the dearer card to be as
 many times faster as it is times more expensive. Lambda's H100 SXM5 at $4.29 is
 7.4x the rate and would need to be 7.4x faster; the best H100 SXM measured
 anywhere in this survey is **2.0x** faster. Lambda's cheapest 80 GB card, the
-H100 PCIe at $3.29, measured 0.735 ms — **1.2x** faster than the A100 for 5.7x
-the money, and $0.0244/window against $0.0052. It is not close, and no
-PCIe-attached card at Lambda's price list closes it.
+H100 PCIe at $3.29, measured 0.555 and 0.735 ms — **1.4x** faster than the
+A100 for 5.7x the money, and a median $0.0214/window against $0.0062. It is
+not close, and no PCIe-attached card at Lambda's price list closes it.
 
 **3. And then Lambda wins outright — on the one instance type that is not
 PCIe-attached.** `gpu_1x_gh200`, $2.29/h:
 
 | | A100 80GB PCIe (Vast, $0.581/h) | GH200 (Lambda, $2.29/h) |
 |---|---|---|
-| host→device, warm | 26.7 GB/s | **379.4 GB/s** |
+| host→device, warm | 26.7 GB/s | **379 – 404 GB/s** |
 | per-matrix step | 0.891 ms | **0.098 ms** |
 | min/window (inner loop) | 0.54 | **0.06** |
 | **$/window** | $0.00522 | **$0.00227** |
@@ -167,8 +167,9 @@ subject to the ceiling that decides every other row. Fourteen times the
 bandwidth, nine times faster per matrix, at four times the hourly rate — which
 nets out to **2.3x cheaper per measurement than the best single rental on the
 cheapest marketplace**, and 2.5x cheaper than the best *median* row there, on
-fleet hardware at a stable published price rather than a stranger's PC. Two
-independent rentals measured 0.098 and 0.099 ms, 1% apart.
+fleet hardware at a stable published price rather than a stranger's PC. Three
+independent rentals measured 0.097, 0.098 and 0.099 ms — a 2% spread, against
+2.25x on RunPod's secure H100s.
 
 **So: Lambda stops being the expensive option the moment you stop buying PCIe
 from it.** Every PCIe card on its price list is 5–8x Vast's cost per
@@ -188,44 +189,73 @@ found anywhere, on any provider, at any price.
   property** (`llms.txt`, and §5 of `CLOUD-RECIPES.md`). Reproducing a number
   there is a result worth publishing, not an assumption worth making.
 
-### Postscript: we never got a usable H100 SXM5, and that is itself the finding
+### Postscript: the H100 SXM5, and why we still have no number for it
 
 `gpu_1x_h100_sxm5` — the $4.29/h card the whole question was about — produced
-**zero measurements in seventy minutes of trying** (2026-08-31, 11:23–12:33
-UTC). Three things happened, in this order, and each is a different failure:
+**no measurement at all**, and the reasons are worth more than the number would
+have been. Over 2026-08-31, 11:23–13:59 UTC — **eleven launch attempts, eight
+instances created, one usable GPU** — this happened:
 
-1. **The catalogue said no.** A two-minute poll of
-   `regions_with_capacity_available` for eight single-GPU types found this one
-   available in **0 of 20 polls**, while `gpu_1x_a100_sxm4` was available in
-   20/20 and `gpu_1x_gh200` in 7/20. Raw log:
-   [`lambda-capacity-poll.jsonl`](../reports/provider-bench/lambda-capacity-poll.jsonl).
-2. **When the catalogue said yes, the launch said no.** A 20-second watcher
-   caught three brief windows the two-minute poll missed. The first, 11:36:20
-   UTC, was refused outright: `HTTP 400
+1. **Capacity was thin, and thinnest exactly when we started.** A two-minute
+   poll of `regions_with_capacity_available` for eight single-GPU types ran for
+   2 h 11 m (66 polls). `gpu_1x_h100_sxm5` was available in **0 of the first
+   21** and 15 of the remaining 45 — 15/66 overall — against 66/66 for
+   `gpu_1x_a100_sxm4`, 48/66 for `gpu_1x_h100_pcie`, 47/66 for `gpu_1x_gh200`,
+   and **0/66** for `gpu_1x_b200_sxm6`, which we never got to try at all. Raw
+   log: [`lambda-capacity-poll.jsonl`](../reports/provider-bench/lambda-capacity-poll.jsonl).
+2. **When it said yes, the launch sometimes said no.** A 15-second watcher
+   caught brief windows the two-minute poll missed and fired at each. **Three
+   of eleven** attempts were refused outright: `HTTP 400
    instance-operations/launch/insufficient-capacity`.
-3. **When the launch succeeded, the GPU was not there.** The other two, 12:15
-   and 12:23 UTC, both created an instance in `us-south-3`, both reached
-   `active` with an IP and a working sshd after 238 s and 260 s — and on both,
-   `torch.cuda.is_available()` was **False**. The second was probed four times
-   over three and a half minutes and never came up. Both were destroyed. Both
-   billed at $4.29/h for a card that never appeared.
+3. **Seven of the eight instances that DID launch had no usable GPU.** Each
+   reached `active` with an IP and a working sshd after 238–333 s — and on
+   seven of them, `torch.cuda.is_available()` was **False**.
+   `nvidia-smi` was perfectly happy on them (driver 570.148.08, CUDA 12.8, an
+   H100 80GB HBM3 at 27 °C and 0 % util); the failure is inside CUDA:
 
-That third case is the one worth generalising. **An instance the API calls
-`active`, which accepts an SSH connection, is not yet a machine with a GPU** —
-the same shape as this project's older lesson that a failed run leaves its box
-idle but *running*. `fidelity-bench` now refuses to write a receipt when the
-payload reports `no cuda` or produces no `stream_matrix_ms`, and retries that
-one error four times across three minutes first: a receipt of zeros tabulates
-as a very slow machine, and nothing in it says the card was missing. The first
-of these two rentals wrote exactly such a receipt before that guard existed.
+   ```
+   CUDA initialization: Unexpected error from cudaGetDeviceCount().
+   Error 802: system not yet initialized
+   ```
 
-None of this changes the arithmetic. The verdict above rests on Lambda's H100
-PCIe, which we did rent twice, and which is **cheaper per hour** than the SXM5
-($3.29 vs $4.29). An SXM5 would have to be 1.3x faster than the PCIe part just
-to match its dollars per window — and the PCIe part is already 4x adrift of a
-Vast A100. But it is worth saying plainly: **a rate you cannot rent at is not a
-rate**, and the headline number that made Lambda look expensive turned out to
-be attached to something we could not buy on the day we looked.
+   `torch.cuda.device_count()` returned **1** while `is_available()` returned
+   False. One box was probed every 60 s for six minutes and never recovered,
+   and four others were probed four times across three and a half minutes each,
+   so this is not a slow boot. Capacity for this type appeared only in
+   `us-south-3` and `us-south-2`.
+4. **One in eight was fine.** At 13:04 UTC a single rental of the same type
+   answered `True` on the first probe. So error 802 here is a **per-host
+   condition on this instance type**, not a property of the type — the same
+   shape as every other heterogeneity finding in this document, except that
+   this time it is a fleet rather than a marketplace. It is also not simply a
+   stopped NVSwitch Fabric Manager, the usual cause of 802: on the healthy box
+   `nvidia-fabricmanager` was **inactive and disabled**, `nvidia-smi -q`
+   reported `Fabric State: Completed`, and starting the service failed
+   outright. The evidence, unedited, is in
+   [`exhibits/lambda-h100-sxm5-cuda-802.md`](../reports/provider-bench/exhibits/lambda-h100-sxm5-cuda-802.md).
+
+The healthy one was a diagnostic run, torn down before the pattern was clear. **So this table has no
+H100 SXM5 row, and saying so is the honest outcome**: seven of eight rentals of
+a $4.29/h card could not have run a measurement, and the one that could was a
+diagnostic run already torn down before the pattern was clear. Four further
+attempts after that produced three more 802s and one capacity refusal.
+
+Two things follow that do not depend on the missing number.
+
+**The arithmetic is unaffected.** The verdict above rests on Lambda's H100
+PCIe, rented twice, which is *cheaper per hour* than the SXM5 ($3.29 vs $4.29).
+An SXM5 would have to be 1.3x faster than the PCIe part merely to match its
+dollars per window, and the PCIe part is already 3.4x adrift of a Vast A100.
+Nothing an SXM5 could plausibly measure would change the ranking.
+
+**And the tool changed.** An instance the API calls `active`, which accepts an
+SSH connection, is not yet a machine with a GPU — the same lesson as this
+project's older "watch run STATE, not output counts". `fidelity-bench` now
+refuses to write a receipt when the payload reports `no cuda` or produces no
+`stream_matrix_ms`, retrying that one error four times across three minutes
+first. The first of these rentals wrote a receipt of zeros before that guard
+existed: it tabulated as a very slow machine, and nothing in it said the card
+was missing.
 
 ---
 
@@ -280,10 +310,12 @@ ask `48850759` reported `running` throughout while
 about $0.30 and produced nothing. Teardown fired from `finally` and the
 instance is gone.
 
-**Two rentals came up with no GPU at all.** Both Lambda `gpu_1x_h100_sxm5`
-launches reached `active` with a working sshd and answered
-`torch.cuda.is_available() == False`; see the postscript above. The first wrote
-a receipt of zeros, which is why `fidelity-bench` now refuses to.
+**Seven rentals in eight came up with no usable GPU.** Seven of eight Lambda
+`gpu_1x_h100_sxm5` instances reached `active` with a working sshd and a happy
+`nvidia-smi`, and answered `torch.cuda.is_available() == False` with CUDA error
+802; one was fine. A fleet is not automatically a uniform one. See the
+postscript above. The first of them wrote a receipt of zeros, which is why
+`fidelity-bench` now refuses to.
 
 **And host variance is not a Vast-only phenomenon.** RunPod's *secure* cloud —
 a datacentre product, one flat price — gave 0.513, 1.096, 1.110 and 1.139 ms
@@ -306,9 +338,11 @@ moment a bad machine is still cheap to walk away from.
 ## So which one should a stranger pick?
 
 * **Cheapest per measurement, today: Lambda `gpu_1x_gh200` at $2.29/h.** Nothing
-  else measured comes within 2x, and it is fleet hardware with a fixed price.
-  Check capacity first — Lambda's is thin and its catalogue can promise a type
-  it then refuses to launch.
+  else measured comes within 2x, and it is fleet hardware at a fixed published
+  price, reproducing to 2% across three rentals. Check capacity first — Lambda's
+  is thin (this type was rentable in 47 of 66 two-minute polls), its catalogue
+  can promise a type it then refuses to launch, and its boots are slow: 165–478 s
+  to a usable box against RunPod's 28–67 s.
 * **Cheapest per measurement on PCIe: Vast, an A100 80GB PCIe around
   $0.58/h.** Pass `--gpu` (without it, "cheapest that fits ≥63 GB" once picked a
   CMP 170HX mining card), pass `--min-h2d-gbps`, and expect one rental in
@@ -322,7 +356,9 @@ moment a bad machine is still cheap to walk away from.
   is per-transfer overhead rather than link width. At $3.99 on-demand it is the
   dearest row in the table; at $1.99 spot it halves, and the resumable
   filesystem is worth more than the difference on a long capture.
-* **Lambda for anything PCIe-attached** only when predictability is worth 5x.
+* **Lambda for anything PCIe-attached** only when predictability is worth 5x —
+  and check the box has a GPU before you commit hours to it, which
+  `bin/fidelity-bench` and `measure-cloud --min-h2d-gbps` both now do.
 
 ---
 
