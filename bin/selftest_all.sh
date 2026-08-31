@@ -58,6 +58,7 @@ t "race mode: overlap, preview identity, generation probe (T15)" \
                                            0 "$VPY" bin/selftest_race_mode.py
 t "provider portability (T5d)"             0 python3 bin/selftest_provider_portability.py
 t "fp8 -> bf16 losslessness (T5e)"         0 python3 bin/selftest_fp8_lossless.py
+t "canonical_json: bin == registry (T5f)"  0 python3 bin/selftest_canonical_json.py
 # T13. The GGUF lane end to end: shelf -> plan -> argv -> fetch -> receipt. The
 # adapter, the scorer, the aggregator and the registry adapter all existed and
 # NONE of it was reachable, because no lane classified a llama.cpp container as
