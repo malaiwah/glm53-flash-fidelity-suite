@@ -477,8 +477,28 @@ def m_non_canonical_line(C):
     return None  # handled specially below
 
 
+def m_remote_code_without_remote_digest(C):
+    """A remote_code disclosure beside a harness that digests only the suite's own
+    closure. RC-001's tightened form: the disclosure and the digests must corroborate
+    each other -- the modeling .py files the disclosure warns about must appear in
+    code_digests with role=remote_model_code, or 'we hashed what ran' is false for
+    exactly the code that makes the row need the disclosure."""
+    a = C["measurements"]["measurement--glm53.k6-6bpw-stream.brandonmusic-final25"]
+    assert (a.get("harness") or {}).get("recorded"), "fixture row must have a recorded harness"
+    assert not any(d.get("role") == "remote_model_code"
+                   for d in a["harness"]["code_digests"])
+    a.setdefault("disclosures", []).append({
+        "code": "remote_code",
+        "detail": "executed repository-shipped modeling code (trust_remote_code)",
+        "severity": "caveat",
+        "affects_comparability": True,
+    })
+    return "RC-001", "a remote_code disclosure must be corroborated by a remote_model_code digest"
+
+
 MUTATIONS = [
     ("forged-comparability-key", m_forge_key),
+    ("remote-code-without-remote-digest", m_remote_code_without_remote_digest),
     ("forged-key-inputs", m_forge_key_inputs),
     ("determinism-from-receipt-hash", m_determinism_from_receipt_hash),
     ("determinism-single-run", m_determinism_single_run),

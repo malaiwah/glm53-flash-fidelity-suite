@@ -421,7 +421,7 @@
     {
       "id": "RC-001",
       "severity": "error",
-      "statement": "A measurement produced by executing repository-shipped modeling code (trust_remote_code) carries a remote_code disclosure with affects_comparability, AND a RECORDED harness -- the executed .py files are revision-pinned and content-digested exactly like the suite's own estimator closure. Policy (approved 2026-09-01): revision-pinned, every shipped .py digested into harness.code_digests, HF token absent from the capture environment, disclosure on every resulting row. A remote_code row with an unrecorded harness is refused: 'we ran code we did not hash' is precisely the claim this registry exists to make impossible."
+      "statement": "A measurement produced by executing repository-shipped modeling code (trust_remote_code) carries a remote_code disclosure with affects_comparability, AND a RECORDED harness -- the executed .py files are revision-pinned and content-digested exactly like the suite's own estimator closure. Policy (approved 2026-09-01): revision-pinned, every shipped .py digested into harness.code_digests, HF token absent from the capture environment, disclosure on every resulting row. A remote_code row with an unrecorded harness is refused: 'we ran code we did not hash' is precisely the claim this registry exists to make impossible. Tightened 2026-08-31 (peer-review follow-up): a RECORDED harness alone does not corroborate the disclosure -- the row's harness.code_digests[] must contain at least one entry with role=remote_model_code, digesting the repository-shipped .py files the disclosure warns about. A harness that hashes only the suite's own closure beside a remote_code disclosure is refused: 'we hashed what ran' must be true for exactly the code that makes the row need the disclosure."
     },
     {
       "id": "SCOPE-001",
@@ -607,6 +607,7 @@
     "estimator_overridden",
     "estimator_scope_narrower_than_artifact",
     "estimator_unknown",
+    "fp32_vocab_reduction",
     "harness_unrecorded",
     "head_substituted",
     "interval_recomputed",

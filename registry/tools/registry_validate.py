@@ -1001,12 +1001,25 @@ def check_references(C, rep):
                 m, "different_reference_kind", affects=True):
             rep.err("REFC-001", "%s measures against a dequantized reference without a "
                                 "different_reference_kind disclosure" % mid, mid)
-        if L.has_disclosure(m, "remote_code", affects=None) and not (
-                (m.get("harness") or {}).get("recorded")):
-            rep.err("RC-001", "%s was measured by executing repository-shipped "
-                              "modeling code but carries no RECORDED harness: the "
-                              "executed .py files must be revision-pinned and "
-                              "content-digested like the suite's own closure" % mid, mid)
+        if L.has_disclosure(m, "remote_code", affects=None):
+            harness = m.get("harness") or {}
+            if not harness.get("recorded"):
+                rep.err("RC-001", "%s was measured by executing repository-shipped "
+                                  "modeling code but carries no RECORDED harness: the "
+                                  "executed .py files must be revision-pinned and "
+                                  "content-digested like the suite's own closure" % mid, mid)
+            # A recorded harness that digests only the suite's own closure does
+            # not corroborate the disclosure: the code the disclosure warns
+            # about is exactly the code that must appear in the digest set. The
+            # disclosure and the digests must corroborate each other, not
+            # merely coexist (peer-review follow-up on RC-001).
+            elif not any(d.get("role") == "remote_model_code"
+                         for d in harness.get("code_digests") or []):
+                rep.err("RC-001", "%s carries a remote_code disclosure but its recorded "
+                                  "harness digests no code_digests[] entry with "
+                                  "role=remote_model_code: the repository-shipped .py "
+                                  "files that actually ran are absent from the very "
+                                  "record that claims to have hashed what ran" % mid, mid)
         if r.get("reference_kind") == "quantized_proxy":
             # No row against a designated proxy may read as a floor. The
             # comparability key already binds reference_id, so these rows can
@@ -1463,10 +1476,20 @@ def check_submission(root, path):
     peers = [m for m in registry["measurements"].values()
              if (m.get("comparability") or {}).get("key") == row["comparability"]["key"]
              and m["id"] != row["id"]]
-    print("  comparable to            %d existing row(s)%s"
-          % (len(peers), ":" if peers else " -- it would be the only member of its group"))
-    for pmid in sorted(peers, key=lambda x: x["metric"]["value"] or 0):
-        print("     %-64s %r" % (pmid["id"], pmid["metric"]["value"]))
+    # Field evidence: this print once listed eleven same-key rows flatly as
+    # "comparable", mixed lanes included. Same key = same partition, not a
+    # ranking license; each peer gets the full predicate verdict (P1-01).
+    import registry_predicate as RP
+    registry["measurements"][row["id"]] = row
+    try:
+        print("  same comparability key   %d existing row(s)%s"
+              % (len(peers), ":" if peers else " -- it would be the only member of its group"))
+        for pmid in sorted(peers, key=lambda x: x["metric"]["value"] or 0):
+            verdict = RP.pair_label(RP.pair_predicate(registry, row["id"], pmid["id"]))
+            print("     %-64s %r" % (pmid["id"], pmid["metric"]["value"]))
+            print("        %s" % verdict)
+    finally:
+        del registry["measurements"][row["id"]]
     for rec in new:
         print("  + would create           %s" % rec["id"])
     return 0
@@ -1582,9 +1605,13 @@ def summarize(C, groups, generated_path):
                   "| panel | `%s` |" % m["panel_ref"],
                   "| reference | `%s` |" % m["reference_ref"], ""]
         if peers:
-            lines += ["It shares a comparability key with, and may therefore be ranked against:", ""]
+            import registry_predicate as RP
+            lines += ["It shares a comparability key with (same key = candidates, not a ranking "
+                      "license -- each peer's like-for-like verdict follows):", ""]
             for p in peers:
-                lines.append("- `%s` -- %r" % (p["id"], p["metric"]["value"]))
+                lines.append("- `%s` -- %r -- %s"
+                             % (p["id"], p["metric"]["value"],
+                                RP.pair_label(RP.pair_predicate(C, mid, p["id"]))))
         else:
             lines.append("It is the only member of its comparability group: there is nothing in the "
                          "registry it can be ranked against. That is a fact about the protocol, not "
@@ -1625,9 +1652,11 @@ def explain(C, a_id, b_id):
             print("  %-19s %s" % (f, ki[f]))
         peers = [m for m in C["measurements"].values()
                  if m["comparability"]["key"] == A["comparability"]["key"] and m["id"] != a_id]
-        print("  comparable to %d other row(s):" % len(peers))
+        import registry_predicate as RP
+        print("  same comparability key, %d other row(s):" % len(peers))
         for p in sorted(peers, key=lambda x: x["metric"]["value"] if x["metric"]["value"] is not None else 0):
             print("    %-70s %r" % (p["id"], p["metric"]["value"]))
+            print("       %s" % RP.pair_label(RP.pair_predicate(C, a_id, p["id"])))
         return 0
     B = C["measurements"].get(b_id)
     if not B:
@@ -1636,7 +1665,12 @@ def explain(C, a_id, b_id):
     ka, kb = A["comparability"]["key_inputs"], B["comparability"]["key_inputs"]
     diff = [f for f in L.COMPARABILITY_KEY_FIELDS if ka[f] != kb[f]]
     if not diff:
-        print("COMPARABLE. Both rows share comparability key %s." % A["comparability"]["key"])
+        import registry_predicate as RP
+        pred = RP.pair_predicate(C, a_id, b_id)
+        print("SAME COMPARABILITY KEY (%s). Like-for-like predicate: %s."
+              % (A["comparability"]["key"], pred["comparable"]))
+        for reason in pred["reasons"]:
+            print("  %s" % reason)
         print("  %-70s %r" % (a_id, A["metric"]["value"]))
         print("  %-70s %r" % (b_id, B["metric"]["value"]))
         for row, other in ((A, B), (B, A)):

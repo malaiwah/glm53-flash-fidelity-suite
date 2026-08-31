@@ -199,3 +199,28 @@ def group_predicate(C, member_ids):
 def registry_predicates(C, groups):
     """{key: predicate} over {key: [measurement ids]}."""
     return {key: group_predicate(C, members) for key, members in groups.items()}
+
+
+def pair_predicate(C, a_id, b_id):
+    """The predicate over exactly two rows -- what submit-time and --explain print.
+
+    A synthetic row not yet in C["measurements"] may be passed by inserting it
+    first; this function only reads.
+    """
+    return group_predicate(C, [a_id, b_id])
+
+
+def pair_label(pred):
+    """One-line verdict for a peer listing. Field evidence: bin/registry-submit
+    once printed eleven same-key rows flatly as "comparable", mixed lanes
+    included, directly contradicting the README's promise that lanes are tabled
+    apart. The first thing a contributor sees must apply the full predicate."""
+    if pred["comparable"] == "true":
+        return "comparable (like-for-like: lane, pipeline, scope, hardware match)"
+    dims_failed = sorted(d for d, v in pred["secondary"].items() if v["status"] == "fail")
+    dims_unknown = sorted(d for d, v in pred["secondary"].items() if v["status"] == "unknown")
+    if pred["comparable"] == "false":
+        return ("same-key-but-%s-differ%s (NOT rankable without a measured bridge)"
+                % ("/".join(dims_failed), "s" if len(dims_failed) == 1 else ""))
+    return ("same key; %s unrecorded -- like-for-like not certified"
+            % "/".join(dims_unknown))
