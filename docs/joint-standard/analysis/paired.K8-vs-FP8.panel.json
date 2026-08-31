@@ -16,8 +16,74 @@
     0.5165808904085457,
     0.6874500782316917
   ],
+  "contract_a": {
+    "estimator": null,
+    "lane": "streaming / same_stack",
+    "reference": null,
+    "scope": null,
+    "series": "K8 streaming (2-run)",
+    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k8-streaming.json"
+  },
+  "contract_b": {
+    "estimator": null,
+    "lane": "cross_stack replay",
+    "reference": null,
+    "scope": null,
+    "series": "official FP8 (cross-stack)",
+    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/fp8-crossstack.json"
+  },
+  "cross_lane": {
+    "bridge": "no measured bridge exists between the checkpoint lanes and the cross-stack replay lane; the cross-stack side carries its own measured floor (0.012712 nats, printed as context, never subtracted across lanes -- BIAS-006). Descriptive contrast of the mixed design only.",
+    "lane_a": "streaming / same_stack",
+    "lane_b": "cross_stack replay",
+    "mixed": true,
+    "note": "this contrast crosses measurement lanes; the bridge is context, not a correction, and every statistic here describes the mixed design"
+  },
+  "document_level": {
+    "ci95_diff_t": [
+      -0.012520566061415434,
+      -0.00394400550125088
+    ],
+    "df": 3,
+    "documents_a_better": 4,
+    "documents_b_better": 0,
+    "documents_tied": 0,
+    "mean_diff_equal_documents": -0.008232285781333157,
+    "n_documents": 4,
+    "note": "the panel's windows derive from 4 source documents; the document is the independent sampling unit, and this block is the inferential statement. Window-level intervals and sign tests above it are DESCRIPTIVE of this fixed panel only.",
+    "per_document": [
+      {
+        "document_id": "reap-recall-packed-axis1_general-4",
+        "mean_diff": -0.008201729172532408,
+        "n_windows": 7
+      },
+      {
+        "document_id": "reap-recall-packed-axis2_legal-2",
+        "mean_diff": -0.010588610166582644,
+        "n_windows": 6
+      },
+      {
+        "document_id": "reap-recall-packed-axis3_code_agentic-3",
+        "mean_diff": -0.009670421591421481,
+        "n_windows": 6
+      },
+      {
+        "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
+        "mean_diff": -0.004468382194796096,
+        "n_windows": 6
+      }
+    ],
+    "se_equal_documents": 0.00134747922469661,
+    "sign_test_n": 4,
+    "sign_test_p": 0.125,
+    "t_critical": 3.1824463052837046,
+    "t_interval_note": "equal-document-weight Student-t; at 4 documents this is illustrative, not calibrated -- a domain-population interval is not estimable from one document per domain",
+    "unit": "source_document"
+  },
+  "document_map_source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/window-selection.brandonmusic-final25.json",
   "emitted_by": "bin/joint_standard.py",
   "excludes_zero": true,
+  "inference_unit": "source_document",
   "label_a": "K8",
   "label_b": "FP8",
   "mcnemar": {
@@ -37,10 +103,14 @@
   "ratio_a_over_b": 0.6007294743393338,
   "schema": "malaiwah.glm53-joint-standard-paired.v1",
   "scope": "panel",
+  "scope_complete": true,
   "seed": 20260829,
+  "sign_test_n": 25,
+  "sign_test_note": null,
   "sign_test_p": 5.960464477539063e-08,
   "source_a": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k8-streaming.json",
   "source_b": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/fp8-crossstack.json",
+  "window_stats_are": "descriptive of this fixed panel only: 25 windows derive from 4 source document(s), so window-level bootstrap intervals and the window-level sign test treat pseudoreplicates as independent evidence (P1-15). The inferential statement is document_level.",
   "windows": [
     "final-0000",
     "final-0001",
@@ -69,5 +139,8 @@
     "final-0024"
   ],
   "windows_a_better": 25,
-  "windows_b_better": 0
+  "windows_b_better": 0,
+  "windows_dropped_a": [],
+  "windows_dropped_b": [],
+  "windows_tied": 0
 }

@@ -16,8 +16,69 @@
     1.7259761757388528,
     2.73184925171125
   ],
+  "contract_a": {
+    "estimator": null,
+    "lane": "his k4-tp2 / same_stack",
+    "reference": null,
+    "scope": null,
+    "series": "brandonmusic 4bpw (k4)",
+    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/brandonmusic-4bpw.json"
+  },
+  "contract_b": {
+    "estimator": null,
+    "lane": "sealed-ep8 / same_stack",
+    "reference": null,
+    "scope": null,
+    "series": "K6 sealed (5-run)",
+    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k6-sealed.json"
+  },
+  "cross_lane": {
+    "bridge": "no measured bridge between brandonmusic's k4-tp2 runtime and the sealed-ep8 lane. Panel and teacher identity are byte-verified (his receipt's token_panel_receipt_sha256 and teacher_receipt_sha256 are identical to ours); his lane's FP8 runs show non-zero run spread, and no cross-runtime offset has been measured. Descriptive contrast of the mixed design only; the registry row is advisory.",
+    "lane_a": "his k4-tp2 / same_stack",
+    "lane_b": "sealed-ep8 / same_stack",
+    "mixed": true,
+    "note": "this contrast crosses measurement lanes; the bridge is context, not a correction, and every statistic here describes the mixed design"
+  },
+  "document_level": {
+    "ci95_diff_t": [
+      0.002603964093205159,
+      0.022906299689618485
+    ],
+    "df": 2,
+    "documents_a_better": 0,
+    "documents_b_better": 3,
+    "documents_tied": 0,
+    "mean_diff_equal_documents": 0.012755131891411822,
+    "n_documents": 3,
+    "note": "the panel's windows derive from 3 source documents; the document is the independent sampling unit, and this block is the inferential statement. Window-level intervals and sign tests above it are DESCRIPTIVE of this fixed panel only.",
+    "per_document": [
+      {
+        "document_id": "reap-recall-packed-axis1_general-4",
+        "mean_diff": 0.017144691653228624,
+        "n_windows": 7
+      },
+      {
+        "document_id": "reap-recall-packed-axis2_legal-2",
+        "mean_diff": 0.0120595009368096,
+        "n_windows": 5
+      },
+      {
+        "document_id": "reap-recall-packed-axis3_code_agentic-3",
+        "mean_diff": 0.009061203084197242,
+        "n_windows": 5
+      }
+    ],
+    "se_equal_documents": 0.0023592812238876102,
+    "sign_test_n": 3,
+    "sign_test_p": 0.25,
+    "t_critical": 4.302652729749456,
+    "t_interval_note": "equal-document-weight Student-t; at 3 documents this is illustrative, not calibrated -- a domain-population interval is not estimable from one document per domain",
+    "unit": "source_document"
+  },
+  "document_map_source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/window-selection.brandonmusic-final25.json",
   "emitted_by": "bin/joint_standard.py",
   "excludes_zero": true,
+  "inference_unit": "source_document",
   "label_a": "BM4bpw",
   "label_b": "K6",
   "mcnemar": {
@@ -37,10 +98,14 @@
   "ratio_a_over_b": 2.1365269522291004,
   "schema": "malaiwah.glm53-joint-standard-paired.v1",
   "scope": "selected",
+  "scope_complete": true,
   "seed": 20260829,
+  "sign_test_n": 17,
+  "sign_test_note": null,
   "sign_test_p": 1.52587890625e-05,
   "source_a": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/brandonmusic-4bpw.json",
   "source_b": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k6-sealed.json",
+  "window_stats_are": "descriptive of this fixed panel only: 17 windows derive from 3 source document(s), so window-level bootstrap intervals and the window-level sign test treat pseudoreplicates as independent evidence (P1-15). The inferential statement is document_level.",
   "windows": [
     "final-0000",
     "final-0001",
@@ -61,5 +126,8 @@
     "final-0024"
   ],
   "windows_a_better": 0,
-  "windows_b_better": 17
+  "windows_b_better": 17,
+  "windows_dropped_a": [],
+  "windows_dropped_b": [],
+  "windows_tied": 0
 }

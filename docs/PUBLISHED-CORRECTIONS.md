@@ -539,6 +539,75 @@ overwriting these.
 
 ---
 
+## 7. K6/K8 paired inference on the Brandon panel — the independent unit is the source document (P1-15 + P1-16)
+
+**Published 2026-08-31.** This changes the INTERPRETATION of published
+statistics, not any measured value. Independent peer review, verified by
+recomputation from the committed per-window series before anything was changed.
+
+### What was wrong
+
+Two defects, one confounded pair of receipts:
+
+1. **Pseudoreplication (P1-15).** The sealed 25-window panel derives from
+   **four source documents** — one per axis, 7/6/6/6 windows
+   (`registry/protocol/window-selection.brandonmusic-final25.json`,
+   `per_window[].document_id`); clean17 holds three (7/5/5). The published
+   paired K6−K8 analysis resampled and sign-tested **windows** as exchangeable
+   units: mean diff 0.001339, BCa [+0.000695, +0.002330], sign test
+   **p = 0.004077** (clean17: 0.000848, [+0.000153, +0.001573], **p = 0.0490**).
+   Windows cut from one document share its topic, style and register; splitting
+   the same four documents into more windows shrinks that interval without
+   adding independent textual evidence. At the document level the exact
+   two-sided sign test is **p = 0.125** (4 of 4 positive) and **0.25**
+   (3 of 3); an equal-document t interval is [+0.000049, +0.002710] full and
+   [−0.000256, +0.002078] clean17.
+2. **Mixed-lane pairing (P1-16).** The published K6−K8 receipts paired the
+   **sealed** K6 series against the **streaming** K8 series, and the loader
+   (`bin/joint_standard.py cmd_paired`) reduced each input to `{window: mean}`,
+   discarding lane and every other contract field. Of the five published
+   pairings only FP8-vs-BF16floor was same-lane.
+
+### What changed
+
+* Every `docs/joint-standard/analysis/paired.*.json` regenerated (same seeds,
+  same B; every previously published number reproduces bit-for-bit) with:
+  `document_level` — per-document means, exact document sign test, equal-document
+  t interval, and the statement that it is the only inferential block;
+  `window_stats_are` — the window-level statistics relabelled descriptive of
+  this fixed panel; `contract_a`/`contract_b`/`cross_lane` — each side's lane,
+  recorded, with the K6−K8 receipt carrying the measured streaming↔sealed
+  bridge verbatim.
+* `bin/joint_standard.py paired` now **refuses a mixed-lane contrast** without
+  an explicit `--bridge` statement, and refuses recorded reference/estimator
+  mismatches outright. `--document-map` carries window→document provenance;
+  without it a receipt labels itself descriptive-only.
+* New same-lane receipt `paired.K6stream-vs-K8.*`: mean diff **0.001331** full
+  / **0.000847** clean17 — the ordering is lane-robust.
+* `docs/PROTOCOL-ALIGNMENT.md` §4.4 carries the correction banner; the K6/K8
+  model cards are regenerated with the same relabelling.
+
+### What survives, and what is withdrawn
+
+**Survives:** the K6/K8 panel means themselves (bitwise-evidenced, untouched);
+the K8-better-than-K6 ordering *on this panel* — all four document means
+positive, same-lane recompute preserves it; every per-window array and BCa
+endpoint as a **description of these exact windows**.
+
+**Withdrawn:** the reading of window-level sign-test p-values (0.0041 / 0.049)
+and BCa intervals as population inference; any implication that the 25-window
+panel supplies 25 independent observations. A population claim about these two
+quantizers awaits a panel with many independent source documents per domain.
+
+### What did NOT change
+
+No `metric.value`, no registry row, no receipt digest of any measurement. The
+pre-correction paired receipts are superseded in place by regeneration; their
+statistical fields are bit-identical, so any third party who pinned a number
+still finds it — under a label that now says what it is.
+
+---
+
 ## Not published, deliberately
 
 Nothing from `docs/REVIEW-DEFERRED.md` is now held back for an operator decision on

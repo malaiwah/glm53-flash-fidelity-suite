@@ -27,6 +27,7 @@ import json
 import math
 import os
 import statistics
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -604,6 +605,83 @@ def t_paired() -> None:
 
 
 # ======================================================================== 6
+def t_paired_provenance() -> None:
+    section("6b. PAIRED INFERENCE CARRIES ITS PROVENANCE (P1-15 / P1-16)")
+    # ---- P1-15: the document, not the window, is the independent unit -------
+    # 8 windows from 4 documents, every window in B's favour: the window-level
+    # sign test sees n=8 (p=0.0078), the document-level test sees n=4 and must
+    # say p=0.125 -- all four documents agree, and that is still only four
+    # independent observations. Pre-fix, paired_windows had no document_level
+    # at all and the 0.0078 was the only number a reader got.
+    docs = {"w%02d" % i: "doc%d" % (i % 4) for i in range(8)}
+    a = {w: 0.010 + 0.001 * i for i, w in enumerate(sorted(docs))}
+    b = {w: v - 0.0005 for w, v in a.items()}
+    r = stats_mod.paired_windows(a, b, "A", "B", boot_b=200, seed=20260829,
+                                 documents=docs)
+    dl = r.get("document_level") or {}
+    if (dl.get("n_documents") == 4 and dl.get("documents_b_better") == 4
+            and dl.get("sign_test_p") is not None
+            and abs(dl["sign_test_p"] - 0.125) < 1e-12
+            and r.get("inference_unit") == "source_document"
+            and "pseudoreplicates" in (r.get("window_stats_are") or "")):
+        ok("P1-15: document-level sign test is the inferential statement",
+           "4 docs all one way -> p=0.125 (window-level n=8 would say %.4f)"
+           % r["sign_test_p"])
+    else:
+        bad("P1-15: document_level", json.dumps(dl)[:200])
+    # without a document map the receipt must label itself descriptive
+    r2 = stats_mod.paired_windows(a, b, "A", "B", boot_b=200, seed=20260829)
+    if ((r2.get("document_level") or {}).get("available") is False
+            and r2.get("inference_unit") == "none"):
+        ok("P1-15: no document map -> descriptive-only, said out loud",
+           "document_level.available=False")
+    else:
+        bad("P1-15: no document map", json.dumps(r2.get("document_level"))[:150])
+
+    # ---- P1-16: a mixed-lane contrast refuses without an explicit bridge ----
+    cli = os.path.join(ROOT, "bin", "joint_standard.py")
+    per6 = os.path.join(ROOT, "registry/protocol/per-window/k6-sealed.json")
+    per8 = os.path.join(ROOT, "registry/protocol/per-window/k8-streaming.json")
+    per6s = os.path.join(ROOT, "registry/protocol/per-window/k6-streaming.json")
+    wsel = os.path.join(ROOT, "registry/protocol/window-selection.brandonmusic-final25.json")
+    tmp = tempfile.mkdtemp(prefix="js-lane-")
+
+    def run(argv):
+        r = subprocess.run([sys.executable, cli] + argv, capture_output=True, text=True)
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+    out = os.path.join(tmp, "p.json")
+    rc, msg = run(["paired", "--a", per6, "--b", per8, "--label-a", "K6",
+                   "--label-b", "K8", "--bootstrap-b", "100", "--out", out])
+    if rc == 3 and "mixed-lane" in msg and not os.path.exists(out):
+        ok("P1-16: sealed-vs-streaming refuses without --bridge",
+           "exit 3 (pre-fix: exit 0 and a receipt with no lane field at all)")
+    else:
+        bad("P1-16: mixed-lane refusal", "rc=%d msg=%s" % (rc, msg[:120]))
+    rc, msg = run(["paired", "--a", per6, "--b", per8, "--label-a", "K6",
+                   "--label-b", "K8", "--bootstrap-b", "100", "--out", out,
+                   "--bridge", "measured K6 streaming<->sealed bridge, -8.4958e-06",
+                   "--document-map", wsel])
+    d = json.load(open(out)) if rc == 0 and os.path.exists(out) else {}
+    if (rc == 0 and (d.get("cross_lane") or {}).get("mixed") is True
+            and (d.get("cross_lane") or {}).get("bridge")
+            and (d.get("contract_a") or {}).get("lane")
+            and (d.get("document_level") or {}).get("n_documents") == 4):
+        ok("P1-16: --bridge unlocks emission and the receipt carries the mix",
+           "cross_lane.mixed=true, bridge verbatim, contracts recorded")
+    else:
+        bad("P1-16: bridged emission", "rc=%d keys=%s" % (rc, sorted(d)[:8]))
+    out2 = os.path.join(tmp, "q.json")
+    rc, msg = run(["paired", "--a", per6s, "--b", per8, "--label-a", "K6stream",
+                   "--label-b", "K8", "--bootstrap-b", "100", "--out", out2])
+    d2 = json.load(open(out2)) if rc == 0 and os.path.exists(out2) else {}
+    if rc == 0 and (d2.get("cross_lane") or {}).get("mixed") is False:
+        ok("P1-16: a same-lane pair needs no bridge", "streaming vs streaming, exit 0")
+    else:
+        bad("P1-16: same-lane pair", "rc=%d" % rc)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def t_sigma_run() -> None:
     section("6. sigma_run AND SE IN QUADRATURE -- HIS PUBLISHED SWEEPS")
     fix = load_fixture()
@@ -960,9 +1038,14 @@ def t_cli() -> None:
                                  "--scope", "selected", "--bootstrap-b", "400",
                                  "--domain-bootstrap-b", "200"]))
     if os.path.exists(per) and os.path.exists(per8):
+        # sealed K6 vs streaming K8 is a MIXED-LANE contrast: since P1-16 it
+        # refuses without an explicit --bridge (t_paired_provenance proves the
+        # refusal; here we prove the stamped emission still works through it).
         runs.append(("paired", ["paired", "--a", per, "--b", per8,
                                 "--label-a", "K6", "--label-b", "K8",
                                 "--scope-file", SELECTION, "--scope", "selected",
+                                "--bridge", "measured K6 streaming<->sealed bridge",
+                                "--document-map", SELECTION,
                                 "--bootstrap-b", "400"]))
     for name, argv in runs:
         out = os.path.join(tmp, name + ".json")
@@ -1284,7 +1367,7 @@ def main() -> int:
         "AVAILABLE " + json.dumps(st.get("modules", {})) if st["available"]
         else "not importable", "" if st["available"] else " -- %s" % st["reason"]))
     for fn in (t_protocol, t_chi2_and_mcnemar, t_stats_refusals, t_clustered_se, t_bootstrap,
-               t_paired, t_sigma_run, t_percentile_guard, t_ngram, t_canary,
+               t_paired, t_paired_provenance, t_sigma_run, t_percentile_guard, t_ngram, t_canary,
                t_cli, t_cli_refusals, t_registry_joint_check, t_no_network):
         fn()
     print()

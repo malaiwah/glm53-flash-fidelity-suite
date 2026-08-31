@@ -334,7 +334,23 @@ structurally impossible rather than merely discouraged.
 
 ### 4.4 Do the conclusions survive?
 
-Paired per-window comparisons, BCa on the differences, on both scopes:
+> **Correction, 2026-08-31 (P1-15/P1-16, peer review).** The table below is
+> **descriptive of this fixed panel**, not population inference. The panel's 25
+> windows derive from **four source documents** (7/6/6/6; clean17: three,
+> 7/5/5), so the window-level sign tests and BCa intervals treat
+> pseudoreplicates as independent evidence. At the actual independent unit —
+> the source document — the K6−K8 contrast reads: all four document means
+> positive (all three on clean17), exact sign test **p = 0.125** (full) /
+> **0.25** (clean17). The ordering **survives**; the window-level p-values
+> 0.0041 / 0.049 are **withdrawn as inferential statements** and stay below
+> only as descriptions of these exact windows. The K6−K8 row also mixes the
+> sealed K6 with the streaming K8 (P1-16); the same-lane recompute
+> (`paired.K6stream-vs-K8`) gives 0.001331 / 0.000847 with the same ordering.
+> Receipts: `docs/joint-standard/analysis/paired.*.json`, each carrying a
+> `document_level` block; correction logged in `PUBLISHED-CORRECTIONS.md` §4.
+
+Paired per-window comparisons, BCa on the differences, on both scopes —
+**descriptive of this panel; the inferential unit is the document (above)**:
 
 | comparison | scope | mean A | mean B | ratio | 95 % CI of A−B (BCa) | A better in | sign p |
 |---|---|---|---|---|---|---|---|
@@ -345,11 +361,14 @@ Paired per-window comparisons, BCa on the differences, on both scopes:
 | K8 − FP8 | clean17 | 0.010829420 | 0.018665327 | 0.580 | [−0.011966, −0.005493] | 17/17 | 1.5e-05 |
 | his 4bpw − K6 | clean17 | 0.024948837 | 0.011677286 | 2.137 | [+0.008430, +0.028684] | 0/17 | 1.5e-05 |
 
-- **K8 better than K6 SURVIVES, weakened.** The paired BCa still excludes zero on
-  the clean scope, but the interval lower bound falls from +0.000695 to +0.000153
-  and the sign test goes from p = 0.0041 to p = 0.049 — right at the edge. The
-  headline gap shrinks by about a third. We will not restate "K8 is better than
-  K6" without the scope attached.
+- **K8 better than K6 SURVIVES as a description of this panel, weakened on the
+  clean scope.** The paired BCa still excludes zero on the clean scope, but the
+  interval lower bound falls from +0.000695 to +0.000153, and the headline gap
+  shrinks by about a third. As *inference beyond this panel* the evidence is
+  four (three) source documents, all favouring K8: sign test p = 0.125 (0.25).
+  We will not restate "K8 is better than K6" without the scope attached, and
+  not as a population claim at all until the panel has many independent source
+  documents per domain.
 - **K6 better than FP8 STRENGTHENS.** 17/17 windows on the clean scope, ratio
   0.666 → 0.626.
 - Note the two marginal CIs for K6 and K8 overlap almost completely on both

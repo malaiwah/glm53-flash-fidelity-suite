@@ -1,28 +1,28 @@
 {
   "backend": "numpy",
-  "bca_acceleration": 0.0196741291039157,
+  "bca_acceleration": 0.020866155581742905,
   "bca_excludes_zero": true,
-  "bca_z0": -0.016293804724859258,
+  "bca_z0": -0.012533469508069274,
   "bootstrap_b": 2000,
   "ci95_diff_bca": [
-    0.00015263386794256493,
-    0.0015726736943635375
+    0.00016901716194097602,
+    0.0015555786409235926
   ],
   "ci95_diff_percentile": [
-    0.00014080495453142413,
-    0.001543381354877994
+    0.00016016351902662637,
+    0.0015324173572937522
   ],
   "ci95_ratio_percentile": [
-    1.01302086874327,
-    1.1459499730414509
+    1.0142418470620367,
+    1.145647790511187
   ],
   "contract_a": {
     "estimator": null,
-    "lane": "sealed-ep8 / same_stack",
+    "lane": "streaming / same_stack",
     "reference": null,
     "scope": null,
-    "series": "K6 sealed (5-run)",
-    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k6-sealed.json"
+    "series": "K6 streaming (2-run)",
+    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k6-streaming.json"
   },
   "contract_b": {
     "estimator": null,
@@ -33,42 +33,40 @@
     "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k8-streaming.json"
   },
   "cross_lane": {
-    "bridge": "measured streaming<->sealed bridge for K6 on this exact panel, recorded on pipeline--malaiwah.glm53-stream-packed-kld: signed delta -8.4958e-06 nats on the panel mean, worst single window 2.8735e-04, tokenwise KL array does NOT match the sealed run (publishable_as_reproduction=false). K8 has no sealed-lane sibling, so its lane offset is direction-unknown. The same-lane contrast is published beside this one as paired.K6stream-vs-K8.",
-    "lane_a": "sealed-ep8 / same_stack",
+    "lane_a": "streaming / same_stack",
     "lane_b": "streaming / same_stack",
-    "mixed": true,
-    "note": "this contrast crosses measurement lanes; the bridge is context, not a correction, and every statistic here describes the mixed design"
+    "mixed": false
   },
   "document_level": {
     "ci95_diff_t": [
-      -0.00025574816229383894,
-      0.002078203301250704
+      -0.00019782256691193401,
+      0.0020116980146760695
     ],
     "df": 2,
     "documents_a_better": 0,
     "documents_b_better": 3,
     "documents_tied": 0,
-    "mean_diff_equal_documents": 0.0009112275694784325,
+    "mean_diff_equal_documents": 0.0009069377238820677,
     "n_documents": 3,
     "note": "the panel's windows derive from 3 source documents; the document is the independent sampling unit, and this block is the inferential statement. Window-level intervals and sign tests above it are DESCRIPTIVE of this fixed panel only.",
     "per_document": [
       {
         "document_id": "reap-recall-packed-axis1_general-4",
-        "mean_diff": 0.00037265846881736573,
+        "mean_diff": 0.0003938360736263419,
         "n_windows": 7
       },
       {
         "document_id": "reap-recall-packed-axis2_legal-2",
-        "mean_diff": 0.0011244564515612804,
+        "mean_diff": 0.0011454298469900065,
         "n_windows": 5
       },
       {
         "document_id": "reap-recall-packed-axis3_code_agentic-3",
-        "mean_diff": 0.0012365677880566515,
+        "mean_diff": 0.0011815472510298547,
         "n_windows": 5
       }
     ],
-    "se_equal_documents": 0.0002712223842058071,
+    "se_equal_documents": 0.00025676259744493305,
     "sign_test_n": 3,
     "sign_test_p": 0.25,
     "t_critical": 4.302652729749456,
@@ -79,23 +77,23 @@
   "emitted_by": "bin/joint_standard.py",
   "excludes_zero": true,
   "inference_unit": "source_document",
-  "label_a": "K6",
+  "label_a": "K6stream",
   "label_b": "K8",
   "mcnemar": {
     "available": false,
     "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
   },
-  "mean_a": 0.011677286368695299,
+  "mean_a": 0.011675992693734857,
   "mean_b": 0.010829419869882874,
-  "mean_diff": 0.0008478664988124246,
-  "mean_diff_se": 0.00037094614244505514,
+  "mean_diff": 0.0008465728238519824,
+  "mean_diff_se": 0.0003663799439134213,
   "n_windows": 17,
   "not_submittable": true,
   "protocol_file": "registry/protocol/glm53-joint-kld-protocol.v1.json",
   "protocol_file_sha256": "80df521eb46fba68538dd90aa3f2baf22b1e440b8b560555646ff9bbeb35961b",
   "protocol_schema": "malaiwah.glm53-joint-kld-protocol.v1",
   "protocol_scoring_sha256": "20ea68c0c730a9d2444148b234a610a5821a50dfa9980e2446c02723317b5e98",
-  "ratio_a_over_b": 1.0782928826289562,
+  "ratio_a_over_b": 1.0781734233249505,
   "schema": "malaiwah.glm53-joint-standard-paired.v1",
   "scope": "selected",
   "scope_complete": true,
@@ -103,7 +101,7 @@
   "sign_test_n": 17,
   "sign_test_note": null,
   "sign_test_p": 0.049041748046875,
-  "source_a": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k6-sealed.json",
+  "source_a": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k6-streaming.json",
   "source_b": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k8-streaming.json",
   "window_stats_are": "descriptive of this fixed panel only: 17 windows derive from 3 source document(s), so window-level bootstrap intervals and the window-level sign test treat pseudoreplicates as independent evidence (P1-15). The inferential statement is document_level.",
   "windows": [

@@ -1,77 +1,77 @@
 {
   "backend": "numpy",
-  "bca_acceleration": 0.051871160534475234,
+  "bca_acceleration": 0.04830850485849118,
   "bca_excludes_zero": true,
   "bca_z0": 0.051408514696361964,
   "bootstrap_b": 2000,
   "ci95_diff_bca": [
-    0.005823013130950891,
-    0.011253055396632681
+    0.0006927421845805919,
+    0.002298781434569155
   ],
   "ci95_diff_percentile": [
-    0.005590520585988117,
-    0.010668339688496982
+    0.0006052000792763769,
+    0.0021362014317991124
   ],
   "ci95_ratio_percentile": [
-    1.4590025822293584,
-    1.7919222367834746
+    1.0472068851822884,
+    1.180338737829052
   ],
   "contract_a": {
     "estimator": null,
-    "lane": "cross_stack replay",
+    "lane": "streaming / same_stack",
     "reference": null,
     "scope": null,
-    "series": "official FP8 (cross-stack)",
-    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/fp8-crossstack.json"
+    "series": "K6 streaming (2-run)",
+    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k6-streaming.json"
   },
   "contract_b": {
     "estimator": null,
-    "lane": "cross_stack replay",
+    "lane": "streaming / same_stack",
     "reference": null,
     "scope": null,
-    "series": "BF16 floor (cross-stack)",
-    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/bf16-floor-crossstack.json"
+    "series": "K8 streaming (2-run)",
+    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k8-streaming.json"
   },
   "cross_lane": {
-    "lane_a": "cross_stack replay",
-    "lane_b": "cross_stack replay",
+    "lane_a": "streaming / same_stack",
+    "lane_b": "streaming / same_stack",
     "mixed": false
   },
   "document_level": {
     "ci95_diff_t": [
-      0.003002646123289307,
-      0.012788964432135938
+      9.812846902101002e-05,
+      0.002641338939759475
     ],
     "df": 3,
     "documents_a_better": 0,
     "documents_b_better": 4,
     "documents_tied": 0,
-    "mean_diff_equal_documents": 0.007895805277712623,
+    "mean_diff_equal_documents": 0.0013697337043902427,
     "n_documents": 4,
     "note": "the panel's windows derive from 4 source documents; the document is the independent sampling unit, and this block is the inferential statement. Window-level intervals and sign tests above it are DESCRIPTIVE of this fixed panel only.",
     "per_document": [
       {
         "document_id": "reap-recall-packed-axis1_general-4",
-        "mean_diff": 0.008092041414079145,
+        "mean_diff": 0.0003938360736263419,
         "n_windows": 7
       },
       {
         "document_id": "reap-recall-packed-axis2_legal-2",
-        "mean_diff": 0.011167838805002954,
+        "mean_diff": 0.0012755156635926655,
         "n_windows": 6
       },
       {
         "document_id": "reap-recall-packed-axis3_code_agentic-3",
-        "mean_diff": 0.008570968201066178,
+        "mean_diff": 0.0023418456842997835,
         "n_windows": 6
       },
       {
         "document_id": "reap-recall-packed-axis4_reasoning_termination-0",
-        "mean_diff": 0.0037523726907022097,
+        "mean_diff": 0.0014677373960421795,
         "n_windows": 6
       }
     ],
-    "se_equal_documents": 0.001537546492551775,
+    "se_equal_documents": 0.0003995684807809737,
     "sign_test_n": 4,
     "sign_test_p": 0.125,
     "t_critical": 3.1824463052837046,
@@ -82,32 +82,32 @@
   "emitted_by": "bin/joint_standard.py",
   "excludes_zero": true,
   "inference_unit": "source_document",
-  "label_a": "FP8",
-  "label_b": "BF16floor-xstack",
+  "label_a": "K6stream",
+  "label_b": "K8",
   "mcnemar": {
     "available": false,
     "reason": "McNemar needs per-position top-1 agreement for BOTH runs; per-window means cannot supply a contingency table. Pass --a-only-correct/--b-only-correct from a run that emits them."
   },
-  "mean_a": 0.020615254540417995,
-  "mean_b": 0.012711599817250709,
-  "mean_diff": 0.007903654723167284,
-  "mean_diff_se": 0.0013514689584912015,
+  "mean_a": 0.013714888822596551,
+  "mean_b": 0.012384191023436866,
+  "mean_diff": 0.0013306977991596866,
+  "mean_diff_se": 0.00040549836137774176,
   "n_windows": 25,
   "not_submittable": true,
   "protocol_file": "registry/protocol/glm53-joint-kld-protocol.v1.json",
   "protocol_file_sha256": "80df521eb46fba68538dd90aa3f2baf22b1e440b8b560555646ff9bbeb35961b",
   "protocol_schema": "malaiwah.glm53-joint-kld-protocol.v1",
   "protocol_scoring_sha256": "20ea68c0c730a9d2444148b234a610a5821a50dfa9980e2446c02723317b5e98",
-  "ratio_a_over_b": 1.6217671132504787,
+  "ratio_a_over_b": 1.1074513302194195,
   "schema": "malaiwah.glm53-joint-standard-paired.v1",
   "scope": "panel",
   "scope_complete": true,
   "seed": 20260829,
   "sign_test_n": 25,
   "sign_test_note": null,
-  "sign_test_p": 5.960464477539063e-08,
-  "source_a": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/fp8-crossstack.json",
-  "source_b": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/bf16-floor-crossstack.json",
+  "sign_test_p": 0.004077315330505371,
+  "source_a": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k6-streaming.json",
+  "source_b": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/k8-streaming.json",
   "window_stats_are": "descriptive of this fixed panel only: 25 windows derive from 4 source document(s), so window-level bootstrap intervals and the window-level sign test treat pseudoreplicates as independent evidence (P1-15). The inferential statement is document_level.",
   "windows": [
     "final-0000",
@@ -136,8 +136,8 @@
     "final-0023",
     "final-0024"
   ],
-  "windows_a_better": 0,
-  "windows_b_better": 25,
+  "windows_a_better": 5,
+  "windows_b_better": 20,
   "windows_dropped_a": [],
   "windows_dropped_b": [],
   "windows_tied": 0

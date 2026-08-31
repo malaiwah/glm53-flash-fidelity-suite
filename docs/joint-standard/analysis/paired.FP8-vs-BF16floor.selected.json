@@ -16,8 +16,67 @@
     1.573476765949015,
     1.9440707664213417
   ],
+  "contract_a": {
+    "estimator": null,
+    "lane": "cross_stack replay",
+    "reference": null,
+    "scope": null,
+    "series": "official FP8 (cross-stack)",
+    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/fp8-crossstack.json"
+  },
+  "contract_b": {
+    "estimator": null,
+    "lane": "cross_stack replay",
+    "reference": null,
+    "scope": null,
+    "series": "BF16 floor (cross-stack)",
+    "source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/bf16-floor-crossstack.json"
+  },
+  "cross_lane": {
+    "lane_a": "cross_stack replay",
+    "lane_b": "cross_stack replay",
+    "mixed": false
+  },
+  "document_level": {
+    "ci95_diff_t": [
+      0.0014926855187667514,
+      0.01452286110989735
+    ],
+    "df": 2,
+    "documents_a_better": 0,
+    "documents_b_better": 3,
+    "documents_tied": 0,
+    "mean_diff_equal_documents": 0.008007773314332051,
+    "n_documents": 3,
+    "note": "the panel's windows derive from 3 source documents; the document is the independent sampling unit, and this block is the inferential statement. Window-level intervals and sign tests above it are DESCRIPTIVE of this fixed panel only.",
+    "per_document": [
+      {
+        "document_id": "reap-recall-packed-axis1_general-4",
+        "mean_diff": 0.008092041414079145,
+        "n_windows": 7
+      },
+      {
+        "document_id": "reap-recall-packed-axis2_legal-2",
+        "mean_diff": 0.010587299498045263,
+        "n_windows": 5
+      },
+      {
+        "document_id": "reap-recall-packed-axis3_code_agentic-3",
+        "mean_diff": 0.005343979030871744,
+        "n_windows": 5
+      }
+    ],
+    "se_equal_documents": 0.0015142025640411548,
+    "sign_test_n": 3,
+    "sign_test_p": 0.25,
+    "t_critical": 4.302652729749456,
+    "t_interval_note": "equal-document-weight Student-t; at 3 documents this is illustrative, not calibrated -- a domain-population interval is not estimable from one document per domain",
+    "unit": "source_document"
+  },
+  "document_map_source": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/window-selection.brandonmusic-final25.json",
   "emitted_by": "bin/joint_standard.py",
   "excludes_zero": true,
+  "inference_unit": "source_document",
   "label_a": "FP8",
   "label_b": "BF16floor-xstack",
   "mcnemar": {
@@ -37,10 +96,14 @@
   "ratio_a_over_b": 1.7530013871206505,
   "schema": "malaiwah.glm53-joint-standard-paired.v1",
   "scope": "selected",
+  "scope_complete": true,
   "seed": 20260829,
+  "sign_test_n": 17,
+  "sign_test_note": null,
   "sign_test_p": 1.52587890625e-05,
   "source_a": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/fp8-crossstack.json",
   "source_b": "/Users/mbelleau/Projects/glm53-fidelity-suite/registry/protocol/per-window/bf16-floor-crossstack.json",
+  "window_stats_are": "descriptive of this fixed panel only: 17 windows derive from 3 source document(s), so window-level bootstrap intervals and the window-level sign test treat pseudoreplicates as independent evidence (P1-15). The inferential statement is document_level.",
   "windows": [
     "final-0000",
     "final-0001",
@@ -61,5 +124,8 @@
     "final-0024"
   ],
   "windows_a_better": 0,
-  "windows_b_better": 17
+  "windows_b_better": 17,
+  "windows_dropped_a": [],
+  "windows_dropped_b": [],
+  "windows_tied": 0
 }

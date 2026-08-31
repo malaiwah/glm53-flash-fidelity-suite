@@ -165,6 +165,60 @@ def load_scope(path: Optional[str], scope: Optional[str]) -> Optional[List[str]]
     raise SystemExit("scope %r not found in %s" % (scope, path))
 
 
+def load_report_contract(path: str) -> Dict[str, Any]:
+    """The measurement-contract fields a per-window report declares about ITSELF.
+
+    P1-16. cmd_paired used to reduce each input to {window_id: mean} and pair
+    whatever it was handed: the headline K6-vs-K8 receipt paired the SEALED K6
+    against the STREAMING K8, and three of the five published pairings crossed
+    lanes or stacks, with nothing in the receipt recording that it had happened.
+    A paired analysis is a claim that two series differ only in the artifact;
+    every recorded contract field that differs makes that claim false. Fields
+    the report does not declare are carried as None -- unrecorded is unrecorded,
+    and only RECORDED mismatches refuse.
+    """
+    with open(path, "r", encoding="utf-8") as fh:
+        doc = json.load(fh)
+    return {
+        "source": os.path.abspath(path),
+        "lane": doc.get("lane"),
+        "reference": doc.get("reference"),
+        "estimator": doc.get("estimator"),
+        "scope": doc.get("scope") if isinstance(doc.get("scope"), (str, dict)) else None,
+        "series": doc.get("series"),
+    }
+
+
+def load_document_map(path: Optional[str],
+                      per_window_rows: Sequence[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    """window_id -> document_id, from --document-map or the reports themselves.
+
+    P1-15. The sealed panel's 25 windows derive from FOUR source documents
+    (7/6/6/6; clean17: three, 7/5/5), so the document, not the window, is the
+    independent sampling unit. Accepts the window-selection receipt schema
+    (per_window[].{window_id, document_id}) or a bare {window_id: document_id}
+    mapping; falls back to document_id fields on the per-window rows.
+    """
+    if path:
+        with open(path, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+        pw = doc.get("per_window")
+        if isinstance(pw, list):
+            out = {w["window_id"]: w.get("document_id") for w in pw
+                   if isinstance(w, dict) and w.get("window_id")}
+            out = {k: v for k, v in out.items() if v}
+            if out:
+                return out
+        if isinstance(doc, dict) and doc and all(
+                isinstance(v, str) for v in doc.values()):
+            return dict(doc)
+        raise SystemExit("no window->document mapping found in %s" % path)
+    from_rows = {w["window_id"]: w.get("document_id") for w in per_window_rows}
+    if from_rows and all(from_rows.values()):
+        return from_rows
+    return None
+
+
 # ------------------------------------------------------------------- verbs
 def cmd_protocol(args: argparse.Namespace) -> int:
     proto = protocol_mod.load(args.protocol)
@@ -514,8 +568,39 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
 def cmd_paired(args: argparse.Namespace) -> int:
     proto = protocol_mod.load(args.protocol)
-    a = {w["window_id"]: w["mean"] for w in load_per_window(args.a)}
-    b = {w["window_id"]: w["mean"] for w in load_per_window(args.b)}
+    rows_a = load_per_window(args.a)
+    rows_b = load_per_window(args.b)
+    a = {w["window_id"]: w["mean"] for w in rows_a}
+    b = {w["window_id"]: w["mean"] for w in rows_b}
+    contract_a = load_report_contract(args.a)
+    contract_b = load_report_contract(args.b)
+    # P1-16: refuse a contrast whose two sides RECORD different measurement
+    # contracts. Lane is overridable with an EXPLICIT bridge statement, because
+    # a measured bridge is a real (if artifact- and panel-specific) thing;
+    # reference/estimator/scope mismatches have no bridge and no override.
+    hard = [f for f in ("reference", "estimator")
+            if contract_a[f] is not None and contract_b[f] is not None
+            and contract_a[f] != contract_b[f]]
+    if hard:
+        sys.stderr.write(
+            "REFUSED: the two reports record different measurement contracts and no "
+            "bridge can authorize pairing them: %s. a=%r b=%r\n"
+            % (", ".join(hard),
+               {f: contract_a[f] for f in hard}, {f: contract_b[f] for f in hard}))
+        return EXIT_REFUSED
+    lanes_differ = (contract_a["lane"] is not None and contract_b["lane"] is not None
+                    and contract_a["lane"] != contract_b["lane"])
+    if lanes_differ and not args.bridge:
+        sys.stderr.write(
+            "REFUSED: mixed-lane contrast. %s declares lane %r, %s declares lane %r. "
+            "Lanes are not interchangeable -- a paired analysis across them carries a "
+            "lane term on top of the artifact difference. If a MEASURED bridge exists "
+            "for this exact contrast, restate it with --bridge '<what and where>'; the "
+            "receipt will carry it verbatim, and the analysis stays descriptive of the "
+            "mixed design either way (P1-16).\n"
+            % (args.label_a, contract_a["lane"], args.label_b, contract_b["lane"]))
+        return EXIT_REFUSED
+    documents = load_document_map(args.document_map, rows_a)
     keep = load_scope(args.scope_file, args.scope)
     if keep:
         ks = set(keep)
@@ -551,14 +636,32 @@ def cmd_paired(args: argparse.Namespace) -> int:
 
     res = stats_mod.paired_windows(a, b, args.label_a, args.label_b,
                                    boot_b=args.bootstrap_b, seed=args.seed,
-                                   backend=args.backend)
+                                   backend=args.backend, documents=documents)
     doc: Dict[str, Any] = {"schema": PAIRED_SCHEMA,
                            "scope": scope_name,
                            "scope_complete": not (dropped_a or dropped_b or dropped_scope),
                            "windows_dropped_a": dropped_a,
                            "windows_dropped_b": dropped_b,
                            "source_a": os.path.abspath(args.a),
-                           "source_b": os.path.abspath(args.b)}
+                           "source_b": os.path.abspath(args.b),
+                           "contract_a": contract_a,
+                           "contract_b": contract_b,
+                           "cross_lane": ({"mixed": True,
+                                           "lane_a": contract_a["lane"],
+                                           "lane_b": contract_b["lane"],
+                                           "bridge": args.bridge,
+                                           "note": "this contrast crosses measurement "
+                                                   "lanes; the bridge is context, not a "
+                                                   "correction, and every statistic here "
+                                                   "describes the mixed design"}
+                                          if lanes_differ else
+                                          {"mixed": False,
+                                           "lane_a": contract_a["lane"],
+                                           "lane_b": contract_b["lane"]}),
+                           "document_map_source": (os.path.abspath(args.document_map)
+                                                   if args.document_map else
+                                                   ("per_window.document_id" if documents
+                                                    else None))}
     doc.update(res)
     if args.a_only_correct is not None and args.b_only_correct is not None:
         doc["mcnemar"] = stats_mod.mcnemar(args.a_only_correct, args.b_only_correct)
@@ -663,6 +766,16 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--label-b", default="b")
     q.add_argument("--scope-file")
     q.add_argument("--scope", choices=["selected", "panel"], default=None)
+    q.add_argument("--document-map",
+                   help="window->document provenance (window-selection receipt or a bare "
+                        "mapping). Without it, per-window document_id fields are used when "
+                        "present; without either, every statistic is labelled descriptive "
+                        "-- windows from one source document are pseudoreplicates (P1-15)")
+    q.add_argument("--bridge",
+                   help="explicit statement of the measured bridge that authorizes a "
+                        "MIXED-LANE contrast (e.g. the streaming<->sealed K6 bridge on the "
+                        "lane's pipeline record). Without it a mixed-lane pairing refuses "
+                        "(P1-16). Carried verbatim into the receipt")
     q.add_argument("--a-only-correct", type=int, default=None)
     q.add_argument("--b-only-correct", type=int, default=None)
     q.add_argument("--bootstrap-b", type=int, default=2000)

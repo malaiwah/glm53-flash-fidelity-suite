@@ -762,6 +762,75 @@ def domain_table(
 
 
 # =================================================== paired window comparison
+def document_level_paired(diffs: Sequence[float], windows: Sequence[str],
+                          documents: Dict[str, str], alpha: float = 0.05) -> Dict[str, Any]:
+    """The paired contrast at the actual independent unit: the SOURCE DOCUMENT.
+
+    P1-15 (peer review, confirmed by recomputation). The sealed 25-window panel
+    is not 25 independently sourced texts: its four axes each come from ONE
+    source document (7/6/6/6 windows), and clean17 holds three documents
+    (7/5/5). Windows cut from one document share its topic, style and register;
+    resampling them as exchangeable units, or sign-testing 25 of them, treats
+    pseudoreplicates as evidence. Splitting the same four documents into MORE
+    windows would shrink the window-level interval without adding one bit of
+    independent textual evidence.
+
+    Published values this replaces as the INFERENTIAL statement (K6 vs K8):
+    window-level sign test p=0.004077 (full) / 0.0490 (clean17); document-level
+    exact sign test p=0.125 (4 of 4 documents positive) / 0.25 (3 of 3).
+    The window-level mean and BCa spread remain correct DESCRIPTIONS of this
+    fixed panel; what is withdrawn is their reading as population inference.
+
+    Sign test excludes exact ties (Dixon-Mood), matching the window-level test.
+    The t interval weights documents equally; with 3-4 documents it is
+    illustrative, not calibrated, and the receipt says so.
+    """
+    by_doc: Dict[str, List[float]] = {}
+    for w, d in zip(windows, diffs):
+        by_doc.setdefault(documents[w], []).append(d)
+    doc_ids = sorted(by_doc)
+    doc_means = [statistics.fmean(by_doc[d]) for d in doc_ids]
+    g = len(doc_ids)
+    wins_a = sum(1 for m in doc_means if m < 0)   # lower KLD is better for A
+    wins_b = sum(1 for m in doc_means if m > 0)
+    ties = g - wins_a - wins_b
+    sign_n = wins_a + wins_b
+    out: Dict[str, Any] = {
+        "unit": "source_document",
+        "n_documents": g,
+        "per_document": [
+            {"document_id": d, "n_windows": len(by_doc[d]),
+             "mean_diff": statistics.fmean(by_doc[d])}
+            for d in doc_ids],
+        "documents_a_better": wins_a,
+        "documents_b_better": wins_b,
+        "documents_tied": ties,
+        "sign_test_n": sign_n,
+        "sign_test_p": (None if sign_n == 0
+                        else chi2.binom_sf_two_sided(wins_a, sign_n)),
+        "note": ("the panel's windows derive from %d source document%s; the document is "
+                 "the independent sampling unit, and this block is the inferential "
+                 "statement. Window-level intervals and sign tests above it are "
+                 "DESCRIPTIVE of this fixed panel only." % (g, "" if g == 1 else "s")),
+    }
+    if g >= 2:
+        mean = statistics.fmean(doc_means)
+        se = statistics.stdev(doc_means) / math.sqrt(g)
+        t = chi2.student_t_ppf(1.0 - alpha / 2.0, g - 1)
+        out.update({
+            "mean_diff_equal_documents": mean,
+            "se_equal_documents": se,
+            "df": g - 1,
+            "t_critical": t,
+            "ci95_diff_t": [mean - t * se, mean + t * se],
+            "t_interval_note": ("equal-document-weight Student-t; at %d documents this is "
+                                "illustrative, not calibrated -- a domain-population "
+                                "interval is not estimable from one document per domain"
+                                % g),
+        })
+    return out
+
+
 def paired_windows(
     a: Dict[str, float],
     b: Dict[str, float],
@@ -770,6 +839,7 @@ def paired_windows(
     boot_b: int = 2000,
     seed: int = BOOTSTRAP_SEED,
     backend: str = "auto",
+    documents: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Rank two students on the SAME windows by their paired difference.
 
@@ -845,7 +915,7 @@ def paired_windows(
         blo, bhi, z0, acc = _bca_endpoints(bd, statistics.fmean(diffs), jack, 0.05)
 
     cse = clustered_se(diffs, common)
-    return {
+    out = {
         "label_a": label_a,
         "label_b": label_b,
         "n_windows": n,
@@ -876,3 +946,29 @@ def paired_windows(
         "seed": seed,
         "backend": chosen,
     }
+    covered = documents is not None and all(w in documents for w in common)
+    if covered:
+        doc_block = document_level_paired(diffs, common, documents)
+        out["document_level"] = doc_block
+        out["inference_unit"] = "source_document"
+        out["window_stats_are"] = (
+            "descriptive of this fixed panel only: %d windows derive from %d source "
+            "document(s), so window-level bootstrap intervals and the window-level "
+            "sign test treat pseudoreplicates as independent evidence (P1-15). The "
+            "inferential statement is document_level."
+            % (n, doc_block["n_documents"]))
+    else:
+        out["document_level"] = {
+            "available": False,
+            "reason": ("no document map supplied%s; window-to-document provenance is "
+                       "REQUIRED to read any of the interval or sign-test fields above "
+                       "as inference rather than description -- windows cut from one "
+                       "source document are pseudoreplicates"
+                       % ("" if documents is None else
+                          " for every common window")),
+        }
+        out["inference_unit"] = "none"
+        out["window_stats_are"] = (
+            "descriptive of this fixed panel only; without window-to-document "
+            "provenance no inferential reading is supported (P1-15)")
+    return out
