@@ -60,7 +60,11 @@ check("fp8 -> fp32 -> fp8 returns the identical byte",
       bool(((f32.to(E4M3).view(torch.uint8) == raw) | ~finite).all()))
 
 print("\n== dequantisation is a SCALED cast, and that is different ==")
-vals = f8[finite].to(torch.float32)
+# NOT f8[finite]: boolean indexing is not implemented for Float8_e4m3fn on
+# every torch this suite runs under ("index_cpu not implemented for
+# Float8_e4m3fn"). f32 already holds the exact same values -- the cast above is
+# what the first check proves lossless -- so index that instead.
+vals = f32[finite]
 gen = torch.Generator().manual_seed(0)
 scales = torch.rand(1024, generator=gen, dtype=torch.float32) * 3.7 + 0.01
 prod32 = vals[:, None] * scales[None, :]

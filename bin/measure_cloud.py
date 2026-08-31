@@ -790,9 +790,26 @@ def _find_by_name(jl: JL, name: str) -> Optional[int]:
 
 
 def job_id_for(args: argparse.Namespace) -> str:
+    """A run's identity, and therefore where its receipts land.
+
+    PROVIDER and GPU are part of it. They were not, and the same measurement
+    run on two providers produced the same job id, the same
+    `fidelity-runs/<id>/` directory, and the second run silently OVERWROTE the
+    first one's sealed receipt. That was found the only way it can be: two
+    runs of one artifact on two clouds finished hours apart and the earlier
+    result had to be rescued from disk before the later one landed.
+
+    It matters beyond housekeeping. Cross-device reproduction is a RESULT this
+    project publishes -- H200 and A100 agree to three significant figures and
+    are not bitwise identical -- so the hardware a number came from is part of
+    that number's identity, not an incidental detail of where it ran.
+    """
     key = json.dumps({
         "model": args.model, "revision": args.revision, "panel": args.panel,
         "lane": args.lane, "spot": args.spot, "cold_runs": args.cold_runs,
+        "provider": getattr(args, "provider", "jarvislabs"),
+        "gpu": getattr(args, "gpu", None),
+        "role": getattr(args, "role", "quant"),
     }, sort_keys=True)
     return hashlib.sha1(key.encode()).hexdigest()[:8]
 
@@ -2208,7 +2225,11 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
             "gpu": plan_data["chosen"]["gpu_type"],
             "gpu_count": plan_data["chosen"]["gpus"],
             "tensor_parallel": plan_data["requirement"]["ep_size"],
-            "host": "jarvislabs",
+            # The provider actually rented from, not a constant. A receipt
+            # that says "jarvislabs" about a Vast A100 is a false provenance
+            # claim in the one block whose job is provenance -- and it was
+            # emitted on every non-JarvisLabs run.
+            "host": getattr(args, "provider", "jarvislabs"),
         },
         "keep_student_logits": bool(args.keep_student_logits),
         # Disclosures the PLANNER established from the artifact's own metadata

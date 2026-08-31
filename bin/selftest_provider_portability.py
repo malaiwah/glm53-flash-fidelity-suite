@@ -178,6 +178,37 @@ for r in EXPORTED_ROOTS:
 check("...and none of them point at /home/jl_fs on a runpod box",
       "/home/jl_fs" not in env)
 
+print("\n== a run's identity includes WHERE it ran ==")
+import argparse                                            # noqa: E402
+
+
+def jid(**kw):
+    base = dict(model="m", revision="r" * 40, panel="p", lane="streaming",
+                spot=False, cold_runs=2, provider="jarvislabs", gpu=None,
+                role="quant")
+    base.update(kw)
+    return mc.job_id_for(argparse.Namespace(**base))
+
+
+# Two providers running the SAME measurement produced the same job id, the
+# same fidelity-runs/<id>/ directory, and the second silently OVERWROTE the
+# first one's sealed receipt. The earlier result had to be rescued from disk.
+ids = {jid(), jid(provider="vast"), jid(provider="runpod"),
+       jid(provider="runpod", gpu="NVIDIA A100-SXM4-80GB"),
+       jid(provider="runpod", gpu="NVIDIA H100 PCIe")}
+check("provider and GPU change the job id (no receipt collision)", len(ids) == 5)
+check("the same inputs still give the same id", jid() == jid())
+check("--role root is a different run from --role quant",
+      jid(role="root") != jid(role="quant"))
+
+print("\n== a receipt says which cloud it actually ran on ==")
+src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "measure_cloud.py"), encoding="utf-8").read()
+check('the environment host is read from --provider, not hardcoded',
+      '"host": getattr(args, "provider"' in src)
+check("...and no literal jarvislabs host remains",
+      '"host": "jarvislabs"' not in src)
+
 print()
 if FAILED:
     print("selftest_provider_portability: %d FAILED" % len(FAILED))
