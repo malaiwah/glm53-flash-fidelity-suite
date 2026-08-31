@@ -343,6 +343,17 @@ class RunPod(SSHTransport):
                 "dockerStartCmd": [str(a) for a in docker_cmd],
                 "env": dict(kw.get("env") or {}, PUBLIC_KEY=pubkey.replace('"', "")),
             }
+            # ASK FOR A HOST WHOSE DRIVER CAN RUN THIS IMAGE. A RunPod L4 came
+            # up with driver 12040 (CUDA 12.4) against an image pinned to
+            # torch cu130; setup passed, 10 GB was fetched, and the capture
+            # died on the first `.to(cuda)`. The container refuses that up
+            # front now, but refusing still costs a rental -- this is how the
+            # rental is not taken in the first place. RunPod's enum is
+            # "13.0".."11.8"; unset means any version is acceptable, which is
+            # what we were doing.
+            cuda = kw.get("cuda_versions")
+            if cuda:
+                payload["allowedCudaVersions"] = [str(c) for c in cuda]
             entry = kw.get("docker_entrypoint")
             if entry is not None:
                 payload["dockerEntrypoint"] = [str(a) for a in entry]

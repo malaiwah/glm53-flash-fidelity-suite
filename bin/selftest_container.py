@@ -626,6 +626,67 @@ def rung_cli():
 # C11  the release path: decided in a script, tested offline, default-off
 # --------------------------------------------------------------------------
 
+def rung_accelerator():
+    """C12  a rented box whose CUDA does not work refuses BEFORE the fetch."""
+    import container_entry as CE
+    print("[C12] a dead accelerator is refused before anything is fetched")
+
+    def venv(tmp, body):
+        root = Path(tmp)
+        (root / "venv" / "bin").mkdir(parents=True)
+        py = root / "venv" / "bin" / "python"
+        py.write_text("#!/bin/sh\n" + body + "\n")
+        py.chmod(0o755)
+        return root
+
+    def quiet(_text):
+        return None
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = venv(tmp, "echo '{\"ok\": true, \"torch\": \"2.11.0+cu130\","
+                         " \"built\": \"13.0\", \"name\": \"NVIDIA L4\"}'")
+        CE.require_accelerator({"capture": {"device": "cuda"}}, root, quiet)
+        check("C12a a box with a usable CUDA device proceeds", True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Verbatim from the field: RunPod L4, driver 12040, image pinned cu130.
+        root = venv(tmp, "echo 'UserWarning: The NVIDIA driver on your system"
+                         " is too old (found version 12040).' 1>&2\n"
+                         "echo '{\"ok\": false, \"torch\": \"2.11.0+cu130\","
+                         " \"built\": \"13.0\", \"name\": null}'")
+        try:
+            CE.require_accelerator({"capture": {"device": "cuda"}}, root, quiet)
+            check("C12b a CUDA-less box REFUSES before any stage", False,
+                  "it proceeded, which is how 10 GB got fetched onto a dead box")
+        except CE.Refusal as exc:
+            check("C12b a CUDA-less box REFUSES before any stage", True)
+            check("C12c ...naming the driver version, because the remedy "
+                  "depends on which it is",
+                  any("12040" in a for a in exc.advice))
+            check("C12d ...and stating that nothing was fetched",
+                  any("Nothing was fetched" in a for a in exc.advice))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = venv(tmp, "echo '{\"ok\": false, \"torch\": \"x\","
+                         " \"built\": \"13.0\", \"name\": null}'")
+        CE.require_accelerator({"capture": {"device": "cpu"}}, root, quiet)
+        check("C12e a job that asked for cpu is not gated", True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        CE.require_accelerator({"capture": {"device": "cuda"}}, Path(tmp), quiet)
+        check("C12f before the venv exists the bootstrap speaks first", True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = venv(tmp, "echo boom 1>&2; exit 3")
+        try:
+            CE.require_accelerator({"capture": {"device": "cuda"}}, root, quiet)
+            check("C12g a box that cannot ANSWER is refused, not assumed good",
+                  False, "proceeded")
+        except CE.Refusal:
+            check("C12g a box that cannot ANSWER is refused, not assumed good",
+                  True)
+
+
 def rung_release():
     print("[C11] what a release build would tag, build and push")
     import release_plan as RP                               # noqa: E402
@@ -775,6 +836,7 @@ def main() -> int:
     rung_capture_identity()
     rung_dockerfile()
     rung_cli()
+    rung_accelerator()
     rung_release()
     rung_github_output()
     print("")

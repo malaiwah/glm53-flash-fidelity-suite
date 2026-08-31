@@ -673,6 +673,67 @@ def cmd_doctor(con) -> int:
     return EXIT_OK if proc.returncode == 0 else EXIT_FAILED
 
 
+def require_accelerator(doc, engine_root: Path, con) -> None:
+    """A rented box whose CUDA does not work must refuse NOW, not after the fetch.
+
+    FOUND BY RENTING, 2026-08-31. A RunPod L4 came up with driver 12040 (CUDA
+    12.4) while this image pins torch cu130. The bootstrap's accelerator check
+    saw it and said:
+
+        PASS 1b accelerator decode parity: SKIPPED (no CUDA and no MPS on this
+             host; the check RUNS on the instance, which is where it counts)
+
+    That parenthetical is true on a laptop and false here: this IS the
+    instance. "No CUDA" is not `not applicable` on hardware being billed by
+    the hour -- it is the whole run, already dead. So `setup` reported PASS,
+    `fetch_target` pulled 10 GB, and the capture died on the first `.to(cuda)`.
+    On Fruit that is five cents. On a GLM-5.3 root it is a 117 GB fetch.
+
+    This is the "an outer PASS can hide a SKIP" rule with a price attached.
+    The probe runs BEFORE the stage list, so nothing is fetched, and it names
+    the driver rather than saying `cuda unavailable`, because the remedy
+    (a different host, or a cu12 image) depends on which it is.
+    """
+    device = str((doc.get("capture") or {}).get("device")
+                 or (doc.get("environment") or {}).get("device")
+                 or "cuda").lower()
+    if device != "cuda":
+        return
+    py = engine_root / "venv" / "bin" / "python"
+    if not py.is_file():
+        return                      # no venv yet; the bootstrap speaks first
+    probe = ("import json, torch;"
+             "ok = torch.cuda.is_available();"
+             "print(json.dumps({'ok': ok, 'torch': torch.__version__,"
+             " 'built': torch.version.cuda,"
+             " 'name': torch.cuda.get_device_name(0) if ok else None}))")
+    proc = subprocess.run([str(py), "-c", probe], capture_output=True, text=True)
+    try:
+        info = json.loads((proc.stdout or "").strip().splitlines()[-1])
+    except Exception:
+        raise Refusal(
+            "could not determine whether this box has a usable CUDA device",
+            ["torch probe exited %d" % proc.returncode,
+             (proc.stderr or "").strip()[-300:] or "(no stderr)",
+             "This job asks for --capture-device cuda; a box that cannot "
+             "answer must not start a paid fetch."])
+    if info.get("ok"):
+        con("accelerator              ok  %s (torch %s, built for CUDA %s)"
+            % (info.get("name"), info.get("torch"), info.get("built")))
+        return
+    detail = (proc.stderr or "").strip().splitlines()
+    why = next((ln for ln in detail if "driver" in ln.lower()), "")
+    raise Refusal(
+        "this box has no usable CUDA device, and the job asks for one",
+        [why[:300] or "torch.cuda.is_available() is False",
+         "torch %s is built for CUDA %s."
+         % (info.get("torch"), info.get("built")),
+         "Nothing was fetched. Destroy this instance and take another: on "
+         "RunPod, `allowedCudaVersions` on REST pod creation asks for a host "
+         "whose driver matches.",
+         "If you meant to capture on CPU, pass --capture-device cpu."])
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -781,6 +842,9 @@ def main(argv=None) -> int:
             con("stages: %s" % " ".join(stages))
             con("dry run: nothing was created, nothing was fetched")
             return EXIT_OK
+
+        # BEFORE the stage list, so a dead box costs nothing.
+        require_accelerator(doc, engine_root, con)
 
         job_path = fs_root / "job.json"
         job_path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n",
