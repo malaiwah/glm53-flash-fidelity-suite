@@ -363,6 +363,12 @@ def job_document(args, suite: Path, fs_root: Path, con) -> dict:
             "schedule": args.schedule,
             "panel_dir": panel_rel,
             "panel_id": panel_id,
+            # Present on both transports, filled only when the caller passes
+            # --designated-reference through the cloud controller; the container
+            # form does not take the flag yet (the plan-time release check that
+            # justifies it lives in measure_cloud), so it is honestly None here
+            # rather than absent -- C3c holds the two blocks to the same fields.
+            "designated_reference": None,
             "dataset_id": args.dataset_id,
             "dataset_name": args.dataset_name or args.dataset_id,
             "author": args.measurer,
