@@ -1,0 +1,212 @@
+{
+  "candidate": {
+    "capture_content_digest": "0e754aa6b9a779f34591889f50668951d14cf8209a414b379aa2483428710e3b",
+    "checkpoint_identity_sha256": "8b5df5743cf2535f7d4ca477ea82d53be4ba98c2329db67739b4b68a3d4031e7",
+    "cuda": "13.0",
+    "dataset_id": "fruit-fidelity-root-a100-v1",
+    "dataset_sha256": "7c0d5e4d3ef4a2c3a66766ce3558928ef5345bb69c6f4741b72422004999718e",
+    "device": "NVIDIA A100-SXM4-80GB",
+    "lane": "streaming",
+    "lane_identity_sha256": "82afcf34ad7f30ee496e459eb87f180c08e67aa92dfb65a003eb03d832f41ad4",
+    "python": "3.12.3",
+    "root": "<a100-root: this run's sealed capture>",
+    "stack_fingerprint_sha256": "03ac681241c202f2989ad21ef22348bb4b38e3c7d7a78ca1cf0231805c297519",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.16.1"
+  },
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "direction": "reference_to_candidate",
+    "replay_backend": "numpy:cpu:float32",
+    "vocab_masking_policy": "full_stored_vocab"
+  },
+  "head": {
+    "candidate_sha256": "8d0f7d6e35c48a3f6b97f5f5ebc24657a3fd32e1e6c22adc710a9b317b5b5440",
+    "reference_sha256": "8d0f7d6e35c48a3f6b97f5f5ebc24657a3fd32e1e6c22adc710a9b317b5b5440",
+    "same_tensor_content": true
+  },
+  "hidden_states": {
+    "bitwise_identical": false,
+    "max_abs_diff": 2.703125
+  },
+  "not_a_sealed_receipt": true,
+  "note": "computed with fidelity/dscompare's own load_tensor/_replay/token_kld (numpy fp32 replay, fp64 full-vocabulary KLD, direction reference->candidate) because the sealed comparator refused an IDENTITY gate, not a numeric one. No registry row follows from this.",
+  "per_context": [
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 2.703125,
+      "index": 0,
+      "max": 0.14397322621683528,
+      "mean": 0.0022861290616942942,
+      "scored_rows": 2047,
+      "window_id": "final-0000"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 0.875,
+      "index": 1,
+      "max": 0.04976583329167213,
+      "mean": 0.001302824044713755,
+      "scored_rows": 2047,
+      "window_id": "final-0001"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 1.5625,
+      "index": 2,
+      "max": 0.10347408401129501,
+      "mean": 0.0021428026807315806,
+      "scored_rows": 2047,
+      "window_id": "final-0002"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 1.34375,
+      "index": 3,
+      "max": 0.2265925436025063,
+      "mean": 0.005630383424350665,
+      "scored_rows": 2047,
+      "window_id": "final-0003"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 1.875,
+      "index": 4,
+      "max": 0.1858925785896084,
+      "mean": 0.002369666237217264,
+      "scored_rows": 2047,
+      "window_id": "final-0004"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 1.34375,
+      "index": 5,
+      "max": 0.3177857093039684,
+      "mean": 0.009062765814060408,
+      "scored_rows": 2047,
+      "window_id": "final-0005"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 1.232421875,
+      "index": 6,
+      "max": 0.05968683248948081,
+      "mean": 0.0011247945615665202,
+      "scored_rows": 2047,
+      "window_id": "final-0006"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 1.6875,
+      "index": 7,
+      "max": 0.12664235447854594,
+      "mean": 0.002095788065445569,
+      "scored_rows": 2047,
+      "window_id": "final-0007"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 2.328125,
+      "index": 8,
+      "max": 0.6144444563266296,
+      "mean": 0.00691027117907286,
+      "scored_rows": 2047,
+      "window_id": "final-0008"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 1.59375,
+      "index": 9,
+      "max": 0.35725995808701233,
+      "mean": 0.009774962737847703,
+      "scored_rows": 2047,
+      "window_id": "final-0009"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 1.71875,
+      "index": 10,
+      "max": 0.12592908868915387,
+      "mean": 0.0038787844823807726,
+      "scored_rows": 2047,
+      "window_id": "final-0010"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 1.4296875,
+      "index": 11,
+      "max": 0.44768540825373904,
+      "mean": 0.010739839018980341,
+      "scored_rows": 2047,
+      "window_id": "final-0011"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 1.359375,
+      "index": 12,
+      "max": 0.515366936480018,
+      "mean": 0.009171140915207394,
+      "scored_rows": 2047,
+      "window_id": "final-0012"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 1.40625,
+      "index": 13,
+      "max": 0.04503161811617691,
+      "mean": 0.0013679549075034081,
+      "scored_rows": 2047,
+      "window_id": "final-0013"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 1.421875,
+      "index": 14,
+      "max": 0.08791382501424952,
+      "mean": 0.0022075114818669683,
+      "scored_rows": 2047,
+      "window_id": "final-0014"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 1.79296875,
+      "index": 15,
+      "max": 0.061601870692519725,
+      "mean": 0.0014064382742945418,
+      "scored_rows": 2047,
+      "window_id": "final-0015"
+    }
+  ],
+  "reference": {
+    "capture_content_digest": "b417acc22b8aa7f3294b8e62c4b619bc5051aef9fd8a073602572a30af6b3e1c",
+    "checkpoint_identity_sha256": "8b5df5743cf2535f7d4ca477ea82d53be4ba98c2329db67739b4b68a3d4031e7",
+    "cuda": "13.0",
+    "dataset_id": "fidelity--fruit.malaiwah.root.bf16",
+    "dataset_sha256": "f56674f9159a68fa4abd5ccb2e727aadf510f35ce1b44b5cc4b825987560e7cf",
+    "device": "NVIDIA L4",
+    "lane": "local-cuda-budget",
+    "lane_identity_sha256": "152b841a3bd312830e4e02c2acbb4e30e45304c96748bb80d31d7e7ff5748c8f",
+    "python": "3.10.20",
+    "root": "<published-root: hf://malaiwah/fruit-fidelity-root-v1@7611f964>",
+    "stack_fingerprint_sha256": "c9803c4d56ba16c82a0b55554a653df671183d3627e8d71eb765171157bf87c5",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.16.1"
+  },
+  "result": {
+    "contexts": 16,
+    "max_tokenwise_kld": 0.6144444563266296,
+    "mean_tokenwise_kld": 0.004467003555433378,
+    "median_tokenwise_kld": 0.0007251201958801338,
+    "p95": 0.019434184673449567,
+    "p99": 0.05910264059744491,
+    "per_domain_mean": {
+      "literary": 0.003251894236222507,
+      "scientific": 0.005682112874644249
+    },
+    "per_window_mean_sd": 0.0033900619027140222,
+    "scored_positions": 32752,
+    "tokenwise_kld_sha256": "e4e11fe5fc1e69de5fc58d54b8b4effd30a4d55f3958e5f6f78983f40dfe0f65",
+    "top1_agreement": 0.9657120175867122
+  },
+  "schema": "adhoc.direct-capture-comparison.v1"
+}

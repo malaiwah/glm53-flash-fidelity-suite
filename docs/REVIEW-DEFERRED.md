@@ -1547,3 +1547,81 @@ what they actually share.
 
 **Test:** a rung that captures the same fixture twice under two different `--out`/model-tree
 roots and asserts `compare --self-compare` succeeds. It fails today.
+
+**Caller-side half LANDED, 2026-08-31 (GH200 qualification):** `bin/stage_measure.sh` now
+passes `--weights-repository "$REPO"` in both capture stages, so `tokenizer_id =
+args.tokenizer_id or args.weights_repository or args.model` resolves to the published repo
+id instead of the local tree. That is the same value this entry says should be recorded,
+placed at the caller so the dataset FORMAT is untouched. It cannot make anything compare
+worse — today's cloud captures record a path that already compares unequal to every other
+capture, including to a second run of themselves — and it removes an on-instance absolute
+path from four other published fields the same expression feeds (`runtime.weights.
+repository`, the card's provenance line, and both `weights=` blocks). Regression:
+`selftest_root_capture.py`, "names the HF repo as the weights repository, not the local
+path". **The engine-side half of this entry is still open**: reading a legacy path-valued
+`id` as *unknown* rather than as a mismatch, so already-published captures stay comparable.
+
+## ROOT-1 — a root capture's sealed dataset is never brought home, and dies with the box
+
+**Anchor:** `bin/measure_cloud.py`, `def _pull_receipts`; `fidelity/stages.py`,
+`ROOT_STAGES`.
+
+`--role root` writes the sealed dataset to `$FS/dataset`, `verify` recomputes its digest
+chain there, and then the instance is destroyed. Teardown pulls **`$FS/receipts` and
+nothing else**. There is no `$FS/dataset` pull anywhere in the controller.
+
+On JarvisLabs that is survivable by accident: `$FS` is a separable filesystem, so
+`--keep-fs` leaves the dataset behind for a later box to publish from. On the other three
+backends `separable_storage = False` — RunPod's volume, Vast's disk and Lambda's local NVMe
+all die with the instance — so **the artifact the whole rental existed to produce is
+deleted at teardown**, and the run reports success. Confirmed by reading; worked around
+during the GH200 qualification by a sidecar that polled for
+`$FS/dataset/fidelity-dataset.json` and `scp`'d the tree down before the controller
+finished.
+
+This is the one defect in this file that destroys the *product* rather than costing money.
+
+**Suggested shape:** a `_pull_dataset` teardown step, ordered before `_pull_receipts` and
+gated on `role == "root"`, tarring `$FS/dataset` exactly as receipts are tarred (one
+transfer, not a per-file walk — that lesson is already paid for). Its timeout must scale
+with the dataset: a Fruit root is 385 MB, a GLM-5.3-Flash hidden-form root is ~30 GB. If a
+run's dataset is too large to pull, the honest answer is to publish it from the instance
+before teardown, not to leave it there.
+
+**Test:** the container/stage battery already builds a fake `$FS`; a rung that runs the
+teardown against one containing `dataset/` and asserts the tree arrives under `--out`
+fails today.
+
+## ROOT-2 — a root capture is fit-checked against GLM-5.3-Flash, whatever it is capturing
+
+**Anchor:** the `fit` block printed by `bin/measure-cloud --dry-run`; `base decoded BF16
+642.70 GB` and `required VRAM 63 GB/GPU` for **any** target.
+
+`bin/measure-cloud --role root --model malaiwah/GLM-5.2-SIQ-Fruit-bf16` — a 10.10 GB
+checkpoint whose capture peaked well inside a single 40 GB card — plans against
+GLM-5.3-Flash's 642.70 GB census and refuses every instance type under 63 GB:
+
+```
+gpu_1x_a100_sxm4 us-east-1   43 GB  $1.99   free=1   too small (43 < 63 GB)
+REFUSE: no available instance fits this lane
+        lane streaming needs >=63 GB/GPU x1
+```
+
+The disk line is computed from the real target (`10.10 GB artifact`), so the census is
+reachable; the VRAM arithmetic simply is not wired to it for `role == "root"`. Two costs,
+both paid during the GH200 qualification: the cheap x86 control arm had to be rented from
+another provider because no Lambda type both fit the phantom 63 GB and had capacity, and a
+run is refused outright whenever the only free cards are ones that would have worked.
+
+It also mis-prices every root: the cost estimate quotes `25 windows @ ~2.82 min` and a
+31.73 GB panel fetch for a job that has 16 windows, no `fetch_panel` stage at all (see
+`ROOT_STAGES`), and a capture that finished in minutes.
+
+**Suggested shape:** for `role == "root"`, size the fit from the target's own census — the
+hidden-form capture's working set is the resident non-layer parameters plus one streamed
+layer under `--schedule layer-outer`, not the whole decoded checkpoint — and take the window
+count from the panel directory that was passed, which the planner has already read to
+extract `panel_id`.
+
+**Test:** a fit rung asserting that a root plan for a 10 GB checkpoint does not demand 63 GB
+of VRAM, and that its window count equals the panel's. Both fail today.

@@ -1,0 +1,150 @@
+{
+  "capture_tool": {
+    "file": "engines/tools/hf_capture.py",
+    "layer_residency": "stream",
+    "mechanism": "transformers forward pass, layer-outer/window-inner schedule: for each decoder layer the model's own forward is run once per window with the layers below replaying their memoised output and the layers above suspending, so each layer's weights are materialised once for the whole panel. Windows are pushed through sequentially, never batched. Forward pre-hook on model.get_output_embeddings(), fired by the model's own epilogue after the last layer",
+    "parallel_plan_dropped": false,
+    "schedule": "layer-outer",
+    "sha256": "eac6e7dc29e297997f659c60d3fa24d4908474579c06b07de257e90fff6e4331",
+    "version": "hf_capture/1",
+    "wraps": []
+  },
+  "container": {
+    "image_digest": null,
+    "image_reference": null,
+    "image_repository_digest": null
+  },
+  "format_version": 1,
+  "lane": "streaming",
+  "lane_identity_inputs": [
+    "torch_version",
+    "cuda_runtime_version",
+    "device_name",
+    "grouped_mm_kernel",
+    "numeric_policy",
+    "attention_backend",
+    "experts_implementation",
+    "parallelism",
+    "ep_emulate",
+    "reduce_order"
+  ],
+  "lane_identity_sha256": "82afcf34ad7f30ee496e459eb87f180c08e67aa92dfb65a003eb03d832f41ad4",
+  "lane_inferred": false,
+  "receipt_sha256": "376ac7d9410cd4d2c9b8b3db637bca9654f060a073959413468e96a0f951ba30",
+  "runtime_environment": {
+    "cold_run": "20260831T162318Z-2775",
+    "python": "3.12.3"
+  },
+  "schema": "malaiwah.fidelity-capture-runtime.v1",
+  "source_files": {
+    "engines/tools/hf_capture.py": "eac6e7dc29e297997f659c60d3fa24d4908474579c06b07de257e90fff6e4331",
+    "engines/tools/layer_outer.py": "6a763b7a9c5bdc6716b08fff2369023284adaabd73eb9daca00e8ce5d64b3e05"
+  },
+  "stack_fingerprint": {
+    "attention_backend": "model default",
+    "cuda_runtime_version": "13.0",
+    "device": "cuda",
+    "device_name": "NVIDIA A100-SXM4-80GB",
+    "engine": "transformers-eager",
+    "numeric_policy": "default torch matmul precision; no TF32 override applied",
+    "schema": "malaiwah.stack-fingerprint.v1",
+    "torch_version": "2.11.0+cu130",
+    "transformers_version": "5.16.1"
+  },
+  "stack_fingerprint_sha256": "03ac681241c202f2989ad21ef22348bb4b38e3c7d7a78ca1cf0231805c297519",
+  "upstream_receipts": [],
+  "weights": {
+    "checkpoint_files": [
+      {
+        "name": "config.json",
+        "sha256": "5a19697e555fff140d1b089b852c3ef227114b196f8d76796560feeeb34dc44a",
+        "size": 1846
+      },
+      {
+        "name": "model-embed.safetensors",
+        "sha256": "d0a951b46d56eaee73f7823f1cffeb635b64676e6f47a15506df81cbe7cbeb47",
+        "size": 317194376
+      },
+      {
+        "name": "model-head.safetensors",
+        "sha256": "bae08929bf96a9e90b0f9ad16df4358ce76db31df01631b55079ef4153f1c0dd",
+        "size": 317196504
+      },
+      {
+        "name": "model-layer-000.safetensors",
+        "sha256": "3c9dd926cc2cd615008af8b514bae2b615a12f3f180ed2860922fcef92cc0a5e",
+        "size": 48702904
+      },
+      {
+        "name": "model-layer-001.safetensors",
+        "sha256": "f421aabc325ca4def460c7547ee42e0831ba192ecfbb31fa994186009d0e3ffa",
+        "size": 48702904
+      },
+      {
+        "name": "model-layer-002.safetensors",
+        "sha256": "95a224e85f80c6fdd01646da1e7b75bb6c16f7dddb0da7586f63c3a064f527e7",
+        "size": 48702904
+      },
+      {
+        "name": "model-layer-003.safetensors",
+        "sha256": "62686fb9434a493353918b49cfb054169c36fbe4688d57b3464a325f1f41b685",
+        "size": 845190600
+      },
+      {
+        "name": "model-layer-004.safetensors",
+        "sha256": "6fbfe45fb8d0a9cbce239dcba2cf5074362c7a0198aea49c83d668d325baa714",
+        "size": 845190600
+      },
+      {
+        "name": "model-layer-005.safetensors",
+        "sha256": "aa4b07384584e5c27c31c67cb1748abf337bb78d0945f5338764bfe7d958d1d7",
+        "size": 845190600
+      },
+      {
+        "name": "model-layer-006.safetensors",
+        "sha256": "ba7521f7c1a7121fcac53b257f4524a3575667a3a13cfd1949ef77c64fbf456a",
+        "size": 845190600
+      },
+      {
+        "name": "model-layer-007.safetensors",
+        "sha256": "0e9c8843ec62cb0473fcb34ae9e4ebda7dd7bf782c9e8adfa76687fb3cff2ac2",
+        "size": 845190600
+      },
+      {
+        "name": "model-layer-008.safetensors",
+        "sha256": "5ed6a6514c70cb182e995279c8a6a169db37d28b59deb6b24006b7c78fe60c56",
+        "size": 845190600
+      },
+      {
+        "name": "model-layer-009.safetensors",
+        "sha256": "f8834409249834692512ebd05b133e178e89338f141d08d86c55ce34531bb9fd",
+        "size": 845190600
+      },
+      {
+        "name": "model-layer-010.safetensors",
+        "sha256": "b4506064d1f195346085644a3152d98cfeb0734b80844586233a8ad2089e03e0",
+        "size": 845191392
+      },
+      {
+        "name": "model-layer-011.safetensors",
+        "sha256": "c4bef127db4023e284b61945bf166f762c37c3487b5246276b5817359fee7f4c",
+        "size": 845191392
+      },
+      {
+        "name": "model-layer-012.safetensors",
+        "sha256": "bf01e257cd14dadc26ce7900c66812f6a9eee2069bc063f43c3ba8af45b032d0",
+        "size": 845191392
+      },
+      {
+        "name": "model-layer-013.safetensors",
+        "sha256": "864c61ed0ec52ce2683472b2202ad36b04cd555ebf8bde6060e64b528a43aab2",
+        "size": 849392264
+      }
+    ],
+    "checkpoint_identity_algorithm": "sha256 over the canonical JSON {\"algorithm\": <this string>, \"files\": [{\"name\", \"size\", \"sha256\"}, ...]} of every *.safetensors shard plus config.json in the checkpoint directory, sorted by name",
+    "checkpoint_identity_sha256": "8b5df5743cf2535f7d4ca477ea82d53be4ba98c2329db67739b4b68a3d4031e7",
+    "model_revision": "ef68013aa6e16453cf52b5b77647f72fbe258c3c",
+    "repository": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+    "revision": "ef68013aa6e16453cf52b5b77647f72fbe258c3c"
+  }
+}

@@ -1,0 +1,20 @@
+Warning: Identity file  <local ssh key> -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=15 not accessible: No such file or directory.
+== uname ==
+6.8.0-1013-nvidia-64k aarch64
+== os ==
+Ubuntu 22.04.5 LTS
+== id ==
+uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),100(users),118(admin)
+== /home ==
+drwxr-xr-x 3 root root 4096 Jul  7  2025 /home
+== can I mkdir /home/jl_fs? ==
+mkdir: cannot create directory ‘/home/jl_fs’: Permission denied
+MKDIR_OK
+== python ==
+Python 3.10.12
+/usr/bin/python3.10
+/usr/bin/python3.10-config
+== nvidia-smi ==
+NVIDIA GH200 480GB, 97871 MiB, 4, 1, 570.148.08
+== disk ==
+/dev/vda1       3.9T   24G  3.9T   1% /

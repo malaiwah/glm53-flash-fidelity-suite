@@ -1,0 +1,47 @@
+{"files": 17, "sha256": "8b5df5743cf2535f7d4ca477ea82d53be4ba98c2329db67739b4b68a3d4031e7", "stage": "checkpoint_identity"}
+{"bytes": 10081800232, "index_present": true, "shards": 16, "stage": "checkpoint_audit", "tensors": 8715}
+{"layers_prefix": "model.layers", "renamed_checkpoint_keys": 8448, "stage": "stream_routing", "total_checkpoint_keys": 8715}
+{"deferred_buffers": 0, "layers_prefix": "model.layers", "resident_shards": null, "resident_tensors": 13, "stage": "stream_base", "streamed_layers": 13, "streamed_params": 201}
+{"conversion_errors": 0, "conversion_errors_visible": true, "error_msgs": 0, "mismatched": 0, "missing": 0, "observed": true, "stage": "load_report", "unexpected": 791, "unexpected_sample": ["model.layers.13.eh_proj.weight", "model.layers.13.enorm.weight", "model.layers.13.hnorm.weight", "model.layers.13.input_layernorm.weight", "model.layers.13.mlp.experts.0.down_proj.weight", "model.layers.13.mlp.experts.0.gate_proj.weight"]}
+{"architectures": ["GlmMoeDsaForCausalLM"], "device": "cpu", "dtype": "torch.bfloat16", "hidden_size": 1024, "stage": "model", "vocab_size": 154880}
+{"panel_json": "/workspace/fidelity/engines/panels/panel--fruit.malaiwah.heldout-v1/panel.json", "receipt_sha256": "6c195ef252305d0e647c2f33b99e60d927c306a4e86ff3a055173297bc9a403c", "stage": "panel", "windows": 16}
+{"expect": "Paris", "prompt": "The capital of France is", "prompt_tokens": 5, "stage": "sanity_probe_planned"}
+{"forward_windows": 17, "layers": 13, "residency": "stream", "schedule": "layer-outer", "stage": "schedule", "windows": 16}
+{"checkpoint_tensors": 17, "index": 0, "resident_weight_bytes": 683101952, "seconds": 0.01, "stage": "layer_load"}
+{"index": 0, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 17, "index": 1, "resident_weight_bytes": 683101952, "seconds": 0.01, "stage": "layer_load"}
+{"index": 1, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 17, "index": 2, "resident_weight_bytes": 683101952, "seconds": 0.01, "stage": "layer_load"}
+{"index": 2, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 3, "resident_weight_bytes": 1470778624, "seconds": 1.459, "stage": "layer_load"}
+{"index": 3, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 4, "resident_weight_bytes": 1470778624, "seconds": 1.483, "stage": "layer_load"}
+{"index": 4, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 5, "resident_weight_bytes": 1470778624, "seconds": 1.458, "stage": "layer_load"}
+{"index": 5, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 6, "resident_weight_bytes": 1470778624, "seconds": 1.387, "stage": "layer_load"}
+{"index": 6, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 7, "resident_weight_bytes": 1470778624, "seconds": 1.508, "stage": "layer_load"}
+{"index": 7, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 8, "resident_weight_bytes": 1470778624, "seconds": 1.447, "stage": "layer_load"}
+{"index": 8, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 9, "resident_weight_bytes": 1470778624, "seconds": 1.368, "stage": "layer_load"}
+{"index": 9, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 10, "resident_weight_bytes": 1470778624, "seconds": 1.514, "stage": "layer_load"}
+{"index": 10, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 11, "resident_weight_bytes": 1470778624, "seconds": 1.499, "stage": "layer_load"}
+{"index": 11, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 12, "resident_weight_bytes": 1470778624, "seconds": 1.443, "stage": "layer_load"}
+progress: layer-outer forwards 1/221 0% [07:03<25:52:22, 423.4 s/it]
+progress: layer-outer forwards 6/221 2% [07:34<4:31:41, 75.8 s/it]
+progress: layer-outer forwards 11/221 4% [08:05<2:34:29, 44.1 s/it]
+progress: layer-outer forwards 16/221 7% [08:36<1:50:22, 32.3 s/it]
+{"index": 12, "stage": "layer", "windows": 17}
+progress: layer-outer forwards 17/221 7% [08:37<1:43:25, 30.4 s/it]
+hf_capture: ERROR: REFUSED: the generation sanity probe failed. 'The capital of France is' continued with ' the' (p=0.1115, entropy 5.692 of a possible 11.950 nats), and 'Paris' was expected. Tensor counts, shapes and the load report can ALL be clean while a shard loaded as zeros or as randomly initialised weights -- this is the check that sees it. Top-5: ' the' p=0.1115, ' located' p=0.0676, ' France' p=0.0597, ' ' p=0.0579, ' in' p=0.0423. Pass --sanity-expect '' to record the probe without enforcing it, if this model is genuinely expected to answer otherwise.
+capture plan
+  engine          hf-transformers (engines/tools/hf_capture.py)
+  form / role     hidden / root   lane streaming
+  dataset root    /workspace/fidelity/dataset
+  command         /workspace/fidelity-engine/venv/bin/python /workspace/fidelity/engines/tools/hf_capture.py --out /workspace/fidelity/dataset --role root --lane streaming --model /workspace/fidelity/models/target --weights-repository malaiwah/GLM-5.2-SIQ-Fruit-bf16 --repository malaiwah/GLM-5.2-SIQ-Fruit-bf16 --model-revision ef68013aa6e16453cf52b5b77647f72fbe258c3c --panel /workspace/fidelity/engines/panels/panel--fruit.malaiwah.heldout-v1 --panel-id panel--fruit.malaiwah.heldout-v1 --schedule layer-outer --dtype bfloat16 --dataset-id fruit-fidelity-root-a100-v1 --dataset-name GLM-5.2-SIQ-Fruit bf16 root fidelity dataset (hidden form), RunPod A100-SXM4-80GB x86_64 --author malaiwah --role root --sanity-expect Paris --allow-unexpected-tensors
+REFUSED [capture_failed]: the capture exited 1; no dataset written

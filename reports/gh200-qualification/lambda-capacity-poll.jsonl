@@ -1,0 +1,24 @@
+{"utc": "2026-08-31T15:40:47Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T15:42:48Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": ["us-southeast-1"], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T15:44:48Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": ["us-southeast-1"], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T15:46:49Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": ["us-southeast-1"], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T15:48:50Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": ["us-southeast-1"], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T15:50:51Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T15:52:52Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T15:54:53Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T15:56:54Z", "gpu_1x_gh200": ["us-east-3"], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T15:58:55Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:00:56Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:02:57Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:04:58Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:06:58Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:08:59Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:11:00Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:13:01Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:15:02Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:17:03Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": [], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:19:04Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": [], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:21:05Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": ["us-southeast-1"], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:23:05Z", "gpu_1x_gh200": ["us-east-3"], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": ["us-southeast-1"], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:25:06Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": ["us-south-2", "us-southeast-1"], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}
+{"utc": "2026-08-31T16:27:07Z", "gpu_1x_gh200": [], "gpu_1x_h100_pcie": ["us-west-3"], "gpu_1x_h100_sxm5": ["us-south-2", "us-southeast-1"], "gpu_1x_a100_sxm4": ["us-east-1", "us-west-2", "asia-south-1"], "gpu_1x_b200_sxm6": []}

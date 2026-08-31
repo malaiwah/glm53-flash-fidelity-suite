@@ -1,0 +1,66 @@
+{"files": 17, "sha256": "8b5df5743cf2535f7d4ca477ea82d53be4ba98c2329db67739b4b68a3d4031e7", "stage": "checkpoint_identity"}
+{"bytes": 10081800232, "index_present": true, "shards": 16, "stage": "checkpoint_audit", "tensors": 8715}
+{"layers_prefix": "model.layers", "renamed_checkpoint_keys": 8448, "stage": "stream_routing", "total_checkpoint_keys": 8715}
+{"deferred_buffers": 0, "layers_prefix": "model.layers", "resident_shards": null, "resident_tensors": 13, "stage": "stream_base", "streamed_layers": 13, "streamed_params": 201}
+{"conversion_errors": 0, "conversion_errors_visible": true, "error_msgs": 0, "mismatched": 0, "missing": 0, "observed": true, "stage": "load_report", "unexpected": 791, "unexpected_sample": ["model.layers.13.eh_proj.weight", "model.layers.13.enorm.weight", "model.layers.13.hnorm.weight", "model.layers.13.input_layernorm.weight", "model.layers.13.mlp.experts.0.down_proj.weight", "model.layers.13.mlp.experts.0.gate_proj.weight"]}
+{"architectures": ["GlmMoeDsaForCausalLM"], "device": "cuda", "dtype": "torch.bfloat16", "hidden_size": 1024, "stage": "model", "vocab_size": 154880}
+{"panel_json": "/workspace/fidelity/engines/panels/panel--fruit.malaiwah.heldout-v1/panel.json", "receipt_sha256": "6c195ef252305d0e647c2f33b99e60d927c306a4e86ff3a055173297bc9a403c", "stage": "panel", "windows": 16}
+{"expect": null, "prompt": "The capital of France is", "prompt_tokens": 5, "stage": "sanity_probe_planned"}
+{"forward_windows": 17, "layers": 13, "residency": "stream", "schedule": "layer-outer", "stage": "schedule", "windows": 16}
+{"checkpoint_tensors": 17, "index": 0, "resident_weight_bytes": 683101952, "seconds": 0.018, "stage": "layer_load"}
+{"index": 0, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 17, "index": 1, "resident_weight_bytes": 683101952, "seconds": 0.033, "stage": "layer_load"}
+{"index": 1, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 17, "index": 2, "resident_weight_bytes": 683101952, "seconds": 0.03, "stage": "layer_load"}
+{"index": 2, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 3, "resident_weight_bytes": 1470778624, "seconds": 0.336, "stage": "layer_load"}
+{"index": 3, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 4, "resident_weight_bytes": 1470778624, "seconds": 0.326, "stage": "layer_load"}
+{"index": 4, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 5, "resident_weight_bytes": 1470778624, "seconds": 0.358, "stage": "layer_load"}
+{"index": 5, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 6, "resident_weight_bytes": 1470778624, "seconds": 0.394, "stage": "layer_load"}
+{"index": 6, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 7, "resident_weight_bytes": 1470778624, "seconds": 0.423, "stage": "layer_load"}
+{"index": 7, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 8, "resident_weight_bytes": 1470778624, "seconds": 0.382, "stage": "layer_load"}
+{"index": 8, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 9, "resident_weight_bytes": 1470778624, "seconds": 0.323, "stage": "layer_load"}
+{"index": 9, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 10, "resident_weight_bytes": 1470778624, "seconds": 0.374, "stage": "layer_load"}
+{"index": 10, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 11, "resident_weight_bytes": 1470778624, "seconds": 0.35, "stage": "layer_load"}
+{"index": 11, "stage": "layer", "windows": 17}
+{"checkpoint_tensors": 786, "index": 12, "resident_weight_bytes": 1470778624, "seconds": 0.31, "stage": "layer_load"}
+{"index": 12, "stage": "layer", "windows": 17}
+{"enforced": false, "entropy_nats": 5.6929, "probability": 0.11241, "stage": "sanity_probe", "status": "recorded", "top1": " the", "uniform_entropy_nats": 11.9504}
+{"bytes": 4192533, "index": 0, "rows": 2047, "seconds": 0.025, "stage": "window", "window_id": "final-0000"}
+{"bytes": 4192533, "index": 1, "rows": 2047, "seconds": 0.017, "stage": "window", "window_id": "final-0001"}
+{"bytes": 4192533, "index": 2, "rows": 2047, "seconds": 0.015, "stage": "window", "window_id": "final-0002"}
+{"bytes": 4192533, "index": 3, "rows": 2047, "seconds": 0.021, "stage": "window", "window_id": "final-0003"}
+{"bytes": 4192533, "index": 4, "rows": 2047, "seconds": 0.018, "stage": "window", "window_id": "final-0004"}
+{"bytes": 4192533, "index": 5, "rows": 2047, "seconds": 0.016, "stage": "window", "window_id": "final-0005"}
+{"bytes": 4192533, "index": 6, "rows": 2047, "seconds": 0.015, "stage": "window", "window_id": "final-0006"}
+{"bytes": 4192533, "index": 7, "rows": 2047, "seconds": 0.015, "stage": "window", "window_id": "final-0007"}
+{"bytes": 4192533, "index": 8, "rows": 2047, "seconds": 0.015, "stage": "window", "window_id": "final-0008"}
+{"bytes": 4192533, "index": 9, "rows": 2047, "seconds": 0.021, "stage": "window", "window_id": "final-0009"}
+{"bytes": 4192533, "index": 10, "rows": 2047, "seconds": 0.019, "stage": "window", "window_id": "final-0010"}
+{"bytes": 4192533, "index": 11, "rows": 2047, "seconds": 0.015, "stage": "window", "window_id": "final-0011"}
+{"bytes": 4192533, "index": 12, "rows": 2047, "seconds": 0.015, "stage": "window", "window_id": "final-0012"}
+{"bytes": 4192533, "index": 13, "rows": 2047, "seconds": 0.015, "stage": "window", "window_id": "final-0013"}
+{"bytes": 4192533, "index": 14, "rows": 2047, "seconds": 0.015, "stage": "window", "window_id": "final-0014"}
+{"bytes": 4192533, "index": 15, "rows": 2047, "seconds": 0.019, "stage": "window", "window_id": "final-0015"}
+{"bytes": 317194334, "file": "head/weight.safetensors", "stage": "head", "tensor_content_sha256": "8d0f7d6e35c48a3f6b97f5f5ebc24657a3fd32e1e6c22adc710a9b317b5b5440"}
+{"context_length": 2048, "decoder_layers": 13, "device": "cuda", "hidden_size": 1024, "layer_residency": "stream", "model": "malaiwah/GLM-5.2-SIQ-Fruit-bf16", "peak_cuda_allocated_bytes": 2460023296, "peak_cuda_allocated_gb": 2.46, "peak_cuda_reserved_bytes": 4016046080, "peak_cuda_reserved_gb": 4.016, "peak_resident_weight_bytes": 1470778624, "peak_resident_weight_detail": {"buffers": 10496, "parameters": 1470768128, "total": 1470778624}, "peak_resident_weight_gb": 1.471, "peak_rss_bytes": 11640901632, "peak_rss_gb": 11.641, "resident_weight_note": "the maximum, over the run, of the materialised parameter+buffer bytes. On the CPU path peak_rss_bytes ALSO counts the safetensors mmap page cache, which is evictable and is not held by the schedule; this figure is not confounded by it. On CUDA, peak_cuda_allocated_bytes is the authoritative number because it includes activations and workspace and has no page cache.", "rss_units_source": "Linux ru_maxrss", "schedule": "layer-outer", "stage": "peak_memory", "vocab_size": 154880, "windows": 16}
+{"bytes": 8171, "file": "panel/panel-receipt.json", "sha256": "6c195ef252305d0e647c2f33b99e60d927c306a4e86ff3a055173297bc9a403c", "stage": "panel_receipt"}
+{"capture_content_digest": "0e754aa6b9a779f34591889f50668951d14cf8209a414b379aa2483428710e3b", "dataset_sha256": "7c0d5e4d3ef4a2c3a66766ce3558928ef5345bb69c6f4741b72422004999718e", "elapsed_seconds": 23.9, "hidden_form_bytes": 67080528, "logit_form_bytes_equivalent": 20290519040, "out": "/workspace/fidelity/dataset", "records": 16, "scored_rows": 32752, "stage": "sealed", "storage_ratio": 302.5}
+capture plan
+  engine          hf-transformers (engines/tools/hf_capture.py)
+  form / role     hidden / root   lane streaming
+  dataset root    /workspace/fidelity/dataset
+  command         /workspace/fidelity-engine/venv/bin/python /workspace/fidelity/engines/tools/hf_capture.py --out /workspace/fidelity/dataset --role root --lane streaming --model /workspace/fidelity/models/target --weights-repository malaiwah/GLM-5.2-SIQ-Fruit-bf16 --repository malaiwah/GLM-5.2-SIQ-Fruit-bf16 --model-revision ef68013aa6e16453cf52b5b77647f72fbe258c3c --panel /workspace/fidelity/engines/panels/panel--fruit.malaiwah.heldout-v1 --panel-id panel--fruit.malaiwah.heldout-v1 --schedule layer-outer --device cuda --dtype bfloat16 --dataset-id fruit-fidelity-root-a100-v1 --dataset-name GLM-5.2-SIQ-Fruit bf16 root fidelity dataset (hidden form), RunPod A100-SXM4-80GB x86_64 --author malaiwah --role root --sanity-expect  --allow-unexpected-tensors
+SEALED DATASET -> /workspace/fidelity/dataset
+  dataset_sha256          7c0d5e4d3ef4a2c3a66766ce3558928ef5345bb69c6f4741b72422004999718e
+  capture_content_digest  0e754aa6b9a779f34591889f50668951d14cf8209a414b379aa2483428710e3b
+  records / scored rows   16 / 32752
+367M	/workspace/fidelity/dataset

@@ -259,6 +259,178 @@ was missing.
 
 ---
 
+## Qualifying the GH200 for real work: what a micro-benchmark could not tell us
+
+**2026-08-31, 14:40–16:35 UTC. `malaiwah/GLM-5.2-SIQ-Fruit-bf16` (10.10 GB),
+the sealed 16-window Fruit panel, `bin/measure-cloud --role root`.** The table
+above was produced by `bin/fidelity-bench`, which uploads one payload and times
+a loop. It never built this suite's stack and never captured anything. This
+section is what happened when the real thing was pointed at the same machine.
+Evidence: [`reports/gh200-qualification/`](../reports/gh200-qualification/).
+
+### The stack builds on aarch64, and it is not close
+
+`gpu_1x_gh200` is a **Grace Hopper superchip: the host CPU is ARM**
+(`aarch64`, Ubuntu 22.04.5, kernel `6.8.0-1013-nvidia-64k`, 64 KB pages,
+64 vCPU / 432 GB). `bin/bootstrap_measure.sh` had never run on one. It
+completed in **98 seconds**, and the whole `setup` stage — bootstrap plus every
+offline selftest — in **4 m 02 s**, the same as x86:
+
+```
+14:57:17 installing python3.12 (deadsnakes)     -> Python 3.12.13   (27 s)
+14:57:46 installing the pinned wheel set        -> 67 s
+         torch 2.11.0+cu130 cuda 13.0 | transformers 5.16.1 |
+         safetensors 0.8.0 | numpy 2.5.2 | hf_transfer 0.1.9
+14:58:53 patches 0001-0006 + 0008 applied, pipeline import OK
+14:58:55 exllamav3 NOT built: the measurement path imports the pipeline without it
+         tr3 / dione / dione-stream / exl3hf / gguf offline selftests: all pass
+```
+
+Nothing needed porting. deadsnakes publishes `arm64` for jammy and noble, and
+PyTorch publishes `torch-2.11.0+cu130-cp312-cp312-manylinux_2_28_aarch64.whl`;
+`kbnf`, `hf_transfer`, `safetensors` and `tokenizers` all ship `aarch64`
+wheels, and `formatron`, `pydantic`, `transformers` and `accelerate` are pure
+Python. The **gguf offline selftest matters most of the four**: its rung 1b
+re-decodes committed real bytes on the box's own CUDA device and demands
+`torch.equal` against the reference — so a bitwise decode check passed on
+ARM+Hopper.
+
+**The ARM landmines that do exist were never reached, and that is luck rather
+than design.** `bootstrap_measure.sh`'s exllamav3 branch hardcodes a
+`flash_attn-...-linux_x86_64.whl` and a `cuda/repos/ubuntu2204/x86_64/`
+keyring. The probe skips that branch because the measurement path imports the
+pipeline without exllamav3 — so the **capture and streaming lanes are ARM-clean,
+and any lane that needs exllamav3 is not**. Nobody should discover that on a
+rental.
+
+### The `Gen4 x1` question, answered on a real run
+
+`measure-cloud`'s post-setup gate ran with `--min-h2d-gbps 100` and **passed**:
+
+```
+machine measured  ok  h2d 365.2 GB/s (cold 274.0), expert GEMM 763 TF,
+                      PCIe Gen4 x1 of Gen4 x1
+```
+
+`bench.gate` reads `h2d_GBps` and ignores link width, exactly as its docstring
+promises, so the fastest machine in this survey is not refused by the check
+written to catch oversubscribed hosts. The x86 control measured the other side
+of that ceiling on the same day: RunPod A100-SXM4-80GB, three rentals,
+**20.7 / 21.7 / 22.8 GB/s** at `Gen4 x16 of Gen4 x16`. **16x the bandwidth over
+a link one lane wide.**
+
+### Six defects, each of which ends a rented root capture
+
+None of these are ARM. All were found by running, and all are now fixed with
+regression tests (`035aa7e`, `1659165`):
+
+| what | where it bit |
+|---|---|
+| `sniff_surface` read `torch_dtype` and `text_config.dtype`, never top-level `dtype` | a plain bf16 tree — the only thing a root capture reads — refused as "no recognised surface marker", for $0.00 |
+| Lambda's run root was `/home/jl_fs`, and Lambda logs in as `ubuntu` | `mkdir: Permission denied`; every Lambda rental died at the bundle upload |
+| `_await_stage` called `jl.run_status(run_id)`, which every SSH backend refuses without an instance | a FAILED stage never ended the poll on runpod/vast/lambda. Measured: capture exited non-zero at 15:03:2x, un-noticed at 15:12, GPU at 0% |
+| `--sanity-expect` was read by `race_capture` only | on the default path the generation probe ran **unenforced** |
+| no `--allow-unexpected-tensors` route | any checkpoint with an MTP/draft block died at capture. Fruit's 791 unhoused tensors are its MTP layer 13; GLM-5.3-Flash and GLM-5.3 have the same shape |
+| `--device` was never passed, and `hf_capture` defaults to `cpu` | **the forward ran on the CPU of a box rented for its GPU** |
+
+The last is the one that would have made this whole comparison meaningless.
+On the A100 the CPU capture logged
+`progress: layer-outer forwards 1/221 0% [07:03<25:52:22, 423.4 s/it]`,
+settling near 30 s per forward; on the GPU the same work is **0.0173 s per
+window**. The GH200's idle `0 %, 2 MiB` during its capture stage was this bug,
+not the hardware.
+
+### What a root capture actually costs, end to end
+
+RunPod A100-SXM4-80GB, $1.39/h, x86_64, the complete four stages:
+
+| stage | wall | note |
+|---|---|---|
+| setup | 4 m 02 s | bootstrap + five offline selftests |
+| fetch_target | 2 m 01 s | 10.10 GB |
+| capture | 2 m 01 s | 16 windows + the probe |
+| verify | 2 m 01 s | seal + digest chain + tensor content |
+| **total rental** | **11 min** | **billed $0.26** (estimate said $2.47) |
+
+**Read those stage times as upper bounds.** `_await_stage` polls every 120 s,
+so every stage that finishes inside two minutes reports `2 m 01 s`. The honest
+per-window figure is the capture manifest's own: **0.0173 s/window mean** on the
+A100, against **0.253 s/window** on the L4 that captured the published root.
+For a root capture, `$/window` from the table above does not transfer at all —
+that column prices the streaming lane's *per-window expert upload*, and a
+layer-outer root capture loads each layer **once for the whole panel**. The
+GH200's 16x bandwidth advantage applies to a term that a root capture pays once.
+
+### The finding that decides the dual-root question
+
+`docs/ARCHITECTURE-DETERMINISM.md` says the root's hardware sets the regime.
+Here is that effect measured directly, for the first time, on the root rather
+than inferred from candidate rows — the **same published quant**
+(`malaiwah/fruit-fidelity-quant-siq-v1`), the **same sealed panel**, the **same
+fp64 estimator**, against two roots of the same weights captured on two GPUs:
+
+| root captured on | mean tokenwise KLD of the same quant | top-1 |
+|---|---|---|
+| NVIDIA L4 (the published root) | 0.038737449793 | 0.8797631 |
+| NVIDIA A100-SXM4-80GB (this run) | 0.038844450282 | 0.8786334 |
+| **difference** | **1.070e-04 nats — 0.276 %** | −0.113 pp |
+
+Set beside `ARCHITECTURE-DETERMINISM.md` §8's own table, Fruit lands exactly
+where its size says it should:
+
+| | model | KLD | hardware term, absolute | relative |
+|---|---|---|---|---|
+| toy | 16 layers, hidden 1024, vocab 32768 | 6.3e-05 | 3.49e-06 | 5.5 % |
+| **Fruit SIQ exl3 K3/K4** | **13 built layers, hidden 1024, vocab 154880** | **0.03874** | **1.070e-04** | **0.276 %** |
+| GLM-5.3-Flash 2.05bpw | 45 layers, vocab 154880 | 0.1219 | 2.973e-04 | 0.245 % |
+
+Absolute grows with depth; relative sits on GLM-5.3-Flash's 0.245 %. The
+prediction held.
+
+**And the part that is new: the perturbation mostly cancels.** The two roots are
+far apart from each other — `KLD(L4 ‖ A100) = 4.467e-03` nats, top-1 0.9657,
+hidden states differing by up to 2.70 in absolute value — yet a quant measured
+against either moves by only 1.070e-04. **41.7x of the root-to-root divergence
+is common-mode and cancels in the KL between root and candidate.** That is why
+the registry's published numbers are as stable as they are, and it is the
+strongest argument yet that a root captured on scarce hardware does not poison
+the rows measured against it.
+
+**State the statistics honestly.** On 16 windows the paired per-window delta is
+mean 1.070e-04, sd 6.147e-04, **t = 0.70**, with 8 windows moving each way. The
+census difference on this panel is exact — the lane is deterministic — but at
+t = 0.70 the shift does **not** generalise to a new panel on this evidence. The
+number to quote is "the hardware term is at the 1e-04 / 0.3 % scale", not
+"1.070e-04 ± nothing". `llms.txt` Rule 2 applies to machines as it does to
+windows.
+
+Harness control: the same code reproduces the published registry row
+(`measurement--fruit.siq-exl3-k3k4.heldout-v1`, 0.038737453713514176) as
+0.038737449793 — 3.9e-09 apart, with top-1 agreement identical to all ten
+digits — and a capture compared against a byte-identical copy of itself returns
+**exactly 0.0 nats at top-1 1.0** over all 32,752 positions with
+`--force-compute`, i.e. with the math actually run rather than short-circuited
+on the digest.
+
+### The GH200 capacity reality, and it is worse than 47-of-66
+
+The survey's poll said `gpu_1x_gh200` was rentable in 47 of 66 two-minute
+polls. Trying to actually rent one for an hour, at 45-second polls
+([`lambda-capacity-poll.jsonl`](../reports/gh200-qualification/lambda-capacity-poll.jsonl)):
+
+* `regions_with_capacity_available` was **empty for 28 continuous minutes**
+  (15:28–15:56 UTC) and empty again from 16:19 on;
+* of five launches fired while the catalogue said yes, **two were refused** with
+  `HTTP 400 instance-operations/launch/insufficient-capacity`;
+* of three instances that did launch, **two came up `unhealthy`** — created,
+  billed, never reaching `active`, sshd never answering. `_endpoint` waits 900 s
+  for `active`, so an unhealthy box costs a quarter-hour of rental unless
+  something destroys it.
+
+Five of eight attempts produced nothing. That is a scheduling property of the
+work, not a footnote: **a GH200 root capture has to be written as a retry loop
+against capacity and health, or it does not happen.**
+
 ## What a price cannot express
 
 Verified against the live APIs on 2026-08-31, not read off marketing pages.

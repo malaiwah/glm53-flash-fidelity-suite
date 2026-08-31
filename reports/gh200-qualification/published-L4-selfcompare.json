@@ -1,0 +1,212 @@
+{
+  "candidate": {
+    "capture_content_digest": "b417acc22b8aa7f3294b8e62c4b619bc5051aef9fd8a073602572a30af6b3e1c",
+    "checkpoint_identity_sha256": "8b5df5743cf2535f7d4ca477ea82d53be4ba98c2329db67739b4b68a3d4031e7",
+    "cuda": "13.0",
+    "dataset_id": "fidelity--fruit.malaiwah.root.bf16",
+    "dataset_sha256": "f56674f9159a68fa4abd5ccb2e727aadf510f35ce1b44b5cc4b825987560e7cf",
+    "device": "NVIDIA L4",
+    "lane": "local-cuda-budget",
+    "lane_identity_sha256": "152b841a3bd312830e4e02c2acbb4e30e45304c96748bb80d31d7e7ff5748c8f",
+    "python": "3.10.20",
+    "root": "<published-root: hf://malaiwah/fruit-fidelity-root-v1@7611f964>",
+    "stack_fingerprint_sha256": "c9803c4d56ba16c82a0b55554a653df671183d3627e8d71eb765171157bf87c5",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.16.1"
+  },
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "direction": "reference_to_candidate",
+    "replay_backend": "numpy:cpu:float32",
+    "vocab_masking_policy": "full_stored_vocab"
+  },
+  "head": {
+    "candidate_sha256": "8d0f7d6e35c48a3f6b97f5f5ebc24657a3fd32e1e6c22adc710a9b317b5b5440",
+    "reference_sha256": "8d0f7d6e35c48a3f6b97f5f5ebc24657a3fd32e1e6c22adc710a9b317b5b5440",
+    "same_tensor_content": true
+  },
+  "hidden_states": {
+    "bitwise_identical": true,
+    "max_abs_diff": 0.0
+  },
+  "not_a_sealed_receipt": true,
+  "note": "computed with fidelity/dscompare's own load_tensor/_replay/token_kld (numpy fp32 replay, fp64 full-vocabulary KLD, direction reference->candidate) because the sealed comparator refused an IDENTITY gate, not a numeric one. No registry row follows from this.",
+  "per_context": [
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 0.0,
+      "index": 0,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0000"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 0.0,
+      "index": 1,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0001"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 0.0,
+      "index": 2,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0002"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 0.0,
+      "index": 3,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0003"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 0.0,
+      "index": 4,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0004"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 0.0,
+      "index": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0005"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 0.0,
+      "index": 6,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0006"
+    },
+    {
+      "domain": "literary",
+      "hidden_max_abs_diff": 0.0,
+      "index": 7,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0007"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 0.0,
+      "index": 8,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0008"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 0.0,
+      "index": 9,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0009"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 0.0,
+      "index": 10,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0010"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 0.0,
+      "index": 11,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0011"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 0.0,
+      "index": 12,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0012"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 0.0,
+      "index": 13,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0013"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 0.0,
+      "index": 14,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0014"
+    },
+    {
+      "domain": "scientific",
+      "hidden_max_abs_diff": 0.0,
+      "index": 15,
+      "max": 0.0,
+      "mean": 0.0,
+      "scored_rows": 2047,
+      "window_id": "final-0015"
+    }
+  ],
+  "reference": {
+    "capture_content_digest": "b417acc22b8aa7f3294b8e62c4b619bc5051aef9fd8a073602572a30af6b3e1c",
+    "checkpoint_identity_sha256": "8b5df5743cf2535f7d4ca477ea82d53be4ba98c2329db67739b4b68a3d4031e7",
+    "cuda": "13.0",
+    "dataset_id": "fidelity--fruit.malaiwah.root.bf16",
+    "dataset_sha256": "f56674f9159a68fa4abd5ccb2e727aadf510f35ce1b44b5cc4b825987560e7cf",
+    "device": "NVIDIA L4",
+    "lane": "local-cuda-budget",
+    "lane_identity_sha256": "152b841a3bd312830e4e02c2acbb4e30e45304c96748bb80d31d7e7ff5748c8f",
+    "python": "3.10.20",
+    "root": "<published-root: hf://malaiwah/fruit-fidelity-root-v1@7611f964>",
+    "stack_fingerprint_sha256": "c9803c4d56ba16c82a0b55554a653df671183d3627e8d71eb765171157bf87c5",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.16.1"
+  },
+  "result": {
+    "contexts": 16,
+    "max_tokenwise_kld": 0.0,
+    "mean_tokenwise_kld": 0.0,
+    "median_tokenwise_kld": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "per_domain_mean": {
+      "literary": 0.0,
+      "scientific": 0.0
+    },
+    "per_window_mean_sd": 0.0,
+    "scored_positions": 32752,
+    "tokenwise_kld_sha256": "4bb3ee52d85cc893d2f6bd7ee66375c5857c6535b23f85abc7c9bdfc312131cf",
+    "top1_agreement": 1.0
+  },
+  "schema": "adhoc.direct-capture-comparison.v1"
+}

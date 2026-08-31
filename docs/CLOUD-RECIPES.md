@@ -147,6 +147,43 @@ export LAMBDA_KEY_FILE=~/.lambda_key HF_TOKEN=$(cat ~/.hf_token)
 40 GB and will not hold a GLM-5.3-Flash streaming measurement (needs 63 GB);
 the smallest type that does is `gpu_1x_h100_sxm5`.
 
+**Lambda's runs are not root-owned, and until 2026-08-31 nothing here knew
+that.** Its instances log in as `ubuntu` and `/home` on its images is root-owned
+0755, so the controller's inherited `/home/jl_fs/fidelity` run root was `EACCES`
+and *every* Lambda measurement died two minutes in, during the bundle upload,
+with the boot already paid for:
+
+```
+ERROR  remote command exited 1: mkdir: cannot create directory '/home/jl_fs': Permission denied
+```
+
+The run root is now the backend's to declare (`LambdaCloud.run_base =
+"/home/ubuntu"`), so a Lambda run lives under `/home/ubuntu/fidelity` and
+`/home/ubuntu/fidelity-engine`. Nothing else changed; the other three providers
+are byte-identical. This is why §2's claim that Lambda's backend is "fully
+exercised" was true of `create`/`exec`/`upload`/`destroy` and false of a
+measurement: the full run had never been attempted, exactly as that paragraph
+says.
+
+**Capacity is the binding constraint on `gpu_1x_gh200`, more so than the
+survey's 47-of-66 suggests.** Over 2026-08-31 15:27–16:30 UTC, polling every
+45 s ([`lambda-capacity-poll.jsonl`](../reports/gh200-qualification/lambda-capacity-poll.jsonl)):
+
+* `regions_with_capacity_available` was **empty for a continuous 28 minutes**
+  (15:28–15:56) and empty again from 16:19 onward;
+* when it was non-empty, **two of five launches were refused anyway** with
+  `HTTP 400 instance-operations/launch/insufficient-capacity` — the catalogue
+  promising a type the launch API then declines, the same shape §"Postscript"
+  of [`CLOUD-COMPARISON.md`](CLOUD-COMPARISON.md) records for
+  `gpu_1x_h100_sxm5`;
+* and **two of three instances that DID launch came up `unhealthy`** — a status
+  the API creates, bills for, and never advances to `active`, with sshd never
+  answering. `LambdaCloud._endpoint` waits for `active` and so sits out its full
+  900 s on one of these; destroy it and relaunch rather than paying the wait.
+
+Budget a GH200 run as *several* launch attempts, not one, and watch the status
+rather than assuming a created instance is a machine.
+
 ### JarvisLabs
 
 ```bash
