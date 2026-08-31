@@ -358,6 +358,41 @@ states each gap at the point of use.
 Format: [`docs/FIDELITY-DATASET-SPEC.md`](docs/FIDELITY-DATASET-SPEC.md).
 Card annotation: [`docs/CARD-ANNOTATION-SPEC.md`](docs/CARD-ANNOTATION-SPEC.md).
 
+## 6a. The claim template — what a number here may honestly say
+
+Adopted 2026-08-31 from the independent peer review, because the difference
+between the safe form and the unsafe forms is where every misuse of this data
+begins.
+
+**The safe claim:**
+
+> "On panel X, under pipeline/lane/hardware configuration Y, this exact
+> candidate's teacher-forced next-token distribution had lower mean
+> teacher-to-candidate KL than candidate Z, with the reported sampling and run
+> uncertainty."
+
+Every clause is load-bearing: the panel (Rule 2: never one window), the full
+configuration (the comparability key is necessary, not sufficient — §5), the
+exact candidate (an artifact revision, not a format family), teacher-forced
+next-token distributions (not free-running generation), the direction, and the
+uncertainty (at its honest unit — for the Brandon panel that unit is the
+source document, of which there are four).
+
+**Unsafe claims, without additional evidence none of this data supplies:**
+
+- "This is the best quant."
+- "K6 preserves quality 2.52× better than K8." *(withdrawn — a residual ratio
+  with no uncertainty; see §4)*
+- "The residual is the amount caused by quantization." *(it is the excess over
+  a same-lane control, not a causal attribution)*
+- "A lower KL means higher task accuracy." *(KL is a distributional-drift
+  diagnostic; the flips literature shows accuracy and drift dissociate)*
+- "The result applies to long context or served generation." *(2,048-token
+  teacher-forced panels; the checkpoint lane deliberately cannot see serving)*
+- "The two numbers share a comparability key, so the better one is the better
+  quant." *(equal keys make candidates, not a certificate — check the
+  registry's per-group predicate)*
+
 ## The measurers' checklist
 
 1. State the direction, estimator precision, and scored-position count.

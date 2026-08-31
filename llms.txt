@@ -57,6 +57,14 @@ deterministic; five cold runs give population stddev exactly 0.0). The *serving 
 real engine and characterizes weights + kernels + activation quantization together. Neither is
 wrong; mixing them silently is.
 
+**The one safe claim shape** (adopted from independent peer review, 2026-08-31): "On panel X,
+under pipeline/lane/hardware configuration Y, this exact candidate's teacher-forced next-token
+distribution had lower mean teacher-to-candidate KL than candidate Z, with the reported sampling
+and run uncertainty." Unsafe without further evidence: "this is the best quant"; any residual
+ratio without uncertainty (the once-published "2.52x" is withdrawn); "the residual is the amount
+caused by quantization"; "lower KL means higher task accuracy"; "the result applies to long
+context or served generation".
+
 ## Start here
 
 - [WHAT-WE-MEASURE.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/WHAT-WE-MEASURE.md): the definitive answer to *what* a number here is — the measured quantity, whether the lm_head is included (yes in the computation, no in the quantization), the two lanes, floors, and the comparability rules. Read this before citing any number.
