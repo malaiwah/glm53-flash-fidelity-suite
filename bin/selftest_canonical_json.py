@@ -76,6 +76,45 @@ for label, value in CASES[:8]:
           C.sha256_hex(C.canonical_json(value))
           == L.sha256_hex(L.canonical_json(value)))
 
+print("\n== non-finite numbers: BOTH sides refuse, identically (P1-08) ==")
+# NaN/Infinity are not JSON (RFC 8259). Before the fix both serializers emitted
+# the non-standard tokens NaN/Infinity/-Infinity -- "canonical" bytes a
+# conforming parser rejects, sealed under a sha256.
+NONFINITE = [
+    ("NaN value", {"v": float("nan")}),
+    ("+Infinity value", {"v": float("inf")}),
+    ("-Infinity value", {"v": float("-inf")}),
+    ("NaN nested in array", {"a": [1.0, float("nan")]}),
+    ("Infinity deep in object", {"a": {"b": {"c": float("inf")}}}),
+]
+for label, value in NONFINITE:
+    verdicts = []
+    for mod in (C, L):
+        try:
+            mod.canonical_json(value)
+            verdicts.append("accepted")
+        except ValueError:
+            verdicts.append("refused")
+    check("%-30s -> refused by both" % label, verdicts == ["refused", "refused"])
+
+for label, text in [("NaN token", '{"v": NaN}'),
+                    ("Infinity token", '{"v": Infinity}'),
+                    ("-Infinity token", '{"v": -Infinity}'),
+                    ("nested NaN token", '{"a": [1, {"b": NaN}]}')]:
+    verdicts = []
+    for mod in (C, L):
+        try:
+            mod.parse_json(text)
+            verdicts.append("accepted")
+        except ValueError:
+            verdicts.append("refused")
+    check("parse %-24s -> refused by both" % label, verdicts == ["refused", "refused"])
+
+check("finite floats still serialize (allow_nan=False is not a float ban)",
+      C.canonical_json({"v": 0.013723384665701147})
+      == L.canonical_json({"v": 0.013723384665701147})
+      == '{"v":0.013723384665701147}')
+
 print("\n== properties the wire format depends on ==")
 doc = {"b": 1, "a": {"d": 2, "c": [1, 2]}}
 s = C.canonical_json(doc)

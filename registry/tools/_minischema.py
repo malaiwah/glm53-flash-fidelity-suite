@@ -104,8 +104,28 @@ class Registry(object):
 
     def validate(self, instance, schema_name):
         errors = []
+        # P1-08. NaN/Infinity are not JSON (RFC 8259), yet Python's json module
+        # both parses and emits them, and every BOUND check below fails open on
+        # NaN because all comparisons with NaN are False -- a NaN metric.value
+        # used to validate cleanly against `minimum: 0`. Finiteness is checked
+        # here, recursively over the WHOLE instance, so a non-finite number is
+        # an error even under a permissive subschema (additionalProperties true)
+        # that the keyword walk would never descend into.
+        _check_finite(instance, "", errors)
         _validate(instance, self.docs[schema_name], self, schema_name, "", errors)
         return errors
+
+
+def _check_finite(inst, path, errors):
+    if isinstance(inst, float) and not (inst == inst and abs(inst) != float("inf")):
+        errors.append(Error(path or "#", "non-finite number (NaN/Infinity) is not valid JSON "
+                                         "and cannot be validated or canonically serialized"))
+    elif isinstance(inst, dict):
+        for k, v in inst.items():
+            _check_finite(v, path + "/" + str(k), errors)
+    elif isinstance(inst, list):
+        for i, v in enumerate(inst):
+            _check_finite(v, "%s/%d" % (path, i), errors)
 
 
 # REG-23. Keywords whose values are SCHEMAS. Everything else is a leaf: recursing into a

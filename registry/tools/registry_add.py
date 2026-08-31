@@ -258,7 +258,7 @@ def harness_for_row(args):
     manifest = getattr(args, "harness_manifest", None)
     if manifest:
         with open(manifest, encoding="utf-8") as fh:
-            pb = json.load(fh)
+            pb = json.load(fh, parse_constant=L.reject_nonfinite_token)
         h = harness_from_produced_by(pb, os.path.basename(manifest))
         if h is None:
             raise Refuse(E_MISSING,
@@ -275,7 +275,9 @@ def load_receipt(path):
         raise Refuse(E_MISSING, "receipt not found: %s" % path)
     with open(path, "r", encoding="utf-8") as fh:
         try:
-            r = json.load(fh)
+            # P1-08: NaN/Infinity refused at the parse -- the minischema's bound
+            # checks fail open on NaN and canonical serialization must never see one.
+            r = json.load(fh, parse_constant=L.reject_nonfinite_token)
         except ValueError as exc:
             raise Refuse(E_MISSING, "receipt is not valid JSON: %s (%s)" % (path, exc))
     schema = r.get("schema")
@@ -2223,7 +2225,7 @@ def load_submission(path):
         raise Refuse(E_MISSING, "submission not found: %s" % path)
     with open(path, "r", encoding="utf-8") as fh:
         try:
-            sub = json.load(fh)
+            sub = json.load(fh, parse_constant=L.reject_nonfinite_token)
         except ValueError as exc:
             raise Refuse(E_MISSING, "submission is not valid JSON: %s (%s)" % (path, exc))
     if sub.get("submission_schema") != SUBMISSION_SCHEMA:

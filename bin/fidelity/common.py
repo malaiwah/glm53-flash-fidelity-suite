@@ -208,7 +208,22 @@ def safe_urlopen(request, *, timeout=60.0):
 
 
 def canonical_json(obj: Any) -> str:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    # P1-08: allow_nan=False, exactly as registry_lib.canonical_json. NaN/Infinity
+    # are not JSON; sealing them would publish "canonical" bytes a conforming
+    # parser rejects. Non-finite input is a ValueError, never a wire token.
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                      allow_nan=False)
+
+
+def reject_nonfinite_token(token):
+    """parse_constant hook: refuse the non-RFC tokens NaN/Infinity/-Infinity."""
+    raise ValueError("non-finite JSON token %r: NaN/Infinity are not valid JSON (RFC 8259)"
+                     % token)
+
+
+def parse_json(text: str) -> Any:
+    """json.loads with non-finite tokens refused (matches registry_lib.parse_json)."""
+    return json.loads(text, parse_constant=reject_nonfinite_token)
 
 
 def sha256_hex(text: str) -> str:
@@ -259,7 +274,8 @@ def write_json(path: str, obj: Any) -> None:
     handle, tmp = tempfile.mkstemp(dir=directory, prefix=".receipt-", suffix=".tmp")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as fh:
-            json.dump(obj, fh, indent=2, sort_keys=True, ensure_ascii=False)
+            json.dump(obj, fh, indent=2, sort_keys=True, ensure_ascii=False,
+                      allow_nan=False)
             fh.write("\n")
             fh.flush()
             os.fsync(fh.fileno())
@@ -273,7 +289,7 @@ def write_json(path: str, obj: Any) -> None:
 
 def read_json(path: str) -> Any:
     with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+        return json.load(fh, parse_constant=reject_nonfinite_token)
 
 
 # --------------------------------------------------------------------------
