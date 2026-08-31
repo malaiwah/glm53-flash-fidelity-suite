@@ -8,9 +8,9 @@
 set -uo pipefail
 S=/home/suite/engines/tools/hidden_replay_stage.sh
 T=/home/hr/receipts/stage-timing.txt
-NTFY="${QP_NTFY_URL:-https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33}"
+NTFY="${NTFY_URL:-${QP_NTFY_URL:-}}"
 
-note() { curl -s -m 10 -H "Title: $2" -H "Tags: $3" -d "$1" "$NTFY" >/dev/null 2>&1 || true; }
+note() { [ -n "$NTFY" ] || return 0; curl -s -m 10 -H "Title: $2" -H "Tags: $3" -d "$1" "$NTFY" >/dev/null 2>&1 || true; }
 
 for stage in verify run1 run2 run3; do
   t0=$(date +%s)

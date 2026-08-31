@@ -54,8 +54,9 @@ SEALED_STREAM_MEAN=0.013714888822596553
 SEALED_STREAM_TOKENWISE_SHA=9657ede36b9f4b09a2c74916239c6d9a3baebce5f3fa64af7af388b0686aa284
 SEALED_STREAM_CHECKPOINT_IDENTITY=a8668be3592493035e98a52994e0e3c43548a9757eadb79f7ae939f2f32de1c1
 
-NTFY_URL="${QP_NTFY_URL:-https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33}"
+NTFY_URL="${NTFY_URL:-${QP_NTFY_URL:-}}"
 ntfy() {  # ntfy <body> <title> <tags> [priority]
+  [ -n "$NTFY_URL" ] || return 0
   curl -s -m 10 -H "Title: $2" -H "Tags: $3" ${4:+-H "Priority: $4"} \
        -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true
 }

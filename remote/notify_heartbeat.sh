@@ -3,7 +3,9 @@
 #   notify_heartbeat.sh [interval_seconds]
 # Stops itself when the package stage completes or when logs/heartbeat.stop exists.
 ROOT=/home/ubuntu/glm53
-NTFY_URL="https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33"
+# Notification endpoint: opt-in via NTFY_URL (or QP_NTFY_URL). Unset = no
+# notifications. A public repo must not pin its operator's channel.
+NTFY_URL="${NTFY_URL:-${QP_NTFY_URL:-}}"
 INTERVAL="${1:-900}"
 mkdir -p "$ROOT/logs"
 
@@ -60,10 +62,12 @@ if r.is_file():
 print("\n".join(lines))
 EOF
 )
+  [ -z "$NTFY_URL" ] || \
   curl -s -m 15 -H "Title: GLM53 heartbeat (VM)" -H "Tags: hourglass_flowing_sand" \
        -d "$BODY" "$NTFY_URL" >/dev/null 2>&1 || true
 
   if [ -f "$ROOT/logs/heartbeat.stop" ] || grep -q '^done:package' "$ROOT/logs/stage.state" 2>/dev/null; then
+    [ -z "$NTFY_URL" ] || \
     curl -s -m 15 -H "Title: GLM53 heartbeat stopping" -H "Tags: checkered_flag" \
          -d "package stage complete or stop requested — VM heartbeat ends" "$NTFY_URL" >/dev/null 2>&1 || true
     exit 0

@@ -7,9 +7,11 @@ ROOT=/home/ubuntu/glm53            # bundle + hfenv live on the VM disk
 FS=/home/jl_fs/glm53               # heavy artifacts live on the shared filesystem
 IMAGE_REF="$(awk '{print $1}' "$ROOT/out/image-pin.txt" 2>/dev/null || true)"
 IMAGE_REF="${IMAGE_REF:-__IMAGE_REF__}"
-NTFY_URL="https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33"
+# Notification endpoint: opt-in via NTFY_URL (or QP_NTFY_URL). Unset = no
+# notifications. A public repo must not pin its operator's channel.
+NTFY_URL="${NTFY_URL:-${QP_NTFY_URL:-}}"
 STAGE="$1"
-ntfy() { curl -s -m 10 -H "Title: $2" -H "Tags: $3" ${4:+-H "Priority: $4"} -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true; }
+ntfy() { [ -n "$NTFY_URL" ] || return 0; curl -s -m 10 -H "Title: $2" -H "Tags: $3" ${4:+-H "Priority: $4"} -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true; }
 mkdir -p "$FS"/{models,image,out} "$ROOT/logs"
 echo "running:prep-$STAGE $(date -u +%FT%TZ)" > "$ROOT/logs/stage.state"
 trap 'rc=$?; if [ $rc -eq 0 ]; then ntfy "prep stage $STAGE completed" "GLM53 prep OK: $STAGE" "white_check_mark";

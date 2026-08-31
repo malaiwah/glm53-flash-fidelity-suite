@@ -253,6 +253,21 @@ PY
   fi
 fi
 
+# ---------------------------------------------------------------- SEC-02
+# No tracked file may pin a ntfy topic. The endpoint is operator
+# configuration (NTFY_URL / QP_NTFY_URL, unset = notifications off); a
+# public repo that hardcodes its operator's channel ships that channel to
+# every reader (peer review 2026-08-31, "hard-coded public notification
+# topic"). This file is exempt: the pattern below is the detector.
+LITERALS="$(cd "$ROOT" && git ls-files 2>/dev/null \
+  | grep -v '^bin/selftest_shell_guards.sh$' \
+  | xargs grep -l 'ntfy\.sh/' 2>/dev/null || true)"
+if [ -z "$LITERALS" ]; then
+  ok "SEC-02 no tracked file hardcodes a ntfy.sh topic"
+else
+  no "SEC-02 no tracked file hardcodes a ntfy.sh topic" "$LITERALS"
+fi
+
 echo
 echo "selftest_shell_guards: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

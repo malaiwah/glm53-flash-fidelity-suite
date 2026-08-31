@@ -13,7 +13,9 @@ ROOT=/home/ubuntu/glm53
 FS=/home/jl_fs/glm53
 S="$ROOT/bundle/remote/stage.sh"
 DL="$ROOT/bundle/remote/download_model_vm.sh"
-NTFY_URL="https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33"
+# Notification endpoint: opt-in via NTFY_URL (or QP_NTFY_URL). Unset = no
+# notifications. A public repo must not pin its operator's channel.
+NTFY_URL="${NTFY_URL:-${QP_NTFY_URL:-}}"
 RATE=31.92
 BUDGET_USD="${BUDGET_USD:-200}"
 # SH-21. BUDGET_USD was interpolated straight into `python3 -c`, so a malformed value
@@ -27,7 +29,7 @@ case "$BUDGET_USD" in ''|*[!0-9.]*)
 python3 -c 'import sys; float(sys.argv[1])' "$BUDGET_USD" 2>/dev/null || {
   echo "BUDGET_USD must be a number (got: $BUDGET_USD)" >&2; exit 2; }
 START_TS=$(date +%s)
-ntfy() { curl -s -m 10 -H "Title: $2" -H "Tags: $3" ${4:+-H "Priority: $4"} -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true; }
+ntfy() { [ -n "$NTFY_URL" ] || return 0; curl -s -m 10 -H "Title: $2" -H "Tags: $3" ${4:+-H "Priority: $4"} -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true; }
 spent() { python3 -c "import time,sys; print(round((time.time()-float(sys.argv[1]))/3600*float(sys.argv[2]), 2))" "$START_TS" "$RATE"; }
 remaining() { python3 -c "import sys; print(round(float(sys.argv[1])-float(sys.argv[2]), 2))" "$BUDGET_USD" "$(spent)"; }
 

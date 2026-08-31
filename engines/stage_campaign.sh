@@ -26,7 +26,7 @@ ROOT=/home/jl_fs/glm53-k6
 BF16=/home/jl_fs/models/bf16              # pinned zai-org/GLM-5.3-Flash-BF16 (weights == a6c167b6)
 # Overridable so a dry validation of a stage (e.g. proving measure_stream
 # fails closed) does not page the operator on the campaign topic.
-NTFY_URL="${QP_NTFY_URL:-https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33}"
+NTFY_URL="${NTFY_URL:-${QP_NTFY_URL:-}}"
 STAGE="${1:?usage: stage_campaign.sh <stage>}"
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 [ -e "$SELF.new" ] && { echo "half-synced $SELF.new exists - finish the mv first" >&2; exit 3; }
@@ -58,6 +58,7 @@ DONE=$RCPT/done
 mkdir -p "$ROOT/logs" "$RCPT" "$DONE"
 
 ntfy() {  # ntfy <body> <title> <tags> [priority]
+  [ -n "$NTFY_URL" ] || return 0
   curl -s -m 10 -H "Title: $2" -H "Tags: $3" ${4:+-H "Priority: $4"} \
        -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true
 }

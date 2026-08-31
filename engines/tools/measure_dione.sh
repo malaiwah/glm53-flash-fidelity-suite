@@ -23,7 +23,9 @@ TEACH=$R/teacher-final
 RCPT=$R/receipts
 Q4=/home/ubuntu/q4
 REV=99cccdf0e8741715662c383828a9ea601990c125
-NTFY="https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33"
+# Notification endpoint: opt-in via NTFY_URL (or QP_NTFY_URL). Unset = no
+# notifications. A public repo must not pin its operator's channel.
+NTFY="${NTFY_URL:-${QP_NTFY_URL:-}}"
 
 $V/python $R/tools/dione_surface.py probe --root $Q4 --bf16 $BF16 --pipeline-root $PIPE || { echo PROBE_FAILED; exit 1; }
 echo PROBE_OK
@@ -89,7 +91,7 @@ if [ "${H1##* }" -eq 0 ] || [ "${H2##* }" -eq 0 ]; then
 fi
 if [ "$H1" != "$H2" ]; then
   echo "ESCALATING to 5 runs (nondeterminism detected)"
-  curl -s -d "Q4: runs differ -> escalating to 5 cold runs" "$NTFY" -H "Title: q4 escalation" >/dev/null
+  [ -z "$NTFY" ] || curl -s -d "Q4: runs differ -> escalating to 5 cold runs" "$NTFY" -H "Title: q4 escalation" >/dev/null
   for n in 3 4 5; do run_one $n || exit 1; RUNS="$RUNS $RCPT/dione-q4-student-run$n"; done
 fi
 
@@ -102,4 +104,4 @@ QP_PIPELINE_ROOT=$PIPE PYTHONPATH=$PIPE/src:$R/shapleymcg:$R/sqg-mcg \
     --runs $RUNS --out $RCPT/dione-q4-kld.json || { echo REPORT_FAILED; exit 1; }
 echo Q4_REPORT_DONE
 find $RCPT -maxdepth 2 -name "*dione-q4*kld*.json" | head -3
-curl -s -d "Q4 MEASUREMENT COMPLETE — report sealed" "$NTFY" -H "Title: Q4 number in" -H "Priority: high" >/dev/null
+[ -z "$NTFY" ] || curl -s -d "Q4 MEASUREMENT COMPLETE — report sealed" "$NTFY" -H "Title: Q4 number in" -H "Priority: high" >/dev/null

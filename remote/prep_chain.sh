@@ -6,8 +6,10 @@
 set -uo pipefail
 ROOT=/home/ubuntu/glm53
 FS=/home/jl_fs/glm53
-NTFY_URL="https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33"
-ntfy() { curl -s -m 10 -H "Title: $2" -H "Tags: $3" ${4:+-H "Priority: $4"} -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true; }
+# Notification endpoint: opt-in via NTFY_URL (or QP_NTFY_URL). Unset = no
+# notifications. A public repo must not pin its operator's channel.
+NTFY_URL="${NTFY_URL:-${QP_NTFY_URL:-}}"
+ntfy() { [ -n "$NTFY_URL" ] || return 0; curl -s -m 10 -H "Title: $2" -H "Tags: $3" ${4:+-H "Priority: $4"} -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true; }
 
 echo "waiting for BF16 download to complete..."
 for i in $(seq 1 480); do

@@ -8,9 +8,12 @@ ROOT=/home/ubuntu/glm53
 IMAGE_REF="$(awk '{print $1}' "$ROOT/out/image-pin.txt" 2>/dev/null || true)"
 IMAGE_REF="${IMAGE_REF:-__IMAGE_REF__}"
 TP=8
-NTFY_URL="https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33"
+# Notification endpoint: opt-in via NTFY_URL (or QP_NTFY_URL). Unset = no
+# notifications. A public repo must not pin its operator's channel.
+NTFY_URL="${NTFY_URL:-${QP_NTFY_URL:-}}"
 STAGE="$1"
 ntfy() {  # ntfy <body> <title> <tags> [priority]
+  [ -n "$NTFY_URL" ] || return 0
   curl -s -m 10 -H "Title: $2" -H "Tags: $3" ${4:+-H "Priority: $4"} \
        -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true
 }
@@ -99,6 +102,7 @@ if last.get("has_think_block"):
 print("GEN_CHECK_GREEN paris=", r["paris_mentioned"])
 open("/home/ubuntu/glm53/out/gen-snippet.txt", "w").write(snippet)
 GENSUM
+  [ -z "$NTFY_URL" ] || \
   curl -s -m 10 -H "Title: GLM53 speaks (gen_check green)" -H "Tags: speech_balloon" \
        --data-binary @/home/ubuntu/glm53/out/gen-snippet.txt "$NTFY_URL" >/dev/null 2>&1 || true
   ;;
