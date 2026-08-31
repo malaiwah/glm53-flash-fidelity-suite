@@ -169,6 +169,22 @@ def m_proxy_pointing_at_base(C):
     return "REFC-006", "a quantized_proxy must point at an actually-quantized artifact"
 
 
+def m_remote_code_unrecorded_harness(C):
+    """A row measured by executing repo-shipped modeling code, with no digest of it.
+
+    The approved policy (2026-09-01) is that trust_remote_code is acceptable in
+    the checkpoint lane ONLY revision-pinned and content-digested: the shipped
+    .py files enter harness.code_digests exactly like the suite's own estimator
+    closure. A remote_code row whose harness is unrecorded asserts "we ran code
+    we did not hash", which is the one claim this registry exists to refuse.
+    """
+    a = C["measurements"]["measurement--glm53.turbo-4.05bpw-stream.brandonmusic-final25"]
+    a["disclosures"].append({"code": "remote_code", "severity": "caveat",
+                             "affects_comparability": True,
+                             "detail": "executed modeling_kimi_k3.py from the repo"})
+    return "RC-001", "remote code without a recorded harness must be refused"
+
+
 def m_scope_digest_edited(C):
     a = C["artifacts"]["artifact--malaiwah.glm-5.3-flash-tr3-6bpw"]
     a["scope"]["assignments"][3]["bits_per_weight"] = 4.0
@@ -476,6 +492,7 @@ MUTATIONS = [
     ("teacher-from-another-panel", m_teacher_from_another_panel),
     ("positions-under-wrong-panel", m_positions_under_wrong_panel),
     ("dequantized-reference-undisclosed", m_mlx_row_promoted),
+    ("remote-code-unrecorded-harness", m_remote_code_unrecorded_harness),
     ("proxy-reference-undisclosed", m_proxy_reference_undisclosed),
     ("proxy-reference-marked-strict", m_proxy_reference_marked_strict),
     ("proxy-reference-on-base-artifact", m_proxy_pointing_at_base),

@@ -414,6 +414,11 @@
       "statement": "reference.reference_kind=quantized_proxy requires artifacts[reference.artifact_ref].kind in {quant,requantized}, and every measurement using that reference carries a different_reference_kind disclosure (affects_comparability) and is comparability.class=advisory. A quantized_proxy is the most-faithful PUBLISHED artifact of a family that releases no unquantized weights, DESIGNATED as the reference so its children are measurable at all; it is not a measured floor, and rows against it are systematically smaller than they would be against true unquantized weights."
     },
     {
+      "id": "RC-001",
+      "severity": "error",
+      "statement": "A measurement produced by executing repository-shipped modeling code (trust_remote_code) carries a remote_code disclosure with affects_comparability, AND a RECORDED harness -- the executed .py files are revision-pinned and content-digested exactly like the suite's own estimator closure. Policy (approved 2026-09-01): revision-pinned, every shipped .py digested into harness.code_digests, HF token absent from the capture environment, disclosure on every resulting row. A remote_code row with an unrecorded harness is refused: 'we ran code we did not hash' is precisely the claim this registry exists to make impossible."
+    },
+    {
       "id": "SCOPE-001",
       "severity": "error",
       "statement": "measurement.scope_digest equals the recomputed digest of artifacts[measurement.artifact_ref].scope."
@@ -616,6 +621,7 @@
     "record_note",
     "reduced_run_count",
     "redundant_tensor_representations",
+    "remote_code",
     "revision_unpinned",
     "routed_experts_only_scope",
     "scope_record_corrected",

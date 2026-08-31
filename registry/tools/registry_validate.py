@@ -1001,6 +1001,12 @@ def check_references(C, rep):
                 m, "different_reference_kind", affects=True):
             rep.err("REFC-001", "%s measures against a dequantized reference without a "
                                 "different_reference_kind disclosure" % mid, mid)
+        if L.has_disclosure(m, "remote_code", affects=None) and not (
+                (m.get("harness") or {}).get("recorded")):
+            rep.err("RC-001", "%s was measured by executing repository-shipped "
+                              "modeling code but carries no RECORDED harness: the "
+                              "executed .py files must be revision-pinned and "
+                              "content-digested like the suite's own closure" % mid, mid)
         if r.get("reference_kind") == "quantized_proxy":
             # No row against a designated proxy may read as a floor. The
             # comparability key already binds reference_id, so these rows can
