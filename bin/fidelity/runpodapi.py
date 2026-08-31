@@ -40,6 +40,7 @@ import urllib.request
 from typing import Any, Dict, List, Optional, Sequence
 
 from .jlapi import GpuOffer, Instance, JLError, redact
+from .sshbase import SSHTransport
 
 GQL = "https://api.runpod.io/graphql"
 # A REAL tag, read from the account's own template list rather than guessed.
@@ -64,8 +65,12 @@ def _load_key(path: Optional[str] = None) -> str:
     return key
 
 
-class RunPod:
+class RunPod(SSHTransport):
     """Thin, auditable wrapper. `dry` short-circuits every mutating call."""
+    # This provider has NO filesystem that outlives its instance, so the
+    # whole run must fit on the instance's own disk: a RunPod volume is created with the pod and dies with it.
+    # The controller reads this to size `create(storage=)`.
+    separable_storage = False
 
     provider = "runpod"
 
@@ -289,146 +294,21 @@ class RunPod:
                 for port in ((p.get("runtime") or {}).get("ports") or []):
                     if port.get("privatePort") == 22 and port.get("isIpPublic"):
                         ep = (port["ip"], int(port["publicPort"]))
+                        # The port being PUBLISHED is not sshd accepting on it.
+                        self._await_ssh(ep[0], ep[1],
+                                        wait=max(60.0, deadline - time.time()))
                         self._ssh_cache[pid] = ep
                         return ep
             time.sleep(10)
         raise RunPodError("pod %s exposed no public SSH port within %ds "
                           "(it may still be provisioning)" % (pid, int(wait)))
 
-    def _ssh_argv(self, machine_id: Any) -> List[str]:
-        ip, port = self._endpoint(machine_id)
-        return ["ssh", "-i", self.ssh_key, "-p", str(port),
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "LogLevel=ERROR",
-                "-o", "ConnectTimeout=30",
-                "root@%s" % ip]
-
-    def exec(self, machine_id: Any, command: str, *,
-             timeout: float = 600, check: bool = True) -> Any:
-        """Run a shell command over SSH, and CHECK that it worked.
-
-        Returns the same {exit_code, stdout, stderr} shape the JarvisLabs
-        backend returns, because the controller reads `exit_code` out of the
-        payload rather than trusting the transport's own exit status.
-        """
-        if self.dry:
-            return {"exit_code": 0, "stdout": "", "stderr": "", "dry_run": True}
-        argv = self._ssh_argv(machine_id) + ["sh -lc " + shlex.quote(command)]
-        try:
-            p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            raise RunPodError("remote command timed out after %ss" % timeout)
-        res = {"exit_code": p.returncode, "stdout": p.stdout, "stderr": p.stderr}
-        if check and p.returncode != 0:
-            raise RunPodError("remote command exited %s: %s"
-                              % (p.returncode, redact((p.stderr or p.stdout)[:400])))
-        return res
-
-    def exec_stdout(self, machine_id: Any, command: str, *,
-                    timeout: float = 600, check: bool = True) -> str:
-        res = self.exec(machine_id, command, timeout=timeout, check=check)
-        return str(res.get("stdout") or "")
-
-    def upload(self, machine_id: Any, local: str, remote: str) -> Any:
-        if self.dry:
-            return {"dry_run": True}
-        ip, port = self._endpoint(machine_id)
-        argv = ["scp", "-i", self.ssh_key, "-P", str(port),
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
-                "-r", local, "root@%s:%s" % (ip, remote)]
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=1800)
-        if p.returncode != 0:
-            raise RunPodError("upload failed: %s" % redact(p.stderr[:300]))
-        return {"uploaded": remote}
-
-    def download(self, machine_id: Any, remote: str, local: str,
-                 *, recursive: bool = True, timeout: float = 900) -> Any:
-        if self.dry:
-            return {"dry_run": True}
-        ip, port = self._endpoint(machine_id)
-        argv = ["scp", "-i", self.ssh_key, "-P", str(port),
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
-        if recursive:
-            argv.append("-r")
-        argv += ["root@%s:%s" % (ip, remote), local]
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-        if p.returncode != 0:
-            raise RunPodError("download failed: %s" % redact(p.stderr[:300]))
-        return {"downloaded": local}
-
-    # -- detached jobs -----------------------------------------------------
-    # RunPod has no managed-run concept, so this is nohup plus three files.
-    # The exit-code file is what makes "died" distinguishable from "still
-    # running" -- without it a polling controller cannot tell them apart, which
-    # is the failure mode jlapi's exec_stdout docstring describes.
-    RUNS = "/workspace/.fidruns"
-
-    def run_job(self, machine_id: Any, command: str) -> Any:
-        """Start a detached job that records its OWN exit code.
-
-        The obvious spelling -- `nohup cmd & ( wait $!; echo $? > exit_code )`
-        -- does not work and fails in the worst direction: `wait` only knows
-        children of the shell that spawned them, and the subshell is not that
-        shell, so exit_code was never written. `run_status` then saw no
-        exit_code and no live pid and reported a perfectly healthy job as
-        FAILED. A controller believing that would tear down a run mid-measure.
-
-        So the command is written to a file and wrapped: the wrapper runs it,
-        then writes its own status. setsid detaches it from the SSH session, so
-        closing the connection does not kill the stage.
-        """
-        run_id = "r_%d" % int(time.time() * 1000)
-        d = "%s/%s" % (self.RUNS, run_id)
-        payload = command.replace("'\\''", "'\\''")
-        launcher = (
-            "mkdir -p {d} && printf '%s' {cmd} > {d}/run.sh && "
-            "setsid sh -c 'sh {d}/run.sh > {d}/output.log 2>&1; "
-            "echo $? > {d}/exit_code' </dev/null >/dev/null 2>&1 & "
-            "echo $! > {d}/pid; sleep 1; echo launched {rid}"
-        ).format(d=d, cmd=shlex.quote(payload), rid=run_id)
-        self.exec(machine_id, launcher, timeout=180)
-        return {"run_id": run_id, "machine_id": str(machine_id)}
-
-    def run_status(self, run_id: str, machine_id: Any = None) -> Any:
-        """Done, running, or dead -- and never "dead" for a healthy job.
-
-        Liveness is decided by `pgrep -f <run_id>`, NOT by the recorded pid.
-        `echo $!` captures the backgrounded shell, which forks and exits almost
-        immediately, so a pid check reported a perfectly healthy job as dead on
-        the very first poll -- and the controller polls right after launch, so
-        every stage would have been torn down seconds after starting. The run
-        id is in the wrapper's own command line, which is what actually tracks
-        the work.
-        """
-        if machine_id is None:
-            raise RunPodError("run_status needs machine_id on this backend")
-        d = "%s/%s" % (self.RUNS, run_id)
-        out = self.exec_stdout(
-            machine_id,
-            "if [ -f %s/exit_code ]; then echo DONE $(cat %s/exit_code); "
-            "elif pgrep -f %s >/dev/null 2>&1; then echo RUNNING; "
-            "else echo GONE; fi" % (d, d, shlex.quote(run_id)),
-            timeout=120).strip().split()
-        if not out:
-            return {"state": "unknown", "run_id": run_id}
-        if out[0] == "DONE":
-            code = int(out[1]) if len(out) > 1 and out[1].lstrip("-").isdigit() else 1
-            return {"state": "succeeded" if code == 0 else "failed",
-                    "exit_code": code, "run_id": run_id}
-        if out[0] == "RUNNING":
-            return {"state": "running", "run_id": run_id}
-        return {"state": "failed", "run_id": run_id,
-                "note": "no exit_code file and no process matching the run id"}
-
-    def run_logs(self, run_id: str, *, tail: int = 50, machine_id: Any = None) -> Any:
-        if machine_id is None:
-            raise RunPodError("run_logs needs machine_id on this backend")
-        return self.exec_stdout(
-            machine_id, "tail -n %d %s/%s/output.log 2>/dev/null || true"
-            % (int(tail), self.RUNS, run_id), timeout=120)
+    # exec / exec_stdout / upload / download / run_job / run_status /
+    # run_logs all come from SSHTransport. They were written here first and
+    # then needed again for Vast and Lambda; keeping three copies of a
+    # transport whose two subtle bugs (a detached job that never records its
+    # exit code, and liveness read from a pid that has already forked away)
+    # cost real money to find is how the third copy reintroduces them.
 
     # -- storage -----------------------------------------------------------
     def fs_create(self, *, storage: int, region: str = "",

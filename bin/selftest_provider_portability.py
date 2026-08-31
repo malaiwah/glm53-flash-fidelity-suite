@@ -126,6 +126,20 @@ check("every mutating call is a no-op under dry",
       rpb.create(gpu_type="x").get("dry_run") is True
       and rpb.destroy("x").get("dry_run") is True)
 
+print("\n== storage that dies with the instance must be sized at create ==")
+for name, sep in (("jarvislabs", True), ("runpod", False), ("vast", False),
+                  ("lambda", False)):
+    prov = mc._make_provider(name, dry=True)
+    check("%-10s separable_storage=%s" % (name, sep),
+          getattr(prov, "separable_storage", True) is sep)
+# 100 GB is right ONLY where the big disk is a separate filesystem. Getting
+# this wrong is not a create error: it is "No space left on device" three
+# stages and 45 minutes into a paid run, which is exactly what happened.
+check("a non-separable provider is sized from the plan, not 100 GB",
+      'else int(plan_data["storage_gb"])' in
+      open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "measure_cloud.py")).read())
+
 print()
 if FAILED:
     print("selftest_provider_portability: %d FAILED" % len(FAILED))

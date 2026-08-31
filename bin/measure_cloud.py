@@ -743,6 +743,12 @@ def _make_provider(name: str, *, dry: bool = False):
     if name == "runpod":
         from fidelity.runpodapi import RunPod
         return RunPod(dry=dry)
+    if name == "vast":
+        from fidelity.vastapi import Vast
+        return Vast(dry=dry)
+    if name == "lambda":
+        from fidelity.lambdaapi import LambdaCloud
+        return LambdaCloud(dry=dry)
     return JL(dry=dry)
 
 
@@ -1551,6 +1557,12 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
               human_bytes(panel_bytes),
               human_bytes(need.transient_student_logits_bytes), args.cold_runs,
               human_bytes(need.toolchain_bytes), storage_gb), indent=4)
+    # Providers that rent from a marketplace filter offers themselves, so the
+    # requirement has to be in the plan and not only in the selector's locals.
+    try:
+        plan["required_vram_gb"] = int(req.per_gpu_bytes / (1024 ** 3))
+    except Exception:                                     # noqa: BLE001
+        pass
     plan["storage_gb"] = storage_gb
     plan["storage_need"] = need.to_dict()
 
@@ -1851,7 +1863,15 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
         try:
             created = jl.create(
                 gpu_type=chosen["gpu_type"], num_gpus=chosen["gpus"],
-                spot=args.spot, region=region, fs_id=td.fs_id, storage=100,
+                spot=args.spot, region=region, fs_id=td.fs_id,
+                # 100 GB is right ONLY where the big disk is a separate
+                # filesystem attached to a small box. Where storage dies with
+                # the instance, the whole plan has to fit on it -- and getting
+                # this wrong is not a create error, it is a `No space left on
+                # device` three stages and 45 minutes into a paid run.
+                storage=(100 if getattr(jl, "separable_storage", True)
+                         else int(plan_data["storage_gb"])),
+                min_vram_gb=int(plan_data.get("required_vram_gb") or 0),
                 name=plan_data["instance_name"], template="pytorch")
         finally:
             # The id must be adopted even when `create` raised or answered in a
@@ -2406,7 +2426,7 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=(None, "reaper", "adopt"),
                    help="reaper: manage the teardown backstop; adopt: resume a job")
     p.add_argument("--provider", default="jarvislabs",
-                   choices=("jarvislabs", "runpod"),
+                   choices=("jarvislabs", "runpod", "vast", "lambda"),
                    help="which cloud to rent from. The measurement is the same "
                         "on any of them -- fp64 KLD is not vendor-specific -- "
                         "but BITWISE determinism is a per-device property, so a "

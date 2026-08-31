@@ -123,6 +123,11 @@ _CREATE_FLAG_ALIASES = {"gpu_type": "gpu"}
 class JL:
     """Thin, auditable wrapper.  `dry` short-circuits every mutating call."""
 
+    # JarvisLabs filesystems outlive their instance, which is why the
+    # controller creates a small box and attaches the big fs to it.
+    separable_storage = True
+    provider = "jarvislabs"
+
     def __init__(self, *, dry: bool = False, binary: str = "jl",
                  timeout: float = 300.0) -> None:
         self.binary = binary
