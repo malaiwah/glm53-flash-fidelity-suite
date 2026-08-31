@@ -193,7 +193,20 @@ def build_invocation(
     argv = list(engine.launcher) + [str((suite_root / engine.entrypoint).resolve())]
     for key, flag in engine.flag_map.items():
         value = values.get(key)
-        if value in (None, ""):
+        if value is None or (isinstance(value, str) and value == ""):
+            continue
+        if isinstance(value, (list, tuple)):
+            # A REPEATED flag: argparse `action="append"`.  stream_score's
+            # --gguf-file is the first -- a llama.cpp build is n files and the
+            # engine wants every one of them, because the container's tensor
+            # table is per-part and a missing part is a missing layer rather
+            # than a short read.  Joining them into one comma-separated value
+            # would reach argparse as a single path that does not exist, an
+            # hour into a rental.
+            if not value:
+                continue
+            for item in value:
+                argv.extend([flag, str(item)])
             continue
         if flag.endswith("="):            # bare switch, no value
             argv.append(flag[:-1])

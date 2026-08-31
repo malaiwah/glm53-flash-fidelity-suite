@@ -49,6 +49,14 @@ t "submission refusability (T5)"           0 python3 bin/selftest_submission_ref
 t "scope must match the release (T5b)"      0 python3 bin/selftest_scope_crosscheck.py
 t "root capture: --role root (T5c)"        0 python3 bin/selftest_root_capture.py
 t "provider portability (T5d)"             0 python3 bin/selftest_provider_portability.py
+# T13. The GGUF lane end to end: shelf -> plan -> argv -> fetch -> receipt. The
+# adapter, the scorer, the aggregator and the registry adapter all existed and
+# NONE of it was reachable, because no lane classified a llama.cpp container as
+# anything -- so the runner refused the model's largest quant audience with a
+# refusal that was simply untrue. Rung 5 is the one that stops the next surface
+# landing half-wired.
+t "gguf lane: shelf, profile, argv, fetch scope, receipt (T13)" \
+                                           0 python3 bin/selftest_gguf_lane.py
 t "stack fingerprint (T9: deterministic, engine-absent, MPS/CUDA-absent)" \
                                            0 python3 bin/selftest_stackprint.py
 # The money chokepoint (T11). `jl list` is the only thing that answers "is this

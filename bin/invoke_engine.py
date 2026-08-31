@@ -89,6 +89,7 @@ def main() -> int:
         "exl3hf": "exl3hf",
         "tr3-published": "tr3",
         "dione": "dione",
+        "gguf": "gguf",
     }
     if "source" in (engine.flag_map or {}) and surface not in source_by_surface:
         con.err(
@@ -176,6 +177,44 @@ def main() -> int:
         missing = [k for k in ("dione_repo", "dione_revision") if not extra[k]]
         if missing:
             con.err("job.json target is missing %s -- a dione capture cannot "
+                    "seal its provenance without them" % ", ".join(missing))
+            return 3
+    elif surface == "gguf":
+        # A GGUF is the opposite case from tr3/dione and needs no materialize
+        # stage at all: stream_score calls gguf_surface.materialize_nonrouted_view
+        # itself, because that view IS the artifact's non-routed function decoded
+        # (a GGUF quantizes token_embd, lm_head and the whole attention path too).
+        # So --bf16 keeps pointing at the OFFICIAL skeleton, whose entire job here
+        # is config/tokenizer plus the vision tower the container does not carry --
+        # and the engine's identity gate hashes that config/index against the
+        # sealed inventory the setup stage writes beside it.
+        #
+        # The artifact identity is NOT the repo revision: an unsloth GGUF repo
+        # publishes a dozen builds at one commit. It is this build's file list,
+        # each whole-file sha256'd by the fetch stage, which is why every part is
+        # named on the argv rather than a directory.
+        files = [row.get("name") if isinstance(row, dict) else row
+                 for row in (target.get("artifact_files") or [])]
+        files = [f for f in files if f]
+        if not files:
+            con.err("job.json target carries no artifact_files -- a GGUF repo is "
+                    "a shelf of builds and a capture must name the parts of ONE. "
+                    "Re-plan with --path <build>.")
+            return 3
+        extra.update({
+            # beside the stage markers, not on the container's ephemeral layer:
+            # the gguf setup stage writes ~4.2 GB of official vision shard here
+            # (see stage_measure.sh, same reasoning, same gguf-only scope)
+            "bf16": os.environ.get("BF16", "%s/models/bf16" % fs),
+            "gguf_files": ["%s/models/target/%s" % (fs, name) for name in files],
+            "gguf_repo": target.get("repo_id", ""),
+            "gguf_revision": target.get("revision", ""),
+            "inventory": os.environ.get(
+                "BF16_INVENTORY", "%s/models/bf16-inventory.json" % fs),
+        })
+        missing = [k for k in ("gguf_repo", "gguf_revision") if not extra[k]]
+        if missing:
+            con.err("job.json target is missing %s -- a gguf capture cannot "
                     "seal its provenance without them" % ", ".join(missing))
             return 3
     try:

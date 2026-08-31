@@ -655,6 +655,62 @@ def main() -> int:
         "rebuild (1,412 tensors, %d streamed routed modules, bijection ok, identity %s...)"
         % (summary["streamed_routed_modules"], summary["checkpoint_identity_sha256"][:12]))
 
+    # ---- 7c. the MEASURED per-tensor-class scope ---------------------------
+    # Known answers over the REAL 1,412-tensor table, because this is the block
+    # that decides what a published row CLAIMS the artifact quantized. Every
+    # number below is arithmetic over ggml block traits, not a reading of the
+    # build name -- which says "Q4_K" and is wrong about the whole non-routed
+    # half of the file.
+    run = subprocess.run(
+        [sys.executable, str(TOOLS / "gguf_surface.py"), "scope",
+         "--file", str(a), "--file", str(b),
+         "--repo", "unsloth/GLM-5.3-Flash-GGUF",
+         "--revision", "2975ab414d30340466d8c51533c6e91f0cca64c1"],
+        capture_output=True, text=True, env=env)
+    assert run.returncode == 0, run.stderr[-2000:]
+    report = json.loads(run.stdout)
+    scope = report["scope"]
+    assert report["schema"] == gs.GGUF_SCOPE_SCHEMA
+    by_class = {a_["tensor_class"]: a_ for a_ in scope["assignments"]}
+    assert len(by_class) == len(scope["assignments"]), (
+        "a tensor_class appears twice; scope_digest would double-count it")
+    # the name says 4 bits; the artifact is 4.98, because everything outside the
+    # routed experts is Q8_0. This is the number the codec block records as
+    # bits_per_weight_effective.
+    assert abs(report["measured_bits_per_weight"] - 4.98062529958249) < 1e-9, \
+        report["measured_bits_per_weight"]
+    # the three claims that separate a GGUF row from a routed-experts-only one
+    assert by_class["lm_head"]["treatment"] == "quantized"
+    assert by_class["embed_tokens"]["treatment"] == "quantized"
+    assert by_class["attn.qkv"]["treatment"] == "quantized"
+    assert scope["head_policy"] == "quantized"
+    # ... and the one that separates it from a UNIFORM quant
+    assert scope["policy"] == "mixed"
+    assert by_class["moe.experts"]["bits_per_weight"] is None, (
+        "a class holding Q4_K, Q5_K and Q6_K must not claim one nominal rate")
+    assert "Q4_K x82" in by_class["moe.experts"]["note"]
+    assert "Q6_K x3" in by_class["moe.experts"]["note"]
+    # norms are the one thing a GGUF stores WIDER than the release
+    assert by_class["norm"]["treatment"] == "native"
+    assert by_class["norm"]["format"] == "fp32"
+    assert "mmproj" in by_class["other"]["note"], (
+        "the absent vision tower must be stated, not left to be assumed")
+    assert report["source"]["quant_metadata"]["general.quantized_by"] == "Unsloth"
+    # and the committed fixture the bin-side lane selftest seals against is THIS
+    # scope, not a hand-edited copy of it: a fixture nothing re-derives is a
+    # second source of truth waiting to drift from the first.
+    fixture = EVIDENCE / "udq4kxl-scope.json"
+    if fixture.is_file():
+        assert json.loads(fixture.read_text(encoding="utf-8"))["scope"] == scope, (
+            "%s no longer equals the scope recomputed from the real tensor table"
+            % fixture)
+    passed.append(
+        "7c scope: the per-class recipe is MEASURED from the real 1,412-tensor table -- "
+        "lm_head/embed_tokens/attn.qkv quantized, head_policy quantized, policy mixed, "
+        "moe.experts claims no single rate (Q4_K/Q5_K/Q6_K), and the artifact measures "
+        "%.4f bits/weight against a name that says 4"
+        % report["measured_bits_per_weight"])
+
     if args.pipeline_root:
         passed.append(_stream_score_dry_run(scratch, args.pipeline_root, [a, b], env))
     else:

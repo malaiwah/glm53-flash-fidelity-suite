@@ -119,7 +119,15 @@ def main() -> int:
             "repository": target.get("repo_id"),
             "revision": target.get("revision"),
             "url": "https://huggingface.co/%s" % target.get("repo_id"),
-            "container": target.get("container", "exl3"),
+            # `.get(k, default)` returns None for a key present-but-null,
+            # which is exactly what a plan writes for a surface that does not
+            # know. `or` is the correct operator here, and the default stays
+            # "exl3" because four of the five readable surfaces are EXL3.
+            "container": target.get("container") or "exl3",
+            # Which artifact inside the repository, when the repo publishes
+            # more than one at this revision. A GGUF shelf does; nothing else
+            # here does, and for those this stays null.
+            "path": target.get("path"),
             "precision_label": target.get("precision_label")
                                or ("%g bpw" % bits if bits else None),
             "size_bytes": target.get("size_bytes"),
@@ -129,9 +137,18 @@ def main() -> int:
             "codec": {
                 "family": target.get("codec") or "exl3-mcg",
                 "bits_per_weight_nominal": bits,
-                "bits_per_weight_effective": None,
+                # Nominal is what the release NAMES its rate; effective is
+                # what its bytes actually are. For a GGUF they differ by a lot
+                # and in the direction nobody expects: a "Q4_K_XL" build whose
+                # non-routed half is Q8_0 measures ~4.98 bits/weight overall,
+                # and a Q4_K block is 4.5 bits once its scales and mins are
+                # counted. Recorded when the surface computed it; null
+                # otherwise, never inferred.
+                "bits_per_weight_effective":
+                    target.get("bits_per_weight_effective"),
                 "group_size": None,
-                "quantizer_tool": "exllamav3 EXL3",
+                "quantizer_tool": (target.get("quantizer_tool")
+                                   or "exllamav3 EXL3"),
                 # the storage-ABI pin when there is one (TR3), else the
                 # quantizer version the release's own config states (stock
                 # exllamav3 ships no ABI file but does say "1.4.4")

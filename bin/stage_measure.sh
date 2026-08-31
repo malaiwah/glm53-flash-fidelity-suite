@@ -94,6 +94,17 @@ setup)
   # index.  Both need the ORIGINAL bytes -- at the PINNED revision, not main,
   # which can move under us between two measurements of the same artifact.
   BF16_DIR="${BF16:-/home/jl_fs/models/bf16}"
+  # For every other surface this tree is 16 MB of config + index, and living on
+  # the container's own layer is harmless. A GGUF run also stores the ~4.2 GB
+  # vision-carrying shard here, and THAT is not harmless on a provider whose
+  # persistent disk is a mounted volume: the stage markers live on the volume,
+  # so a restarted pod would skip `setup` as done while the tree it wrote had
+  # evaporated with the container. Put it beside the markers instead. Scoped to
+  # gguf on purpose -- moving it for every surface would strand a run that is
+  # in flight right now under the old path.
+  if [ "$(jqget target.surface)" = "gguf" ]; then
+    BF16_DIR="${BF16:-$FS/models/bf16}"
+  fi
   BF16_REV="$(jqget official_bf16_revision a6c167b62691b2bac901344b65cb651a70f53e43)"
   mkdir -p "$BF16_DIR" "$ROOT"
   if [ ! -f "$BF16_DIR/config.json" ] || [ ! -f "$BF16_DIR/model.safetensors.index.json" ]; then
@@ -118,6 +129,85 @@ PYSKEL
   fi
   log "bootstrapping (measurement-only recipe)"
   bash "$FS/bin/bootstrap_measure.sh" 2>&1 | tee -a "$LOGS/setup.log"
+  # --source gguf needs MORE of the official tree than the skeleton above and
+  # far LESS than a full clone, and it needs a sealed inventory that no
+  # publisher ships.
+  #
+  # MORE: a GGUF container carries no tokenizer and no vision tower (llama.cpp
+  # ships the projector as a separate mmproj file), so gguf_surface's
+  # materialized view copies the official config/tokenizer sidecars and reads
+  # model.visual.* out of the official shards. On GLM-5.3-Flash all 347 visual
+  # tensors live in ONE shard of 120, so this is ~4.2 GB rather than 1.4 TB --
+  # computed from the index, never assumed, because a release that spreads the
+  # tower over three shards must fetch three.
+  #
+  # LESS: every measured weight comes from the artifact. No routed expert and
+  # no attention projection is read from this tree, which is exactly the scope
+  # difference that makes a GGUF row not comparable to a routed-experts-only
+  # one.
+  #
+  # And the inventory: stream_score's identity gate hashes the config.json and
+  # index it actually loads against a sealed quant-pipeline.glm-release-
+  # inventory.v1. zai publishes no such file, and the surfaces that have one
+  # got it from their own materializer. Here it is written over the two
+  # OFFICIAL files at the pinned revision, so the gate binds the bytes on this
+  # disk to that commit rather than to nothing.
+  if [ "$(jqget target.surface)" = "gguf" ]; then
+    load_token
+    mapfile -d '' -t OFFICIAL < <(python3 - "$BF16_DIR" <<'PYVIS'
+import json, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+wanted = ["config.json", "generation_config.json", "processor_config.json",
+          "tokenizer.json", "tokenizer_config.json", "chat_template.jinja"]
+index = json.loads((root / "model.safetensors.index.json").read_text())
+wanted += sorted({shard for name, shard in index["weight_map"].items()
+                  if name.startswith("model.visual.")})
+for name in wanted:
+    sys.stdout.write("--include\0" + name + "\0")
+PYVIS
+    )
+    log "fetching the official config/tokenizer + vision-carrying shards ($((${#OFFICIAL[@]} / 2)) patterns)"
+    HF_HUB_ENABLE_HF_TRANSFER=1 HF_HOME="$FS/hf" \
+      "$VENV/bin/hf" download zai-org/GLM-5.3-Flash-BF16 --revision "$BF16_REV" \
+        --local-dir "$BF16_DIR" --max-workers 8 "${OFFICIAL[@]}" \
+        >>"$LOGS/setup.log" 2>&1
+    python3 - "$BF16_DIR" "$BF16_REV" "$FS/models/bf16-inventory.json" <<'PYINV'
+import hashlib, json, pathlib, sys
+
+root, revision, out = pathlib.Path(sys.argv[1]), sys.argv[2], pathlib.Path(sys.argv[3])
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(8 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+record = {
+    "schema": "quant-pipeline.glm-release-inventory.v1",
+    "model_repo": "zai-org/GLM-5.3-Flash-BF16",
+    "model_revision": revision,
+    "seal_mode": "full-shard-sha256",
+    "config_sha256": sha256(root / "config.json"),
+    "index_sha256": sha256(root / "model.safetensors.index.json"),
+    "shards": {p.name: sha256(p) for p in sorted(root.glob("*.safetensors"))},
+    "provenance": (
+        "written on the measuring instance over the OFFICIAL release files at the "
+        "pinned revision, for a --source gguf run. It binds ONLY what that run reads "
+        "from the official tree: config/tokenizer and the vision-carrying shards. "
+        "Every measured weight is decoded from the GGUF artifact instead, so this is "
+        "NOT a claim that the official weights were scored."),
+}
+record["inventory_sha256"] = hashlib.sha256(
+    (json.dumps(record, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False) + "\n").encode()).hexdigest()
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print("wrote", out, "binding", record["config_sha256"][:12], record["index_sha256"][:12])
+PYINV
+  fi
   df -h "$FS" | tee -a "$LOGS/setup.log"
   touch "$marker"
   log "done"
@@ -129,11 +219,38 @@ fetch_target)
   REV="$(jqget target.revision)"
   DEST="$MODELS/target"
   [ -n "$REPO" ] || { echo "job.json has no target.repo_id" >&2; exit 2; }
-  log "fetching $REPO @ $REV -> $DEST"
   mkdir -p "$DEST"
+  # A GGUF repo is a SHELF, not an artifact: unsloth/GLM-5.3-Flash-GGUF
+  # publishes twelve builds at one revision and a whole-repo download is 2.55
+  # TB for the ~200 GB one build actually needs. The plan already chose the
+  # build and listed its parts by name, so fetch exactly those -- and only
+  # those, because a `--include <build>/*` glob would also pull a sidecar the
+  # publisher adds tomorrow into a run whose receipt names today's file list.
+  #
+  # Built as a NUL-delimited bash array for the same reason fetch_panel is:
+  # these names come from job.json, and the shell must not be parsing data.
+  # There is no `eval` here and there must never be one.
+  mapfile -d '' -t TARGET_INCLUDES < <(python3 - "$CONF" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+target = doc.get("target") or {}
+if (target.get("surface") or "") != "gguf":
+    raise SystemExit(0)
+for row in target.get("artifact_files") or []:
+    name = row.get("name") if isinstance(row, dict) else row
+    if name:
+        sys.stdout.write("--include\0" + name + "\0")
+PY
+  )
+  if [ "${#TARGET_INCLUDES[@]}" -gt 0 ]; then
+    log "fetching $REPO @ $REV -> $DEST  ($((${#TARGET_INCLUDES[@]} / 2)) named files of a multi-build repo)"
+  else
+    log "fetching $REPO @ $REV -> $DEST"
+  fi
   HF_HUB_ENABLE_HF_TRANSFER=1 HF_HOME="$FS/hf" \
     "$VENV/bin/hf" download "$REPO" --revision "$REV" \
-      --local-dir "$DEST" --max-workers 8 >>"$LOGS/fetch_target.log" 2>&1
+      --local-dir "$DEST" --max-workers 8 "${TARGET_INCLUDES[@]}" \
+      >>"$LOGS/fetch_target.log" 2>&1
   # Verify what the release seals, not what we hope: SHA256SUMS if published.
   #
   # `sha256sum -c` over the whole list is the wrong instrument for a MIRROR.
@@ -192,6 +309,41 @@ fetch_target)
         --out "$RCPT/artifact-scope.json" \
         >/dev/null 2>>"$LOGS/fetch_target.log"
     log "shards verified; scope written to $RCPT/artifact-scope.json"
+  fi
+  if [ "$SURFACE" = "gguf" ]; then
+    # A community GGUF publishes no seal, no encoder receipt and no per-file
+    # digest list -- so the ONLY identity a receipt can claim beyond the repo
+    # commit is the whole-file sha256 of the parts this run actually read.
+    # gguf_surface REQUIRES that marker at capture time (the alternative is
+    # --skip-gguf-hashes, which is a disclosed unverified read), and the only
+    # cheap moment to hash 200 GB is right after it lands -- not four stages
+    # and three GPU-hours later.
+    log "hashing every part of the build (gguf verify-files)"
+    mapfile -d '' -t GGUF_PARTS < <(python3 - "$CONF" "$DEST" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+root = sys.argv[2].rstrip("/")
+for row in (doc.get("target") or {}).get("artifact_files") or []:
+    name = row.get("name") if isinstance(row, dict) else row
+    if name:
+        sys.stdout.write("--file\0" + root + "/" + name + "\0")
+PY
+    )
+    "$VENV/bin/python" "$FS/k6/tools/gguf_surface.py" verify-files \
+        "${GGUF_PARTS[@]}" > "$RCPT/artifact-file-verification.json" \
+        2>>"$LOGS/fetch_target.log"
+    log "parts hashed; marker written beside the build"
+    # The same pass writes the artifact's per-tensor-class recipe, MEASURED
+    # from the container's own tensor table. seal_receipt prefers this over its
+    # unknown-everything default, and for a GGUF that default would be wrong
+    # twice: it records `unknown` for embeddings/attention/lm_head, which this
+    # artifact quantizes and DECLARES it quantizes, and it would record the
+    # dense MLPs at the build's nominal rate when they are Q8_0.
+    "$VENV/bin/python" "$FS/k6/tools/gguf_surface.py" scope \
+        "${GGUF_PARTS[@]}" --repo "$REPO" --revision "$REV" \
+        --out "$RCPT/artifact-scope.json" \
+        >/dev/null 2>>"$LOGS/fetch_target.log"
+    log "scope written to $RCPT/artifact-scope.json"
   fi
   df -h "$FS" | tee -a "$LOGS/fetch_target.log"
   touch "$marker"

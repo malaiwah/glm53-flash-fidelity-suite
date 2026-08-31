@@ -1,0 +1,152 @@
+{
+  "measured_bits_per_weight": 4.98062529958249,
+  "schema": "malaiwah.glm53-gguf-scope.v1",
+  "scope": {
+    "activation_quantization": null,
+    "assignments": [
+      {
+        "bits_per_weight": 8.0,
+        "format": "gguf-k-quant",
+        "layer_range": "all",
+        "note": "the attention output projection. ggml types: Q8_0 x45. MEASURED 8.5000 bits/weight over 1879048192 weights.",
+        "tensor_class": "attn.o",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": null,
+        "format": "mixed",
+        "layer_range": "all",
+        "note": "mHC hyper-connection coefficients on the attention branch. ggml types: F32 x360, Q8_0 x248. MEASURED 9.0464 bits/weight over 219404095 weights.",
+        "tensor_class": "attn.other",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8.0,
+        "format": "gguf-k-quant",
+        "layer_range": "all",
+        "note": "q/k/v and the MLA down/up projections. ggml types: Q8_0 x157. MEASURED 8.5000 bits/weight over 3976200192 weights.",
+        "tensor_class": "attn.qkv",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8.0,
+        "format": "gguf-k-quant",
+        "layer_range": "all",
+        "note": "the token embedding table. ggml types: Q8_0 x1. MEASURED 8.5000 bits/weight over 634388480 weights.",
+        "tensor_class": "embed_tokens",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8.0,
+        "format": "gguf-k-quant",
+        "layer_range": "all",
+        "note": "the output projection. ggml types: Q8_0 x1. MEASURED 8.5000 bits/weight over 634388480 weights.",
+        "tensor_class": "lm_head",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8.0,
+        "format": "gguf-k-quant",
+        "layer_range": "all",
+        "note": "dense (non-MoE) layers only. ggml types: Q8_0 x3. MEASURED 8.5000 bits/weight over 150994944 weights.",
+        "tensor_class": "mlp.down",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8.0,
+        "format": "gguf-k-quant",
+        "layer_range": "all",
+        "note": "dense (non-MoE) layers only. ggml types: Q8_0 x3. MEASURED 8.5000 bits/weight over 150994944 weights.",
+        "tensor_class": "mlp.gate",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8.0,
+        "format": "gguf-k-quant",
+        "layer_range": "all",
+        "note": "dense (non-MoE) layers only. ggml types: Q8_0 x3. MEASURED 8.5000 bits/weight over 150994944 weights.",
+        "tensor_class": "mlp.up",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": null,
+        "format": "gguf-k-quant",
+        "layer_range": "all",
+        "note": "routed experts. ggml types: Q4_K x82, Q5_K x41, Q6_K x3. MEASURED 4.8745 bits/weight over 304405807104 weights.",
+        "tensor_class": "moe.experts",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 32.0,
+        "format": "fp32",
+        "layer_range": "all",
+        "note": "the router logits and their score-correction bias. ggml types: F32 x84. MEASURED 32.0000 bits/weight over 49557312 weights. Stored natively by the artifact; the streaming lane's materialized view casts F32 tensors the official release stores as bf16 down to bf16, so the constructed model is dtype-identical to a native build rather than wider.",
+        "tensor_class": "moe.router",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 8.0,
+        "format": "gguf-k-quant",
+        "layer_range": "all",
+        "note": "the always-on shared expert. ggml types: Q8_0 x126. MEASURED 8.5000 bits/weight over 1056964608 weights.",
+        "tensor_class": "moe.shared_expert",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": null,
+        "format": "mixed",
+        "layer_range": "all",
+        "note": "layer 45 is the MTP layer; present in the artifact, never executed. ggml types: F32 x13, Q4_K x2, Q5_K x1, Q8_0 x13. MEASURED 4.9287 bits/weight over 7432592416 weights.",
+        "tensor_class": "mtp",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 32.0,
+        "format": "fp32",
+        "layer_range": "all",
+        "note": "layer and final norms. ggml types: F32 x91. MEASURED 32.0000 bits/weight over 372736 weights. Stored natively by the artifact; the streaming lane's materialized view casts F32 tensors the official release stores as bf16 down to bf16, so the constructed model is dtype-identical to a native build rather than wider.",
+        "tensor_class": "norm",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": null,
+        "format": "mixed",
+        "layer_range": "all",
+        "note": "mHC hyper-connection coefficients on the FFN branch. ggml types: F32 x90, Q8_0 x45. MEASURED 8.5016 bits/weight over 17695935 weights. The vision tower (model.visual.*) is ALSO `other` and is NOT in this container -- llama.cpp ships it as a separate mmproj file. The streaming lane copies it from the official BF16 tree so the model can be constructed at all; the text-only sealed panel never executes it, so no vision weight is inside the measured function.",
+        "tensor_class": "other",
+        "treatment": "quantized"
+      }
+    ],
+    "head_policy": "quantized",
+    "kv_cache_dtype": "not_applicable",
+    "mtp_included": true,
+    "policy": "mixed"
+  },
+  "scope_disclosure": "the GGUF artifact quantizes non-routed tensors too (token_embd, lm_head, attention/KDA/DSA projections, shared experts, dense MLPs); this lane decodes ALL of them from the artifact -- the non-routed forward therefore measures the artifact, not the official BF16 tree. The vision tower is NOT in the main GGUF (separate mmproj file) and is sourced from the official BF16 tree; it is never executed by the text-only sealed panel",
+  "seal_disclosure": "unsealed-source scoring: community GGUF releases ship no upstream encoder receipts, reconstruction closures or sealed reader ABI; the surface was decoded WITHOUT seal verification (whole-file sha256 of every consumed GGUF and the immutable repo revision are recorded instead)",
+  "source": {
+    "architecture": "glm5next",
+    "checkpoint_identity_sha256": "df3713f617fc7862704b276ac5c53994a2f187f32eacbf48adc8116efcf45b42",
+    "file_hash_verification": "skipped",
+    "files": [
+      "GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf",
+      "GLM-5.3-Flash-UD-Q4_K_XL-00002-of-00006.gguf",
+      "GLM-5.3-Flash-UD-Q4_K_XL-00003-of-00006.gguf",
+      "GLM-5.3-Flash-UD-Q4_K_XL-00004-of-00006.gguf",
+      "GLM-5.3-Flash-UD-Q4_K_XL-00005-of-00006.gguf",
+      "GLM-5.3-Flash-UD-Q4_K_XL-00006-of-00006.gguf"
+    ],
+    "quant_metadata": {
+      "general.file_type": 15,
+      "general.quantization_version": 2,
+      "general.quantized_by": "Unsloth",
+      "quantize.imatrix.chunks_count": 88,
+      "quantize.imatrix.dataset": "unsloth_calibration_GLM-5.3-Flash.txt",
+      "quantize.imatrix.entries_count": 809,
+      "quantize.imatrix.file": "GLM-5.3-Flash-GGUF/imatrix_unsloth.gguf"
+    },
+    "read_from": "the container's OWN tensor table -- every type, element count and block size -- never from the build name, which for an unsloth 'UD' build claims one type and holds four",
+    "repo": "unsloth/GLM-5.3-Flash-GGUF",
+    "revision": "2975ab414d30340466d8c51533c6e91f0cca64c1"
+  }
+}

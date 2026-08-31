@@ -56,8 +56,8 @@ from fidelity.common import (                          # noqa: E402
 from fidelity.dsformat import resolve_inside                 # noqa: E402
 from fidelity.engines import EngineUnpinned, build_invocation, load_engines  # noqa: E402
 from fidelity.hfmeta import (                          # noqa: E402
-    HFError, RepoMeta, fetch_file, fetch_json, hf_token, load_panel_descriptor,
-    repo_meta, safetensors_header, sniff_surface,
+    HF_ENDPOINT, HFError, RepoMeta, fetch_file, fetch_json, hf_token,
+    load_panel_descriptor, repo_meta, safetensors_header, sniff_surface,
 )
 from fidelity.jlapi import JL, JLError, JLNotInstalled, select_offer  # noqa: E402
 from fidelity.receipt import produced_by_block                      # noqa: E402
@@ -1190,6 +1190,160 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
            % (passed, len(seal["checks"])))
 
 
+def _verify_gguf_readable(con: Console, repo_id: str, revision: str,
+                          surface, plan: Dict[str, Any]) -> None:
+    """Prove the chosen build's ggml types are decodable, from its own headers.
+
+    This gate exists because the obvious shortcut is wrong. A build's NAME
+    looks like it names its quantization -- and for the unsloth "UD" (Unsloth
+    Dynamic) recipes it does not: `UD-Q2_K_XL` carries IQ2_XS/IQ3_XXS/IQ4_XS
+    tensors and `UD-Q3_K_XL` carries IQ3_XXS/IQ4_XS, neither of which
+    gguf_surface v1 has a kernel for. A planner that trusted the directory name
+    would rent a box, download 100 GB and be refused at census time by a type
+    it could have read for free.
+
+    A GGUF header is at the front of the file and `gguf_surface` reads https
+    locations by range request, so the whole check costs a few hundred
+    kilobytes and no rental. It answers three questions the plan should not
+    guess: every type is supported, the architecture and geometry are this
+    model's, and the container's non-routed tensors are a bijection with the
+    official non-routed name set (nothing missing, nothing stray).
+
+    Skipped -- loudly -- where numpy is not importable, because `bin/` is
+    stdlib-only by policy (AGENTS.md) and the surfaces under `k6/tools/` are
+    not. A skipped gate is a warning, never a silent pass.
+    """
+    import sys as _sys
+    tools = SUITE_ROOT / "k6" / "tools"
+    if str(tools) not in _sys.path:
+        _sys.path.insert(0, str(tools))
+    try:
+        import gguf_surface as ggs
+    except Exception as exc:                             # noqa: BLE001
+        con.warn("gguf readability gate skipped: %s" % redact(str(exc)))
+        con.warn("  the build's ggml types will not be checked until the "
+                 "instance runs census -- after the fetch is paid for")
+        return
+    urls = ["%s/%s/resolve/%s/%s" % (HF_ENDPOINT, repo_id, revision, name)
+            for name, _ in surface.artifact_files]
+    try:
+        loaded = ggs.load_gguf_surface(urls, repo=repo_id, revision=revision,
+                                       require_file_hashes=False)
+    except ValueError as exc:
+        raise Refusal(
+            "this GGUF build cannot be decoded by gguf_surface v1",
+            [redact(str(exc)),
+             "",
+             "Read from the build's OWN headers at the pinned revision, not "
+             "from its name: unsloth's UD recipes mix IQ types into builds "
+             "whose names say Q2_K/Q3_K.",
+             "Another build of the same repo may well be measurable -- "
+             "`--path <build>` picks one, and the planner lists them.",
+             "Adding a type means adding a kernel WITH a bitwise-vs-gguf-py "
+             "proof (k6/tools/selftest_gguf_offline.py), not skipping tensors.",
+             "Nothing was created. $0.00 spent."])
+    except Exception as exc:                             # noqa: BLE001
+        con.warn("gguf readability gate skipped: %s" % redact(str(exc)))
+        return
+    summary = ggs.surface_summary(loaded)
+    try:
+        official = fetch_json("zai-org/GLM-5.3-Flash-BF16",
+                              "model.safetensors.index.json",
+                              revision=OFFICIAL_BF16_REVISION)["weight_map"]
+        bijection = ggs.verify_nonrouted_bijection(loaded.census, official.keys())
+    except (HFError, ValueError) as exc:
+        con.warn("gguf non-routed bijection skipped: %s" % redact(str(exc)))
+        bijection = None
+    if bijection is not None and not bijection.get("bijection_ok"):
+        raise Refusal(
+            "this GGUF build's non-routed tensors are not the official "
+            "non-routed set",
+            ["missing %d, stray %d" % (len(bijection.get("missing") or []),
+                                       len(bijection.get("stray") or [])),
+             "The streaming lane loads the decoded non-routed tensors AS the "
+             "model, so a name the container does not carry would be randomly "
+             "initialised and the number would describe a model nobody has.",
+             "Nothing was created. $0.00 spent."])
+    plan.setdefault("target", {})["gguf_verification"] = {
+        "verified": True,
+        "architecture": summary.get("architecture"),
+        "tensor_count": summary.get("tensor_count"),
+        "streamed_routed_modules": summary.get("streamed_routed_modules"),
+        "nonrouted_tensors_from_artifact":
+            summary.get("nonrouted_tensors_from_artifact"),
+        "type_census": summary.get("type_census"),
+        "scope_policy": summary.get("scope_policy"),
+        "checkpoint_identity_sha256": summary.get("checkpoint_identity_sha256"),
+        "seal_disclosure": summary.get("seal_disclosure"),
+        "nonrouted_bijection_ok": (bijection or {}).get("bijection_ok"),
+        "read_from": "https range requests over the build's own headers",
+    }
+    plan["target"]["nonrouted_completeness"] = {
+        "official_nonrouted": len([n for n in (official or {})
+                                   if ".mlp.experts." not in n]) if bijection else None,
+        "planned": summary.get("nonrouted_tensors_from_artifact"),
+        "missing": len((bijection or {}).get("missing") or []),
+        "duplicated": 0,
+    }
+    meta = summary.get("quant_metadata") or {}
+    version = meta.get("general.quantization_version")
+    quantized_by = meta.get("general.quantized_by")
+    plan["target"].update({
+        # The receipt's artifact block is built from these. Without them the
+        # seal would call a llama.cpp container an EXL3 one quantized by
+        # exllamav3, because those are the defaults four of the five surfaces
+        # share.
+        "container": "gguf",
+        "quantizer_tool": ("llama.cpp (quantized_by: %s)" % quantized_by
+                           if quantized_by else "llama.cpp"),
+        "quantizer_version": (("gguf quantization_version %s" % version)
+                              if version is not None else None),
+        # NOMINAL bits come from the build name and are already on the target.
+        # This is the artifact's own rate, computed from ggml block traits over
+        # every tensor it stores -- the number that shows a "Q4_K_XL" build is
+        # really ~5 bits/weight because everything outside the routed experts
+        # is Q8_0.
+        "bits_per_weight_effective": ggs.measured_bits_per_weight(loaded),
+    })
+    imatrix = {k: v for k, v in meta.items() if k.startswith("quantize.imatrix.")}
+    if imatrix:
+        # Calibration is a comparability fact, not trivia: an imatrix-calibrated
+        # build and an uncalibrated one at the same nominal rate are different
+        # artifacts. The submission schema's codec block has no calibration
+        # field (additionalProperties:false), so it travels as a disclosure --
+        # and because it is a claim about HOW the artifact was made, it carries
+        # its own pinned source (PROV-014/015).
+        plan.setdefault("disclosures", []).append({
+            "code": "imatrix_calibrated",
+            "severity": "info",
+            "affects_comparability": False,
+            "asserts_provenance": True,
+            "detail": ("the build declares importance-matrix calibration in its "
+                       "own GGUF metadata: %s. A calibrated quant and an "
+                       "uncalibrated one at the same nominal rate are different "
+                       "artifacts."
+                       % ", ".join("%s=%s" % (k.split(".", 2)[2], imatrix[k])
+                                   for k in sorted(imatrix))),
+            "sources": [{
+                "kind": "hf_file",
+                "uri": "%s/%s/resolve/%s/%s"
+                       % (HF_ENDPOINT, repo_id, revision,
+                          surface.artifact_files[0][0]),
+                "note": "general/quantize KV of the container's own header, "
+                        "read at the pinned revision",
+            }],
+        })
+    effective = plan["target"].get("bits_per_weight_effective")
+    if effective:
+        con.kv("measured rate", "%.4f bits/weight over every tensor the "
+                                "container stores (the name says %g)"
+               % (effective, surface.bits or 0.0))
+    census = summary.get("type_census") or {}
+    con.ok("gguf readable", "%s, %d tensors, types %s"
+           % (summary.get("architecture"), summary.get("tensor_count") or 0,
+              ", ".join("%s x%d" % (t, census[t]) for t in sorted(census))))
+
+
 #: Which table in `k6/tools/stream_score.py` holds a surface's profiles. Named
 #: rather than derived: the constants are not a mechanical transform of the
 #: surface string (`tr3-published` lives in TR3_PROFILES), and a refusal that
@@ -1199,6 +1353,10 @@ PROFILE_TABLE_NAMES = {
     "exl3hf": "EXL3HF_PROFILES",
     "tr3-published": "TR3_PROFILES",
     "dione": "DIONE_PROFILES",
+    # GGUF has no profile TABLE, because it has no per-rate profile: one
+    # reader, one receipt family and one format-wide student label serve every
+    # build. The constant to read is the label itself.
+    "gguf": "GGUF_STUDENT_LABEL",
 }
 
 
@@ -1210,6 +1368,15 @@ def resolve_profile(lane_spec, surface: Optional[str], bits: Optional[float]) ->
     release are the same number, a different codec, a different scope and a
     different receipt family -- so a bits-only key cannot name a profile once
     both exist.
+
+    A surface map may also be RATE-INDEPENDENT, spelled with the key "*": the
+    profile names the receipt family and the student label, and for a format
+    whose label is format-wide those do not vary with the bit rate. GGUF is the
+    case: one reader, one receipt family, one student label
+    ("gguf-llamacpp"), and a dozen builds at a dozen rates behind them. "*" is
+    checked BEFORE the bits keys so such a surface resolves even when the rate
+    is unknown -- which it legitimately is for a mixed-type build whose name
+    claims one number and whose headers hold four.
     """
     if lane_spec is None:
         return None
@@ -1217,6 +1384,9 @@ def resolve_profile(lane_spec, surface: Optional[str], bits: Optional[float]) ->
     generic = getattr(lane_spec, "profile_map", None) or {}
     if surface == "native-bf16":
         return (by_surface.get(surface) or {}).get("native") or generic.get("native")
+    wildcard = (by_surface.get(surface or "") or {}).get("*")
+    if wildcard:
+        return wildcard
     if bits is None:
         return None
     keys = []
@@ -1266,7 +1436,8 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
         from fidelity.registry_client import front_gate
 
         gate = front_gate(
-            repo=args.model, revision=args.revision, path_hint=None,
+            repo=args.model, revision=args.revision,
+            path_hint=getattr(args, "path", None),
             source=getattr(args, "registry", "auto"),
             force=getattr(args, "force", False),
             accept_measured_revision=getattr(args, "accept_measured_revision",
@@ -1373,7 +1544,11 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
             con.kv("last modified", target.last_modified)
         con.kv("files / size", "%d / %s" % (len(target.files),
                                             human_bytes(target.total_bytes)))
-        surface = sniff_surface(target)
+        surface = sniff_surface(target, getattr(args, "path", None))
+        if surface.evidence.get("gguf_builds"):
+            con.kv("builds", "%d published at this revision%s"
+                   % (len(surface.evidence["gguf_builds"]),
+                      ("; measuring %s" % surface.path) if surface.path else ""))
         con.kv("surface", "%s%s" % (surface.surface,
                                     ("  codec %s@%s" % (surface.codec_family, surface.bits))
                                     if surface.codec_family else ""))
@@ -1398,6 +1573,14 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
             "quantizer_version": surface.evidence.get("quantizer_version"),
             "head_bits": surface.evidence.get("head_bits"),
             "quantized_from": surface.evidence.get("original_quantization_config_fmt"),
+            # A repo that publishes several artifacts at one revision: the
+            # build, and the exact files it is made of. The fetch stage
+            # downloads these by name and the capture argv names every one,
+            # because for a GGUF the repo commit alone does not identify what
+            # was measured.
+            "path": surface.path,
+            "artifact_files": [{"name": name, "bytes": size}
+                               for name, size in surface.artifact_files],
         }
         if getattr(args, "role", "quant") == "root":
             _refuse_quantized_root(con, target, surface, plan)
@@ -1410,9 +1593,20 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                 plan)
         if surface.surface == "tr3-published" and not surface.problems:
             _verify_tr3_seal(con, target.repo_id, target.revision, plan)
+        if surface.surface == "gguf" and not surface.problems:
+            _verify_gguf_readable(con, target.repo_id, target.revision,
+                                  surface, plan)
         if surface.problems:
+            # "no adapter" and "you must pick one" are different verdicts and
+            # the second one used to wear the first one's headline. A GGUF
+            # shelf IS readable; what it lacks is a choice only the operator
+            # can make, and telling them the format is unsupported sends them
+            # to write an adapter that already exists.
             raise Refusal(
-                "this artifact cannot be read by any available surface adapter",
+                ("this repo publishes several artifacts and the measurement "
+                 "must name one"
+                 if surface.surface != "unknown" else
+                 "this artifact cannot be read by any available surface adapter"),
                 surface.problems + [
                     "",
                     "This is detected from the repo's own metadata, at a cost of a "
@@ -1487,7 +1681,10 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
             if not args.dry_run:
                 raise refusal
             would_refuse(con, plan, refusal)
-        artifact_bytes = float(target.total_bytes)
+        # For every other surface the repo IS the artifact. For a GGUF shelf
+        # the difference is 2.55 TB vs 200 GB, and pricing the shelf would
+        # refuse a run that fits comfortably.
+        artifact_bytes = float(surface.artifact_bytes or target.total_bytes)
         bits = float(surface.bits or 4.0)
     else:
         plan["target"] = {"repo_id": args.model, "revision": args.revision,
@@ -1540,9 +1737,14 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
 
     # exl3hf artifacts additionally materialize their non-routed function as a
     # local BF16 tree (~the model's non-routed footprint) before any capture.
+    # A GGUF materializes one too, and for the strongest reason of the four:
+    # its non-routed tensors are QUANTIZED, so the view is the artifact's own
+    # embeddings / lm_head / attention path decoded, not a re-shard of the
+    # official tensors.
     materialized_bytes = (
         cen.nonrouted_bytes
-        if plan["target"].get("surface") in ("exl3hf", "tr3-published", "dione") else 0.0
+        if plan["target"].get("surface") in ("exl3hf", "tr3-published", "dione",
+                                             "gguf") else 0.0
     )
     need = C.storage_need(artifact_bytes=artifact_bytes, panel_bytes=panel_bytes,
                           keep_student_logits=args.keep_student_logits,
@@ -2008,6 +2210,10 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
             "host": "jarvislabs",
         },
         "keep_student_logits": bool(args.keep_student_logits),
+        # Disclosures the PLANNER established from the artifact's own metadata
+        # (e.g. a GGUF's declared imatrix calibration). seal_receipt appends
+        # them to the lane's own; a plan with nothing to add sends [].
+        "disclosures": plan_data.get("disclosures") or [],
         # seal_receipt prefers job["scope"] over the registry's existing record
         # and over its own unknown-everything default.
         "scope": scope,
@@ -2443,6 +2649,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "for once and read by every later measurement.")
     t.add_argument("--model", help="HF repo id of the artifact to measure")
     t.add_argument("--revision", help="40-hex pin (default: resolve main and show it)")
+    t.add_argument("--path",
+                   help="which artifact inside a repo that publishes several at "
+                        "one revision (a GGUF shelf: --path UD-Q4_K_XL). The "
+                        "planner lists the builds when the choice is yours to make.")
     t.add_argument("--registry", default="auto",
                    help="auto | hf | local[:PATH] -- where the already-measured "
                         "front gate reads from")

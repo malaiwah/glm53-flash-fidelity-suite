@@ -38,7 +38,88 @@ SURFACE_MARKERS = {
     # by config.json's inline quantization_config.quant_method == "exl3" plus
     # a canonical model.safetensors.index.json.
     "exl3hf": ("config.json (inline quantization_config, quant_method exl3)",),
+    # llama.cpp container: no config.json, no index, no marker file at all --
+    # identified by the .gguf extension itself.  A GGUF *repo* is a shelf of
+    # independent builds, not one artifact (see `gguf_builds`).
+    "gguf": ("*.gguf",),
 }
+
+
+# --------------------------------------------------------------------------
+# GGUF: a repo is a shelf, not an artifact
+# --------------------------------------------------------------------------
+
+#: ggml type tokens as they appear in a build's directory or file name, longest
+#: first so `IQ4_XS` is not read as `Q4_...`.  The nominal rate is what the NAME
+#: claims; unsloth's "UD" (Unsloth Dynamic) recipes mix several types across
+#: tensor classes, so this is a family label and never a measured bpw.  What the
+#: build actually contains is read from its own headers by the readability gate.
+_GGML_NAME_TOKENS = (
+    ("IQ2_XXS", 2.0, "gguf-i-quant"), ("IQ3_XXS", 3.0, "gguf-i-quant"),
+    ("IQ4_XS", 4.0, "gguf-i-quant"), ("IQ4_NL", 4.0, "gguf-i-quant"),
+    ("IQ2_XS", 2.0, "gguf-i-quant"), ("IQ3_S", 3.0, "gguf-i-quant"),
+    ("IQ2_S", 2.0, "gguf-i-quant"), ("IQ1_M", 1.0, "gguf-i-quant"),
+    ("IQ1_S", 1.0, "gguf-i-quant"),
+    ("Q8_0", 8.0, "gguf-k-quant"), ("Q6_K", 6.0, "gguf-k-quant"),
+    ("Q5_K", 5.0, "gguf-k-quant"), ("Q4_K", 4.0, "gguf-k-quant"),
+    ("Q3_K", 3.0, "gguf-k-quant"), ("Q2_K", 2.0, "gguf-k-quant"),
+    ("Q5_1", 5.0, "gguf-k-quant"), ("Q5_0", 5.0, "gguf-k-quant"),
+    ("Q4_1", 4.0, "gguf-k-quant"), ("Q4_0", 4.0, "gguf-k-quant"),
+    ("TQ1_0", 1.0, "gguf-k-quant"), ("TQ2_0", 2.0, "gguf-k-quant"),
+    ("MXFP4", 4.0, "mxfp4"),
+    ("BF16", 16.0, "bf16"), ("F16", 16.0, "fp16"), ("F32", 32.0, "fp32"),
+)
+
+#: llama.cpp's split suffix, e.g. `-00002-of-00006.gguf`.
+_GGUF_SPLIT = re.compile(r"-\d{5}-of-\d{5}$")
+
+
+def gguf_build_key(path: str) -> str:
+    """The build a .gguf file belongs to.
+
+    Two published layouts, both in the wild for the same publisher:
+    `unsloth/GLM-5.3-Flash-GGUF` puts each build in its own directory
+    (`UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00003-of-00006.gguf`), while
+    `unsloth/Qwen3.8-27B-GGUF` publishes flat files at the repo root
+    (`Qwen3.8-27B-Q6_K.gguf`).  Directory wins where there is one; otherwise
+    the file stem with llama.cpp's split suffix removed, which is what makes
+    the parts of one split build group together instead of reading as six
+    separate artifacts.
+    """
+    head, _, tail = path.rpartition("/")
+    if head:
+        return head
+    return _GGUF_SPLIT.sub("", tail[:-len(".gguf")])
+
+
+def gguf_builds(meta: "RepoMeta") -> Dict[str, List[Tuple[str, int]]]:
+    """Every selectable model build in a GGUF repo, keyed by `gguf_build_key`.
+
+    `mmproj-*` files are the vision projector, not a model build: llama.cpp
+    ships the vision tower separately and the text-only sealed panel never
+    executes it.  They are excluded from selection rather than offered as a
+    build nobody can score.  `.gguf_file` (unsloth's shard-rewrite sidecars and
+    its published imatrix) is deliberately NOT `.gguf` and never matches.
+    """
+    builds: Dict[str, List[Tuple[str, int]]] = {}
+    for path, size in meta.files:
+        if not path.endswith(".gguf"):
+            continue
+        if path.rpartition("/")[2].startswith("mmproj"):
+            continue
+        builds.setdefault(gguf_build_key(path), []).append((path, size))
+    for files in builds.values():
+        files.sort()
+    return builds
+
+
+def gguf_nominal_rate(build: str) -> Tuple[Optional[float], str]:
+    """(nominal bits, registry codec) claimed by a build's NAME."""
+    upper = build.upper()
+    for token, bits, codec in _GGML_NAME_TOKENS:
+        if token in upper:
+            return bits, codec
+    return None, "unknown"
 
 
 class HFError(RuntimeError):
@@ -354,6 +435,15 @@ class SurfaceInfo:
     tp_world_size: Optional[int] = None
     evidence: Dict[str, Any] = field(default_factory=dict)
     problems: List[str] = field(default_factory=list)
+    #: For a repo that publishes MANY artifacts at one revision (a GGUF shelf),
+    #: the build this SurfaceInfo describes, and exactly the files it is made
+    #: of.  Every other surface leaves these None/[]: the repo IS the artifact.
+    path: Optional[str] = None
+    artifact_files: List[Tuple[str, int]] = field(default_factory=list)
+
+    @property
+    def artifact_bytes(self) -> Optional[int]:
+        return sum(size for _, size in self.artifact_files) or None
 
     @property
     def usable(self) -> bool:
@@ -403,7 +493,7 @@ def normalize_codec(quant_method: Optional[str],
     return aliases.get(raw, "unknown")
 
 
-def sniff_surface(meta: RepoMeta) -> SurfaceInfo:
+def sniff_surface(meta: RepoMeta, path: Optional[str] = None) -> SurfaceInfo:
     """Decide how a published checkpoint must be read, from its own files.
 
     The distinction that matters most: a `packed` checkpoint's
@@ -422,6 +512,55 @@ def sniff_surface(meta: RepoMeta) -> SurfaceInfo:
         ranks = {int(m.group(1)) for p in names
                  for m in [re.search(r"\.rank(\d+)\.", p)] if m}
         info.tp_world_size = max(ranks) + 1 if ranks else None
+
+    # GGUF first, and by extension alone.  A llama.cpp container carries no
+    # config.json, no safetensors index and no marker file, so every marker the
+    # other branches look for is absent -- which is why an unsloth GGUF repo
+    # used to reach the "no recognised surface marker" refusal.  It is also the
+    # only surface here whose REPO is not the artifact: unsloth publishes
+    # twelve independent builds of GLM-5.3-Flash at one revision, so a
+    # measurement must name one.
+    builds = gguf_builds(meta)
+    if builds:
+        info.surface = "gguf"
+        info.evidence["gguf_builds"] = {
+            key: {"files": len(files), "bytes": sum(s for _, s in files)}
+            for key, files in sorted(builds.items())
+        }
+        want = (path or "").strip().strip("/")
+        chosen = None
+        if want:
+            for key, files in builds.items():
+                if want == key or want in {p for p, _ in files} or \
+                        want == key.rpartition("/")[2]:
+                    chosen = key
+                    break
+            if chosen is None:
+                info.problems.append(
+                    "--path %r names no build in %s; it publishes: %s"
+                    % (want, meta.repo_id, ", ".join(sorted(builds))))
+        elif len(builds) == 1:
+            chosen = next(iter(builds))
+        else:
+            info.problems.append(
+                "%s publishes %d GGUF builds at this revision (%s) and a "
+                "measurement describes ONE of them. Pass --path <build>."
+                % (meta.repo_id, len(builds), ", ".join(sorted(builds))))
+        if chosen is not None:
+            info.path = chosen
+            info.artifact_files = list(builds[chosen])
+            info.shard_count = len(info.artifact_files)
+            info.bits, info.codec_family = gguf_nominal_rate(chosen)
+            info.evidence["gguf_rate_source"] = (
+                "nominal, read from the build NAME. unsloth's UD (Unsloth "
+                "Dynamic) recipes mix ggml types across tensor classes, so this "
+                "is a family label, not a measured bits-per-weight.")
+            # A GGUF quantizes the whole forward, so nothing in it is retained
+            # at source precision -- the opposite of the routed-experts-only
+            # releases this suite mostly measures. Recorded here so the plan
+            # and the receipt say it rather than implying the usual scope.
+            info.nonrouted_native = False
+        return info
 
     if "exl3-mcg-storage-abi.json" in names:
         info.surface = "tr3-published"

@@ -911,6 +911,225 @@ def _scope_policy(container: GgufContainer, census: GgufCensus) -> Dict[str, Any
     }
 
 
+GGUF_SCOPE_SCHEMA = "malaiwah.glm53-gguf-scope.v1"
+
+#: ggml type -> (registry numeric_format, nominal bits/weight).  "Nominal" is
+#: the type's name; the MEASURED rate per class is computed from the block
+#: traits below and reported in the note, because a K-quant block carries
+#: scales and mins that the name does not mention.
+_REGISTRY_FORMAT = {
+    "F32": ("fp32", 32.0), "F16": ("fp16", 16.0), "BF16": ("bf16", 16.0),
+    "Q8_0": ("gguf-k-quant", 8.0), "Q6_K": ("gguf-k-quant", 6.0),
+    "Q5_K": ("gguf-k-quant", 5.0), "Q4_K": ("gguf-k-quant", 4.0),
+    "Q3_K": ("gguf-k-quant", 3.0), "Q2_K": ("gguf-k-quant", 2.0),
+    "Q5_1": ("gguf-k-quant", 5.0), "Q5_0": ("gguf-k-quant", 5.0),
+    "Q4_1": ("gguf-k-quant", 4.0), "Q4_0": ("gguf-k-quant", 4.0),
+    "IQ4_XS": ("gguf-i-quant", 4.0), "IQ4_NL": ("gguf-i-quant", 4.0),
+    "IQ3_S": ("gguf-i-quant", 3.0), "IQ3_XXS": ("gguf-i-quant", 3.0),
+    "IQ2_S": ("gguf-i-quant", 2.0), "IQ2_XS": ("gguf-i-quant", 2.0),
+    "IQ2_XXS": ("gguf-i-quant", 2.0), "IQ1_M": ("gguf-i-quant", 1.0),
+    "IQ1_S": ("gguf-i-quant", 1.0), "MXFP4": ("mxfp4", 4.0),
+}
+_NATIVE_TYPES = ("F32", "F16", "BF16")
+
+
+def scope_class_of(hf_name: str, layer: Optional[int]) -> Tuple[str, str]:
+    """(registry tensor_class, why) for one official name.
+
+    The registry vocabulary is coarse and model-agnostic on purpose, and this
+    architecture has three families that do not map onto it by keyword:
+    GLM5Next's KDA gates (``f_a/f_b/g_a/g_b/b_proj``, the conv1d kernels,
+    ``A_log``/``dt_bias``), the DSA sparse-attention indexer, and the mHC
+    hyper-connection coefficients (``hc_*``).  None of them is a q/k/v or an o
+    projection, so calling them ``attn.qkv`` would overstate what the qkv row
+    covers; they go to ``attn.other`` / ``other`` WITH a note, which the schema
+    requires for ``other`` and which is the honest answer anyway.
+    """
+    if layer == MTP_LAYER:
+        return "mtp", "layer %d is the MTP layer; present in the artifact, never executed" % MTP_LAYER
+    if hf_name.endswith("lm_head.weight"):
+        return "lm_head", "the output projection"
+    if "embed_tokens" in hf_name:
+        return "embed_tokens", "the token embedding table"
+    if ".mlp.experts." in hf_name or ".mlp.experts" in hf_name:
+        return "moe.experts", "routed experts"
+    if ".mlp.shared_experts." in hf_name:
+        return "moe.shared_expert", "the always-on shared expert"
+    if ".mlp.gate." in hf_name:
+        return "moe.router", "the router logits and their score-correction bias"
+    if hf_name.endswith(".mlp.gate_proj.weight"):
+        return "mlp.gate", "dense (non-MoE) layers only"
+    if hf_name.endswith(".mlp.up_proj.weight"):
+        return "mlp.up", "dense (non-MoE) layers only"
+    if hf_name.endswith(".mlp.down_proj.weight"):
+        return "mlp.down", "dense (non-MoE) layers only"
+    if ".self_attn." in hf_name:
+        tail = hf_name.split(".self_attn.", 1)[1]
+        if tail.startswith("o_proj"):
+            return "attn.o", "the attention output projection"
+        if tail.split(".")[0] in (
+                "q_proj", "k_proj", "v_proj", "q_a_proj", "q_b_proj",
+                "kv_a_proj_with_mqa", "kv_b_proj"):
+            return "attn.qkv", "q/k/v and the MLA down/up projections"
+        return "attn.other", ("KDA gates, conv1d kernels, the DSA indexer and "
+                              "the attention norms")
+    if ".hc_attn" in hf_name:
+        return "attn.other", "mHC hyper-connection coefficients on the attention branch"
+    if ".hc_ffn" in hf_name:
+        return "other", "mHC hyper-connection coefficients on the FFN branch"
+    if "norm" in hf_name:
+        return "norm", "layer and final norms"
+    if ".visual." in hf_name:
+        return "other", "the vision tower"
+    return "other", "unclassified by the registry's coarse vocabulary"
+
+
+def measured_scope(surface: "GgufSurface") -> Dict[str, Any]:
+    """The per-tensor-class recipe, MEASURED from the container's own table.
+
+    Nothing here is read off a build NAME and nothing is defaulted.  Every
+    class reports the ggml types its tensors actually use, so a mixed class
+    (unsloth's "Dynamic" recipe puts Q4_K gate/up beside Q6_K down on three
+    layers) says `mixed` instead of picking one and calling the other a
+    rounding error.
+
+    The MEASURED bits/weight per class is computed from ggml's own block traits
+    -- elements and bytes -- and lands in the note, because it is the number the
+    type name does not tell you: Q4_K is 4.5 bits/weight once its scales and
+    mins are counted, not 4.
+    """
+    container, census = surface.container, surface.census
+    per_class: Dict[str, Dict[str, Any]] = {}
+
+    def account(hf_name: str, layer: Optional[int], row: Mapping[str, Any],
+                count: int = 1) -> None:
+        cls, why = scope_class_of(hf_name, layer)
+        entry = per_class.setdefault(cls, {"types": {}, "why": why,
+                                           "elements": 0, "bytes": 0})
+        ggml_type = row["type"]
+        entry["types"][ggml_type] = entry["types"].get(ggml_type, 0) + count
+        elements = int(row["elements"])
+        traits = BLOCK_TRAITS.get(ggml_type)
+        entry["elements"] += elements
+        if traits is not None:
+            per_block, block_bytes = traits
+            entry["bytes"] += elements // per_block * block_bytes
+
+    for gguf_name, hf_name in census.direct_map.items():
+        match = _BLK.match(gguf_name)
+        account(hf_name, int(match.group(1)) if match else None,
+                container.tensors[gguf_name])
+    for (layer, _half), gguf_name in census.mla.items():
+        account(kv_b_hf_name(layer), layer, container.tensors[gguf_name])
+    for (layer, projection), gguf_name in census.routed.items():
+        account(official_expert_name(layer, 0, projection), layer,
+                container.tensors[gguf_name])
+
+    assignments = []
+    for cls in sorted(per_class):
+        entry = per_class[cls]
+        types = entry["types"]
+        native = all(t in _NATIVE_TYPES for t in types)
+        formats = {_REGISTRY_FORMAT.get(t, ("unknown", None))[0] for t in types}
+        fmt = formats.pop() if len(formats) == 1 else "mixed"
+        nominal = {_REGISTRY_FORMAT.get(t, ("unknown", None))[1] for t in types}
+        effective = (8.0 * entry["bytes"] / entry["elements"]) if entry["elements"] else None
+        note = "%s. ggml types: %s. MEASURED %.4f bits/weight over %d weights." % (
+            entry["why"],
+            ", ".join("%s x%d" % (t, types[t]) for t in sorted(types)),
+            effective if effective is not None else float("nan"), entry["elements"])
+        if native:
+            note += (" Stored natively by the artifact; the streaming lane's "
+                     "materialized view casts F32 tensors the official release "
+                     "stores as bf16 down to bf16, so the constructed model is "
+                     "dtype-identical to a native build rather than wider.")
+        assignments.append({
+            "tensor_class": cls,
+            "treatment": "native" if native else "quantized",
+            "format": fmt,
+            "bits_per_weight": (nominal.pop() if len(nominal) == 1 else None),
+            "layer_range": "all",
+            "note": note,
+        })
+    # The vision tower belongs to `other` too, and it is ABSENT. One class
+    # cannot be both quantized and not_present, and the registry vocabulary has
+    # one `other` slot, so the absence is stated in the note rather than as a
+    # second entry with the same tensor_class -- which would double-count the
+    # class in scope_digest and read as a contradiction.
+    vision = ("The vision tower (model.visual.*) is ALSO `other` and is NOT in "
+              "this container -- llama.cpp ships it as a separate mmproj file. "
+              "The streaming lane copies it from the official BF16 tree so the "
+              "model can be constructed at all; the text-only sealed panel never "
+              "executes it, so no vision weight is inside the measured function.")
+    other = next((a for a in assignments if a["tensor_class"] == "other"), None)
+    if other is None:
+        assignments.append({
+            "tensor_class": "other", "treatment": "not_present",
+            "format": "unknown", "bits_per_weight": None, "layer_range": "all",
+            "note": vision,
+        })
+    else:
+        other["note"] += " " + vision
+    quantized = {(a["format"], a["bits_per_weight"]) for a in assignments
+                 if a["treatment"] == "quantized"}
+    policy = "none" if not quantized else ("uniform" if len(quantized) == 1 else "mixed")
+    head = next((a for a in assignments if a["tensor_class"] == "lm_head"), None)
+    return {
+        "policy": policy,
+        "head_policy": ("quantized" if head and head["treatment"] == "quantized"
+                        else "native" if head else "unknown"),
+        # A GGUF is a WEIGHTS container. The KV cache dtype is a llama.cpp
+        # runtime flag that the file does not carry, and this measurement does
+        # not run llama.cpp at all -- it runs the sealed transformers forward.
+        # "unknown" would suggest the artifact declares something we failed to
+        # read; it declares nothing, which is a different fact.
+        "kv_cache_dtype": "not_applicable",
+        "mtp_included": any(a["tensor_class"] == "mtp" for a in assignments),
+        "activation_quantization": None,
+        "assignments": assignments,
+    }
+
+
+def measured_bits_per_weight(surface: "GgufSurface") -> Optional[float]:
+    """The artifact's own bits/weight, over every tensor it stores."""
+    elements = 0
+    payload = 0
+    for row in surface.container.tensors.values():
+        traits = BLOCK_TRAITS.get(row["type"])
+        if traits is None:
+            return None
+        per_block, block_bytes = traits
+        n = int(row["elements"])
+        elements += n
+        payload += n // per_block * block_bytes
+    return (8.0 * payload / elements) if elements else None
+
+
+def scope_report(surface: "GgufSurface") -> Dict[str, Any]:
+    """What `gguf_surface.py scope` writes: the scope plus its provenance."""
+    scope = measured_scope(surface)
+    return {
+        "schema": GGUF_SCOPE_SCHEMA,
+        "scope": scope,
+        "measured_bits_per_weight": measured_bits_per_weight(surface),
+        "source": {
+            "repo": surface.repo,
+            "revision": surface.revision,
+            "architecture": surface.architecture,
+            "files": [row["name"] for row in surface.file_records],
+            "file_hash_verification": surface.file_hash_verification,
+            "checkpoint_identity_sha256": surface.checkpoint_identity_sha256(),
+            "quant_metadata": surface.quant_metadata,
+            "read_from": ("the container's OWN tensor table -- every type, "
+                          "element count and block size -- never from the build "
+                          "name, which for an unsloth 'UD' build claims one type "
+                          "and holds four"),
+        },
+        "seal_disclosure": SEAL_DISCLOSURE,
+        "scope_disclosure": SCOPE_DISCLOSURE,
+    }
+
+
 def load_gguf_surface(
     locations: List[str],
     *,
@@ -1620,6 +1839,13 @@ def main() -> int:
     p = sub.add_parser("verify-files", help="sha256 every local file; write the marker")
     p.add_argument("--file", action="append", required=True, dest="files")
 
+    p = sub.add_parser("scope", help="emit the per-tensor-class recipe MEASURED "
+                                     "from the container's own tensor table")
+    p.add_argument("--file", action="append", required=True, dest="files")
+    p.add_argument("--repo")
+    p.add_argument("--revision")
+    p.add_argument("--out", type=Path, help="write here instead of stdout")
+
     p = sub.add_parser("audit-mla", help="re-prove the kv_b_proj reconstruction "
                                          "arrangement against the official BF16 tensor")
     p.add_argument("--file", action="append", required=True, dest="files")
@@ -1652,6 +1878,14 @@ def main() -> int:
         require_file_hashes=False,
     )
     summary = surface_summary(surface)
+    if args.command == "scope":
+        report = scope_report(surface)
+        text = json.dumps(report, indent=2, sort_keys=True) + "\n"
+        if getattr(args, "out", None):
+            args.out.write_text(text, encoding="utf-8")
+        else:
+            sys.stdout.write(text)
+        return 0
     if args.command == "dry-run":
         if args.bf16_index and args.bf16_index.is_file():
             official = json.loads(args.bf16_index.read_text(encoding="utf-8"))["weight_map"]
