@@ -71,8 +71,49 @@ print(cur if not isinstance(cur, (dict, list)) else json.dumps(cur))
 
 log() { echo "[$(date -u +%FT%TZ)] stage_measure/$STAGE: $*"; }
 
+# --------------------------------------------------------------------------
+# Job identity binding (P1-12 / P1-13)
+#
+# A bare `<stage>.done` marker said only "SOME job finished SOME stage in
+# this run root".  On a reused container mount that skipped model B's fetch
+# because model A's marker existed; on a cloud resume it let a newly resolved
+# revision / new code state adopt outputs older bytes produced.  So a marker
+# carries the 256-bit job identity + the sha256 of the job.json that drove
+# it, and a marker bound to a DIFFERENT job is a refusal, never a skip.
+# Deleting $DONE/*.done (or using a fresh run root) is the deliberate
+# override; FIDELITY_ADOPT_MARKERS=1 exists for an operator who has verified
+# the outputs by hand.
+# --------------------------------------------------------------------------
+JOB_BINDING="$(jqget job_id_full "$(jqget job_id "")")"
+JOB_SHA=""
+if [ -f "$CONF" ]; then
+  JOB_SHA="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$CONF" 2>/dev/null || true)"
+fi
+
+write_marker() {  # bind the marker to this job's identity and inputs
+  if [ -n "$JOB_BINDING" ]; then
+    {
+      echo "job_id_full=$JOB_BINDING"
+      echo "job_sha256=$JOB_SHA"
+      echo "stage=$STAGE"
+      echo "completed_at=$(date -u +%FT%TZ)"
+    } > "$marker"
+  else
+    : > "$marker"
+  fi
+}
+
 marker="$DONE/$STAGE.done"
 if [ "$STAGE" != "setup" ] && [ -f "$marker" ]; then
+  if [ -n "$JOB_BINDING" ] && [ "${FIDELITY_ADOPT_MARKERS:-}" != "1" ]; then
+    have="$(sed -n 's/^job_id_full=//p' "$marker" 2>/dev/null | head -1)"
+    if [ "$have" != "$JOB_BINDING" ]; then
+      echo "stage_measure: REFUSING marker $marker: it belongs to job '${have:-<unbound>}' and this job is '$JOB_BINDING'." >&2
+      echo "  A marker from another job means this run root holds ANOTHER RUN'S outputs (container reuse, or a resume after the target revision or the suite moved)." >&2
+      echo "  Use a fresh run root; or, after verifying whose outputs these are, delete $DONE/*.done or set FIDELITY_ADOPT_MARKERS=1." >&2
+      exit 7
+    fi
+  fi
   log "already done (marker $marker) -- skipping"
   exit 0
 fi
@@ -85,6 +126,41 @@ if [ "$STAGE" != "setup" ] && [ ! -x "$PY" ]; then
   echo "  The setup stage builds it. Run (or finish) 'stage_measure.sh setup' first." >&2
   exit 3
 fi
+
+# --------------------------------------------------------------------------
+# Atomic per-stage lock (P1-14)
+#
+# The controller's liveness probe can answer "unknown" (ssh flake, API blip),
+# and an unknown must never authorize a second writer -- two capture
+# processes interleaving receipts/run-N/ is not a crash, it is a corrupted
+# measurement that looks finished.  mkdir is the atomic primitive every
+# POSIX filesystem has; the owner file records who holds it.  A lock whose
+# recorded pid is dead is stale (OOM, preemption) and is taken over.
+# --------------------------------------------------------------------------
+LOCK="$RCPT/locks/$STAGE.lock"
+mkdir -p "$RCPT/locks"
+write_lock_owner() {
+  {
+    echo "job_id_full=$JOB_BINDING"
+    echo "pid=$$"
+    echo "host=$(hostname 2>/dev/null || echo '?')"
+    echo "started=$(date -u +%FT%TZ)"
+  } > "$LOCK/owner"
+}
+if mkdir "$LOCK" 2>/dev/null; then
+  write_lock_owner
+else
+  opid="$(sed -n 's/^pid=//p' "$LOCK/owner" 2>/dev/null | head -1)"
+  if [ -n "$opid" ] && kill -0 "$opid" 2>/dev/null; then
+    echo "stage_measure: stage $STAGE is ALREADY RUNNING here (lock $LOCK, pid $opid) -- refusing to start a second writer." >&2
+    exit 8
+  fi
+  log "stale lock $LOCK (owner pid ${opid:-unknown} is gone) -- taking over"
+  rm -rf "$LOCK"
+  mkdir "$LOCK" 2>/dev/null || { echo "stage_measure: lost the lock race for $STAGE" >&2; exit 8; }
+  write_lock_owner
+fi
+trap 'rm -rf "$LOCK"' EXIT
 
 # Load the HF token from its 0600 file, never from argv or the environment of a
 # command line that could be observed in the process list.
@@ -224,7 +300,7 @@ print("wrote", out, "binding", record["config_sha256"][:12], record["index_sha25
 PYINV
   fi
   df -h "$FS" | tee -a "$LOGS/setup.log"
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 
@@ -361,7 +437,7 @@ PY
     log "scope written to $RCPT/artifact-scope.json"
   fi
   df -h "$FS" | tee -a "$LOGS/fetch_target.log"
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 
@@ -403,7 +479,7 @@ PY
   # named file, rather than at load_panel_windows four stages later.
   python3 "$FS/bin/stage_panel_paths.py" --panel "$PANEL" \
       2>&1 | tee -a "$LOGS/fetch_panel.log"
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 
@@ -422,7 +498,7 @@ materialize)
   case "$SURFACE" in
     exl3hf|tr3-published|dione) ;;
     *) log "surface=$SURFACE needs no materialization -- skipping"
-       touch "$marker"; exit 0 ;;
+       write_marker; exit 0 ;;
   esac
   REPO="$(jqget target.repo_id)"
   REV="$(jqget target.revision)"
@@ -446,7 +522,7 @@ materialize)
       2>&1 | tee -a "$LOGS/materialize.log"
   fi
   df -h "$FS" | tee -a "$LOGS/materialize.log"
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 
@@ -467,7 +543,7 @@ measure)
       --cold-run "$run" --out "$RCPT/run-$run" \
       2>&1 | tee -a "$LOGS/measure-run-$run.log"
   done
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 
@@ -496,7 +572,7 @@ score)
     log "keep_student_logits is set -- the per-run logit trees are retained"
   fi
   df -h "$FS" | tee -a "$LOGS/score.log"
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 
@@ -505,7 +581,7 @@ seal)
   "$PY" "$FS/bin/seal_receipt.py" --job "$CONF" --receipts "$RCPT" \
       --out "$RCPT/measurement-receipt.json" 2>&1 | tee -a "$LOGS/seal.log"
   ( cd "$RCPT" && sha256sum measurement-receipt.json > RECEIPT.sha256 ) || true
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 
@@ -577,7 +653,7 @@ capture)
         2>&1 | tee -a "$LOGS/capture.log"
   fi
   du -sh "$OUT" | tee -a "$LOGS/capture.log"
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 
@@ -618,7 +694,7 @@ race_bootstrap)
   python3 -c 'import json,sys; wm=json.load(open(sys.argv[1])).get("weight_map") or {}; print("index: %d tensors over %d shards" % (len(wm), len(set(wm.values()))))' \
       "$DEST/model.safetensors.index.json" | tee -a "$LOGS/race_bootstrap.log"
   df -h "$FS" | tee -a "$LOGS/race_bootstrap.log"
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 
@@ -697,7 +773,7 @@ race_capture)
   fi
   du -sh "$OUT" | tee -a "$LOGS/race_capture.log"
   df -h "$FS" | tee -a "$LOGS/race_capture.log"
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 
@@ -714,7 +790,7 @@ verify)
       2>&1 | tee -a "$LOGS/verify.log"
   "$PY" "$FS/bin/fidelity_dataset.py" describe "$OUT" \
       2>&1 | tee -a "$LOGS/verify.log"
-  touch "$marker"
+  write_marker
   log "done"
   ;;
 

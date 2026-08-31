@@ -509,11 +509,15 @@ class Teardown:
 
 def write_lease(job_id: str, *, name: str, deadline: float,
                 machine_id: Optional[int], fs_id: Optional[int],
-                provider: str = "jarvislabs") -> Path:
+                provider: str = "jarvislabs",
+                job_id_full: Optional[str] = None) -> Path:
     LEASE_DIR.mkdir(parents=True, exist_ok=True)
     path = LEASE_DIR / ("%s.json" % job_id)
     write_json(str(path), {
         "job_id": job_id,
+        # The 256-bit identity adoption compares against (P1-12); the 8-char
+        # display id above only names the file and the instance.
+        "job_id_full": job_id_full or job_id,
         "name": name,
         # The sweep can only drive ONE backend (the jl CLI); a lease must say
         # whose instance it names, or an expired RunPod lease could aim
@@ -1063,14 +1067,67 @@ def job_id_for(args: argparse.Namespace) -> str:
     are not bitwise identical -- so the hardware a number came from is part of
     that number's identity, not an incidental detail of where it ran.
     """
+    return job_identity(args)["job_id"]
+
+
+def _suite_head() -> str:
+    """The code state that will produce the receipts, as one string.
+
+    A git checkout answers with HEAD; a tarball answers with a digest of the
+    two files that drive a cloud run.  Part of the job identity (P1-12): the
+    same command re-run after the suite moved is a DIFFERENT producer, and
+    letting it adopt the old machine relabels old outputs with new code.
+    """
+    try:
+        proc = subprocess.run(["git", "-C", str(SUITE_ROOT), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=30)
+        head = (proc.stdout or "").strip()
+        if len(head) == 40:
+            return head
+    except Exception:                                    # noqa: BLE001
+        pass
+    digest = hashlib.sha256()
+    for rel in ("bin/measure_cloud.py", "bin/stage_measure.sh"):
+        try:
+            digest.update((SUITE_ROOT / rel).read_bytes())
+        except OSError:
+            digest.update(("missing:%s" % rel).encode())
+    return "files-%s" % digest.hexdigest()
+
+
+def job_identity(args: argparse.Namespace, *,
+                 resolved_revision: "Optional[str]" = None,
+                 panel_revision: "Optional[str]" = None) -> Dict[str, str]:
+    """The wide job identity: resolve first, then hash at 256 bits (P1-12).
+
+    The old identity was sha1(requested args)[:8]: it hashed `--revision main`
+    BEFORE resolution, ignored the suite's own code state, and 32 bits of it
+    named the instance -- so a rerun after upstream `main` (or this repo)
+    moved would adopt the old machine, overwrite job.json with the newly
+    resolved target, and skip stages whose bytes the OLD identity produced.
+    A sealed-looking receipt could then name a producer state that did not
+    create its evidence.
+
+    So: `resolved_revision` (the 40-hex the planner pinned) and the panel's
+    resolved revision go in once known, the suite HEAD always goes in, and
+    the FULL 64-hex id is what leases, job.json and stage markers store and
+    compare.  The 8-char prefix is DISPLAY (and the instance-name length
+    budget); it is never the basis of a comparison on its own.
+    """
     key = json.dumps({
-        "model": args.model, "revision": args.revision, "panel": args.panel,
+        "model": args.model,
+        "revision": resolved_revision or args.revision,
+        "revision_resolved": bool(resolved_revision),
+        "panel": args.panel,
+        "panel_revision": panel_revision,
         "lane": args.lane, "spot": args.spot, "cold_runs": args.cold_runs,
         "provider": getattr(args, "provider", "jarvislabs"),
         "gpu": getattr(args, "gpu", None),
         "role": getattr(args, "role", "quant"),
+        "suite_head": _suite_head(),
     }, sort_keys=True)
-    return hashlib.sha1(key.encode()).hexdigest()[:8]
+    full = hashlib.sha256(key.encode()).hexdigest()
+    return {"job_id_full": full, "job_id": full[:8]}
 
 
 
@@ -2047,6 +2104,20 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     plan["panel"] = dict(descriptor.to_dict(), revision=panel_rev,
                          fetch_bytes=panel_bytes)
 
+    # -- job identity, now that every mutable reference is resolved --------
+    # (P1-12: identity is derived AFTER resolution, at 256 bits; the 8-char
+    # prefix is display + instance-name budget, never compared on its own.)
+    identity = job_identity(
+        args,
+        resolved_revision=(target.revision if target is not None else None),
+        panel_revision=panel_rev)
+    if identity["job_id"] != plan["job_id"]:
+        con.kv("job id", "%s  (final; provisional was %s)"
+               % (identity["job_id"], plan["job_id"]))
+    plan["job_id"] = identity["job_id"]
+    plan["job_id_full"] = identity["job_id_full"]
+    plan["suite_head"] = _suite_head()
+
     # -- fit ---------------------------------------------------------------
     con.say("")
     cen = C.glm53_flash_census()
@@ -2362,13 +2433,25 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
     region = chosen["region"]
     started = time.time()
 
+    # The lease a previous controller of this job wrote, BEFORE this run's
+    # lease overwrites it: its job_id_full is the identity an adoption below
+    # must match (P1-12).
+    prior_lease: Optional[Dict[str, Any]] = None
+    prior_path = LEASE_DIR / ("%s.json" % plan_data["job_id"])
+    if prior_path.is_file():
+        try:
+            prior_lease = read_json(str(prior_path))
+        except (OSError, ValueError):
+            prior_lease = None
+
     # L4: write the lease BEFORE `jl create`, so the window between create
     # returning and the id being known is still covered -- the sweep matches on
     # the name, which is decided here.
     td.lease_path = write_lease(plan_data["job_id"], name=plan_data["instance_name"],
                                 deadline=plan_data["deadline_epoch"],
                                 machine_id=None, fs_id=None,
-                                provider=getattr(args, "provider", "jarvislabs"))
+                                provider=getattr(args, "provider", "jarvislabs"),
+                                job_id_full=plan_data.get("job_id_full"))
     con.step("lease written  %s" % td.lease_path)
 
     # Adopt an existing instance for this exact job rather than creating a
@@ -2382,7 +2465,25 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
     job_prefix = "fidcloud-%s-" % plan_data["job_id"]
     for inst in jl.list_instances():
         if (inst.name or "").startswith(job_prefix) and _is_running(inst):
-            con.step("adopting existing instance %d for this job (name %s)"
+            # The name carries only the 8-char DISPLAY prefix.  The identity
+            # adoption must match is the 256-bit job_id_full in the lease the
+            # previous controller wrote (P1-12): a prefix collision, a legacy
+            # lease, or a lease from a different producer state must not let
+            # this run relabel that machine's outputs as its own.
+            prior_full = (prior_lease or {}).get("job_id_full")
+            if prior_full != plan_data.get("job_id_full"):
+                raise Refusal(
+                    "an instance named %s is running but its lease does not "
+                    "carry this job's full identity" % inst.name,
+                    ["lease job_id_full: %s" % (prior_full or "<absent>"),
+                     "this run's:        %s" % plan_data.get("job_id_full"),
+                     "Adopting it would relabel that run's outputs with this "
+                     "run's resolved revision and code state (P1-12).",
+                     "If that instance is yours and finished, tear it down "
+                     "(bin/measure-cloud reaper --list / jl destroy) and "
+                     "re-run; nothing was created, $0.00 spent this run."])
+            con.step("adopting existing instance %s for this job (name %s, "
+                     "full identity matches its lease)"
                      % (inst.machine_id, inst.name))
             td.adopt(inst.machine_id, fs_id=inst.fs_id)
             # The lease and the plan must now speak about the instance that
@@ -2546,6 +2647,10 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
         "capture": capture,
         "recipe": "cloud",
         "job_id": plan_data["job_id"],
+        # Stage markers bind to THIS (P1-12/P1-13): the stage runner refuses
+        # a marker whose job_id_full differs, which kills both the
+        # resume-relabel and the container-reuse silent skips.
+        "job_id_full": plan_data.get("job_id_full") or plan_data["job_id"],
         "lane": args.lane,
         # Who made the measurement.  Without it seal_receipt defaults to
         # "unknown", so every cloud receipt UNDER-CLAIMED its own provenance
@@ -2818,8 +2923,10 @@ def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
         # captured, and the only safe resume was to wait for the marker by hand.
         run_id = None
         if _stage_is_alive(jl, td, stage):
-            con.warn("stage %s is ALREADY RUNNING on %s -- attaching to it "
-                     "instead of launching a second copy"
+            # "alive" OR "unknown-after-retries": both refuse the launch --
+            # a network blip must never authorize a second writer (P1-14).
+            con.warn("stage %s is (or may be) ALREADY RUNNING on %s -- "
+                     "attaching to it instead of launching a second copy"
                      % (stage, td.machine_id))
         else:
             run = jl.run_job(
@@ -2872,8 +2979,8 @@ def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
             _await_stage(con, jl, td, (r or {}).get("run_id"), "setup", deadline)
 
 
-def _stage_is_alive(jl, td, stage: str) -> bool:
-    """Is `stage_measure.sh <stage>` running on the instance right now?
+def _stage_liveness(jl, td, stage: str) -> str:
+    """Is `stage_measure.sh <stage>` running? -> "alive" | "dead" | "unknown".
 
     `[s]tage_measure` and NOT `stage_measure`: `pgrep -f` matches full command
     lines, and this probe's own shell carries the pattern in ITS command line,
@@ -2883,13 +2990,13 @@ def _stage_is_alive(jl, td, stage: str) -> bool:
     cmdline holds "stage_measure.sh", and not the probe, whose cmdline holds
     "[s]tage_measure.sh".  JOURNAL lesson 36 / 44.
 
-    An unreadable instance answers False: the caller then LAUNCHES, and a
-    launch into an already-running stage is caught by the stage's own marker
-    on the next poll.  Answering True on no evidence would hang the controller
-    on a stage that is not there.
+    Tri-state on purpose (P1-14): a probe that cannot run -- ssh flake, API
+    blip -- used to answer False, the same value as CONFIRMED DEAD, and the
+    caller then launched a SECOND writer into a live capture.  "unknown" is
+    its own verdict and never authorizes a launch.
     """
     if td.machine_id is None or jl.dry:
-        return False
+        return "dead"
     try:
         out = jl.exec_stdout(
             td.machine_id,
@@ -2897,8 +3004,32 @@ def _stage_is_alive(jl, td, stage: str) -> bool:
             "&& echo alive || echo gone" % stage,
             timeout=120, check=False)
     except JLError:
-        return False
-    return (out or "").strip().splitlines()[-1:] == ["alive"]
+        return "unknown"
+    tail = (out or "").strip().splitlines()[-1:]
+    if tail == ["alive"]:
+        return "alive"
+    if tail == ["gone"]:
+        return "dead"
+    return "unknown"
+
+
+def _stage_is_alive(jl, td, stage: str, *, retries: int = 3,
+                    wait: float = 20.0, sleep=time.sleep) -> bool:
+    """True unless the stage is CONFIRMED dead.
+
+    Callers use this to decide "may I launch?" -- and the only answer that
+    may authorize a launch is a CONFIRMED "dead".  On "unknown" the probe is
+    retried; still unknown after `retries` means the caller must NOT launch a
+    duplicate writer (P1-14): the poll loop keeps watching, the marker or a
+    later confirmed answer resolves it, and --max-runtime bounds the wait.
+    """
+    verdict = _stage_liveness(jl, td, stage)
+    attempt = 0
+    while verdict == "unknown" and attempt < retries:
+        attempt += 1
+        sleep(wait)
+        verdict = _stage_liveness(jl, td, stage)
+    return verdict != "dead"
 
 
 #: How many consecutive 120 s polls may read the SAME progress counter before

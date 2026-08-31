@@ -75,6 +75,10 @@ t "provider portability (T5d)"             0 python3 bin/selftest_provider_porta
 t "container transport (T17)"                0 "$VPY" bin/selftest_container.py
 t "fp8 -> bf16 losslessness (T5e)"         0 python3 bin/selftest_fp8_lossless.py
 t "canonical_json: bin == registry (T5f)"  0 python3 bin/selftest_canonical_json.py
+# P1-08. NaN/Infinity are not JSON: refused at the parse (parse_constant), by
+# both canonical serializers (allow_nan=False), and by the minischema's
+# recursive finiteness walk -- bound checks fail open on NaN otherwise.
+t "non-finite rejection: ingest/seal/render (P1-08)" 0 python3 bin/selftest_nonfinite_rejection.py
 t "bundle completeness (T5g)"              0 python3 bin/selftest_bundle_complete.py
 # T18. The guards for what a NAMING SWEEP can destroy. This tree is being swept
 # of GLM/K6 names now that it measures four families; half those strings are
@@ -125,6 +129,12 @@ t "reaper: lease-authorized, confirmed, faithful dry-run (T22: P1-P8)" \
 # ESTIMATE ONLY. G5 forces offline via a closed local port -- no network.
 t "seal gates fail closed, offline dry-run is estimate-only (T23: G1-G5)" \
                                            0 python3 bin/selftest_seal_gate.py
+# T24. Job identity and duplicate writers (P1-12/P1-14). Identity is hashed
+# AFTER revision resolution, at 256 bits, including the suite HEAD; adoption
+# compares the lease's full id, never the 8-char name prefix; liveness is
+# tri-state and unknown never authorizes a launch. Stub provider, $0.00.
+t "job identity resolved-first + tri-state liveness (T24: J1-J7)" \
+                                           0 python3 bin/selftest_job_identity.py
 # T14. The progress meter. Both capture engines print one line at the start and
 # one at the end, which on the streaming lane is a 2-3 hour silence in a stage
 # log that looks exactly like a hang. The rungs that matter are the ones about

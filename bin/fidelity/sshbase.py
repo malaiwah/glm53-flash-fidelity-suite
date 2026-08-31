@@ -232,12 +232,22 @@ class SSHTransport:
         # -- OOM, preemption, a reaped container -- which is exactly the branch
         # that decides whether the controller fails in one poll or waits out
         # --max-runtime on a billing instance.
-        out = self.exec_stdout(
-            machine_id,
-            "if [ -f {d}/exit_code ]; then echo DONE $(cat {d}/exit_code); "
-            "elif [ -f {d}/pid ] && kill -0 $(cat {d}/pid) 2>/dev/null; "
-            "then echo RUNNING; else echo GONE; fi".format(d=d),
-            timeout=120).strip().split()
+        # Tri-state (P1-14): a probe that cannot run is UNKNOWN, never a
+        # verdict.  GONE below is evidence-based dead (the box answered and
+        # found neither an exit_code nor a live pid); an ssh failure or an
+        # empty answer must not wear that verdict, because the caller treats
+        # "failed" as permission to act on a job that may be alive.
+        try:
+            out = self.exec_stdout(
+                machine_id,
+                "if [ -f {d}/exit_code ]; then echo DONE $(cat {d}/exit_code); "
+                "elif [ -f {d}/pid ] && kill -0 $(cat {d}/pid) 2>/dev/null; "
+                "then echo RUNNING; else echo GONE; fi".format(d=d),
+                timeout=120).strip().split()
+        except JLError as exc:
+            return {"state": "unknown", "run_id": run_id,
+                    "note": "liveness probe failed (%s); not evidence of "
+                            "death" % redact(str(exc))[:200]}
         if not out:
             return {"state": "unknown", "run_id": run_id}
         if out[0] == "DONE":

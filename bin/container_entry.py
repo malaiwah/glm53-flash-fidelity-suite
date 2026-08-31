@@ -403,13 +403,38 @@ def job_document(args, suite: Path, fs_root: Path, con) -> dict:
     if getattr(args, "path", None):
         target["path"] = args.path
 
+    produced = produced_by(suite, build, pin)
+    # Content-derived identity at 256 bits (P1-12/P1-13): the time-based
+    # default id changed on every invocation, so stage markers could not be
+    # bound to anything and a reused run root silently returned model A's
+    # receipts for model B.  Hash what the job IS -- target, panel, capture
+    # identity, lane, profile, producer revision -- and let the stage runner
+    # refuse a marker bound to a different job.
+    identity_key = json.dumps({
+        "role": role, "lane": args.lane,
+        "target": target,
+        "panel": {"repo_id": panel.get("repo_id"),
+                  "revision": panel.get("revision"),
+                  "panel_id": panel.get("panel_id")},
+        "capture": {"dataset_id": capture.get("dataset_id"),
+                    "preview_of": capture.get("preview_of"),
+                    "form": capture.get("form"),
+                    "schedule": capture.get("schedule")},
+        "profile": getattr(args, "profile", None),
+        "cold_runs": args.cold_runs,
+        "reduce_order": args.reduce_order,
+        "suite_revision": produced.get("revision"),
+    }, sort_keys=True)
+    job_id_full = hashlib.sha256(identity_key.encode("utf-8")).hexdigest()
+
     doc = {
         "role": role,
         "capture": capture,
         # seal_receipt only reads this to pick a fallback runner name, and we
         # never take that fallback: produced_by is always supplied below.
         "recipe": "container",
-        "job_id": args.job_id or ("job-%d" % int(time.time())),
+        "job_id": args.job_id or ("job-%s" % job_id_full[:8]),
+        "job_id_full": job_id_full,
         "lane": args.lane,
         "measurer": {
             "name": args.measurer, "handle": args.measurer,
@@ -447,7 +472,7 @@ def job_document(args, suite: Path, fs_root: Path, con) -> dict:
         "disclosures": [],
         "scope": (json.loads(Path(args.scope_json).read_text(encoding="utf-8"))
                   if args.scope_json else None),
-        "produced_by": produced_by(suite, build, pin),
+        "produced_by": produced,
     }
     if args.official_bf16_revision:
         doc["official_bf16_revision"] = args.official_bf16_revision

@@ -694,6 +694,90 @@ def main():
               proc.returncode == 0 and not calls
               and "already done" in proc.stdout, proc.stdout)
 
+        # ---------------------------------------------------------------
+        # P1-12 / P1-13: a marker is bound to the JOB, not just to the stage.
+        # A bare marker in a reused run root silently returned model A's
+        # receipts for model B; a cloud resume relabeled old outputs with a
+        # newly resolved revision.  The stage runner now refuses a marker
+        # whose job_id_full differs, and only skips on a MATCH.
+        print("\n== markers bind to the job identity (P1-12/P1-13) ==")
+        FULL_A = "a1" * 32
+        FULL_B = "b2" * 32
+
+        # M1: marker written by THIS job -> skip.
+        sb = Sandbox(td / "bind1", job_quant(job_id_full=FULL_A))
+        proc, calls = sb.run("fetch_panel", bash)   # writes a bound marker
+        bound = sb.marker("fetch_panel").read_text()
+        check("M1 a completed stage writes a job-bound marker",
+              proc.returncode == 0
+              and ("job_id_full=%s" % FULL_A) in bound
+              and "job_sha256=" in bound, bound)
+        proc, calls = sb.run("fetch_panel", bash)
+        check("M1b the SAME job skips on its own marker",
+              proc.returncode == 0 and not calls
+              and "already done" in proc.stdout, proc.stdout)
+
+        # M2: marker from ANOTHER job -> refusal, exit 7, nothing runs.
+        (sb.fs / "job.json").write_text(
+            json.dumps(job_quant(job_id_full=FULL_B)), encoding="utf-8")
+        proc, calls = sb.run("fetch_panel", bash)
+        check("M2 a marker bound to a DIFFERENT job REFUSES (exit 7), "
+              "nothing re-runs",
+              proc.returncode == 7 and not calls
+              and "REFUSING marker" in proc.stderr,
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+
+        # M3: a legacy EMPTY marker under a job that carries an identity is
+        # exactly the container-reuse shape: refuse, do not skip.
+        sb = Sandbox(td / "bind3", job_quant(job_id_full=FULL_A))
+        sb.marker("fetch_panel").parent.mkdir(parents=True, exist_ok=True)
+        sb.marker("fetch_panel").write_text("")
+        proc, calls = sb.run("fetch_panel", bash)
+        check("M3 an unbound legacy marker under an identified job refuses",
+              proc.returncode == 7 and not calls,
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+        # ... and the documented operator override adopts it.
+        proc, calls = sb.run("fetch_panel", bash, FIDELITY_ADOPT_MARKERS="1")
+        check("M3b FIDELITY_ADOPT_MARKERS=1 is the deliberate override",
+              proc.returncode == 0 and not calls
+              and "already done" in proc.stdout, proc.stdout)
+
+        # M4: a job document WITHOUT an identity keeps the legacy behavior
+        # (the live campaign's job.json predates the binding).
+        sb = Sandbox(td / "bind4", job_quant())
+        sb.marker("fetch_panel").parent.mkdir(parents=True, exist_ok=True)
+        sb.marker("fetch_panel").write_text("")
+        proc, calls = sb.run("fetch_panel", bash)
+        check("M4 a legacy job document still skips on a bare marker",
+              proc.returncode == 0 and not calls, proc.stderr)
+
+        # ---------------------------------------------------------------
+        # P1-14: the atomic per-stage lock.  An unknown liveness probe must
+        # never authorize a second writer; the lock is the on-box guarantee.
+        print("\n== the per-stage lock refuses a second writer (P1-14) ==")
+        sb = Sandbox(td / "lock1", job_quant(job_id_full=FULL_A))
+        lock = sb.fs / "receipts" / "locks" / "fetch_panel.lock"
+        lock.mkdir(parents=True)
+        (lock / "owner").write_text(
+            "job_id_full=%s\npid=%d\nhost=x\nstarted=t\n"
+            % (FULL_A, os.getpid()))    # a LIVE pid: this process
+        proc, calls = sb.run("fetch_panel", bash)
+        check("L1 a lock held by a LIVE process refuses (exit 8), nothing runs",
+              proc.returncode == 8 and not calls
+              and "second writer" in proc.stderr,
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+
+        # L2: a lock whose owner is dead is stale -> taken over, stage runs.
+        (lock / "owner").write_text(
+            "job_id_full=%s\npid=99999999\nhost=x\nstarted=t\n" % FULL_A)
+        proc, calls = sb.run("fetch_panel", bash)
+        check("L2 a stale lock (dead owner) is taken over and the stage runs",
+              proc.returncode == 0 and len(calls) >= 1
+              and "taking over" in proc.stdout,
+              "rc=%s\n%s" % (proc.returncode, proc.stdout + proc.stderr))
+        check("L2b the lock is released when the stage exits",
+              not lock.exists())
+
     print()
     if FAILED:
         print("selftest_stage_measure: %d FAILED" % len(FAILED))
