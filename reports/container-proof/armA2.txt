@@ -1,0 +1,266 @@
++ export LD_LIBRARY_PATH=/usr/local/cuda-13.0/compat
++ LD_LIBRARY_PATH=/usr/local/cuda-13.0/compat
++ python3 /home/ubuntu/suite/bin/container_entry.py capture --fs-root /home/ubuntu/armA/fidelity --engine-root /home/ubuntu/armA/engine --model inference-optimization/GLM-5.3-Flash-0.1B-A0.1B --revision 7c3a6d3dc51732dd8ab230888e06ba8c93a381ac --panel-dir /home/ubuntu/panel --dataset-id fidelity--containerproof.malaiwah.root.bf16 --dataset-name 'container-proof root capture' --lane streaming --gpu 'NVIDIA A10' --host lambda --token-file /home/ubuntu/.hf_token --job-id ctrproof
+[2026-08-31T15:10:48Z] suite synced into the run root  3 file(s) changed
+[2026-08-31T15:10:48Z] panel staged under the run root: /home/ubuntu/armA/fidelity/panel-src/panel
+[2026-08-31T15:10:48Z] job.json written  1733 bytes
+[2026-08-31T15:10:48Z] HF token installed  0600 file, never argv
+[2026-08-31T15:10:48Z] stage setup starting
+[2026-08-31T15:10:48Z] stage_measure/setup: bootstrapping (measurement-only recipe)
+Python 3.12.13
+torch 2.11.0+cu130 cuda 13.0 | transformers 5.16.1 | safetensors 0.8.0 | numpy 2.5.2 | hf_transfer 0.1.9
+pipeline import OK
+[2026-08-31T15:10:54Z] bootstrap_measure: exllamav3 NOT built: the measurement path imports the pipeline without it
+surface adapters import OK: malaiwah.glm53-exl3hf-surface.v1
+[2026-08-31T15:10:54Z] bootstrap_measure: running the tr3 offline selftest (seal recompute + mcg decode parity)
+[ok] sealed release loads
+[ok] every seal claim reproduced - 12 checks
+[ok] seal covers all 12 published claims - abi_schema, materialization_receipt_self_seal, config_sha256, index_sha256, output_tensor_names_sha256, plan_sha256_agreement, payload_objects_per_choice, tensor_count_algebra, nonrouted_native_exact, nonrouted_name_set_equals_official, native_tensor_count_matches_names, mcg_multiplier
+[ok] index shape is the real one - 150226
+[ok] non-routed census - 1618
+[ok] routed module census - 37152
+[ok] dtype census read from shard headers, not assumed - {"BF16": 1507, "F32": 111}
+[ok] tampered name digest is caught - tr3_surface: published seal does not reproduce: output_tensor_names_sha256 -- recomputed fef5367167148f04 over
+[ok] plan disagreement is caught - tr3_surface: published seal does not reproduce: plan_sha256_agreement -- abi 9999999999999999 vs receipt aaaaa
+[ok] count algebra is caught - tr3_surface: published seal does not reproduce: payload_objects_per_choice -- packed_tensor_count 148608 vs 4 
+[ok] a non-exact non-routed claim is caught - tr3_surface: published seal does not reproduce: nonrouted_native_exact -- receipt declares False
+[ok] a missing official non-routed name is caught - tr3_surface: published seal does not reproduce: nonrouted_name_set_equals_official -- missing 1 (first ['lm_he
+[ok] a foreign non-routed name is caught - tr3_surface: published seal does not reproduce: nonrouted_name_set_equals_official -- missing 0 (first []), ex
+[ok] a wrong MCG multiplier is caught - tr3_surface: published seal does not reproduce: mcg_multiplier -- abi '0xDEADBEEF' vs campaign constant 0xcbac
+[ok] materialization receipt self-seal is checked - tr3_surface: published seal does not reproduce: materialization_receipt_self_seal -- recomputed 5780669319b77c
+[ok] a mul1 release is not a TR3 release - tr3_surface: a TR3-published release is EXL3/MCG; this one declares codebook 'mul1'. A mul1 release is the exl
+[ok] a full-scope release is refused - tr3_surface: this adapter reads the routed-experts-only TR3 scope; the release declares scope='everything'. A 
+[ok] a non-official non-routed policy is refused - tr3_surface: release declares non_routed_dtype_policy='dequantized', not 'official_source_native': the streami
+[ok] a quantized head is refused by THIS surface - tr3_surface: TR3 keeps lm_head native (head_bits 16); this release declares head_bits=6, which changes the mea
+[ok] a non-immutable revision is refused - tr3_surface: --tr3-revision must be the immutable 40-hex commit
+[ok] crosscheck proves the receipt map == published SHA256SUMS - receipt-shard-map == published SHA256SUMS
+[ok] full re-hash agrees with the receipt map
+[ok] SHA256SUMS disagreeing with the seal is refused - tr3_surface: SHA256SUMS and materialization-receipt.json disagree on 1 shard(s): ['model-00001-of-00002.safete
+[ok] skip is disclosed, not silent
+[ok] expert_source hands back the exl3hf pair
+[ok] tr3 decode == exl3hf decode (bitwise) - shape (2048, 4096), K4
+[ok] decoded bits read from the trellis shape
+[ok] decoded matrix is finite
+[ok] a wrong per-module codebook marker is refused at decode - exl3hf_surface: mcg marker differs on model.language_model.layers.3.mlp.experts.0.gate_proj: 1234 != -87791208
+[ok] scope names every class the registry knows - attn.o, attn.other, attn.qkv, embed_tokens, lm_head, mlp.down, mlp.gate, mlp.up, moe.experts, moe.router, moe.shared_expert, mtp, norm, other
+[ok] no class is recorded as unknown - attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16
+[ok] the head is native in the digest
+[ok] scope digest equals the registry's record for the same weights - ours   attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@4|moe.router=native:fp32@32|moe.shared_expert=native:bf16@16|mtp=quantized:exl3-mcg@4|norm=native:bf16@16|other=native:bf16@16|head=native|kv=bf16
+          theirs attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@4|moe.router=native:fp32@32|moe.shared_expert=native:bf16@16|mtp=quantized:exl3-mcg@4|norm=native:bf16@16|other=native:bf16@16|head=native|kv=bf16
+[ok] the routed experts are the only quantized class
+[ok] scope carries ONLY keys artifact.schema.json allows - extra=[] missing=[]
+[ok] every assignment carries only allowed keys - []
+[ok] every tensor_class and format is in the registry vocabulary - classes=[] formats=[]
+[ok] scope_report keeps provenance OUTSIDE the scope object
+[ok] scope digest is stable across loads
+[ok] materializer runs on a TR3 tree - written_tensor_count=1618, official_index_check=True
+[ok] the materializer's official-index gate ran and passed
+[ok] materialized name set == the official non-routed set - 1618 produced
+[ok] materialized tensors are bitwise the artifact's (no decode) - 400 checked, dtypes preserved (bf16 stays bf16, fp32 stays fp32)
+[ok] the materialized config drops quantization_config
+[ok] executed routed surface closes - 36288
+[ok] MTP is present and named as not executed
+[ok] identity binds repo, revision, seal and scope
+
+selftest_tr3_offline: 47/47 checks passed
+[2026-08-31T15:11:06Z] bootstrap_measure: running the dione offline selftest (pack layout + decode identity + real-index census)
+PASS 1 pack-layout equivalence (exllamav3 pack.cu transliteration): K3/K4/K6/K2
+PASS 2 decode identity vs campaign reader: bitwise equal (K4/K6), K3 shape ok
+PASS 3 safetensors e2e: DioneShardReader+load_decoded_module bitwise == manual
+PASS 4 SKIPPED (dione-evidence real indexes absent)
+PASS 5 SKIPPED (real config/index absent)
+{"ok": true, "checks": 5}
+[2026-08-31T15:11:17Z] bootstrap_measure: running the dione STREAMING front-end selftest (manifests + shards + scope + materializer)
+[ok] a well-formed release loads - bits=3 tp=4
+[ok] the uppercase manifest spelling is found - EXL3_MANIFEST.json / schema_version=1
+[ok] the manifest binds the official source revision
+[ok] the census closes: 1,618 official natives + 864 MTP experts retained
+[ok] the Q4 manifest spelling AND schema still load
+[ok] a case/underscore spelling is found by the fold, not the name list - /tmp/dione-selftest-ffyccbi2/underscore/exl3_manifest.json
+[ok] a directory with no manifest at all folds to None
+[ok] a manifest matching neither schema is refused, not guessed at - dione_surface: release manifest matches neither published schema (no `files` array and no `quantized_shards`/`retained_s
+[ok] a manifest that disagrees with config on tp_size is refused - dione_surface: only the published TP4 slicing is supported, got tp_size=2
+[ok] a missing routed payload tensor is refused - dione_surface: 1 routed payload tensors absent, e.g. ['model.language_model.layers.7.mlp.experts.100.up_proj.rank2.suh']
+[ok] a routed name outside the declared scope is refused - dione_surface: packed tensors outside the declared scope: ['model.language_model.layers.45.mlp.experts.0.gate_proj.rank0
+[ok] a layer shipping BOTH packed and native routed tensors is refused - dione_surface: layer 3 ships both packed and native routed tensors
+[ok] an absent MTP native expert is refused - dione_surface: MTP layer 45 native experts absent, e.g. ['model.language_model.layers.45.mlp.experts.0.gate_proj.weight'
+[ok] verify-shards passes on an intact release
+[ok] the marker gates a `full` load
+[ok] a tampered shard is refused by verify-shards - dione_surface: shard hash differs from EXL3_MANIFEST.json: /tmp/dione-selftest-ffyccbi2/tampered/retained/retained-00001
+[ok] a weight file the manifest does not cover is refused - dione_surface: 1 safetensors file(s) on disk are not covered by EXL3_MANIFEST.json, e.g. ['retained/extra.safetensors']
+[ok] a stale verification marker is refused - dione_surface: stale/foreign dione-shards-verified.json - re-run verify-shards
+[ok] verify-shards with no manifest at all is refused - dione_surface: no release manifest under /tmp/dione-selftest-ffyccbi2/nomanifest (looked for exl3-manifest.json / EXL3_M
+[ok] the published scope contains no `unknown` - attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3|moe.router=native:fp32@32|moe.shared_expert=native:bf16@16|mtp=native:bf16@16|norm=native:bf16@16|other=native:bf16@16|head=native|kv=bf16
+[ok] the routed experts are the only quantized class
+[ok] the head is declared NATIVE, not quantized
+[ok] scope carries ONLY keys artifact.schema.json allows - extra=[] missing=[]
+[ok] every assignment carries only allowed keys - []
+[ok] every tensor_class and format is in the registry vocabulary - classes=[] formats=[]
+[ok] head_policy / kv_cache_dtype / policy are in their enums
+[ok] scope_report keeps provenance OUTSIDE the scope object
+[ok] scope digest is stable across loads
+[ok] policy follows SCOPE-003 (one quantized (format,bits) -> uniform) - quantized=[('exl3-mcg', 3.0)] policy=uniform
+[ok] the registry's 3.0bpw record carries the digest this surface reads - registry=attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3|moe.router=native:fp32@32|moe.shared_expert=native:bf16@16|mtp=native:bf16@16|norm=native:bf16@16|other=native:bf16@16|head=native|kv=bf16
+[ok] the materializer writes exactly the official 1,618 non-routed tensors
+[ok] the 864 MTP expert tensors are excluded from the measured tree
+[ok] dtypes are copied VERBATIM (fp32 natives stay fp32) - {"bfloat16": 1507, "float32": 111}
+[ok] materialized name set == the official non-routed set - 1618 produced
+[ok] virtual routed entries cover layers 3-44 AND the MTP layer
+[ok] the materialized config carries no quantization_config
+[ok] the inventory is sealed in the schema stream_score binds against
+[ok] the receipt binds THIS snapshot's config/index digests
+[ok] the materialization receipt's own digest reproduces
+[ok] a non-routed set that differs from the official one is refused BEFORE anything is read - dione_surface: planned non-routed name set differs from the official release's BEFORE any read: missing 1 (first ['not.a
+[ok] the view keeps 1,618 tensors and filters every routed entry
+[ok] every shard the view's index names exists on disk - ['model-nonrouted-00001.safetensors']
+[ok] payload() returns tp_size geometry-checked slices in rank order
+[ok] a wrong MCG marker is refused at read time - dione_surface: MCG marker differs: L3 E0 gate_proj rank1
+[ok] the reader serves a thread pool (thread-local handles)
+[ok] decode_module_payload is bitwise load_decoded_module
+[ok] hash_payloads changes the census, never the tensor
+
+47 rungs, all green
+[2026-08-31T15:11:41Z] bootstrap_measure: running the exl3hf offline selftest (mcg-parity rung included)
+[ok] mul1 LUT == fp64 recomputation (all 65,536 states)
+[ok] hfma emulation: fp32 path == exact-rational path (sampled)
+[ok] mul1 marker constant - -2082680531
+[ok] mcg LUT is 65,536 fp16 entries
+[ok] mcg LUT matches its frozen digest
+[ok] mcg LUT == pure-integer recomputation (stratified states) - disagreed at []
+[ok] mcg LUT is finite and symmetric-ranged - min=-3.94921875 max=3.94921875
+[ok] the mcg path no longer imports the unpublished campaign package
+[ok] anybits unpack parity vs dione (K3)
+[ok] anybits unpack parity vs dione (K4)
+[ok] anybits unpack parity vs dione (K6)
+[ok] anybits unpack parity vs dione (K8)
+[ok] mul1 decode runs and is finite (K4) - shape (128, 128)
+[ok] mul1 decode runs and is finite (K6) - shape (128, 128)
+[ok] mul1 decode golden sha (K4) - 781baa7618e5afb96a7aa19152d95e7c2de19e6398657d78807f5c16f9bc9fca
+[ok] mul1 decode golden sha (K6) - 0a1b47c8162ad0c17edb3b9cbc30794904d228f7ed0cd66b9c53888f7c71e997
+[ok] mcg decode parity vs campaign reader (K4)
+[ok] mcg decode parity vs campaign reader (K6)
+[ok] materializer: receipt written and sealed
+[ok] materializer: produced name set == official non-routed set - missing=[] extra=[]
+[ok] materializer: virtual routed entries present - 37152
+[ok] materializer: KDA q slice shape+dtype
+[ok] materializer: conv k slice
+[ok] materializer: visual qkv.bias fused
+[ok] materializer: quantized split beats the redundant native fused copy - native sentinel 7.0 present in the materialized visual qkv
+[ok] materializer: the redundant natives are counted, not silently dropped - 2
+[ok] planner == stream: the pre-flight name plan is what materialization emits - planned=12 streamed=12 first_diff=None
+[ok] planner: the plan has no duplicate names
+[ok] materializer: fp32 native kept fp32
+[ok] materializer: lm_head dequantized bf16
+[ok] materializer: q slice == decoded rows 0:128 (bf16)
+[ok] materializer: inventory sealed + schema
+[ok] materializer: quantization_config stripped from the written config
+[ok] K2: anybits unpack inverts the exllamav3 pack.cu transliteration
+[ok] K2: anybits unpack parity vs dione
+[ok] K2 mcg decode is finite - shape (128, 128)
+[ok] K2 mcg and mul1 decodes differ (the codebook is load-bearing at K2 too)
+[ok] mcg decode golden sha (K2) - ee76ee58e63b11e24e70258e31a9edd613540d07aa091ae3a100abccf2cf24c3
+[skip] mcg decode parity vs campaign reader (K2) - the campaign reader's SUPPORTED_BITS does not include 2; the pack.cu round-trip above is the K2 evidence
+selftest_exl3hf_offline: 39/39 green
+[2026-08-31T15:11:44Z] bootstrap_measure: running the gguf offline selftest (gguf-py parity + CUDA decode parity)
+PASS 1 reference equality: Q4_K, Q5_K, Q6_K, Q8_0 bitwise == committed gguf-py output on real UD-Q4_K_XL bytes (gguf-py absent: live recompute SKIPPED)
+PASS 1b accelerator decode parity: Q4_K, Q5_K, Q6_K, Q8_0 decoded on cuda are torch.equal to the cpu reference on real UD-Q4_K_XL bytes (98304 elements)
+PASS 2 independent scale unpack: 128 Q4_K blocks (32768 elements, 8 sub-block scales+mins each) match a scalar get_scale_min_k4 transliteration bitwise
+PASS 3 container + refusals: a 2-part v3 split round-trips (1412 tensors, union table checked against split.tensors.count) and 8 refusals fire BY NAME (unmapped tensor, unsupported type, alias collision, wrong arch, wrong geometry, wrong dims, missing split part, unpinned revision); the sha256 marker gate opens only after verify-files
+PASS 4 real-metadata census: 1,412 GGUF tensors close (1,259 direct + 129 fused + 24 MLA) and their 1,271 official names biject the real BF16 index (38,770 - 37,152 routed - 347 vision); ddh0's second convert vintage maps 1,412/1,412 names and is refused only by TYPE (IQ3_S/IQ4_XS), arch spelled glm5-next; of unsloth's 12 builds v1 scores BF16, Q8_0, UD-Q4_K_XL, UD-Q5_K_XL, UD-Q6_K_XL and refuses UD-IQ1_M, UD-IQ1_S, UD-IQ2_XXS, UD-IQ3_XXS, UD-IQ4_XS, UD-Q2_K_XL, UD-Q3_K_XL (UD-Q2_K_XL/UD-Q3_K_XL carry IQ types despite their names)
+PASS 5 MLA reconstruction: on real heads 0-1 of blk.3.attn_k_b/attn_v_b vs the real official kv_b_proj rows, per_head_rows_kT_then_v scores rel-L2 0.0054 (= the Q8_0 error) against 0.9528 for the closest wrong arrangement; the committed full 64-head audit agrees (0.0054 vs 1.4049)
+PASS 5b SKIPPED (dione-evidence official expert payload absent)
+PASS 6 slice + view: expert 137 sliced from a 288-expert Q4_K fused tensor equals a direct decode of its byte range; the materialized view writes official names (bf16 decoded, float32 passthrough byte-exact, vision copied), round-trips bitwise and is REUSED on the second call
+PASS 7a dry-run: gguf_surface.py dry-run plans the REAL artifact from a header-only rebuild (1,412 tensors, 36288 streamed routed modules, bijection ok, identity 7f8d66bd891a...)
+PASS 7c scope: the per-class recipe is MEASURED from the real 1,412-tensor table -- lm_head/embed_tokens/attn.qkv quantized, head_policy quantized, policy mixed, moe.experts claims no single rate (Q4_K/Q5_K/Q6_K), and the artifact measures 4.9806 bits/weight against a name that says 4
+PASS 7b dry-run: stream_score.py --source gguf reaches plan-print over the REAL config+index (identity gate hashed them), and refuses --profile k6
+{"ok": true, "checks": 11}
+[2026-08-31T15:11:53Z] bootstrap_measure: bootstrap complete
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda1       1.4T   50G  1.3T   4% /
+[2026-08-31T15:11:53Z] stage_measure/setup: done
+[2026-08-31T15:11:53Z] stage setup ok  65s
+[2026-08-31T15:11:53Z] stage fetch_target starting
+[2026-08-31T15:11:53Z] stage_measure/fetch_target: already done (marker /home/ubuntu/armA/fidelity/receipts/done/fetch_target.done) -- skipping
+[2026-08-31T15:11:53Z] stage fetch_target ok  0s
+[2026-08-31T15:11:53Z] stage capture starting
+[2026-08-31T15:11:53Z] stage_measure/capture: capturing inference-optimization/GLM-5.3-Flash-0.1B-A0.1B @ 7c3a6d3dc51732dd8ab230888e06ba8c93a381ac  form=hidden schedule=layer-outer panel=panel--containerproof.malaiwah.suitedocs2
+{"files": 2, "sha256": "0823dded5e2b593824ff50234cb280087c924e576fd7548406f194eb377377f4", "stage": "checkpoint_identity"}
+{"bytes": 168778084, "index_present": false, "shards": 1, "stage": "checkpoint_audit", "tensors": 223}
+{"layers_prefix": "model.language_model.layers", "renamed_checkpoint_keys": 106, "stage": "stream_routing", "total_checkpoint_keys": 223}
+Loading weights:   0%|          | 0/44 [00:00<?, ?it/s]Loading weights: 100%|██████████| 44/44 [00:00<00:00, 8508.50it/s]
+{"deferred_buffers": 0, "layers_prefix": "model.language_model.layers", "resident_shards": null, "resident_tensors": 44, "stage": "stream_base", "streamed_layers": 5, "streamed_params": 127}
+{"conversion_errors": 0, "conversion_errors_visible": true, "error_msgs": 0, "mismatched": 0, "missing": 0, "observed": true, "stage": "load_report", "unexpected": 0, "unexpected_sample": []}
+{"architectures": ["Glm5NextForConditionalGeneration"], "device": "cpu", "dtype": "torch.bfloat16", "hidden_size": 256, "stage": "model", "vocab_size": 154880}
+{"panel_json": "/home/ubuntu/armA/fidelity/panel-src/panel/panel.json", "receipt_sha256": "ff53778a74054acd2e696d295a6409f382e5867ce289d3a3b3593b208f7af809", "stage": "panel", "windows": 2}
+{"expect": null, "prompt": "The capital of France is", "prompt_tokens": 5, "stage": "sanity_probe_planned"}
+{"forward_windows": 3, "layers": 5, "residency": "stream", "schedule": "layer-outer", "stage": "schedule", "windows": 2}
+Loading weights:   0%|          | 0/24 [00:00<?, ?it/s]Loading weights: 100%|██████████| 24/24 [00:00<00:00, 6462.72it/s]
+{"checkpoint_tensors": 26, "index": 0, "resident_weight_bytes": 161512028, "seconds": 0.01, "stage": "layer_load"}
+{"index": 0, "stage": "layer", "windows": 3}
+Loading weights:   0%|          | 0/24 [00:00<?, ?it/s]Loading weights: 100%|██████████| 24/24 [00:00<00:00, 7377.30it/s]
+{"checkpoint_tensors": 26, "index": 1, "resident_weight_bytes": 161512028, "seconds": 0.01, "stage": "layer_load"}
+{"index": 1, "stage": "layer", "windows": 3}
+Loading weights:   0%|          | 0/24 [00:00<?, ?it/s]Loading weights: 100%|██████████| 24/24 [00:00<00:00, 7862.48it/s]
+{"checkpoint_tensors": 26, "index": 2, "resident_weight_bytes": 161512028, "seconds": 0.009, "stage": "layer_load"}
+{"index": 2, "stage": "layer", "windows": 3}
+Loading weights:   0%|          | 0/28 [00:00<?, ?it/s]Loading weights: 100%|██████████| 28/28 [00:00<00:00, 4821.43it/s]
+{"checkpoint_tensors": 50, "index": 3, "resident_weight_bytes": 162716236, "seconds": 0.014, "stage": "layer_load"}
+{"index": 3, "stage": "layer", "windows": 3}
+Loading weights:   0%|          | 0/27 [00:00<?, ?it/s]Loading weights: 100%|██████████| 27/27 [00:00<00:00, 4774.09it/s]
+{"checkpoint_tensors": 51, "index": 4, "resident_weight_bytes": 162892380, "seconds": 0.014, "stage": "layer_load"}
+{"index": 4, "stage": "layer", "windows": 3}
+{"enforced": false, "entropy_nats": 0.5747, "probability": 0.953691, "stage": "sanity_probe", "status": "recorded", "top1": " Paris", "uniform_entropy_nats": 11.9504}
+{"bytes": 130835, "index": 0, "rows": 255, "seconds": 0.072, "stage": "window", "window_id": "final-0000"}
+progress: windows 1/2 50% [00:00<00:00, 760.06 it/s]
+{"bytes": 130835, "index": 1, "rows": 255, "seconds": 0.077, "stage": "window", "window_id": "final-0001"}
+progress: windows 2/2 100% [00:00<00:00, 852.91 it/s]
+progress: windows 2/2 100% [00:00<00:00, 845.67 it/s] capture complete
+{"bytes": 79298652, "file": "head/weight.safetensors", "stage": "head", "tensor_content_sha256": "58b4b967abf4b663cc8827413ff2feddeb524347f426f3bf3dad3ecb105bbab6"}
+{"context_length": 256, "decoder_layers": 5, "device": "cpu", "hidden_size": 256, "layer_residency": "stream", "model": "/home/ubuntu/armA/fidelity/models/target", "peak_resident_weight_bytes": 162892380, "peak_resident_weight_detail": {"buffers": 96, "parameters": 162892284, "total": 162892380}, "peak_resident_weight_gb": 0.163, "peak_rss_bytes": 1343148032, "peak_rss_gb": 1.343, "resident_weight_note": "the maximum, over the run, of the materialised parameter+buffer bytes. On the CPU path peak_rss_bytes ALSO counts the safetensors mmap page cache, which is evictable and is not held by the schedule; this figure is not confounded by it. On CUDA, peak_cuda_allocated_bytes is the authoritative number because it includes activations and workspace and has no page cache.", "rss_units_source": "Linux ru_maxrss", "schedule": "layer-outer", "stage": "peak_memory", "vocab_size": 154880, "windows": 2}
+{"bytes": 2722, "file": "panel/panel-receipt.json", "sha256": "ff53778a74054acd2e696d295a6409f382e5867ce289d3a3b3593b208f7af809", "stage": "panel_receipt"}
+{"capture_content_digest": "b42ffe8f1d1dfcfdd78452339cdcd913c8be9ceae13f88f6348f19b43a960549", "dataset_sha256": "4d8eaae9864588373b95999bd80a817772e9888494953a467c4085e42f7ed919", "elapsed_seconds": 5.3, "hidden_form_bytes": 261670, "logit_form_bytes_equivalent": 315955200, "out": "/home/ubuntu/armA/fidelity/dataset", "records": 2, "scored_rows": 510, "stage": "sealed", "storage_ratio": 1207.5}
+capture plan
+  engine          hf-transformers (engines/tools/hf_capture.py)
+  form / role     hidden / root   lane streaming
+  dataset root    /home/ubuntu/armA/fidelity/dataset
+  command         /home/ubuntu/armA/engine/venv/bin/python /home/ubuntu/armA/fidelity/engines/tools/hf_capture.py --out /home/ubuntu/armA/fidelity/dataset --role root --lane streaming --model /home/ubuntu/armA/fidelity/models/target --repository inference-optimization/GLM-5.3-Flash-0.1B-A0.1B --model-revision 7c3a6d3dc51732dd8ab230888e06ba8c93a381ac --panel /home/ubuntu/armA/fidelity/panel-src/panel --panel-id panel--containerproof.malaiwah.suitedocs2 --schedule layer-outer --dtype bfloat16 --dataset-id fidelity--containerproof.malaiwah.root.bf16 --dataset-name container-proof root capture --author malaiwah --role root
+SEALED DATASET -> /home/ubuntu/armA/fidelity/dataset
+  dataset_sha256          4d8eaae9864588373b95999bd80a817772e9888494953a467c4085e42f7ed919
+  capture_content_digest  b42ffe8f1d1dfcfdd78452339cdcd913c8be9ceae13f88f6348f19b43a960549
+  records / scored rows   2 / 510
+76M	/home/ubuntu/armA/fidelity/dataset
+[2026-08-31T15:12:00Z] stage_measure/capture: done
+[2026-08-31T15:12:00Z] stage capture ok  7s
+[2026-08-31T15:12:00Z] stage verify starting
+[2026-08-31T15:12:00Z] stage_measure/verify: verifying /home/ubuntu/armA/fidelity/dataset (seal + digest chain + tensor content)
+VERIFIED /home/ubuntu/armA/fidelity/dataset
+  dataset_sha256          4d8eaae9864588373b95999bd80a817772e9888494953a467c4085e42f7ed919
+  capture_content_digest  b42ffe8f1d1dfcfdd78452339cdcd913c8be9ceae13f88f6348f19b43a960549
+  head tensor content     58b4b967abf4b663cc8827413ff2feddeb524347f426f3bf3dad3ecb105bbab6
+  panel suite token hash  52445ebe8732000c3338b2f3f775c3bded1231f633a2b90d189f1191980f831e
+  tensors recomputed      yes
+container-proof root capture  (fidelity--containerproof.malaiwah.root.bf16)
+  role / status      root / sealed
+  form               hidden at after_final_rmsnorm_before_lm_head
+  tensor key / dtype hidden_states / BF16 (lossless=True)
+  geometry           vocab 154880, hidden 256
+  panel              panel--containerproof.malaiwah.suitedocs2  2 contexts x 256
+  panel token hash   52445ebe8732000c3338b2f3f775c3bded1231f633a2b90d189f1191980f831e
+  scoring window     score_from=0 windowed=False
+  head               lm_head.weight, quantized=False, source=native
+  head content       58b4b967abf4b663cc8827413ff2feddeb524347f426f3bf3dad3ecb105bbab6
+  lane               streaming (inferred=False)
+  stack fingerprint  18735425224674010b93195cf2260ee9ebe1e813e6e902957c6b649ce4778746
+  coverage           2/2 records, complete=True
+  determinism        run_count=1 evidence=hidden_state_tensor_sha256 identical=None
+  capture digest     b42ffe8f1d1dfcfdd78452339cdcd913c8be9ceae13f88f6348f19b43a960549
+  dataset_sha256     4d8eaae9864588373b95999bd80a817772e9888494953a467c4085e42f7ed919
+  lossy codec        null
+  divergences        D-1, D-2, D-3, D-4, D-5, D-6, D-7, D-8, D-9, D-10
+  disclosure         no_known_deviations (info)
+  disclosure         reduced_run_count (caveat)
+[2026-08-31T15:12:01Z] stage_measure/verify: done
+[2026-08-31T15:12:01Z] stage verify ok  0s
+[2026-08-31T15:12:01Z] all stages complete; receipts under /home/ubuntu/armA/fidelity/receipts
++ echo ARMA_EXIT=0
+ARMA_EXIT=0
