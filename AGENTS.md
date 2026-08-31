@@ -167,8 +167,10 @@ second toolchain; match the file you are editing.
 
 - Full vocabulary, fp64 accumulation, direction KLD(reference ‖ candidate).
   No top-k, ever. Never clamp a non-finite value into plausibility — refuse.
-- **Never compare a single window** to rank two artifacts: per-window scatter
-  (sd ≈ 1.7e-3) exceeds the effect between adjacent bit-widths (≈ 1.2e-3).
+- **Never compare a single window** to rank two artifacts: even the paired
+  per-window delta scatter (sd ≈ 2.0e-3) exceeds the effect between adjacent
+  bit-widths (≈ 1.33e-3); raw per-window scatter is ≈ 7.2e-3. (The 1.7e-3 /
+  1.2e-3 pair formerly quoted here was mis-scoped — CC-01.)
   Previews prove liveness, not quality.
 - **Never subtract a floor from a different lane.** Invariant `BIAS-006` refuses
   it; do not route around the validator.

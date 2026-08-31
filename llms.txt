@@ -32,8 +32,10 @@ artifact scope. Equal keys alone are NOT a license to rank; check the predicate.
 cannot state the tuple for a number you found in the wild, it is an anecdote, not a
 measurement.
 
-**Rule 2 — never quote a single window as a rate comparison.** Per-window KLD scatter on our
-panel (sd ≈ 1.7e-3) exceeds the difference between adjacent bit-widths (K6 vs K8 ≈ 1.2e-3).
+**Rule 2 — never quote a single window as a rate comparison.** On our sealed panel the
+per-window KLD scatter is sd ≈ 7.2e-3, and even the paired per-window K6−K8 delta has
+sd ≈ 2.0e-3 against an effect of ≈ 1.33e-3 (the 1.7e-3 / 1.2e-3 pair quoted here before
+2026-08-31 was mis-scoped from an eleven-window subset and is retracted — CC-01).
 One unlucky window made our 8-bit quant look *worse* than our 6-bit; the full 25-window panel
 showed it winning decisively. Previews are for "is the pipeline alive", never for ranking.
 
