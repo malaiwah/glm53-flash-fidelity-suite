@@ -62,6 +62,88 @@ def redact(text: str) -> str:
 
 
 # --------------------------------------------------------------------------
+# HTTP: never forward Authorization across an origin boundary
+# --------------------------------------------------------------------------
+
+# One handler, shared by every stdlib HTTP client in this suite that attaches
+# a bearer token (dshub, hfmeta; engines/tools/fetch_truncated_ckpt.py carries
+# a standalone copy because it ships to remote boxes as a single file).
+#
+# Why: urllib's default redirect handler copies every header except
+# content-length/content-type onto the redirected request, INCLUDING
+# `Authorization`.  Hugging Face `/resolve/` URLs 302 to pre-signed CDN/Xet
+# hosts, so the default behaviour hands the Hub token to whatever host the
+# endpoint named.  `requests` (and therefore huggingface_hub) strips it; a
+# stdlib client that does not is strictly looser than the library it stands
+# in for.  The 2026-08-31 peer review demonstrated the leak against a local
+# adversarial redirect ("Security and cloud-operations review", High).
+
+
+def _origin(url):
+    """(scheme, host, port) with default ports normalised."""
+    import urllib.parse
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return ("", "", None)
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    if port is None:
+        port = {"http": 80, "https": 443}.get(scheme)
+    return (scheme, host, port)
+
+
+def make_no_cross_origin_auth_handler():
+    """The redirect handler class, built at call time.
+
+    urllib.request is imported lazily so importing `common` (which every tool
+    does) does not drag the HTTP stack into processes that never speak HTTP.
+    """
+    import urllib.request
+
+    class NoCrossOriginAuth(urllib.request.HTTPRedirectHandler):
+        """Strip `Authorization` when a redirect leaves the original origin.
+
+        "Leaves the origin" means the (scheme, host, port) triple changed --
+        which covers the cross-host CDN hop, an https->http downgrade on the
+        same host, and a port change.  Redirect count stays bounded by
+        urllib's own max_redirections (a loop raises instead of spinning).
+        """
+
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            new = urllib.request.HTTPRedirectHandler.redirect_request(
+                self, req, fp, code, msg, headers, newurl)
+            if new is not None and _origin(newurl) != _origin(req.full_url):
+                new.headers = {k: v for k, v in new.headers.items()
+                               if k.lower() != "authorization"}
+                new.unredirected_hdrs = {
+                    k: v for k, v in getattr(new, "unredirected_hdrs", {}).items()
+                    if k.lower() != "authorization"}
+            return new
+
+    return NoCrossOriginAuth
+
+
+_SAFE_OPENER = None
+
+
+def safe_urlopen(request, *, timeout=60.0):
+    """`urlopen` through the auth-stripping redirect handler. Always use this
+    (never bare `urllib.request.urlopen`) for a request that may carry
+    `Authorization`."""
+    global _SAFE_OPENER
+    if _SAFE_OPENER is None:
+        import urllib.request
+        _SAFE_OPENER = urllib.request.build_opener(
+            make_no_cross_origin_auth_handler()())
+    return _SAFE_OPENER.open(request, timeout=timeout)
+
+
+# --------------------------------------------------------------------------
 # Canonical JSON + hashing (must match registry/tools/registry_lib.py exactly)
 # --------------------------------------------------------------------------
 

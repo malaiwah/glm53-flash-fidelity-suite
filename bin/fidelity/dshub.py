@@ -62,25 +62,12 @@ def parse_ref(ref: str) -> Tuple[str, str]:
     return text, "main"
 
 
-class _NoCrossHostAuth(urllib.request.HTTPRedirectHandler):
-    """Drop `Authorization` when a redirect crosses to another host.
-
-    urllib copies every header except content-length/content-type across a redirect, and
-    HF `/resolve/` URLs 302 to a pre-signed CDN host -- so the bearer token was handed to
-    whatever host the endpoint redirected to. `requests`, and therefore huggingface_hub,
-    strips it; this hand-rolled client did not, making it strictly looser than the library
-    it stands in for."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        new = urllib.request.HTTPRedirectHandler.redirect_request(
-            self, req, fp, code, msg, headers, newurl)
-        if new is not None and _host(newurl) != _host(req.full_url):
-            new.headers = {k: v for k, v in new.headers.items()
-                           if k.lower() != "authorization"}
-            new.unredirected_hdrs = {k: v for k, v in getattr(new, "unredirected_hdrs", {}).items()
-                                     if k.lower() != "authorization"}
-        return new
-
+# Drop `Authorization` when a redirect leaves the original origin.  The class
+# used to live here alone; the 2026-08-31 peer review found hfmeta and the
+# truncation fetcher still on urllib's default handler (which forwards the
+# bearer across hosts, and HF `/resolve/` 302s to CDN hosts), so the one
+# correct implementation moved to `common` and every client shares it.
+_NoCrossHostAuth = common.make_no_cross_origin_auth_handler()
 
 _OPENER = urllib.request.build_opener(_NoCrossHostAuth())
 

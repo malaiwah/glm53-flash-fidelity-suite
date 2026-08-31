@@ -85,6 +85,12 @@ t "naming sweep: published identity + two-file agreements (T18)" \
 # landing half-wired.
 t "gguf lane: shelf, profile, argv, fetch scope, receipt (T13)" \
                                            0 python3 bin/selftest_gguf_lane.py
+# T19. The bearer token must not follow a redirect off the original origin.
+# HF /resolve/ URLs 302 to CDN hosts; urllib's default handler forwards
+# Authorization across that hop. Driven against local stub servers -- no
+# network, no real token. (Peer review 2026-08-31, security chapter.)
+t "no cross-origin bearer forwarding (T19: R1-R8)" \
+                                           0 python3 bin/selftest_hf_redirect.py
 # T14. The progress meter. Both capture engines print one line at the start and
 # one at the end, which on the streaming lane is a 2-3 hour silence in a stage
 # log that looks exactly like a hang. The rungs that matter are the ones about

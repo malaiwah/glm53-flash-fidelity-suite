@@ -21,9 +21,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .common import register_secret
+from .common import register_secret, safe_urlopen
 
 HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
+
+
+def _endpoint_host() -> str:
+    try:
+        return (urllib.parse.urlsplit(HF_ENDPOINT).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _url_host(url: str) -> str:
+    try:
+        return (urllib.parse.urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
 # Filenames that identify a checkpoint's packing surface.  Sniffing beats
@@ -158,9 +172,19 @@ def _get(url: str, *, timeout: float = 30.0) -> Any:
     req = urllib.request.Request(url, headers={"User-Agent": "fidelity-suite/0.1"})
     token = hf_token()
     if token:
-        req.add_header("Authorization", "Bearer " + token)
+        # Only ever to the configured endpoint: a caller-built URL that names
+        # any other host must not carry the token at all -- and the redirect
+        # handler in `safe_urlopen` strips it again if the endpoint 302s to a
+        # CDN host, which HF `/resolve/` URLs routinely do.
+        if _url_host(url) == _endpoint_host():
+            req.add_header("Authorization", "Bearer " + token)
+        else:
+            raise HFError(
+                "refusing to send the Hugging Face token to %s (the configured "
+                "endpoint is %s)" % (_url_host(url) or "an unparseable host",
+                                     _endpoint_host()))
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with safe_urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         hint = ""
@@ -385,9 +409,17 @@ def fetch_file(repo_id: str, path: str, *, repo_type: str = "model",
         req.add_header("Range", "bytes=%d-%d" % byte_range)
     token = hf_token()
     if token:
-        req.add_header("Authorization", "Bearer " + token)
+        # Same rule as _get: token only to the configured endpoint, and
+        # `safe_urlopen` strips it when the resolve URL redirects off-origin.
+        if _url_host(url) == _endpoint_host():
+            req.add_header("Authorization", "Bearer " + token)
+        else:
+            raise HFError(
+                "refusing to send the Hugging Face token to %s (the configured "
+                "endpoint is %s)" % (_url_host(url) or "an unparseable host",
+                                     _endpoint_host()))
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with safe_urlopen(req, timeout=timeout) as resp:
             return resp.read()
     except urllib.error.HTTPError as exc:
         raise HFError("HTTP %d fetching %s from %s" % (exc.code, path, repo_id)) from None

@@ -119,6 +119,51 @@ def sha256_bytes(data: bytes) -> str:
 # HTTP
 # ---------------------------------------------------------------------------
 
+# Standalone copy of bin/fidelity/common.make_no_cross_origin_auth_handler():
+# this file is scp'd to remote boxes as a single script, so it cannot import
+# the suite package.  Keep the semantics identical: urllib's default redirect
+# handler forwards `Authorization` across hosts, and HF `/resolve/` URLs 302
+# to pre-signed CDN hosts, so the default handler hands the Hub token to
+# whatever host the endpoint names (2026-08-31 peer review, High).
+
+
+def _origin(url: str):
+    """(scheme, host, port) with default ports normalised."""
+    import urllib.parse
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return ("", "", None)
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    if port is None:
+        port = {"http": 80, "https": 443}.get(scheme)
+    return (scheme, host, port)
+
+
+class _NoCrossOriginAuth(urllib.request.HTTPRedirectHandler):
+    """Strip `Authorization` when a redirect leaves the original origin
+    (host change, https->http downgrade, or port change).  Redirect loops
+    stay bounded by urllib's own max_redirections."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = urllib.request.HTTPRedirectHandler.redirect_request(
+            self, req, fp, code, msg, headers, newurl)
+        if new is not None and _origin(newurl) != _origin(req.full_url):
+            new.headers = {k: v for k, v in new.headers.items()
+                           if k.lower() != "authorization"}
+            new.unredirected_hdrs = {
+                k: v for k, v in getattr(new, "unredirected_hdrs", {}).items()
+                if k.lower() != "authorization"}
+        return new
+
+
+_OPENER = urllib.request.build_opener(_NoCrossOriginAuth())
+
 
 class Fetcher:
     def __init__(self, repo: str, revision: str, token: Optional[str]) -> None:
@@ -136,7 +181,7 @@ class Fetcher:
             if byte_range is not None:
                 req.add_header("Range", "bytes=%d-%d" % byte_range)
             try:
-                with urllib.request.urlopen(req, timeout=300) as handle:
+                with _OPENER.open(req, timeout=300) as handle:
                     data = handle.read()
                 if byte_range is not None:
                     want = byte_range[1] - byte_range[0] + 1
