@@ -37,14 +37,12 @@ from .sshbase import SSHTransport
 
 API = "https://cloud.lambdalabs.com/api/v1"
 
-# Local disk per instance type, in GB, as published by Lambda. Used only to
-# REFUSE a plan that cannot fit before renting; it is not a substitute for
-# checking the real device once the box is up.
-_KNOWN_DISK_GB = {
-    "gpu_1x_a10": 200, "gpu_1x_a100": 512, "gpu_1x_a100_sxm4": 512,
-    "gpu_1x_a6000": 200, "gpu_1x_h100_pcie": 1024, "gpu_1x_h100_sxm5": 1024,
-    "gpu_2x_h100_sxm5": 1024, "gpu_8x_a100": 6000, "gpu_8x_h100_sxm5": 6000,
-}
+# Lambda publishes each type's real local disk as `specs.storage_gib`, so it is
+# READ, never guessed. It was guessed once, from a hardcoded table that had
+# `gpu_1x_a10` at 200 GB by confusing storage_gib with memory_gib -- and a plan
+# needing 400 GB was refused on a machine whose root filesystem measured 1.4 TB.
+# A false refusal is cheap to notice and expensive to trust, so the table is
+# gone and the only fallback is "unknown", which does not refuse.
 
 
 class LambdaError(JLError):
@@ -156,7 +154,8 @@ class LambdaCloud(SSHTransport):
                     spot=False,
                     free_devices=1 if regions else 0,
                     workload_type="vm",
-                    raw={"gpus": gpus, "disk_gb": _KNOWN_DISK_GB.get(name),
+                    raw={"gpus": gpus,
+                         "disk_gb": (specs.get("storage_gib")),
                          "description": it.get("gpu_description"),
                          "available": bool(regions)}))
         return offers
@@ -171,7 +170,7 @@ class LambdaCloud(SSHTransport):
             "num_gpus": int(((it.get("specs") or {}).get("gpus")) or 1),
             "region": (d.get("region") or {}).get("name"),
             "is_spot": False, "cost": 0.0, "runtime": None, "fs_id": None,
-            "storage_gb": _KNOWN_DISK_GB.get(it.get("name")),
+            "storage_gb": ((it.get("specs") or {}).get("storage_gib")),
             "name": d.get("name"),
         })
         inst.machine_id = d.get("id")
@@ -196,7 +195,9 @@ class LambdaCloud(SSHTransport):
         if not itype:
             raise LambdaError("create requires gpu_type (a Lambda instance type)")
         want_disk = int(kw.get("storage") or kw.get("storage_gb") or 0)
-        have = _KNOWN_DISK_GB.get(itype)
+        types_now = self._req("GET", "/instance-types").get("data", {})
+        have = (((types_now.get(itype) or {}).get("instance_type") or {})
+                .get("specs") or {}).get("storage_gib")
         if want_disk and have and want_disk > have:
             raise LambdaError(
                 "instance type %s provides ~%d GB of local disk and this plan "
