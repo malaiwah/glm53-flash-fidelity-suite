@@ -894,7 +894,8 @@ def _validate_scope_json(con: Console, path: str) -> None:
     con.ok("scope file schema", "valid against submission.schema.json")
 
 
-def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any]) -> None:
+def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
+                           args=None) -> None:
     """A reference must be the unquantized thing, or it is not a reference.
 
     Every measurement in this registry is a distance FROM a root, so a root
@@ -928,13 +929,42 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any]) 
              "Nothing was created. $0.00 spent."])
     qc = cfg.get("quantization_config") or (
         cfg.get("text_config") or {}).get("quantization_config")
+    designated = bool(getattr(args, "designated_reference", False))
     if not qc:
+        if designated:
+            # The flag on an UNQUANTIZED checkpoint is a contradiction, and
+            # accepting it would let a proxy reference be minted for a family
+            # that has a real root -- turning an advisory-by-necessity
+            # mechanism into an advisory-by-convenience one.
+            raise Refusal(
+                "--designated-reference, but this checkpoint publishes no "
+                "quantization_config: it IS an unquantized root",
+                ["A designated reference exists for families that publish no "
+                 "unquantized weights at all. This family does. Capture it as "
+                 "a plain root and drop the flag.",
+                 "Nothing was created. $0.00 spent."])
         con.ok("root is unquantized",
                "surface %s: config.json declares no quantization_config"
                % surface.surface)
         plan.setdefault("target", {})["root_unquantized"] = True
         return
     method = qc.get("quant_method") or qc.get("fmt") or "declared"
+    if designated:
+        # REFC-006's case, entered explicitly and recorded everywhere the
+        # output travels: the plan, the job document (below, via this field),
+        # and therefore the sealed dataset. Its 0.0 self-compare is an origin
+        # we chose, not a floor we measured.
+        con.warn("DESIGNATED REFERENCE: this checkpoint is quantized "
+                 "(quant_method %s) and is being captured as the family's "
+                 "designated reference -- an origin by designation, not a "
+                 "measured floor. Rows against it will be advisory "
+                 "(REFC-006)." % method)
+        plan.setdefault("target", {})["root_unquantized"] = False
+        plan["target"]["designated_reference"] = {
+            "quant_method": method,
+            "note": "quantized_proxy reference; no unquantized release "
+                    "exists for this family"}
+        return
     raise Refusal(
         "--role root, but this checkpoint publishes a quantization_config "
         "(quant_method %s)" % method,
@@ -1621,7 +1651,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                                for name, size in surface.artifact_files],
         }
         if getattr(args, "role", "quant") == "root":
-            _refuse_quantized_root(con, target, surface, plan)
+            _refuse_quantized_root(con, target, surface, plan, args=args)
         if surface.surface == "exl3hf" and not surface.problems:
             _refuse_incomplete_exl3hf(con, target.repo_id, target.revision, plan)
         if not surface.problems:
@@ -2210,6 +2240,8 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
                           if pdir else None),
             "panel_id": (json.loads((Path(pdir) / "panel.json").read_text())
                          .get("panel_id") if pdir else None),
+            "designated_reference": (plan_data.get("target") or {}).get(
+                "designated_reference"),
             "dataset_id": args.dataset_id,
             "dataset_name": args.dataset_name or args.dataset_id,
             "author": args.measurer,
@@ -2912,6 +2944,18 @@ def build_parser() -> argparse.ArgumentParser:
                          "why published roots are hidden-form")
     rt.add_argument("--schedule", default="layer-outer",
                     choices=("layer-outer", "window-outer"))
+    rt.add_argument("--designated-reference", action="store_true",
+                    help="capture a QUANTIZED checkpoint as its family's "
+                         "designated reference (registry reference_kind "
+                         "quantized_proxy, REFC-006). For families that publish "
+                         "no unquantized weights at all -- every deepseek_v4 "
+                         "repo ships a quantization_config. The dataset this "
+                         "produces is an origin by DESIGNATION, not a measured "
+                         "floor: rows against it are advisory, systematically "
+                         "smaller than against true unquantized weights, and "
+                         "carry a different_reference_kind disclosure. Refused "
+                         "on a checkpoint that is NOT quantized: a family with "
+                         "a true root must use it.")
     rt.add_argument("--race", action="store_true",
                     help="RACE MODE (docs/RACE-MODE.md): fetch the checkpoint WHILE "
                          "capturing it, in the order the layer-outer schedule needs "

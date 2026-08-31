@@ -91,6 +91,48 @@ try:
 finally:
     mc.fetch_json = real
 
+print("\n== a designated reference is a door, not a hole in the wall ==")
+
+
+def guard_flagged(config, designated):
+    real, mc.fetch_json = mc.fetch_json, lambda *a, **k: config
+    ns = type("A", (), {"designated_reference": designated})()
+    plan = {}
+    try:
+        mc._refuse_quantized_root(Con(), target(), surface("unknown", "fp8_e4m3"),
+                                  plan, args=ns)
+        return None, plan
+    except mc.Refusal as exc:
+        return "\n".join([str(exc)] + [str(a) for a in (exc.advice or [])]), plan
+    finally:
+        mc.fetch_json = real
+
+
+FP8 = {"quantization_config": {"quant_method": "fp8"}}
+BF16 = {"model_type": "deepseek_v4"}
+
+# Without the flag, a quantized root is still refused -- the wall stands.
+msg, _ = guard_flagged(FP8, False)
+check("a quantized root is still REFUSED without the flag", msg is not None)
+
+# With the flag, it proceeds AND the designation is recorded in the plan,
+# which is what carries it into job.json and the sealed dataset.
+msg, plan = guard_flagged(FP8, True)
+check("--designated-reference admits a quantized root", msg is None)
+dr = (plan.get("target") or {}).get("designated_reference") or {}
+check("...and records the designation with its quant method",
+      dr.get("quant_method") == "fp8")
+check("...and root_unquantized is honestly False",
+      (plan.get("target") or {}).get("root_unquantized") is False)
+
+# The contradiction case: the flag on a TRUE root is refused, because minting a
+# proxy for a family that has a real root would turn advisory-by-necessity
+# into advisory-by-convenience.
+msg, _ = guard_flagged(BF16, True)
+check("the flag on an UNQUANTIZED root is refused", msg is not None)
+check("...telling the caller to capture it as a plain root",
+      bool(msg) and "plain root" in msg)
+
 print("\n== the root path takes different inputs, and refuses without them ==")
 
 
