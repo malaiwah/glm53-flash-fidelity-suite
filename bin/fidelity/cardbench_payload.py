@@ -18,6 +18,29 @@ import torch
 
 def sync(): torch.cuda.synchronize()
 
+def _pcie_state():
+    """Link generation and width, straight from the driver.
+
+    This is what makes "the card was asleep" and "the host is oversubscribed"
+    distinguishable instead of a matter of opinion: a Gen1 x1 link at idle that
+    becomes Gen4 x16 under load was parked, and a link that stays narrow under
+    sustained traffic is genuinely what the machine offers.
+    """
+    import subprocess
+    q = ("pcie.link.gen.current,pcie.link.width.current,"
+         "pcie.link.gen.max,pcie.link.width.max")
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=" + q, "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=30).stdout.strip()
+        gen, width, gen_max, width_max = [x.strip() for x in out.split(",")[:4]]
+        return {"gen": gen, "width": width, "gen_max": gen_max,
+                "width_max": width_max, "text": "Gen%s x%s of Gen%s x%s"
+                % (gen, width, gen_max, width_max)}
+    except Exception as exc:                              # noqa: BLE001
+        return {"error": str(exc)[:80]}
+
+
 def timeit(fn, iters, warmup=3):
     for _ in range(warmup): fn()
     sync()
@@ -42,11 +65,40 @@ def main():
     t = timeit(lambda: buf.sum(), 20)
     out["read_GBps"] = round(buf.numel() * 2 / t / 1e9, 1)
 
-    # host->device, which is what a streaming lane pays when the model does not fit
+    # host->device, which is what a streaming lane pays when the model does not
+    # fit. MEASURED IN TWO PHASES ON PURPOSE.
+    #
+    # An NVIDIA card parks its PCIe link when idle -- dropping link generation
+    # and/or width, commonly to Gen1 x1 -- and only ramps back under sustained
+    # traffic. A short warmup therefore measures the RAMP, not the link, and
+    # reports a number several times too low for a card that is merely asleep.
+    # The first version of this benchmark did exactly that and concluded a host
+    # was oversubscribed when the card had simply not woken up.
+    #
+    # So: record the link state from nvidia-smi cold, push traffic for a few
+    # seconds, record it again, and report cold and warm bandwidth separately.
     host = torch.empty(n, dtype=torch.bfloat16, device="cpu").pin_memory()
     dst = torch.empty_like(buf)
-    t = timeit(lambda: dst.copy_(host, non_blocking=True), 10)
-    out["h2d_GBps"] = round(host.numel() * 2 / t / 1e9, 1)
+    nbytes = host.numel() * 2
+
+    out["pcie_idle"] = _pcie_state()
+    # cold: the very first transfers, before the link has any reason to ramp
+    sync(); t0 = time.perf_counter()
+    for _ in range(3):
+        dst.copy_(host, non_blocking=True)
+    sync()
+    out["h2d_cold_GBps"] = round(3 * nbytes / (time.perf_counter() - t0) / 1e9, 1)
+
+    # sustained: keep the link busy for a fixed wall-clock stretch, then time it
+    warm_until = time.perf_counter() + 4.0
+    while time.perf_counter() < warm_until:
+        dst.copy_(host, non_blocking=True)
+    sync()
+    out["pcie_load"] = _pcie_state()
+    t = timeit(lambda: dst.copy_(host, non_blocking=True), 20, warmup=5)
+    out["h2d_GBps"] = round(nbytes / t / 1e9, 1)
+    out["h2d_ramp_x"] = (round(out["h2d_GBps"] / out["h2d_cold_GBps"], 2)
+                         if out["h2d_cold_GBps"] else None)
     del host, dst
 
     # -- 2. the shapes a GLM-5.3-Flash window actually multiplies -------------

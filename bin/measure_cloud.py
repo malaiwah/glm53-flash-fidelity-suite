@@ -2367,6 +2367,54 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
         stages.insert(2, "materialize")
     for stage in stages:
         _run_stage(args, con, jl, td, plan_data, stage)
+        if stage == "setup":
+            _preflight_bench(args, con, jl, td, plan_data)
+
+
+
+def _preflight_bench(args, con, jl, td, plan_data) -> None:
+    """Measure the machine we just rented, before spending the run on it.
+
+    Setup takes minutes; the fetch is the first expensive thing. In between is
+    the only moment where the box exists, torch works, and almost nothing has
+    been paid for -- so it is where "is this machine worth it?" belongs.
+
+    The case is not hypothetical. One Vast offer for an RTX 4000 Ada wires the
+    card at **Gen4 x1 of a Gen4 x16 slot**: same GPU, compute within 3% of a
+    sibling host, and 1.6 GB/s host-to-device instead of 11.0. That is a 3-hour
+    measurement becoming a 20-hour one, and no catalogue anywhere exposes link
+    width. Verified as a wiring fact rather than a sleeping link by reading
+    pcie.link.width.current idle AND after four seconds of sustained traffic --
+    a parked link ramps, this one does not.
+
+    Reports always; ABORTS only when a threshold was asked for.
+    """
+    if getattr(args, "no_preflight_bench", False):
+        return
+    from fidelity.bench import bench_existing, gate
+
+    try:
+        doc = bench_existing(jl, td.machine_id, con=con)
+    except Exception as exc:                              # noqa: BLE001
+        # A failed benchmark must not fail the run: it is an advisory unless a
+        # threshold was set, and the run itself is the thing being protected.
+        con.warn("preflight benchmark skipped: %s" % redact(str(exc))[:200])
+        return
+    plan_data["preflight_bench"] = doc
+    link = (doc.get("pcie_load") or {}).get("text", "?")
+    con.ok("machine measured",
+           "h2d %.1f GB/s (cold %.1f), expert GEMM %.0f TF, PCIe %s"
+           % (doc.get("h2d_GBps") or 0, doc.get("h2d_cold_GBps") or 0,
+              doc.get("expert_gemm_TFLOPs") or 0, link))
+
+    why = gate(doc, min_h2d_gbps=getattr(args, "min_h2d_gbps", None),
+               min_gemm_tflops=getattr(args, "min_gemm_tflops", None))
+    if why:
+        raise Refusal(
+            "this machine is below the floor you set: %s" % why,
+            ["Setup is paid for; the fetch and the measure stage are not.",
+             "Teardown runs next, so nothing is left billing.",
+             "Retry to draw a different host, or lower the floor."])
 
 
 def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
@@ -2725,6 +2773,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("subcommand", nargs="?", default=None,
                    choices=(None, "reaper", "adopt"),
                    help="reaper: manage the teardown backstop; adopt: resume a job")
+    p.add_argument("--min-h2d-gbps", type=float,
+                   help="ABORT after setup if the rented machine's "
+                        "host-to-device bandwidth is below this. The streaming "
+                        "lane is bandwidth-bound, and a host that wires the "
+                        "card at PCIe x1 turns a 3-hour run into a 20-hour one "
+                        "while looking identical in the catalogue. 8 is a "
+                        "reasonable floor for an x16 slot.")
+    p.add_argument("--min-gemm-tflops", type=float,
+                   help="ABORT after setup if the measured expert-shape bf16 "
+                        "GEMM is below this")
+    p.add_argument("--no-preflight-bench", action="store_true",
+                   help="skip the post-setup machine measurement entirely")
     p.add_argument("--provider", default="jarvislabs",
                    choices=("jarvislabs", "runpod", "vast", "lambda"),
                    help="which cloud to rent from. The measurement is the same "

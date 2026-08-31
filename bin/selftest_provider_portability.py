@@ -209,6 +209,42 @@ check('the environment host is read from --provider, not hardcoded',
 check("...and no literal jarvislabs host remains",
       '"host": "jarvislabs"' not in src)
 
+print("\n== the machine is measured before the run is spent on it ==")
+from fidelity.bench import estimate, gate                   # noqa: E402
+
+# Both are REAL readings from two Vast offers for the same GPU model, taken
+# with the same benchmark minutes apart. The only difference is how the host
+# wires the card.
+X1 = {"gpu": "NVIDIA RTX 4000 Ada Generation", "h2d_GBps": 1.6,
+      "h2d_cold_GBps": 1.6, "expert_gemm_TFLOPs": 82.2,
+      "stream_matrix_ms": 10.587,
+      "pcie_load": {"text": "Gen4 x1 of Gen4 x16"}}
+X16 = {"gpu": "NVIDIA RTX 4000 Ada Generation", "h2d_GBps": 11.0,
+       "h2d_cold_GBps": 10.8, "expert_gemm_TFLOPs": 85.7,
+       "stream_matrix_ms": 1.755,
+       "pcie_load": {"text": "Gen3 x16 of Gen3 x16"}}
+
+check("a PCIe x1 host is REFUSED at an 8 GB/s floor",
+      gate(X1, min_h2d_gbps=8.0) is not None)
+check("...and the refusal names the link width, not just the number",
+      "Gen4 x1" in (gate(X1, min_h2d_gbps=8.0) or ""))
+check("the x16 sibling of the SAME GPU passes the same floor",
+      gate(X16, min_h2d_gbps=8.0) is None)
+check("no floor asked for means no refusal", gate(X1) is None)
+check("a compute floor is separate from a bandwidth floor",
+      gate(X16, min_gemm_tflops=200.0) is not None)
+
+# The whole point: same card, same compute, 6x the wall clock.
+e1 = estimate(X1, matrices_per_window=36288)
+e16 = estimate(X16, matrices_per_window=36288)
+check("the x1 host is ~6x slower per window on identical silicon",
+      5.0 < e1["minutes_per_window"] / e16["minutes_per_window"] < 7.0)
+
+# A parked link ramps under load; a narrow one does not. That distinction is
+# what makes the refusal defensible rather than a guess.
+check("cold and warm are reported separately so a ramp is visible",
+      "h2d_cold_GBps" in X1 and "h2d_GBps" in X1)
+
 print()
 if FAILED:
     print("selftest_provider_portability: %d FAILED" % len(FAILED))

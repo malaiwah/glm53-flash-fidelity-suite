@@ -94,6 +94,49 @@ def run_bench(provider, *, gpu: Optional[str] = None, ask_id: Optional[Any] = No
                     % (mid, exc))
 
 
+def bench_existing(provider, machine_id, *, con=None) -> Dict[str, Any]:
+    """Benchmark a box that is ALREADY rented, without touching its lifecycle.
+
+    This is the preflight form: the instance exists, setup has installed torch,
+    and the question is whether the next three hours are worth starting here.
+    It creates nothing and destroys nothing.
+    """
+    provider.upload(machine_id, str(PAYLOAD), "/tmp/cardbench.py")
+    out = provider.exec_stdout(machine_id, "python3 /tmp/cardbench.py 2>&1 | tail -30",
+                               timeout=900)
+    try:
+        return json.loads(out[out.index("{"):out.rindex("}") + 1])
+    except Exception:                                     # noqa: BLE001
+        raise RuntimeError("preflight benchmark produced no JSON:\n%s" % out[-600:])
+
+
+def gate(doc: Dict[str, Any], *, min_h2d_gbps: Optional[float] = None,
+         min_gemm_tflops: Optional[float] = None) -> Optional[str]:
+    """Is this machine fast enough to be worth the run? None means yes.
+
+    The case this exists for is real and was measured twice on one Vast offer:
+    an RTX 4000 Ada whose host wires the card at **Gen4 x1 of Gen4 x16**. Same
+    GPU, same compute to within 3% of a sibling host -- and 1.6 GB/s instead of
+    11.0, which turns a 3-hour measurement into a 20-hour one. Nothing in any
+    catalogue exposes link width, and the failure is invisible until the bill
+    arrives.
+
+    It is checked AFTER setup and BEFORE the fetch, because setup is minutes
+    and the fetch is the first expensive thing.
+    """
+    bad = []
+    h2d = doc.get("h2d_GBps")
+    if min_h2d_gbps and h2d is not None and h2d < min_h2d_gbps:
+        link = (doc.get("pcie_load") or {}).get("text", "unknown")
+        bad.append("host->device is %.1f GB/s, below the required %.1f "
+                   "(PCIe link under load: %s)" % (h2d, min_h2d_gbps, link))
+    gemm = doc.get("expert_gemm_TFLOPs")
+    if min_gemm_tflops and gemm is not None and gemm < min_gemm_tflops:
+        bad.append("expert GEMM is %.1f TFLOP/s, below the required %.1f"
+                   % (gemm, min_gemm_tflops))
+    return "; ".join(bad) if bad else None
+
+
 def estimate(doc: Dict[str, Any], *, matrices_per_window: int) -> Dict[str, Any]:
     """Scale a measured per-matrix time into a per-window one.
 
@@ -122,8 +165,11 @@ def render(doc: Dict[str, Any], est: Optional[Dict[str, Any]] = None) -> str:
         "  torch / cuda           %s / %s" % (doc.get("torch"), doc.get("cuda")),
         "",
         "  device read            %8.1f GB/s" % doc.get("read_GBps", 0),
-        "  host -> device         %8.1f GB/s   <- the streaming lane's real limit"
+        "  host -> device  cold   %8.1f GB/s" % doc.get("h2d_cold_GBps", 0),
+        "  host -> device  warm   %8.1f GB/s   <- the streaming lane's real limit"
         % doc.get("h2d_GBps", 0),
+        "  PCIe link  idle        %s" % (doc.get("pcie_idle") or {}).get("text", "?"),
+        "  PCIe link  under load  %s" % (doc.get("pcie_load") or {}).get("text", "?"),
         "  expert GEMM            %8.1f TFLOP/s bf16 (2047x4096x2048)"
         % doc.get("expert_gemm_TFLOPs", 0),
         "  dense 4k GEMM          %8.1f TFLOP/s bf16" % doc.get("dense_4k_TFLOPs", 0),
