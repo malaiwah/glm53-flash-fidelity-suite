@@ -151,6 +151,19 @@ t "doc-vs-receipt: every alignment/card number re-derived" \
 t "stream_score ladder rungs g,h,i,j,k,l (teacher role / preview refusal / \
 sampling / receipt stability / source dispatch / decode-cache identity)" \
                                            0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k,l
+# The three helpers every claim in docs/ARCHITECTURE-DETERMINISM.md rests on:
+# the partition explanation test (which must reject BOTH failure directions --
+# same attribute different result, and same result different attribute), the
+# fp64 KLD estimator (exactly 0.0 on identical inputs, finite on extreme
+# logits), and the float32 ULP encoder. Not hypothetical coverage: cases [13]
+# and [14] caught a sign error in the ULP encoder that scored +0.0 against -0.0
+# as 2^32 ULPs and made every quoted ULP figure wrong. Needs numpy only.
+if have_module "$VPY" numpy; then
+t "arch-determinism analysis helpers (partition/KLD/ULP, 14 cases)" \
+                                           0 "$VPY" reports/arch-determinism/selftest_arch_determinism.py
+else
+  s "arch-determinism analysis helpers" "numpy not importable"
+fi
 # The three community-quant weight-decode surfaces.  Each proves its dequant
 # against that ecosystem's own reference implementation on REAL ranged-fetched
 # tensors (replayed here from committed fixtures so the proof runs with no

@@ -1,0 +1,189 @@
+==============================================================================
+BOXES
+==============================================================================
+  ada-l4                   NVIDIA L4                                      sm_89    58 SM  driver 570.195.03
+  ada-l40s                 NVIDIA L40S                                    sm_89   142 SM  driver 580.178.04
+  ampere-a100-sxm4-80gb    NVIDIA A100-SXM4-80GB                          sm_80   108 SM  driver 570.172.08
+  ampere-a6000             NVIDIA RTX A6000                               sm_86    84 SM  driver 550.127.08
+  blackwell-pro4000        NVIDIA RTX PRO 4000 Blackwell                  sm_120   70 SM  driver 580.159.04
+  blackwell-pro6000        NVIDIA RTX PRO 6000 Blackwell Server Edition   sm_120  188 SM  driver 595.91.07
+  hopper-h100-pcie         NVIDIA H100 PCIe                               sm_90   114 SM  driver 580.159.04
+  hopper-h100-sxm          NVIDIA H100 80GB HBM3                          sm_90   132 SM  driver 580.159.03
+
+  software stack identical across boxes
+    torch 2.9.1+cu130 / cuda 13.0 / numpy 2.5.2 / cudnn 91300
+
+==============================================================================
+WHICH LAYERS DIVERGE  (lane policy: TF32 off, matmul precision highest)
+==============================================================================
+  layer          keys  variant   example
+  L1               12        0   -
+  L2               15       13   L2.expert.bf16
+  L3                1        0   -
+  L4               12        4   L4.sum_all.fp32
+  L5                4        0   -
+  L6                8        2   L6.tokenwise_kld
+  L7               37       34   L7.bf16.depth01
+  L8               22        0   -
+
+  58 of 111 result keys are architecture-INVARIANT
+
+==============================================================================
+WHAT EXPLAINS THE GROUPING
+==============================================================================
+  variant keys                                    53
+  ... a function of compute capability alone      0
+  ... a function of SM count alone                18
+  ... every card in its own group                 18
+
+  headline keys:
+    L7.fp32.logits               8 groups    cap-explained=False sm-explained=True
+        ada-l4(sm_89,58SM)
+        ada-l40s(sm_89,142SM)
+        ampere-a100-sxm4-80gb(sm_80,108SM)
+        ampere-a6000(sm_86,84SM)
+        blackwell-pro4000(sm_120,70SM)
+        blackwell-pro6000(sm_120,188SM)
+        hopper-h100-pcie(sm_90,114SM)
+        hopper-h100-sxm(sm_90,132SM)
+    L7.bf16.logits               6 groups    cap-explained=False sm-explained=False
+        ada-l4(sm_89,58SM)
+        ada-l40s(sm_89,142SM)
+        ampere-a100-sxm4-80gb(sm_80,108SM)
+        ampere-a6000(sm_86,84SM)
+        blackwell-pro4000(sm_120,70SM)  hopper-h100-pcie(sm_90,114SM)  hopper-h100-sxm(sm_90,132SM)
+        blackwell-pro6000(sm_120,188SM)
+    L2.sq2048.bf16               3 groups    cap-explained=False sm-explained=False
+        ada-l4(sm_89,58SM)  ampere-a6000(sm_86,84SM)
+        ada-l40s(sm_89,142SM)  ampere-a100-sxm4-80gb(sm_80,108SM)
+        blackwell-pro4000(sm_120,70SM)  blackwell-pro6000(sm_120,188SM)  hopper-h100-pcie(sm_90,114SM)  hopper-h100-sxm(sm_90,132SM)
+    L2.expert.bf16               4 groups    cap-explained=False sm-explained=False
+        ada-l4(sm_89,58SM)  ampere-a6000(sm_86,84SM)
+        ada-l40s(sm_89,142SM)  ampere-a100-sxm4-80gb(sm_80,108SM)
+        blackwell-pro4000(sm_120,70SM)  hopper-h100-pcie(sm_90,114SM)  hopper-h100-sxm(sm_90,132SM)
+        blackwell-pro6000(sm_120,188SM)
+    L2.expert.fp64               INVARIANT   cap-explained=False sm-explained=False
+    L3.grouped_mm                INVARIANT   cap-explained=False sm-explained=False
+    L5.log_softmax.fp64          INVARIANT   cap-explained=False sm-explained=False
+    L6.tokenwise_kld             2 groups    cap-explained=False sm-explained=False
+        ada-l4(sm_89,58SM)  ada-l40s(sm_89,142SM)  ampere-a100-sxm4-80gb(sm_80,108SM)  ampere-a6000(sm_86,84SM)  blackwell-pro4000(sm_120,70SM)  hopper-h100-pcie(sm_90,114SM)
+        blackwell-pro6000(sm_120,188SM)  hopper-h100-sxm(sm_90,132SM)
+    L4.wide.sum_lastdim.fp64     3 groups    cap-explained=False sm-explained=False
+        ada-l4(sm_89,58SM)  hopper-h100-pcie(sm_90,114SM)
+        ada-l40s(sm_89,142SM)  ampere-a100-sxm4-80gb(sm_80,108SM)
+        ampere-a6000(sm_86,84SM)  blackwell-pro4000(sm_120,70SM)  blackwell-pro6000(sm_120,188SM)  hopper-h100-sxm(sm_90,132SM)
+
+==============================================================================
+DOES FORCING DETERMINISM HELP
+==============================================================================
+  ada-l4                   changed 0 of 111 result keys within the box
+  ada-l40s                 changed 0 of 111 result keys within the box
+  ampere-a100-sxm4-80gb    changed 0 of 111 result keys within the box
+  ampere-a6000             changed 0 of 111 result keys within the box
+  blackwell-pro4000        changed 0 of 111 result keys within the box
+  blackwell-pro6000        changed 0 of 111 result keys within the box
+  hopper-h100-pcie         changed 0 of 111 result keys within the box
+  hopper-h100-sxm          changed 0 of 111 result keys within the box
+  keys still differing ACROSS boxes under deterministic mode: 53
+
+==============================================================================
+MAGNITUDE  (toy 16-layer decoder; fp64 CPU estimator, same for all)
+==============================================================================
+  reference panel: ada-l4 -- its fp32 logits stand in for the teacher.
+  (the choice is arbitrary; only the SPREAD is meaningful)
+
+  box                      mean KLD (nats)          delta vs lowest
+  ada-l40s                 6.2083425553899338e-05   +0.0000e+00
+  blackwell-pro4000        6.2204340658246216e-05   +1.2092e-07
+  hopper-h100-pcie         6.2204340658246216e-05   +1.2092e-07
+  hopper-h100-sxm          6.2204340658246216e-05   +1.2092e-07
+  blackwell-pro6000        6.3309777257589481e-05   +1.2264e-06
+  ampere-a100-sxm4-80gb    6.3739148976167713e-05   +1.6557e-06
+  ampere-a6000             6.4306096184775033e-05   +2.2227e-06
+  ada-l4                   6.5569291082523531e-05   +3.4859e-06
+
+  spread across cards: 3.4859e-06 nats = 5.52% of the mean
+
+  bf16 logits vs ada-l4 -- bitwise, max-abs, ULP over DIFFERING elements
+  (max ULP is not quoted: two near-zero values a few bf16 steps
+   apart span many float32 exponents, which inflates it to ~2e9)
+  ada-l4                   bitwise=True  max_abs=0.000e+00 differing= 0.00% ulp p50=- p99=-
+  ada-l40s                 bitwise=False max_abs=6.836e-02 differing=84.58% ulp p50=196608 p99=10878976
+  ampere-a100-sxm4-80gb    bitwise=False max_abs=6.860e-02 differing=84.57% ulp p50=196608 p99=10878976
+  ampere-a6000             bitwise=False max_abs=6.799e-02 differing=84.65% ulp p50=196608 p99=10878976
+  blackwell-pro4000        bitwise=False max_abs=6.250e-02 differing=84.34% ulp p50=196608 p99=10682368
+  blackwell-pro6000        bitwise=False max_abs=6.250e-02 differing=84.56% ulp p50=196608 p99=10813440
+  hopper-h100-pcie         bitwise=False max_abs=6.250e-02 differing=84.34% ulp p50=196608 p99=10682368
+  hopper-h100-sxm          bitwise=False max_abs=6.250e-02 differing=84.34% ulp p50=196608 p99=10682368
+
+  hidden-state max-abs difference vs ada-l4, by depth
+  box                           L01      L02      L03      L04      L05      L06      L07      L08      L09      L10      L11      L12      L13      L14      L15      L16
+  ada-l4                    0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00  0.0e+00
+  ada-l40s                  1.6e-02  4.7e-02  6.2e-02  9.4e-02  9.4e-02  1.2e-01  1.6e-01  1.9e-01  1.9e-01  2.5e-01  2.5e-01  2.5e-01  2.5e-01  3.1e-01  3.1e-01  3.8e-01
+  ampere-a100-sxm4-80gb     1.6e-02  4.7e-02  6.2e-02  9.4e-02  1.2e-01  1.6e-01  1.9e-01  1.9e-01  2.2e-01  2.5e-01  2.5e-01  2.5e-01  2.5e-01  2.5e-01  3.1e-01  3.1e-01
+  ampere-a6000              1.6e-02  4.7e-02  6.2e-02  9.4e-02  1.2e-01  1.2e-01  1.9e-01  2.5e-01  2.5e-01  2.5e-01  3.1e-01  2.5e-01  3.1e-01  3.1e-01  3.1e-01  3.1e-01
+  blackwell-pro4000         1.6e-02  4.7e-02  6.2e-02  9.4e-02  1.2e-01  1.2e-01  1.6e-01  1.9e-01  1.9e-01  2.2e-01  2.5e-01  2.5e-01  2.5e-01  3.1e-01  3.1e-01  3.8e-01
+  blackwell-pro6000         1.6e-02  4.7e-02  7.8e-02  9.4e-02  1.1e-01  1.2e-01  1.6e-01  1.9e-01  2.2e-01  1.9e-01  1.9e-01  2.5e-01  3.1e-01  3.8e-01  3.1e-01  3.1e-01
+  hopper-h100-pcie          1.6e-02  4.7e-02  6.2e-02  9.4e-02  1.2e-01  1.2e-01  1.6e-01  1.9e-01  1.9e-01  2.2e-01  2.5e-01  2.5e-01  2.5e-01  3.1e-01  3.1e-01  3.8e-01
+  hopper-h100-sxm           1.6e-02  4.7e-02  6.2e-02  9.4e-02  1.2e-01  1.2e-01  1.6e-01  1.9e-01  1.9e-01  2.2e-01  2.5e-01  2.5e-01  2.5e-01  3.1e-01  3.1e-01  3.8e-01
+
+  L6 tokenwise KLD -- IDENTICAL synthetic logits fed to every box
+  ada-l4                   mean=0.010708313060237793 bitwise_vs_ref=True  max_abs=0.000e+00
+  ada-l40s                 mean=0.010708313060237793 bitwise_vs_ref=True  max_abs=0.000e+00
+  ampere-a100-sxm4-80gb    mean=0.010708313060237793 bitwise_vs_ref=True  max_abs=0.000e+00
+  ampere-a6000             mean=0.010708313060237793 bitwise_vs_ref=True  max_abs=0.000e+00
+  blackwell-pro4000        mean=0.010708313060237793 bitwise_vs_ref=True  max_abs=0.000e+00
+  blackwell-pro6000        mean=0.010708313060237793 bitwise_vs_ref=False max_abs=9.714e-17
+  hopper-h100-pcie         mean=0.010708313060237793 bitwise_vs_ref=True  max_abs=0.000e+00
+  hopper-h100-sxm          mean=0.010708313060237793 bitwise_vs_ref=False max_abs=9.714e-17
+
+==============================================================================
+WHERE THE REDUCTION SPLITS  (7 cards)
+==============================================================================
+  ada-l4(58SM), ampere-a100-sxm4-80gb(108SM), ampere-a6000(84SM), blackwell-pro4000(70SM), blackwell-pro6000(188SM), hopper-h100-pcie(114SM), hopper-h100-sxm(132SM)
+
+  L8: fp64 sum over the last dim, 16384 columns
+    rows=   16  1 group(s)
+    rows=   32  1 group(s)
+    rows=   64  1 group(s)
+    rows=   96  1 group(s)
+    rows=  128  1 group(s)
+    rows=  192  1 group(s)
+    rows=  256  1 group(s)
+    rows=  384  1 group(s)
+    rows=  512  1 group(s)
+    rows=  768  1 group(s)
+    rows= 1024  1 group(s)
+
+  L9: fp64 sum over the last dim, 154880 columns
+    rows=   32  3 group(s)   ada-l4,ampere-a100-sxm4-80gb,ampere-a6000,blackwell-pro4000,blackwell-pro6000 | hopper-h100-pcie | hopper-h100-sxm
+    rows=   64  2 group(s)   ada-l4,ampere-a6000,blackwell-pro4000,hopper-h100-pcie | ampere-a100-sxm4-80gb,blackwell-pro6000,hopper-h100-sxm
+    rows=  128  3 group(s)   ada-l4,ampere-a6000,blackwell-pro4000 | ampere-a100-sxm4-80gb,hopper-h100-pcie | blackwell-pro6000,hopper-h100-sxm
+    rows=  256  2 group(s)   ada-l4,ampere-a100-sxm4-80gb,ampere-a6000,blackwell-pro4000,hopper-h100-pcie | blackwell-pro6000,hopper-h100-sxm
+    rows=  384  2 group(s)   ampere-a100-sxm4-80gb,blackwell-pro6000,hopper-h100-pcie,hopper-h100-sxm | ada-l4,ampere-a6000,blackwell-pro4000
+    rows=  448  2 group(s)   ada-l4,ampere-a100-sxm4-80gb,ampere-a6000,blackwell-pro4000 | blackwell-pro6000,hopper-h100-pcie,hopper-h100-sxm
+    rows=  512  2 group(s)   ada-l4,ampere-a100-sxm4-80gb,ampere-a6000,blackwell-pro4000,hopper-h100-pcie | blackwell-pro6000,hopper-h100-sxm
+    rows=  640  1 group(s)
+    rows=  768  1 group(s)
+    rows= 1024  1 group(s)
+
+  L10: k6_kld_report._token_kld VERBATIM, 154880-wide vocabulary,
+       by position block -- the lane runs 512 today
+    chunk=  256  3 group(s)   ada-l4,ampere-a6000,blackwell-pro4000 | ampere-a100-sxm4-80gb,hopper-h100-pcie | blackwell-pro6000,hopper-h100-sxm
+    chunk=  512  2 group(s)   ada-l4,ampere-a100-sxm4-80gb,ampere-a6000,blackwell-pro4000,hopper-h100-pcie | blackwell-pro6000,hopper-h100-sxm
+    chunk=  640  1 group(s)
+    chunk= 1024  1 group(s)
+
+==============================================================================
+REPLICATION  (a second rental of the same GPU model, other host)
+==============================================================================
+  ada-l4                     89 keys compared, 0 differ
+  ada-l40s                  111 keys compared, 0 differ
+  ampere-a100-sxm4-80gb      89 keys compared, 0 differ
+  ampere-a6000               89 keys compared, 1 differ  L6.tokenwise_kld_cpu_slice
+  blackwell-pro4000          89 keys compared, 0 differ
+  blackwell-pro6000          89 keys compared, 0 differ
+  hopper-h100-pcie           89 keys compared, 0 differ
+  hopper-h100-sxm            89 keys compared, 1 differ  L6.tokenwise_kld_cpu_slice
+
+  wrote reports/arch-determinism/findings.json

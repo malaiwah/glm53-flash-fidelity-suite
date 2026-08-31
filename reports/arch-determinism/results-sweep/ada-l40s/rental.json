@@ -1,0 +1,8 @@
+{
+ "advertised_usd_per_hour": 0.99,
+ "label": "ada-l40s",
+ "provider": "runpod",
+ "requested_gpu": "NVIDIA L40S",
+ "requested_region": "secure",
+ "schema": "malaiwah.arch-determinism-rental.v1"
+}

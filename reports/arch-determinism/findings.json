@@ -1,0 +1,1942 @@
+{
+ "L6_means": {
+  "ada-l4": 0.010708313060237793,
+  "ada-l40s": 0.010708313060237793,
+  "ampere-a100-sxm4-80gb": 0.010708313060237793,
+  "ampere-a6000": 0.010708313060237793,
+  "blackwell-pro4000": 0.010708313060237793,
+  "blackwell-pro6000": 0.010708313060237793,
+  "hopper-h100-pcie": 0.010708313060237793,
+  "hopper-h100-sxm": 0.010708313060237793
+ },
+ "all_separate_count": 18,
+ "boxes": {
+  "ada-l4": {
+   "capability": "sm_89",
+   "driver": "570.195.03",
+   "l2_cache_size": 50331648,
+   "max_threads_per_multi_processor": 1536,
+   "multi_processor_count": 58,
+   "name": "NVIDIA L4",
+   "numpy": "2.5.2",
+   "sm_major": 8,
+   "sm_minor": 9,
+   "torch": "2.9.1+cu130",
+   "torch_cuda": "13.0",
+   "total_memory_gb": 22.04,
+   "warp_size": 32
+  },
+  "ada-l40s": {
+   "capability": "sm_89",
+   "driver": "580.178.04",
+   "l2_cache_size": 100663296,
+   "max_threads_per_multi_processor": 1536,
+   "multi_processor_count": 142,
+   "name": "NVIDIA L40S",
+   "numpy": "2.5.2",
+   "sm_major": 8,
+   "sm_minor": 9,
+   "torch": "2.9.1+cu130",
+   "torch_cuda": "13.0",
+   "total_memory_gb": 44.39,
+   "warp_size": 32
+  },
+  "ampere-a100-sxm4-80gb": {
+   "capability": "sm_80",
+   "driver": "570.172.08",
+   "l2_cache_size": 41943040,
+   "max_threads_per_multi_processor": 2048,
+   "multi_processor_count": 108,
+   "name": "NVIDIA A100-SXM4-80GB",
+   "numpy": "2.5.2",
+   "sm_major": 8,
+   "sm_minor": 0,
+   "torch": "2.9.1+cu130",
+   "torch_cuda": "13.0",
+   "total_memory_gb": 79.25,
+   "warp_size": 32
+  },
+  "ampere-a6000": {
+   "capability": "sm_86",
+   "driver": "550.127.08",
+   "l2_cache_size": 6291456,
+   "max_threads_per_multi_processor": 1536,
+   "multi_processor_count": 84,
+   "name": "NVIDIA RTX A6000",
+   "numpy": "2.5.2",
+   "sm_major": 8,
+   "sm_minor": 6,
+   "torch": "2.9.1+cu130",
+   "torch_cuda": "13.0",
+   "total_memory_gb": 47.53,
+   "warp_size": 32
+  },
+  "blackwell-pro4000": {
+   "capability": "sm_120",
+   "driver": "580.159.04",
+   "l2_cache_size": 50331648,
+   "max_threads_per_multi_processor": 1536,
+   "multi_processor_count": 70,
+   "name": "NVIDIA RTX PRO 4000 Blackwell",
+   "numpy": "2.5.2",
+   "sm_major": 12,
+   "sm_minor": 0,
+   "torch": "2.9.1+cu130",
+   "torch_cuda": "13.0",
+   "total_memory_gb": 23.42,
+   "warp_size": 32
+  },
+  "blackwell-pro6000": {
+   "capability": "sm_120",
+   "driver": "595.91.07",
+   "l2_cache_size": 134217728,
+   "max_threads_per_multi_processor": 1536,
+   "multi_processor_count": 188,
+   "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+   "numpy": "2.5.2",
+   "sm_major": 12,
+   "sm_minor": 0,
+   "torch": "2.9.1+cu130",
+   "torch_cuda": "13.0",
+   "total_memory_gb": 94.97,
+   "warp_size": 32
+  },
+  "hopper-h100-pcie": {
+   "capability": "sm_90",
+   "driver": "580.159.04",
+   "l2_cache_size": 52428800,
+   "max_threads_per_multi_processor": 2048,
+   "multi_processor_count": 114,
+   "name": "NVIDIA H100 PCIe",
+   "numpy": "2.5.2",
+   "sm_major": 9,
+   "sm_minor": 0,
+   "torch": "2.9.1+cu130",
+   "torch_cuda": "13.0",
+   "total_memory_gb": 79.18,
+   "warp_size": 32
+  },
+  "hopper-h100-sxm": {
+   "capability": "sm_90",
+   "driver": "580.159.03",
+   "l2_cache_size": 52428800,
+   "max_threads_per_multi_processor": 2048,
+   "multi_processor_count": 132,
+   "name": "NVIDIA H100 80GB HBM3",
+   "numpy": "2.5.2",
+   "sm_major": 9,
+   "sm_minor": 0,
+   "torch": "2.9.1+cu130",
+   "torch_cuda": "13.0",
+   "total_memory_gb": 79.18,
+   "warp_size": 32
+  }
+ },
+ "depth_growth": {
+  "depths": [
+   "h_depth01",
+   "h_depth02",
+   "h_depth03",
+   "h_depth04",
+   "h_depth05",
+   "h_depth06",
+   "h_depth07",
+   "h_depth08",
+   "h_depth09",
+   "h_depth10",
+   "h_depth11",
+   "h_depth12",
+   "h_depth13",
+   "h_depth14",
+   "h_depth15",
+   "h_depth16"
+  ],
+  "max_abs": {
+   "ada-l4": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "ada-l40s": [
+    0.015625,
+    0.046875,
+    0.0625,
+    0.09375,
+    0.09375,
+    0.125,
+    0.15625,
+    0.1875,
+    0.1875,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.3125,
+    0.3125,
+    0.375
+   ],
+   "ampere-a100-sxm4-80gb": [
+    0.015625,
+    0.046875,
+    0.0625,
+    0.09375,
+    0.125,
+    0.15625,
+    0.1875,
+    0.1875,
+    0.21875,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.3125,
+    0.3125
+   ],
+   "ampere-a6000": [
+    0.015625,
+    0.046875,
+    0.0625,
+    0.09375,
+    0.125,
+    0.125,
+    0.1875,
+    0.25,
+    0.25,
+    0.25,
+    0.3125,
+    0.25,
+    0.3125,
+    0.3125,
+    0.3125,
+    0.3125
+   ],
+   "blackwell-pro4000": [
+    0.015625,
+    0.046875,
+    0.0625,
+    0.09375,
+    0.125,
+    0.125,
+    0.15625,
+    0.1875,
+    0.1875,
+    0.21875,
+    0.25,
+    0.25,
+    0.25,
+    0.3125,
+    0.3125,
+    0.375
+   ],
+   "blackwell-pro6000": [
+    0.015625,
+    0.046875,
+    0.078125,
+    0.09375,
+    0.109375,
+    0.125,
+    0.15625,
+    0.1875,
+    0.21875,
+    0.1875,
+    0.1875,
+    0.25,
+    0.3125,
+    0.375,
+    0.3125,
+    0.3125
+   ],
+   "hopper-h100-pcie": [
+    0.015625,
+    0.046875,
+    0.0625,
+    0.09375,
+    0.125,
+    0.125,
+    0.15625,
+    0.1875,
+    0.1875,
+    0.21875,
+    0.25,
+    0.25,
+    0.25,
+    0.3125,
+    0.3125,
+    0.375
+   ],
+   "hopper-h100-sxm": [
+    0.015625,
+    0.046875,
+    0.0625,
+    0.09375,
+    0.125,
+    0.125,
+    0.15625,
+    0.1875,
+    0.1875,
+    0.21875,
+    0.25,
+    0.25,
+    0.25,
+    0.3125,
+    0.3125,
+    0.375
+   ]
+  }
+ },
+ "deterministic_changed_within_box": {
+  "ada-l4": 0,
+  "ada-l40s": 0,
+  "ampere-a100-sxm4-80gb": 0,
+  "ampere-a6000": 0,
+  "blackwell-pro4000": 0,
+  "blackwell-pro6000": 0,
+  "hopper-h100-pcie": 0,
+  "hopper-h100-sxm": 0
+ },
+ "deterministic_still_variant": 53,
+ "explained_by_capability_count": 0,
+ "explained_by_sm_count_count": 18,
+ "invariant": [
+  "L1.erf.fp32",
+  "L1.erf.fp64",
+  "L1.exp.fp32",
+  "L1.exp.fp64",
+  "L1.log.fp32",
+  "L1.log.fp64",
+  "L1.rsqrt.fp32",
+  "L1.rsqrt.fp64",
+  "L1.sigmoid.fp32",
+  "L1.sigmoid.fp64",
+  "L1.tanh.fp32",
+  "L1.tanh.fp64",
+  "L2.expert.fp64",
+  "L2.sq2048.fp64",
+  "L3.grouped_mm",
+  "L4.logsumexp.fp32",
+  "L4.logsumexp.fp64",
+  "L4.mean_lastdim.fp32",
+  "L4.mean_lastdim.fp64",
+  "L4.sum_dim0.fp32",
+  "L4.sum_dim0.fp64",
+  "L4.sum_lastdim.fp32",
+  "L4.sum_lastdim.fp64",
+  "L5.log_softmax.fp32",
+  "L5.log_softmax.fp64",
+  "L5.softmax.fp32",
+  "L5.softmax.fp64",
+  "L6.cuda_slice_equals_cpu_slice",
+  "L6.mean",
+  "L6.student_in",
+  "L6.teacher_in",
+  "L6.top1_matches",
+  "L6.top1_matches_cpu_slice",
+  "L7.bf16.emb_in",
+  "L7.fp32.emb_in",
+  "L7.tokens",
+  "L8.rows0016.sum_lastdim.fp32",
+  "L8.rows0016.sum_lastdim.fp64",
+  "L8.rows0032.sum_lastdim.fp32",
+  "L8.rows0032.sum_lastdim.fp64",
+  "L8.rows0064.sum_lastdim.fp32",
+  "L8.rows0064.sum_lastdim.fp64",
+  "L8.rows0096.sum_lastdim.fp32",
+  "L8.rows0096.sum_lastdim.fp64",
+  "L8.rows0128.sum_lastdim.fp32",
+  "L8.rows0128.sum_lastdim.fp64",
+  "L8.rows0192.sum_lastdim.fp32",
+  "L8.rows0192.sum_lastdim.fp64",
+  "L8.rows0256.sum_lastdim.fp32",
+  "L8.rows0256.sum_lastdim.fp64",
+  "L8.rows0384.sum_lastdim.fp32",
+  "L8.rows0384.sum_lastdim.fp64",
+  "L8.rows0512.sum_lastdim.fp32",
+  "L8.rows0512.sum_lastdim.fp64",
+  "L8.rows0768.sum_lastdim.fp32",
+  "L8.rows0768.sum_lastdim.fp64",
+  "L8.rows1024.sum_lastdim.fp32",
+  "L8.rows1024.sum_lastdim.fp64"
+ ],
+ "layer_summary": {
+  "L1": {
+   "keys": 12,
+   "variant": 0
+  },
+  "L2": {
+   "keys": 15,
+   "variant": 13
+  },
+  "L3": {
+   "keys": 1,
+   "variant": 0
+  },
+  "L4": {
+   "keys": 12,
+   "variant": 4
+  },
+  "L5": {
+   "keys": 4,
+   "variant": 0
+  },
+  "L6": {
+   "keys": 8,
+   "variant": 2
+  },
+  "L7": {
+   "keys": 37,
+   "variant": 34
+  },
+  "L8": {
+   "keys": 22,
+   "variant": 0
+  }
+ },
+ "replication": {
+  "ada-l4": {
+   "compared": 89,
+   "differing": 0,
+   "examples": []
+  },
+  "ada-l40s": {
+   "compared": 111,
+   "differing": 0,
+   "examples": []
+  },
+  "ampere-a100-sxm4-80gb": {
+   "compared": 89,
+   "differing": 0,
+   "examples": []
+  },
+  "ampere-a6000": {
+   "compared": 89,
+   "differing": 1,
+   "examples": [
+    "L6.tokenwise_kld_cpu_slice"
+   ]
+  },
+  "blackwell-pro4000": {
+   "compared": 89,
+   "differing": 0,
+   "examples": []
+  },
+  "blackwell-pro6000": {
+   "compared": 89,
+   "differing": 0,
+   "examples": []
+  },
+  "hopper-h100-pcie": {
+   "compared": 89,
+   "differing": 0,
+   "examples": []
+  },
+  "hopper-h100-sxm": {
+   "compared": 89,
+   "differing": 1,
+   "examples": [
+    "L6.tokenwise_kld_cpu_slice"
+   ]
+  }
+ },
+ "stack_identical": true,
+ "stacks": [
+  [
+   "2.9.1+cu130",
+   "13.0",
+   "2.5.2",
+   "91300"
+  ]
+ ],
+ "sweep": {
+  "L10.chunk1024": 1,
+  "L10.chunk256": 3,
+  "L10.chunk512": 2,
+  "L10.chunk640": 1,
+  "L8.rows1024": 1,
+  "L8.rows128": 1,
+  "L8.rows16": 1,
+  "L8.rows192": 1,
+  "L8.rows256": 1,
+  "L8.rows32": 1,
+  "L8.rows384": 1,
+  "L8.rows512": 1,
+  "L8.rows64": 1,
+  "L8.rows768": 1,
+  "L8.rows96": 1,
+  "L9.rows1024": 1,
+  "L9.rows128": 3,
+  "L9.rows256": 2,
+  "L9.rows32": 3,
+  "L9.rows384": 2,
+  "L9.rows448": 2,
+  "L9.rows512": 2,
+  "L9.rows64": 2,
+  "L9.rows640": 1,
+  "L9.rows768": 1
+ },
+ "toy_panel_kld": {
+  "ada-l4": 6.556929108252353e-05,
+  "ada-l40s": 6.208342555389934e-05,
+  "ampere-a100-sxm4-80gb": 6.373914897616771e-05,
+  "ampere-a6000": 6.430609618477503e-05,
+  "blackwell-pro4000": 6.220434065824622e-05,
+  "blackwell-pro6000": 6.330977725758948e-05,
+  "hopper-h100-pcie": 6.220434065824622e-05,
+  "hopper-h100-sxm": 6.220434065824622e-05
+ },
+ "toy_panel_kld_reference": "ada-l4",
+ "toy_panel_kld_relative_spread": 0.05515383540067063,
+ "toy_panel_kld_spread": 3.4858655286241932e-06,
+ "variant": {
+  "L2.expert.bf16": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "ampere-a6000"
+    ],
+    [
+     "ada-l40s",
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 4
+  },
+  "L2.expert.fp16": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "ampere-a100-sxm4-80gb",
+     "ampere-a6000"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 4
+  },
+  "L2.expert.fp32_tf32off": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "ada-l40s",
+     "ampere-a6000",
+     "blackwell-pro6000"
+    ],
+    [
+     "ampere-a100-sxm4-80gb",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie"
+    ]
+   ],
+   "n_groups": 3
+  },
+  "L2.expert.fp32_tf32on": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s",
+     "ampere-a6000"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "blackwell-pro4000",
+     "blackwell-pro6000",
+     "hopper-h100-sxm"
+    ],
+    [
+     "hopper-h100-pcie"
+    ]
+   ],
+   "n_groups": 5
+  },
+  "L2.splitk.bf16": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 7
+  },
+  "L2.splitk.fp16": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 7
+  },
+  "L2.splitk.fp32_tf32off": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "blackwell-pro4000"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 7
+  },
+  "L2.splitk.fp32_tf32on": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L2.splitk.fp64": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb",
+     "blackwell-pro4000",
+     "blackwell-pro6000"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L2.sq2048.bf16": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "ampere-a6000"
+    ],
+    [
+     "ada-l40s",
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "blackwell-pro4000",
+     "blackwell-pro6000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 3
+  },
+  "L2.sq2048.fp16": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "ampere-a6000"
+    ],
+    [
+     "ada-l40s",
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "blackwell-pro4000",
+     "blackwell-pro6000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 3
+  },
+  "L2.sq2048.fp32_tf32off": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "ada-l40s",
+     "blackwell-pro6000"
+    ],
+    [
+     "ampere-a100-sxm4-80gb",
+     "hopper-h100-sxm"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ]
+   ],
+   "n_groups": 5
+  },
+  "L2.sq2048.fp32_tf32on": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "ada-l40s",
+     "ampere-a100-sxm4-80gb",
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "blackwell-pro6000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 2
+  },
+  "L4.sum_all.fp32": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s",
+     "blackwell-pro6000",
+     "hopper-h100-sxm"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L4.sum_all.fp64": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "ada-l40s",
+     "ampere-a100-sxm4-80gb",
+     "blackwell-pro4000",
+     "blackwell-pro6000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "ampere-a6000"
+    ]
+   ],
+   "n_groups": 2
+  },
+  "L4.wide.logsumexp.fp64": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s",
+     "ampere-a100-sxm4-80gb",
+     "ampere-a6000",
+     "blackwell-pro4000",
+     "hopper-h100-pcie"
+    ],
+    [
+     "blackwell-pro6000",
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 3
+  },
+  "L4.wide.sum_lastdim.fp64": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "hopper-h100-pcie"
+    ],
+    [
+     "ada-l40s",
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000",
+     "blackwell-pro4000",
+     "blackwell-pro6000",
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 3
+  },
+  "L6.tokenwise_kld": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "ada-l40s",
+     "ampere-a100-sxm4-80gb",
+     "ampere-a6000",
+     "blackwell-pro4000",
+     "hopper-h100-pcie"
+    ],
+    [
+     "blackwell-pro6000",
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 2
+  },
+  "L6.tokenwise_kld_cpu_slice": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4",
+     "ada-l40s",
+     "blackwell-pro6000",
+     "hopper-h100-sxm"
+    ],
+    [
+     "ampere-a100-sxm4-80gb",
+     "hopper-h100-pcie"
+    ],
+    [
+     "ampere-a6000",
+     "blackwell-pro4000"
+    ]
+   ],
+   "n_groups": 3
+  },
+  "L7.bf16.depth01": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth02": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth03": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth04": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth05": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth06": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth07": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth08": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth09": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth10": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth11": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth12": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth13": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth14": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth15": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.depth16": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.bf16.logits": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": false,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000",
+     "hopper-h100-pcie",
+     "hopper-h100-sxm"
+    ],
+    [
+     "blackwell-pro6000"
+    ]
+   ],
+   "n_groups": 6
+  },
+  "L7.fp32.depth01": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth02": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth03": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth04": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth05": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth06": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth07": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth08": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth09": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth10": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth11": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth12": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth13": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth14": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth15": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.depth16": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  },
+  "L7.fp32.logits": {
+   "explained_by_capability": false,
+   "explained_by_sm_count": true,
+   "groups": [
+    [
+     "ada-l4"
+    ],
+    [
+     "ada-l40s"
+    ],
+    [
+     "ampere-a100-sxm4-80gb"
+    ],
+    [
+     "ampere-a6000"
+    ],
+    [
+     "blackwell-pro4000"
+    ],
+    [
+     "blackwell-pro6000"
+    ],
+    [
+     "hopper-h100-pcie"
+    ],
+    [
+     "hopper-h100-sxm"
+    ]
+   ],
+   "n_groups": 8
+  }
+ }
+}
