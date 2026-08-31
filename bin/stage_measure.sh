@@ -532,6 +532,14 @@ capture)
   AUTHOR="$(jqget capture.author malaiwah)"
   EXPECT="$(jqget capture.sanity_expect Paris)"
   ALLOW_UNEXPECTED="$(jqget capture.allow_unexpected_tensors false)"
+  # THE GPU THIS RUN IS PAYING FOR. hf_capture's --device defaults to "cpu" and
+  # nothing here ever set it, so every --role root capture ran the forward on
+  # the CPU with the rented card at 0% utilisation -- observed on a Lambda
+  # GH200 ($2.29/h) and a RunPod A100 ($1.39/h), and visible in the sealed
+  # dataset as runtime.stack_fingerprint.device "cpu". The `materialize` and
+  # `measure` stages have always passed `--device cuda`; only the root path was
+  # missed, and its GPU is the entire reason the box is rented.
+  DEVICE="$(jqget capture.device cuda)"
   OUT="$FS/dataset"
   [ -n "$DSID" ] || { echo "job.json has no capture.dataset_id" >&2; exit 2; }
   [ -n "$PANEL_REL" ] || { echo "job.json has no capture.panel_dir" >&2; exit 2; }
@@ -562,7 +570,7 @@ capture)
         --model "$MODELS/target" --weights-repository "$REPO" \
         --repository "$REPO" --model-revision "$REV" \
         --panel "$FS/$PANEL_REL" --panel-id "$PANEL_ID" \
-        --schedule "$SCHED" --dtype bfloat16 \
+        --schedule "$SCHED" --device "$DEVICE" --dtype bfloat16 \
         --dataset-id "$DSID" --dataset-name "$DSNAME" \
         --author "$AUTHOR" --role root \
         "${EXTRA[@]}" \
@@ -641,6 +649,7 @@ race_capture)
   PREVIEW_OF="$(jqget capture.preview_of)"
   EXPECT="$(jqget capture.sanity_expect Paris)"
   ALLOW_UNEXPECTED="$(jqget capture.allow_unexpected_tensors false)"
+  DEVICE="$(jqget capture.device cuda)"   # see the capture stage above
   OUT="$FS/dataset"
   [ -n "$DSID" ] || { echo "job.json has no capture.dataset_id" >&2; exit 2; }
   [ -n "$PANEL_REL" ] || { echo "job.json has no capture.panel_dir" >&2; exit 2; }
@@ -665,7 +674,7 @@ race_capture)
         --model "$MODELS/target" --weights-repository "$REPO" \
         --repository "$REPO" --model-revision "$REV" \
         --panel "$FS/$PANEL_REL" --panel-id "$PANEL_ID" \
-        --schedule "$SCHED" --layer-residency stream --dtype bfloat16 \
+        --schedule "$SCHED" --device "$DEVICE" --layer-residency stream --dtype bfloat16 \
         --dataset-id "$DSID" --dataset-name "$DSNAME" \
         --author "$AUTHOR" --role root \
         --race-repo "$REPO" --race-revision "$REV" \

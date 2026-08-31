@@ -175,7 +175,7 @@ def rung_job_document():
             dataset_id="fidelity--t.malaiwah.root.bf16", dataset_name=None,
             form="hidden", schedule="layer-outer", race=False, race_workers=8,
             preview_of=None, sanity_expect="Paris",
-            allow_unexpected_tensors=True)
+            allow_unexpected_tensors=True, capture_device="cuda")
         cont_root = CE.job_document(rargs, SUITE, fs, quiet)
 
     for label, cloud, cont in (("quant", cloud_quant, cont_quant),

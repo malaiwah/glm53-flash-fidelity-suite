@@ -2236,6 +2236,11 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
             # where the roots that matter are going.
             "allow_unexpected_tensors": bool(
                 getattr(args, "allow_unexpected_tensors", False)),
+            # The device the FORWARD runs on. hf_capture defaults to "cpu" and
+            # the stage script never overrode it, so every root capture ran on
+            # the CPU of a box rented for its GPU. Default "cuda" here matches
+            # what the materialize and measure stages have always passed.
+            "device": getattr(args, "capture_device", None) or "cuda",
         }
     return {
         "role": role,
@@ -2931,6 +2936,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "is genuinely expected to answer otherwise. The probe runs "
                          "either way: it is one extra window through a schedule that "
                          "is already loading every layer.")
+    rt.add_argument("--capture-device", default="cuda",
+                    help="the torch device the capture's forward runs on "
+                         "(default cuda). 'cpu' is a real option -- CPU math is "
+                         "bitwise-portable in a way no GPU's is -- but it is "
+                         "not what a rented GPU is for, and it was the silent "
+                         "default until 2026-08-31.")
     rt.add_argument("--allow-unexpected-tensors", action="store_true",
                     help="proceed when the checkpoint carries tensors this "
                          "architecture has no home for. hf_capture refuses them by "

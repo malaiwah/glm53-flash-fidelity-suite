@@ -201,6 +201,19 @@ for _st in CAPTURE_STAGES:
     # captured on two boxes declare two tokenizers and `compare` refuses them.
     check("%s names the HF repo as the weights repository, not the local path"
           % _st, "--weights-repository" in body)
+    # THE GPU. hf_capture's --device defaults to "cpu"; the stage script never
+    # set it, so a root capture ran the forward on the CPU of a box rented for
+    # its GPU -- at 0% utilisation, for the full hourly rate, on every provider.
+    # The `materialize` and `measure` stages have always passed `--device
+    # cuda`; only this path was missed.
+    check("%s reads capture.device (default cuda)" % _st,
+          "capture.device cuda" in body)
+    check("...and forwards --device to the engine",
+          '--device "$DEVICE"' in body)
+
+check("the controller has a --capture-device flag, defaulting to cuda",
+      '"--capture-device", default="cuda"' in
+      (SUITE / "bin" / "measure_cloud.py").read_text(encoding="utf-8"))
 
 check("the controller has an --allow-unexpected-tensors flag to set it with",
       "--allow-unexpected-tensors" in

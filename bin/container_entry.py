@@ -376,6 +376,7 @@ def job_document(args, suite: Path, fs_root: Path, con) -> dict:
             # that behaves differently depending on how it was launched.
             "allow_unexpected_tensors": bool(
                 getattr(args, "allow_unexpected_tensors", False)),
+            "device": getattr(args, "capture_device", None) or "cuda",
         }
     elif not getattr(args, "profile", None):
         raise Refusal(
@@ -554,6 +555,7 @@ def add_job_flags(p, *, root: bool) -> None:
         p.add_argument("--preview-of")
         p.add_argument("--sanity-expect", default="Paris")
         p.add_argument("--allow-unexpected-tensors", action="store_true")
+        p.add_argument("--capture-device", default="cuda")
     else:
         p.add_argument("--surface")
         p.add_argument("--bits", type=float)
