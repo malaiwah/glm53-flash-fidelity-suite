@@ -51,11 +51,16 @@ ENV FIDELITY_IMAGE_ROOT=/opt/fidelity \
 
 # python3.12 is not optional: the bootstrap refuses any other minor version,
 # because the proven env recipe -- the one that produced every sealed streaming
-# row -- is py3.12.  git/patch are for the pipeline pin and its series; wget
-# and ca-certificates are what the bootstrap's own fetches use.
+# row -- is py3.12.  `python3` is listed SEPARATELY and on purpose: every stage
+# reads job.json through `stage_measure.sh`'s jqget, which runs the SYSTEM
+# python3 rather than the venv's, because it must work in `setup` -- before the
+# venv exists.  On 24.04 they are the same interpreter, and relying on that
+# coincidence is how the next base image breaks every stage at line one.
+# git/patch are for the pipeline pin and its series; wget and ca-certificates
+# are what the bootstrap's own fetches use.
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends \
-        python3.12 python3.12-venv python3.12-dev \
+        python3 python3.12 python3.12-venv python3.12-dev \
         build-essential git patch wget curl ca-certificates bash \
         pciutils tzdata \
  && rm -rf /var/lib/apt/lists/* \
@@ -65,8 +70,8 @@ RUN apt-get update -qq \
 # list that already defines "what lands on rented hardware", so the image is a
 # second transport for the same audited set rather than a parallel one.
 COPY bin/       /tmp/stage/bin/
-COPY k6/tools/  /tmp/stage/k6/tools/
-COPY k6/patches-v2/ /tmp/stage/k6/patches-v2/
+COPY engines/tools/  /tmp/stage/engines/tools/
+COPY engines/patches-v2/ /tmp/stage/engines/patches-v2/
 COPY registry/  /tmp/stage/registry/
 RUN python3.12 /tmp/stage/bin/container_prune.py \
         --stage /tmp/stage --out /opt/fidelity/suite \
@@ -76,7 +81,7 @@ RUN python3.12 /tmp/stage/bin/container_prune.py \
 # `setup` stage copies it too; doing it here as well is what lets the bootstrap
 # apply the series at BUILD time instead of on every rental.
 RUN mkdir -p /opt/fidelity/patches-v2 \
- && cp -f /opt/fidelity/suite/k6/patches-v2/* /opt/fidelity/patches-v2/
+ && cp -f /opt/fidelity/suite/engines/patches-v2/* /opt/fidelity/patches-v2/
 
 # Steps 1-4 of the bootstrap: python, the pinned wheel set, the pipeline at its
 # pin with the measurement patch series, and the exllamav3 decision (which the

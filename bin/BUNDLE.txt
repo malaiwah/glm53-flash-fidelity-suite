@@ -18,7 +18,7 @@ bin/stage_measure.sh
 # fail-closed, entries naming files this repo does not publish REPORTED.
 bin/verify_published_sums.py
 # The measurement-only container bootstrap. The recipe used to delegate to
-# k6/stage_campaign.sh, which was never uploaded (so `setup` ran a file that did not
+# engines/stage_campaign.sh, which was never uploaded (so `setup` ran a file that did not
 # exist) and gates a decode-only run on an ENCODER closure it never needs.
 bin/bootstrap_measure.sh
 bin/watchdog.sh
@@ -50,13 +50,13 @@ bin/fidelity/stackprint.py
 # It is stdlib, but NOT because a dependency was unavailable: tqdm is already
 # installed on every instance (transformers and huggingface_hub both hard-require
 # it). It is hand-written because tqdm cannot emit newline-terminated output at
-# all -- see k6/tools/progress.py and docs/DEPENDENCIES.md.
+# all -- see engines/tools/progress.py and docs/DEPENDENCIES.md.
 # bin/selftest_progress.py rung P11 checks this list against the engines' own
 # module-scope imports so the pairing cannot silently drift.
-k6/tools/progress.py
+engines/tools/progress.py
 # The sealed EP8 lane. Verified present and flag-checked by the planner.
-k6/tools/student_capture.py
-k6/tools/kld_report.py
+engines/tools/student_capture.py
+engines/tools/kld_report.py
 # The UNSEALED Dione (0xSero) selective-EXL3 surface. It serves BOTH lanes:
 # student_capture --surface dione (sealed EP8) and stream_score --source
 # dione (streaming), and it owns its own `materialize` stage. Like tr3 it needs
@@ -64,32 +64,32 @@ k6/tools/kld_report.py
 # emitted name set against the official release's 1,618 non-routed names before
 # it reads a tensor. Its selftest ships for the same reason the others' do --
 # the mcg decode-parity rungs can only run where quant_pipeline is.
-k6/tools/dione_surface.py
-k6/tools/selftest_dione_offline.py
-k6/tools/selftest_dione_stream_offline.py
+engines/tools/dione_surface.py
+engines/tools/selftest_dione_offline.py
+engines/tools/selftest_dione_stream_offline.py
 # The streaming lane. NOT in this checkout at time of writing -- see
 # bin/engines.json, lane "streaming". Listed so it uploads the moment it lands.
-k6/tools/stream_score.py
+engines/tools/stream_score.py
 # The stock-exllamav3 (exl3hf) surface: BOTH the `materialize` stage and the
 # capture import it. Its offline selftest ships too -- the mcg-parity rung
 # self-skips without quant_pipeline on the laptop and RUNS on the instance,
 # which is the only place that check can be made before a paid capture.
-k6/tools/exl3hf_surface.py
-k6/tools/selftest_exl3hf_offline.py
+engines/tools/exl3hf_surface.py
+engines/tools/selftest_exl3hf_offline.py
 # The SEALED tr3-published surface (stream_score.py --source tr3). It composes
 # exl3hf_surface for the decode, and needs official-nonrouted-names.json: the
 # seal's name-set check compares the release's 1,618 non-routed names against
 # the official release's own. Its selftest ships for the same reason exl3hf's
 # does -- the mcg decode-parity rung can only run where quant_pipeline is.
-k6/tools/tr3_surface.py
-k6/tools/selftest_tr3_offline.py
-k6/tools/nvfp4-evidence/official-nonrouted-names.json
+engines/tools/tr3_surface.py
+engines/tools/selftest_tr3_offline.py
+engines/tools/nvfp4-evidence/official-nonrouted-names.json
 # Community MLX affine snapshots (stream_score.py --source mlx). The evidence
 # dir travels with it: bf16-shape-census.json.gz is the architecture yardstick
 # every derived (bits, group_size) is checked against, and the adapter REFUSES
 # to load without it.
-k6/tools/mlx_surface.py
-k6/tools/mlx-evidence/bf16-shape-census.json.gz
+engines/tools/mlx_surface.py
+engines/tools/mlx-evidence/bf16-shape-census.json.gz
 # Community llama.cpp GGUF artifacts (stream_score.py --source gguf). The
 # adapter is self-contained at capture time: the llama.cpp->HF name map is
 # built from the GGUF's own metadata and the official side comes from --bf16,
@@ -97,33 +97,33 @@ k6/tools/mlx-evidence/bf16-shape-census.json.gz
 # refusals and the two layout audits can be re-run on the instance before a
 # paid capture (they are the checks that would otherwise decode cleanly while
 # measuring the wrong model).
-k6/tools/gguf_surface.py
-k6/tools/selftest_gguf_offline.py
+engines/tools/gguf_surface.py
+engines/tools/selftest_gguf_offline.py
 # The fill-rate harness. It ships because the number in engines.json came from
 # it and the next person to doubt that number should be able to re-derive it on
 # their own box for a few minutes of rental, instead of taking a table on faith.
 # `--verify` is also the bitwise acceptance test between the cpu and accelerator
 # decode paths, on whole 288-expert fills of a real layer rather than a fixture.
-k6/tools/gguf_decode_bench.py
+engines/tools/gguf_decode_bench.py
 # Community NVFP4 snapshots (stream_score.py --source nvfp4). The evidence dir
 # travels with it: official-nonrouted-names.json is what turns the non-routed
 # census from a COUNT into a name BIJECTION. Without it the adapter still runs
 # (structural census) and records the weaker gate in the receipt -- so shipping
 # it is the difference between a strong claim and a disclosed weak one.
-k6/tools/nvfp4_surface.py
+engines/tools/nvfp4_surface.py
 
 # --- pipeline patch series -------------------------------------------------
 # bootstrap_measure.sh clones the quant pipeline at its pin and applies these.
 # Without them on the instance the clone stays unpatched and the reader bytes
 # differ from the ones every sealed streaming row binds.
-k6/patches-v2/SERIES
-k6/patches-v2/0001-packed-payload-parameterize-stored-bits.patch
-k6/patches-v2/0002-direct-k4-worker-slots-and-choice-bits.patch
-k6/patches-v2/0003-uniform-k4-h200-worker-admission.patch
-k6/patches-v2/0004-uniform-k6-state-receipt-field-fix.patch
-k6/patches-v2/0005-add-glm53-k6-postmtp-receipts-module.patch
-k6/patches-v2/0006-reader-ep-size-env.patch
-k6/patches-v2/0008-v31-allowed-bits-k6-k8.patch
+engines/patches-v2/SERIES
+engines/patches-v2/0001-packed-payload-parameterize-stored-bits.patch
+engines/patches-v2/0002-direct-k4-worker-slots-and-choice-bits.patch
+engines/patches-v2/0003-uniform-k4-h200-worker-admission.patch
+engines/patches-v2/0004-uniform-k6-state-receipt-field-fix.patch
+engines/patches-v2/0005-add-glm53-k6-postmtp-receipts-module.patch
+engines/patches-v2/0006-reader-ep-size-env.patch
+engines/patches-v2/0008-v31-allowed-bits-k6-k8.patch
 
 # --- receipt derivation ---------------------------------------------------
 # Uploaded so that comparability.key and scope_digest are computed on the
@@ -176,19 +176,31 @@ bin/fidelity_dataset.py
 bin/fidelity/dsformat.py
 bin/fidelity/dsmanifest.py
 bin/fidelity/dsvalidate.py
+# dsvalidate's DATA, and it is not optional: `fidelity_dataset.py capture` ends
+# in a postcondition that validates the manifest it just wrote, and that reads
+# every schema in docs/schema/ through _minischema.Registry -- which does
+# os.listdir on the DIRECTORY, so a missing one is FileNotFoundError, not a
+# skipped check. Found by a containerised root capture on a bundle-only tree:
+#     FileNotFoundError: .../fidelity/docs/schema
+# after the bootstrap, the fetch and the capture itself had all been paid for.
+# Same class as the gguf-evidence entries above -- a bundled script's DATA is a
+# dependency too.
+docs/schema/fidelity-dataset.schema.json
+docs/schema/fidelity-card-annotation.schema.json
+docs/schema/fidelity-comparison-receipt.schema.json
 bin/fidelity/dsadapt.py
 bin/fidelity/dscompare.py
 bin/fidelity/dshub.py
 bin/fidelity/k3compat.py
 bin/fidelity/cardmeta.py
-k6/tools/hf_capture.py
-k6/tools/layer_outer.py
+engines/tools/hf_capture.py
+engines/tools/layer_outer.py
 # Race mode (docs/RACE-MODE.md): the priority-ordered background fetch the
 # layer-outer loader blocks on, and the generation sanity probe every capture
 # runs. Both are imported by hf_capture.py at module scope, so a missing entry
 # here is an ImportError at hour zero of a rented capture.
-k6/tools/race_fetch.py
-k6/tools/generation_probe.py
+engines/tools/race_fetch.py
+engines/tools/generation_probe.py
 
 # --- gguf evidence -------------------------------------------------------
 # bootstrap_measure.sh RUNS selftest_gguf_offline.py at setup, fail-closed,
@@ -197,39 +209,39 @@ k6/tools/generation_probe.py
 # controller reporting nothing but 'stage setup' while the box billed.
 # 2.5 MB total; the alternative (skip the check when its data is absent)
 # would silently disarm a gate somebody added on purpose.
-k6/tools/gguf-evidence/ddh0-tensors.json
-k6/tools/gguf-evidence/dequant_q4_k_blocks.npy
-k6/tools/gguf-evidence/dequant_q4_k_ggufpy_ref.npy
-k6/tools/gguf-evidence/dequant_q5_k_blocks.npy
-k6/tools/gguf-evidence/dequant_q5_k_ggufpy_ref.npy
-k6/tools/gguf-evidence/dequant_q6_k_blocks.npy
-k6/tools/gguf-evidence/dequant_q6_k_ggufpy_ref.npy
-k6/tools/gguf-evidence/dequant_q8_0_blocks.npy
-k6/tools/gguf-evidence/dequant_q8_0_ggufpy_ref.npy
-k6/tools/gguf-evidence/manifest.json
-k6/tools/gguf-evidence/mla-full-audit.json
-k6/tools/gguf-evidence/mla_k_b_head_window.npy
-k6/tools/gguf-evidence/mla_official_row_window_bf16.npy
-k6/tools/gguf-evidence/mla_v_b_head_window.npy
-k6/tools/gguf-evidence/pins.json
-k6/tools/gguf-evidence/udq4kxl-decode-device-a100.jsonl
-k6/tools/gguf-evidence/udq4kxl-decode-timings-a100.jsonl
-k6/tools/gguf-evidence/udq4kxl-scope.json
-k6/tools/gguf-evidence/unsloth-build-census.json
-k6/tools/gguf-evidence/unsloth-udq4kxl-kv.json
-k6/tools/gguf-evidence/unsloth-udq4kxl-tensors.json
+engines/tools/gguf-evidence/ddh0-tensors.json
+engines/tools/gguf-evidence/dequant_q4_k_blocks.npy
+engines/tools/gguf-evidence/dequant_q4_k_ggufpy_ref.npy
+engines/tools/gguf-evidence/dequant_q5_k_blocks.npy
+engines/tools/gguf-evidence/dequant_q5_k_ggufpy_ref.npy
+engines/tools/gguf-evidence/dequant_q6_k_blocks.npy
+engines/tools/gguf-evidence/dequant_q6_k_ggufpy_ref.npy
+engines/tools/gguf-evidence/dequant_q8_0_blocks.npy
+engines/tools/gguf-evidence/dequant_q8_0_ggufpy_ref.npy
+engines/tools/gguf-evidence/manifest.json
+engines/tools/gguf-evidence/mla-full-audit.json
+engines/tools/gguf-evidence/mla_k_b_head_window.npy
+engines/tools/gguf-evidence/mla_official_row_window_bf16.npy
+engines/tools/gguf-evidence/mla_v_b_head_window.npy
+engines/tools/gguf-evidence/pins.json
+engines/tools/gguf-evidence/udq4kxl-decode-device-a100.jsonl
+engines/tools/gguf-evidence/udq4kxl-decode-timings-a100.jsonl
+engines/tools/gguf-evidence/udq4kxl-scope.json
+engines/tools/gguf-evidence/unsloth-build-census.json
+engines/tools/gguf-evidence/unsloth-udq4kxl-kv.json
+engines/tools/gguf-evidence/unsloth-udq4kxl-tensors.json
 
 # exl3hf evidence (32 KB) -- exl3hf_surface.py names it and the setup-time
 # selftest reads it; cheap enough to always ship.
-k6/tools/exl3hf-evidence/local-decode-audit.json
-k6/tools/exl3hf-evidence/scope-turbo-2.05bpw.derivation.json
-k6/tools/exl3hf-evidence/scope-turbo-2.05bpw.json
-k6/tools/exl3hf-evidence/scope-turbo-3.05bpw.json
-k6/tools/exl3hf-evidence/scope-turbo-4.05bpw.json
+engines/tools/exl3hf-evidence/local-decode-audit.json
+engines/tools/exl3hf-evidence/scope-turbo-2.05bpw.derivation.json
+engines/tools/exl3hf-evidence/scope-turbo-2.05bpw.json
+engines/tools/exl3hf-evidence/scope-turbo-3.05bpw.json
+engines/tools/exl3hf-evidence/scope-turbo-4.05bpw.json
 
 # Two small files out of dione-evidence/ (187 MB), because
 # selftest_gguf_offline.py -- which bootstrap RUNS at setup, fail-closed --
 # reads them. Shipping the whole directory would cost more than the bug it
 # prevents; shipping the two it opens costs kilobytes.
-k6/tools/dione-evidence/bf16-config.json
-k6/tools/dione-evidence/bf16-index.json
+engines/tools/dione-evidence/bf16-config.json
+engines/tools/dione-evidence/bf16-index.json

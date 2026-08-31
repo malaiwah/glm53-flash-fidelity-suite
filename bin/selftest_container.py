@@ -113,7 +113,7 @@ CONTAINER_OMITS = {
 
 
 def _plan_data():
-    panel_dir = SUITE / "k6" / "panels" / "panel--minimaxm3.malaiwah.corpus5x5"
+    panel_dir = SUITE / "engines" / "panels" / "panel--minimaxm3.malaiwah.corpus5x5"
     return panel_dir, {
         "job_id": "job-test",
         "profile": "k6",
@@ -336,8 +336,24 @@ def rung_bundle():
         check("C5g the .dockerignore excludes NO bundled file",
               not excluded, "would be missing from the image: %s" % excluded[:5])
         check("C5h ... while still dropping the 187 MB evidence tree",
-              dockerignored("k6/tools/dione-evidence/index-q4.json")
-              and not dockerignored("k6/tools/dione-evidence/bf16-index.json"))
+              dockerignored("engines/tools/dione-evidence/index-q4.json")
+              and not dockerignored("engines/tools/dione-evidence/bf16-index.json"))
+        # Found on a real box, not reasoned about: `fidelity_dataset.py
+        # capture` ends in a postcondition that validates the manifest it just
+        # wrote, and dsvalidate reads docs/schema/ through _minischema.Registry
+        # -- which os.listdirs the DIRECTORY, so an absent one is
+        # FileNotFoundError rather than a skipped check. A containerised root
+        # capture died there after the bootstrap, the fetch and the capture
+        # itself were all paid for. A bundled script's DATA is a dependency.
+        from fidelity import dsvalidate as DV
+        schema_rel = os.path.relpath(DV.SCHEMA_DIR, str(SUITE))
+        staged = sorted((fs / schema_rel).glob("*.json")) if (fs / schema_rel).is_dir() else []
+        check("C5j the capture stage's own validator has its schemas on a "
+              "bundle-only tree", len(staged) >= 1,
+              "%s holds nothing; dsvalidate os.listdirs it" % (fs / schema_rel))
+        check("C5k ... and the .dockerignore lets them into the image",
+              not any(dockerignored(rel) for rel in listed
+                      if rel.startswith(schema_rel + "/")))
         check("C5i ... and the 21 MB bundle.tar.gz and the venv",
               dockerignored("bundle.tar.gz") and dockerignored(".venv/bin/python")
               and dockerignored("bin/__pycache__/measure_cloud.cpython-312.pyc"))
@@ -346,13 +362,13 @@ def rung_bundle():
     with tempfile.TemporaryDirectory() as td:
         stage, out = Path(td) / "stage", Path(td) / "out"
         (stage / "bin" / "fidelity").mkdir(parents=True)
-        (stage / "k6" / "tools" / "dione-evidence").mkdir(parents=True)
+        (stage / "engines" / "tools" / "dione-evidence").mkdir(parents=True)
         (stage / "bin" / "BUNDLE.txt").write_text(
-            "# a comment\nbin/stage_measure.sh\nk6/tools/progress.py\n"
-            "k6/tools/absent_engine.py\n", encoding="utf-8")
+            "# a comment\nbin/stage_measure.sh\nengines/tools/progress.py\n"
+            "engines/tools/absent_engine.py\n", encoding="utf-8")
         (stage / "bin" / "stage_measure.sh").write_text("#!/bin/sh\n", encoding="utf-8")
-        (stage / "k6" / "tools" / "progress.py").write_text("x = 1\n", encoding="utf-8")
-        (stage / "k6" / "tools" / "dione-evidence" / "big.bin").write_text(
+        (stage / "engines" / "tools" / "progress.py").write_text("x = 1\n", encoding="utf-8")
+        (stage / "engines" / "tools" / "dione-evidence" / "big.bin").write_text(
             "y" * 1000, encoding="utf-8")
         proc = subprocess.run(
             [sys.executable, str(HERE / "container_prune.py"),
@@ -362,7 +378,7 @@ def rung_bundle():
         check("C6a exit 0", proc.returncode == 0, proc.stderr[-300:])
         check("C6b only listed files are kept",
               kept == ["bin/BUNDLE.txt", "bin/stage_measure.sh",
-                       "k6/tools/progress.py"], "%s" % kept)
+                       "engines/tools/progress.py"], "%s" % kept)
         check("C6c an absent entry is reported, not silently dropped",
               "absent_engine.py" in proc.stdout)
         check("C6d the stage script stays executable",
@@ -406,7 +422,7 @@ def rung_pin():
 
 def rung_capture_identity():
     print("[C8] recording the container must not move what the container ran")
-    sys.path.insert(0, str(SUITE / "k6" / "tools"))
+    sys.path.insert(0, str(SUITE / "engines" / "tools"))
     try:
         import hf_capture                                  # noqa: E402
     except Exception as exc:                               # noqa: BLE001
@@ -499,7 +515,7 @@ def rung_dockerfile():
 
 def rung_cli():
     print("[C10] the entrypoint mirrors the CLI and refuses rather than guesses")
-    panel_dir = SUITE / "k6" / "panels" / "panel--minimaxm3.malaiwah.corpus5x5"
+    panel_dir = SUITE / "engines" / "panels" / "panel--minimaxm3.malaiwah.corpus5x5"
     with tempfile.TemporaryDirectory() as td:
         fs = Path(td) / "run"
         argv = ["capture", "--fs-root", str(fs), "--model", "someone/root",
