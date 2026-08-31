@@ -34,6 +34,23 @@ ARG SUITE_REVISION=""
 ARG IMAGE_REFERENCE=""
 ARG DEBIAN_FRONTEND=noninteractive
 
+# MULTI-ARCH.  linux/amd64 and linux/arm64 are both real targets, because the
+# cheapest measurement hardware measured anywhere is a Grace-Hopper GH200 --
+# aarch64 -- at 0.098 ms/matrix against an A100 PCIe's 0.891, since this lane
+# is host-bandwidth-bound and NVLink-C2C is not PCIe (docs/CLOUD-COMPARISON.md).
+# An arm64 image is what makes that turnkey instead of a hand-built ARM stack.
+#
+# The pins hold on both: torch 2.11.0+cu130 publishes
+# manylinux_2_28_aarch64 as well as _x86_64, and kbnf / hf_transfer /
+# tokenizers / safetensors all ship aarch64 wheels; pydantic and formatron are
+# pure python.  Nothing in the wheel set falls back to a source build.  The one
+# x86-only artefact in the recipe is the flash-attn wheel URL, which
+# bootstrap_measure.sh fetches ONLY in the exllamav3 branch -- and that branch
+# is not taken, because the measurement path imports the pipeline without it.
+# An arm64 run that ever needs exllamav3 will have to build it; the image says
+# so rather than pretending, and container_manifest records `arch` as a PIN so
+# the two images of one tag carry different content digests.
+
 # Where the image bakes itself.  IMAGE_ROOT is FIDELITY_ENGINE_ROOT: the bootstrap
 # builds its venv at $ROOT/venv and clones the pipeline at $ROOT/pipeline, so
 # pointing that root at an image directory is what puts them in a layer.
@@ -112,6 +129,15 @@ RUN python3.12 /opt/fidelity/suite/bin/container_manifest.py \
 # 200 GB fetch on the container's own layer, which is the shape of the bug that
 # made a restarted pod skip `setup` as done while the tree it wrote had
 # evaporated.
+# OCI labels: what a puller can read without running anything.  revision is the
+# same value the receipt's produced_by will carry.
+LABEL org.opencontainers.image.title="quant-fidelity-measure" \
+      org.opencontainers.image.description="Receipt-backed quantization fidelity measurement: the stage sequence, the pinned stack, and nothing else." \
+      org.opencontainers.image.source="https://github.com/malaiwah/quant-fidelity-suite" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.revision="${SUITE_REVISION}" \
+      org.opencontainers.image.ref.name="${IMAGE_REFERENCE}"
+
 VOLUME ["/workspace"]
 ENV FIDELITY_FS_ROOT=/workspace/fidelity
 WORKDIR /workspace

@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -97,6 +98,16 @@ def main(argv=None) -> int:
     pipeline = root / "pipeline"
 
     pins, wheel_error = wheel_pins(venv_py)
+    # The ARCHITECTURE is a pin, not a label.  aarch64 and x86_64 get DIFFERENT
+    # torch wheels off the same index (manylinux_2_28_aarch64 vs _x86_64) even
+    # at one version string, and this repository has measured that the GPU
+    # model alone shifts the result (docs/ARCHITECTURE-DETERMINISM.md) -- so a
+    # receipt that cannot say which architecture produced it is missing a fact
+    # of the same class.  Recording it here means the two images of one
+    # multi-arch tag have DIFFERENT image_content_sha256 values, which is
+    # correct: they are different stacks that happen to share a tag.
+    pins["arch"] = platform.machine()
+    pins["platform"] = platform.platform(terse=True)
     code, py_version, _ = run([str(venv_py), "-c",
                                "import sys; print('.'.join(map(str, sys.version_info[:3])))"])
     pins["python"] = py_version if code == 0 else None
