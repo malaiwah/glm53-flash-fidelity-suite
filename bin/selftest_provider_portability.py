@@ -245,6 +245,88 @@ check("the x1 host is ~6x slower per window on identical silicon",
 check("cold and warm are reported separately so a ramp is visible",
       "h2d_cold_GBps" in X1 and "h2d_GBps" in X1)
 
+print("\n== the bench waits for readiness on backends that have no socket ==")
+from fidelity.bench import wait_ready                       # noqa: E402
+
+# `fidelity-bench --provider jarvislabs` advertises a fourth backend and could
+# never use it: run_bench called provider._endpoint(), which only the three SSH
+# backends have. The AttributeError landed on the line AFTER create(), so every
+# invocation rented a box, failed, and tore it down -- paying for a benchmark
+# that produced nothing. Readiness has to be asked for in a way a CLI-transport
+# provider can answer.
+
+
+class SSHish:
+    """Has an endpoint, like RunPod / Vast / Lambda."""
+
+    def __init__(self):
+        self.asked = 0
+
+    def _endpoint(self, mid, *, wait=900):
+        self.asked += 1
+        return ("1.2.3.4", 22)
+
+    def get(self, mid):                       # must NOT be consulted
+        raise AssertionError("endpoint provider must not fall back to get()")
+
+
+class CLIish:
+    """No endpoint at all, like JarvisLabs: state is the only signal.
+
+    The last state REPEATS rather than falling through to "Running": a fixture
+    that quietly becomes ready once its script runs out cannot fail the
+    never-comes-up case, and this one did not until it was made to repeat.
+    """
+
+    def __init__(self, states):
+        self._states = list(states)
+
+    def get(self, mid):
+        s = self._states.pop(0) if len(self._states) > 1 else self._states[0]
+        return inst(mid, s)
+
+
+s = SSHish()
+wait_ready(s, "pod-x", wait=5)
+check("an SSH backend is still waited on via its endpoint", s.asked == 1)
+
+check("a CLI backend with no endpoint has no _endpoint to call",
+      getattr(mc._make_provider("jarvislabs", dry=True), "_endpoint", None) is None)
+
+wait_ready(CLIish(["Running"]), 483634, wait=5, poll=0)
+check("a CLI backend that is already Running returns at once", True)
+
+wait_ready(CLIish(["Launching", "Launching", "Running"]), 483634, wait=5, poll=0)
+check("...and one that is still launching is waited for", True)
+
+try:
+    wait_ready(CLIish(["Launching"]), 483634, wait=0.01, poll=0)
+    timed_out = False
+except RuntimeError as exc:
+    timed_out = "never became ready" in str(exc)
+check("a CLI backend that never comes up raises rather than hanging", timed_out)
+
+print("\n== a detached job's liveness cannot be read from pgrep ==")
+ssh_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "fidelity", "sshbase.py"), encoding="utf-8").read()
+# "pgrep appears nowhere" is the wrong assertion: the file DOCUMENTS at length
+# why pgrep cannot work here, and that prose is the point. What must not exist
+# is pgrep inside a command this code actually sends to a machine.
+sent = [ln for ln in ssh_src.splitlines()
+        if "pgrep" in ln and ("exec" in ln or "echo RUNNING" in ln
+                              or "-f %s" in ln or "-f {" in ln)]
+check("no command sent to a machine shells out to pgrep", not sent)
+check("the wrapper records its OWN pid ($$), not the launcher's $!",
+      "echo $$ > {d}/pid" in ssh_src and "echo $! > {d}/pid" not in ssh_src)
+check("liveness is kill -0 on that pid",
+      "kill -0 $(cat {d}/pid)" in ssh_src)
+# Why not pgrep, stated so it is not "simplified" back: the probe names the run
+# DIRECTORY, which contains the plain run id, so the id is in the probe's own
+# cmdline whatever the pattern -- confirmed on procps-ng 4.0.4, where a dead
+# target answers RUNNING for both the plain and the bracketed form.
+check("...and the file explains why the bracket trick cannot work here",
+      "procps-ng" in ssh_src and "bracket" in ssh_src)
+
 print()
 if FAILED:
     print("selftest_provider_portability: %d FAILED" % len(FAILED))

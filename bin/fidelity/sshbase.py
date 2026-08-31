@@ -12,11 +12,18 @@ hard way on RunPod:
   ``wait`` only knows children of the shell that spawned them, and the subshell
   is not that shell. `run_status` then saw no exit code and reported a healthy
   job as FAILED.
-* **Liveness cannot use the recorded pid.** ``echo $!`` captures a shell that
-  forks and exits almost immediately, so the first poll after launch -- and the
-  controller polls immediately -- called a running stage dead. `pgrep -f
-  <run_id>` matches the wrapper's own command line, which is what actually
-  tracks the work.
+* **Liveness must come from a pid the WRAPPER wrote about itself.** ``echo $!``
+  captures the backgrounded shell, which forks and exits almost immediately, so
+  the first poll after launch -- and the controller polls immediately -- called
+  a running stage dead. ``pgrep -f`` is not the answer either: this probe names
+  the run directory, which is built from the plain run id, so the id is in the
+  probe's own command line no matter how the pattern is written, and the
+  bracket-class trick that works in ``measure_cloud._stage_is_alive`` cannot
+  work here. Verified on Linux with procps-ng 4.0.4: against a dead target,
+  both the plain and the bracketed pattern answer RUNNING. The wrapper writes
+  ``$$`` and ``kill -0`` reads it.
+
+
 
 A subclass supplies `_endpoint()` (host, port), `ssh_user` and `ssh_key`.
 """
@@ -140,11 +147,14 @@ class SSHTransport:
     def run_job(self, machine_id: Any, command: str) -> Any:
         run_id = "r_%d" % int(time.time() * 1000)
         d = "%s/%s" % (self.RUNS, run_id)
+        # The WRAPPER writes its own pid ($$), not the launcher's $!.
+        # `$!` is the backgrounded shell, which forks and exits almost at once,
+        # so a pid recorded that way is dead within a second of a healthy start.
         launcher = (
             "mkdir -p {d} && printf '%s' {cmd} > {d}/run.sh && "
-            "setsid sh -c 'sh {d}/run.sh > {d}/output.log 2>&1; "
+            "setsid sh -c 'echo $$ > {d}/pid; sh {d}/run.sh > {d}/output.log 2>&1; "
             "echo $? > {d}/exit_code' </dev/null >/dev/null 2>&1 & "
-            "echo $! > {d}/pid; sleep 1; echo launched {rid}"
+            "sleep 1; echo launched {rid}"
         ).format(d=d, cmd=shlex.quote(command), rid=run_id)
         self.exec(machine_id, launcher, timeout=180)
         return {"run_id": run_id, "machine_id": str(machine_id)}
@@ -153,11 +163,33 @@ class SSHTransport:
         if machine_id is None:
             raise JLError("run_status needs machine_id on this backend")
         d = "%s/%s" % (self.RUNS, run_id)
+        # Liveness comes from the WRAPPER'S OWN pid, not from pgrep.
+        #
+        # pgrep was tried and does not work here, which is worth recording
+        # because the obvious fix does not work either. `pgrep -f` matches full
+        # command lines, and this probe's own shell carries the pattern in ITS
+        # command line. measure_cloud._stage_is_alive solves that with a
+        # bracket class -- `[s]tage_measure.sh` matches the real process and not
+        # the probe, whose cmdline holds the literal brackets (JOURNAL 36/44).
+        #
+        # That trick CANNOT work here, because this command also names the run
+        # DIRECTORY, which is built from the plain run id -- so the unbracketed
+        # id is in the probe's own cmdline no matter how the pattern is
+        # written. Confirmed on Linux (procps-ng 4.0.4): with the target dead,
+        # `pgrep -f r_1788...` AND `pgrep -f '[r]_1788...'` both answer
+        # RUNNING. On macOS BSD pgrep neither does, which is why this needed a
+        # Linux box to see at all.
+        #
+        # `kill -0` on a pid the wrapper wrote about itself has no such
+        # ambiguity. It matters only when a job dies WITHOUT writing exit_code
+        # -- OOM, preemption, a reaped container -- which is exactly the branch
+        # that decides whether the controller fails in one poll or waits out
+        # --max-runtime on a billing instance.
         out = self.exec_stdout(
             machine_id,
-            "if [ -f %s/exit_code ]; then echo DONE $(cat %s/exit_code); "
-            "elif pgrep -f %s >/dev/null 2>&1; then echo RUNNING; "
-            "else echo GONE; fi" % (d, d, shlex.quote(run_id)),
+            "if [ -f {d}/exit_code ]; then echo DONE $(cat {d}/exit_code); "
+            "elif [ -f {d}/pid ] && kill -0 $(cat {d}/pid) 2>/dev/null; "
+            "then echo RUNNING; else echo GONE; fi".format(d=d),
             timeout=120).strip().split()
         if not out:
             return {"state": "unknown", "run_id": run_id}
