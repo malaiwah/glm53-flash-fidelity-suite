@@ -106,8 +106,17 @@ def main() -> int:
     extra = {
         "source": source,
         "bf16": os.environ.get("BF16", "/home/jl_fs/models/bf16"),
-        "pipeline_root": os.environ.get(
-            "QP_PIPELINE_ROOT", "/home/jl_fs/glm53-k6/pipeline"),
+        # The THIRD root that defaults to a JarvisLabs path, and the one nobody
+        # exported. FIDELITY_FS_ROOT and FIDELITY_K6_ROOT are set explicitly by
+        # the controller for exactly this reason; QP_PIPELINE_ROOT was left on a
+        # hard-coded /home/jl_fs/... default, so on any other provider the
+        # engine was handed a pipeline path that does not exist -- and found
+        # out at the START of the measure stage, i.e. after the bootstrap, the
+        # 200 GB fetch and the panel were all paid for. Derive it from the k6
+        # root the controller DID set; the env var still wins.
+        "pipeline_root": os.environ.get("QP_PIPELINE_ROOT") or (
+            "%s/pipeline" % os.environ.get("FIDELITY_K6_ROOT",
+                                           "/home/jl_fs/glm53-k6")),
     }
     if surface == "exl3hf":
         materialized = os.environ.get(

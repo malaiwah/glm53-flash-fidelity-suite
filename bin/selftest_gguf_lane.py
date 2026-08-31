@@ -193,8 +193,10 @@ def rung_argv(tmp: Path) -> None:
     }
     (tmp / "job.json").write_text(json.dumps(job), encoding="utf-8")
     env = dict(os.environ, FIDELITY_FS_ROOT="/fsroot",
+               FIDELITY_K6_ROOT="/fsroot-k6",
                FIDELITY_SUITE_ROOT=str(ROOT),
                FIDELITY_ENGINE_PYTHON=sys.executable)
+    env.pop("QP_PIPELINE_ROOT", None)
     proc = subprocess.run(
         [sys.executable, str(ROOT / "bin" / "invoke_engine.py"),
          "--job", str(tmp / "job.json"), "--lane", "streaming",
@@ -221,6 +223,16 @@ def rung_argv(tmp: Path) -> None:
           argv)
     check("--gguf-revision %s" % REV in argv and "--gguf-repo %s" % REPO in argv,
           "4g the artifact's identity is pinned on the argv")
+    # 4i is not gguf-specific and cost a live run to find. THREE roots default
+    # to JarvisLabs paths; the controller exports two of them and QP_PIPELINE_ROOT
+    # was left hard-coded, so on any other provider the engine was handed a
+    # pipeline that does not exist -- and said so at the START of the measure
+    # stage, i.e. after the bootstrap, a 200 GB fetch and the panel were all
+    # paid for. It must follow the k6 root the controller DOES set.
+    check("--pipeline-root /fsroot-k6/pipeline" in argv,
+          "4i --pipeline-root follows FIDELITY_K6_ROOT rather than defaulting "
+          "to a JarvisLabs path on a provider that is not JarvisLabs",
+          argv)
 
     # and the refusal when the plan forgot to name a build
     job["target"]["artifact_files"] = []
