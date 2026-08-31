@@ -254,6 +254,11 @@ fi
 # the accelerator dequant the capture is about to use by default, and a laptop's
 # MPS pass is evidence for CUDA, not proof of it. It runs here, before the fetch
 # and before any GPU-hour is spent on a number.
+#
+# Fail-CLOSED, and by the file's own `set -euo pipefail` rather than by anything
+# written here: `cmd | tee` propagates cmd's status under pipefail, so a decode
+# that does not reproduce the reference stops the bootstrap instead of being
+# printed into a log nobody reads until the receipt is already sealed.
 if [ -f "$FS/k6/tools/selftest_gguf_offline.py" ]; then
   log "running the gguf offline selftest (gguf-py parity + CUDA decode parity)"
   ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_gguf_offline.py \
