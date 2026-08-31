@@ -398,6 +398,63 @@ for outs, why in ((["{\"error\": \"no cuda\"}"], "no cuda forever"),
         raised = "did not measure anything" in str(exc)
     check("a receipt of zeros is REFUSED (%s)" % why, raised)
 
+print("\n== every launch is a retry loop, with backoff that is polite ==")
+import time as _time
+
+_sleeps = []
+_real_sleep = mc.time.sleep
+mc.time.sleep = lambda t: _sleeps.append(t)
+
+
+class Flaky:
+    """Capacity-fails n times, then succeeds."""
+    def __init__(self, n, msg="SUPPLY_CONSTRAINT: no longer any instances available"):
+        self.n, self.msg, self.calls = n, msg, 0
+
+    def create(self, **kw):
+        self.calls += 1
+        if self.calls <= self.n:
+            raise RuntimeError(self.msg)
+        return {"machine_id": "ok-after-%d" % self.calls}
+
+
+try:
+    _sleeps.clear()
+    got = mc._create_with_retry(Flaky(3), Con(), gpu_type="x")
+    check("capacity failures are retried to success", got["machine_id"] == "ok-after-4")
+    check("...with EXPONENTIAL backoff (each wait ~2x the last)",
+          len(_sleeps) == 3 and all(1.5 < _sleeps[i+1]/_sleeps[i] < 2.7
+                                    for i in range(len(_sleeps)-1)))
+    check("...and jitter, so fleets do not synchronise",
+          all(s % 30 != 0 for s in _sleeps))
+
+    _sleeps.clear()
+    try:
+        mc._create_with_retry(Flaky(99), Con(), attempts=3, gpu_type="x")
+        check("exhausted retries become a Refusal", False)
+    except mc.Refusal as r:
+        check("exhausted retries become a Refusal", "backoff" in str(r))
+        check("...that says $0.00 was spent",
+              any("$0.00" in a for a in (r.advice or [])))
+
+    class Broken:
+        def create(self, **kw):
+            raise RuntimeError("401 unauthorized: bad api key")
+    _sleeps.clear()
+    try:
+        mc._create_with_retry(Broken(), Con(), gpu_type="x")
+        check("a NON-capacity error is not retried", False)
+    except RuntimeError:
+        check("a NON-capacity error is not retried", _sleeps == [])
+finally:
+    mc.time.sleep = _real_sleep
+
+# A box with no working CUDA is a refusal at preflight, not an advisory: 7 of 8
+# H100-SXM5 launches in the survey billed with torch.cuda.is_available()==False.
+src_mc = open(os.path.join(here, "measure_cloud.py"), encoding="utf-8").read()
+check("preflight REFUSES a no-cuda machine",
+      '"no cuda"' in src_mc and "no working CUDA device" in src_mc)
+
 print()
 if FAILED:
     print("selftest_provider_portability: %d FAILED" % len(FAILED))

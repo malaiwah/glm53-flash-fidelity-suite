@@ -738,6 +738,65 @@ def _is_running(inst) -> bool:
         in _RUNNING_STATES
 
 
+
+# Capacity failures, as each provider actually spells them. Matched against the
+# exception TEXT because that is all a CLI-or-HTTP backend surfaces; a pattern
+# here must be specific enough not to swallow a real error (an auth failure or
+# a malformed request retried eight times is eight times as confusing).
+_CAPACITY_PATTERNS = (
+    "SUPPLY_CONSTRAINT",                  # runpod graphql
+    "no longer any instances available",  # runpod prose
+    "insufficient-capacity",              # lambda
+    "insufficient capacity",
+    "no capacity",
+    "out of stock",
+    "no rentable",                        # vast search came back empty
+)
+
+
+def _create_with_retry(jl, con: Console, *, attempts: int = 6,
+                       base_wait: float = 30.0, max_wait: float = 600.0, **kw):
+    """Create an instance, riding out capacity gaps with exponential backoff.
+
+    Capacity is a property of the MINUTE, not of the plan: the provider survey
+    measured GH200 present in 12% of polls and healthy in 3 of 8 launches, two
+    H100 types under 25%, and RunPod answering SUPPLY_CONSTRAINT for pairings
+    its own catalogue advertised. Michel's rule, and it generalises: every
+    launch is a retry loop, on every provider -- with exponential backoff plus
+    jitter, because a fleet of controllers hammering a capacity-starved API at
+    a fixed cadence is how a shortage becomes an outage. Backoff is manners,
+    not just resilience.
+
+    Only capacity-shaped failures retry. Anything else -- auth, a bad GPU id,
+    a malformed request -- raises immediately, because retrying a mistake six
+    times just delays reading the error.
+    """
+    import random
+
+    last = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return jl.create(**kw)
+        except Exception as exc:                          # noqa: BLE001
+            text = str(exc)
+            if not any(pat.lower() in text.lower() for pat in _CAPACITY_PATTERNS):
+                raise
+            last = exc
+            if attempt == attempts:
+                break
+            wait = min(max_wait, base_wait * (2 ** (attempt - 1)))
+            wait *= random.uniform(0.8, 1.2)
+            con.warn("no capacity (attempt %d/%d): %s -- retrying in %.0fs"
+                     % (attempt, attempts, redact(text)[:120], wait))
+            time.sleep(wait)
+    raise Refusal(
+        "no capacity after %d attempts with exponential backoff" % attempts,
+        ["last answer: %s" % redact(str(last))[:200],
+         "The provider is out of this GPU right now; the plan is unchanged.",
+         "Re-run to keep trying, pick another GPU, or another provider.",
+         "Nothing was created. $0.00 spent."])
+
+
 def _stage_env(td: "Teardown") -> str:
     """The two roots every stage script reads, as an inline env prefix.
 
@@ -2131,7 +2190,7 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
                  % (td.fs_id, plan_data["storage_gb"], region))
         created = None
         try:
-            created = jl.create(
+            created = _create_with_retry(jl, con,
                 gpu_type=chosen["gpu_type"], num_gpus=chosen["gpus"],
                 spot=args.spot, region=region, fs_id=td.fs_id,
                 # 100 GB is right ONLY where the big disk is a separate
@@ -2470,6 +2529,17 @@ def _preflight_bench(args, con, jl, td, plan_data) -> None:
         # threshold was set, and the run itself is the thing being protected.
         con.warn("preflight benchmark skipped: %s" % redact(str(exc))[:200])
         return
+    if doc.get("error") == "no cuda":
+        # Not an advisory: seven of eight Lambda H100-SXM5 launches in the
+        # provider survey came up with a healthy nvidia-smi and
+        # torch.cuda.is_available() == False (CUDA error 802). A box that
+        # cannot see its GPU cannot measure anything; failing here costs the
+        # setup stage, staying costs the whole deadline.
+        raise Refusal(
+            "the rented machine has no working CUDA device "
+            "(torch.cuda.is_available() is False while the instance bills)",
+            ["This is a per-host fault, not a plan fault -- teardown runs "
+             "next; re-run to draw a different host."])
     plan_data["preflight_bench"] = doc
     link = (doc.get("pcie_load") or {}).get("text", "?")
     con.ok("machine measured",
