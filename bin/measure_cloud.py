@@ -838,6 +838,49 @@ class Refusal(RuntimeError):
         super().__init__(reason)
 
 
+def gate_verified(plan: Dict[str, Any], gate: str, **detail) -> None:
+    """Record a mandatory gate's positive verdict, distinctly (P1-11)."""
+    plan.setdefault("gates", {})[gate] = dict({"status": "verified"}, **detail)
+
+
+def gate_failed(plan: Dict[str, Any], gate: str, reason: str) -> None:
+    plan.setdefault("gates", {})[gate] = {"status": "failed", "reason": reason}
+
+
+def gate_not_checked(con, plan: Dict[str, Any], args, gate: str,
+                     reason: str) -> None:
+    """A MANDATORY gate that could not run is a verdict of its own (P1-11).
+
+    The old shape -- warn and continue -- let an import failure or a network
+    blip wear a passing gate's clothes: the planner then said "all checks
+    passed" about an artifact whose seal nobody recomputed, and the user
+    rented hardware the gate existed to protect.  `not_checked` is neither
+    `verified` nor `failed`:
+
+      * a REAL run refuses -- renting on an unchecked mandatory gate is the
+        exact spend the gate exists to prevent;
+      * a --dry-run continues, but the plan is downgraded to ESTIMATE-ONLY,
+        the summary names every unchecked gate, and the "all checks passed"
+        line is never printed.
+    """
+    plan.setdefault("gates", {})[gate] = {"status": "not_checked",
+                                          "reason": reason}
+    plan.setdefault("gates_not_checked", []).append(gate)
+    plan["estimate_only"] = True
+    if getattr(args, "dry_run", False):
+        con.warn("gate '%s' NOT CHECKED: %s" % (gate, reason))
+        con.warn("  the plan is now ESTIMATE-ONLY: this is a verdict about "
+                 "the check, not about the artifact")
+    else:
+        raise Refusal(
+            "mandatory gate '%s' could not be checked: %s" % (gate, reason),
+            ["A gate that cannot run is not a gate that passed (P1-11): "
+             "renting on an unchecked gate is the spend it exists to prevent.",
+             "Fix the cause (network, or the engines/tools import) and re-run;",
+             "--dry-run produces a visibly estimate-only plan meanwhile.",
+             "Nothing was created. $0.00 spent."])
+
+
 def would_refuse(con, plan: Dict[str, Any], refusal: "Refusal") -> None:
     """Record a dry-run refusal AND print the remedy that goes with it.
 
@@ -1379,7 +1422,7 @@ def _refuse_scope_contradicted_by_release(con: Console, repo_id: str,
 
 
 def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
-                     plan: Dict[str, Any]) -> None:
+                     plan: Dict[str, Any], *, args) -> None:
     """Recompute the release's OWN seal from its metadata, before renting.
 
     A TR3-published release is the one third-party surface in this suite that
@@ -1400,7 +1443,9 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
     try:
         import tr3_surface as tr3s
     except Exception as exc:                             # noqa: BLE001
-        con.warn("seal gate skipped: %s" % redact(str(exc)))
+        gate_not_checked(con, plan, args, "tr3-seal",
+                         "engines/tools/tr3_surface not importable: %s"
+                         % redact(str(exc)))
         return
     import tempfile
 
@@ -1410,7 +1455,9 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
         blobs = {name: fetch_file(repo_id, name, revision=revision)
                  for name in ("config.json", tr3s.ABI_FILE, tr3s.MATERIALIZATION_FILE)}
     except HFError as exc:
-        con.warn("seal gate skipped: %s" % redact(str(exc)))
+        gate_not_checked(con, plan, args, "tr3-seal",
+                         "could not fetch the release's seal metadata: %s"
+                         % redact(str(exc)))
         return
     with tempfile.TemporaryDirectory(prefix="tr3-seal-") as tmp:
         root = Path(tmp)
@@ -1427,6 +1474,7 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
                 config_path=root / "config.json",
                 index_path=root / "model.safetensors.index.json")
         except ValueError as exc:
+            gate_failed(plan, "tr3-seal", redact(str(exc)))
             raise Refusal(
                 "this release's PUBLISHED seal does not reproduce",
                 [redact(str(exc)),
@@ -1450,12 +1498,13 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
         "planned": seal["materialization"]["native_tensor_count"],
         "missing": 0, "duplicated": 0,
     }
+    gate_verified(plan, "tr3-seal", checks_passed=passed)
     con.ok("published seal", "%d/%d claims recomputed from the release's own bytes"
            % (passed, len(seal["checks"])))
 
 
 def _verify_gguf_readable(con: Console, repo_id: str, revision: str,
-                          surface, plan: Dict[str, Any]) -> None:
+                          surface, plan: Dict[str, Any], *, args) -> None:
     """Prove the chosen build's ggml types are decodable, from its own headers.
 
     This gate exists because the obvious shortcut is wrong. A build's NAME
@@ -1484,9 +1533,9 @@ def _verify_gguf_readable(con: Console, repo_id: str, revision: str,
     try:
         import gguf_surface as ggs
     except Exception as exc:                             # noqa: BLE001
-        con.warn("gguf readability gate skipped: %s" % redact(str(exc)))
-        con.warn("  the build's ggml types will not be checked until the "
-                 "instance runs census -- after the fetch is paid for")
+        gate_not_checked(con, plan, args, "gguf-readability",
+                         "engines/tools/gguf_surface not importable: %s"
+                         % redact(str(exc)))
         return
     urls = ["%s/%s/resolve/%s/%s" % (HF_ENDPOINT, repo_id, revision, name)
             for name, _ in surface.artifact_files]
@@ -1494,6 +1543,7 @@ def _verify_gguf_readable(con: Console, repo_id: str, revision: str,
         loaded = ggs.load_gguf_surface(urls, repo=repo_id, revision=revision,
                                        require_file_hashes=False)
     except ValueError as exc:
+        gate_failed(plan, "gguf-readability", redact(str(exc)))
         raise Refusal(
             "this GGUF build cannot be decoded by gguf_surface v1",
             [redact(str(exc)),
@@ -1507,7 +1557,9 @@ def _verify_gguf_readable(con: Console, repo_id: str, revision: str,
              "proof (engines/tools/selftest_gguf_offline.py), not skipping tensors.",
              "Nothing was created. $0.00 spent."])
     except Exception as exc:                             # noqa: BLE001
-        con.warn("gguf readability gate skipped: %s" % redact(str(exc)))
+        gate_not_checked(con, plan, args, "gguf-readability",
+                         "gguf_surface could not read the build: %s"
+                         % redact(str(exc)))
         return
     summary = ggs.surface_summary(loaded)
     try:
@@ -1516,7 +1568,9 @@ def _verify_gguf_readable(con: Console, repo_id: str, revision: str,
                               revision=OFFICIAL_BF16_REVISION)["weight_map"]
         bijection = ggs.verify_nonrouted_bijection(loaded.census, official.keys())
     except (HFError, ValueError) as exc:
-        con.warn("gguf non-routed bijection skipped: %s" % redact(str(exc)))
+        gate_not_checked(con, plan, args, "gguf-bijection",
+                         "official non-routed index unavailable: %s"
+                         % redact(str(exc)))
         bijection = None
     if bijection is not None and not bijection.get("bijection_ok"):
         raise Refusal(
@@ -1528,6 +1582,9 @@ def _verify_gguf_readable(con: Console, repo_id: str, revision: str,
              "model, so a name the container does not carry would be randomly "
              "initialised and the number would describe a model nobody has.",
              "Nothing was created. $0.00 spent."])
+    gate_verified(plan, "gguf-readability")
+    if bijection is not None and bijection.get("bijection_ok"):
+        gate_verified(plan, "gguf-bijection")
     plan.setdefault("target", {})["gguf_verification"] = {
         "verified": True,
         "architecture": summary.get("architecture"),
@@ -1798,6 +1855,12 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                  "Nothing was created. $0.00 spent."])
         con.warn("cannot reach Hugging Face (%s); dry run continues with the "
                  "pinned GLM-5.3-Flash census" % exc)
+        # Every surface/seal/lane/profile gate below keys off the resolved
+        # target, so NONE of them will run: this plan is an estimate and must
+        # say so instead of ending in "all checks passed" (P1-11).
+        gate_not_checked(con, plan, args, "target-resolution",
+                         "Hugging Face unreachable; the pinned census stands "
+                         "in for the real repo")
         target, offline = None, True
 
     if target is not None:
@@ -1856,10 +1919,11 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                 read_json(args.scope_json) if getattr(args, "scope_json", None) else None,
                 plan)
         if surface.surface == "tr3-published" and not surface.problems:
-            _verify_tr3_seal(con, target.repo_id, target.revision, plan)
+            _verify_tr3_seal(con, target.repo_id, target.revision, plan,
+                             args=args)
         if surface.surface == "gguf" and not surface.problems:
             _verify_gguf_readable(con, target.repo_id, target.revision,
-                                  surface, plan)
+                                  surface, plan, args=args)
         if surface.problems:
             # "no adapter" and "you must pick one" are different verdicts and
             # the second one used to wear the first one's headline. A GGUF
@@ -3460,6 +3524,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             for b in blockers:
                 con.say("  - %s" % b)
             return EXIT_REFUSED
+        not_checked = plan_data.get("gates_not_checked") or []
+        if plan_data.get("estimate_only") or not_checked:
+            con.say("")
+            con.say("ESTIMATE ONLY -- %d mandatory gate(s) went UNCHECKED: %s"
+                    % (len(not_checked), ", ".join(not_checked) or "?"))
+            con.say("The numbers above are estimates, not approvals. A real "
+                    "run REFUSES until every mandatory gate verifies.")
+            return EXIT_OK
         con.say("all checks passed; a real run would proceed to the confirmation prompt.")
         return EXIT_OK
 

@@ -118,6 +118,13 @@ t "ssh per-run TOFU host keys (T21: K1-K6)" \
 # the real run's mutations. Mocked provider, $0.00.
 t "reaper: lease-authorized, confirmed, faithful dry-run (T22: P1-P8)" \
                                            0 python3 bin/selftest_reaper.py
+# T23. Mandatory gates are tri-state (P1-11): verified / failed / not_checked.
+# An import failure or network blip used to warn-and-continue, and the dry
+# run then ended in "all checks passed" about a seal nobody recomputed. Now a
+# real run refuses on not_checked; a dry run visibly downgrades to
+# ESTIMATE ONLY. G5 forces offline via a closed local port -- no network.
+t "seal gates fail closed, offline dry-run is estimate-only (T23: G1-G5)" \
+                                           0 python3 bin/selftest_seal_gate.py
 # T14. The progress meter. Both capture engines print one line at the start and
 # one at the end, which on the streaming lane is a 2-3 hour silence in a stage
 # log that looks exactly like a hang. The rungs that matter are the ones about
