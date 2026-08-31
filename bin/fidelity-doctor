@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""fidelity-doctor -- is THIS machine ready to run a measurement? One command.
+
+    bin/fidelity-doctor
+
+Read-only, offline, $0.00, and it never prints a secret: credentials are
+reported as present/absent with their source, never their value. Each check
+names its remedy, so a first-time contributor can go from a fresh clone to a
+clean `bin/measure-cloud --dry-run` without reading four documents.
+
+This is a THIN wrapper: every check delegates to the same code the runners
+use (`fidelity.hfmeta.hf_token`, each provider's `available()`,
+`measure_cloud.reaper_installed`, `fidelity.engines.load_engines`), so doctor
+and runner cannot disagree. The heavier verifications stay where they are and
+are pointed at, not duplicated: `bin/measure-local --selftest` (fit + decode
+parity), `bin/measure-local --probe-engines` (engine flags), `bash
+bin/selftest_all.sh` (everything), and `docker run <image> doctor` for the
+container image's own view.
+
+Exit 0: a $0.00 dry-run can run from here. Exit 1: it cannot, and the output
+says exactly why.
+"""
+
+import os
+import shutil
+import sys
+from pathlib import Path
+
+SUITE_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SUITE_ROOT / "bin"))
+
+hard_failures = []
+warnings = []
+
+
+def ok(name, detail=""):
+    print("  OK    %-34s %s" % (name, detail))
+
+
+def warn(name, detail, remedy):
+    print("  WARN  %-34s %s" % (name, detail))
+    print("        remedy: %s" % remedy)
+    warnings.append(name)
+
+
+def fail(name, detail, remedy):
+    print("  FAIL  %-34s %s" % (name, detail))
+    print("        remedy: %s" % remedy)
+    hard_failures.append(name)
+
+
+def main():
+    print("fidelity-doctor  (read-only; no network calls; no secret is printed)")
+    print()
+
+    # -- interpreter (bin/ and registry/ run on stock python3.9+) ----------
+    v = sys.version_info
+    if (v.major, v.minor) >= (3, 9):
+        ok("python", "%d.%d.%d at %s" % (v.major, v.minor, v.micro, sys.executable))
+    else:
+        fail("python", "%d.%d < 3.9" % (v.major, v.minor),
+             "bin/ tools need python >= 3.9 (stock, no pip installs)")
+
+    # -- suite entrypoints -------------------------------------------------
+    missing = [t for t in ("measure", "measure-local", "measure-cloud",
+                           "registry-submit", "registry-view")
+               if not os.access(str(SUITE_ROOT / "bin" / t), os.X_OK)]
+    if not missing:
+        ok("suite entrypoints", "measure / measure-local / measure-cloud / "
+                                "registry-submit / registry-view")
+    else:
+        fail("suite entrypoints", "not executable: %s" % ", ".join(missing),
+             "clone the suite repo intact; chmod +x bin/*")
+
+    # -- engine pins -------------------------------------------------------
+    try:
+        from fidelity.engines import load_engines
+        engines = load_engines()
+        unpinned = sorted(l for l, e in engines.items() if not e.pinned)
+        if not unpinned:
+            ok("engine pins", "%d lanes, all pinned (deep check: "
+                              "bin/measure-local --probe-engines)" % len(engines))
+        else:
+            fail("engine pins", "unpinned lanes: %s" % ", ".join(unpinned),
+                 "an unpinned lane refuses to plan; see bin/engines.json")
+    except Exception as exc:                                  # noqa: BLE001
+        fail("engine pins", "cannot load bin/engines.json: %s" % exc,
+             "restore bin/engines.json from the repo")
+
+    # -- registry (offline clone fallback) ---------------------------------
+    data = SUITE_ROOT / "registry" / "data" / "measurements.jsonl"
+    if data.is_file():
+        ok("registry clone", "local data present (runners also try the "
+                             "public HF dataset first)")
+    else:
+        warn("registry clone", "registry/data/measurements.jsonl not found",
+             "clone the full suite repo; the runners can still use the "
+             "public HF dataset when the network is up")
+
+    # -- HF auth (needed for gated/private repos and faster transfer) ------
+    from fidelity.hfmeta import hf_token
+    tok = hf_token()   # registers redaction; NEVER printed
+    if tok:
+        src = ("env HF_TOKEN/HUGGING_FACE_HUB_TOKEN"
+               if (os.environ.get("HF_TOKEN")
+                   or os.environ.get("HUGGING_FACE_HUB_TOKEN"))
+               else "cached login (~/.cache/huggingface/token)")
+        ok("hugging face auth", "token found via %s (value not shown)" % src)
+    else:
+        warn("hugging face auth", "no token in env or cache",
+             "public repos work without one; for gated repos: "
+             "`hf auth login` or export HF_TOKEN=$(cat ~/.hf_token)")
+
+    # -- provider credentials (any ONE unlocks the cloud recipe) -----------
+    providers = []
+    for name, mod, cls, remedy in (
+        ("jarvislabs", "fidelity.jlapi", "JL",
+         "uv tool install jarvislabs && jl setup --token <token> --yes "
+         "(or export JL_API_KEY=...)"),
+        ("runpod", "fidelity.runpodapi", "RunPod",
+         "export RUNPOD_KEY_FILE=~/.runpod_key  (0600, key on one line)"),
+        ("vast", "fidelity.vastapi", "Vast",
+         "export VAST_KEY_FILE=~/.vast_key  (0600, key on one line)"),
+        ("lambda", "fidelity.lambdaapi", "LambdaCloud",
+         "export LAMBDA_KEY_FILE=~/.lambda_key  (0600, key on one line)"),
+    ):
+        try:
+            import importlib
+            avail = getattr(importlib.import_module(mod), cls)().available()
+        except Exception:                                     # noqa: BLE001
+            avail = False
+        providers.append((name, avail, remedy))
+    have = [n for n, a, _ in providers if a]
+    if have:
+        ok("cloud provider credential", "available: %s" % ", ".join(have))
+    else:
+        warn("cloud provider credential", "none of jarvislabs/runpod/vast/"
+             "lambda has a usable credential",
+             "any ONE unlocks bin/measure-cloud -- see docs/CLOUD-RECIPES.md "
+             "§1; e.g. " + providers[0][2])
+
+    # -- SSH key (RunPod/Vast inject it; Lambda attaches by account name) --
+    pub = Path.home() / ".ssh" / "id_ed25519.pub"
+    if pub.is_file():
+        ok("ssh public key", str(pub) + "  (RunPod/Vast inject it at create; "
+           "Lambda needs the key registered in its console)")
+    else:
+        warn("ssh public key", "~/.ssh/id_ed25519.pub not found",
+             "ssh-keygen -t ed25519   (needed for RunPod/Vast/Lambda; "
+             "JarvisLabs uses the jl CLI instead)")
+
+    # -- lease reaper (required before any cloud run over 2h) --------------
+    try:
+        import measure_cloud
+        installed = measure_cloud.reaper_installed()
+    except Exception:                                         # noqa: BLE001
+        installed = None
+    if installed:
+        ok("lease reaper", "installed (the teardown backstop when this "
+                           "machine dies mid-run)")
+    elif installed is None:
+        warn("lease reaper", "could not consult measure_cloud",
+             "run: bin/measure-cloud reaper --install")
+    else:
+        warn("lease reaper", "not installed",
+             "bin/measure-cloud reaper --install  -- the runner refuses any "
+             "run over 2h without it")
+
+    # -- FIDELITY_PYTHON (local execute / preview scoring only) ------------
+    fpy = os.environ.get("FIDELITY_PYTHON")
+    if fpy:
+        torch_ok = os.system(
+            '"%s" -c "import torch" >/dev/null 2>&1' % fpy) == 0
+        if torch_ok:
+            ok("local torch env", "FIDELITY_PYTHON=%s imports torch" % fpy)
+        else:
+            warn("local torch env", "FIDELITY_PYTHON=%s cannot import torch" % fpy,
+                 "python3 -m venv ~/.venvs/fidelity && ~/.venvs/fidelity/bin/pip "
+                 "install torch safetensors numpy huggingface_hub")
+    else:
+        warn("local torch env", "FIDELITY_PYTHON not set (only needed for "
+             "measure-local --execute and preview scoring; the CLOUD recipe "
+             "does not need torch on this machine)",
+             "python3 -m venv ~/.venvs/fidelity; pip install torch "
+             "safetensors numpy huggingface_hub; export "
+             "FIDELITY_PYTHON=~/.venvs/fidelity/bin/python3")
+
+    print()
+    if hard_failures:
+        print("NOT READY: %d hard failure(s): %s"
+              % (len(hard_failures), ", ".join(hard_failures)))
+        return 1
+    if warnings:
+        print("READY for a $0.00 dry-run; %d warning(s) above list what a "
+              "PAID or LOCAL-EXECUTE run would still need." % len(warnings))
+    else:
+        print("READY: dry-run, cloud run and local tooling checks all green.")
+    print("next: bin/measure-cloud --model <hf-repo> "
+          "--panel brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits "
+          "--lane streaming --spot --dry-run")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

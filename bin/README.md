@@ -176,11 +176,14 @@ quantization covers the whole forward rather than the routed experts alone, so
 `--path` is required and its rows are not rankable against the others. See
 [`docs/GGUF-MEASUREMENT.md`](../docs/GGUF-MEASUREMENT.md).)*
 
-So no lane can read a third-party `tr3-published` artifact, which is what a
-stranger's quant almost always is. Until a `tr3-published` reader exists,
-measuring someone else's repo is refused at plan time by the surface check
-(`engines.json` → `surfaces`), for $0.00, instead of after the rental — and
-`bin/measure` says exactly that at step 7.
+Which lane reads which surface today is deliberately **not** restated here:
+the authoritative table is the generated support matrix in
+[README → *Before you rent*](../README.md#before-you-rent-what-is-measurable-today),
+rendered from `engines.json` by `bin/render_support_matrix.py` and
+drift-checked by `bin/selftest_support_matrix.py`. A surface no lane lists is
+refused at plan time by the surface check (`engines.json` → `surfaces`), for
+$0.00, instead of after the rental — and `bin/measure` says exactly that at
+step 7.
 
 ## Adding a new engine or surface
 
@@ -227,7 +230,9 @@ block says so in its own `note`.
 | `fidelity/previewstats.py` | stratified estimator + FPC + position bootstrap (pure stdlib, unit-tested) |
 | `fidelity/jlapi.py` | the single chokepoint for every `jl` call |
 | `fidelity/engines.py`, `engines.json` | which scorer each lane invokes, how, and `preflight` |
-| `fidelity/receipt.py`, `seal_receipt.py` | build and seal a `submission-receipt.v1`; the preview/teacher denylist |
+| `fidelity/receipt.py`, `seal_receipt.py` | build and seal a `submission-receipt.v1` — written as `measurement-receipt.json`, which IS the submission receipt a contributor sends; the preview/teacher denylist |
+| `fidelity-doctor` | one read-only command: is THIS machine ready (credentials present, reaper installed, engines pinned) for a $0.00 dry-run? Prints no secret |
+| `render_support_matrix.py` | renders the README support matrix from `engines.json` (`--write`/`--check`); the end of hand-written support claims |
 | `stage_measure.sh`, `watchdog.sh`, `invoke_engine.py` | the on-instance side |
 | `BUNDLE.txt` | exactly what gets uploaded to rented hardware |
 
@@ -446,6 +451,9 @@ python3 bin/selftest_submission_refusal.py # T5: previews/teachers cannot become
 python3 bin/selftest_fidelity_dataset.py   # T6: format, seals, panel/head/lane/coverage refusals
 python3 bin/selftest_fidelity_compare.py   # T8: known-answer KLD, exact self-compare, SC-3
 python3 bin/selftest_fidelity_card.py      # T7: card annotation, 3 axes (--offline skips the Hub axis)
+python3 bin/selftest_support_matrix.py     # CX1: README support matrix == engines.json (render drift fails)
+python3 bin/selftest_readme_recipes.py     # CX2: every fenced README recipe command parses against the real CLI
+python3 bin/fidelity-doctor                # CX3: is this machine ready? read-only, prints no secret
 python3 engines/tools/stream_score_selftest.py --only g,h,i,j,k # engine-edit rungs
 bin/registry-view --selftest-live          # live dataset, keys, value tripwire
 ```

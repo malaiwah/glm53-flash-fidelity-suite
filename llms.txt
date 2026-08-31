@@ -77,7 +77,8 @@ wrong; mixing them silently is.
 
 ## Contribute a measurement
 
-- [registry/CONTRIBUTING.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/registry/CONTRIBUTING.md): what a receipt must contain, the submission template, and how you are credited. A measurement costs roughly $6–15 of rented GPU time.
+- [docs/THIRD-PARTY-QUICKSTART.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/docs/THIRD-PARTY-QUICKSTART.md): the unaided first-time path — prerequisites with install commands, `bin/fidelity-doctor` as the one verification command, a named measurable target with a pinned revision, the fail-closed dry-run, the exact spend-confirmation prompt, and the one live submission destination.
+- [registry/CONTRIBUTING.md](https://raw.githubusercontent.com/malaiwah/quant-fidelity-suite/main/registry/CONTRIBUTING.md): what a receipt must contain, the submission template, and how you are credited. A measurement costs roughly $6–15 of rented GPU time. The sealed `measurement-receipt.json` a runner writes IS the submission receipt — one noun, one file.
 - `bin/registry-submit <receipt.json>`: prints the row your receipt generates, its comparability key, and which existing rows it may be ranked against — or exactly which check it failed.
 
 ## Optional

@@ -14,13 +14,14 @@ Keep it self-contained: on HF this is often the only page a contributor reads.
    seals a submission receipt for you — `bin/measure-cloud` on a rented GPU (it
    destroys the instance for you, on every exit path, and prints the real dollar
    cost), or `bin/measure-local` on your own Mac or CUDA box. Both write the
-   receipt to `<out>/receipts/measurement-receipt.json`.
+   receipt to `<out>/receipts/measurement-receipt.json` — **that file is your
+   submission receipt**, the one and only thing you submit.
 
 2. Verify the receipt sealed correctly. Four lines, no dependencies:
 
    ```python
    import json, hashlib
-   d = json.load(open("submission.json")); claimed = d["receipt_sha256"]; d["receipt_sha256"] = ""
+   d = json.load(open("measurement-receipt.json")); claimed = d["receipt_sha256"]; d["receipt_sha256"] = ""
    canon = json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
    print(hashlib.sha256(canon.encode()).hexdigest() == claimed)   # must print True
    ```
@@ -39,7 +40,7 @@ Keep it self-contained: on HF this is often the only page a contributor reads.
    - **I am:** the measurer / also the quant's author? → measurer only
    - **Anything odd about this run:** none
 
-   <details><summary>submission.json</summary>
+   <details><summary>measurement-receipt.json</summary>
 
    ```json
    { ...paste the whole file... }
@@ -61,9 +62,10 @@ with it.
 
 **Prefer a pull request?** The GitHub mirror at
 [malaiwah/quant-fidelity-registry](https://github.com/malaiwah/quant-fidelity-registry)
-takes the same receipt as one file under `receipts/<your-handle>/`, with CI that
-checks the seal, the schema and every registry invariant before a human looks.
-Same result, more setup.
+is designed to take the same receipt as one file under
+`receipts/<your-handle>/`, with CI that checks the seal, the schema and every
+registry invariant before a human looks — but it is **not live yet** (the URL
+404s today). Until it is, the discussion above is the one working path.
 
 Full rules — mandatory fields, what gets bounced, how to register a new panel:
 **[CONTRIBUTING.md](https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/blob/main/CONTRIBUTING.md)**.

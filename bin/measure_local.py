@@ -891,15 +891,31 @@ def execute(args: argparse.Namespace, result: Dict[str, Any], con: Console,
                       "teacher per engines/SAME-LANE-TEACHER.md) -- measure-local "
                       "--execute drives packed quant sources today"})
     elif surface and engine.surfaces and surface not in engine.surfaces:
+        # Name the lanes that CAN read it from engines.json rather than
+        # restating a list by hand: a hand-written lane list here went stale
+        # twice (it still said "no lane reads tr3-published" after M2 landed
+        # the reader). README's generated support matrix is the same data.
+        readers = sorted(l for l, e in engines.items()
+                         if surface in (e.surfaces or []))
+        if readers:
+            remedy = ("no LOCAL lane reads '%s'; the %s lane%s can -- run "
+                      "bin/measure-cloud (see the support matrix in README "
+                      "'Before you rent'). This tool can still (a) report "
+                      "existing registry rows for the repo, (b) plan its cost "
+                      "-- it will not run against bytes it cannot open"
+                      % (surface, "/".join(readers),
+                         "s" if len(readers) > 1 else ""))
+        else:
+            remedy = ("no lane can read '%s' today (adding a surface is "
+                      "engine work, tracked in JOURNAL.md; see the support "
+                      "matrix in README 'Before you rent'). This tool can "
+                      "still (a) report existing registry rows for the repo, "
+                      "(b) plan its cost -- it will not rent or run against "
+                      "bytes nothing can open" % surface)
         problems.append({
             "missing": "a reader for surface %r (lane %s reads: %s)"
                        % (surface, lane, ", ".join(engine.surfaces)),
-            "remedy": "no lane can read '%s' today; the streaming lane reads "
-                      "packed, native-bf16, exl3hf and tr3-published (adding a "
-                      "surface is engine work, tracked in JOURNAL.md). This "
-                      "tool can still (a) report existing registry rows for the "
-                      "repo, (b) plan its cost -- it will not rent or run "
-                      "against bytes nothing can open" % surface})
+            "remedy": remedy})
     if not args.artifact_path:
         problems.append({
             "missing": "local artifact tree (--artifact-path)",

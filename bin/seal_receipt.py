@@ -231,7 +231,8 @@ def main() -> int:
     )
 
     write_json(args.out, doc)
-    con.ok("receipt sealed", "%s  sha256 %s" % (args.out, doc["receipt_sha256"][:16]))
+    con.ok("submission receipt sealed",
+           "%s  sha256 %s" % (args.out, doc["receipt_sha256"][:16]))
 
     if not args.no_validate:
         proc = validate_locally(suite_root, Path(args.out))

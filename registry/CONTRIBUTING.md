@@ -1,6 +1,9 @@
 # Contributing a measurement
 
-You measured a quant. Here is how to get it into the registry.
+You measured a quant. Here is how to get it into the registry. (Never done
+one? The step-by-step from a fresh clone — prerequisites, one verification
+command, a named measurable target, the exact confirmation prompt — is
+[`docs/THIRD-PARTY-QUICKSTART.md`](../docs/THIRD-PARTY-QUICKSTART.md).)
 
 **You submit exactly one file: the submission receipt your runner printed.**
 You never edit `data/*.jsonl` and you never write a registry row by hand — a
@@ -26,12 +29,17 @@ the short version:
   refuses at plan time with "has no local fetch descriptor in this checkout".
   In practice that means: a GLM-5.3-Flash quant, on brandonmusic's 25-window
   panel.
-* **The lane decides the surface.** The cloud lane reads `packed`,
-  `native-bf16`, `exl3hf`, `tr3-published` and `dione`; the local lanes read
-  only `packed` and `native-bf16`. So the local recipe cannot execute a
-  third-party quant measurement today, and MLX / GGUF / NVFP4 / AWQ / GPTQ
-  repos are refused on every lane (the decoders exist under `engines/tools/` but no
-  lane lists them).
+* **The lane decides the surface.** The authoritative lane × surface table is
+  the generated support matrix in
+  [README → *Before you rent*](../README.md#before-you-rent-what-is-measurable-today)
+  — rendered from `bin/engines.json`, never hand-written, so it cannot drift
+  from what the runners do. The shape to remember: the local lanes read
+  strictly less than the cloud one, so the local recipe cannot execute a
+  third-party quant measurement today; GGUF **is** measurable on the cloud
+  streaming lane (`--path` picks the build; whole-forward scope — see
+  `docs/GGUF-MEASUREMENT.md`); MLX / NVFP4 / AWQ / GPTQ repos are refused on
+  every lane (decoders may exist under `engines/tools/`, but a reader no lane
+  lists is not reachable).
 
 **Is it already measured?** The front gate answers this for you, and it is the
 first thing both runners do:
@@ -65,7 +73,12 @@ placeholders. Both are refused for free.
 
 ## 1. Produce the receipt
 
-Either runner seals one at the end of a run, under `<out>/receipts/`:
+Either runner seals one at the end of a run, at
+`<out>/receipts/measurement-receipt.json`. **One noun, one file:
+`measurement-receipt.json` IS your submission receipt** (schema
+`quant-fidelity-registry/submission-receipt.v1`) — older copies of these docs
+called the same object `submission.json`, and every snippet below now uses the
+filename the runner actually writes:
 
 ```bash
 # cloud -- rents a GPU, measures, tears the instance down, prints the real cost
@@ -96,7 +109,7 @@ Check it sealed correctly before you send it — four lines, no dependencies:
 
 ```python
 import json, hashlib
-d = json.load(open("submission.json")); claimed = d["receipt_sha256"]; d["receipt_sha256"] = ""
+d = json.load(open("measurement-receipt.json")); claimed = d["receipt_sha256"]; d["receipt_sha256"] = ""
 canon = json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 print(hashlib.sha256(canon.encode()).hexdigest() == claimed)   # must print True
 ```
@@ -111,7 +124,7 @@ touches git, and you can skip it.)
 ```bash
 git clone https://huggingface.co/datasets/malaiwah/quant-fidelity-registry
 cd quant-fidelity-registry
-python tools/registry_validate.py --submission ~/submission.json
+python tools/registry_validate.py --submission ~/measurement-receipt.json
 ```
 
 It prints the row it would generate, its comparability key, and its class — or
@@ -299,7 +312,7 @@ grows means nothing. New rows state their harness or are refused.
 - **I am:** the measurer / also the quant's author? → measurer only
 - **Anything odd about this run:** none
 
-<details><summary>submission.json</summary>
+<details><summary>measurement-receipt.json</summary>
 
 ```json
 { ...paste the whole file... }
@@ -308,8 +321,8 @@ grows means nothing. New rows state their harness or are refused.
 </details>
 ````
 
-That is the whole submission. Attach `submission.json` as a file too if the
-discussion editor lets you — pasted JSON is fine, we hash it either way.
+That is the whole submission. Attach `measurement-receipt.json` as a file too
+if the discussion editor lets you — pasted JSON is fine, we hash it either way.
 
 **Why this is the primary path.** The registry lives on Hugging Face, your
 artifact lives on Hugging Face, and your HF username is already the attribution
@@ -347,7 +360,7 @@ quant-fidelity-registry/
 ```bash
 git clone https://github.com/malaiwah/quant-fidelity-registry && cd quant-fidelity-registry
 mkdir -p receipts/<your-hf-handle>
-cp ~/submission.json receipts/<your-hf-handle>/glm-5.3-flash-exl3-q4.json
+cp ~/measurement-receipt.json receipts/<your-hf-handle>/glm-5.3-flash-exl3-q4.json
 git checkout -b submit/glm-5.3-flash-exl3-q4
 git add receipts/ && git commit -m "measurement: 0xSero/GLM-5.3-Flash-EXL3-Q4 on glm53-final25"
 git push origin submit/glm-5.3-flash-exl3-q4   # then open the PR

@@ -228,6 +228,20 @@ t "joint standard (known answers, canary FIRE cases, registry invariants)" \
 # wrong numbers reached them through the gap; this is the gate that closes it.
 t "doc-vs-receipt: every alignment/card number re-derived" \
                                            0 python3 bin/check_doc_numbers.py
+# CX1/CX2 (contributor-experience review 2026-08-31). The README's support
+# matrix is GENERATED from bin/engines.json (render-drift fails, same pattern
+# as registry/README) and every fenced command in the README's recipe sections
+# parses against the real CLI it names -- hand-written support claims and
+# unexecutable recipes are the two defects these pin down.
+t "support matrix: generated, current, single-source (CX1)" \
+                                           0 python3 bin/selftest_support_matrix.py
+t "README recipes: every fenced command parses; local limits stated (CX2)" \
+                                           0 python3 bin/selftest_readme_recipes.py
+# CX3: the one-command readiness probe the quickstart points at. Read-only and
+# offline; exit 0 means "a $0.00 dry-run can run from here", which is true of
+# any intact checkout -- missing credentials are warnings, not failures.
+t "fidelity-doctor: readiness probe runs clean (CX3)" \
+                                           0 python3 bin/fidelity-doctor
 t "stream_score ladder rungs g,h,i,j,k,l (teacher role / preview refusal / \
 sampling / receipt stability / source dispatch / decode-cache identity)" \
                                            0 python3 engines/tools/stream_score_selftest.py --only g,h,i,j,k,l

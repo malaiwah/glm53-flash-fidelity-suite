@@ -49,9 +49,11 @@ do not have yet.
 
 > <https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/discussions>
 > → **New discussion** → title `submission: <repo> on <panel>` → paste your
-> `submission.json`.
+> `measurement-receipt.json` (the sealed file either runner writes under
+> `<out>/receipts/` — it IS your submission receipt).
 
-A GitHub pull request against the mirror works too. Both paths, the exact
+The GitHub pull-request mirror is written but **not live yet**; until it is,
+the discussion above is the one working path. Both paths, the exact
 template, what gets bounced and how you are credited:
 [CONTRIBUTING.md](CONTRIBUTING.md). A real, sealed, schema-valid example:
 [`docs/examples/dione-q4.submission.json`](docs/examples/dione-q4.submission.json).

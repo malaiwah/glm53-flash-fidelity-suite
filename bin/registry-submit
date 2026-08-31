@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # Check a sealed receipt the way the registry will, before you send it anywhere.
 #
-#   bin/registry-submit <receipt.json>
+#   bin/registry-submit <out>/receipts/measurement-receipt.json
 #
-# Prints the row it would generate, its comparability key and class, and the
-# rows it can be ranked against -- or exactly which check it failed. Offline;
-# no installs, no network, nothing published.
+# The file both runners seal -- measurement-receipt.json -- IS your submission
+# receipt; this command validates that one file. Prints the row it would
+# generate, its comparability key and class, and the rows it can be ranked
+# against -- or exactly which check it failed. Offline; no installs, no
+# network, nothing published.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RECEIPT="${1:?usage: registry-submit <receipt.json>}"
 PY="${FIDELITY_PYTHON:-python3}"
 "$PY" "$ROOT/registry/tools/registry_validate.py" --submission "$RECEIPT"
 echo
-echo "If that said ACCEPTED, submit it -- see registry/CONTRIBUTING.md:"
-echo "  primary   open a discussion on the registry dataset and attach this file"
-echo "            https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/discussions"
-echo "  fallback  open a PR adding it at receipts/<your-hf-handle>/<slug>.json"
+echo "If that said ACCEPTED, this file is your submission receipt -- submit it"
+echo "as-is (see registry/CONTRIBUTING.md; step-by-step: docs/THIRD-PARTY-QUICKSTART.md):"
+echo "  live path  open a discussion on the registry dataset and attach this file"
+echo "             https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/discussions"
+echo "  (the GitHub PR mirror described in CONTRIBUTING §3 is NOT live yet)"
