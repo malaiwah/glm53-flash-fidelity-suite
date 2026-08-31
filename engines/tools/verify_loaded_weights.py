@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Does a loaded model hold the published bytes -- when the published bytes are QUANTIZED?
 
-What this adds to `k6/tools/verify_fused_experts.py`
+What this adds to `engines/tools/verify_fused_experts.py`
 ----------------------------------------------------
 That tool answers the same question for a BF16 root: read the raw little-endian
 bytes of each checkpoint tensor at its published offset and `memcmp` them
@@ -58,7 +58,7 @@ Coverage is stated in both directions, because either half alone is a lie:
   * every live PARAMETER must be covered by checkpoint tensors (or be named as
     a derived buffer the checkpoint never ships).
 
-The model is loaded through `k6/tools/hf_capture.load_model` -- the exact code
+The model is loaded through `engines/tools/hf_capture.load_model` -- the exact code
 path `bin/fidelity-dataset capture --engine hf-transformers` uses -- so a pass
 is a statement about the production engine.
 

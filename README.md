@@ -9,7 +9,7 @@ fixture), six storage formats, 75 published rows. Receipt-driven: every
 published number links to a JSON receipt with pinned revisions and sha256s.
 
 The suite began as a GLM-5.3-Flash program — most of the campaign material
-under [`k6/`](k6/) and [`remote/`](remote/) still is — and the measurement
+under [`engines/`](engines/) and [`remote/`](remote/) still is — and the measurement
 tooling in [`bin/`](bin/) and the registry in [`registry/`](registry/) are
 model-agnostic.
 
@@ -72,7 +72,7 @@ unquantized tree. **So the local recipes cannot today execute a measurement of
 a third-party quant**: `bin/measure` will report existing rows, plan, and
 refuse — pointing you at `bin/measure-cloud`, which can. Most third-party
 repos (MLX, GGUF, NVFP4, AWQ, GPTQ) are refused on *every* lane. Decoders for
-MLX, GGUF and NVFP4 exist under [`k6/tools/`](k6/tools/) and are bitwise-tested
+MLX, GGUF and NVFP4 exist under [`engines/tools/`](engines/tools/) and are bitwise-tested
 against their upstream libraries, but no lane in `engines.json` lists them yet,
 so the runners will not reach them.
 
@@ -110,7 +110,7 @@ answered). Rows are grouped by recomputed comparability key and split by lane
 structurally impossible. Floor-aware analysis lives in `bin/fidelity-stats`
 (the streaming lane's floor and the cross-lane refusal arithmetic), local
 preview scoring in `bin/kld-preview`; the same-lane-teacher plan that drives
-the floor to zero is [`k6/SAME-LANE-TEACHER.md`](k6/SAME-LANE-TEACHER.md).
+the floor to zero is [`engines/SAME-LANE-TEACHER.md`](engines/SAME-LANE-TEACHER.md).
 
 > **Agents:** start at [`llms.txt`](llms.txt) — a curated index plus the five rules that
 > decide whether two fidelity numbers may be compared at all. Reading it first will stop you
@@ -344,8 +344,8 @@ for what that means when you plan GPU time on GLM-5.3-Flash or Qwen3.8-27B.
 | [`docs/`](docs/) | **The fidelity dataset format v1** (the three-step split above): the [spec](docs/FIDELITY-DATASET-SPEC.md), the [HF card annotation standard](docs/CARD-ANNOTATION-SPEC.md), the [registry integration](docs/REGISTRY-INTEGRATION.md) it still needs, worked examples, and the annotation applied to our K6/K8 cards. Tooling: `bin/fidelity-dataset`, `bin/fidelity-card` |
 | [`tools/`](tools/) | The fidelity harness (vLLM hidden-state capture → shared-head replay → exact full-vocab KL), activation capture, cross-stack checker, publishers |
 | [`remote/`](remote/) | The self-driving on-VM pipeline + stage scripts used for the overnight 8×H200 capture campaign |
-| [`k6/`](k6/) | **The K6/K6K8 EXL3 quantization program** (in progress): runbook, stage driver, patch series onto [brandonmusic's pipeline](https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw), driver tools, recipes, and the disclosed [r10 codec reconstruction](k6/fallback/) |
-| [`k6/tools/`](k6/tools/) | The single-GPU **streaming scorer** (`stream_score.py`) and its weight-decode surfaces: sealed K6/K8 payloads, the official BF16 floor, third-party EXL3 (`dione_surface.py`, `exl3hf_surface.py`), and the three community-quant surfaces — Apple-silicon MLX (**[`mlx_surface.py`](k6/tools/MLX-SURFACE.md)**, bitwise vs `mlx.core.dequantize`), llama.cpp GGUF (`gguf_surface.py`, bitwise vs `gguf-py`) and NVFP4 (`nvfp4_surface.py`, bitwise vs `compressed-tensors`). Each one CENSUSES what its artifact actually quantized and the registry row discloses it: the three do not share a scope |
+| [`engines/`](engines/) | **The K6/K6K8 EXL3 quantization program** (in progress): runbook, stage driver, patch series onto [brandonmusic's pipeline](https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw), driver tools, recipes, and the disclosed [r10 codec reconstruction](engines/fallback/) |
+| [`engines/tools/`](engines/tools/) | The single-GPU **streaming scorer** (`stream_score.py`) and its weight-decode surfaces: sealed K6/K8 payloads, the official BF16 floor, third-party EXL3 (`dione_surface.py`, `exl3hf_surface.py`), and the three community-quant surfaces — Apple-silicon MLX (**[`mlx_surface.py`](engines/tools/MLX-SURFACE.md)**, bitwise vs `mlx.core.dequantize`), llama.cpp GGUF (`gguf_surface.py`, bitwise vs `gguf-py`) and NVFP4 (`nvfp4_surface.py`, bitwise vs `compressed-tensors`). Each one CENSUSES what its artifact actually quantized and the registry row discloses it: the three do not share a scope |
 | [`port/`](port/) | Design bundle for a native exllamav3 `glm5_next` architecture port (blueprint, draft, parity harness, adversarial review) |
 | [`suite/`](suite/), [`calsuite/`](calsuite/) | The held-out evaluation suite (5,120×2,048 ctx) and calibration token sets |
 | [`JOURNAL.md`](JOURNAL.md) | The captain's log: every decision, failure, cost, and 24 lessons learned |

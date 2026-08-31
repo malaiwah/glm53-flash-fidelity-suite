@@ -1,8 +1,8 @@
 # 10 tips & wishes for the next campaign (GLM-5.3-full and beyond)
 
 Distilled from the GLM-5.3-Flash K6/K8 campaign (2026-08-27/28). The full
-record: `JOURNAL.md` (27+ lessons), `k6/DECISIONS.md` (9 operator decisions),
-`k6/RUNBOOK.md`, patch series `k6/patches-v2/0001-0010`.
+record: `JOURNAL.md` (27+ lessons), `engines/DECISIONS.md` (9 operator decisions),
+`engines/RUNBOOK.md`, patch series `engines/patches-v2/0001-0010`.
 
 1. **Fixture before real weights, always.** The 0.1B random fixture
    (`inference-optimization/GLM-5.3-Flash-0.1B-A0.1B`) validated the entire

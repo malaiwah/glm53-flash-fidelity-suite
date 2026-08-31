@@ -6,7 +6,7 @@ stage, fail-closed under `set -o pipefail`. Those selftests read fixture DATA,
 and BUNDLE.txt shipped their code without it. The result was a MiniMax-M3 ROOT
 capture whose setup stage died on GGUF test fixtures:
 
-    FileNotFoundError: .../k6/tools/gguf-evidence/manifest.json
+    FileNotFoundError: .../engines/tools/gguf-evidence/manifest.json
 
 with the controller showing nothing but `stage setup` while the instance
 billed. The existing checks could not see it: one asserts every BUNDLE.txt
@@ -75,7 +75,7 @@ try:
     names = setup_selftests()
     check("bootstrap names at least one selftest", bool(names))
     for name in names:
-        script = stage / "k6" / "tools" / name
+        script = stage / "engines" / "tools" / name
         if not script.is_file():
             # Not bundled at all: bootstrap guards on the file existing, so it
             # is skipped on the instance too. That is consistent, not a gap.

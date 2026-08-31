@@ -30,7 +30,7 @@ the short version:
   `native-bf16`, `exl3hf`, `tr3-published` and `dione`; the local lanes read
   only `packed` and `native-bf16`. So the local recipe cannot execute a
   third-party quant measurement today, and MLX / GGUF / NVFP4 / AWQ / GPTQ
-  repos are refused on every lane (the decoders exist under `k6/tools/` but no
+  repos are refused on every lane (the decoders exist under `engines/tools/` but no
   lane lists them).
 
 **Is it already measured?** The front gate answers this for you, and it is the

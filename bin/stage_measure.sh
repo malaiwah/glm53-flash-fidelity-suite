@@ -10,7 +10,7 @@
 # a rebuild guard -- and is idempotent and sudo-aware, which matters because
 # containers lose apt state across a pause.
 #
-# It used to delegate to `k6/stage_campaign.sh setup` (then called stage_k6.sh)
+# It used to delegate to `engines/stage_campaign.sh setup` (then called stage_k6.sh)
 # instead; see bootstrap_measure.sh's header for the two reasons that could
 # never work.  These lines said otherwise for weeks while the code below
 # already called bootstrap_measure.sh.
@@ -99,7 +99,7 @@ case "$STAGE" in
 
 setup)
   # The measurement lane owns its bootstrap (bin/bootstrap_measure.sh).  It
-  # used to call k6/stage_campaign.sh, which (a) was never in the upload bundle and
+  # used to call engines/stage_campaign.sh, which (a) was never in the upload bundle and
   # (b) hard-stops a decode-only run on an ENCODER closure gate.  See that
   # script's header for the full reasoning.
   #
@@ -138,9 +138,9 @@ for name in ("config.json", "model.safetensors.index.json"):
 PYSKEL
   fi
   # patches-v2 ships in the upload tree; the pipeline clone expects it at $ROOT.
-  if [ -d "$FS/k6/patches-v2" ]; then
+  if [ -d "$FS/engines/patches-v2" ]; then
     mkdir -p "$ROOT/patches-v2"
-    cp -f "$FS"/k6/patches-v2/* "$ROOT/patches-v2/"
+    cp -f "$FS"/engines/patches-v2/* "$ROOT/patches-v2/"
   fi
   log "bootstrapping (measurement-only recipe)"
   bash "$FS/bin/bootstrap_measure.sh" 2>&1 | tee -a "$LOGS/setup.log"
@@ -299,11 +299,11 @@ PY
   SURFACE="$(jqget target.surface)"
   if [ "$SURFACE" = "tr3-published" ]; then
     log "verifying the release's published seal (tr3)"
-    "$VENV/bin/python" "$FS/k6/tools/tr3_surface.py" verify \
+    "$VENV/bin/python" "$FS/engines/tools/tr3_surface.py" verify \
         --root "$DEST" --repo "$REPO" --revision "$REV" \
         --shards crosscheck --out "$RCPT/artifact-seal-verification.json" \
         >/dev/null 2>>"$LOGS/fetch_target.log"
-    "$VENV/bin/python" "$FS/k6/tools/tr3_surface.py" scope \
+    "$VENV/bin/python" "$FS/engines/tools/tr3_surface.py" scope \
         --root "$DEST" --repo "$REPO" --revision "$REV" \
         --out "$RCPT/artifact-scope.json" \
         >/dev/null 2>>"$LOGS/fetch_target.log"
@@ -316,10 +316,10 @@ PY
     # The marker this writes is what `--dione-verify-shards full` requires at
     # capture time, four stages and three GPU-hours later.
     log "hashing every shard against the release manifest (dione)"
-    "$VENV/bin/python" "$FS/k6/tools/dione_surface.py" verify-shards \
+    "$VENV/bin/python" "$FS/engines/tools/dione_surface.py" verify-shards \
         --root "$DEST" > "$RCPT/artifact-shard-verification.json" \
         2>>"$LOGS/fetch_target.log"
-    "$VENV/bin/python" "$FS/k6/tools/dione_surface.py" scope \
+    "$VENV/bin/python" "$FS/engines/tools/dione_surface.py" scope \
         --root "$DEST" --repo "$REPO" --revision "$REV" \
         --out "$RCPT/artifact-scope.json" \
         >/dev/null 2>>"$LOGS/fetch_target.log"
@@ -344,7 +344,7 @@ for row in (doc.get("target") or {}).get("artifact_files") or []:
         sys.stdout.write("--file\0" + root + "/" + name + "\0")
 PY
     )
-    "$VENV/bin/python" "$FS/k6/tools/gguf_surface.py" verify-files \
+    "$VENV/bin/python" "$FS/engines/tools/gguf_surface.py" verify-files \
         "${GGUF_PARTS[@]}" > "$RCPT/artifact-file-verification.json" \
         2>>"$LOGS/fetch_target.log"
     log "parts hashed; marker written beside the build"
@@ -354,7 +354,7 @@ PY
     # twice: it records `unknown` for embeddings/attention/lm_head, which this
     # artifact quantizes and DECLARES it quantizes, and it would record the
     # dense MLPs at the build's nominal rate when they are Q8_0.
-    "$VENV/bin/python" "$FS/k6/tools/gguf_surface.py" scope \
+    "$VENV/bin/python" "$FS/engines/tools/gguf_surface.py" scope \
         "${GGUF_PARTS[@]}" --repo "$REPO" --revision "$REV" \
         --out "$RCPT/artifact-scope.json" \
         >/dev/null 2>>"$LOGS/fetch_target.log"
@@ -433,13 +433,13 @@ materialize)
     #            precision, so this decodes NOTHING; it exists because those
     #            shards also carry the 864 MTP expert tensors the streaming
     #            view filters out of the index.
-    "$VENV/bin/python" "$FS/k6/tools/dione_surface.py" materialize \
+    "$VENV/bin/python" "$FS/engines/tools/dione_surface.py" materialize \
         --root "$MODELS/target" --out "$MODELS/target-bf16-materialized" \
         --repo "$REPO" --revision "$REV" \
         --official-index "$BF16_DIR/model.safetensors.index.json" \
         2>&1 | tee -a "$LOGS/materialize.log"
   else
-  "$VENV/bin/python" "$FS/k6/tools/exl3hf_surface.py" materialize \
+  "$VENV/bin/python" "$FS/engines/tools/exl3hf_surface.py" materialize \
       --root "$MODELS/target" --out "$MODELS/target-bf16-materialized" \
       --device cuda --source-repo "$REPO" --source-revision "$REV" \
       --official-index "$BF16_DIR/model.safetensors.index.json" \

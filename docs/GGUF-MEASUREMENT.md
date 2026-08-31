@@ -7,7 +7,7 @@ first-time contributor pointing `bin/measure-cloud` at it got
 
 > this artifact cannot be read by any available surface adapter
 
-which was not true. `k6/tools/gguf_surface.py` had been bitwise-proven against
+which was not true. `engines/tools/gguf_surface.py` had been bitwise-proven against
 `gguf-py` for months, `stream_score.py --source gguf` existed,
 `kld_report.py --profile gguf` existed, and `registry_add.py` already had a
 GGUF adapter that refuses a row with no scope census. What was missing was the
@@ -233,7 +233,7 @@ whole surface rests on. The same choice costs ~7.5x per matrix against the exl3
 path's fused decode (5.2 ms). The proof and the speed are trading against each
 other, and v1 chose the proof.
 
-Raw per-fill timings: `k6/tools/gguf-evidence/udq4kxl-decode-timings-a100.jsonl`.
+Raw per-fill timings: `engines/tools/gguf-evidence/udq4kxl-decode-timings-a100.jsonl`.
 
 ## The fix: decode where the GPU already is
 
@@ -285,7 +285,7 @@ resulting **BF16 slabs** were compared: 7,247,757,312 bf16 elements per layer,
 `torch.equal`, on real UD-Q4_K_XL weights. Those slabs are literally the bytes
 the expert forward reads. If every installed weight is bit-identical then the
 forward is the same function on the same lane, and the tokenwise KLD tensor it
-produces is the same tensor. Harness: `k6/tools/gguf_decode_bench.py --verify`; raw rows, including every sweep below: `k6/tools/gguf-evidence/udq4kxl-decode-device-a100.jsonl`.
+produces is the same tensor. Harness: `engines/tools/gguf_decode_bench.py --verify`; raw rows, including every sweep below: `engines/tools/gguf-evidence/udq4kxl-decode-device-a100.jsonl`.
 
 The check that guards it from here on is `selftest_gguf_offline.py` rung 1b,
 which re-decodes the committed real ranged-fetched bytes on whatever
@@ -375,10 +375,10 @@ Adding a surface means several files agreeing, and the refusal text in
 
 | file | what it holds |
 |---|---|
-| `k6/tools/gguf_surface.py` | the reader, the dequant kernels, and `scope` — the per-class recipe measured from the container's own table |
-| `k6/tools/gguf_decode_bench.py` | the fill-rate harness and the `--verify` bitwise acceptance test between the two decode paths |
-| `k6/tools/stream_score.py` | `--source gguf` / `--profile gguf`, and the view materialization |
-| `k6/tools/k6_kld_report.py` | profile `gguf` → student label `gguf-llamacpp` (format-wide, not per-rate) |
+| `engines/tools/gguf_surface.py` | the reader, the dequant kernels, and `scope` — the per-class recipe measured from the container's own table |
+| `engines/tools/gguf_decode_bench.py` | the fill-rate harness and the `--verify` bitwise acceptance test between the two decode paths |
+| `engines/tools/stream_score.py` | `--source gguf` / `--profile gguf`, and the view materialization |
+| `engines/tools/k6_kld_report.py` | profile `gguf` → student label `gguf-llamacpp` (format-wide, not per-rate) |
 | `bin/fidelity/hfmeta.py` | the shelf: build grouping, `--path` selection, nominal rate from the name |
 | `bin/engines.json` | `surfaces` + `profile_map_by_surface["gguf"] = {"*": "gguf"}` |
 | `bin/invoke_engine.py` | the on-instance argv: every part, the inventory, the official skeleton |
@@ -396,6 +396,6 @@ Keying the profile on bits would have meant twelve identical entries claiming
 twelve different receipt families.
 
 Coverage: `bin/selftest_gguf_lane.py` (T13) walks shelf → plan → argv → fetch →
-sealed receipt, and `k6/tools/selftest_gguf_offline.py` rung 7c re-derives the
+sealed receipt, and `engines/tools/selftest_gguf_offline.py` rung 7c re-derives the
 per-class scope from the real 1,412-tensor table and checks it against the
 committed fixture, so the fixture cannot drift from the artifact.

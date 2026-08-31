@@ -1,6 +1,6 @@
 #!/bin/bash
 # On-box stage driver for the hidden-replay equivalence experiment
-# (k6/HIDDEN-REPLAY.md; Phaelon's sign-off protocol).
+# (engines/HIDDEN-REPLAY.md; Phaelon's sign-off protocol).
 #
 #   hidden_replay_stage.sh <setup|fetch|verify|run1|run2|run3|report|compare>
 #
@@ -14,7 +14,7 @@
 #   SUITE     /home/suite       git clone of malaiwah/quant-fidelity-suite
 #   PIPE      $HR_ROOT/pipeline brandonmmusic-max/glm-5.3-flash-exl3-4bpw @ pin + patches-v2 0001-0011
 #   BF16      $HR_ROOT/models/bf16       sparse non-routed tree (fetch_nonrouted_sparse.py)
-#   PACKED    $HR_ROOT/packed/k6         published K6 payload store (TR3-partsbin-v1, k6/)
+#   PACKED    $HR_ROOT/packed/k6         published K6 payload store (TR3-partsbin-v1, engines/)
 #   TEACH     $HR_ROOT/teacher           sealed 25-window teacher + token panel (scoped fetch)
 #
 # HF token: $HR_ROOT/.secrets/hf_token (0600).  Read into env, never echoed,
@@ -36,7 +36,7 @@ RUNS="$HR_ROOT/runs"
 WORK="$HR_ROOT/work"
 RCPT="$HR_ROOT/receipts"
 LOGS="$HR_ROOT/logs"
-TOOLS="$SUITE/k6/tools"
+TOOLS="$SUITE/engines/tools"
 DONE="$RCPT/done"
 
 PIPE_REPO=https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw
@@ -136,10 +136,10 @@ print('stream env OK torch', torch.__version__, 'transformers', transformers.__v
   if ! grep -q "_STORED_BITS" "$PIPE/src/quant_pipeline/checkpoint/packed_payload.py"; then
     git -C "$PIPE" checkout -q "$PIPE_PIN"
     git -C "$PIPE" diff --quiet && git -C "$PIPE" diff --cached --quiet
-    for p in "$SUITE"/k6/patches-v2/00{01,02,03,04,05,06,07,08,09,10,11}-*.patch; do
+    for p in "$SUITE"/engines/patches-v2/00{01,02,03,04,05,06,07,08,09,10,11}-*.patch; do
       ( cd "$PIPE" && patch -p1 -s < "$p" )
     done
-    ( cd "$SUITE/k6/patches-v2" && sha256sum 00*.patch SERIES ) | tee "$RCPT/patches-applied.txt"
+    ( cd "$SUITE/engines/patches-v2" && sha256sum 00*.patch SERIES ) | tee "$RCPT/patches-applied.txt"
   else
     [ "$(git -C "$PIPE" rev-parse HEAD)" = "$PIPE_PIN" ] || { echo "$PIPE HEAD is not $PIPE_PIN" >&2; exit 1; }
     grep -q "K8_RECIPE_ID" "$PIPE/src/quant_pipeline/campaign/glm53_direct_k4.py" \
@@ -162,7 +162,7 @@ fetch)
   HF="$VENV/bin/hf"
   if [ ! -f "$DONE/fetch-packed.done" ]; then
     "$HF" download "$PARTSBIN_REPO" --repo-type dataset \
-      --include "k6/*" --local-dir "$HR_ROOT/packed" --max-workers 16 \
+      --include "engines/*" --local-dir "$HR_ROOT/packed" --max-workers 16 \
       >> "$LOGS/fetch-packed.log" 2>&1
     for need in contract.json inventory.json mtp-adapter-receipt.json; do
       test -f "$PACKED/$need" || { echo "packed fetch incomplete: $need missing" >&2; exit 1; }

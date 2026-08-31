@@ -293,7 +293,7 @@ def m_lane_is_its_own_baseline(C):
 
 
 def m_floor_measured_on_a_different_lane(C):
-    """Exactly the mistake k6/BF16-FLOOR.md warns about, made mechanically: a floor gets
+    """Exactly the mistake engines/BF16-FLOOR.md warns about, made mechanically: a floor gets
     re-pointed at a row measured on a DIFFERENT lane than the row citing it, without
     touching either row's artifact, panel, teacher or comparability key -- so BIAS-002
     (same key) and BIAS-004 (floor measures unquantized weights) still pass, and only
@@ -672,7 +672,7 @@ def main():
         # (measurement--glm53.bf16-replay-floor...) was measured on the sealed-ep8 lane
         # (pipeline--malaiwah.glm53-crosscheck declares no `lane` object at all); naming it
         # as a streaming-lane row's floor is exactly the cross-lane subtraction
-        # k6/BF16-FLOOR.md warns against, and must never even reach a written row.
+        # engines/BF16-FLOOR.md warns against, and must never even reach a written row.
         cases.append(("a floor measured on a different lane", 7,
                       base + ["from-receipt", "--receipt", receipts["stream_k8"],
                               "--artifact", "artifact--malaiwah.glm-5.3-flash-tr3-8bpw",

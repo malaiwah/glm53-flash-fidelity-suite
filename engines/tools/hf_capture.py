@@ -6,7 +6,7 @@ Why this file exists
 `bin/fidelity-dataset capture` documented a three-step architecture whose step 1
 could not be run by anybody outside our own campaign:
 
-  * it delegates to ``k6/tools/hidden_replay.py``, which was never committed to
+  * it delegates to ``engines/tools/hidden_replay.py``, which was never committed to
     the public repository, so a fresh clone cannot capture at all;
   * that wrapper hard-codes ``HIDDEN_WIDTH = 4096`` and
     ``EXPECTED_VOCAB = 154880``, i.e. GLM-5.3-Flash's exact geometry, so it
@@ -30,7 +30,7 @@ The captured tensor is the model's final hidden state as handed to ``lm_head``
 -- i.e. after the text model's final norm and immediately before the head
 matmul -- taken as the head module's INPUT via ``register_forward_pre_hook``.
 Replay applies the head ONLY.  This is the same cut as
-``k6/tools/hidden_replay.py`` and as Festr's kimi-k3 hidden-replay convention,
+``engines/tools/hidden_replay.py`` and as Festr's kimi-k3 hidden-replay convention,
 which is what makes the two artifact families comparable.
 
 Storage consequence: a hidden-form record costs ``hidden_size * 2`` bytes per
@@ -76,7 +76,7 @@ import generation_probe  # noqa: E402
 # The capture loop is the other multi-hour silence in a stage log: a root
 # capture is 25 windows of full-vocabulary forward and, under the layer-outer
 # schedule, N layers x 25 windows inside a single `run_panel` call.  Same meter,
-# same file-vs-TTY rule -- see k6/tools/progress.py.
+# same file-vs-TTY rule -- see engines/tools/progress.py.
 import progress as progress_meter  # noqa: E402
 
 TOOL_VERSION = "hf_capture/1"
@@ -109,7 +109,7 @@ CUT_STATEMENT = (
     "norm and immediately before the head matmul -- captured as the head "
     "module's input via torch.nn.Module.register_forward_pre_hook; replay "
     "applies the head ONLY (no final norm at replay time: the capture already "
-    "sits after it). Same cut as k6/tools/hidden_replay.py and as Festr's "
+    "sits after it). Same cut as engines/tools/hidden_replay.py and as Festr's "
     "kimi-k3 hidden-replay qualification."
 )
 
@@ -752,9 +752,9 @@ def _source_files(args: argparse.Namespace) -> Dict[str, str]:
     `layer_outer.py` is listed only when it ran: a window-outer capture is not
     made by that file and must not claim to be.
     """
-    files = {"k6/tools/hf_capture.py": F.sha256_file(os.path.abspath(__file__))}
+    files = {"engines/tools/hf_capture.py": F.sha256_file(os.path.abspath(__file__))}
     if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER:
-        files["k6/tools/layer_outer.py"] = F.sha256_file(
+        files["engines/tools/layer_outer.py"] = F.sha256_file(
             os.path.abspath(layer_outer.__file__))
     return files
 
@@ -1547,7 +1547,7 @@ def default_card_body(args, manifest, scope) -> str:
         "# %s" % args.dataset_name,
         "",
         "A **%s** fidelity dataset in **hidden form**, produced by "
-        "`k6/tools/hf_capture.py` from `%s`." % (args.role, args.weights_repository or args.model),
+        "`engines/tools/hf_capture.py` from `%s`." % (args.role, args.weights_repository or args.model),
         "",
         "## The cut",
         "",
@@ -1718,7 +1718,7 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
         runtime_environment={"python": sys.version.split()[0],
                              "cold_run": args.cold_run},
         source_files=_source_files(args),
-        capture_tool={"file": "k6/tools/hf_capture.py",
+        capture_tool={"file": "engines/tools/hf_capture.py",
                       "sha256": F.sha256_file(os.path.abspath(__file__)),
                       "version": TOOL_VERSION, "wraps": [],
                       "schedule": args.schedule,
@@ -1753,7 +1753,7 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
     if not disclosures:
         disclosures = [{"code": "no_known_deviations", "severity": "info",
                         "affects_comparability": False,
-                        "detail": "captured by k6/tools/hf_capture.py"}]
+                        "detail": "captured by engines/tools/hf_capture.py"}]
     # --allow-missing-weights was used: the number in this dataset is partly a
     # measurement of randomly initialised parameters. Say so, loudly, forever.
     if missing_weights:
@@ -2064,7 +2064,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force", action="store_true")
 
     race = parser.add_argument_group(
-        "race mode -- overlap the fetch with the capture (k6/tools/race_fetch.py)")
+        "race mode -- overlap the fetch with the capture (engines/tools/race_fetch.py)")
     race.add_argument("--race-repo", default=None,
                       help="fetch this HF repo IN THE BACKGROUND, in the order the "
                            "layer-outer schedule needs it, while the capture runs. "
@@ -2095,7 +2095,7 @@ def build_parser() -> argparse.ArgumentParser:
                       help="TEST HARNESS ONLY: per-file delay for --race-simulate-source")
 
     sanity = parser.add_argument_group(
-        "generation sanity probe (k6/tools/generation_probe.py) -- on by default")
+        "generation sanity probe (engines/tools/generation_probe.py) -- on by default")
     sanity.add_argument("--sanity-prompt", default=generation_probe.DEFAULT_PROMPT,
                         help="the prompt whose next token is checked. One extra window "
                              "through the schedule already running: ~1/N of an N-window "

@@ -105,7 +105,7 @@ def _scan_for_unsubmittable(node: Any, path: str = "$") -> Optional[str]:
         if node.get("capture_role") == "bf16_teacher":
             return ("%s is a bf16_teacher CAPTURE receipt, not a measurement. A "
                     "teacher becomes a registry REFERENCE record (see "
-                    "k6/SAME-LANE-TEACHER.md), never a measurement row: it has "
+                    "engines/SAME-LANE-TEACHER.md), never a measurement row: it has "
                     "no measured_mean_kld because it IS the thing students are "
                     "measured against." % path)
         for key, value in node.items():

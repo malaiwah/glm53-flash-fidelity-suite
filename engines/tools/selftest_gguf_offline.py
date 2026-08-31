@@ -44,8 +44,8 @@ Proves, on this machine, in seconds:
      and ``stream_score.py --source gguf --dry-run`` does the same end to end
      (SKIPPED, with the reason printed, when quant_pipeline is not importable).
 
-Run:  python3 k6/tools/selftest_gguf_offline.py
-      python3 k6/tools/selftest_gguf_offline.py --pipeline-root <tree>   # adds rung 7b
+Run:  python3 engines/tools/selftest_gguf_offline.py
+      python3 engines/tools/selftest_gguf_offline.py --pipeline-root <tree>   # adds rung 7b
 """
 
 from __future__ import annotations

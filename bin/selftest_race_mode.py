@@ -49,8 +49,8 @@ SCHEDULE, which a simulated link exercises exactly.
          `reference_id` inputs to the comparability key, i.e. different tables
 
 Fail-without-fix: R1-R3 and R6-R7 fail as an ImportError for
-`k6/tools/race_fetch.py`; R4/R5 as a TypeError on the `shards=` keyword; R8-R11
-as an ImportError for `k6/tools/generation_probe.py`; R12-R16 as an argparse
+`engines/tools/race_fetch.py`; R4/R5 as a TypeError on the `shards=` keyword; R8-R11
+as an ImportError for `engines/tools/generation_probe.py`; R12-R16 as an argparse
 refusal of `--preview-of`. Each case reports by name rather than aborting the
 file, so the evidence reads as "these cases fail without the fix".
 """
@@ -69,7 +69,7 @@ import time
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "bin")
 sys.path.insert(0, BIN)
-sys.path.insert(0, os.path.join(REPO, "k6", "tools"))
+sys.path.insert(0, os.path.join(REPO, "engines", "tools"))
 
 PASS: list = []
 FAIL: list = []
@@ -216,7 +216,7 @@ def tiny_panel(path, windows=2, length=10, vocab=23, seed=1):
 
 
 def capture_argv(model, panel, out, *, dataset_id, role="root", extra=()):
-    return ([os.path.join(REPO, "k6", "tools", "hf_capture.py"),
+    return ([os.path.join(REPO, "engines", "tools", "hf_capture.py"),
              "--model", model, "--panel", panel, "--out", out, "--role", role,
              "--lane", "local-cuda-budget", "--dataset-id", dataset_id,
              "--dataset-name", dataset_id, "--device", "cpu",
@@ -295,7 +295,7 @@ def _body(work):
         probe_absent = str(exc)
 
     def needs_race(name):
-        check(name, False, "k6/tools/race_fetch.py is not importable: %s" % race_absent)
+        check(name, False, "engines/tools/race_fetch.py is not importable: %s" % race_absent)
 
     # ---------------------------------------------------------------- R1-R3
     weight_map = {
@@ -516,7 +516,7 @@ def _body(work):
                      "R10 a ZEROED head is refused as a degenerate distribution",
                      "R11 running the probe does not move a single captured byte"):
             check(name, False,
-                  "k6/tools/generation_probe.py is not importable: %s" % probe_absent)
+                  "engines/tools/generation_probe.py is not importable: %s" % probe_absent)
     else:
         healthy = os.path.join(work, "healthy")
         shutil.copytree(remote, healthy)

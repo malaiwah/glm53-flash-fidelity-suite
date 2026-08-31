@@ -493,13 +493,13 @@ def cmd_capture(args):
                           "the bytes; use the streaming lane if you really want it)")
         if os.path.exists(args.out) and not args.force:
             return refuse("destination_exists", "%s exists" % args.out, "pass --force")
-        tool = os.path.join(REPO, "k6", "tools", "hf_capture.py")
+        tool = os.path.join(REPO, "engines", "tools", "hf_capture.py")
         python = os.environ.get("FIDELITY_PYTHON", sys.executable)
         command = ([python, tool, "--out", args.out, "--role", args.role,
                     "--lane", args.lane] + (["--force"] if args.force else [])
                    + passthrough)
         emit("capture plan")
-        emit("  engine          hf-transformers (k6/tools/hf_capture.py)")
+        emit("  engine          hf-transformers (engines/tools/hf_capture.py)")
         emit("  form / role     %s / %s   lane %s" % (args.form, args.role, args.lane))
         emit("  dataset root    %s" % args.out)
         emit("  command         %s" % " ".join(command))
@@ -518,17 +518,17 @@ def cmd_capture(args):
         for problem in problems:
             emit("  " + problem)
         return refuse("bad_capture_argv", "%d pre-flight refusal(s)" % len(problems),
-                      "these are inherited from k6/tools/hidden_replay.py::run_capture")
+                      "these are inherited from engines/tools/hidden_replay.py::run_capture")
 
     if os.path.exists(args.out) and not args.force:
         return refuse("destination_exists", "%s exists" % args.out, "pass --force")
 
-    tool = os.path.join(REPO, "k6", "tools",
+    tool = os.path.join(REPO, "engines", "tools",
                         "hidden_replay.py" if args.form == "hidden" else "stream_score.py")
     if not os.path.isfile(tool):
         return refuse("engine_missing",
                       "%s does not exist in this checkout" % os.path.relpath(tool, REPO),
-                      "k6/tools/hidden_replay.py is campaign-internal and is not part of the "
+                      "engines/tools/hidden_replay.py is campaign-internal and is not part of the "
                       "published repository; from a public clone use "
                       "`--engine hf-transformers`")
     python = os.environ.get("FIDELITY_PYTHON", sys.executable)
@@ -715,10 +715,10 @@ def build_parser():
     p.add_argument("--lane", choices=F.LANES, required=True)
     p.add_argument("--engine", choices=["sealed-lane", "hf-transformers"],
                    default="sealed-lane",
-                   help="sealed-lane wraps k6/tools/hidden_replay.py + stream_score.py "
+                   help="sealed-lane wraps engines/tools/hidden_replay.py + stream_score.py "
                         "(campaign-internal, GLM-5.3-Flash geometry only, and it writes a "
                         "capture work tree that something else must assemble); "
-                        "hf-transformers wraps k6/tools/hf_capture.py, which runs any HF "
+                        "hf-transformers wraps engines/tools/hf_capture.py, which runs any HF "
                         "causal LM and writes the SEALED DATASET at --out itself")
     p.add_argument("--work", help="capture working directory (default: <out>.capture)")
     p.add_argument("--dry-run", action="store_true",

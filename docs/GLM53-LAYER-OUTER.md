@@ -36,7 +36,7 @@ schedule does not handle.
 
 ## 1. What changed
 
-`k6/tools/hf_capture.py` gains two flags. The default is unchanged and the
+`engines/tools/hf_capture.py` gains two flags. The default is unchanged and the
 existing schedule is untouched.
 
 ```
@@ -45,7 +45,7 @@ existing schedule is untouched.
 --memory-report PATH                       write measured peak memory as JSON
 ```
 
-The engine itself is `k6/tools/layer_outer.py`.
+The engine itself is `engines/tools/layer_outer.py`.
 
 **window-outer** (the old path, still the default): load the model, then for
 each window push it through the whole stack. For a checkpoint that does not fit
@@ -172,7 +172,7 @@ H200, and the streamed loader's `device_map={"": "cuda:0"}` path is not
 exercised by any CPU run. Shipping it CPU-proven only would have left a hole in
 exactly the place the engine exists for.
 
-Machine-readable: `k6/tools/layer-outer-evidence/bit-identity.json`.
+Machine-readable: `engines/tools/layer-outer-evidence/bit-identity.json`.
 
 ---
 
@@ -556,7 +556,7 @@ that cannot be read as "these cases fail without the fix".
 # Gate 1 -- the 0.1B fixture (public, 189 MB)
 FIX=$(bin/fixture | tail -1)
 for S in window-outer layer-outer; do
-  .venv/bin/python k6/tools/hf_capture.py \
+  .venv/bin/python engines/tools/hf_capture.py \
     --model "$FIX" --model-revision 7c3a6d3dc51732dd8ab230888e06ba8c93a381ac \
     --panel <a 2048-token panel tree> --out /tmp/ds-$S \
     --role root --lane local-cuda-budget \

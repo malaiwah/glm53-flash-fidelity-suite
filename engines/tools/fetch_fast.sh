@@ -120,4 +120,4 @@ du -sh "$PACKED"
 touch "$DONE/fetch-packed.done"
 echo "=== packed done; handing off to stage script for teacher + bf16 ==="
 
-exec bash /home/suite/k6/tools/hidden_replay_stage.sh fetch
+exec bash /home/suite/engines/tools/hidden_replay_stage.sh fetch

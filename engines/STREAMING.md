@@ -660,7 +660,7 @@ else's* teacher logits with no quantization at all — a different process
 topology, a different expert-combine order, a different box. K6 and K8 sit
 1.11x apart on the raw panel mean while K8's store is 13.2x tighter in
 weight-space NMSE; that is not a contradiction once you know how much of both
-numbers is the floor. See `k6/BF16-FLOOR.md` for the measured value and each
+numbers is the floor. See `engines/BF16-FLOOR.md` for the measured value and each
 quant's floor-subtracted error.
 
 ### Provenance, without a contract
@@ -729,7 +729,7 @@ $PY $ROOT/tools/stream_score.py     --source native --profile native-bf16     --
 
 $PY $ROOT/tools/k6_kld_report.py --profile native-bf16     --teacher $ROOT/teacher-final --runs <run1> <run2>     --device cuda:0 --out /home/glm53-floor/native-bf16-kld.json
 
-$PY $ROOT/tools/bf16_floor_summary.py     --floor-kld /home/glm53-floor/native-bf16-kld.json     --floor-run <run1> --floor-run <run2>     --quant k6:$ROOT/receipts/stream-k6-kld.json:<k6 run1 kld-report.json>     --quant k8:$ROOT/receipts/stream-k8-kld.json:<k8 run1 kld-report.json>     --out-json k6/BF16-FLOOR.json --out-md k6/BF16-FLOOR.md
+$PY $ROOT/tools/bf16_floor_summary.py     --floor-kld /home/glm53-floor/native-bf16-kld.json     --floor-run <run1> --floor-run <run2>     --quant k6:$ROOT/receipts/stream-k6-kld.json:<k6 run1 kld-report.json>     --quant k8:$ROOT/receipts/stream-k8-kld.json:<k8 run1 kld-report.json>     --out-json engines/BF16-FLOOR.json --out-md engines/BF16-FLOOR.md
 ```
 
 ### Default behaviour is unchanged — checked, not asserted
@@ -758,7 +758,7 @@ The packed lanes are decode-bound; the native lane has no decode at all and is
 purely bound by reading 14.50 GB of routed BF16 per layer, 42 layers per
 window, 25 windows. `--decode-cache ram` is therefore worth more here than on
 the packed lanes, and it is capped by the container's cgroup, not the host's
-RAM. Measured figures are in `k6/BF16-FLOOR.md`.
+RAM. Measured figures are in `engines/BF16-FLOOR.md`.
 
 Measured, 1x H200 spot (IN2, 28 vCPU, 300 GiB cgroup, 200 GB local NVMe),
 `--decode-cache ram --decode-threads 28 --ep-emulate 8 --reduce-order fp32`,
@@ -812,7 +812,7 @@ rounding at slab install. **The only thing that changes is where the expert
 weights come from and how they are decoded**, which is what makes the number
 land on the same yardstick.
 
-Adapter: `k6/tools/nvfp4_surface.py`. Profile: `--profile nvfp4` (required
+Adapter: `engines/tools/nvfp4_surface.py`. Profile: `--profile nvfp4` (required
 together with `--source nvfp4`). Summary family:
 `malaiwah.glm53-nvfp4-packed-kld-summary.v1`, student label `nvfp4-e2m1-gs16`.
 
@@ -875,7 +875,7 @@ goes through a 256-entry LUT rather than a float8 kernel, for the same reason.
 Proven, not asserted: on real ranged-fetched tensors (layer 3, expert 0, both
 repos, `gate_proj` and `down_proj`), this decode is **bitwise equal in fp32** to
 `compressed_tensors` 0.18.0's own `unpack_fp4_from_uint8` + dequant. The
-fixtures and their provenance live in `k6/tools/nvfp4-evidence/`; the selftest
+fixtures and their provenance live in `engines/tools/nvfp4-evidence/`; the selftest
 re-derives the reference live whenever the package is importable instead of
 trusting the committed copy. Worked numbers from the RedHat tensor:
 `weight_global_scale = 17280.0`, `W[0,0..5] = [0.0055555557, -0.0166666675,
@@ -963,7 +963,7 @@ layer 45.
 
 ### Offline validation — one command, no GPU, no downloads
 
-`k6/tools/selftest_nvfp4_offline.py` is ten rungs and runs in ~8 s on a laptop;
+`engines/tools/selftest_nvfp4_offline.py` is ten rungs and runs in ~8 s on a laptop;
 `bin/selftest_all.sh` runs it. It proves the f8e4m3 LUT against torch's native
 cast (254 finite codes, bit patterns, -0.0 included), the nibble order against
 compressed-tensors over all 256 byte codes, the dequant known-answers for both
@@ -978,7 +978,7 @@ reference (absent on the CUDA boxes) and the `stream_score --dry-run` rung
 (needs a `--pipeline-root` whose `quant_pipeline` imports, i.e. python 3.11+).
 
 ```bash
-python3 k6/tools/selftest_nvfp4_offline.py --pipeline-root $ROOT/pipeline
+python3 engines/tools/selftest_nvfp4_offline.py --pipeline-root $ROOT/pipeline
 ```
 
 ### Running it
@@ -1083,7 +1083,7 @@ panel never executes. The receipt says so.
 
 ### Decode
 
-`k6/tools/gguf_surface.py` implements F32, F16, BF16, Q8_0, Q4_K, Q5_K and
+`engines/tools/gguf_surface.py` implements F32, F16, BF16, Q8_0, Q4_K, Q5_K and
 Q6_K as plain PyTorch (uint8-level unpack, fp32 accumulation, no float64, no
 int64 beyond gather indices — so it runs on CUDA, MPS and CPU under the
 suite's device policy). Every kernel is **bitwise equal to gguf-py 0.19.0's
@@ -1162,7 +1162,7 @@ whole-file sha256 of every consumed `.gguf`:
 
 ```bash
 # once per artifact: hash the files, write gguf-files-verified.json
-python3 k6/tools/gguf_surface.py verify-files \
+python3 engines/tools/gguf_surface.py verify-files \
   --file .../GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf ...   # all six
 ```
 
@@ -1186,30 +1186,30 @@ recorded.
 
 ```bash
 # 0. metadata-only plan against the live repo (no weights; https allowed here)
-python3 k6/tools/gguf_surface.py dry-run \
+python3 engines/tools/gguf_surface.py dry-run \
   --file https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/<REV>/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf \
   ...                                                              # all six \
   --repo unsloth/GLM-5.3-Flash-GGUF --revision <REV> \
   --bf16-index <bf16>/model.safetensors.index.json
 
 # 1. prove the two layout assumptions on THIS artifact before capturing
-python3 k6/tools/gguf_surface.py audit-mla \
+python3 engines/tools/gguf_surface.py audit-mla \
   --file <part1> ... --bf16 <bf16> --layer 3
-python3 k6/tools/gguf_surface.py audit-expert \
+python3 engines/tools/gguf_surface.py audit-expert \
   --file <part1> ... --bf16 <bf16> --layer 3 --expert 0 --projection gate_proj
 
 # 2. hash the files
-python3 k6/tools/gguf_surface.py verify-files --file <part1> ...
+python3 engines/tools/gguf_surface.py verify-files --file <part1> ...
 
 # 3. capture (one cold run)
-python3 k6/tools/stream_score.py --source gguf --profile gguf \
+python3 engines/tools/stream_score.py --source gguf --profile gguf \
   --gguf-file <part1> ... \
   --gguf-repo unsloth/GLM-5.3-Flash-GGUF --gguf-revision <REV> \
   --bf16 <bf16> --inventory <inventory.json> --teacher <teacher> \
   --cold-run 1 --out <run1>
 
 # 4. aggregate
-python3 k6/tools/k6_kld_report.py --profile gguf --teacher <teacher> \
+python3 engines/tools/k6_kld_report.py --profile gguf --teacher <teacher> \
   --runs <run1> <run2> <run3> --out gguf-packed-kld.json
 ```
 
@@ -1230,14 +1230,14 @@ python3 k6/tools/k6_kld_report.py --profile gguf --teacher <teacher> \
 
 ### Offline validation
 
-`python3 k6/tools/selftest_gguf_offline.py` — nine rungs, no GPU, no network,
+`python3 engines/tools/selftest_gguf_offline.py` — nine rungs, no GPU, no network,
 ~2 s, wired into `bin/selftest_all.sh`. It proves reference equality against
 gguf-py, the independent scalar scale unpack, the split container plus eight
 named refusals, the real-metadata census and bijection, the MLA audit and the
 expert-slot audit on real bytes, the expert slice and materialized view, and
 the `dry-run` plan print.
 Pass `--pipeline-root` to add the `stream_score.py --source gguf --dry-run`
-rung. Evidence fixtures live in `k6/tools/gguf-evidence/`.
+rung. Evidence fixtures live in `engines/tools/gguf-evidence/`.
 
 **Not yet measured.** Everything above is built and validated without a GPU;
 no GGUF panel number exists yet. The first capture is a rental.

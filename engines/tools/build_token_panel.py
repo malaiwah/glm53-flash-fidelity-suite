@@ -3,7 +3,7 @@
 
 Why this file exists
 --------------------
-``k6/tools/hf_capture.py`` consumes a panel directory in the upstream
+``engines/tools/hf_capture.py`` consumes a panel directory in the upstream
 ``quant-pipeline.glm53-token-panel.v1`` layout (``panel.json`` + ``arrays/``),
 but every such panel we had was built for GLM-5.3-Flash by somebody else's
 pipeline.  Reusing one of those against a *different* model is exactly the
@@ -230,7 +230,7 @@ def main(argv=None):
         "format_version": 1,
         "receipt_sha256": "",
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "tool": "k6/tools/build_token_panel.py",
+        "tool": "engines/tools/build_token_panel.py",
         "tool_sha256": sha256_file(os.path.abspath(__file__)),
         "panel_id": args.panel_id,
         "panel_name": args.panel_name,

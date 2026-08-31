@@ -106,14 +106,14 @@ check("...naming both accepted forms",
       "--panel" in out and "--panel-dir" in out)
 
 rc, out = cli("--role", "root", "--model", "a/b",
-              "--panel-dir", "k6/panels/panel--minimaxm3.malaiwah.corpus5x5",
+              "--panel-dir", "engines/panels/panel--minimaxm3.malaiwah.corpus5x5",
               "--lane", "streaming")
 check("--role root with no --dataset-id is refused", rc == mc.EXIT_REFUSED)
 check("...because a capture with no identity cannot be cited",
       "cannot be" in out and "published" in out)
 
 rc, out = cli("--role", "root", "--model", "a/b", "--panel", "some/panel",
-              "--panel-dir", "k6/panels/panel--minimaxm3.malaiwah.corpus5x5",
+              "--panel-dir", "engines/panels/panel--minimaxm3.malaiwah.corpus5x5",
               "--dataset-id", "d", "--lane", "streaming")
 check("--panel and --panel-dir together are refused", rc == mc.EXIT_REFUSED)
 
@@ -167,9 +167,9 @@ check("...and race mode has no fetch_target stage (the fetch is IN the capture)"
 
 print("\n== the panel travels with the bundle ==")
 bundle = (SUITE / "bin" / "BUNDLE.txt").read_text()
-for need in ("bin/fidelity_dataset.py", "k6/tools/hf_capture.py",
-             "k6/tools/layer_outer.py", "bin/fidelity/dsmanifest.py",
-             "k6/tools/race_fetch.py", "k6/tools/generation_probe.py"):
+for need in ("bin/fidelity_dataset.py", "engines/tools/hf_capture.py",
+             "engines/tools/layer_outer.py", "bin/fidelity/dsmanifest.py",
+             "engines/tools/race_fetch.py", "engines/tools/generation_probe.py"):
     check("bundle ships %s" % need, need in bundle)
 missing = [ln.strip() for ln in bundle.splitlines()
            if ln.strip() and not ln.startswith("#")
@@ -178,7 +178,7 @@ check("every bundle entry exists on disk", not missing)
 
 # A bundled file's DATA is a dependency too, and nothing checked that.
 # `bootstrap_measure.sh` runs `selftest_gguf_offline.py` at setup, fail-closed;
-# that selftest reads `k6/tools/gguf-evidence/`, which was never bundled. So a
+# that selftest reads `engines/tools/gguf-evidence/`, which was never bundled. So a
 # MiniMax ROOT capture died in its setup stage on GGUF test fixtures, with the
 # controller showing nothing but "stage setup" while the instance billed. The
 # existing import check (P11) could not see it: this is data, not an import.
@@ -193,7 +193,7 @@ bundled_dirs = {str(Path(b).parent) for b in bundled}
 # does NOT skip -- killed a MiniMax capture. Anything listed here is a
 # deliberate exception with a stated reason, and the list is the review surface.
 TOO_BIG_TO_BUNDLE = {
-    "k6/tools/dione-evidence": "187 MB; its selftest skips when absent",
+    "engines/tools/dione-evidence": "187 MB; its selftest skips when absent",
 }
 data_gaps = []
 for entry in sorted(bundled):
@@ -202,7 +202,7 @@ for entry in sorted(bundled):
         continue
     text = path.read_text(encoding="utf-8", errors="replace")
     # sibling data directories the file names, e.g. `TOOLS / "gguf-evidence"`
-    # or a literal "k6/tools/gguf-evidence/..."
+    # or a literal "engines/tools/gguf-evidence/..."
     # any sibling data directory the file names, however it spells the path
     for sib in set(re.findall(r"([A-Za-z0-9_.-]+-evidence)", text)):
         d = SUITE / Path(entry).parent / sib
@@ -218,7 +218,7 @@ for g in sorted(set(data_gaps)):
     print("      %s" % g)
 check("a bundled file's data directories are bundled too", not data_gaps)
 
-panel = SUITE / "k6" / "panels" / "panel--minimaxm3.malaiwah.corpus5x5"
+panel = SUITE / "engines" / "panels" / "panel--minimaxm3.malaiwah.corpus5x5"
 check("the committed MiniMax panel is a panel directory",
       (panel / "panel.json").is_file() and (panel / "arrays").is_dir())
 

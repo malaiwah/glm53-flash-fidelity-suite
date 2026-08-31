@@ -28,7 +28,7 @@ stage capture                                                              [====
 
 ## Why the overlap is sound
 
-`k6/tools/layer_outer.py` runs the capture as
+`engines/tools/layer_outer.py` runs the capture as
 
 ```
 for each layer:  load it once;  for each window: push that window through it;  free it
@@ -41,7 +41,7 @@ fetch    [ index ][ resident ][ L0 ][ L1 ][ L2 ] ... [ L45 ][ tail ]
 capture           ........... [ build ][ L0 ][ L1 ][ L2 ] ...  [ L45 ][ seal ]
 ```
 
-`k6/tools/race_fetch.py` reads `model.safetensors.index.json` — whose
+`engines/tools/race_fetch.py` reads `model.safetensors.index.json` — whose
 `weight_map` is the only statement of which shard holds which tensor — and
 buckets every shard by the **first** layer that needs it. The fetch becomes a
 priority queue: index and tokenizer, then the resident set, then layer 0, layer
@@ -396,7 +396,7 @@ not publish previews at all — the machinery is built so that omitting `--race`
 
 ```bash
 bin/measure-cloud --role root --race \
-    --model <hf-repo> --panel-dir k6/panels/<panel> \
+    --model <hf-repo> --panel-dir engines/panels/<panel> \
     --dataset-id my-fidelity-root-v1.preview \
     --preview-of my-fidelity-root-v1 \
     --max-cost 15 --dry-run
@@ -409,7 +409,7 @@ bin/measure-cloud --role root --race \
 | `--preview-of ID` | seal as a preview superseded by `ID`. Refuses when `ID == --dataset-id` |
 | `--sanity-expect S` | the continuation the probe requires (default `Paris`); `''` records without enforcing |
 
-Engine-level (`k6/tools/hf_capture.py`, reachable through
+Engine-level (`engines/tools/hf_capture.py`, reachable through
 `bin/fidelity-dataset capture -- …`): `--race-repo`, `--race-revision`,
 `--race-workers`, `--race-timeout-seconds`, `--race-layer-key-regex`,
 `--race-report`, `--sanity-prompt`, `--sanity-expect`, `--no-sanity-check`,
@@ -420,10 +420,10 @@ Engine-level (`k6/tools/hf_capture.py`, reachable through
 
 | path | what it is |
 |---|---|
-| `k6/tools/race_fetch.py` | the plan, the gate, the fetcher, the measured report |
-| `k6/tools/generation_probe.py` | the sanity probe and its verdict |
-| `k6/tools/layer_outer.py` | `audit_checkpoint_tree(shards=…)` and `build_streamed_model(gate=…)` |
-| `k6/tools/hf_capture.py` | starts the fetch, runs the probe, seals the preview identity |
+| `engines/tools/race_fetch.py` | the plan, the gate, the fetcher, the measured report |
+| `engines/tools/generation_probe.py` | the sanity probe and its verdict |
+| `engines/tools/layer_outer.py` | `audit_checkpoint_tree(shards=…)` and `build_streamed_model(gate=…)` |
+| `engines/tools/hf_capture.py` | starts the fetch, runs the probe, seals the preview identity |
 | `bin/fidelity/dscompare.py` | the provenance gate that blocks a preview from the registry |
 | `bin/stage_measure.sh` | `race_bootstrap`, `race_capture` |
 | `bin/measure_cloud.py` | `--race`, `--race-workers`, `--preview-of`, `--sanity-expect` |

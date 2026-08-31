@@ -182,9 +182,9 @@ import tempfile                                            # noqa: E402
 from pathlib import Path as _P                             # noqa: E402
 
 SUITE = _P(mc.SUITE_ROOT)
-REAL = SUITE / "k6" / "exl3hf-evidence" / "scope-turbo-2.05bpw.json"
+REAL = SUITE / "engines" / "exl3hf-evidence" / "scope-turbo-2.05bpw.json"
 if not REAL.is_file():
-    REAL = SUITE / "k6" / "tools" / "exl3hf-evidence" / "scope-turbo-2.05bpw.json"
+    REAL = SUITE / "engines" / "tools" / "exl3hf-evidence" / "scope-turbo-2.05bpw.json"
 
 
 def schema_check(doc):

@@ -2,7 +2,7 @@
 """fidelity-stats -- floor-aware attributable error and honest paired-window CIs.
 
     bin/fidelity-stats attributable --quant-summary K8.json \
-        --floor-summary k6/native-bf16-kld.json
+        --floor-summary engines/native-bf16-kld.json
     bin/fidelity-stats paired-delta --report-a runA/kld-report.json \
         --report-b runB/kld-report.json --label-a K6 --label-b K8
 
@@ -44,7 +44,7 @@ PAIRED_SCHEMA = "malaiwah.glm53-paired-window-delta.v1"
 SEALED_STREAM_TEACHER = "2ae08117c3d4247f747b2a9a889b68e1a06387b788d56a0bf23bb950c77bc5a5"
 
 # The only floor profile that legitimately pairs with the sealed streaming
-# teacher today (k6/native-bf16-kld.json).  Gating on it closes the
+# teacher today (engines/native-bf16-kld.json).  Gating on it closes the
 # adversarial review's "same-teacher floor forgery" residual for every
 # naturally-occurring artifact: the cross-stack 0.012712 number exists only
 # in receipts that do NOT carry this profile.  (A deliberate forgery of the
@@ -273,7 +273,7 @@ def _gate_floor_receipt(floor: Dict[str, Any], floor_path: Path) -> None:
             "'cross_stack_floor_do_not_mix' -- whose name is the instruction: "
             "that value (0.012712) belongs to a DIFFERENT lane and must never "
             "be subtracted from a streaming-lane mean. Pass the floor summary "
-            "instead (k6/native-bf16-kld.json)." % (floor_path, schema))
+            "instead (engines/native-bf16-kld.json)." % (floor_path, schema))
     label = floor.get("student_label")
     if label != "native-bf16":
         raise Refusal(
@@ -299,7 +299,7 @@ def _cross_lane_refusal(quant_mean: float, quant_teacher: str,
            CROSS_LANE_WORKED_EXAMPLE),
         ["a floor is usable IFF teacher_receipt_sha256 matches (the streaming "
          "lane's sealed teacher is %s...)" % SEALED_STREAM_TEACHER[:16],
-         "the streaming lane's own floor summary is k6/native-bf16-kld.json"])
+         "the streaming lane's own floor summary is engines/native-bf16-kld.json"])
 
 
 def _fetch_registry_quant(measurement_id: str, source: str,
@@ -384,14 +384,14 @@ def cmd_attributable(args: argparse.Namespace, con: Console) -> int:
         raise Refusal(
             "floor summary carries no 'profile' field -- a floor without a "
             "declared lane profile cannot be matched to the quant run's lane. "
-            "The streaming lane's own floor (k6/native-bf16-kld.json) carries "
+            "The streaming lane's own floor (engines/native-bf16-kld.json) carries "
             "profile %r." % STREAM_FLOOR_PROFILE)
     if quant_teacher == SEALED_STREAM_TEACHER and \
             floor_profile != STREAM_FLOOR_PROFILE:
         raise Refusal(
             "floor claims the sealed streaming teacher %s... but declares "
             "profile %r; the only floor measured on that (panel, teacher, "
-            "lane) is profile %r (k6/native-bf16-kld.json, 0.011506). A "
+            "lane) is profile %r (engines/native-bf16-kld.json, 0.011506). A "
             "floor from any other lane must not be subtracted here. %s"
             % (quant_teacher[:16], floor_profile, STREAM_FLOOR_PROFILE,
                CROSS_LANE_WORKED_EXAMPLE))
@@ -523,7 +523,7 @@ def _windows_from_anomaly(path: Path) -> Tuple[Dict[str, float], Dict[str, float
         a[row["window"]] = float(row["k6"])
         b[row["window"]] = float(row["k8"])
     if not a:
-        raise Refusal("%s has no per_window k6/k8 rows" % path)
+        raise Refusal("%s has no per_window engines/k8 rows" % path)
     return a, b
 
 
@@ -707,7 +707,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--registry", default="auto")
     a.add_argument("--floor-summary", required=True,
                    help="the lane's floor summary (streaming lane: "
-                        "k6/native-bf16-kld.json)")
+                        "engines/native-bf16-kld.json)")
     a.add_argument("--allow-backend-drift", action="store_true")
     a.add_argument("--out")
 
@@ -716,7 +716,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--report-a", required=True)
     d.add_argument("--report-b")
     d.add_argument("--anomaly-format", action="store_true",
-                   help="--report-a is k6/K8-ANOMALY.json (both series in one file)")
+                   help="--report-a is engines/K8-ANOMALY.json (both series in one file)")
     d.add_argument("--label-a")
     d.add_argument("--label-b")
     d.add_argument("--bootstrap-b", type=int, default=10000)

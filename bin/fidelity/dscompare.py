@@ -37,7 +37,7 @@ from . import dsvalidate
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(os.path.dirname(_HERE))
-_K6_TOOLS = os.path.join(_REPO, "k6", "tools")
+_K6_TOOLS = os.path.join(_REPO, "engines", "tools")
 
 
 class Refusal(Exception):
@@ -724,7 +724,7 @@ def token_kld(reference_logits, candidate_logits, device: str = "cpu"):
 def _replay(hidden32, head32_t, vocab_chunk: Optional[int]):
     """logits' = hidden @ head^T, fp32 both sides.
 
-    Mirrors `k6/tools/hidden_replay.py::_replay_logits`, including the
+    Mirrors `engines/tools/hidden_replay.py::_replay_logits`, including the
     vocab-chunked path used as the invariance probe.
     """
     import numpy as np
@@ -1266,7 +1266,7 @@ def build_receipt(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
                 "entrypoint": "bin/fidelity-dataset compare",
                 # Same reason as the estimator_backend literal above: this
                 # note is inside sealed receipts, so it keeps the module's
-                # 2026-08 spelling. Today the file is k6/tools/kld_report.py.
+                # 2026-08 spelling. Today the file is engines/tools/kld_report.py.
                 "note": "the fp64 estimator is k6_kld_report._token_kld, imported not copied, "
                         "whenever torch is importable; estimator_backend records which path ran.",
             },

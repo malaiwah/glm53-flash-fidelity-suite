@@ -8,7 +8,7 @@ reviewable rather than "whatever happened to be in the directory" -- which is
 how a stray note, a scratch receipt, or somebody's token file ends up on
 somebody else's machine.  A container image is a second transport for that
 same set, so it reads the same list instead of keeping a parallel one.  This
-is not only hygiene: `k6/tools/` is 208 MB in this checkout and 187 MB of that
+is not only hygiene: `engines/tools/` is 208 MB in this checkout and 187 MB of that
 is one evidence directory nothing in the bundle references.
 
 Two files are added to the set on purpose: the entrypoint and the stage-

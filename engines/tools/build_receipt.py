@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assemble reports/hidden-replay-equivalence.json from the on-box artifacts.
 
-Inputs (all produced on box 486679 by k6/tools/hidden_replay_stage.sh):
+Inputs (all produced on box 486679 by engines/tools/hidden_replay_stage.sh):
   comparator      receipts/hidden-replay-comparator.json
   reproduction    receipts/reproduction-check.json
   three_run       receipts/stream-k6-kld-3run.json

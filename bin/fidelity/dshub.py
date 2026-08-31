@@ -147,7 +147,7 @@ def fetch_dataset(ref: str, dest: str, *, token: Optional[str] = None,
     every path is proved to stay inside `dest` before a byte is written.
 
     Neither was true.  `checksums.txt` comes from the remote repo and its paths were
-    joined onto `dest` unchecked, so a line reading `<64 hex>  ../../../../k6/tools/
+    joined onto `dest` unchecked, so a line reading `<64 hex>  ../../../../engines/tools/
     stream_score.py` wrote there -- `os.path.join` also lets an ABSOLUTE entry win
     outright -- and `seal.checksums_file` from the remote manifest was a second such
     sink that fired even on the error path.  `validate`, `verify`, `compare` and the

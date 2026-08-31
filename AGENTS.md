@@ -50,7 +50,7 @@ by reverting it in a scratch copy, not by assuming.
 - MPS cannot do float64 at all — it raises. KLD accumulation pins to CPU.
 - The rule above is about `bin/` and `registry/`. It is **not** a licence to
   argue "no dependencies" anywhere else: `bin/bootstrap_measure.sh` installs
-  torch, transformers, accelerate and `rich` on the instance, so `k6/tools/`
+  torch, transformers, accelerate and `rich` on the instance, so `engines/tools/`
   engines already run inside a stack. Before rejecting a library, check whether
   it is *already transitively installed* — that argument has been made here and
   been wrong. [`docs/DEPENDENCIES.md`](docs/DEPENDENCIES.md) is the audit of
@@ -116,7 +116,7 @@ mirrors are the user's public record.
 ## Where the hard-won detail lives
 
 - [`JOURNAL.md`](JOURNAL.md) — 38 numbered lessons, each from a real failure.
-- [`k6/HANDOFF.md`](k6/HANDOFF.md) — twenty operational lessons for running a campaign.
+- [`engines/HANDOFF.md`](engines/HANDOFF.md) — twenty operational lessons for running a campaign.
 - [`WHAT-WE-MEASURE.md`](WHAT-WE-MEASURE.md) — what a number actually is.
 - [`docs/`](docs/) — the dataset format spec, card annotation spec, protocol alignment.
 - [`docs/CAPTURE-SCALING-PLAN.md`](docs/CAPTURE-SCALING-PLAN.md) — plan of record for scaling a capture: the parallelism decision (tensor-parallel changes the numbers and is rejected), the cost model, and per-family budgets.

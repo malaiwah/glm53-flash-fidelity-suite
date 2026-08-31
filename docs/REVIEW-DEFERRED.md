@@ -523,7 +523,7 @@ choices); it stays silent on a complete store. No regression.
 
 **Claim.** `sniff_surface` has no branch for MLX, GGUF or NVFP4, so those artifacts resolve to
 `unknown` and the one-command front ends refuse them with "no recognised surface marker" —
-while `k6/tools/{mlx,gguf,nvfp4}_surface.py` exist, are bitwise-verified against
+while `engines/tools/{mlx,gguf,nvfp4}_surface.py` exist, are bitwise-verified against
 mlx.core / gguf-py / compressed-tensors, `stream_score.py --source` accepts all three, and
 `README.md:221` advertises them. `README.md:14` shows an MLX example that only works because
 that revision is already in the registry and the front gate answers before the sniff.
@@ -531,9 +531,9 @@ that revision is already in the registry and the front gate answers before the s
 **Repro.** Driving the real `sniff_surface` with the repo's own committed evidence configs:
 
 ```
-MLX      (k6/tools/mlx-evidence/orcarouter-config.json)  -> unknown
-NVFP4/RH (k6/tools/nvfp4-evidence/redhat-config.json)    -> unknown
-NVFP4/LB (k6/tools/nvfp4-evidence/libertai-config.json)  -> unknown
+MLX      (engines/tools/mlx-evidence/orcarouter-config.json)  -> unknown
+NVFP4/RH (engines/tools/nvfp4-evidence/redhat-config.json)    -> unknown
+NVFP4/LB (engines/tools/nvfp4-evidence/libertai-config.json)  -> unknown
 GGUF     (.gguf siblings, no config)                     -> unknown
 ```
 
@@ -842,7 +842,7 @@ Range cap is latent behind an `HF_ENDPOINT` override.
 
 `bin/fidelity_dataset.py` and `bin/fidelity/cardmeta.py` were being rewritten by another
 session while this review ran (uncommitted `hf-transformers` capture engine, `cache_path`,
-`_postcondition`, plus new `k6/tools/hf_capture.py`). These patches were written and TESTED
+`_postcondition`, plus new `engines/tools/hf_capture.py`). These patches were written and TESTED
 against that working tree, then reverted so that another agent's in-flight work is not
 committed under this review's name.
 
@@ -1288,7 +1288,7 @@ The published card says:
 
 > per-window KLD scatter has sd 1.73e-3 against a K6-vs-K8 effect of 1.22e-3
 
-Both values come from `k6/K8-ANOMALY.json`, where they are the per-window **delta** sd
+Both values come from `engines/K8-ANOMALY.json`, where they are the per-window **delta** sd
 (`per_window_delta_stdev` = 0.0017334539428769534) and the pooled delta
 (`pooled_delta_k8_minus_k6` = -0.0012176728196882456) over an **eleven-window subset**.
 They are correctly labelled in that document and were mis-scoped everywhere else.

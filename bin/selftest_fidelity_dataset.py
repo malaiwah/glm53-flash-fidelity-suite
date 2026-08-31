@@ -230,9 +230,9 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
         weights={"repository": "selftest/weights", "revision": model_revision,
                  "model_revision": model_revision,
                  "checkpoint_identity_sha256": checkpoint_identity},
-        source_files={"k6/tools/stream_score.py": F.sha256_hex("selftest")},
+        source_files={"engines/tools/stream_score.py": F.sha256_hex("selftest")},
         capture_tool={"file": "bin/fidelity_dataset.py", "sha256": F.sha256_hex("tool"),
-                      "wraps": ["k6/tools/hidden_replay.py"], "mechanism": "selftest fixture"})
+                      "wraps": ["engines/tools/hidden_replay.py"], "mechanism": "selftest fixture"})
 
     scope = (dsmanifest.native_scope() if not quantized else dsmanifest.scope_block(
         [{"tensor_class": name, "treatment": "quantized", "format": "exl3-mcg",
@@ -1143,7 +1143,7 @@ def section_hostile_fetch(tmp):
 
     `fetch_dataset` wrote every path listed in the remote `checksums.txt`, and the file
     named by the remote manifest's `seal.checksums_file`, straight onto the download
-    directory with `os.path.join` -- so `../../../../k6/tools/stream_score.py` landed
+    directory with `os.path.join` -- so `../../../../engines/tools/stream_score.py` landed
     there, an absolute entry won outright, and the digests beside those paths were parsed
     and never compared to the bytes. Pointing `fidelity-dataset verify` at a stranger's
     repo is the documented way to look at their capture, so this was reachable from the

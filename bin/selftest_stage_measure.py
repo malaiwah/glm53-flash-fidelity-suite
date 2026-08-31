@@ -298,8 +298,8 @@ def main():
         # ---------------------------------------------------------------
         print("== setup: arranges the layout and calls the bootstrap ==")
         sb = Sandbox(td / "setup", job_quant())
-        (sb.fs / "k6" / "patches-v2").mkdir(parents=True)
-        (sb.fs / "k6" / "patches-v2" / "0001-x.patch").write_text("patch\n")
+        (sb.fs / "engines" / "patches-v2").mkdir(parents=True)
+        (sb.fs / "engines" / "patches-v2" / "0001-x.patch").write_text("patch\n")
         proc, calls = sb.run("setup", bash)
         out = proc.stdout + proc.stderr
         check("setup exits 0 offline", proc.returncode == 0, out[-900:])

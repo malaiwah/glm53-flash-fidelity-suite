@@ -201,7 +201,7 @@ does suggest the disclosure field was pointed at the right thing.
   under the parent panel's comparability key and the validator refused them,
   because a different window set is a different panel. They now have their own
   panel record. 90 invariants, runs on a stock interpreter, no pip install.
-- Multi-format decode surfaces. `k6/tools/stream_score.py --source` takes
+- Multi-format decode surfaces. `engines/tools/stream_score.py --source` takes
   checkpoint, payload-store, dione, native, exl3hf, mlx, gguf, nvfp4 — so one
   KLD yardstick spans EXL3, Dione, MLX, GGUF and NVFP4 against the same teacher.
   Working today; the NVFP4 surface is the one most likely to be useful to you.

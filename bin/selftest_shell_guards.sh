@@ -110,7 +110,7 @@ pace_verdict() {  # pace_verdict <contexts_reached> <threshold>
 # EXTRACTED FROM THE SHIPPED SCRIPT, so this cannot pass on a grep for the fix.
 DIONE_PY="$TMP/tensor_digest.py"
 python3 "$ROOT/bin/_extract_dione_digest.py" \
-        "$ROOT/k6/tools/measure_dione.sh" "$DIONE_PY" >/dev/null 2>&1 \
+        "$ROOT/engines/tools/measure_dione.sh" "$DIONE_PY" >/dev/null 2>&1 \
   && ok "SH-06 the tensor_digest snippet was extracted from measure_dione.sh" \
   || no "SH-06 the tensor_digest snippet was extracted from measure_dione.sh" \
         "extraction failed -- the two cases below would pass for the wrong reason"
@@ -135,7 +135,7 @@ else
   no "SH-06 a digest over a real window still answers, with its tensor count" \
      "(SKIPs as a FAIL if safetensors is unavailable -- say so rather than passing)"
 fi
-if grep -q 'set -euo pipefail' "$ROOT/k6/tools/measure_dione.sh"; then
+if grep -q 'set -euo pipefail' "$ROOT/engines/tools/measure_dione.sh"; then
   ok "SH-06 measure_dione runs under set -euo pipefail"
 else
   no "SH-06 measure_dione runs under set -euo pipefail"
@@ -143,7 +143,7 @@ fi
 
 # ---------------------------------------------------------------- NUM-10
 # Every literal --profile a shell script hands to kld_report.py must be one of
-# that tool's argparse choices. `k6/stage_campaign.sh` documented QP_STREAM_PROFILE=k6|k8
+# that tool's argparse choices. `engines/stage_campaign.sh` documented QP_STREAM_PROFILE=k6|k8
 # and composed `--profile "${STREAM_PROFILE}-stream"`, but `k8-stream` is not a
 # choice -- so a K8 streaming run died with argparse exit 2 AFTER the full capture.
 if python3 "$ROOT/bin/_check_kld_profiles.py" "$ROOT"; then

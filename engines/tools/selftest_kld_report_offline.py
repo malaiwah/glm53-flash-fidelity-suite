@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Offline regression tests for k6/tools/kld_report.py.  No GPU, no network, no
+"""Offline regression tests for engines/tools/kld_report.py.  No GPU, no network, no
 `quant_pipeline` checkout.
 
 `selftest_offline.py` needs a real quant_pipeline tree, which a public clone does not
-have (`k6/.patchwork/*/runtime/src/quant_pipeline` ships without an `__init__.py`), so
+have (`engines/.patchwork/*/runtime/src/quant_pipeline` ships without an `__init__.py`), so
 the aggregation and provenance logic in the summary branch had NO test that runs on this
 machine at all.  Every defect below was live in a tool that produces published numbers.
 

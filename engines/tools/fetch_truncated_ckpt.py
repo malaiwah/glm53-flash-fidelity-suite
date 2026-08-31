@@ -3,14 +3,14 @@
 
 Why this exists
 ---------------
-`k6/tools/fetch_nonrouted_sparse.py` fetches the NON-routed byte ranges of a
+`engines/tools/fetch_nonrouted_sparse.py` fetches the NON-routed byte ranges of a
 tree, because the streaming lane reads routed experts from a quantized
 artifact.  That is the wrong shape for the question this tool answers.
 
 `docs/GLM53-ROOT-FEASIBILITY.md` Stage A needs the opposite: a checkpoint that
 is *architecturally complete but short* -- every tensor of layers `0..N-1`
 including all 256 routed experts of the first sparse layer, plus
-`embed_tokens`, `lm_head` and `model.norm` -- so that `k6/tools/hf_capture.py`
+`embed_tokens`, `lm_head` and `model.norm` -- so that `engines/tools/hf_capture.py`
 can be driven down its PRODUCTION code path against real published weights on
 a desk-sized machine.  For `zai-org/GLM-5.3-BF16` at `--layers 4` that is
 25.9 GB instead of 1,506.7 GB, and it exercises the one mechanism that 96.7%
@@ -538,7 +538,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     receipt = {
         "schema": "malaiwah.truncated-checkpoint-receipt.v1",
-        "tool": "k6/tools/fetch_truncated_ckpt.py",
+        "tool": "engines/tools/fetch_truncated_ckpt.py",
         "repo": args.repo, "revision": args.revision,
         "source_num_hidden_layers": source_layers,
         "kept_num_hidden_layers": args.layers,

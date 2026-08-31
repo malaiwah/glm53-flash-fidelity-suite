@@ -229,8 +229,8 @@ not folklore.
 Everything above describes what a *number* must pin. This section is about
 *when the work is done*, and it is the one structural change of 2026-08-29.
 
-Until now, capture and comparison were **fused**: `k6/tools/stream_score.py`
-ran a model over the panel and `k6/tools/k6_kld_report.py` scored it against a
+Until now, capture and comparison were **fused**: `engines/tools/stream_score.py`
+ran a model over the panel and `engines/tools/k6_kld_report.py` scored it against a
 teacher, and the only durable output was a number plus receipts pointing at
 filesystem paths. Three consequences, all of which bit us:
 

@@ -70,7 +70,7 @@ rather than guessed at:
 | L3 | `torch.nn.functional.grouped_mm` — the MoE kernel the streaming lane really dispatches |
 | L4 | `sum`/`mean`/`logsumexp` over dim −1 and dim 0, fp32 and fp64, at 8192 and at the real 154880-wide vocabulary |
 | L5 | `softmax` / `log_softmax`, fp32 and fp64, at the real vocabulary |
-| L6 | `k6/tools/k6_kld_report.py::_token_kld` **verbatim**, on synthetic logits at the real vocabulary |
+| L6 | `engines/tools/k6_kld_report.py::_token_kld` **verbatim**, on synthetic logits at the real vocabulary |
 | L7 | a fixed-weight 16-layer decoder forward, bf16 and fp32, hidden states kept at every depth |
 | L8 | the fp64 last-dim sum at 11 row counts, 16384 columns |
 | L9 | the same sweep at 154880 columns |
@@ -159,7 +159,7 @@ Two GEMM results are invariant on all eight cards: `L2.sq2048.fp64` and
 `torch.backends.cuda.matmul.allow_tf32 = False`,
 `torch.backends.cudnn.allow_tf32 = False` and
 `torch.set_float32_matmul_precision("highest")`
-(`k6/tools/stream_score.py:350–355`), the on-box `backend.json` records
+(`engines/tools/stream_score.py:350–355`), the on-box `backend.json` records
 `numeric_policy.allow_tf32_cuda_matmul: false` as *observed*, and the probe
 re-checks it. `L2.expert.fp32_tf32off` diverges into three groups anyway.
 Turning TF32 on changes the values; it does not change whether the cards agree.
@@ -622,5 +622,5 @@ billing granularity, and the balance is the number to believe.
 * [`DESIGNATED-REFERENCE.md`](DESIGNATED-REFERENCE.md) — the pattern for adding
   an invariant (REFC-006) around a comparability hazard, and the worked example
   of why the comparability key is the enforcement mechanism of last resort.
-* [`k6/K8-ANOMALY.md`](../k6/K8-ANOMALY.md) — why one window cannot rank two
+* [`engines/K8-ANOMALY.md`](../engines/K8-ANOMALY.md) — why one window cannot rank two
   quants. §3's per-window spread is the same phenomenon seen across hardware.

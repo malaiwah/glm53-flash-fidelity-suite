@@ -3,7 +3,7 @@
 
 Why this file exists
 --------------------
-`k6/tools/layer_outer.py` runs
+`engines/tools/layer_outer.py` runs
 
     for each layer:  load it once;  for each window: push that window through it;  free it
 

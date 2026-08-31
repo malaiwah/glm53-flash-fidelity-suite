@@ -1248,7 +1248,13 @@ ARTIFACTS = [
              codec("exl3-mul1", 2.05, None, tool="exllamav3", version="1.4.4",
                    calibration={"used": True, "corpus": None, "tokens": 250 * 2048,
                                 "overlaps_any_panel": None, "overlapping_panel_refs": []}),
-             scope_from_evidence("k6/tools/exl3hf-evidence/scope-turbo-2.05bpw.json"),
+             # A path READ FROM DISK, so it follows the tree: k6/ was renamed
+             # engines/ on 2026-08-31. Every other k6/... string in this file
+             # is a published FIELD -- a scope note, a pipeline entrypoint, a
+             # harness code_digests path -- and those keep the spelling the
+             # tree had when the number ran. `make reseed-check` is what tells
+             # the two apart: it read this one and could not find it.
+             scope_from_evidence("engines/tools/exl3hf-evidence/scope-turbo-2.05bpw.json"),
              TURBODERP("quantizer"),
              [src("url", "https://huggingface.co/api/models/turboderp/GLM-5.3-Flash-exl3?blobs=true",
                   None, "24 files at revision 51058cd5; all-files sum 85,233,484,348"),

@@ -957,7 +957,7 @@ def _refuse_incomplete_exl3hf(con: Console, repo_id: str, revision: str,
     nobody has.
     """
     import sys as _sys
-    tools = SUITE_ROOT / "k6" / "tools"
+    tools = SUITE_ROOT / "engines" / "tools"
     if str(tools) not in _sys.path:
         _sys.path.insert(0, str(tools))
     try:
@@ -1005,7 +1005,7 @@ def _refuse_incomplete_exl3hf(con: Console, repo_id: str, revision: str,
 
 
 # Registry tensor_class <- real module-name mapping, most-specific first.
-# Deliberately duplicated from k6/tools/derive_scope.py's vocabulary rather
+# Deliberately duplicated from engines/tools/derive_scope.py's vocabulary rather
 # than imported: this gate must keep working if that tool is refactored, and
 # a silent vocabulary drift here would turn a REFUSAL into a pass.
 _SCOPE_CLASS_PATTERNS = [
@@ -1156,7 +1156,7 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
     against the official release's own non-routed set.
     """
     import sys as _sys
-    tools = SUITE_ROOT / "k6" / "tools"
+    tools = SUITE_ROOT / "engines" / "tools"
     if str(tools) not in _sys.path:
         _sys.path.insert(0, str(tools))
     try:
@@ -1236,11 +1236,11 @@ def _verify_gguf_readable(con: Console, repo_id: str, revision: str,
     official non-routed name set (nothing missing, nothing stray).
 
     Skipped -- loudly -- where numpy is not importable, because `bin/` is
-    stdlib-only by policy (AGENTS.md) and the surfaces under `k6/tools/` are
+    stdlib-only by policy (AGENTS.md) and the surfaces under `engines/tools/` are
     not. A skipped gate is a warning, never a silent pass.
     """
     import sys as _sys
-    tools = SUITE_ROOT / "k6" / "tools"
+    tools = SUITE_ROOT / "engines" / "tools"
     if str(tools) not in _sys.path:
         _sys.path.insert(0, str(tools))
     try:
@@ -1266,7 +1266,7 @@ def _verify_gguf_readable(con: Console, repo_id: str, revision: str,
              "Another build of the same repo may well be measurable -- "
              "`--path <build>` picks one, and the planner lists them.",
              "Adding a type means adding a kernel WITH a bitwise-vs-gguf-py "
-             "proof (k6/tools/selftest_gguf_offline.py), not skipping tensors.",
+             "proof (engines/tools/selftest_gguf_offline.py), not skipping tensors.",
              "Nothing was created. $0.00 spent."])
     except Exception as exc:                             # noqa: BLE001
         con.warn("gguf readability gate skipped: %s" % redact(str(exc)))
@@ -1370,7 +1370,7 @@ def _verify_gguf_readable(con: Console, repo_id: str, revision: str,
               ", ".join("%s x%d" % (t, census[t]) for t in sorted(census))))
 
 
-#: Which table in `k6/tools/stream_score.py` holds a surface's profiles. Named
+#: Which table in `engines/tools/stream_score.py` holds a surface's profiles. Named
 #: rather than derived: the constants are not a mechanical transform of the
 #: surface string (`tr3-published` lives in TR3_PROFILES), and a refusal that
 #: sends the reader to a constant that does not exist is worse than one that
@@ -1682,11 +1682,11 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                  "checks against the release's own declaration.",
                  "FOUR files must agree, and a profile added to only some of "
                  "them fails later and more expensively than this:",
-                 "  1. k6/tools/stream_score.py    %s: profile -> (declared "
+                 "  1. engines/tools/stream_score.py    %s: profile -> (declared "
                  "bpw, student label), and the --profile argparse choices"
                  % PROFILE_TABLE_NAMES.get(surface.surface,
                                            "the <SURFACE>_PROFILES table"),
-                 "  2. k6/tools/kld_report.py   the run-label map, "
+                 "  2. engines/tools/kld_report.py   the run-label map, "
                  "PROFILE_SURFACE_FAMILY, the student-label map and its "
                  "--profile choices (the display strings are PER PROFILE -- "
                  "read head_bits off the release rather than copying a "
@@ -1699,7 +1699,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                  "  4. registry/tools/registry_add.py  the accepted summary "
                  "schemas, or the row cannot be ingested once you have paid "
                  "for the number",
-                 "k6/tools/selftest_kld_report_offline.py derives its coverage "
+                 "engines/tools/selftest_kld_report_offline.py derives its coverage "
                  "from stream_score's tables, so run it: a half-added profile "
                  "fails NUM-15 offline, before any rental.",
                  "",
@@ -2283,7 +2283,7 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
         if not (pd / "panel.json").is_file():
             raise Refusal("--panel-dir %s has no panel.json" % pd,
                           ["A panel directory is panel.json + arrays/.",
-                           "Build one with k6/tools/build_token_panel.py."])
+                           "Build one with engines/tools/build_token_panel.py."])
         try:
             pd.relative_to(SUITE_ROOT)
         except ValueError:
@@ -2291,7 +2291,7 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
                 "--panel-dir must live inside the suite checkout (%s)" % SUITE_ROOT,
                 ["The bundle uploader addresses files by their path RELATIVE to "
                  "the suite root, so a panel outside it has no remote path.",
-                 "Commit the panel under k6/panels/ and pass that path.",
+                 "Commit the panel under engines/panels/ and pass that path.",
                  "Nothing was created. $0.00 spent."])
         files += sorted(str(f.relative_to(SUITE_ROOT))
                         for f in pd.rglob("*") if f.is_file())
@@ -2554,7 +2554,7 @@ _PROGRESS_STALL_POLLS = 5
 def _progress_counter(text: str) -> "Optional[int]":
     """The item count from the newest ``progress:`` line in a log tail.
 
-    k6/tools/progress.py renders ``progress: <label> <n>/<total> ...`` (or
+    engines/tools/progress.py renders ``progress: <label> <n>/<total> ...`` (or
     ``progress: <label> <n> ...`` when the total is unknown).  ``n`` counts
     within one unit and RESETS when the next unit starts (each layer fill gets
     its own meter), so this is not a monotonic stage-wide clock and must not be
@@ -2581,7 +2581,7 @@ def _progress_counter(text: str) -> "Optional[int]":
     return found
 
 
-#: Duplicated from k6/tools/progress.py rather than imported: bin/ must run on
+#: Duplicated from engines/tools/progress.py rather than imported: bin/ must run on
 #: stock python3.9 with no torch and no k6 tools on sys.path, and this is one
 #: seven-character string.  bin/selftest_progress.py asserts the two agree.
 progress_meter_PREFIX = "progress:"
@@ -2828,7 +2828,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="LOCAL panel directory (panel.json + arrays/) shipped to "
                          "the instance with the bundle. A root capture for a model "
                          "family with no published panel needs one; build it with "
-                         "k6/tools/build_token_panel.py against that family's OWN "
+                         "engines/tools/build_token_panel.py against that family's OWN "
                          "tokenizer. Mutually exclusive with --panel.")
     rt.add_argument("--dataset-id",
                     help="identity of the fidelity dataset to write, e.g. "
@@ -2998,7 +2998,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not (pd / "panel.json").is_file():
                 con.err("--panel-dir %s has no panel.json (a panel directory "
                         "is panel.json + arrays/; build one with "
-                        "k6/tools/build_token_panel.py)" % pd)
+                        "engines/tools/build_token_panel.py)" % pd)
                 return EXIT_REFUSED
             try:
                 pd.relative_to(SUITE_ROOT)
@@ -3006,7 +3006,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 con.err("--panel-dir must live inside the suite checkout (%s): "
                         "the bundle uploader addresses files by their path "
                         "relative to the suite root, so a panel outside it has "
-                        "no remote path. Commit it under k6/panels/ and pass "
+                        "no remote path. Commit it under engines/panels/ and pass "
                         "that path." % SUITE_ROOT)
                 return EXIT_REFUSED
     elif not args.model or not args.panel:

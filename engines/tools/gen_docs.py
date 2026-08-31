@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render k6/HIDDEN-REPLAY.md from reports/hidden-replay-equivalence.json.
+"""Render engines/HIDDEN-REPLAY.md from reports/hidden-replay-equivalence.json.
 
 Every number in the prose comes from the receipt -- nothing is hand-transcribed
 (campaign lesson: a doc that restates numbers by hand eventually disagrees with
@@ -213,12 +213,12 @@ def main() -> int:
     A("")
     A("```bash")
     A("git clone https://github.com/malaiwah/quant-fidelity-suite /home/suite")
-    A("bash /home/suite/k6/tools/hidden_replay_stage.sh setup     # venv, pinned pipeline, selftest")
-    A("bash /home/suite/k6/tools/hidden_replay_stage.sh fetch     # ~305 GB, head sha re-verified")
-    A("bash /home/suite/k6/tools/hidden_replay_stage.sh verify    # sealed receipts + L1 ladder")
-    A("for n in 1 2 3; do bash /home/suite/k6/tools/hidden_replay_stage.sh run$n; done")
-    A("bash /home/suite/k6/tools/hidden_replay_stage.sh report    # path A vs the sealed number")
-    A("bash /home/suite/k6/tools/hidden_replay_stage.sh compare   # the comparator")
+    A("bash /home/suite/engines/tools/hidden_replay_stage.sh setup     # venv, pinned pipeline, selftest")
+    A("bash /home/suite/engines/tools/hidden_replay_stage.sh fetch     # ~305 GB, head sha re-verified")
+    A("bash /home/suite/engines/tools/hidden_replay_stage.sh verify    # sealed receipts + L1 ladder")
+    A("for n in 1 2 3; do bash /home/suite/engines/tools/hidden_replay_stage.sh run$n; done")
+    A("bash /home/suite/engines/tools/hidden_replay_stage.sh report    # path A vs the sealed number")
+    A("bash /home/suite/engines/tools/hidden_replay_stage.sh compare   # the comparator")
     A("```")
     A("")
     A("Code identity (content shas of the exact files that produced the numbers):")

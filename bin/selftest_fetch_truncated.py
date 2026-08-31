@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""F1-F9: `k6/tools/fetch_truncated_ckpt.py` against three real key layouts.
+"""F1-F9: `engines/tools/fetch_truncated_ckpt.py` against three real key layouts.
 
 Why this file exists
 --------------------
@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
-TOOL = ROOT / "k6" / "tools" / "fetch_truncated_ckpt.py"
+TOOL = ROOT / "engines" / "tools" / "fetch_truncated_ckpt.py"
 
 FAKE_REVISION = "0" * 40
 

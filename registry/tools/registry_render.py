@@ -465,7 +465,7 @@ def render_group(C, key, members, groups):
         # subtract and publish" stays prose-only there (see the bias callouts below) -- and
         # the primary table is where every cross_stack group's rows live, since a crosscheck
         # pipeline never declares a `lane`. A same-stack LANE floor is a different case this
-        # registry is choosing to formalize (k6/BF16-FLOOR.md): both terms are small, share
+        # registry is choosing to formalize (engines/BF16-FLOOR.md): both terms are small, share
         # the same reference AND the same lane, and BIAS-002/004/006 guarantee the pairing is
         # sound, so the derived number earns a column instead of staying prose-only.
         show = allow_attributable and any(

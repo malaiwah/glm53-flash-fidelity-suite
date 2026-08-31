@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract `tensor_digest`'s embedded python out of k6/tools/measure_dione.sh.
+"""Extract `tensor_digest`'s embedded python out of engines/tools/measure_dione.sh.
 
 Test-support for bin/selftest_shell_guards.sh (SH-06 / CC-09). The guard must drive
 the SHIPPED snippet, not a copy of it: the defect was that a digest over zero

@@ -550,7 +550,7 @@ alongside the Festr conversation.
   outsider will not guess it; XC-2 enforces `args.lane == dataset.split` so the two can never drift.
 * **Our K6/K8 cards cannot carry a non-null head content digest until the capture tool publishes
   one.** `head-extraction.json` / `head-equality-fp8.json` publish the *file* digest `47eaf729…`;
-  `k6/hidden-replay-evidence/nonrouted-sparse-fetch.json` publishes the *content* digest
+  `engines/hidden-replay-evidence/nonrouted-sparse-fetch.json` publishes the *content* digest
   `aa21c427…` — which is the correct value, but it is a working-tree artifact and not yet published
   as part of a sealed dataset. Until it is, the generator emits `replay_permitted: false` (GEN-8) and
   the comparator refuses cross-artifact hidden replay against those cards (HEAD-4). This is the

@@ -650,7 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "refuses with remedies, never a stack trace")
     r.add_argument("--pipeline-root",
                    help="patched quant_pipeline tree for --execute preflight "
-                        "(clone PIPE_REPO per k6/stage_campaign.sh + patches-v2)")
+                        "(clone PIPE_REPO per engines/stage_campaign.sh + patches-v2)")
     r.add_argument("--teacher-tree",
                    help="LOCAL teacher logits tree for --execute (default "
                         "<work>/teacher)")
@@ -844,7 +844,7 @@ def fixture_smoke(args: argparse.Namespace, con: Console) -> int:
     # below, and raw tqdm "Loading weights" bars replayed after the fact read
     # like garbage (usability review, 2026-08-28).
     env = dict(os.environ, HF_HUB_DISABLE_PROGRESS_BARS="1")
-    proc = _run([python, str(SUITE_ROOT / "k6" / "tools" / "stream_score_selftest.py"),
+    proc = _run([python, str(SUITE_ROOT / "engines" / "tools" / "stream_score_selftest.py"),
                  "--fixture", str(fixture_path), "--only", "b,c,f,g,h,i,j",
                  "--device", ("mps" if platform.machine() == "arm64" else "cpu")],
                 check=False, timeout=3600, env=env)
@@ -887,8 +887,8 @@ def execute(args: argparse.Namespace, result: Dict[str, Any], con: Console,
             "missing": "a native-bf16 run driver in measure-local",
             "remedy": "the BF16 base is measured by the bf16-floor lane "
                       "(stream_score.py --source native --inventory <sealed> "
-                      "--bf16 <tree>; k6/BF16-FLOOR.md, and --capture-role "
-                      "teacher per k6/SAME-LANE-TEACHER.md) -- measure-local "
+                      "--bf16 <tree>; engines/BF16-FLOOR.md, and --capture-role "
+                      "teacher per engines/SAME-LANE-TEACHER.md) -- measure-local "
                       "--execute drives packed quant sources today"})
     elif surface and engine.surfaces and surface not in engine.surfaces:
         problems.append({

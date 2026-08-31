@@ -47,7 +47,7 @@ it under another name. **DIVERGENT** — we differ, with a measured reason.
 | 14 | Measured BF16 **floor** and attributable error | no equivalent; §5.3 of his report argues against subtraction | yes | **OURS — divergent, §7** | the floor framing is scope-stable where its inputs are not (+1.4% vs −9% / −16%) |
 | 15 | Schema-enforced registry with mechanical refusals | no | yes | **OURS** | 90 invariants, 8 new; CMP-003 caught a real error in this very work (§4.3) |
 | 16 | Lane separation (`same_stack` / `cross_stack`) | no field | yes, on the teacher-vs-student axis only | **OURS, but narrower than we first claimed — §8** | our two BF16 floors, 0.011506 vs 0.012712, same panel and teacher. It does **not** separate his 0.0305 from his 0.024555: that is a pipeline difference and `pipeline_ref` is not a key input |
-| 17 | Multi-format decode surfaces (TR3/EXL3, dione, MLX, GGUF, NVFP4) | EXL3 + NVFP4 | 5 surfaces | OURS | `k6/tools/stream_score.py --source` |
+| 17 | Multi-format decode surfaces (TR3/EXL3, dione, MLX, GGUF, NVFP4) | EXL3 + NVFP4 | 5 surfaces | OURS | `engines/tools/stream_score.py --source` |
 | 18 | Threshold for the overlap scan justified | bare `0.05` literal, no sensitivity analysis | n/a — his scanner, his threshold | **CONTRIBUTION BACK on row 11, §4.2** | the published means swing 15% across plausible thresholds |
 
 **Where he is plainly ahead and we simply took his design:** rows 6-13. That is
@@ -84,7 +84,7 @@ registry/tools/registry_joint_check.py   JOINT-001..008, the arithmetic JSON Sch
 
 GLM-5.3-Flash stores 154,880 lm_head columns for a 154,856-token vocabulary.
 His protocol masks the 24 padded columns out of both sides before the
-log-softmax. Ours never has: `k6/tools/k6_kld_report.py::_token_kld` takes a
+log-softmax. Ours never has: `engines/tools/k6_kld_report.py::_token_kld` takes a
 log-softmax over the full last dimension.
 
 We did not argue about the size of this, but we could not measure it directly

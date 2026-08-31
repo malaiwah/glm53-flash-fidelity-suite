@@ -79,7 +79,7 @@ class Instance:
     def billed_usd(self) -> float:
         """The accumulated dollar total for this instance so far.
 
-        NOTE, and this contradicts an earlier note in k6/HANDOFF.md: `jl get`'s
+        NOTE, and this contradicts an earlier note in engines/HANDOFF.md: `jl get`'s
         `cost` field is a running TOTAL in USD, not an hourly rate.  Verified
         by reconciling live instances against the published rates -- e.g. an
         8x H200 spot box at 2h33m reported 40.897, which is $16.04/h against a

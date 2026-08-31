@@ -3,7 +3,7 @@
 
 Why this file exists
 --------------------
-`k6/tools/hf_capture.py` captures a panel the obvious way: load the model, then
+`engines/tools/hf_capture.py` captures a panel the obvious way: load the model, then
 push one window at a time through the whole stack.  For a checkpoint that does
 not fit in memory that is the wrong loop order, and the cost is not compute --
 it is WEIGHT LOADING.  `docs/GLM53-ROOT-FEASIBILITY.md` puts the number on it:
@@ -196,7 +196,7 @@ def audit_checkpoint_tree(model_dir: str,
     """Refuse a checkpoint whose shards can hand back holes instead of weights.
 
     `shards` restricts the audit to a NAMED SUBSET, for the overlapped fetch of
-    `k6/tools/race_fetch.py`: at the moment layer N is about to be loaded, the
+    `engines/tools/race_fetch.py`: at the moment layer N is about to be loaded, the
     shards for layer N+1 may legitimately still be downloading, and auditing
     them would refuse a tree that is merely incomplete-so-far.  The subset audit
     is not weaker on what it covers -- each named shard is still checked against
@@ -449,7 +449,7 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     """Instantiate on meta, load everything but the decoder layers, and return the streamer.
 
     `gate` turns the loader from "the tree is complete" into "the tree arrives
-    while I work" -- the overlapped fetch of `k6/tools/race_fetch.py`.  It is any
+    while I work" -- the overlapped fetch of `engines/tools/race_fetch.py`.  It is any
     object exposing `wait_for_shards(names)`, `wait_for_layer(i)` and `.plan`
     (a `race_fetch.FetchPlan`).  With a gate:
 

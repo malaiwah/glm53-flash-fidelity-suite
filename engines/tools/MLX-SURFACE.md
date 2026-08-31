@@ -106,7 +106,7 @@ lane.
 ## 4. Running one
 
 ```bash
-cd k6/tools
+cd engines/tools
 PY=/path/to/python                     # torch + safetensors; mlx optional (macOS)
 
 # 0. offline validation (8 rungs, ~8 s, no network, no GPU)

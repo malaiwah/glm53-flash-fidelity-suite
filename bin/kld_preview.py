@@ -191,7 +191,7 @@ def _lane_disclosure(teacher: Dict[str, Any]) -> Dict[str, Any]:
     else:
         floor_context = (
             "local lane floor unmeasured against this teacher; the known "
-            "same-lane CUDA streaming floor is %.18g nats (k6/native-bf16-"
+            "same-lane CUDA streaming floor is %.18g nats (engines/native-bf16-"
             "kld.json) and must NOT be subtracted from local-lane numbers"
             % KNOWN_CUDA_STREAM_FLOOR)
     return {
@@ -486,7 +486,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "--student %s is itself a bf16_teacher capture; scoring a "
                 "teacher against a teacher is the floor measurement, which "
                 "needs the sealed scorer's determinism chain (or T1 hash "
-                "identity -- see k6/SAME-LANE-TEACHER.md)" % args.student)
+                "identity -- see engines/SAME-LANE-TEACHER.md)" % args.student)
         _gate_pair(teacher, student, "student")
         sampled = student.get("schema") == PREVIEW_CAPTURE_SCHEMA
         student2 = student2_root = None

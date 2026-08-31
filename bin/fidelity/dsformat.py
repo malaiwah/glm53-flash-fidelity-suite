@@ -149,8 +149,8 @@ def read_safetensors_header(path: str) -> Tuple[int, Dict[str, Any]]:
 def payload_sha256(path: str) -> str:
     """Preimage 2: the safetensors DATA REGION, header skipped.
 
-    Byte-identical to `k6/tools/hidden_replay.py::payload_sha256` and to
-    `k6/stage_campaign.sh` L4's payload-shas.json: read the `<Q` header length at
+    Byte-identical to `engines/tools/hidden_replay.py::payload_sha256` and to
+    `engines/stage_campaign.sh` L4's payload-shas.json: read the `<Q` header length at
     offset 0, seek past `8 + header_len`, hash the rest.  Survives
     `__metadata__` churn.
     """
@@ -445,7 +445,7 @@ def parse_checksums(text: str) -> Dict[str, str]:
         if path in out:
             raise FormatError("seal_failed", "checksums.txt lists %r twice" % path)
         # The digest was validated and the PATH was not, so a remote checksums.txt could
-        # name `../../k6/tools/stream_score.py` or an absolute path and the fetcher joined
+        # name `../../engines/tools/stream_score.py` or an absolute path and the fetcher joined
         # it onto the download directory. `write_checksums` derives every entry from
         # `iter_dataset_files`, which is an os.walk + relpath and hard-errors on symlinks,
         # so a legitimately generated file can never contain one: rejecting the whole list

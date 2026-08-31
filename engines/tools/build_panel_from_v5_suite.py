@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Rebuild the sealed malaiwah Qwen3.8 suite-v5 shard-0 token panel as a
-``quant-pipeline.glm53-token-panel.v1`` tree that ``k6/tools/hf_capture.py``
+``quant-pipeline.glm53-token-panel.v1`` tree that ``engines/tools/hf_capture.py``
 can consume.
 
 Why this exists
@@ -183,7 +183,7 @@ def main():
         "schema": "malaiwah.token-panel-rebuild-receipt.v1",
         "format_version": 1,
         "receipt_sha256": "",
-        "tool": "k6/tools/build_panel_from_v5_suite.py",
+        "tool": "engines/tools/build_panel_from_v5_suite.py",
         "tool_sha256": sha256_file(os.path.abspath(__file__)),
         "panel_id": args.panel_id,
         "panel_name": args.panel_name,

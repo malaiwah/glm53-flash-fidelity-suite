@@ -326,7 +326,7 @@ per-window KLD scatter has sd 7.2e-3 (K6) / 6.9e-3 (K8), and even the paired
 per-window K6−K8 delta has sd 2.0e-3, against an effect of 1.33e-3. On one unlucky window (`window-0000`)
 K8 appeared *worse* than K6; over the full panel it wins decisively. Never
 quote a single-window KLD as a rate comparison —
-[full write-up](https://github.com/malaiwah/quant-fidelity-suite/blob/main/k6/K8-ANOMALY.md).
+[full write-up](https://github.com/malaiwah/quant-fidelity-suite/blob/main/engines/K8-ANOMALY.md).
 
 ### Quantization-attributable error (the floor removed)
 
@@ -345,7 +345,7 @@ differing expert-combine orders). Two cold runs, identical means. Removing it:
 only 1.11x — K8 removes ~60% of the divergence K6 leaves behind. Raw KLD
 understates differences between good quants because the floor is common to
 both. Method, receipts and the ways this subtraction can be misused:
-[BF16-FLOOR.md](https://github.com/malaiwah/quant-fidelity-suite/blob/main/k6/BF16-FLOOR.md).
+[BF16-FLOOR.md](https://github.com/malaiwah/quant-fidelity-suite/blob/main/engines/BF16-FLOOR.md).
 
 ## What this is (and is not)
 
@@ -355,7 +355,7 @@ both. Method, receipts and the ways this subtraction can be misused:
   with a disclosed patch series. His published core admits K3/K4/K5, so **K8 is
   a declared rate extension** — our encoder was verified **byte-identical** to
   his sealed core across 120 encodes / 624 MiB / 0 differing bytes
-  ([evidence](https://github.com/malaiwah/quant-fidelity-suite/blob/main/k6/fallback/closure-comparison.json),
+  ([evidence](https://github.com/malaiwah/quant-fidelity-suite/blob/main/engines/fallback/closure-comparison.json),
   [issue #1](https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw/issues/1)).
 - **Serving runtime:** use
   [`malaiwah/glm52-exl3-vast`](https://github.com/malaiwah/glm52-exl3-vast)

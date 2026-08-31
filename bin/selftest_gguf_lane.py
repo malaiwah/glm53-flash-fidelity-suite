@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """T13 -- the GGUF LANE wiring: shelf -> plan -> argv -> fetch -> receipt.
 
-`k6/tools/gguf_surface.py` could already read a llama.cpp container, and
+`engines/tools/gguf_surface.py` could already read a llama.cpp container, and
 `stream_score.py` could already score one, and `kld_report.py` and
 `registry_add.py` already knew the family.  None of that was reachable: the
 lane did not classify a GGUF repo as anything, so `bin/measure-cloud` refused
@@ -149,7 +149,7 @@ def rung_profile() -> None:
           and resolve_profile(lane, "exl3hf", 4.05) == "turbo-4.05bpw",
           "2d the wildcard did not leak: a rate-keyed surface still refuses an "
           "unmapped rate and still resolves a mapped one")
-    src = (ROOT / "k6" / "tools" / "stream_score.py").read_text(encoding="utf-8")
+    src = (ROOT / "engines" / "tools" / "stream_score.py").read_text(encoding="utf-8")
     check(("\n%s =" % PROFILE_TABLE_NAMES["gguf"]) in src,
           "2e the refusal's advice names a constant that exists in stream_score",
           PROFILE_TABLE_NAMES["gguf"])
@@ -362,7 +362,7 @@ def rung_receipt(tmp: Path) -> None:
     from fidelity.hfmeta import DEFAULT_PANEL
     from fidelity.receipt import produced_by_block
 
-    scope_src = ROOT / "k6" / "tools" / "gguf-evidence" / "udq4kxl-scope.json"
+    scope_src = ROOT / "engines" / "tools" / "gguf-evidence" / "udq4kxl-scope.json"
     scope = json.loads(scope_src.read_text(encoding="utf-8"))["scope"]
     panel = dict(DEFAULT_PANEL.to_dict(), revision="0" * 40)
     job = {

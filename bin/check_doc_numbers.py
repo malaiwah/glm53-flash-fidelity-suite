@@ -594,7 +594,7 @@ def main():
     print("=" * 78)
     # CC-01. Six places in this repo, and the PUBLISHED K8 model card, said
     # "per-window KLD scatter has sd 1.73e-3 against a K6-vs-K8 effect of 1.22e-3".
-    # Both numbers came from k6/K8-ANOMALY.json, where they are the per-window DELTA
+    # Both numbers came from engines/K8-ANOMALY.json, where they are the per-window DELTA
     # sd (0.0017334539428769534) and the pooled delta (-0.0012176728196882456) over an
     # ELEVEN-window subset -- correct in that document, mislabelled and mis-scoped
     # everywhere else. Two selftests asserted the literal strings, which locked them in.

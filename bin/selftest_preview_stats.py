@@ -99,7 +99,7 @@ def main() -> int:
     check("same seed -> identical indices", a == b)
     check("different seed -> a different start", a != c)
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "k6" / "tools"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "engines" / "tools"))
         import stream_score
         same = all(
             PS.systematic_indices(s, w, 2047, m) ==

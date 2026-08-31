@@ -7,9 +7,9 @@ exists, or a refusal that names its arithmetic. `registry-view` browses the
 public registry from the CLI; `registry-submit` checks a sealed receipt the
 way the registry will, before it is sent anywhere.
 
-## Why here and not in `k6/tools/`
+## Why here and not in `engines/tools/`
 
-`k6/tools/` is campaign-scoped — its name is a campaign, its contents assume
+`engines/tools/` is campaign-scoped — its name is a campaign, its contents assume
 GLM-5.3-Flash and the K6 encode. The runners are meant for people who have
 never heard of K6 and are measuring some other model entirely. Putting them at
 the top level alongside `registry/` is what makes the pair read as a product
@@ -110,9 +110,9 @@ arithmetic for you: subtracting the cross-stack floor 0.012712 from the
 streaming K8 mean gives 0.012384 − 0.012712 = **−0.000328** — a negative
 attributable for an 8-bit quant, arithmetic proof the floors are not
 interchangeable; the same-lane floor gives 0.012384 − 0.011506 = +0.000878.
-`k6/BF16-FLOOR.json` (the analysis) is refused as a floor input by name, and
+`engines/BF16-FLOOR.json` (the analysis) is refused as a floor input by name, and
 "floor = 0" is accepted only with T1 hash evidence
-(`k6/SAME-LANE-TEACHER.md`). `--from-registry MEASUREMENT_ID` fetches the
+(`engines/SAME-LANE-TEACHER.md`). `--from-registry MEASUREMENT_ID` fetches the
 public receipt and gates on its real teacher sha.
 
 `paired-delta`: the honest CI for a two-run difference — paired per-window
@@ -129,8 +129,8 @@ A lane whose engine is not `pinned: true` in `engines.json` **refuses to
 plan**. It does not guess flags.
 
 **All five lanes are now pinned**: `sealed-ep8` (against
-`k6/tools/k6_student_capture.py`), and `bf16-floor`, `streaming`,
-`local-mps`, `local-cuda-budget` (all against `k6/tools/stream_score.py`,
+`engines/tools/k6_student_capture.py`), and `bf16-floor`, `streaming`,
+`local-mps`, `local-cuda-budget` (all against `engines/tools/stream_score.py`,
 every required flag verified by `bin/measure-local --probe-engines` in the
 real file). The 2026-08-29 reconciliation was done by PROBING the CLI (AST
 scrape of the argparse declarations), never by reading docs. Planner-only
@@ -164,7 +164,7 @@ have been enough:
   plus a `--bf16` tree, with ONE exception: `--source native --profile
   native-bf16` needs no packed root at all — only the `--bf16` tree, a sealed
   `inventory.json` (`--inventory`) and the panel. That is the BF16-floor lane
-  (see `k6/BF16-FLOOR.md`), and it is also the shape a `tr3-published` reader
+  (see `engines/BF16-FLOOR.md`), and it is also the shape a `tr3-published` reader
   would need. `--source dione` raises *"not enabled in this build"*.
 
 *(That last paragraph is history: `tr3-published`, `dione`, `exl3hf` and `gguf`
@@ -252,7 +252,7 @@ When a model lands on the Hub, the quants appear within hours and nobody can
 say how good any of them are, because there is no root to measure against.
 [`docs/RACE-MODE.md`](../docs/RACE-MODE.md) is the whole story; the short form:
 
-* **The fetch stops being a barrier.** `k6/tools/race_fetch.py` reads
+* **The fetch stops being a barrier.** `engines/tools/race_fetch.py` reads
   `model.safetensors.index.json`, buckets every shard by the first layer that
   needs it, and downloads in that order while the capture runs. The layer-outer
   loader blocks on layer N's shards only when it is about to load layer N. Worst
@@ -269,7 +269,7 @@ say how good any of them are, because there is no root to measure against.
   root in place would put rows measured against different bytes into ONE
   comparability group; passing the same id for both is refused by name.
 * **The generation sanity check runs on EVERY capture**, race or not
-  (`k6/tools/generation_probe.py`). `"The capital of France is"` → `" Paris"`,
+  (`engines/tools/generation_probe.py`). `"The capital of France is"` → `" Paris"`,
   as one extra window through the schedule already loading every layer: ~1/N of
   an N-window panel and zero extra weight loading. It is the only guard here
   that sees a shard which loaded as ZEROS — names, shapes and tensor counts are
@@ -444,7 +444,7 @@ python3 bin/selftest_submission_refusal.py # T5: previews/teachers cannot become
 python3 bin/selftest_fidelity_dataset.py   # T6: format, seals, panel/head/lane/coverage refusals
 python3 bin/selftest_fidelity_compare.py   # T8: known-answer KLD, exact self-compare, SC-3
 python3 bin/selftest_fidelity_card.py      # T7: card annotation, 3 axes (--offline skips the Hub axis)
-python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k # engine-edit rungs
+python3 engines/tools/stream_score_selftest.py --only g,h,i,j,k # engine-edit rungs
 bin/registry-view --selftest-live          # live dataset, keys, value tripwire
 ```
 

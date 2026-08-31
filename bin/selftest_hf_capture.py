@@ -193,7 +193,7 @@ def capture(model, panel, out, *, role, dataset_id, name, scope_file=None, extra
                     "--out", out, "--form", "hidden", "--role", role,
                     "--lane", "local-cuda-budget", "--engine", "hf-transformers",
                     "--"] + tail)
-    return run([os.path.join(REPO, "k6", "tools", "hf_capture.py"),
+    return run([os.path.join(REPO, "engines", "tools", "hf_capture.py"),
                 "--out", out, "--role", role, "--lane", "local-cuda-budget"] + tail)
 
 
@@ -445,7 +445,7 @@ def _body(work):
     # hand the report back instead of raising, and then this reader is the only
     # thing standing between a randomly initialised tensor and a published
     # number.
-    sys.path.insert(0, os.path.join(REPO, "k6", "tools"))
+    sys.path.insert(0, os.path.join(REPO, "engines", "tools"))
     import hf_capture as HC
 
     def _refused(report, allow_missing):

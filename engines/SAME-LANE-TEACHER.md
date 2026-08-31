@@ -2,7 +2,7 @@
 
 **Status: tooling shipped, GPU run NOT executed.** `stream_score.py
 --capture-role teacher` exists, is selftested (ladder rungs L1.g–L1.j), and its
-output tree is a valid `--teacher` for `k6/tools/k6_kld_report.py` and
+output tree is a valid `--teacher` for `engines/tools/k6_kld_report.py` and
 `bin/kld-preview`. The ~$6 capture run itself is deliberately not part of this
 change (no renting); this document is the complete recipe for whoever runs it.
 
@@ -10,7 +10,7 @@ change (no renting); this document is the complete recipe for whoever runs it.
 
 The streaming lane's measured floor against the sealed EP8 teacher is
 **0.011505922619330299** nats (2 cold runs, identical means,
-`k6/native-bf16-kld.json`). Every quant measured on this lane sits on that
+`engines/native-bf16-kld.json`). Every quant measured on this lane sits on that
 floor: K6's panel mean 0.013715 is only 0.002209 of quantization error; K8's
 0.012384 is only 0.000878. The floor exists because the teacher was captured
 on a DIFFERENT stack (8×H200 EP8 NCCL) than the streaming lane replays.

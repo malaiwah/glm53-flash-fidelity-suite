@@ -4,7 +4,7 @@
 #   bootstrap_measure.sh            (called by stage_measure.sh setup)
 #
 # WHY THIS EXISTS.  The cloud recipe used to delegate its bootstrap to
-# `k6/stage_campaign.sh setup` (called stage_k6.sh until 2026-08-31), on the
+# `engines/stage_campaign.sh setup` (called stage_k6.sh until 2026-08-31), on the
 # reasoning that the campaign script's container recipe is the proven one.  Two facts made that unrunnable, and both only show
 # up on a cold box:
 #
@@ -46,7 +46,7 @@ EXL3="$ROOT/exllamav3"
 RCPT="$FS/receipts"
 PATCHES="$ROOT/patches-v2"
 
-# Pins, verbatim from k6/stage_campaign.sh (the tree that produced the sealed rows).
+# Pins, verbatim from engines/stage_campaign.sh (the tree that produced the sealed rows).
 PIPE_REPO=https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw
 PIPE_PIN=ce1bf9706b6aa18435e2baccab63bdd72299257c
 EXL3_REPO=https://github.com/turboderp-org/exllamav3
@@ -236,7 +236,7 @@ fi
 # in an adapter is a syntax error we can see for free, before any download.
 QP_PIPELINE_ROOT="$PIPE" "$PY" - <<PY | tee "$RCPT/adapter-import.txt"
 import sys
-sys.path.insert(0, "$FS/k6/tools")
+sys.path.insert(0, "$FS/engines/tools")
 sys.path.insert(0, "$PIPE/src")
 import exl3hf_surface, dione_surface   # noqa: F401
 print("surface adapters import OK:", exl3hf_surface.EXL3HF_SURFACE_SCHEMA)
@@ -245,24 +245,24 @@ PY
 # ---- 6. the exl3hf offline selftest, INCLUDING the rungs that need the
 #         pipeline (they self-skip on the laptop; this is the only place the
 #         mcg-parity rung can run before a paid capture) --------------------
-if [ -f "$FS/k6/tools/selftest_tr3_offline.py" ]; then
+if [ -f "$FS/engines/tools/selftest_tr3_offline.py" ]; then
   log "running the tr3 offline selftest (seal recompute + mcg decode parity)"
-  ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_tr3_offline.py ) \
+  ( cd "$FS/engines/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_tr3_offline.py ) \
     | tee "$RCPT/selftest-tr3.txt"
 fi
-if [ -f "$FS/k6/tools/selftest_dione_offline.py" ]; then
+if [ -f "$FS/engines/tools/selftest_dione_offline.py" ]; then
   log "running the dione offline selftest (pack layout + decode identity + real-index census)"
-  ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_dione_offline.py \
+  ( cd "$FS/engines/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_dione_offline.py \
       --pipeline-root "$PIPE" ) | tee "$RCPT/selftest-dione.txt"
 fi
-if [ -f "$FS/k6/tools/selftest_dione_stream_offline.py" ]; then
+if [ -f "$FS/engines/tools/selftest_dione_stream_offline.py" ]; then
   log "running the dione STREAMING front-end selftest (manifests + shards + scope + materializer)"
-  ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_dione_stream_offline.py ) \
+  ( cd "$FS/engines/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_dione_stream_offline.py ) \
     | tee "$RCPT/selftest-dione-stream.txt"
 fi
-if [ -f "$FS/k6/tools/selftest_exl3hf_offline.py" ]; then
+if [ -f "$FS/engines/tools/selftest_exl3hf_offline.py" ]; then
   log "running the exl3hf offline selftest (mcg-parity rung included)"
-  ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_exl3hf_offline.py ) \
+  ( cd "$FS/engines/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_exl3hf_offline.py ) \
     | tee "$RCPT/selftest-exl3hf.txt"
 fi
 # The GGUF surface's offline battery has been in bin/BUNDLE.txt since the lane
@@ -282,9 +282,9 @@ fi
 # written here: `cmd | tee` propagates cmd's status under pipefail, so a decode
 # that does not reproduce the reference stops the bootstrap instead of being
 # printed into a log nobody reads until the receipt is already sealed.
-if [ -f "$FS/k6/tools/selftest_gguf_offline.py" ]; then
+if [ -f "$FS/engines/tools/selftest_gguf_offline.py" ]; then
   log "running the gguf offline selftest (gguf-py parity + CUDA decode parity)"
-  ( cd "$FS/k6/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_gguf_offline.py \
+  ( cd "$FS/engines/tools" && PYTHONPATH="$PIPE/src" "$PY" selftest_gguf_offline.py \
       --pipeline-root "$PIPE" ) | tee "$RCPT/selftest-gguf.txt"
 fi
 

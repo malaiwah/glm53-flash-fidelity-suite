@@ -183,7 +183,7 @@ def bundle_entries(suite: Path):
 def sync_suite(suite: Path, fs_root: Path, con) -> int:
     """Put the baked code where the stage scripts look for it.
 
-    `stage_measure.sh` addresses everything as `$FS/bin/...`, `$FS/k6/...`,
+    `stage_measure.sh` addresses everything as `$FS/bin/...`, `$FS/engines/...`,
     `$FS/registry/...`, and the same `$FS` also holds the models, the panel and
     the receipts.  In a container the code is immutable (it is an image layer)
     and the data is a mount, so the code is copied into the mount once, by
@@ -232,7 +232,7 @@ def stage_panel(panel_dir, fs_root: Path, con) -> str:
         raise Refusal(
             "--panel-dir %s has no panel.json" % src,
             ["A panel directory is panel.json + arrays/.",
-             "Build one with k6/tools/build_token_panel.py, then bind-mount it."])
+             "Build one with engines/tools/build_token_panel.py, then bind-mount it."])
     try:
         return str(src.relative_to(fs_root.resolve()))
     except ValueError:

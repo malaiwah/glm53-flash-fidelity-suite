@@ -45,7 +45,7 @@ several rows below:
 | `registry/tools/` | contributor's stock interpreter | **no** — this is the point |
 | `bin/` (controller: `measure_cloud.py`, the provider backends, `sshbase.py`) | the operator's laptop, stock `python3` | **no by policy**; see the `jl` caveat below |
 | `bin/fidelity/` files listed in `bin/BUNDLE.txt` | *both* laptop and rented instance | laptop is the binding constraint |
-| `k6/tools/` engines | the rented instance **after** `bootstrap_measure.sh` | **yes** — torch, transformers, `rich`, and `tqdm` are all installed |
+| `engines/tools/` engines | the rented instance **after** `bootstrap_measure.sh` | **yes** — torch, transformers, `rich`, and `tqdm` are all installed |
 
 Two facts complicate the policy and are recorded here rather than argued away:
 
@@ -64,7 +64,7 @@ Two facts complicate the policy and are recorded here rather than argued away:
 
 | # | Component | Alternative | Verdict |
 |---|---|---|---|
-| 1 | `k6/tools/progress.py` | `tqdm`, `rich.progress` | **KEEP — for a different reason than the file gave** |
+| 1 | `engines/tools/progress.py` | `tqdm`, `rich.progress` | **KEEP — for a different reason than the file gave** |
 | 2 | `registry/tools/_minischema.py` | `jsonschema` | **KEEP** |
 | 3 | `bin/fidelity/jlapi.py` (CLI wrapper) | JarvisLabs REST | **KEEP** |
 | 4 | `bin/fidelity/runpodapi.py` (`urllib`) | `requests`/`httpx` | **KEEP-BUT-DOCUMENT** — urllib demonstrably cost one live incident |
@@ -80,12 +80,12 @@ Two facts complicate the policy and are recorded here rather than argued away:
 | 14 | The selftest harness, re-declared ~24× | `unittest` | **KEEP the design, ADOPT the shared module (proposed)** |
 | 15 | Atomic-write helper × 8 | nothing in stdlib | **KEEP** |
 | 16 | Two checksum-file parsers | one parser | **KEEP — deliberately two** |
-| 17 | Two retry curves in `k6/tools/fetch_*.py` | one curve | **KEEP, reconcile the constants (proposed)** |
+| 17 | Two retry curves in `engines/tools/fetch_*.py` | one curve | **KEEP, reconcile the constants (proposed)** |
 | 18 | `argparse`, `pathlib`, `dataclasses`, `enum`, tables, colors | — | **not reinvented; no finding** |
 
 ---
 
-## 1. `k6/tools/progress.py` — the meter that started this
+## 1. `engines/tools/progress.py` — the meter that started this
 
 **KEEP.** The conclusion is unchanged; **the reason in the file was false and has been
 corrected.**
@@ -159,7 +159,7 @@ Two further properties are contract, not taste:
   process forever. The `progress:` prefix and the `n/total` token are an interface.
 - **`bin/` cannot import it.** `measure_cloud.py` duplicates the seven-character prefix
   rather than importing `progress.py`, because the controller runs on stock python3.9 with
-  no torch and no `k6/tools` on `sys.path`. `bin/selftest_progress.py` asserts the two
+  no torch and no `engines/tools` on `sys.path`. `bin/selftest_progress.py` asserts the two
   agree.
 
 **Verdict: KEEP.** Not because tqdm is a dependency — it is already installed — but because
@@ -410,7 +410,7 @@ Fifteen distinct definitions of the same chunked sha256 loop, with chunk sizes t
 arbitrarily between copies (`1024*1024`, `1<<20`, `1<<22`, `8<<20`). Unlike `canonical_json`,
 **this duplication is justified nowhere.** It is not a wire format; it is a loop.
 
-- `k6/tools/` (7 copies) runs on the instance under 3.12+, so those can become
+- `engines/tools/` (7 copies) runs on the instance under 3.12+, so those can become
   `hashlib.file_digest(fh, "sha256").hexdigest()` outright.
 - `bin/` and `registry/` are blocked by the 3.9 floor, but the three copies inside
   `bin/fidelity/` alone should collapse to one.
@@ -503,12 +503,12 @@ manifest (a security boundary — must be strict), the other parses **a third pa
 That is a legitimate reason for two parsers, and it deserves a cross-reference comment so
 nobody "fixes" the lenient one into strictness.
 
-## 17. Two retry curves in `k6/tools/fetch_*.py` — **KEEP, reconcile the constants**
+## 17. Two retry curves in `engines/tools/fetch_*.py` — **KEEP, reconcile the constants**
 
 `fetch_truncated_ckpt.py` sleeps `min(30.0, 1.5 * 2**attempt)`; `fetch_nonrouted_sparse.py`
 sleeps `min(2**attempt, 30)`. Same intent, silently different behaviour, same directory.
 
-These live in `k6/tools/`, so a library is not blocked by policy — but the retry wraps a
+These live in `engines/tools/`, so a library is not blocked by policy — but the retry wraps a
 **Range** request and also catches the module's own `IOError("short read")`, i.e. it retries
 partial-content responses, which is application-level logic `urllib3.Retry` does not
 express. The defect is that there are two curves, not that they exist.
@@ -550,7 +550,7 @@ came back clean:
 
 ## What this audit changed
 
-- `k6/tools/progress.py` and `bin/selftest_progress.py`: the **false** "tqdm is not in the
+- `engines/tools/progress.py` and `bin/selftest_progress.py`: the **false** "tqdm is not in the
   bundle / a rented instance gets no pip install" rationale replaced with the verified one
   (tqdm is already installed transitively; it has no newline mode; the output is a parsed
   contract).

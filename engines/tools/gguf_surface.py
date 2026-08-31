@@ -76,7 +76,7 @@ DISCLOSED DEVIATION - unsealed-source scoring: community GGUFs ship no encoder
 receipts, no reconstruction closures and no sealed reader ABI.  The adapter
 records whole-file sha256 for every GGUF it consumes plus the immutable repo
 revision, and every receipt carries ``seal_disclosure`` saying exactly that
-(the Dione precedent, k6/tools/dione_surface.py).
+(the Dione precedent, engines/tools/dione_surface.py).
 """
 
 from __future__ import annotations
@@ -307,7 +307,7 @@ def dequant_bytes(ggml_type: str, raw: bytes, n_elements: int, device=None):
     classes are exactly specified and device-independent: there is no reduction,
     no matmul (so no TF32 path), and in eager mode no fusion that could turn the
     ``dd * q - dm`` pair into an FMA with a different rounding.  Proven, not
-    assumed: `k6/tools/selftest_gguf_offline.py` rung 1b re-decodes the same
+    assumed: `engines/tools/selftest_gguf_offline.py` rung 1b re-decodes the same
     committed REAL ranged-fetched bytes on whatever accelerator the host has and
     demands ``torch.equal`` against the CPU output that rung 1 already proved
     bitwise-equal to gguf-py 0.19.0.  On this laptop that is MPS; on the rented

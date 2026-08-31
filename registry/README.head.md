@@ -151,7 +151,7 @@ pair does not. `BIAS-006` is what keeps the two floors from ever crossing: a flo
 `floor_measurement_ref` must have been measured on the SAME lane as the row naming it, so the
 cross-stack floor can never be subtracted from a streaming-lane row, nor this one from a
 cross-stack row, even on the rare occasion the two share a comparability key. See
-`k6/BF16-FLOOR.md` for the full analysis.
+`engines/BF16-FLOOR.md` for the full analysis.
 
 The second differing axis is the metric itself: the K6 / 4bpw / Dione rows are
 `mean_of_run_means_tokenwise_kld` over five cold runs, while the cross-stack rows are a single

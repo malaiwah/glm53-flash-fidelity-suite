@@ -91,7 +91,7 @@ t "gguf lane: shelf, profile, argv, fetch scope, receipt (T13)" \
 # the OUTPUT SHAPE: every stage runs `nohup ... > stage-<name>.log`, so a
 # carriage-return spinner writes one megabyte-long line, and the meter must fall
 # back to throttled newline-terminated lines when stdout is not a TTY. P11 is
-# the drift guard: a k6/tools module an engine imports but BUNDLE.txt does not
+# the drift guard: a engines/tools module an engine imports but BUNDLE.txt does not
 # list is an ImportError at the start of the measure stage, i.e. after the
 # bootstrap, the 200 GB fetch and the panel have all been paid for.
 t "progress meter: file vs TTY, throttle, wiring, bundle, stall counter (T14)" \
@@ -180,7 +180,7 @@ t "doc-vs-receipt: every alignment/card number re-derived" \
                                            0 python3 bin/check_doc_numbers.py
 t "stream_score ladder rungs g,h,i,j,k,l (teacher role / preview refusal / \
 sampling / receipt stability / source dispatch / decode-cache identity)" \
-                                           0 python3 k6/tools/stream_score_selftest.py --only g,h,i,j,k,l
+                                           0 python3 engines/tools/stream_score_selftest.py --only g,h,i,j,k,l
 # The three helpers every claim in docs/ARCHITECTURE-DETERMINISM.md rests on:
 # the partition explanation test (which must reject BOTH failure directions --
 # same attribute different result, and same result different attribute), the
@@ -207,13 +207,13 @@ MLXPY="${FIDELITY_PYTHON:-/opt/homebrew/bin/python3.14}"
 [ -x "$MLXPY" ] || MLXPY="$PY"
 if have_module "$MLXPY" torch && have_module "$MLXPY" safetensors; then
   t "mlx surface offline (8 rungs: mlx equality, census, refusals, plumbing, \
-dry-runs, registry adapter)"               0 "$MLXPY" k6/tools/selftest_mlx_offline.py
+dry-runs, registry adapter)"               0 "$MLXPY" engines/tools/selftest_mlx_offline.py
 else
   s "mlx surface offline" "torch/safetensors not importable under $MLXPY -- export FIDELITY_PYTHON"
 fi
 if have_module "$PY" torch; then
   t "gguf surface offline (dequant vs gguf-py, census, MLA audit, refusals)" \
-                                           0 "$PY" k6/tools/selftest_gguf_offline.py
+                                           0 "$PY" engines/tools/selftest_gguf_offline.py
 else
   s "gguf surface offline" "torch not importable by $PY"
 fi
@@ -231,7 +231,7 @@ have_module "$TPY" torch || TPY="$PY"
 have_module "$TPY" torch || TPY=""
 if [ -n "$TPY" ]; then
   t "nvfp4 surface offline (decode vs compressed-tensors, census, registry adapter)" \
-                                           0 "$TPY" k6/tools/selftest_nvfp4_offline.py \
+                                           0 "$TPY" engines/tools/selftest_nvfp4_offline.py \
                                              ${QP_PIPELINE_ROOT:+--pipeline-root "$QP_PIPELINE_ROOT"}
 else
   s "nvfp4 surface offline" "no torch in $VPY or $PY"
@@ -243,7 +243,7 @@ fi
 # satisfies. The MCG decode-parity rung self-skips without quant_pipeline.
 if [ -n "$TPY" ]; then
   t "tr3 surface offline (seal recompute, tampers, scope, decode == exl3hf)" \
-                                           0 "$TPY" k6/tools/selftest_tr3_offline.py
+                                           0 "$TPY" engines/tools/selftest_tr3_offline.py
 else
   s "tr3 surface offline" "no torch in $VPY or $PY"
 fi
@@ -316,7 +316,7 @@ fi
 import ast, sys
 sys.path.insert(0, "bin")
 import measure_cloud as MC
-src = open("k6/tools/stream_score.py", encoding="utf-8").read()
+src = open("engines/tools/stream_score.py", encoding="utf-8").read()
 names = {t.id for n in ast.parse(src).body if isinstance(n, ast.Assign)
          for t in n.targets if hasattr(t, "id")}
 missing = sorted(set(MC.PROFILE_TABLE_NAMES.values()) - names)
@@ -500,7 +500,7 @@ else
   if FIXTURE_PATH="$(python3 bin/fixture_fetch.py --print 2>/dev/null)" || \
      FIXTURE_PATH="$(python3 bin/fixture_fetch.py 2>/dev/null | tail -1)"; then
     t "fixture ladder b,c,f,g,h,i,j (0.1B, whole chain)" 0 \
-      "$FIXPY" k6/tools/stream_score_selftest.py --fixture "$FIXTURE_PATH" \
+      "$FIXPY" engines/tools/stream_score_selftest.py --fixture "$FIXTURE_PATH" \
         --only b,c,f,g,h,i,j
   else
     s "fixture ladder" "fixture fetch failed (network?) -- run bin/fixture manually"

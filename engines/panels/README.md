@@ -1,7 +1,7 @@
 # Panels built by this suite
 
 A panel is a *yardstick*, and a yardstick belongs to the model family it was
-built for. `k6/tools/hf_capture.py` consumes the upstream
+built for. `engines/tools/hf_capture.py` consumes the upstream
 `quant-pipeline.glm53-token-panel.v1` layout (`panel.json` + `arrays/`), and
 every panel we had in that layout was built for GLM-5.3-Flash by somebody
 else's pipeline. Reusing one against a different model is the cross-model
@@ -11,7 +11,7 @@ calibration separation, and a number measured on it invites being ranked
 against numbers it has no business being ranked against.
 
 So a model family that needs its own yardstick gets its own panel, with its
-own `panel_id`, built by `k6/tools/build_token_panel.py` — a rule anyone can
+own `panel_id`, built by `engines/tools/build_token_panel.py` — a rule anyone can
 re-run, with no RNG anywhere in it.
 
 | panel_id | model family | shape | corpus |

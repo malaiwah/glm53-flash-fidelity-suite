@@ -44,7 +44,7 @@ Engine kinds:
 Checkpoint-lane integration: `from_backend_json` (bottom of this file) maps an
 existing stream_score/k6 `backend.json` dict onto this schema.  It is shipped
 as the documented adapter so the k6 tools can embed a fingerprint WITHOUT this
-module needing torch at import time — but `k6/tools/stream_score.py` itself is
+module needing torch at import time — but `engines/tools/stream_score.py` itself is
 NOT wired yet: a concurrent format-adapters merge owns that file (JOURNAL
 2026-08-29, "stack fingerprint" entry).  Wire it there after their merge
 lands, by calling `from_backend_json(backend)` right after backend.json is
@@ -556,7 +556,7 @@ def _numeric_policy_from_backend(backend: dict) -> object:
 def from_backend_json(backend: dict) -> dict:
     """Map a stream_score/k6 backend.json dict onto the fingerprint schema.
 
-    INTEGRATION STUB — not called by any pipeline yet.  k6/tools/stream_score.py
+    INTEGRATION STUB — not called by any pipeline yet.  engines/tools/stream_score.py
     is owned by the in-flight format-adapters merge; once that lands on
     origin/main (rebase first), call this right after `backend` is assembled
     and store the result as backend["stack_fingerprint"] plus

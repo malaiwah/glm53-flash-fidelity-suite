@@ -205,8 +205,8 @@ def _record_map(receipt: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 #: How the artifact this profile measures is STORED. Not the lane, and not the world size.
 #: The old expression suffixed every unrecognised profile "-tp4", so the two published
 #: streaming receipts carry `k6-stream-tp4` and `k8-tp4` -- a claim that the artifact ships
-#: TP4-sliced ranks. k6/DECISIONS.md forbids exactly that ("the checkpoint must not bake in
-#: a TP/EP topology"), and k6/stage_campaign.sh hard-asserts `qualified_tp_sizes == []` on those
+#: TP4-sliced ranks. engines/DECISIONS.md forbids exactly that ("the checkpoint must not bake in
+#: a TP/EP topology"), and engines/stage_campaign.sh hard-asserts `qualified_tp_sizes == []` on those
 #: very releases before publishing them. It is the same defect JOURNAL lesson #10 already
 #: recorded and fixed for `gguf-tp4`, left live in two more receipts.
 PROFILE_STORAGE_LABEL = {

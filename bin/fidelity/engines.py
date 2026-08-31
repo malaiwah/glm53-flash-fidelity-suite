@@ -2,12 +2,12 @@
 
 WHY THIS INDIRECTION EXISTS.  The runners are orchestration -- fit, cost,
 teardown, receipts.  The measurement itself is done by the engines that already
-exist under `k6/tools/`.  Hard-coding their flags into the runners would mean
+exist under `engines/tools/`.  Hard-coding their flags into the runners would mean
 that every engine change silently breaks a recipe that strangers are pasting.
 Instead, each lane names an engine in `bin/engines.json`, and a lane whose
 engine is not PINNED refuses to plan.
 
-That refusal is the point.  At the time of writing, `k6/tools/stream_score.py`
+That refusal is the point.  At the time of writing, `engines/tools/stream_score.py`
 is not present in this checkout -- it exists only on the validation box -- so
 the `streaming`, `local-mps` and `local-cuda-budget` lanes are declared
 `pinned: false` with the exact contract they need.  `--dry-run` reports that
@@ -298,11 +298,11 @@ def preflight(engine: Engine, *, suite_root: Path,
             problems.append({
                 "missing": "quant_pipeline package under --pipeline-root %s" % pipeline_root,
                 "remedy": "point --pipeline-root at the patched tree (clone "
-                          "PIPE_REPO per k6/stage_campaign.sh + apply patches-v2)"})
+                          "PIPE_REPO per engines/stage_campaign.sh + apply patches-v2)"})
     elif _can_import(python, "quant_pipeline") is None:
         problems.append({
             "missing": "quant_pipeline (the engine's reader package)",
-            "remedy": "clone PIPE_REPO per k6/stage_campaign.sh + apply patches-v2, "
+            "remedy": "clone PIPE_REPO per engines/stage_campaign.sh + apply patches-v2, "
                       "then pass --pipeline-root PATH (or pip-install it into "
                       "FIDELITY_PYTHON)"})
     _ = qp_env

@@ -270,7 +270,7 @@ import hashlib                                                   # noqa: E402
 # Two byte-identical executables in one checkout are a fork waiting to happen:
 # a fix lands in the copy that is invoked and the other rots, or worse, the
 # other one is what gets uploaded.  `k6_publish.py` (now publish_release.py)
-# existed twice, identically, at k6/ and k6/tools/, and only the k6/tools/
+# existed twice, identically, at engines/ and engines/tools/, and only the engines/tools/
 # copy was ever run.
 by_digest = {}
 for dirpath, dirnames, filenames in os.walk(ROOT):

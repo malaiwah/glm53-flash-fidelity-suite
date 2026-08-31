@@ -86,7 +86,7 @@ nothing in the repository saying why.
 ### Why a sidecar and not a correction
 
 The receipt is self-sealed, and that seal is verified against the **published bytes** on
-every measurement run (`k6/tools/tr3_surface.py::verify_seal`, reached from
+every measurement run (`engines/tools/tr3_surface.py::verify_seal`, reached from
 `bin/measure_cloud.py`, which raises `this release's PUBLISHED seal does not reproduce`).
 Editing the paths would permanently break every future measurement against these releases
 and would falsify a record of where the encode actually ran.

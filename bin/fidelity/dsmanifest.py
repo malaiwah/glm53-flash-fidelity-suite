@@ -12,7 +12,7 @@ Stdlib only.  No torch, no numpy at import: a dataset is buildable and
 CI-checkable on a stock py3.9 interpreter with no GPU.
 
 The one thing this module deliberately does NOT do is run a model.  Capture is
-`k6/tools/stream_score.py` (frozen) wrapped by `k6/tools/hidden_replay.py`; this
+`engines/tools/stream_score.py` (frozen) wrapped by `engines/tools/hidden_replay.py`; this
 module turns the tree those produce into a portable dataset.
 """
 
@@ -506,7 +506,7 @@ def write_sub(root: str, relpath: str, doc: Dict[str, Any]) -> Tuple[str, str]:
 def flushing_tap(write_one: Callable[[int, Any], None]) -> Callable[[int, Any], None]:
     """Flush-per-window tap factory.
 
-    `k6/tools/hidden_replay.py`'s tap accumulates every window in CPU RAM before
+    `engines/tools/hidden_replay.py`'s tap accumulates every window in CPU RAM before
     writing: 419 MiB for the 25-window panel is fine, but a 400-context shard is
     ~6.6 GiB and the full 10.48M-position suite is ~86 GB.  Anything past panel
     scale must write and drop.  Passing this as the tap's `flush_fn` keeps that

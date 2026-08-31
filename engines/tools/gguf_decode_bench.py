@@ -22,7 +22,7 @@ What it reproduces, from `stream_score.ExpertStreamer._fill_range`, verbatim:
 Two things it deliberately does NOT do: run the forward (the forward is
 unchanged and is not what costs 23.7 minutes), and load the non-routed view.
 The quantity reported is milliseconds per expert MATRIX and seconds per layer
-FILL, which is exactly the quantity `k6/tools/gguf-evidence/
+FILL, which is exactly the quantity `engines/tools/gguf-evidence/
 udq4kxl-decode-timings-a100.jsonl` recorded and the quantity
 `engines.json:minutes_per_window_by_surface.gguf` is derived from
 (36,288 matrices per window).

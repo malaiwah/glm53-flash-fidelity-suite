@@ -12,7 +12,7 @@ identical byte for all 254 finite patterns: no compounding, no drift.
 **DEQUANTISATION is not a cast, and is not exact.** A real fp8 checkpoint does
 not store a value, it stores `value x block_scale`, and that PRODUCT is what
 has to land in the target dtype. It lands in bf16 exactly under 1% of the time,
-with a relative error up to ~2^-8. `k6/tools/dequant_fp8.py` therefore does the
+with a relative error up to ~2^-8. `engines/tools/dequant_fp8.py` therefore does the
 multiply in fp32 -- which IS exact -- and only the final store rounds.
 
 The consequence, and the reason this file exists rather than a comment: a
@@ -81,7 +81,7 @@ check("the same product kept in fp32 IS exact",
 
 print("\n== which is why dequant_fp8.py multiplies in fp32 ==")
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "..", "k6", "tools", "dequant_fp8.py"),
+                        "..", "engines", "tools", "dequant_fp8.py"),
            encoding="utf-8").read()
 check("it casts the weight to float32 before scaling",
       "w = t.to(torch.float32)" in src)

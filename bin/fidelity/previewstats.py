@@ -37,7 +37,7 @@ Z_975 = 1.959963984540054           # Phi^-1(0.975)
 def systematic_indices(seed: int, window_id: str, n_positions: int,
                        per_window: int) -> List[int]:
     """The same systematic-with-seeded-start design stream_score.py implements
-    (k6/tools must stay self-contained for upload to rented boxes, so the two
+    (engines/tools must stay self-contained for upload to rented boxes, so the two
     copies exist on purpose; selftest_preview_stats.py cross-checks equality
     whenever stream_score is importable, which is what keeps them from
     drifting).

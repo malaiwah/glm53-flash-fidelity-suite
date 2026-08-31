@@ -6,7 +6,7 @@
 # Timing is written to /home/hr/receipts/stage-timing.txt after every stage, so
 # the run-1 duration can be used to project cost before runs 2 and 3 commit.
 set -uo pipefail
-S=/home/suite/k6/tools/hidden_replay_stage.sh
+S=/home/suite/engines/tools/hidden_replay_stage.sh
 T=/home/hr/receipts/stage-timing.txt
 NTFY="${QP_NTFY_URL:-https://ntfy.sh/omp-396220bc418fb23ea7a57901a54c7b33}"
 

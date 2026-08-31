@@ -3,8 +3,8 @@
 
     python3 bin/selftest_stats.py
 
-Every number asserted below is either in a committed file (k6/K8-ANOMALY.json,
-k6/native-bf16-kld.json, k6/BF16-FLOOR.json) or is arithmetic redoable on
+Every number asserted below is either in a committed file (engines/K8-ANOMALY.json,
+engines/native-bf16-kld.json, engines/BF16-FLOOR.json) or is arithmetic redoable on
 paper.  Stock python3.9, stdlib, offline.
 """
 
@@ -37,7 +37,7 @@ def rel_close(a, b, tol):
 
 
 def main() -> int:
-    anomaly = json.loads((ROOT / "k6" / "K8-ANOMALY.json").read_text())
+    anomaly = json.loads((ROOT / "engines" / "K8-ANOMALY.json").read_text())
     per = anomaly["per_window"]
     k6 = [row["k6"] for row in per]
     k8 = [row["k8"] for row in per]
@@ -105,7 +105,7 @@ def main() -> int:
 
     print("\n[6] the CLI end-to-end on the committed anomaly file")
     rc = FS.main(["paired-delta", "--report-a",
-                  str(ROOT / "k6" / "K8-ANOMALY.json"), "--anomaly-format",
+                  str(ROOT / "engines" / "K8-ANOMALY.json"), "--anomaly-format",
                   "--bootstrap-b", "500", "--seed", "0"])
     check("paired-delta --anomaly-format exits 0", rc == 0)
 
@@ -148,7 +148,7 @@ def main() -> int:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = FS.main(["attributable", "--quant-summary", str(tmpd / "quant.json"),
-                          "--floor-summary", str(ROOT / "k6" / "BF16-FLOOR.json")])
+                          "--floor-summary", str(ROOT / "engines" / "BF16-FLOOR.json")])
         out = buf.getvalue()
         check("analysis-as-floor is REFUSED (rc 3)", rc == 3)
         check("refusal quotes cross_stack_floor_do_not_mix by name",
@@ -160,7 +160,7 @@ def main() -> int:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = FS.main(["attributable", "--quant-summary", str(tmpd / "quant.json"),
-                          "--floor-summary", str(ROOT / "k6" / "native-bf16-kld.json"),
+                          "--floor-summary", str(ROOT / "engines" / "native-bf16-kld.json"),
                           "--out", str(tmpd / "attr.json")])
         out = buf.getvalue()
         check("K8 vs same-lane floor exits 0", rc == 0)

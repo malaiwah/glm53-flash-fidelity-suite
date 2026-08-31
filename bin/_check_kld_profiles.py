@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Every literal `--profile` a shell script hands to kld_report.py must be a choice.
 
-Test-support for bin/selftest_shell_guards.sh (NUM-10). `k6/stage_campaign.sh` documented
+Test-support for bin/selftest_shell_guards.sh (NUM-10). `engines/stage_campaign.sh` documented
 `QP_STREAM_PROFILE=k6|k8` and composed `--profile "${STREAM_PROFILE}-stream"`, but
 `k8-stream` is not one of kld_report's argparse choices -- so a K8 streaming run
-exited 2 AFTER the whole multi-hour capture. `k6/tools/measure_dione.sh` passed the
+exited 2 AFTER the whole multi-hour capture. `engines/tools/measure_dione.sh` passed the
 equally non-existent `--profile dione`.
 
 Only `kld_report.py` invocations are inspected: `campaign_driver.py` and
@@ -34,7 +34,7 @@ def main(argv):
         sys.stderr.write(__doc__)
         return 2
     root = Path(argv[1])
-    report = root / "k6" / "tools" / "kld_report.py"
+    report = root / "engines" / "tools" / "kld_report.py"
     found = CHOICES.search(report.read_text(encoding="utf-8"))
     if not found:
         sys.stderr.write("could not read --profile choices from %s\n" % report)

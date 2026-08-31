@@ -8,7 +8,7 @@ exactly the thing that document argues against.  This file closes that gap.
 WHAT THE QUESTION IS.  GLM-5.3-Flash stores 154,880 lm_head columns for a
 154,856-token vocabulary: 24 of them are padding, never a real token, never
 trained.  brandonmusic's protocol masks those 24 out of BOTH sides before the
-log-softmax.  ``k6/tools/kld_report.py::_token_kld`` does not -- it
+log-softmax.  ``engines/tools/kld_report.py::_token_kld`` does not -- it
 log-softmaxes over the full last dimension of whatever it is handed.  That is a
 real divergence between the two protocols and it had to be sized, not waved at.
 

@@ -10,7 +10,7 @@ Stock `transformers` does not implement that storage, and it does **not** fail:
 ``model.layers.{3..12}.mlp.experts.{gate_up,down}_proj`` as MISSING, randomly
 initialises them, and hands back a model that runs.  Measured against the bf16
 reference, such a model would produce a large, confident, entirely meaningless
-KLD.  `k6/tools/hf_capture.py` now refuses that load outright.
+KLD.  `engines/tools/hf_capture.py` now refuses that load outright.
 
 The honest way to measure the artifact is therefore to **reconstruct** the
 weights the quantizer encoded -- decode the trellis, write plain bf16 tensors --
@@ -29,7 +29,7 @@ must say so.
 Decode provenance
 -----------------
 The trellis unpack, the tile permutation, the two Hadamard passes and the
-suh/svh scaling are `k6/tools/exl3hf_surface.decode_payload_hf`, unchanged.
+suh/svh scaling are `engines/tools/exl3hf_surface.decode_payload_hf`, unchanged.
 The `mcg` codebook table is `exl3hf_surface.mcg_lut`, transcribed from
 exllamav3 v1.4.2 `codebook.cuh` and verified bitwise against the campaign's
 frozen table over all 65,536 entries.
@@ -223,9 +223,9 @@ def main(argv=None) -> int:
     summary: Dict[str, Any] = {
         "schema": "malaiwah.exl3-reconstruction-receipt.v1",
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "tool": "k6/tools/materialize_exl3_experts.py",
+        "tool": "engines/tools/materialize_exl3_experts.py",
         "decoder": {
-            "module": "k6/tools/exl3hf_surface.py",
+            "module": "engines/tools/exl3hf_surface.py",
             "function": "decode_payload_hf",
             "codebook_lut_sha256": EXL3.MCG_LUT_SHA256,
             "codebook_source": "exllamav3 v1.4.2 exllamav3/exllamav3_ext/quant/"

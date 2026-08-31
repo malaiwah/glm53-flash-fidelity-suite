@@ -10,8 +10,8 @@
 
 ## 0. Why this exists
 
-Today capture and comparison are **fused**. `k6/tools/stream_score.py` runs a model over a panel and
-`k6/tools/k6_kld_report.py` scores it against a teacher, and the only durable output is a *number*
+Today capture and comparison are **fused**. `engines/tools/stream_score.py` runs a model over a panel and
+`engines/tools/k6_kld_report.py` scores it against a teacher, and the only durable output is a *number*
 plus receipts pointing at filesystem paths. Three consequences, all of which have already bitten us:
 
 1. **Every measurement re-pays for capture.** Scoring quant N against the BF16 reference re-runs the
@@ -274,7 +274,7 @@ defect this field removes; see §8.5.
 **FORM-3** The value `"after_final_rmsnorm_before_lm_head"` is **adopted verbatim from kimi-k3**. Our
 capture is at exactly that cut — verified in code, not documentation: `tools/fidelity.py`
 `_rpc_install_hook` registers a *post*-hook on `…language_model.norm` (module output), and the replay
-path computes `hidden @ head.T` and never applies `final_norm`; `k6/tools/hidden_replay.py` takes the
+path computes `hidden @ head.T` and never applies `final_norm`; `engines/tools/hidden_replay.py` takes the
 lm_head module's *input* via a forward **pre**-hook, which is the same tensor.
 
 ---
@@ -286,8 +286,8 @@ lm_head module's *input* via a forward **pre**-hook, which is the same tensor.
 | name | preimage | notes |
 |---|---|---|
 | `file_sha256` | sha256 of the whole file bytes | the container digest. What `checksums.txt` carries. **Never determinism evidence** (§11). |
-| `payload_sha256` | sha256 of the safetensors data region: read `<Q` header length at offset 0, skip `8 + header_len`, hash the rest | survives `__metadata__` churn; implemented today in `k6/tools/hidden_replay.py::payload_sha256` and `k6/stage_campaign.sh` L4 |
-| `tensor_content_sha256` | sha256 of the raw little-endian bytes of the **named tensor only** | container-independent. bf16 is hashed via its `uint16` view. Implemented today in `k6/tools/hidden_replay.py::tensor_content_sha256` |
+| `payload_sha256` | sha256 of the safetensors data region: read `<Q` header length at offset 0, skip `8 + header_len`, hash the rest | survives `__metadata__` churn; implemented today in `engines/tools/hidden_replay.py::payload_sha256` and `engines/stage_campaign.sh` L4 |
+| `tensor_content_sha256` | sha256 of the raw little-endian bytes of the **named tensor only** | container-independent. bf16 is hashed via its `uint16` view. Implemented today in `engines/tools/hidden_replay.py::tensor_content_sha256` |
 | `token_ids_json_sha256` | `sha256(json.dumps(ids, separators=(",",":")).encode("utf-8"))` | **compact separators — kimi-k3's preimage, ADOPTED.** Our historical preimage used default separators (`", "`); it is preserved as `token_ids_sha256_legacy`. |
 | `suite_token_hash_sha256` | `sha256("\n".join(per_record_token_ids_json_sha256_hex).encode("ascii"))`, records in ascending index order | **newline join — kimi-k3's preimage, ADOPTED.** Our historical aggregate joined with `""`; preserved as `panel_token_sha256_legacy`. |
 
@@ -459,7 +459,7 @@ makes our capture readable by his unmodified comparator.
 **REC-1** `index` values are unique and `>= 0`. Duplicates are a hard error (his validator's rule).
 **REC-2** `key` equals the header `tensor_key` exactly. Festr's comparator hard-codes
 `"hidden_states"` / `"logits"` and refuses anything else; our own
-`k6/tools/hidden_replay.py` currently writes `"hidden"`, which would be rejected on a one-word
+`engines/tools/hidden_replay.py` currently writes `"hidden"`, which would be rejected on a one-word
 difference. **v1 normative key is `"hidden_states"`**; a reader MUST accept `"hidden"` from a
 pre-v1 artifact and MUST rewrite it on ingest, recording the rewrite as a disclosure.
 **REC-3** `shape[0] == scored_rows`, and for hidden form `shape[1] == hidden_width`, for logit form
@@ -736,7 +736,7 @@ head readable by his tooling. `file_sha256` is a container digest and is **never
 
 This resolves a live inconsistency in our own published receipts: `head-extraction.json` and
 `head-equality-fp8.json` record the **file** digest `47eaf729…`, while
-`k6/hidden-replay-evidence/nonrouted-sparse-fetch.json` records the **tensor content** digest
+`engines/hidden-replay-evidence/nonrouted-sparse-fetch.json` records the **tensor content** digest
 `aa21c427…` for the same weight. v1 requires both, names content as normative, and forbids comparing
 one to the other.
 
@@ -882,10 +882,10 @@ A replay-qualification receipt without its comparator device is meaningless, so 
     "image_repository_digest": null
   },
   "runtime_environment": {"CUBLAS_WORKSPACE_CONFIG": ":4096:8", "NVIDIA_TF32_OVERRIDE": "0"},
-  "source_files": {"k6/tools/stream_score.py": "022a167e…", "k6/tools/hidden_replay.py": "87940124…"},
+  "source_files": {"engines/tools/stream_score.py": "022a167e…", "engines/tools/hidden_replay.py": "87940124…"},
   "capture_tool": {
     "file": "bin/fidelity_dataset.py", "sha256": "…",
-    "wraps": ["k6/tools/hidden_replay.py", "k6/tools/stream_score.py"],
+    "wraps": ["engines/tools/hidden_replay.py", "engines/tools/stream_score.py"],
     "mechanism": "monkeypatch stream_score.build_streaming_model; forward pre-hook on model.get_output_embeddings()"
   },
   "weights": {
@@ -1006,7 +1006,7 @@ Fixed, not configurable except where noted:
 
 * Full **vocabulary**, no truncation, no top-k.
 * `torch.log_softmax` in **float64** (`estimator.accumulation_dtype = "float64"`), matching
-  `k6/tools/k6_kld_report.py::_token_kld`. `float32` is expressible but lands the receipt in a
+  `engines/tools/k6_kld_report.py::_token_kld`. `float32` is expressible but lands the receipt in a
   *different comparability class* — `accumulation_dtype` is one of the seven comparability-key
   inputs, so an fp32 receipt and an fp64 receipt on identical data are correctly not comparable.
   (Festr's log-probs are fp32 with an fp64 reduction and a `clamp_min_(0)`; his receipts therefore
@@ -1188,7 +1188,7 @@ logits_tensor_sha256, tokenwise_kld_sha256, sealed_tokenwise_digest}`, `run_coun
 **DET-D2 — file digests are not evidence.** `stream_score.py` writes a safetensors `__metadata__`
 block containing `cold_run`, `checkpoint_identity_sha256` and `runtime_reader_sha256`, so **the whole
 file digest of a logits file differs between bitwise-identical cold runs**. Confirmed empirically
-(`k6/tools/hidden_replay_selftest.py` rung `f-payload-sha`: *"payload hashes equal across metadata
+(`engines/tools/hidden_replay_selftest.py` rung `f-payload-sha`: *"payload hashes equal across metadata
 variants; file hashes differ"*) and in the published data (`reports/k6-five-run-kld.json`: five
 different `student_capture_receipt_sha256`, five different `student_backend_identity_sha256`, **one**
 `tokenwise_kld_sha256` `52e35723…`, `population_stddev_of_run_means: 0.0`).
@@ -1491,7 +1491,7 @@ Stated plainly, because a spec that only names other people's gaps is marketing.
 | id | defect | fixed by |
 |---|---|---|
 | **O-1** | `semantic_point` is nowhere declared. `glm53flash-fidelity-capture/2` has no cut field; the README says only "capture final-norm hidden states"; shipping `final_norm.safetensors` next to the head implies a norm+head replay. A third party will guess wrong. | FORM-2, §8.5, HEAD-7 |
-| **O-2** | tensor key inconsistency **inside our own tooling**: `tools/fidelity.py` writes `hidden_states`, `k6/tools/hidden_replay.py` writes `hidden`. Festr's comparator hard-codes `hidden_states` and would reject the streaming-lane captures on a one-word difference. | REC-2 (`hidden_states` normative, `hidden` accepted on ingest and rewritten) |
+| **O-2** | tensor key inconsistency **inside our own tooling**: `tools/fidelity.py` writes `hidden_states`, `engines/tools/hidden_replay.py` writes `hidden`. Festr's comparator hard-codes `hidden_states` and would reject the streaming-lane captures on a one-word difference. | REC-2 (`hidden_states` normative, `hidden` accepted on ingest and rewritten) |
 | **O-3** | the published manifest **overclaims**: `expected_contexts: 5120`, `complete: true`, in a repo holding indices 0–511. Nothing says "shard 0 of 10". | §6.3 coverage, COV-1..3 |
 | **O-4** | per-capture records are thin: `{index, sha256, shape}` — no `file`, `dtype`, `key`, token digest or content digest. Panel binding is one top-level hash, so a single swapped or reordered hidden file passes. | §6.2 record, BIND-1..6 |
 | **O-5** | K6's published `materialization-receipt.json` still names `packed_root: /home/jl_fs/glm53-k6/out-k6`. `stream_score --source checkpoint` does `packed_root = Path(materialization["packed_root"]).resolve()` then fails if it is not a directory — **there is no override flag** — and `--source payload-store` needs `contract.json`, `inventory.json`, `mtp-adapter-receipt.json` and the `payload-store/` trees, none published. Both packed reading paths are unreachable from public artifacts. (`--source exl3hf` **is** reachable: payloads are inline and `lm_head.weight` is a plain BF16 tensor.) | PATH-2, §9.4 `stripped_fields`, and the existence of the dataset itself — a published capture makes the reading path irrelevant |
@@ -1505,7 +1505,7 @@ Stated plainly, because a spec that only names other people's gaps is marketing.
 | item | why |
 |---|---|
 | **Integration with `bin/measure-cloud`** | explicitly out of scope in the brief; a sequential measurement workflow owns `bin/measure_cloud.py`, `bin/stage_measure.sh`, `bin/fidelity/hfmeta.py`, `bin/engines.json`, `bin/invoke_engine.py`. Integration points are documented in the build plan instead. |
-| **Editing `k6/tools/stream_score.py`** | same reason, plus the format adapters just merged there. All capture paths are **wrapped**, never edited — the precedent `k6/tools/hidden_replay.py` already sets. |
+| **Editing `engines/tools/stream_score.py`** | same reason, plus the format adapters just merged there. All capture paths are **wrapped**, never edited — the precedent `engines/tools/hidden_replay.py` already sets. |
 | **Fixing `tools/fidelity.py cmd_replay`'s `--candidate-head` default** (O-7) | a real bug, in a file this work does not own. Filed as a follow-up; the comparator refuses the same condition in the meantime. |
 | **Re-publishing corrected K6/K8 materialization receipts** (O-5) | changing a published artifact's receipts is an operator decision with downstream consequences for anyone who pinned them; the dataset makes the defect harmless without touching them. |
 | **A new registry `lane` value (`serving`)** | would change `submission.schema.json`'s enum and reclassify existing rows. k3-adapted datasets map to `other` with `lane_inferred: true` until an operator decides. |

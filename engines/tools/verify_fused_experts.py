@@ -38,7 +38,7 @@ parameter:
     gate_up_proj[k][I:2*I, :]   ==  experts.k.up_proj.weight
     down_proj[k]                ==  experts.k.down_proj.weight
 
-The model is loaded through `k6/tools/hf_capture.load_model`, i.e. the exact
+The model is loaded through `engines/tools/hf_capture.load_model`, i.e. the exact
 code path `bin/fidelity-dataset capture` uses, so a pass is a statement about
 the production engine and not about a bespoke script.
 

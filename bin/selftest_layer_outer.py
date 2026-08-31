@@ -39,7 +39,7 @@ that the mechanism behind them cannot silently regress.
 
 Fail-without-fix: L1, L2, L4-L9, L12, L13 fail against the tree before this
 change (L1/L2/L13 as an argparse refusal of --schedule, the rest as an
-ImportError for k6/tools/layer_outer.py).  Verified by running this file
+ImportError for engines/tools/layer_outer.py).  Verified by running this file
 against a `git archive` of the parent commit; see docs/GLM53-LAYER-OUTER.md.
 """
 
@@ -56,7 +56,7 @@ import tempfile
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "bin")
 sys.path.insert(0, BIN)
-sys.path.insert(0, os.path.join(REPO, "k6", "tools"))
+sys.path.insert(0, os.path.join(REPO, "engines", "tools"))
 
 PASS: list = []
 FAIL: list = []
@@ -158,7 +158,7 @@ def tiny_panel(path, windows=3, length=12, vocab=64, seed=1):
 
 
 def capture(model, panel, out, *, dataset_id, name, extra=(), memory_report=None):
-    argv = [os.path.join(REPO, "k6", "tools", "hf_capture.py"),
+    argv = [os.path.join(REPO, "engines", "tools", "hf_capture.py"),
             "--model", model, "--panel", panel, "--out", out, "--role", "root",
             "--lane", "local-cuda-budget", "--dataset-id", dataset_id,
             "--dataset-name", name, "--device", "cpu",
@@ -208,7 +208,7 @@ def _body(work):
         module_absent = None
 
     def needs_module(name):
-        check(name, False, "k6/tools/layer_outer.py is not importable: %s" % module_absent)
+        check(name, False, "engines/tools/layer_outer.py is not importable: %s" % module_absent)
 
     model = tiny_model(os.path.join(work, "reference"))
     panel = tiny_panel(os.path.join(work, "panel"))

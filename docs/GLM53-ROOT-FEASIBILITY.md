@@ -12,7 +12,7 @@
 > recipe and to R1's stated tensor shape are in section 9.2.
 
 `zai-org/GLM-5.3-BF16` is our architecture — `glm_moe_dsa`, the same family as
-Fruit, which `k6/tools/hf_capture.py` captured end to end. Every config key
+Fruit, which `engines/tools/hf_capture.py` captured end to end. Every config key
 Fruit needed is present. The memory arithmetic fits one H200 with room to
 spare. The checkpoint fits a JarvisLabs disk. None of that is the problem.
 
@@ -20,7 +20,7 @@ The problem is that **no engine we have can read this checkpoint.** The
 portable engine (`hf_capture.py`) materialises the whole model and then calls
 `.to(device)`; at 1,486.8 GB that fails on every machine JarvisLabs rents. The
 engine that *can* stream a 600 GB BF16 tree on one H200 (`stream_score.py`, via
-`k6/tools/hidden_replay.py`) is hard-coded to GLM-5.3-Flash's `glm5_next`
+`engines/tools/hidden_replay.py`) is hard-coded to GLM-5.3-Flash's `glm5_next`
 geometry — `HIDDEN_WIDTH = 4096` — and is not in this repository at all.
 
 So the honest shape of the answer is: **the science is ready, the yardstick is
@@ -161,7 +161,7 @@ Using the census figures directly (`nonrouted` + N layer buffers + panel state
 `2047 × 154880 × 4` = 1.27 GB.)
 
 **One H200 (141 GB) fits the roomiest schedule with 59 GB of headroom.** This
-is consistent with the lane's own history: `k6/STREAMING.md` records a measured
+is consistent with the lane's own history: `engines/STREAMING.md` records a measured
 34.40–47.08 GB peak for the Flash streaming lane on one H200, and GLM-5.3's
 non-routed is 1.95× Flash's while its per-layer routed set is 1.33× Flash's
 14.50 GB.
@@ -230,7 +230,7 @@ will do the capture. At $0.29/h + 1,700 GB of storage that fetch costs
 
 ### Sparse fetch: does not apply
 
-`k6/tools/fetch_nonrouted_sparse.py` exists and works, but it is the wrong tool
+`engines/tools/fetch_nonrouted_sparse.py` exists and works, but it is the wrong tool
 here and would be actively misleading. It materialises **only the non-routed**
 byte ranges, because the Flash streaming lane reads routed experts from a
 *quantized artifact* and non-routed from BF16. A **root** capture is the BF16
@@ -348,7 +348,7 @@ was written for exactly this situation.
 
 ### Recommendation: 25 windows, 5 strata × 5, its own `panel_id`
 
-Build with `k6/tools/build_token_panel.py` — deterministic, no RNG, sorted
+Build with `engines/tools/build_token_panel.py` — deterministic, no RNG, sorted
 traversal and a fixed slice — over the same public corpus Fruit's panel used:
 
 ```
@@ -483,7 +483,7 @@ Add **$0.40–0.56** of one-time fetch to every row. Assumptions:
 - **B-1** places ~1,050 GiB of 1,385 GiB on eight H200s and spills ~334 GiB to
   CPU RAM (8 × 300 GB = 2,400 GB, so it fits). Per-window that is a 358 GB
   pageable H2D transfer; this repo measured pageable H2D at **1.23 GB/s**
-  (`k6/STREAMING.md`: "a 14.50 GB pageable H2D copy (~11.8 s)"), giving **4.9
+  (`engines/STREAMING.md`: "a 14.50 GB pageable H2D copy (~11.8 s)"), giving **4.9
   min/window**. Every cold run needs a fresh process, hence a full 0.75 h
   reload. This lane needs only a small `hf_capture` patch — pass `device_map` /
   `max_memory` and skip the `model.to(device)` that follows `from_pretrained`,
@@ -576,7 +576,7 @@ configuration holds this model in VRAM.
 *Mitigation:* the `device_map` / `max_memory` / `offload_folder` patch described
 in §6 B-1, or the layer-outer engine. Either way this is a **tooling change and
 a blocker**, not a runtime surprise. It is also the reason the streaming lane
-cannot substitute: `k6/tools/hidden_replay.py` hard-codes `HIDDEN_WIDTH = 4096`
+cannot substitute: `engines/tools/hidden_replay.py` hard-codes `HIDDEN_WIDTH = 4096`
 and `import stream_score`, and `stream_score.py` is not in this repository —
 `fidelity_dataset.py` already refuses `--engine sealed-lane` for exactly that
 reason.
@@ -669,7 +669,7 @@ Stage C.
 
 ### 9.1 What was fetched, and what it cost
 
-`k6/tools/fetch_truncated_ckpt.py` (new) range-fetches only the byte ranges of
+`engines/tools/fetch_truncated_ckpt.py` (new) range-fetches only the byte ranges of
 the tensors a truncated model needs, writing them at their published offsets
 into **sparse** local shards under the published safetensors headers.
 
@@ -724,7 +724,7 @@ gate and rows `2048:4096` are up.
 
 ### 9.3 R1 — CLOSED. The converter is honest, byte for byte
 
-`k6/tools/verify_fused_experts.py` (new) loads the checkpoint through
+`engines/tools/verify_fused_experts.py` (new) loads the checkpoint through
 `hf_capture.load_model` — the production path — then reads each per-expert
 matrix's raw bytes straight out of the local shard at its published offset,
 with no `safetensors` reader and no `transformers` in the path, and `memcmp`s
@@ -869,7 +869,7 @@ the head hook fired once; the hidden dtype is bf16.
 
 The sealed manifests carry three disclosures — `no_known_deviations`,
 `reduced_run_count`, and the new `checkpoint_tensors_not_loaded` naming the 43
-unused tensors. Evidence lives in `k6/tools/glm53-stagea-evidence/`. **The
+unused tensors. Evidence lives in `engines/tools/glm53-stagea-evidence/`. **The
 datasets themselves were deleted**: they are a truncation, they are not a
 measurement, and nothing should be able to mistake them for one.
 
@@ -905,7 +905,7 @@ zero and left the engineering exactly where it was.
 
 **§9.7's closing sentence is no longer true, and this section is here so nobody
 reads it as current.** The layer-outer, window-inner engine exists:
-`k6/tools/layer_outer.py`, driven by
+`engines/tools/layer_outer.py`, driven by
 `hf_capture.py --schedule layer-outer`. It is proven **bit-identical** to the
 window-outer schedule — the same `capture_content_digest` — on both the 0.1B
 `glm5_next` fixture and `malaiwah/GLM-5.2-SIQ-Fruit-bf16` (`glm_moe_dsa`, this
@@ -933,7 +933,7 @@ now the dominant and least-measured term.
 Full evidence, the two digest proofs, the measured memory tables, what the
 schedule does **not** handle, and what would falsify the projection:
 **`docs/GLM53-LAYER-OUTER.md`**. Raw receipts:
-`k6/tools/layer-outer-evidence/`.
+`engines/tools/layer-outer-evidence/`.
 
 **Stage B is unchanged as a decision and is not taken here.** No GLM-5.3
 capture has been run.

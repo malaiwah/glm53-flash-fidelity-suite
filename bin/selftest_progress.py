@@ -29,7 +29,7 @@ The two failure modes this battery holds the line on:
          indistinguishable from no meter (the same lesson the GGUF lane taught:
          "a capability nothing can invoke is indistinguishable from a missing
          one").  So: both engines tick it in their real loops, and every
-         k6/tools module they import at module scope is in `bin/BUNDLE.txt` --
+         engines/tools module they import at module scope is in `bin/BUNDLE.txt` --
          an omission there is an ImportError at the START of the measure stage,
          after the bootstrap, the 200 GB fetch and the panel are all paid for.
   P11-P13 **liveness is not progress.**  `_stage_is_alive`'s pgrep says yes for
@@ -38,7 +38,7 @@ The two failure modes this battery holds the line on:
          stalled run is stalled.  It reports; it never returns a verdict and
          never touches teardown.
 
-Every rung fails without its fix: `git stash` removes k6/tools/progress.py and
+Every rung fails without its fix: `git stash` removes engines/tools/progress.py and
 the wiring, and P1-P13 fail (P1-P7 on the missing import, P8-P13 on the source
 and bundle checks).
 
@@ -48,6 +48,7 @@ Run:  python3 bin/selftest_progress.py
 from __future__ import annotations
 
 import io
+import os
 import re
 import sys
 import time
@@ -55,7 +56,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bin"))
-sys.path.insert(0, str(ROOT / "k6" / "tools"))
+sys.path.insert(0, str(ROOT / "engines" / "tools"))
 
 _pass, _fail = 0, 0
 
@@ -174,8 +175,8 @@ def rung_throttle(P) -> None:
 # P8-P9: the meter is actually wired into both engines
 # ---------------------------------------------------------------------------
 def rung_wiring() -> None:
-    stream_src = (ROOT / "k6" / "tools" / "stream_score.py").read_text(encoding="utf-8")
-    capture_src = (ROOT / "k6" / "tools" / "hf_capture.py").read_text(encoding="utf-8")
+    stream_src = (ROOT / "engines" / "tools" / "stream_score.py").read_text(encoding="utf-8")
+    capture_src = (ROOT / "engines" / "tools" / "hf_capture.py").read_text(encoding="utf-8")
 
     # The fill loops are the 2-3 hours.  There are three of them (packed/native/
     # mlx/gguf/nvfp4 share one, dione has its own, exl3hf/tr3 have a third), and
@@ -234,26 +235,46 @@ _IMPORT = re.compile(r"^\s*(?:import (\w+)|from (\w+) import)", re.M)
 
 
 def rung_bundle() -> None:
+    """Every bundled module's module-scope imports must be bundled too.
+
+    The engine DIRECTORY is read out of BUNDLE.txt rather than written here.
+    It used to be the literal `k6/tools`, so the 2026-08-31 rename of that
+    directory to `engines/` would have left this rung scanning a path that no
+    longer exists -- passing vacuously, which is worse than failing, because
+    the defect it guards (an ImportError at the start of the measure stage,
+    after the bootstrap, the 200 GB fetch and the panel are all paid for) does
+    not announce itself locally.
+    """
     listed = {ln.strip() for ln in
               (ROOT / "bin" / "BUNDLE.txt").read_text(encoding="utf-8").splitlines()
               if ln.strip() and not ln.startswith("#")}
-    tools = ROOT / "k6" / "tools"
-    engines = [rel for rel in listed
-               if rel.startswith("k6/tools/") and rel.endswith(".py")]
-    missing = []
-    for rel in engines:
+    # Every directory the bundle ships python from, discovered from the list.
+    dirs = sorted({os.path.dirname(rel) for rel in listed if rel.endswith(".py")})
+    checked, missing = 0, []
+    for rel in sorted(rel for rel in listed if rel.endswith(".py")):
         src_path = ROOT / rel
         if not src_path.is_file():
             continue
+        checked += 1
+        own_dir = os.path.dirname(rel)
         for m in _IMPORT.finditer(src_path.read_text(encoding="utf-8")):
             name = m.group(1) or m.group(2)
-            sibling = "k6/tools/%s.py" % name
-            if (tools / ("%s.py" % name)).is_file() and sibling not in listed:
-                missing.append("%s imports %s" % (rel, sibling))
+            # A module resolves against its OWN directory first (the engines run
+            # with their tools dir on sys.path), then any other bundled dir.
+            for d in [own_dir] + [x for x in dirs if x != own_dir]:
+                sibling = "%s/%s.py" % (d, name)
+                if (ROOT / sibling).is_file():
+                    if sibling not in listed:
+                        missing.append("%s imports %s" % (rel, sibling))
+                    break
     check(not missing,
-          "P11 every k6/tools module a BUNDLE.txt engine imports is itself in "
+          "P11 every in-repo module a BUNDLE.txt entry imports is itself in "
           "BUNDLE.txt (a missing line is an ImportError after the 200 GB fetch)",
           "; ".join(sorted(set(missing))))
+    # A rung that stops reading files passes for the wrong reason.
+    check(checked >= 20 and any(d.endswith("/tools") for d in dirs),
+          "P11b ...and it actually read %d bundled modules across %s"
+          % (checked, ", ".join(dirs)))
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +313,7 @@ def main() -> int:
     try:
         import progress as P
     except ImportError as exc:
-        no("P1-P7 k6/tools/progress.py is importable", str(exc))
+        no("P1-P7 engines/tools/progress.py is importable", str(exc))
         print("\nselftest_progress: %d passed, %d failed" % (_pass, _fail))
         return 1
     rung_file_mode(P)

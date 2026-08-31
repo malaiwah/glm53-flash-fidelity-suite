@@ -1890,7 +1890,7 @@ def main() -> int:
                      help="--source mlx: immutable 40-hex repo commit (REQUIRED unless --dry-run)")
     src.add_argument("--mlx-official-census", type=Path,
                      help="--source mlx: official BF16 shape census "
-                          "(default k6/tools/mlx-evidence/bf16-shape-census.json.gz)")
+                          "(default engines/tools/mlx-evidence/bf16-shape-census.json.gz)")
     src.add_argument("--mlx-skip-shard-hashes", action="store_true",
                      help="--source mlx: skip the whole-shard sha256 gate (disclosed in the receipt)")
     src.add_argument("--gguf-file", action="append", dest="gguf_files", metavar="GGUF",
@@ -2002,7 +2002,7 @@ def main() -> int:
                              "Legal only with --source native, full census. The output tree is "
                              "then a valid --teacher for kld_report.py, and the lane's floor "
                              "against it is exactly 0 once T1 hash evidence exists "
-                             "(k6/SAME-LANE-TEACHER.md)")
+                             "(engines/SAME-LANE-TEACHER.md)")
     stream.add_argument("--store-positions", default="all",
                         help="all (default, sealed) | per-window:<m> -- store only m "
                              "systematically-sampled positions per window. PREVIEW ONLY: the "
@@ -3057,7 +3057,7 @@ def main() -> int:
         # binding and the expert combine are unchanged and still true.
         disclosure["routed_weight_source"] = (
             "the GGUF's fused blk.L.ffn_{gate,up,down}_exps.weight tensors, sliced per expert "
-            "and block-dequantized (ggml Q4_K/Q5_K/Q6_K/Q8_0 -> fp32) by k6/tools/gguf_surface.py, "
+            "and block-dequantized (ggml Q4_K/Q5_K/Q6_K/Q8_0 -> fp32) by engines/tools/gguf_surface.py, "
             "whose kernels are bitwise equal to gguf-py's reference dequantize()"
         )
         disclosure["nonrouted_weight_source"] = (

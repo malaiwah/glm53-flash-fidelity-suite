@@ -92,7 +92,7 @@ transports cannot drift into different sequences.
 # a reference (root) capture
 docker run --gpus all --rm \
     -v /data/run:/workspace \
-    -v $PWD/k6/panels/panel--x:/panel:ro \
+    -v $PWD/engines/panels/panel--x:/panel:ro \
     -e HF_TOKEN \
     <image> capture \
         --model <repo> --revision <40-hex> \
@@ -140,7 +140,7 @@ so a second start copies nothing.
 Two receipt fields that have been `null` on **every** capture this repository
 has ever sealed now have an answer.
 
-* `runtime.container.image_digest` — filled by `k6/tools/hf_capture.py` from
+* `runtime.container.image_digest` — filled by `engines/tools/hf_capture.py` from
   `STACKPRINT_IMAGE_PIN` or the baked pin file, the convention
   `fidelity/stackprint.py` already reads. `docker load` strips the registry
   digest, so the file is the only identity that survives every transport; the

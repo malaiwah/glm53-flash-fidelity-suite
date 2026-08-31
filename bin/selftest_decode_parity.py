@@ -35,8 +35,8 @@ from typing import Any, Dict, List
 
 SUITE_ROOT = Path(__file__).resolve().parent.parent
 READER_CANDIDATES = [
-    SUITE_ROOT / "k6/.patchwork/b/runtime/src/quant_pipeline/evaluation/glm53_packed_k4_reader.py",
-    SUITE_ROOT / "k6/.patchwork/a/runtime/src/quant_pipeline/evaluation/glm53_packed_k4_reader.py",
+    SUITE_ROOT / "engines/.patchwork/b/runtime/src/quant_pipeline/evaluation/glm53_packed_k4_reader.py",
+    SUITE_ROOT / "engines/.patchwork/a/runtime/src/quant_pipeline/evaluation/glm53_packed_k4_reader.py",
 ]
 
 WANTED_FUNCS = ("unpack_trellis_states", "mcg_lut", "_permutation",

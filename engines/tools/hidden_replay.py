@@ -30,7 +30,7 @@ GLM-5.3-Flash's residual/norm output is natively torch.bfloat16 (the model is
 built and run in bf16; the hook asserts the dtype at every window), so the
 bf16 capture is LOSSLESS -- no rounding is introduced by storing it.
 
-This file is deliberately a NEW module: k6/tools/stream_score.py is not
+This file is deliberately a NEW module: engines/tools/stream_score.py is not
 edited (another workflow owns large in-flight changes there).  The wrapper
 monkeypatches stream_score.build_streaming_model at run time to attach the
 hook; the sealed capture path itself is byte-identical.

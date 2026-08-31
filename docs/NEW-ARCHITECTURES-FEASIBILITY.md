@@ -201,7 +201,7 @@ halves; A25 is deliberately frame-based so that an unrelated
 
 ### 1.3 The byte check had to be rebuilt, because `memcmp` is the wrong instrument here
 
-`k6/tools/verify_fused_experts.py` closed GLM-5.3's R1 by reading each expert
+`engines/tools/verify_fused_experts.py` closed GLM-5.3's R1 by reading each expert
 matrix's raw bytes at its published offset and `memcmp`ing them against the live
 fused parameter. That is exactly right when the loader is a byte mover.
 
@@ -214,7 +214,7 @@ matrices into `[E, 2I, H]`. A `memcmp` cannot see whether any of that is right,
 and a statistic cannot either: a swapped nibble order, a transposed scale grid,
 an off-by-one block size and a gate/up swap all produce plausible numbers.
 
-`k6/tools/verify_loaded_weights.py` re-implements the **value** pipeline from
+`engines/tools/verify_loaded_weights.py` re-implements the **value** pipeline from
 the format, in numpy, with no `transformers` and no `safetensors` in the path:
 256-entry E4M3 and E8M0 tables built arithmetically from the bit fields, the
 16-entry E2M1 table low-nibble-first, the block size derived from the two
@@ -231,9 +231,9 @@ The E2M1 nibble convention — low nibble first, bit 3 the sign, magnitudes
 `[0, 0.5, 1, 1.5, 2, 3, 4, 6]`, and index 8 decoding to negative zero — is a
 convention, and copying it out of the library under test would make agreement
 unfalsifiable. It is not copied: it is the same 16-entry table as
-`k6/tools/nvfp4_surface.py::_e2m1_lut16`, which this repository already proved
+`engines/tools/nvfp4_surface.py::_e2m1_lut16`, which this repository already proved
 **bitwise against `compressed-tensors` 0.18.0's own `unpack_fp4_from_uint8`**
-on real ranged-fetched tensors (`k6/tools/nvfp4-evidence/`). Two independent
+on real ranged-fetched tensors (`engines/tools/nvfp4-evidence/`). Two independent
 implementations of the same published convention, agreeing, is the strongest
 form of this claim available without a third.
 
@@ -297,7 +297,7 @@ Two facts worth carrying forward:
 Two cold captures in two separate processes through
 `bin/fidelity-dataset capture --engine hf-transformers`, on
 `panel--dsv4.stagea.smoke.2w` (2 windows, 2,048 tokens, literary + scientific,
-built by `k6/tools/build_token_panel.py` against DeepSeek's own tokenizer).
+built by `engines/tools/build_token_panel.py` against DeepSeek's own tokenizer).
 
 | | |
 |---|---|
@@ -581,7 +581,7 @@ Consequences, in order of how much they cost:
 1. A root capture host needs **≥ 128 GB of system RAM** (or ≥ 141 GB VRAM to
    hold it on-device). This is a machine-shape requirement, not a GPU-hours
    one, and it must be checked before renting.
-2. **`k6/tools/layer_outer.py` has never seen a `_no_placement_params`
+2. **`engines/tools/layer_outer.py` has never seen a `_no_placement_params`
    parameter.** Its residency model streams whole layers on and off the device;
    a 102.4 GB parameter that must stay put is exactly the case it does not
    describe. That is the "work" in GO-WITH-WORK, and it is engine work, not
@@ -703,8 +703,8 @@ RAM — engineering and machine shape, not budget.
 
 ### 4.1 Where the evidence is
 
-`k6/tools/newarch-stagea-evidence/` — 32 files, the same shape as
-`k6/tools/glm53-stagea-evidence/`:
+`engines/tools/newarch-stagea-evidence/` — 32 files, the same shape as
+`engines/tools/glm53-stagea-evidence/`:
 
 | file group | what it is |
 |---|---|

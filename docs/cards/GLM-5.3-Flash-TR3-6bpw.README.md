@@ -477,7 +477,7 @@ differing expert-combine orders). Two cold runs, identical means. Removing it:
 only 1.11x — K8 removes ~60% of the divergence K6 leaves behind. Raw KLD
 understates differences between good quants because the floor is common to
 both. Method, receipts and the ways this subtraction can be misused:
-[BF16-FLOOR.md](https://github.com/malaiwah/quant-fidelity-suite/blob/main/k6/BF16-FLOOR.md).
+[BF16-FLOOR.md](https://github.com/malaiwah/quant-fidelity-suite/blob/main/engines/BF16-FLOOR.md).
 
 ## What this is (and is not)
 
@@ -521,7 +521,7 @@ inputs came back **120/120 encodes byte-identical — 624 MiB of packed trellis,
 admits only K3/K4/K5, so K6/K8 are a *declared rate extension*, not a
 substitution; driving his sealed primitives past that admission constant
 reproduces our bytes exactly. Fidelity impact is identically zero. Evidence:
-[closure-comparison.json](https://github.com/malaiwah/quant-fidelity-suite/blob/main/k6/fallback/closure-comparison.json),
+[closure-comparison.json](https://github.com/malaiwah/quant-fidelity-suite/blob/main/engines/fallback/closure-comparison.json),
 [issue #1](https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw/issues/1)), K4-KL gate satisfied via a disclosed bridge
 document carrying his real published K4 receipt hashes, qualification at EP8
 (his reader default EP4). The five-run qualification receipts land here when

@@ -15,10 +15,10 @@ bin/measure_cloud.py   bin/stage_measure.sh   bin/fidelity/hfmeta.py
 bin/engines.json       bin/invoke_engine.py
 ```
 
-Also **do not edit** `k6/tools/stream_score.py` (the format adapters just merged there).
+Also **do not edit** `engines/tools/stream_score.py` (the format adapters just merged there).
 
 Everything below is **new files only**. Existing code is **imported, wrapped or shelled out to** —
-never modified. The precedent is `k6/tools/hidden_replay.py`, which attaches a capture hook by
+never modified. The precedent is `engines/tools/hidden_replay.py`, which attaches a capture hook by
 monkeypatching `stream_score.build_streaming_model` at run time and changes nothing in
 `stream_score`'s own path.
 
@@ -131,8 +131,8 @@ bin/fidelity-dataset capture
    refuse `--sweep` (extra forwards interleave hiddens), refuse any `--store-positions` other than
    `all`, and **require an explicit `--token-panel`** (the wrapper needs the mask `.npy` paths, which
    the capture receipt does not carry).
-2. Hidden form: exec `k6/tools/hidden_replay.py capture -- <argv>`. Logit form: exec
-   `k6/tools/stream_score.py <argv>` directly. Either way `stream_score`'s own path is byte-identical
+2. Hidden form: exec `engines/tools/hidden_replay.py capture -- <argv>`. Logit form: exec
+   `engines/tools/stream_score.py <argv>` directly. Either way `stream_score`'s own path is byte-identical
    to a plain run.
 3. After the run, read `capture-receipt.json`, `backend.json`, and (hidden form)
    `hidden-capture.json`; assert `len(hiddens) == len(logit_files)`.
@@ -218,10 +218,10 @@ Then computes (spec §10.2), then writes `<out>/comparison-receipt.json` and
 
 | from | used for |
 |---|---|
-| `k6/tools/k6_kld_report.py::_token_kld` | the fp64 full-vocabulary per-token KL |
-| `k6/tools/k6_kld_report.py::_load_slice`, `_record_map`, `_resolve_teacher_paths`, `_find_teacher_receipt` | slice streaming, record matching, digest-verified path fallback, schema-not-filename discovery |
-| `k6/tools/hidden_replay.py::_replay_logits`, `summarize_tokenwise`, `payload_sha256`, `tensor_content_sha256` | hidden→logit replay, the `{mean, median, p95, p99, p99_9, max}` block, the two content digests |
-| `k6/tools/stream_score.py::resolve_device`, `apply_numeric_policy` | device selection and the numeric policy, so the comparator's numerics match the capture lane's |
+| `engines/tools/k6_kld_report.py::_token_kld` | the fp64 full-vocabulary per-token KL |
+| `engines/tools/k6_kld_report.py::_load_slice`, `_record_map`, `_resolve_teacher_paths`, `_find_teacher_receipt` | slice streaming, record matching, digest-verified path fallback, schema-not-filename discovery |
+| `engines/tools/hidden_replay.py::_replay_logits`, `summarize_tokenwise`, `payload_sha256`, `tensor_content_sha256` | hidden→logit replay, the `{mean, median, p95, p99, p99_9, max}` block, the two content digests |
+| `engines/tools/stream_score.py::resolve_device`, `apply_numeric_policy` | device selection and the numeric policy, so the comparator's numerics match the capture lane's |
 | `bin/fidelity/stackprint.py::from_backend_json`, `fingerprint_sha256` | the embedded stack fingerprint |
 | `bin/fidelity/previewstats.py` | context / source-cluster / stratified-cluster bootstraps |
 | `bin/fidelity/receipt.py::build_submission`, `assert_submittable`, `produced_by_block` | the registry submission and its refusals |
@@ -448,7 +448,7 @@ network, no GPU, no torch. Each case names the spec rule it exercises.
 
 ### 5.7 Already-green tests this work must not break
 
-`bin/selftest_zero_floor.py` (PASS 8/0/0) and `k6/tools/hidden_replay_selftest.py` (6/0, including
+`bin/selftest_zero_floor.py` (PASS 8/0/0) and `engines/tools/hidden_replay_selftest.py` (6/0, including
 `e-hook-mechanism: captured == post-norm (bitwise)` and `f-payload-sha`) are the existing proofs the
 comparator's assumptions rest on. Both must still pass after every change.
 
@@ -500,7 +500,7 @@ Beyond spec §14, which lists the format-level exclusions:
 
 | item | why |
 |---|---|
-| **Any edit to the five reserved files or `k6/tools/stream_score.py`** | the M1–M4 workflow owns them; every capture path is wrapped instead |
+| **Any edit to the five reserved files or `engines/tools/stream_score.py`** | the M1–M4 workflow owns them; every capture path is wrapped instead |
 | **Wiring the dataset stage into `bin/measure-cloud`** | explicitly out of scope in the brief; seams documented in §3 |
 | **A `serving` lane enum value** | changes `submission.schema.json` and reclassifies existing rows; operator decision |
 | **Running a real capture** | no GPU, no rentals. Everything here is validated with synthetic fixtures and real *metadata* |

@@ -5,8 +5,8 @@ the receipt.
 Deliberate asymmetry, because another workflow has uncommitted changes in this
 tree:
 
-  k6/HIDDEN-REPLAY.md      NEW file        -> written directly (no conflict possible)
-  k6/SAME-LANE-TEACHER.md  clean in tree   -> edited directly (safe to stage alone)
+  engines/HIDDEN-REPLAY.md      NEW file        -> written directly (no conflict possible)
+  engines/SAME-LANE-TEACHER.md  clean in tree   -> edited directly (safe to stage alone)
   WHAT-WE-MEASURE.md       DIRTY (theirs)  -> NOT touched; the one-line pointer is
                                               emitted to the scratchpad for the
                                               publish phase to apply after a rebase,
@@ -67,7 +67,7 @@ def main() -> int:
         return text
 
     # ---- 1. SAME-LANE-TEACHER.md: insert before "## Open items" -----------
-    slt = args.repo / "k6" / "SAME-LANE-TEACHER.md"
+    slt = args.repo / "engines" / "SAME-LANE-TEACHER.md"
     body = slt.read_text(encoding="utf-8")
     addition = fill((args.scratch / "same_lane_addition.md.tmpl").read_text(encoding="utf-8"))
     marker = "## Open items"

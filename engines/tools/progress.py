@@ -49,7 +49,7 @@ matters when one item is a multi-minute window.
 And the output here is a CONTRACT, not decoration: ``measure_cloud``'s
 ``_progress_counter`` parses ``progress: <label> <n>/<total>`` out of the log
 tail (see the note at the end of this docstring).  ``bin/`` cannot even import
-this module -- it runs on stock python3.9 with no torch and no ``k6/tools`` on
+this module -- it runs on stock python3.9 with no torch and no ``engines/tools`` on
 ``sys.path`` -- so the prefix is duplicated there and
 ``bin/selftest_progress.py`` asserts the two agree.
 
