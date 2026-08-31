@@ -1,0 +1,42 @@
+{
+ "gpu": "NVIDIA A100 80GB PCIe",
+ "vram_gb": 79.1,
+ "sm": "8.0",
+ "torch": "2.8.0+cu128",
+ "cuda": "12.8",
+ "read_GBps": 1435.5,
+ "pcie_idle": {
+  "gen": "4",
+  "width": "16",
+  "gen_max": "4",
+  "width_max": "16",
+  "text": "Gen4 x16 of Gen4 x16"
+ },
+ "h2d_cold_GBps": 17.3,
+ "pcie_load": {
+  "gen": "4",
+  "width": "16",
+  "gen_max": "4",
+  "width_max": "16",
+  "text": "Gen4 x16 of Gen4 x16"
+ },
+ "h2d_GBps": 23.6,
+ "h2d_ramp_x": 1.36,
+ "expert_gemm_ms": 0.206,
+ "expert_gemm_TFLOPs": 166.4,
+ "dense_4k_TFLOPs": 263.8,
+ "stream_matrix_ms": 1.07,
+ "provider": "vast",
+ "wall_seconds": 154.5,
+ "rental": {
+  "usd_per_hour": 0.6741,
+  "rate_source": "contract:dph_total",
+  "gpu_type_billed": "A100 PCIE",
+  "region": "Beijing, CN",
+  "is_spot": false,
+  "machine_id": "49390274",
+  "requested_gpu": null,
+  "requested_ask_id": "46749593",
+  "at_utc": "2026-08-31T12:11:00Z"
+ }
+}

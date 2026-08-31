@@ -226,6 +226,50 @@ discussion on the registry dataset and attach the file; a GitHub PR against the
 mirror works too. Both paths, the paste template, and how you are credited:
 [`registry/CONTRIBUTING.md`](registry/CONTRIBUTING.md).
 
+### Which cloud? Dollars per hour is the wrong metric
+
+A card at three times the rate that finishes in a third of the time is a wash.
+What decides the bill is **dollars per window** — `minutes/window x $/hour` —
+and `bin/fidelity-bench` measures both halves on one rental, in under a minute,
+for a few cents, then destroys the box. The full survey, its receipts and the
+qualitative axes a price cannot express are in
+**[`docs/CLOUD-COMPARISON.md`](docs/CLOUD-COMPARISON.md)**. Snapshot
+2026-08-31; **no affiliation with any provider**; the whole thing cost about
+four dollars to produce and you can re-run it.
+
+32 rentals across four providers, 2026-08-31, median of each card:
+
+| cheapest per window, measured | $/h | min/window | **$/window** |
+|---|---|---|---|
+| Lambda `gpu_1x_gh200` — NVLink-C2C, 404 GB/s h2d | 2.29 | 0.06 | **0.0023** |
+| Vast RTX PRO 6000 Blackwell Max-Q, 96 GB | 0.74 | 0.45 | 0.0056 |
+| Vast A100 80GB PCIe | 0.58–0.67 | 0.54–0.65 | 0.0062 |
+| Vast H100 SXM | 1.78–2.01 | 0.27–0.40 | 0.0105 |
+| RunPod A100-SXM4-80GB (secure) | 1.59 | 0.56–1.25 | 0.0185 |
+| Lambda H100 PCIe | 3.29 | 0.34–0.45 | 0.0214 |
+| RunPod H100 80GB HBM3 (secure) | 3.29 | 0.31–0.69 | 0.0366 |
+| JarvisLabs H200 (on-demand; halve for spot) | 3.99 | 0.79 | 0.0525 |
+
+Four things that survey found, none of which is in any catalogue:
+
+* **The lane is host-bandwidth-bound**, so a B200 with 7.7x an A100's bf16
+  throughput finishes the inner step only 2.7x faster. Buying FLOPs does not
+  buy speed here; buying host-to-device bandwidth does — which is why the one
+  card that reaches host memory over NVLink-C2C instead of PCIe wins by 2.5x,
+  and why `nvidia-smi` reporting `Gen4 x1` on it is a red herring.
+* **The same SKU at the same price is not the same machine.** Four RunPod
+  *secure* H100 rentals at a flat $3.29/h spread **2.2x**. JarvisLabs
+  reproduced to 0.5%. That spread is the price of the cheap tier and it is
+  measurable — pass `--min-h2d-gbps` and walk away early.
+* **One Vast offer advertised a B200 and delivered an H100** at 1.66 ms per
+  matrix, and one Vast host billed for fifteen minutes without ever accepting a
+  connection. Measure what you got; an offer id is not a durable name for a
+  machine.
+* **A rate you cannot rent at is not a rate.** Lambda's $4.29 H100 SXM5 — the
+  card that made Lambda look expensive — was unavailable in 20 of 20 capacity
+  polls, refused one launch outright, and came up twice with
+  `torch.cuda.is_available() == False`.
+
 > **Requirements.** The cloud recipe needs the `jl` CLI
 > (`uv tool install jarvislabs`). The local recipe needs only
 > `pip install torch safetensors numpy huggingface_hub` — the EXL3/TR3 decode

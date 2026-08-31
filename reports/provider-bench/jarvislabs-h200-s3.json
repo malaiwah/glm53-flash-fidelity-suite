@@ -1,0 +1,42 @@
+{
+ "gpu": "NVIDIA H200",
+ "vram_gb": 139.8,
+ "sm": "9.0",
+ "torch": "2.11.0+cu130",
+ "cuda": "13.0",
+ "read_GBps": 3774.0,
+ "pcie_idle": {
+  "gen": "5",
+  "width": "16",
+  "gen_max": "5",
+  "width_max": "16",
+  "text": "Gen5 x16 of Gen5 x16"
+ },
+ "h2d_cold_GBps": 26.7,
+ "pcie_load": {
+  "gen": "5",
+  "width": "16",
+  "gen_max": "5",
+  "width_max": "16",
+  "text": "Gen5 x16 of Gen5 x16"
+ },
+ "h2d_GBps": 38.3,
+ "h2d_ramp_x": 1.43,
+ "expert_gemm_ms": 0.045,
+ "expert_gemm_TFLOPs": 758.2,
+ "dense_4k_TFLOPs": 778.9,
+ "stream_matrix_ms": 1.307,
+ "provider": "jarvislabs",
+ "wall_seconds": 31.8,
+ "rental": {
+  "usd_per_hour": 3.99,
+  "rate_source": "catalogue",
+  "gpu_type_billed": "H200",
+  "region": "IN2",
+  "is_spot": false,
+  "machine_id": "489620",
+  "requested_gpu": "H200",
+  "requested_ask_id": null,
+  "at_utc": "2026-08-31T11:58:19Z"
+ }
+}

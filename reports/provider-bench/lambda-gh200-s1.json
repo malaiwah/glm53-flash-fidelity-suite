@@ -1,0 +1,41 @@
+{
+ "gpu": "NVIDIA GH200 480GB",
+ "vram_gb": 94.5,
+ "sm": "9.0",
+ "torch": "2.7.0",
+ "cuda": "12.8",
+ "read_GBps": 3103.5,
+ "pcie_idle": {
+  "gen": "4",
+  "width": "1",
+  "gen_max": "4",
+  "width_max": "1",
+  "text": "Gen4 x1 of Gen4 x1"
+ },
+ "h2d_cold_GBps": 315.3,
+ "pcie_load": {
+  "gen": "4",
+  "width": "1",
+  "gen_max": "4",
+  "width_max": "1",
+  "text": "Gen4 x1 of Gen4 x1"
+ },
+ "h2d_GBps": 379.4,
+ "h2d_ramp_x": 1.2,
+ "expert_gemm_ms": 0.045,
+ "expert_gemm_TFLOPs": 761.4,
+ "dense_4k_TFLOPs": 810.8,
+ "stream_matrix_ms": 0.098,
+ "provider": "lambda",
+ "wall_seconds": 269.2,
+ "rental": {
+  "usd_per_hour": 2.29,
+  "gpu_type_billed": "gpu_1x_gh200",
+  "region": "us-east-3",
+  "is_spot": false,
+  "machine_id": "162325220f0e42839415cbc051bb09b2",
+  "requested_gpu": "gpu_1x_gh200",
+  "requested_ask_id": null,
+  "at_utc": "2026-08-31T11:44:23Z"
+ }
+}

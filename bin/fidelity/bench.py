@@ -150,6 +150,46 @@ def rented_rate(provider, machine_id: Any) -> Dict[str, Any]:
             "is_spot": bool(getattr(inst, "is_spot", False))}
 
 
+def _measure(provider, machine_id: Any, say, *, attempts: int = 4,
+             settle: float = 45.0) -> Dict[str, Any]:
+    """Run the payload and INSIST on a real result, retrying a boot race.
+
+    A receipt full of zeros is worse than a failure: it is publishable, it
+    tabulates, and nothing about it says the card was missing. This raises
+    instead, naming what the payload said.
+
+    The one error worth retrying is `no cuda`. Lambda reports an instance
+    `active` with an IP, and sshd accepts a connection, several minutes before
+    the driver stack is usable -- a gpu_1x_h100_sxm5 rented on 2026-08-31
+    answered `torch.cuda.is_available() == False` 238 s in and wrote a receipt
+    of zeros for a card that was fine. That is the same lesson as
+    "watch run STATE, not output counts": the API's readiness and the machine's
+    are different claims. Everything else fails at once, because a box that
+    cannot import torch will not learn to.
+    """
+    last = ""
+    for attempt in range(1, attempts + 1):
+        out = provider.exec_stdout(
+            machine_id, "python3 /tmp/cardbench.py 2>&1 | tail -30", timeout=900)
+        try:
+            doc = json.loads(out[out.index("{"):out.rindex("}") + 1])
+        except Exception:                                 # noqa: BLE001
+            raise RuntimeError("benchmark produced no JSON:\n%s" % out[-600:])
+        err = doc.get("error")
+        if not err and doc.get("stream_matrix_ms"):
+            return doc
+        last = err or "no stream_matrix_ms in %r" % (sorted(doc),)
+        if err != "no cuda" or attempt == attempts:
+            break
+        say("payload says 'no cuda' (%d/%d) -- the driver stack is not up yet, "
+            "waiting %ds" % (attempt, attempts, int(settle)))
+        time.sleep(settle)
+    raise RuntimeError(
+        "the benchmark did not measure anything on %s: %s. A receipt of zeros "
+        "would tabulate as if it were a slow machine, so none was written."
+        % (machine_id, last))
+
+
 def run_bench(provider, *, gpu: Optional[str] = None, ask_id: Optional[Any] = None,
               storage: int = 30, name: str = "fidbench",
               con=None, keep: bool = False) -> Dict[str, Any]:
@@ -181,12 +221,7 @@ def run_bench(provider, *, gpu: Optional[str] = None, ask_id: Optional[Any] = No
         say("ready after %.0fs" % (time.time() - started))
         rate = rented_rate(provider, mid)
         provider.upload(mid, str(PAYLOAD), "/tmp/cardbench.py")
-        out = provider.exec_stdout(mid, "python3 /tmp/cardbench.py 2>&1 | tail -30",
-                                   timeout=900)
-        try:
-            doc = json.loads(out[out.index("{"):out.rindex("}") + 1])
-        except Exception:                                 # noqa: BLE001
-            raise RuntimeError("benchmark produced no JSON:\n%s" % out[-600:])
+        doc = _measure(provider, mid, say)
         doc["provider"] = getattr(provider, "provider", "?")
         doc["wall_seconds"] = round(time.time() - started, 1)
         doc["rental"] = dict(rate, machine_id=str(mid),

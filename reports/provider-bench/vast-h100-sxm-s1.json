@@ -1,0 +1,42 @@
+{
+ "gpu": "NVIDIA H100 80GB HBM3",
+ "vram_gb": 79.2,
+ "sm": "9.0",
+ "torch": "2.8.0+cu128",
+ "cuda": "12.8",
+ "read_GBps": 2640.7,
+ "pcie_idle": {
+  "gen": "4",
+  "width": "16",
+  "gen_max": "4",
+  "width_max": "16",
+  "text": "Gen4 x16 of Gen4 x16"
+ },
+ "h2d_cold_GBps": 27.6,
+ "pcie_load": {
+  "gen": "4",
+  "width": "16",
+  "gen_max": "4",
+  "width_max": "16",
+  "text": "Gen4 x16 of Gen4 x16"
+ },
+ "h2d_GBps": 27.7,
+ "h2d_ramp_x": 1.0,
+ "expert_gemm_ms": 0.045,
+ "expert_gemm_TFLOPs": 758.1,
+ "dense_4k_TFLOPs": 795.7,
+ "stream_matrix_ms": 0.66,
+ "provider": "vast",
+ "wall_seconds": 39.9,
+ "rental": {
+  "usd_per_hour": 1.7844,
+  "rate_source": "contract:dph_total",
+  "gpu_type_billed": "H100 SXM",
+  "region": "District of Columbia, US",
+  "is_spot": false,
+  "machine_id": "49389272",
+  "requested_gpu": null,
+  "requested_ask_id": "48850759",
+  "at_utc": "2026-08-31T11:59:52Z"
+ }
+}

@@ -1,0 +1,41 @@
+{
+ "gpu": "NVIDIA H100 PCIe",
+ "vram_gb": 79.2,
+ "sm": "9.0",
+ "torch": "2.7.0",
+ "cuda": "12.8",
+ "read_GBps": 1651.0,
+ "pcie_idle": {
+  "gen": "5",
+  "width": "16",
+  "gen_max": "5",
+  "width_max": "16",
+  "text": "Gen5 x16 of Gen5 x16"
+ },
+ "h2d_cold_GBps": 51.3,
+ "pcie_load": {
+  "gen": "5",
+  "width": "16",
+  "gen_max": "5",
+  "width_max": "16",
+  "text": "Gen5 x16 of Gen5 x16"
+ },
+ "h2d_GBps": 55.5,
+ "h2d_ramp_x": 1.08,
+ "expert_gemm_ms": 0.067,
+ "expert_gemm_TFLOPs": 515.7,
+ "dense_4k_TFLOPs": 492.9,
+ "stream_matrix_ms": 0.735,
+ "provider": "lambda",
+ "wall_seconds": 425.1,
+ "rental": {
+  "usd_per_hour": 3.29,
+  "gpu_type_billed": "gpu_1x_h100_pcie",
+  "region": "us-west-3",
+  "is_spot": false,
+  "machine_id": "dbba49d1803944888d8fdfebb80249eb",
+  "requested_gpu": "gpu_1x_h100_pcie",
+  "requested_ask_id": null,
+  "at_utc": "2026-08-31T11:58:26Z"
+ }
+}

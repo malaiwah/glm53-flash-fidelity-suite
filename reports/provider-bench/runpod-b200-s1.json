@@ -1,0 +1,41 @@
+{
+ "gpu": "NVIDIA B200",
+ "vram_gb": 178.4,
+ "sm": "10.0",
+ "torch": "2.9.1+cu130",
+ "cuda": "13.0",
+ "read_GBps": 3505.6,
+ "pcie_idle": {
+  "gen": "5",
+  "width": "16",
+  "gen_max": "5",
+  "width_max": "16",
+  "text": "Gen5 x16 of Gen5 x16"
+ },
+ "h2d_cold_GBps": 51.2,
+ "pcie_load": {
+  "gen": "5",
+  "width": "16",
+  "gen_max": "5",
+  "width_max": "16",
+  "text": "Gen5 x16 of Gen5 x16"
+ },
+ "h2d_GBps": 55.5,
+ "h2d_ramp_x": 1.08,
+ "expert_gemm_ms": 0.025,
+ "expert_gemm_TFLOPs": 1372.0,
+ "dense_4k_TFLOPs": 1508.5,
+ "stream_matrix_ms": 0.557,
+ "provider": "runpod",
+ "wall_seconds": 27.5,
+ "rental": {
+  "usd_per_hour": 6.79,
+  "gpu_type_billed": "eosnqzirylf7",
+  "region": null,
+  "is_spot": false,
+  "machine_id": "3hwd21x7sk55ix",
+  "requested_gpu": "NVIDIA B200",
+  "requested_ask_id": null,
+  "at_utc": "2026-08-31T11:36:50Z"
+ }
+}

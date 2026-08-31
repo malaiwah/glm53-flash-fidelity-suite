@@ -1,0 +1,41 @@
+{
+ "gpu": "NVIDIA A100-SXM4-40GB",
+ "vram_gb": 39.5,
+ "sm": "8.0",
+ "torch": "2.7.0",
+ "cuda": "12.8",
+ "read_GBps": 1211.3,
+ "pcie_idle": {
+  "gen": "4",
+  "width": "16",
+  "gen_max": "4",
+  "width_max": "16",
+  "text": "Gen4 x16 of Gen4 x16"
+ },
+ "h2d_cold_GBps": 25.2,
+ "pcie_load": {
+  "gen": "4",
+  "width": "16",
+  "gen_max": "4",
+  "width_max": "16",
+  "text": "Gen4 x16 of Gen4 x16"
+ },
+ "h2d_GBps": 26.1,
+ "h2d_ramp_x": 1.04,
+ "expert_gemm_ms": 0.204,
+ "expert_gemm_TFLOPs": 168.7,
+ "dense_4k_TFLOPs": 270.4,
+ "stream_matrix_ms": 0.894,
+ "provider": "lambda",
+ "wall_seconds": 247.1,
+ "rental": {
+  "usd_per_hour": 1.99,
+  "gpu_type_billed": "gpu_1x_a100_sxm4",
+  "region": "us-east-1",
+  "is_spot": false,
+  "machine_id": "10ac55bdb9924a8fa080e64e6d359be0",
+  "requested_gpu": "gpu_1x_a100_sxm4",
+  "requested_ask_id": null,
+  "at_utc": "2026-08-31T11:50:31Z"
+ }
+}

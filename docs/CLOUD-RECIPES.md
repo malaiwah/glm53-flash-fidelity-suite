@@ -76,6 +76,17 @@ estimate each provider's own plan produced):
 | JarvisLabs | H200 spot $1.99/h | $6.80 | $9.52 | $16.33 |
 | Lambda | H100 SXM5 $4.29/h | **$14.46** | $20.24 | $26.05 |
 
+> **Superseded in part, 2026-08-31.** The table above prices each provider's
+> *default* card, and on that basis Lambda is the dearest. Benchmarking the
+> actual per-window cost on eleven cards across all four providers found that
+> Lambda's `gpu_1x_gh200` at **$2.29/h** is the **cheapest per measurement of
+> anything measured anywhere** — 0.098 ms/matrix against an A100 PCIe's 0.891,
+> because it reaches host memory over NVLink-C2C instead of PCIe, and this lane
+> is host-bandwidth-bound. See [`CLOUD-COMPARISON.md`](CLOUD-COMPARISON.md) for
+> the receipts, the spread between two rentals of one SKU, and the
+> qualitative axes. Everything below about *how* to drive each provider remains
+> current.
+
 Seven times between the cheapest and the dearest for an identical measurement.
 Lambda's backend here is fully exercised — create with the disk guard, boot in
 164 s, exec with exit-code propagation, upload, download, detached jobs in all

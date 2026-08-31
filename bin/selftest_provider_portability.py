@@ -327,6 +327,48 @@ check("liveness is kill -0 on that pid",
 check("...and the file explains why the bracket trick cannot work here",
       "procps-ng" in ssh_src and "bracket" in ssh_src)
 
+print("\n== a benchmark that measured nothing must not write a receipt ==")
+from fidelity.bench import _measure                          # noqa: E402
+
+# A Lambda gpu_1x_h100_sxm5 answered `{"error": "no cuda"}` 238 s after the API
+# called it active, and the run wrote a receipt of zeros, exit 0. That receipt
+# tabulates as a very slow machine and nothing in it says the card was absent.
+
+
+class Payload:
+    """Replays a scripted sequence of payload stdouts, one per exec."""
+
+    def __init__(self, outs):
+        self.outs = list(outs)
+        self.calls = 0
+
+    def exec_stdout(self, mid, cmd, timeout=0):
+        self.calls += 1
+        return self.outs[min(self.calls - 1, len(self.outs) - 1)]
+
+
+GOOD = '{"gpu": "X", "stream_matrix_ms": 0.9}'
+NOCUDA = '{"error": "no cuda"}'
+
+p_ok = Payload([GOOD])
+check("a real result is returned on the first try",
+      _measure(p_ok, "m", lambda *_: None)["stream_matrix_ms"] == 0.9
+      and p_ok.calls == 1)
+
+p_race = Payload([NOCUDA, NOCUDA, GOOD])
+check("'no cuda' is RETRIED -- the API calls a box ready before the driver is",
+      _measure(p_race, "m", lambda *_: None, settle=0)["stream_matrix_ms"] == 0.9
+      and p_race.calls == 3)
+
+for outs, why in ((["{\"error\": \"no cuda\"}"], "no cuda forever"),
+                  (['{"gpu": "X"}'], "no stream_matrix_ms")):
+    try:
+        _measure(Payload(outs), "m", lambda *_: None, attempts=2, settle=0)
+        raised = False
+    except RuntimeError as exc:
+        raised = "did not measure anything" in str(exc)
+    check("a receipt of zeros is REFUSED (%s)" % why, raised)
+
 print()
 if FAILED:
     print("selftest_provider_portability: %d FAILED" % len(FAILED))

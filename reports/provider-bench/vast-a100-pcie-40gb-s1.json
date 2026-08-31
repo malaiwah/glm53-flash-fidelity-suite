@@ -1,0 +1,41 @@
+{
+ "gpu": "NVIDIA A100-PCIE-40GB",
+ "vram_gb": 39.5,
+ "sm": "8.0",
+ "torch": "2.8.0+cu128",
+ "cuda": "12.8",
+ "read_GBps": 1065.4,
+ "pcie_idle": {
+  "gen": "3",
+  "width": "16",
+  "gen_max": "3",
+  "width_max": "16",
+  "text": "Gen3 x16 of Gen3 x16"
+ },
+ "h2d_cold_GBps": 12.3,
+ "pcie_load": {
+  "gen": "3",
+  "width": "16",
+  "gen_max": "3",
+  "width_max": "16",
+  "text": "Gen3 x16 of Gen3 x16"
+ },
+ "h2d_GBps": 12.3,
+ "h2d_ramp_x": 1.0,
+ "expert_gemm_ms": 0.214,
+ "expert_gemm_TFLOPs": 160.6,
+ "dense_4k_TFLOPs": 245.7,
+ "stream_matrix_ms": 1.603,
+ "provider": "vast",
+ "wall_seconds": 456.4,
+ "rental": {
+  "usd_per_hour": 0.2741,
+  "gpu_type_billed": "A100 PCIE",
+  "region": "Florida, US",
+  "is_spot": false,
+  "machine_id": "49386261",
+  "requested_gpu": "A100 PCIE",
+  "requested_ask_id": null,
+  "at_utc": "2026-08-31T11:42:50Z"
+ }
+}

@@ -1,0 +1,41 @@
+{
+ "gpu": "NVIDIA A100-SXM4-80GB",
+ "vram_gb": 79.3,
+ "sm": "8.0",
+ "torch": "2.9.1+cu130",
+ "cuda": "13.0",
+ "read_GBps": 1365.9,
+ "pcie_idle": {
+  "gen": "4",
+  "width": "16",
+  "gen_max": "4",
+  "width_max": "16",
+  "text": "Gen4 x16 of Gen4 x16"
+ },
+ "h2d_cold_GBps": 20.8,
+ "pcie_load": {
+  "gen": "4",
+  "width": "16",
+  "gen_max": "4",
+  "width_max": "16",
+  "text": "Gen4 x16 of Gen4 x16"
+ },
+ "h2d_GBps": 26.3,
+ "h2d_ramp_x": 1.26,
+ "expert_gemm_ms": 0.204,
+ "expert_gemm_TFLOPs": 168.0,
+ "dense_4k_TFLOPs": 269.2,
+ "stream_matrix_ms": 0.919,
+ "provider": "runpod",
+ "wall_seconds": 42.4,
+ "rental": {
+  "usd_per_hour": 1.59,
+  "gpu_type_billed": "nssiamx8bbud",
+  "region": null,
+  "is_spot": false,
+  "machine_id": "rneh63dc61y528",
+  "requested_gpu": "NVIDIA A100-SXM4-80GB",
+  "requested_ask_id": null,
+  "at_utc": "2026-08-31T11:51:29Z"
+ }
+}

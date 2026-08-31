@@ -1,0 +1,31 @@
+{
+ "gpu": "NVIDIA H100 80GB HBM3",
+ "vram_gb": 79.2,
+ "sm": "9.0",
+ "torch": "2.8.0+cu128",
+ "cuda": "12.8",
+ "read_GBps": 2642.5,
+ "pcie_idle": {
+  "gen": "4",
+  "width": "16",
+  "gen_max": "4",
+  "width_max": "16",
+  "text": "Gen4 x16 of Gen4 x16"
+ },
+ "h2d_cold_GBps": 27.6,
+ "pcie_load": {
+  "gen": "4",
+  "width": "16",
+  "gen_max": "4",
+  "width_max": "16",
+  "text": "Gen4 x16 of Gen4 x16"
+ },
+ "h2d_GBps": 13.8,
+ "h2d_ramp_x": 0.5,
+ "expert_gemm_ms": 0.047,
+ "expert_gemm_TFLOPs": 723.9,
+ "dense_4k_TFLOPs": 786.3,
+ "stream_matrix_ms": 1.663,
+ "provider": "vast",
+ "wall_seconds": 177.6
+}

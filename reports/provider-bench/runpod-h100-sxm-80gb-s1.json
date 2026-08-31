@@ -1,0 +1,41 @@
+{
+ "gpu": "NVIDIA H100 80GB HBM3",
+ "vram_gb": 79.2,
+ "sm": "9.0",
+ "torch": "2.9.1+cu130",
+ "cuda": "13.0",
+ "read_GBps": 2720.5,
+ "pcie_idle": {
+  "gen": "5",
+  "width": "16",
+  "gen_max": "5",
+  "width_max": "16",
+  "text": "Gen5 x16 of Gen5 x16"
+ },
+ "h2d_cold_GBps": 52.1,
+ "pcie_load": {
+  "gen": "5",
+  "width": "16",
+  "gen_max": "5",
+  "width_max": "16",
+  "text": "Gen5 x16 of Gen5 x16"
+ },
+ "h2d_GBps": 57.5,
+ "h2d_ramp_x": 1.1,
+ "expert_gemm_ms": 0.046,
+ "expert_gemm_TFLOPs": 753.1,
+ "dense_4k_TFLOPs": 797.0,
+ "stream_matrix_ms": 0.513,
+ "provider": "runpod",
+ "wall_seconds": 37.7,
+ "rental": {
+  "usd_per_hour": 3.29,
+  "gpu_type_billed": "o5zpe06jo95r",
+  "region": null,
+  "is_spot": false,
+  "machine_id": "0gsso0wq6btasu",
+  "requested_gpu": "NVIDIA H100 80GB HBM3",
+  "requested_ask_id": null,
+  "at_utc": "2026-08-31T11:36:22Z"
+ }
+}
