@@ -102,6 +102,12 @@ t "no cross-origin bearer forwarding (T19: R1-R8)" \
 # no network, no real token. (Peer review 2026-08-31, security chapter.)
 t "secret file creation + transport + cleanup (T20: S1-S9)" \
                                            0 python3 bin/selftest_secret_files.py
+# T21. SSH host authentication. StrictHostKeyChecking=no + /dev/null removed
+# server authentication from the channel carrying the token and the receipts;
+# now: per-run trust-on-first-use, a known_hosts file under the run dir, and
+# the accepted fingerprint recorded for the cost receipt.
+t "ssh per-run TOFU host keys (T21: K1-K6)" \
+                                           0 python3 bin/selftest_sshbase.py
 # T14. The progress meter. Both capture engines print one line at the start and
 # one at the end, which on the streaming lane is a 2-3 hour silence in a stage
 # log that looks exactly like a hang. The rungs that matter are the ones about

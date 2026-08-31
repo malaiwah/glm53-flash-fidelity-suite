@@ -29,10 +29,12 @@ A subclass supplies `_endpoint()` (host, port), `ssh_user` and `ssh_key`.
 """
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
+import tempfile
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .jlapi import JLError, redact
 
@@ -77,10 +79,55 @@ class SSHTransport:
         raise JLError("ssh on %s:%s never accepted a connection within %ds"
                       % (host, port, int(wait)))
 
+    # -- host keys ---------------------------------------------------------
+    # `StrictHostKeyChecking=no` + `UserKnownHostsFile=/dev/null` removed
+    # server authentication ENTIRELY from the transport that carries the HF
+    # token and every measurement artifact -- an on-path attacker or a
+    # compromised provider routing layer could capture the credential or
+    # substitute receipts (peer review 2026-08-31, security chapter, High).
+    #
+    # The providers hand out ephemeral machines with fresh keys, so a global
+    # known_hosts is useless; what IS achievable is per-run trust-on-first-use:
+    # `accept-new` records the key the FIRST connection sees into a per-run
+    # file, and every later connection in the run refuses a changed key.  The
+    # first hop remains unauthenticated (the provider publishes no
+    # fingerprint), and saying so honestly is the point: the accepted key's
+    # fingerprint is recorded so the receipt can carry it.
+    _known_hosts: Optional[str] = None
+
+    def set_known_hosts(self, path) -> None:
+        """Pin this run's host keys under the run directory (the controller
+        calls this once the outdir exists, so the evidence survives the run)."""
+        self._known_hosts = str(path)
+
+    def _known_hosts_file(self) -> str:
+        if not self._known_hosts:
+            fd, path = tempfile.mkstemp(prefix="fidelity-known-hosts-")
+            os.close(fd)
+            self._known_hosts = path
+        parent = os.path.dirname(self._known_hosts)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        return self._known_hosts
+
+    def host_key_fingerprints(self) -> List[str]:
+        """SHA256 fingerprints of every host key this run accepted."""
+        path = self._known_hosts
+        if not path or not os.path.isfile(path):
+            return []
+        try:
+            p = subprocess.run(["ssh-keygen", "-l", "-f", path],
+                               capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        if p.returncode != 0:
+            return []
+        return [line.strip() for line in p.stdout.splitlines() if line.strip()]
+
     # -- ssh ---------------------------------------------------------------
     def _ssh_opts(self) -> List[str]:
-        return ["-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
+        return ["-o", "StrictHostKeyChecking=accept-new",
+                "-o", "UserKnownHostsFile=%s" % self._known_hosts_file(),
                 "-o", "LogLevel=ERROR",
                 "-o", "ConnectTimeout=30",
                 "-o", "ServerAliveInterval=30"]

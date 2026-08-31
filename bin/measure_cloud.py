@@ -2152,6 +2152,12 @@ def execute(args: argparse.Namespace, con: Console, jl: JL,
     outdir.mkdir(parents=True, exist_ok=True)
     td.outdir = outdir
 
+    # Per-run trust-on-first-use for the SSH transports: the first connection
+    # records the host key under the run dir, every later connection in this
+    # run refuses a changed one, and the fingerprint lands in the cost receipt.
+    if hasattr(jl, "set_known_hosts"):
+        jl.set_known_hosts(outdir / "ssh_known_hosts")
+
     chosen = plan_data["chosen"]
     region = chosen["region"]
     started = time.time()
@@ -2955,6 +2961,13 @@ def _reconcile_cost(jl, td, plan_data, elapsed, outdir, con) -> Dict[str, Any]:
                 plan_data["cost_estimate"]["storage_rate_provenance"],
         },
     }
+    # The host key(s) this run accepted on first use: an on-path substitution
+    # after the first connection would have failed loudly, and the receipt
+    # says which key the whole run trusted.
+    if hasattr(jl, "host_key_fingerprints"):
+        fingerprints = jl.host_key_fingerprints()
+        if fingerprints:
+            cost["ssh_host_key_fingerprints"] = fingerprints
     write_json(str(outdir / "cost-receipt.json"), cost)
     return cost
 
