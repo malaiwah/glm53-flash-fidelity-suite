@@ -891,21 +891,46 @@ class TailHistogram:
 
 @inference_mode
 def normalizers_and_top1(hidden: torch.Tensor, head: torch.Tensor, vocab_chunk: int):
+    """Log-normalizers and argmax per row, with the log-sum-exp in float64.
+
+    P1-06: the matmul runs in the capture dtype (that is the logits_dtype the
+    receipt declares), but everything downstream of the logits -- exp, the
+    vocabulary reduction, the running logaddexp -- is float64. Casting AFTER
+    the reduction cannot recover precision the float32 sum already lost, and
+    the receipts declare accumulation float64.
+    """
     import torch
 
     rows = hidden.shape[0]
-    log_z = torch.full((rows,), -math.inf, dtype=torch.float32, device=hidden.device)
-    top_val = torch.full((rows,), -math.inf, dtype=torch.float32, device=hidden.device)
+    log_z = torch.full((rows,), -math.inf, dtype=torch.float64, device=hidden.device)
+    top_val = torch.full((rows,), -math.inf, dtype=torch.float64, device=hidden.device)
     top_id = torch.zeros((rows,), dtype=torch.int64, device=hidden.device)
     for start in range(0, head.shape[0], vocab_chunk):
         end = min(start + vocab_chunk, head.shape[0])
-        logits = (hidden @ head[start:end].T).float()
+        logits = (hidden @ head[start:end].T).double()
         log_z = torch.logaddexp(log_z, torch.logsumexp(logits, dim=-1))
         val, idx = logits.max(dim=-1)
         upd = val > top_val
         top_val = torch.where(upd, val, top_val)
         top_id = torch.where(upd, idx + start, top_id)
     return log_z, top_id
+
+
+def _check_kl_sane(kl: torch.Tensor, where: str):
+    """KL is mathematically non-negative; refuse to return a value that is not.
+
+    A tiny negative from float64 rounding would sit at the 1e-15 scale; anything
+    materially below zero, or non-finite, means the estimator itself is broken
+    and the number must not be published.
+    """
+    import torch
+
+    if not torch.isfinite(kl).all():
+        raise ValueError("%s: non-finite per-token KL; refusing to report" % where)
+    worst = float(kl.min())
+    if worst < -1e-9:
+        raise ValueError("%s: materially negative per-token KL %.3e; refusing to report"
+                         % (where, worst))
 
 
 @inference_mode
@@ -925,15 +950,20 @@ def context_metrics(ref_h: torch.Tensor, cand_h: torch.Tensor, head: torch.Tenso
     kl = torch.zeros(rows, dtype=torch.float64, device=ref_h.device)
     js = torch.zeros(rows, dtype=torch.float64, device=ref_h.device)
     ln2 = math.log(2.0)
+    # P1-06: float64 BEFORE subtraction, exp, product and the vocabulary sum.
+    # The old code reduced in float32 and cast the finished sum to double; on
+    # near-equal 50k-vocab distributions that returned NEGATIVE "KL" values at
+    # the 1e-7 scale while declaring float64 accumulation.
     for start in range(0, head.shape[0], vocab_chunk):
         end = min(start + vocab_chunk, head.shape[0])
-        rl = (ref_h @ head[start:end].T).float() - ref_z[:, None]
-        cl = (cand_h @ ch[start:end].T).float() - cand_z[:, None]
+        rl = (ref_h @ head[start:end].T).double() - ref_z[:, None]
+        cl = (cand_h @ ch[start:end].T).double() - cand_z[:, None]
         p, q = rl.exp(), cl.exp()
-        kl += (p * (rl - cl)).sum(-1).double()
+        kl += (p * (rl - cl)).sum(-1)
         m = 0.5 * (p + q)
         logm = m.clamp_min(1e-30).log()
-        js += (0.5 * (p * (rl - logm)).sum(-1) + 0.5 * (q * (cl - logm)).sum(-1)).double()
+        js += 0.5 * (p * (rl - logm)).sum(-1) + 0.5 * (q * (cl - logm)).sum(-1)
+    _check_kl_sane(kl, "context_metrics")
     return kl.cpu(), (js / ln2).cpu(), (ref_top == cand_top).sum().item()
 
 
@@ -1155,24 +1185,32 @@ def qualification_metrics(live_logprobs: torch.Tensor, hidden: torch.Tensor,
 
     rows = hidden.shape[0]
     dev = hidden.device
-    log_z = torch.full((rows,), -math.inf, dtype=torch.float32, device=dev)
+    # P1-06: float64 from the logits on, exactly as in context_metrics. The
+    # live operand is a normalised log-probability matrix and joins in float64.
+    log_z = torch.full((rows,), -math.inf, dtype=torch.float64, device=dev)
     rep_top = torch.zeros((rows,), dtype=torch.int64, device=dev)
-    rep_val = torch.full((rows,), -math.inf, dtype=torch.float32, device=dev)
+    rep_val = torch.full((rows,), -math.inf, dtype=torch.float64, device=dev)
     for start in range(0, head.shape[0], vocab_chunk):
         end = min(start + vocab_chunk, head.shape[0])
-        logits = (hidden @ head[start:end].T).float()
+        logits = (hidden @ head[start:end].T).double()
         log_z = torch.logaddexp(log_z, torch.logsumexp(logits, dim=-1))
         val, idx = logits.max(dim=-1)
         upd = val > rep_val
         rep_val = torch.where(upd, val, rep_val)
         rep_top = torch.where(upd, idx + start, rep_top)
     live_top = live_logprobs.argmax(dim=-1)
+    # The engine hands over float32 log-probabilities that are normalised only to
+    # float32 precision; re-normalise in float64 so the operand is a true
+    # distribution at accumulation precision (otherwise KL dips negative at the
+    # ~1e-8 float32-normalisation-error scale).
+    live_z = torch.logsumexp(live_logprobs.double(), dim=-1)
     kl = torch.zeros(rows, dtype=torch.float64, device=dev)
     for start in range(0, head.shape[0], vocab_chunk):
         end = min(start + vocab_chunk, head.shape[0])
-        rep = (hidden @ head[start:end].T).float() - log_z[:, None]
-        liv = live_logprobs[:, start:end]
-        kl += (liv.exp() * (liv - rep)).sum(-1).double()
+        rep = (hidden @ head[start:end].T).double() - log_z[:, None]
+        liv = live_logprobs[:, start:end].double() - live_z[:, None]
+        kl += (liv.exp() * (liv - rep)).sum(-1)
+    _check_kl_sane(kl, "qualification_metrics")
     return kl.cpu(), int((live_top == rep_top).sum().item())
 
 
