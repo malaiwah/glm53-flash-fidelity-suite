@@ -356,15 +356,15 @@ Attribution is a column, not a footnote: *measured by us*, *measured by us (thei
 
 > **Panel disclosure -- `unsealed_source`:** The qwen38 v5 token suite is pinned by suite_token_sha256 and by its manifest digest c79dfad3..., but the token files themselves are not published, so a third party cannot reproduce the digest today.
 
-#### Group `cmp--5f556b50b25762a2` -- 6 rows
+#### Group `cmp--c8c4df32774bdb63` -- 6 rows
 
 **Panel** `panel--qwen38.malaiwah.suite-v5-10m` -- malaiwah Qwen3.8-27B distribution-fidelity suite v5 -- 5,120 contexts
   5120 contexts x 2047 scored positions = **10,480,640 scored positions**, score_from 0
   sealed: **yes** (token digest `510541f6861b589d...`) -- contamination scan: **yes, 0 hits**
 **Reference (teacher)** `reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m` -- native_bf16, artifact `artifact--qwen.qwen3.8-27b-bf16` @unpinned revision
-**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
+**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float32_reduce_legacy
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
-**Comparability key** `cmp--5f556b50b25762a2`
+**Comparability key** `cmp--c8c4df32774bdb63`
 **Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
 > **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
@@ -372,10 +372,10 @@ Attribution is a column, not a footnote: *measured by us*, *measured by us (thei
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
-> - `cmp--05e16411a5932713` (3 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m
-> - `cmp--4a93702ded23e01a` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
-> - `cmp--12bfc6ec82b47678` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
-> - `cmp--1ef6a9b5901f8e2a` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256
+> - `cmp--75b64be1f101ed22` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
+> - `cmp--726ac1b18b8129fa` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
+> - `cmp--0bb49e8411b6dc75` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256
+> - `cmp--47c0bc74ebec3fa7` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-10m -> panel--qwen38.malaiwah.suite-v5-shards01-2m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -394,30 +394,36 @@ Attribution is a column, not a footnote: *measured by us*, *measured by us (thei
 >
 > <details><summary>the 6 artifacts and their ranges</summary>
 >
-> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`.
-> - **malaiwah Qwen3.8-27B K4** -- 5 values here, from **0.00987561** to **0.0106039** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`.
-> - **unsloth Qwen3.8-27B NVFP4** -- 2 values here, from **0.0301154** to **0.0310586** nats (3% apart). Other tables: `cmp--4a93702ded23e01a`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`.
+> - **malaiwah Qwen3.8-27B K4** -- 5 values here, from **0.00987561** to **0.0106039** nats (7% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`.
+> - **unsloth Qwen3.8-27B NVFP4** -- 2 values here, from **0.0301154** to **0.0310586** nats (3% apart). Other tables: `cmp--75b64be1f101ed22`.
 >
 > </details>
 
-<details><summary>Disclosures for the rows above (13)</summary>
+<details><summary>Disclosures for the rows above (19)</summary>
 
 - `qwen38.k5k6-hydrated.suite-v5-10m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6-hydrated.suite-v5-10m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6-hydrated.suite-v5-10m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6.suite-v5-10m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6.suite-v5-10m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6.suite-v5-10m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6-context.suite-v5-10m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6-context.suite-v5-10m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6-context.suite-v5-10m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.official-fp8.suite-v5-10m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.official-fp8.suite-v5-10m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.official-fp8.suite-v5-10m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k4.suite-v5-10m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k4.suite-v5-10m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k4.suite-v5-10m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.unsloth-nvfp4.suite-v5-10m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.unsloth-nvfp4.suite-v5-10m` **artifact_identity_incomplete**: The per-tensor-class quantization recipe for this artifact was never published, so scope.assignments records 'unknown' rather than a guessed allocation. Its scope_digest shows the gap.
 - `qwen38.unsloth-nvfp4.suite-v5-10m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.unsloth-nvfp4.suite-v5-10m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 
 </details>
 
@@ -429,15 +435,15 @@ Derived from `panel--qwen38.malaiwah.suite-v5-10m` by **shard_subset**: shards 0
 
 > **Panel disclosure -- `unsealed_source`:** The qwen38 v5 token suite is pinned by suite_token_sha256 and by its manifest digest c79dfad3..., but the token files themselves are not published, so a third party cannot reproduce the digest today.
 
-#### Group `cmp--1669ccf7958fb75c` -- 5 rows
+#### Group `cmp--47c0bc74ebec3fa7` -- 5 rows
 
 **Panel** `panel--qwen38.malaiwah.suite-v5-shards01-2m` -- malaiwah Qwen3.8-27B suite v5, shards 0-1 -- 1,024 contexts
   1024 contexts x 2047 scored positions = **2,096,128 scored positions**, score_from 0
   sealed: **no** -- contamination scan: **yes, 0 hits**
 **Reference (teacher)** `reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m` -- native_bf16, artifact `artifact--qwen.qwen3.8-27b-bf16` @unpinned revision
-**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
+**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float32_reduce_legacy
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
-**Comparability key** `cmp--1669ccf7958fb75c`
+**Comparability key** `cmp--47c0bc74ebec3fa7`
 **Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
 > **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
@@ -445,10 +451,10 @@ Derived from `panel--qwen38.malaiwah.suite-v5-10m` by **shard_subset**: shards 0
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
-> - `cmp--05e16411a5932713` (3 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m
-> - `cmp--4a93702ded23e01a` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
-> - `cmp--5f556b50b25762a2` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
-> - `cmp--12bfc6ec82b47678` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
+> - `cmp--75b64be1f101ed22` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
+> - `cmp--c8c4df32774bdb63` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
+> - `cmp--726ac1b18b8129fa` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
+> - `cmp--0bb49e8411b6dc75` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shards01-2m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -466,26 +472,31 @@ Derived from `panel--qwen38.malaiwah.suite-v5-10m` by **shard_subset**: shards 0
 >
 > <details><summary>the 5 artifacts and their ranges</summary>
 >
-> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--12bfc6ec82b47678`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B K4** -- 5 values here, from **0.00987561** to **0.0106039** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--0bb49e8411b6dc75`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B K4** -- 5 values here, from **0.00987561** to **0.0106039** nats (7% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
 >
 > </details>
 
-<details><summary>Disclosures for the rows above (10)</summary>
+<details><summary>Disclosures for the rows above (15)</summary>
 
 - `qwen38.k5k6-hydrated.suite-v5-shards01-2m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6-hydrated.suite-v5-shards01-2m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6-hydrated.suite-v5-shards01-2m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6.suite-v5-shards01-2m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6.suite-v5-shards01-2m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6.suite-v5-shards01-2m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6-context.suite-v5-shards01-2m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6-context.suite-v5-shards01-2m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6-context.suite-v5-shards01-2m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.official-fp8.suite-v5-shards01-2m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.official-fp8.suite-v5-shards01-2m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.official-fp8.suite-v5-shards01-2m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k4.suite-v5-shards01-2m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k4.suite-v5-shards01-2m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k4.suite-v5-shards01-2m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 
 </details>
 
@@ -497,15 +508,15 @@ Derived from `panel--qwen38.malaiwah.suite-v5-10m` by **shard_subset**: shard 0 
 
 This panel carries **3 separate comparability groups**. They are different measurements of different things and are never merged.
 
-#### Group `cmp--4a93702ded23e01a` -- 12 rows
+#### Group `cmp--75b64be1f101ed22` -- 12 rows
 
 **Panel** `panel--qwen38.malaiwah.suite-v5-shard0-1m` -- malaiwah Qwen3.8-27B suite v5, shard 0 -- 512 contexts
   512 contexts x 2047 scored positions = **1,048,064 scored positions**, score_from 0
   sealed: **yes** (token digest `caef8a4628d6c07c...`) -- contamination scan: **yes, 0 hits**
 **Reference (teacher)** `reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m` -- native_bf16, artifact `artifact--qwen.qwen3.8-27b-bf16` @unpinned revision
-**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
+**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float32_reduce_legacy
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
-**Comparability key** `cmp--4a93702ded23e01a`
+**Comparability key** `cmp--75b64be1f101ed22`
 **Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
 > **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
@@ -513,10 +524,10 @@ This panel carries **3 separate comparability groups**. They are different measu
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
-> - `cmp--05e16411a5932713` (3 rows): `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m
-> - `cmp--46a8a19f0fa33bed` (4 rows): `stack_relation` same_stack -> cross_stack
-> - `cmp--5f556b50b25762a2` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
-> - `cmp--12bfc6ec82b47678` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
+> - `cmp--35a4b2ab8ed5cd50` (4 rows): `stack_relation` same_stack -> cross_stack
+> - `cmp--05e16411a5932713` (3 rows): `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m; `accumulation_dtype` float32_reduce_legacy -> float64
+> - `cmp--c8c4df32774bdb63` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
+> - `cmp--726ac1b18b8129fa` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -541,59 +552,71 @@ This panel carries **3 separate comparability groups**. They are different measu
 >
 > <details><summary>the 6 artifacts and their ranges</summary>
 >
-> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B K4** -- 5 values here, from **0.00987561** to **0.0106039** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--5f556b50b25762a2`.
-> - **unsloth Qwen3.8-27B NVFP4** -- 2 values here, from **0.0301154** to **0.0310586** nats (3% apart). Other tables: `cmp--5f556b50b25762a2`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B K4** -- 5 values here, from **0.00987561** to **0.0106039** nats (7% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--c8c4df32774bdb63`.
+> - **unsloth Qwen3.8-27B NVFP4** -- 2 values here, from **0.0301154** to **0.0310586** nats (3% apart). Other tables: `cmp--c8c4df32774bdb63`.
 >
 > </details>
 
-<details><summary>Disclosures for the rows above (30)</summary>
+<details><summary>Disclosures for the rows above (42)</summary>
 
 - `qwen38.turboderp-6bpw.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.turboderp-6bpw.suite-v5-shard0-1m` **artifact_identity_incomplete**: The per-tensor-class quantization recipe for this artifact was never published, so scope.assignments records 'unknown' rather than a guessed allocation. Its scope_digest shows the gap.
 - `qwen38.turboderp-6bpw.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.turboderp-6bpw.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k6-parity.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k6-parity.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k6-parity.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6-hydrated.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6-hydrated.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6-hydrated.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6-context.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6-context.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6-context.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.turboderp-5bpw.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.turboderp-5bpw.suite-v5-shard0-1m` **artifact_identity_incomplete**: The per-tensor-class quantization recipe for this artifact was never published, so scope.assignments records 'unknown' rather than a guessed allocation. Its scope_digest shows the gap.
 - `qwen38.turboderp-5bpw.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.turboderp-5bpw.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.official-fp8.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.official-fp8.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.official-fp8.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k4.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k4.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k4.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.awq-int4.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.awq-int4.suite-v5-shard0-1m` **artifact_identity_incomplete**: The upstream repository for this artifact is not recorded by the receipt; only a local path. The measurement is ours and real, the artifact identity is not established.
 - `qwen38.awq-int4.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.awq-int4.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.unsloth-nvfp4.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.unsloth-nvfp4.suite-v5-shard0-1m` **artifact_identity_incomplete**: The per-tensor-class quantization recipe for this artifact was never published, so scope.assignments records 'unknown' rather than a guessed allocation. Its scope_digest shows the gap.
 - `qwen38.unsloth-nvfp4.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.unsloth-nvfp4.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.gittensor-nvfp4.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.gittensor-nvfp4.suite-v5-shard0-1m` **artifact_identity_incomplete**: The per-tensor-class quantization recipe for this artifact was never published, so scope.assignments records 'unknown' rather than a guessed allocation. Its scope_digest shows the gap.
 - `qwen38.gittensor-nvfp4.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.gittensor-nvfp4.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.mtp-nvfp4.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.mtp-nvfp4.suite-v5-shard0-1m` **artifact_identity_incomplete**: The upstream repository for this artifact is not recorded by the receipt; only a local path. The measurement is ours and real, the artifact identity is not established.
 - `qwen38.mtp-nvfp4.suite-v5-shard0-1m` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.mtp-nvfp4.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 
 </details>
 
-#### Group `cmp--46a8a19f0fa33bed` -- 4 rows
+#### Group `cmp--35a4b2ab8ed5cd50` -- 4 rows
 
 **Panel** `panel--qwen38.malaiwah.suite-v5-shard0-1m` -- malaiwah Qwen3.8-27B suite v5, shard 0 -- 512 contexts
   512 contexts x 2047 scored positions = **1,048,064 scored positions**, score_from 0
   sealed: **yes** (token digest `caef8a4628d6c07c...`) -- contamination scan: **yes, 0 hits**
 **Reference (teacher)** `reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m` -- native_bf16, artifact `artifact--qwen.qwen3.8-27b-bf16` @unpinned revision
-**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
+**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float32_reduce_legacy
 **Estimation surface** stack_relation `cross_stack`, head_policy `shared_reference_head`
-**Comparability key** `cmp--46a8a19f0fa33bed`
+**Comparability key** `cmp--35a4b2ab8ed5cd50`
 **Like-for-like predicate** `comparable: unknown` -- no recorded difference, but lane, scope are unrecorded for at least one member, so homogeneity cannot be certified. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
 > **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
@@ -601,8 +624,7 @@ This panel carries **3 separate comparability groups**. They are different measu
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
-> - `cmp--4a93702ded23e01a` (12 rows): `stack_relation` cross_stack -> same_stack
-> - `cmp--05e16411a5932713` (3 rows): `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m; `stack_relation` cross_stack -> same_stack
+> - `cmp--75b64be1f101ed22` (12 rows): `stack_relation` cross_stack -> same_stack
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -623,22 +645,26 @@ This panel carries **3 separate comparability groups**. They are different measu
 
 > **Bias on unsloth Qwen3.8-27B-GGUF UD-Q5_K_XL** -- cross_stack_capture_replay, direction upward. llama.cpp candidate capture vs vLLM reference capture. The cross-engine floor on this exact panel is 0.000507 nats, so this is an UPPER BOUND. Naive net of floor: 0.003936170795822309 -- an estimate, not an identity, because KL is not additive.
 
-<details><summary>Disclosures for the rows above (16)</summary>
+<details><summary>Disclosures for the rows above (20)</summary>
 
 - `qwen38.gguf-bf16-engine-floor.suite-v5-shard0-1m` **cross_engine_capture**: The candidate was captured with llama.cpp; the reference and every EXL3/FP8 row on this panel were captured under vLLM. This number therefore contains a llama.cpp-vs-vLLM term on top of quantization error, which can only inflate it. That term is measured: 0.000507 nats.
 - `qwen38.gguf-bf16-engine-floor.suite-v5-shard0-1m` **single_run**: One pass.
+- `qwen38.gguf-bf16-engine-floor.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.gguf-bf16-engine-floor.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.gguf-bf16-engine-floor.suite-v5-shard0-1m` note: CONTROL ROW / CROSS-ENGINE FLOOR.
 - `qwen38.unsloth-gguf-q8-0.suite-v5-shard0-1m` **cross_engine_capture**: The candidate was captured with llama.cpp; the reference and every EXL3/FP8 row on this panel were captured under vLLM. This number therefore contains a llama.cpp-vs-vLLM term on top of quantization error, which can only inflate it. That term is measured: 0.000507 nats.
 - `qwen38.unsloth-gguf-q8-0.suite-v5-shard0-1m` **single_run**: One pass.
+- `qwen38.unsloth-gguf-q8-0.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.unsloth-gguf-q8-0.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.unsloth-gguf-q8-0.suite-v5-shard0-1m` **artifact_identity_incomplete**: The per-tensor-class quantization recipe for this artifact was never published, so scope.assignments records 'unknown' rather than a guessed allocation. Its scope_digest shows the gap.
 - `qwen38.unsloth-gguf-q6-k.suite-v5-shard0-1m` **cross_engine_capture**: The candidate was captured with llama.cpp; the reference and every EXL3/FP8 row on this panel were captured under vLLM. This number therefore contains a llama.cpp-vs-vLLM term on top of quantization error, which can only inflate it. That term is measured: 0.000507 nats.
 - `qwen38.unsloth-gguf-q6-k.suite-v5-shard0-1m` **single_run**: One pass.
+- `qwen38.unsloth-gguf-q6-k.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.unsloth-gguf-q6-k.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.unsloth-gguf-q6-k.suite-v5-shard0-1m` **artifact_identity_incomplete**: The per-tensor-class quantization recipe for this artifact was never published, so scope.assignments records 'unknown' rather than a guessed allocation. Its scope_digest shows the gap.
 - `qwen38.unsloth-gguf-ud-q5-k-xl.suite-v5-shard0-1m` **cross_engine_capture**: The candidate was captured with llama.cpp; the reference and every EXL3/FP8 row on this panel were captured under vLLM. This number therefore contains a llama.cpp-vs-vLLM term on top of quantization error, which can only inflate it. That term is measured: 0.000507 nats.
 - `qwen38.unsloth-gguf-ud-q5-k-xl.suite-v5-shard0-1m` **single_run**: One pass.
+- `qwen38.unsloth-gguf-ud-q5-k-xl.suite-v5-shard0-1m` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.unsloth-gguf-ud-q5-k-xl.suite-v5-shard0-1m` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.unsloth-gguf-ud-q5-k-xl.suite-v5-shard0-1m` **artifact_identity_incomplete**: The per-tensor-class quantization recipe for this artifact was never published, so scope.assignments records 'unknown' rather than a guessed allocation. Its scope_digest shows the gap.
 
@@ -660,10 +686,7 @@ This panel carries **3 separate comparability groups**. They are different measu
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
-> - `cmp--4a93702ded23e01a` (12 rows): `reference_id` reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
-> - `cmp--46a8a19f0fa33bed` (4 rows): `reference_id` reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m; `stack_relation` same_stack -> cross_stack
-> - `cmp--5f556b50b25762a2` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
-> - `cmp--12bfc6ec82b47678` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
+> - `cmp--75b64be1f101ed22` (12 rows): `reference_id` reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m; `accumulation_dtype` float64 -> float32_reduce_legacy
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -677,7 +700,7 @@ This panel carries **3 separate comparability groups**. They are different measu
 
 > **The same artifact, measured elsewhere in this file.** One of the artifacts below also carries a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
-> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
 
 <details><summary>Disclosures for the rows above (5)</summary>
 
@@ -695,15 +718,15 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 
 > **Panel disclosure -- `unsealed_source`:** The qwen38 v5 token suite is pinned by suite_token_sha256 and by its manifest digest c79dfad3..., but the token files themselves are not published, so a third party cannot reproduce the digest today.
 
-#### Group `cmp--1ef6a9b5901f8e2a` -- 5 rows
+#### Group `cmp--0bb49e8411b6dc75` -- 5 rows
 
 **Panel** `panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256` -- malaiwah Qwen3.8-27B suite v5 shard 0, scored from position 256
   512 contexts x 1791 scored positions = **916,992 scored positions**, score_from 256, windowed
   sealed: **yes** (token digest `caef8a4628d6c07c...`) -- contamination scan: **yes, 0 hits**
 **Reference (teacher)** `reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256` -- native_bf16, artifact `artifact--qwen.qwen3.8-27b-bf16` @unpinned revision
-**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
+**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float32_reduce_legacy
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
-**Comparability key** `cmp--1ef6a9b5901f8e2a`
+**Comparability key** `cmp--0bb49e8411b6dc75`
 **Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
 > **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
@@ -711,10 +734,10 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
-> - `cmp--05e16411a5932713` (3 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m
-> - `cmp--4a93702ded23e01a` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
-> - `cmp--5f556b50b25762a2` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
-> - `cmp--12bfc6ec82b47678` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
+> - `cmp--75b64be1f101ed22` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
+> - `cmp--c8c4df32774bdb63` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
+> - `cmp--726ac1b18b8129fa` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024
+> - `cmp--47c0bc74ebec3fa7` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 -> panel--qwen38.malaiwah.suite-v5-shards01-2m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -732,26 +755,31 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 >
 > <details><summary>the 5 artifacts and their ranges</summary>
 >
-> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B K4** -- 5 values here, from **0.00987561** to **0.0106039** nats (7% apart). Other tables: `cmp--12bfc6ec82b47678`, `cmp--1669ccf7958fb75c`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B K4** -- 5 values here, from **0.00987561** to **0.0106039** nats (7% apart). Other tables: `cmp--47c0bc74ebec3fa7`, `cmp--726ac1b18b8129fa`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
 >
 > </details>
 
-<details><summary>Disclosures for the rows above (10)</summary>
+<details><summary>Disclosures for the rows above (15)</summary>
 
 - `qwen38.k5k6-hydrated.suite-v5-shard0-1m.scorefrom256` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6-hydrated.suite-v5-shard0-1m.scorefrom256` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6-hydrated.suite-v5-shard0-1m.scorefrom256` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6.suite-v5-shard0-1m.scorefrom256` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6.suite-v5-shard0-1m.scorefrom256` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6.suite-v5-shard0-1m.scorefrom256` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6-context.suite-v5-shard0-1m.scorefrom256` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6-context.suite-v5-shard0-1m.scorefrom256` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6-context.suite-v5-shard0-1m.scorefrom256` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.official-fp8.suite-v5-shard0-1m.scorefrom256` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.official-fp8.suite-v5-shard0-1m.scorefrom256` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.official-fp8.suite-v5-shard0-1m.scorefrom256` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k4.suite-v5-shard0-1m.scorefrom256` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k4.suite-v5-shard0-1m.scorefrom256` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k4.suite-v5-shard0-1m.scorefrom256` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 
 </details>
 
@@ -761,15 +789,15 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 
 > **Panel disclosure -- `unsealed_source`:** The qwen38 v5 token suite is pinned by suite_token_sha256 and by its manifest digest c79dfad3..., but the token files themselves are not published, so a third party cannot reproduce the digest today.
 
-#### Group `cmp--12bfc6ec82b47678` -- 5 rows
+#### Group `cmp--726ac1b18b8129fa` -- 5 rows
 
 **Panel** `panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024` -- malaiwah Qwen3.8-27B suite v5 shard 0, scored from position 1024
   512 contexts x 1023 scored positions = **523,776 scored positions**, score_from 1024, windowed
   sealed: **yes** (token digest `caef8a4628d6c07c...`) -- contamination scan: **yes, 0 hits**
 **Reference (teacher)** `reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024` -- native_bf16, artifact `artifact--qwen.qwen3.8-27b-bf16` @unpinned revision
-**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
+**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float32_reduce_legacy
 **Estimation surface** stack_relation `same_stack`, head_policy `shared_reference_head`
-**Comparability key** `cmp--12bfc6ec82b47678`
+**Comparability key** `cmp--726ac1b18b8129fa`
 **Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
 
 > **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
@@ -777,10 +805,10 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 > **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
 >
 > **What it is NOT comparable to.** The nearest neighbouring groups differ in:
-> - `cmp--05e16411a5932713` (3 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-hf.suite-v5-shard0-1m
-> - `cmp--4a93702ded23e01a` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
-> - `cmp--5f556b50b25762a2` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
-> - `cmp--1ef6a9b5901f8e2a` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256
+> - `cmp--75b64be1f101ed22` (12 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-shard0-1m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m
+> - `cmp--c8c4df32774bdb63` (6 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-10m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m
+> - `cmp--0bb49e8411b6dc75` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256
+> - `cmp--47c0bc74ebec3fa7` (5 rows): `panel_id` panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 -> panel--qwen38.malaiwah.suite-v5-shards01-2m; `reference_id` reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024 -> reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m
 > 
 > Those numbers are in this file, under their own headings. Quoting one under the other heading is the mistake this layout exists to prevent: the key is a function of the panel, the teacher, the metric, the direction and the estimator, and the validator recomputes it from those fields rather than trusting the stamped value. What that catches is a row filed under a key its own fields do not produce. It does not catch a number attributed to the wrong panel in the first place -- no offline checker can. That is what the receipt digests on every row are for.
 >
@@ -798,26 +826,31 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 >
 > <details><summary>the 5 artifacts and their ranges</summary>
 >
-> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
-> - **malaiwah Qwen3.8-27B K4** -- 5 values here, from **0.00987561** to **0.0106039** nats (7% apart). Other tables: `cmp--1669ccf7958fb75c`, `cmp--1ef6a9b5901f8e2a`, `cmp--4a93702ded23e01a`, `cmp--5f556b50b25762a2`.
+> - **Qwen3.8-27B FP8 (official)** -- 6 values here, from **0.00298985** to **0.00529563** nats (77% apart). Other tables: `cmp--05e16411a5932713`, `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6** -- 5 values here, from **0.0030196** to **0.00320988** nats (6% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6 context** -- 5 values here, from **0.00324322** to **0.00350936** nats (8% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B EXL3 K5K6 hydrated** -- 5 values here, from **0.00257964** to **0.00275963** nats (7% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
+> - **malaiwah Qwen3.8-27B K4** -- 5 values here, from **0.00987561** to **0.0106039** nats (7% apart). Other tables: `cmp--0bb49e8411b6dc75`, `cmp--47c0bc74ebec3fa7`, `cmp--75b64be1f101ed22`, `cmp--c8c4df32774bdb63`.
 >
 > </details>
 
-<details><summary>Disclosures for the rows above (10)</summary>
+<details><summary>Disclosures for the rows above (15)</summary>
 
 - `qwen38.k5k6-hydrated.suite-v5-shard0-1m.scorefrom1024` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6-hydrated.suite-v5-shard0-1m.scorefrom1024` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6-hydrated.suite-v5-shard0-1m.scorefrom1024` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6.suite-v5-shard0-1m.scorefrom1024` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6.suite-v5-shard0-1m.scorefrom1024` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6.suite-v5-shard0-1m.scorefrom1024` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k5k6-context.suite-v5-shard0-1m.scorefrom1024` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k5k6-context.suite-v5-shard0-1m.scorefrom1024` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k5k6-context.suite-v5-shard0-1m.scorefrom1024` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.official-fp8.suite-v5-shard0-1m.scorefrom1024` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.official-fp8.suite-v5-shard0-1m.scorefrom1024` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.official-fp8.suite-v5-shard0-1m.scorefrom1024` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 - `qwen38.k4.suite-v5-shard0-1m.scorefrom1024` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k4.suite-v5-shard0-1m.scorefrom1024` **single_run**: One pass. Repeatability was not established for this row.
+- `qwen38.k4.suite-v5-shard0-1m.scorefrom1024` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
 
 </details>
 

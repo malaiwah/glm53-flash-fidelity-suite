@@ -10,7 +10,7 @@
       "file": "data/measurements.jsonl",
       "record_count": 76,
       "schema": "schema/measurement.schema.json",
-      "sha256": "4edf8583881f76cf09742afdf67fe744982dabefa496edcaf386edc42ba38882"
+      "sha256": "7aa9fc3edee9c8fd2e723b9dad58bd89f8a5fbe5a3c7441ff0e83a355ccfc6b3"
     },
     "models": {
       "file": "data/models.jsonl",
@@ -28,7 +28,7 @@
       "file": "data/pipelines.jsonl",
       "record_count": 15,
       "schema": "schema/pipeline.schema.json",
-      "sha256": "e8036643511ae37759dbda371f8a9d6ce3e58fd9d24f727d2504fc0edcc9537a"
+      "sha256": "4c143473c80b75d1cd9cec6d0e1a5985dc68a2c1e5df20b52dbb6a6183e5e694"
     },
     "references": {
       "file": "data/references.jsonl",
@@ -83,7 +83,7 @@
       "stack_relation": "same_stack"
     },
     {
-      "accumulation_dtype": "float64",
+      "accumulation_dtype": "float32_reduce_legacy",
       "comparability": {
         "comparable": "false",
         "live_member_count": 5,
@@ -122,60 +122,12 @@
       },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
-      "key": "cmp--12bfc6ec82b47678",
-      "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 (same_stack, shared_reference_head)",
+      "key": "cmp--0bb49e8411b6dc75",
+      "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 (same_stack, shared_reference_head)",
       "member_count": 5,
       "metric_name": "mean_tokenwise_kld",
-      "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024",
-      "reference_id": "reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024",
-      "stack_relation": "same_stack"
-    },
-    {
-      "accumulation_dtype": "float64",
-      "comparability": {
-        "comparable": "false",
-        "live_member_count": 5,
-        "predicate_version": "comparability-predicate/v1",
-        "reasons": [
-          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
-        ],
-        "secondary": {
-          "hardware": {
-            "status": "pass",
-            "values": [
-              "cuda"
-            ]
-          },
-          "lane": {
-            "status": "pass",
-            "values": [
-              "sealed-ep8"
-            ]
-          },
-          "pipeline": {
-            "status": "pass",
-            "values": [
-              "pipeline--malaiwah.qwen38-kld-ladder"
-            ]
-          },
-          "scope": {
-            "status": "fail",
-            "values": [
-              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
-              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
-              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16"
-            ]
-          }
-        }
-      },
-      "direction": "reference_to_candidate",
-      "head_policy": "shared_reference_head",
-      "key": "cmp--1669ccf7958fb75c",
-      "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-shards01-2m (same_stack, shared_reference_head)",
-      "member_count": 5,
-      "metric_name": "mean_tokenwise_kld",
-      "panel_id": "panel--qwen38.malaiwah.suite-v5-shards01-2m",
-      "reference_id": "reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m",
+      "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256",
+      "reference_id": "reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256",
       "stack_relation": "same_stack"
     },
     {
@@ -227,54 +179,6 @@
       "metric_name": "mean_tokenwise_kld",
       "panel_id": "panel--glm53.brandonmusic.final-0000",
       "reference_id": "reference--brandonmusic.glm53-bf16-fp32-logits.final-0000",
-      "stack_relation": "same_stack"
-    },
-    {
-      "accumulation_dtype": "float64",
-      "comparability": {
-        "comparable": "false",
-        "live_member_count": 5,
-        "predicate_version": "comparability-predicate/v1",
-        "reasons": [
-          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
-        ],
-        "secondary": {
-          "hardware": {
-            "status": "pass",
-            "values": [
-              "cuda"
-            ]
-          },
-          "lane": {
-            "status": "pass",
-            "values": [
-              "sealed-ep8"
-            ]
-          },
-          "pipeline": {
-            "status": "pass",
-            "values": [
-              "pipeline--malaiwah.qwen38-kld-ladder"
-            ]
-          },
-          "scope": {
-            "status": "fail",
-            "values": [
-              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
-              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
-              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16"
-            ]
-          }
-        }
-      },
-      "direction": "reference_to_candidate",
-      "head_policy": "shared_reference_head",
-      "key": "cmp--1ef6a9b5901f8e2a",
-      "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256 (same_stack, shared_reference_head)",
-      "member_count": 5,
-      "metric_name": "mean_tokenwise_kld",
-      "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom256",
-      "reference_id": "reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom256",
       "stack_relation": "same_stack"
     },
     {
@@ -386,7 +290,7 @@
       "stack_relation": "same_stack"
     },
     {
-      "accumulation_dtype": "float64",
+      "accumulation_dtype": "float32_reduce_legacy",
       "comparability": {
         "comparable": "unknown",
         "live_member_count": 4,
@@ -424,13 +328,61 @@
       },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
-      "key": "cmp--46a8a19f0fa33bed",
+      "key": "cmp--35a4b2ab8ed5cd50",
       "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-shard0-1m (cross_stack, shared_reference_head)",
       "member_count": 4,
       "metric_name": "mean_tokenwise_kld",
       "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m",
       "reference_id": "reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m",
       "stack_relation": "cross_stack"
+    },
+    {
+      "accumulation_dtype": "float32_reduce_legacy",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 5,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.qwen38-kld-ladder"
+            ]
+          },
+          "scope": {
+            "status": "fail",
+            "values": [
+              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
+              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16"
+            ]
+          }
+        }
+      },
+      "direction": "reference_to_candidate",
+      "head_policy": "shared_reference_head",
+      "key": "cmp--47c0bc74ebec3fa7",
+      "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-shards01-2m (same_stack, shared_reference_head)",
+      "member_count": 5,
+      "metric_name": "mean_tokenwise_kld",
+      "panel_id": "panel--qwen38.malaiwah.suite-v5-shards01-2m",
+      "reference_id": "reference--malaiwah.qwen38-bf16-vllm.suite-v5-shards01-2m",
+      "stack_relation": "same_stack"
     },
     {
       "accumulation_dtype": "unknown",
@@ -526,7 +478,55 @@
       "stack_relation": "cross_stack"
     },
     {
-      "accumulation_dtype": "float64",
+      "accumulation_dtype": "float32_reduce_legacy",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 5,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.qwen38-kld-ladder"
+            ]
+          },
+          "scope": {
+            "status": "fail",
+            "values": [
+              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
+              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16"
+            ]
+          }
+        }
+      },
+      "direction": "reference_to_candidate",
+      "head_policy": "shared_reference_head",
+      "key": "cmp--726ac1b18b8129fa",
+      "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024 (same_stack, shared_reference_head)",
+      "member_count": 5,
+      "metric_name": "mean_tokenwise_kld",
+      "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m.scorefrom1024",
+      "reference_id": "reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m.scorefrom1024",
+      "stack_relation": "same_stack"
+    },
+    {
+      "accumulation_dtype": "float32_reduce_legacy",
       "comparability": {
         "comparable": "false",
         "live_member_count": 12,
@@ -566,61 +566,12 @@
       },
       "direction": "reference_to_candidate",
       "head_policy": "shared_reference_head",
-      "key": "cmp--4a93702ded23e01a",
+      "key": "cmp--75b64be1f101ed22",
       "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-shard0-1m (same_stack, shared_reference_head)",
       "member_count": 12,
       "metric_name": "mean_tokenwise_kld",
       "panel_id": "panel--qwen38.malaiwah.suite-v5-shard0-1m",
       "reference_id": "reference--malaiwah.qwen38-bf16-vllm.suite-v5-shard0-1m",
-      "stack_relation": "same_stack"
-    },
-    {
-      "accumulation_dtype": "float64",
-      "comparability": {
-        "comparable": "false",
-        "live_member_count": 6,
-        "predicate_version": "comparability-predicate/v1",
-        "reasons": [
-          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16, unrecorded} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
-        ],
-        "secondary": {
-          "hardware": {
-            "status": "pass",
-            "values": [
-              "cuda"
-            ]
-          },
-          "lane": {
-            "status": "pass",
-            "values": [
-              "sealed-ep8"
-            ]
-          },
-          "pipeline": {
-            "status": "pass",
-            "values": [
-              "pipeline--malaiwah.qwen38-kld-ladder"
-            ]
-          },
-          "scope": {
-            "status": "fail",
-            "values": [
-              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
-              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
-              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16",
-              "unrecorded"
-            ]
-          }
-        }
-      },
-      "direction": "reference_to_candidate",
-      "head_policy": "shared_reference_head",
-      "key": "cmp--5f556b50b25762a2",
-      "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-10m (same_stack, shared_reference_head)",
-      "member_count": 6,
-      "metric_name": "mean_tokenwise_kld",
-      "panel_id": "panel--qwen38.malaiwah.suite-v5-10m",
-      "reference_id": "reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m",
       "stack_relation": "same_stack"
     },
     {
@@ -715,6 +666,55 @@
       "metric_name": "mean_of_run_means_tokenwise_kld",
       "panel_id": "panel--glm53.brandonmusic.final-0000",
       "reference_id": "reference--brandonmusic.glm53-bf16-fp32-logits.final-0000",
+      "stack_relation": "same_stack"
+    },
+    {
+      "accumulation_dtype": "float32_reduce_legacy",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 6,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "scope: members span {attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16, lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16, unrecorded} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "cuda"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.qwen38-kld-ladder"
+            ]
+          },
+          "scope": {
+            "status": "fail",
+            "values": [
+              "attn.o+attn.qkv+lm_head+mlp.down+mlp.gate+mlp.up+mtp|head=quantized|kv=bf16",
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up|head=native|kv=bf16",
+              "lm_head+mlp.down+mlp.gate+mlp.up|head=quantized|kv=bf16",
+              "unrecorded"
+            ]
+          }
+        }
+      },
+      "direction": "reference_to_candidate",
+      "head_policy": "shared_reference_head",
+      "key": "cmp--c8c4df32774bdb63",
+      "label": "mean_tokenwise_kld on panel--qwen38.malaiwah.suite-v5-10m (same_stack, shared_reference_head)",
+      "member_count": 6,
+      "metric_name": "mean_tokenwise_kld",
+      "panel_id": "panel--qwen38.malaiwah.suite-v5-10m",
+      "reference_id": "reference--malaiwah.qwen38-bf16-vllm.suite-v5-10m",
       "stack_relation": "same_stack"
     },
     {
@@ -876,13 +876,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-08-31T18:11:05+00:00",
+  "generated_at": "2026-08-31T18:48:17+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-08-31T18:11:05+00:00",
+    "last_run_at": "2026-08-31T18:48:17+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }

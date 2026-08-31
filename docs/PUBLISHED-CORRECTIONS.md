@@ -460,6 +460,85 @@ corroboration.
 
 ---
 
+## 6. `malaiwah/quant-fidelity-registry` — 37 Qwen rows relabeled `float32_reduce_legacy` (P1-06)
+
+**Published 2026-08-31, from the independent peer review's P1-06.** This changes a
+LABEL and therefore a comparability key on 37 rows. No measured value moved, no
+receipt was edited, no id changed.
+
+### What was wrong
+
+The producer behind every Qwen3.8-27B row on the `qwen38-kld-ladder` and
+`qwen38-gguf-cross-engine` pipelines — `tools/fidelity.py`'s replay comparator —
+computed logits, normalizers, probabilities and the **vocabulary sum in float32**
+and cast the already-reduced result to float64. Its receipts declared
+`accumulation: float64`, and the 37 registry rows seeded from them inherited
+`estimator.accumulation_dtype: "float64"` — a false precision contract.
+
+Demonstrated, not hypothesized: on synthetic near-equal distributions over a
+50,000-entry vocabulary, the float32 reduction returns **negative** per-token
+"KL" around `-8e-7` where the true float64 value is `~+2e-8`
+(`bin/selftest_fidelity_reducer.py` reproduces it deterministically; KL is
+non-negative, so the entire negative excursion is estimator error). No published
+row was observed with a negative headline value, and the ladder's published means
+sit at `1e-3`–`1e-1` — three to five orders above that error scale — but "the
+error is probably small" is not the same claim as "accumulated in float64".
+
+### What changed
+
+* `tools/fidelity.py` now casts to float64 **before** log-sum-exp, probability,
+  product and the vocabulary reduction, in both `context_metrics` and
+  `qualification_metrics`, and refuses non-finite or materially negative
+  per-token KL instead of reporting it. Known-answer tests pin the fixed reducer
+  to a dense float64 reference within 1e-12 on exactly the construction where
+  the float32 path goes negative.
+* The 37 rows are relabeled `accumulation_dtype: "float32_reduce_legacy"` (new
+  schema enum value), each with a `fp32_vocab_reduction` disclosure
+  (`affects_comparability: true`). Because `accumulation_dtype` is one of the
+  seven comparability-key fields, the relabel moves every one of these rows to a
+  new `comparability.key` **by construction** — that is the system working: they
+  remain rankable against each other (same reducer, same panels) and are no
+  longer in any group a true-float64 row could join.
+* The two pipeline records correct `numerics.accumulation_dtype` from `fp64` to
+  `fp32` and carry the same disclosure.
+* The 3 `qwen38-hf.*` rows on the `fidelity-dataset-hf.rtxpro6000` pipeline are
+  untouched: their producer (`bin/fidelity/dscompare.py`) normalizes and
+  accumulates in float64 and keeps its `float64` label.
+
+### Sensitivity, measured at the operating point
+
+Simulated at the ladder's real geometry — vocabulary 248,320, chunk 24,832,
+float32 logits, per-token KL calibrated to the published levels (5e-4 GGUF
+floor, 5e-3 fp8, 2e-2, 1e-1), two base-distribution shapes, 2,048 tokens per
+cell, seed 20260831:
+
+| quantity | measured |
+|---|---|
+| per-token fp32-reduction error, worst | ~2.2e-6 nats |
+| effect on a MEAN over tokens (the published statistic) | ~1e-8 nats (signs mixed; cancels) |
+| relative error on the mean at the floor level (5e-4) | ≤ 0.13% |
+| relative error on the mean at ladder levels (≥ 5e-3) | ≤ 0.014% |
+| smallest adjacent-row gap in any relabeled group | 5.07e-5 nats (turboderp-6bpw vs k6-parity, 1m panel) |
+
+The mean-level bias sits three orders of magnitude below the tightest published
+gap, so **no published Qwen mean moves at its quoted precision and no ordering
+changes** — consistent with the review's own reading ("a false precision
+contract, not that all published Qwen rankings are numerically reversed"). The
+negative-KL failure needs per-token KL near 1e-7, which no published row
+approaches.
+
+### What was NOT done
+
+The 37 values were **not** re-run on the real captures. The sensitivity table
+above is synthetic (calibrated to the published levels, not replayed from the
+hidden states); a true rerun needs the private Qwen3.8-27B captures replayed on
+a rented GPU. Until then the honest state is the relabel plus this disclosure,
+not silently "corrected" numbers. When any row is re-measured with the fixed
+reducer it will publish under a `float64` key as a new row, never by
+overwriting these.
+
+---
+
 ## Not published, deliberately
 
 Nothing from `docs/REVIEW-DEFERRED.md` is now held back for an operator decision on

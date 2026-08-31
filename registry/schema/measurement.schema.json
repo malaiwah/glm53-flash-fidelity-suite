@@ -335,9 +335,10 @@
             "float64",
             "float32",
             "mixed",
-            "unknown"
+            "unknown",
+            "float32_reduce_legacy"
           ],
-          "description": "The dtype the per-token KL sum accumulated in. fp32 accumulation over 10M positions is a materially different estimator from fp64."
+          "description": "The dtype the per-token KL sum accumulated in. fp32 accumulation over 10M positions is a materially different estimator from fp64. float32_reduce_legacy is the honest relabel for rows whose producer computed logits, normalizers and the vocabulary reduction in float32 and cast the finished sum to float64 while declaring float64 (P1-06, disclosed 2026-08-31): such rows form their own comparability group and are never ranked against true-float64 rows."
         },
         "logits_dtype": {
           "$ref": "common.schema.json#/$defs/numeric_format"
@@ -1212,7 +1213,8 @@
                 "enum": [
                   "float64",
                   "float32",
-                  "mixed"
+                  "mixed",
+                  "float32_reduce_legacy"
                 ]
               },
               "stack_relation": {

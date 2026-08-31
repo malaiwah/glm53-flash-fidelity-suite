@@ -2208,27 +2208,39 @@ PIPELINES = [
              hardware={"gpu": "cuda", "gpu_count": None, "tensor_parallel": None},
              sources=[src("hf_file", "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/resolve/main/reports/fp8-on-brandon-panel.json")],
              cross_refs=lair()),
-    pipeline(PL_QLADDER, "malaiwah Qwen3.8-27B shared-head replay + fp64 KLD ladder",
+    pipeline(PL_QLADDER, "malaiwah Qwen3.8-27B shared-head replay + fp32-reduce KLD ladder",
              ["capture", "replay", "scorer", "aggregator"], None, None, "tools/kld_aggregate.py",
              MAL("toolchain-author"),
              [disc("record_note", "info",
-                   "float64 two-pass over 24,832-entry vocabulary chunks; per-shard reports are recomputed from "
+                   "Two-pass over 24,832-entry vocabulary chunks; per-shard reports are recomputed from "
                    "per-context rows and cross-checked against each shard's own summary "
-                   "(max relative gap 1.7e-16).")],
-             numerics={"accumulation_dtype": "fp64", "two_pass": True, "vocab_chunk": 24832,
+                   "(max relative gap 1.7e-16)."),
+              disc("fp32_vocab_reduction", "caveat",
+                   "ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer this pipeline ran computed "
+                   "logits, normalizers and the vocabulary reduction in float32 and cast the finished sum to "
+                   "float64 while declaring float64 accumulation. numerics.accumulation_dtype is corrected to "
+                   "fp32 and every row this pipeline backs is relabeled float32_reduce_legacy. The reducer was "
+                   "fixed the same day (tools/fidelity.py; bin/selftest_fidelity_reducer.py); rows produced by "
+                   "the fixed code cite a fp64 pipeline.", True)],
+             numerics={"accumulation_dtype": "fp32", "two_pass": True, "vocab_chunk": 24832,
                        "determinism_controls": ["fixed_batch_shape"]},
              hardware={"gpu": "cuda", "gpu_count": None, "tensor_parallel": None},
              cost={"usd_per_measurement": None, "basis": None},
              sources=[QREC("kld5-10M-fp8.json")], cross_refs=lair()),
-    pipeline(PL_QGGUF, "malaiwah llama.cpp GGUF capture + vLLM-referenced fp64 scorer",
+    pipeline(PL_QGGUF, "malaiwah llama.cpp GGUF capture + vLLM-referenced fp32-reduce scorer",
              ["capture", "scorer"], "https://github.com/ggml-org/llama.cpp",
              "ece963f41b0b02d7a0d61436ae365762c073a4c8", "tools/gguf_capture.cpp", MAL("toolchain-author"),
              [disc("cross_engine_capture", "caveat",
                    "GGUF candidates are captured with llama.cpp (reading res->t_embd, post-final-norm) while the "
                    "reference and every EXL3/FP8 row are captured under vLLM. Every number from this pipeline "
                    "carries a llama.cpp-vs-vLLM term on top of quantization error, which can only inflate it. "
-                   "It is measured: 0.000507 nats on identical unquantized weights.", True)],
-             numerics={"accumulation_dtype": "fp64", "two_pass": True, "vocab_chunk": 24832,
+                   "It is measured: 0.000507 nats on identical unquantized weights.", True),
+              disc("fp32_vocab_reduction", "caveat",
+                   "ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). Same scorer as the KLD ladder pipeline: "
+                   "the vocabulary reduction ran in float32 with the cast to float64 applied after the sum, "
+                   "while fp64 accumulation was declared. numerics.accumulation_dtype is corrected to fp32 and "
+                   "every row this pipeline backs is relabeled float32_reduce_legacy.", True)],
+             numerics={"accumulation_dtype": "fp32", "two_pass": True, "vocab_chunk": 24832,
                        "determinism_controls": []},
              hardware={"gpu": "cuda", "gpu_count": None, "tensor_parallel": None},
              sources=[QREC("cross-engine-comparator.json"), QREC("gguf-report-engine-floor.json")],
@@ -3365,6 +3377,34 @@ def _read_receipt(fname):
         return _json.load(fh), path, L.sha256_file(path)
 
 
+# P1-06 (peer review 2026-08-31). The producer behind every row in this section --
+# tools/fidelity.py's replay comparator -- computed logits, normalizers,
+# probabilities and the VOCABULARY SUM in float32 and cast the finished sum to
+# float64, while its receipts (and these rows) declared float64 accumulation. On
+# near-equal 50k-vocab distributions that reduction returns negative per-token
+# "KL" at the 1e-6 scale where the true float64 value is ~1e-8. The 37 rows are
+# relabeled accumulation_dtype=float32_reduce_legacy: the measured values are
+# unchanged and the receipts untouched, but the label now tells the truth, and
+# because accumulation_dtype is one of the seven comparability-key fields the
+# relabel moves them into their own comparability groups -- rankable against each
+# other (same reducer), never against a true-float64 row. The reducer itself was
+# fixed the same day (bin/selftest_fidelity_reducer.py holds the known answers);
+# rows produced by the FIXED code declare float64 honestly.
+# See docs/PUBLISHED-CORRECTIONS.md entry 5.
+Q_ACC_LEGACY = "float32_reduce_legacy"
+QWEN_FP32_REDUCE_DISC = disc(
+    "fp32_vocab_reduction", "caveat",
+    "ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the "
+    "vocabulary reduction in float32 and cast the finished sum to float64; this row "
+    "previously declared accumulation_dtype float64. Relabeled "
+    "float32_reduce_legacy -- the value is unchanged, the comparability key moved, "
+    "and the row ranks only against rows from the same float32-reducing scorer. "
+    "Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 "
+    "against a true value of ~2e-8 on near-equal distributions; this ladder's "
+    "published means sit at 1e-3..1e-1, three to five orders above that error "
+    "scale. See docs/PUBLISHED-CORRECTIONS.md.", True)
+
+
 def build_measurements_qwen(artifacts_map):
     """Every Qwen row is read straight out of its receipt -- no transcribed numbers."""
     M = lambda *a, **k: measurement(*a, artifacts_map=artifacts_map, **k)
@@ -3388,9 +3428,11 @@ def build_measurements_qwen(artifacts_map):
                            "One pass. Repeatability was not established for this row.", False))
             ds.append(disc("shared_reference_head", "info",
                            "One head (25a30fd5...) applied to both sides' hidden states."))
+            ds.append(QWEN_FP32_REDUCE_DISC)
             out.append(M(
                 "measurement--qwen38.%s.%s" % (_QNAME[cand], pslug), QWN, _QART[cand], panel, ref,
                 PL_QLADDER, r["token_mean_kld"],
+                accumulation=Q_ACC_LEGACY,
                 head_policy="shared_reference_head",
                 two_pass=cmp_.get("two_pass"), vocab_chunk=cmp_.get("vocab_chunk"),
                 top1=r.get("top1_agreement"),
@@ -3416,8 +3458,10 @@ def build_measurements_qwen(artifacts_map):
         disc("third_party_artifact_self_measured", "info", "unsloth's weights, our measurement."),
         disc("single_run", "caveat", "One pass.", False),
         disc("shared_reference_head", "info", "One head (25a30fd5...) applied to both sides."),
+        QWEN_FP32_REDUCE_DISC,
         QWEN_NOREV] + extra
     out.append(M(M_FLOOR_GGUF, QWN, Q_GGUF_BF16, P_Q1M, R_Q1M, PL_QGGUF, fr["token_mean_kld"],
+                 accumulation=Q_ACC_LEGACY,
                  stack_relation="cross_stack", head_policy="shared_reference_head",
                  two_pass=fcmp.get("two_pass"), vocab_chunk=fcmp.get("vocab_chunk"),
                  top1=fr.get("top1_agreement"),
@@ -3445,6 +3489,7 @@ def build_measurements_qwen(artifacts_map):
         naive = r["token_mean_kld"] - fr["token_mean_kld"]
         out.append(M("measurement--qwen38.unsloth-gguf-%s.suite-v5-shard0-1m" % slug, QWN, art, P_Q1M, R_Q1M,
                      PL_QGGUF, r["token_mean_kld"],
+                     accumulation=Q_ACC_LEGACY,
                      stack_relation="cross_stack", head_policy="shared_reference_head",
                      two_pass=cmp_.get("two_pass"), vocab_chunk=cmp_.get("vocab_chunk"),
                      top1=r.get("top1_agreement"),
