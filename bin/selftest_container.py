@@ -752,6 +752,7 @@ def main() -> int:
     rung_dockerfile()
     rung_cli()
     rung_release()
+    rung_github_output()
     print("")
     if FAILED:
         print("FAILED %d:" % len(FAILED))
@@ -760,6 +761,40 @@ def main() -> int:
         return 1
     print("container path: all rungs pass")
     return 0
+
+
+
+def rung_github_output():
+    """C11s -- the plan step's outputs actually reach GITHUB_OUTPUT.
+
+    P1-17 (independent peer review): the workflow caught release_plan's
+    name=value lines with `| tee summary 2> "$GITHUB_OUTPUT"` -- a redirect
+    that binds to TEE's stderr, which is silent. GITHUB_OUTPUT stayed empty,
+    `push` evaluated false, and the first ARMED publish run built both
+    architectures and then skipped GHCR with every job green. release_plan now
+    writes the runner's file itself, so a caller's plumbing cannot lose it.
+    """
+    import tempfile
+
+    print("[C11s] the plan step owns its outputs")
+    fh = tempfile.NamedTemporaryFile("r", delete=False)
+    gh_out = fh.name
+    fh.close()
+    env = dict(os.environ, GITHUB_OUTPUT=gh_out)
+    p = subprocess.run(
+        [sys.executable, str(SUITE / "bin" / "release_plan.py"),
+         "--event", "workflow_dispatch", "--ref", "refs/heads/main",
+         "--sha", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+         "--publish", "true", "--github-output"],
+        capture_output=True, text=True, env=env)
+    body = open(gh_out, encoding="utf-8").read()
+    os.unlink(gh_out)
+    check("C11s release_plan exits 0", p.returncode == 0)
+    check("C11s GITHUB_OUTPUT is non-empty", bool(body.strip()))
+    check("C11s ...and carries push=", "push=" in body)
+    check("C11s ...and the tags", "tags=ghcr.io/" in body)
+    check("C11s nothing to stderr for a caller's redirect to lose",
+          "push=" not in (p.stderr or ""))
 
 
 if __name__ == "__main__":

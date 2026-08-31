@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 
@@ -134,7 +135,17 @@ def main(argv=None) -> int:
     doc = plan(args)
     print(json.dumps(doc, indent=2, sort_keys=True))
     if args.github_output:
-        out = sys.stderr
+        # Write $GITHUB_OUTPUT OURSELVES when the runner provides it. The
+        # workflow used to catch these lines with a shell redirect --
+        # `python ... | tee summary 2> "$GITHUB_OUTPUT"` -- and that redirect
+        # binds to TEE's stderr, not python's. The name=value lines went to the
+        # job log, GITHUB_OUTPUT stayed empty, `push` evaluated false, and the
+        # first ARMED publish run built both architectures and then silently
+        # skipped GHCR. Found by the independent peer review (P1-17), from the
+        # workflow text alone. A step that owns its outputs cannot be undone
+        # by a caller's plumbing.
+        gh_out = os.environ.get("GITHUB_OUTPUT")
+        out = open(gh_out, "a", encoding="utf-8") if gh_out else sys.stderr
         out.write("tags=%s\n" % ",".join(doc["tags"]))
         out.write("platforms=%s\n" % ",".join(doc["platforms"]))
         out.write("push=%s\n" % ("true" if doc["push"] else "false"))

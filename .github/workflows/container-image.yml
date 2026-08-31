@@ -68,8 +68,12 @@ jobs:
             --image "ghcr.io/${{ github.repository_owner }}/quant-fidelity-measure" \
             --publish "${{ vars.PUBLISH_CONTAINER }}" \
             --github-output \
-            | tee "$GITHUB_STEP_SUMMARY" 2> "$GITHUB_OUTPUT"
-          cat "$GITHUB_OUTPUT"
+            | tee "$GITHUB_STEP_SUMMARY"
+          # release_plan writes $GITHUB_OUTPUT itself (P1-17: a `2>` on tee
+          # captured tee's silence, not python's output, and an armed publish
+          # skipped GHCR with every job green).
+          echo "--- outputs ---"; cat "$GITHUB_OUTPUT"
+          test -s "$GITHUB_OUTPUT" || { echo "::error::release_plan produced no outputs"; exit 1; }
       # The same offline battery that guards the transport locally. It costs
       # seconds and it is what catches a BUNDLE.txt entry the Dockerfile does
       # not COPY -- statically, instead of on a billing box at the end of a
