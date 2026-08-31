@@ -57,8 +57,17 @@ t "root capture: --role root (T5c)"        0 python3 bin/selftest_root_capture.p
 t "race mode: overlap, preview identity, generation probe (T15)" \
                                            0 "$VPY" bin/selftest_race_mode.py
 t "provider portability (T5d)"             0 python3 bin/selftest_provider_portability.py
+# T17. The container transport. Porting to three clouds produced five defects and
+# not one was about the measurement; an image deletes that category, but only if
+# it drives the SAME stages from the SAME contract. These rungs are the anti-drift
+# ones: one stage sequence with one owner, one job.json contract with two writers,
+# the token still a 0600 file, and -- the acceptance test in code -- recording
+# WHICH container ran must not move stack_fingerprint_sha256, because that digest
+# is what dscompare reads to decide stack_relation.
+t "container transport (T17)"                0 "$VPY" bin/selftest_container.py
 t "fp8 -> bf16 losslessness (T5e)"         0 python3 bin/selftest_fp8_lossless.py
 t "canonical_json: bin == registry (T5f)"  0 python3 bin/selftest_canonical_json.py
+t "bundle completeness (T5g)"              0 python3 bin/selftest_bundle_complete.py
 # T18. The guards for what a NAMING SWEEP can destroy. This tree is being swept
 # of GLM/K6 names now that it measures four families; half those strings are
 # identity, not history. 157 registry ids and 239 receipt schema literals are

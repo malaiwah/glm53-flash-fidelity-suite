@@ -189,3 +189,47 @@ k6/tools/layer_outer.py
 # here is an ImportError at hour zero of a rented capture.
 k6/tools/race_fetch.py
 k6/tools/generation_probe.py
+
+# --- gguf evidence -------------------------------------------------------
+# bootstrap_measure.sh RUNS selftest_gguf_offline.py at setup, fail-closed,
+# and that selftest reads these fixtures. They were never bundled, so the
+# setup stage of a MiniMax ROOT capture died on GGUF test data -- with the
+# controller reporting nothing but 'stage setup' while the box billed.
+# 2.5 MB total; the alternative (skip the check when its data is absent)
+# would silently disarm a gate somebody added on purpose.
+k6/tools/gguf-evidence/ddh0-tensors.json
+k6/tools/gguf-evidence/dequant_q4_k_blocks.npy
+k6/tools/gguf-evidence/dequant_q4_k_ggufpy_ref.npy
+k6/tools/gguf-evidence/dequant_q5_k_blocks.npy
+k6/tools/gguf-evidence/dequant_q5_k_ggufpy_ref.npy
+k6/tools/gguf-evidence/dequant_q6_k_blocks.npy
+k6/tools/gguf-evidence/dequant_q6_k_ggufpy_ref.npy
+k6/tools/gguf-evidence/dequant_q8_0_blocks.npy
+k6/tools/gguf-evidence/dequant_q8_0_ggufpy_ref.npy
+k6/tools/gguf-evidence/manifest.json
+k6/tools/gguf-evidence/mla-full-audit.json
+k6/tools/gguf-evidence/mla_k_b_head_window.npy
+k6/tools/gguf-evidence/mla_official_row_window_bf16.npy
+k6/tools/gguf-evidence/mla_v_b_head_window.npy
+k6/tools/gguf-evidence/pins.json
+k6/tools/gguf-evidence/udq4kxl-decode-device-a100.jsonl
+k6/tools/gguf-evidence/udq4kxl-decode-timings-a100.jsonl
+k6/tools/gguf-evidence/udq4kxl-scope.json
+k6/tools/gguf-evidence/unsloth-build-census.json
+k6/tools/gguf-evidence/unsloth-udq4kxl-kv.json
+k6/tools/gguf-evidence/unsloth-udq4kxl-tensors.json
+
+# exl3hf evidence (32 KB) -- exl3hf_surface.py names it and the setup-time
+# selftest reads it; cheap enough to always ship.
+k6/tools/exl3hf-evidence/local-decode-audit.json
+k6/tools/exl3hf-evidence/scope-turbo-2.05bpw.derivation.json
+k6/tools/exl3hf-evidence/scope-turbo-2.05bpw.json
+k6/tools/exl3hf-evidence/scope-turbo-3.05bpw.json
+k6/tools/exl3hf-evidence/scope-turbo-4.05bpw.json
+
+# Two small files out of dione-evidence/ (187 MB), because
+# selftest_gguf_offline.py -- which bootstrap RUNS at setup, fail-closed --
+# reads them. Shipping the whole directory would cost more than the bug it
+# prevents; shipping the two it opens costs kilobytes.
+k6/tools/dione-evidence/bf16-config.json
+k6/tools/dione-evidence/bf16-index.json
