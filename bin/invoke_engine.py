@@ -29,6 +29,28 @@ from fidelity.engines import (                          # noqa: E402
 )
 
 
+# The engine tree's own default root. It used to be `/home/jl_fs/glm53-k6`:
+# one provider AND one model baked into a path on a box that may be measuring
+# something else entirely. The provider half cost three paid runs to find (see
+# bin/selftest_provider_portability.py); the model half is the same defect one
+# axis over, and bin/selftest_naming_sweep.py is the rule that finds the next
+# one without renting anything.
+#
+# FIDELITY_K6_ROOT is the pre-2026-08-31 spelling. It is still READ, because a
+# controller and an instance can come from different checkouts (and the
+# container image bakes the old name today); it is no longer WRITTEN.
+ENGINE_ROOT_ENV = "FIDELITY_ENGINE_ROOT"
+ENGINE_ROOT_ENV_LEGACY = "FIDELITY_K6_ROOT"
+ENGINE_ROOT_DEFAULT = "/home/jl_fs/fidelity-engine"
+
+
+def engine_root() -> str:
+    """Where the venv, the pipeline clone and the patch series live."""
+    return (os.environ.get(ENGINE_ROOT_ENV)
+            or os.environ.get(ENGINE_ROOT_ENV_LEGACY)
+            or ENGINE_ROOT_DEFAULT)
+
+
 def engine_python(fs: str) -> str:
     """The torch-capable interpreter the engine script runs under.
 
@@ -44,7 +66,7 @@ def engine_python(fs: str) -> str:
         return env
     for candidate in (
         os.environ.get("VENV") and "%s/bin/python" % os.environ["VENV"],
-        "%s/venv/bin/python" % os.environ.get("FIDELITY_K6_ROOT", "/home/jl_fs/glm53-k6"),
+        "%s/venv/bin/python" % engine_root(),
         "%s/venv/bin/python" % fs,
     ):
         if candidate and Path(candidate).is_file():
@@ -107,7 +129,7 @@ def main() -> int:
         "source": source,
         "bf16": os.environ.get("BF16") or ("%s/models/bf16" % fs),
         # The THIRD root that defaults to a JarvisLabs path, and the one nobody
-        # exported. FIDELITY_FS_ROOT and FIDELITY_K6_ROOT are set explicitly by
+        # exported. FIDELITY_FS_ROOT and FIDELITY_ENGINE_ROOT are set explicitly by
         # the controller for exactly this reason; QP_PIPELINE_ROOT was left on a
         # hard-coded /home/jl_fs/... default, so on any other provider the
         # engine was handed a pipeline path that does not exist -- and found
@@ -115,8 +137,7 @@ def main() -> int:
         # 200 GB fetch and the panel were all paid for. Derive it from the k6
         # root the controller DID set; the env var still wins.
         "pipeline_root": os.environ.get("QP_PIPELINE_ROOT") or (
-            "%s/pipeline" % os.environ.get("FIDELITY_K6_ROOT",
-                                           "/home/jl_fs/glm53-k6")),
+            "%s/pipeline" % engine_root()),
     }
     if surface == "exl3hf":
         materialized = os.environ.get(

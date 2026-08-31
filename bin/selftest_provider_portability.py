@@ -104,10 +104,18 @@ rp, jl = mc.Teardown(FakeJL([]), Con(), mc.Path(".")), \
     mc.Teardown(JLish(), Con(), mc.Path("."))
 check("runpod runs under /workspace", rp.fs_root.startswith("/workspace"))
 check("jarvislabs runs under /home/jl_fs", jl.fs_root.startswith("/home/jl_fs"))
+# The root the controller CHOOSES, not just the ones it exports: it used to be
+# `/home/jl_fs/glm53-k6` -- one provider and one model baked into the same
+# path, on a box that may be measuring MiniMax.
+check("neither engine root names a model or a campaign (%s / %s)"
+      % (rp.engine_root, jl.engine_root),
+      not any(t in (rp.engine_root + jl.engine_root).lower()
+              for t in ("glm", "qwen", "minimax", "deepseek", "fruit",
+                        "k6", "k8", "tr3")))
 for t in (rp, jl):
     env = mc._stage_env(t)
     check("%s stage env names both roots" % t.fs_root.split("/")[1],
-          "FIDELITY_FS_ROOT=" in env and "FIDELITY_K6_ROOT=" in env
+          "FIDELITY_FS_ROOT=" in env and "FIDELITY_ENGINE_ROOT=" in env
           and t.fs_root in env)
 
 print("\n== the backend switch ==")
@@ -143,12 +151,12 @@ check("a non-separable provider is sized from the plan, not 100 GB",
 print("\n== no path may assume JarvisLabs except the two exported roots ==")
 # Every hardcoded /home/jl_fs literal in the on-instance tools is a run that
 # silently does the wrong thing somewhere else. Three of them were found one at
-# a time, each by a paid run: FIDELITY_FS_ROOT and FIDELITY_K6_ROOT (a run
+# a time, each by a paid run: FIDELITY_FS_ROOT and FIDELITY_ENGINE_ROOT (a run
 # written into a container's ephemeral layer), then QP_PIPELINE_ROOT -- which
 # stalled a box at 0% GPU for two hours, at $1.59/h, AFTER the bootstrap, a
 # 200 GB fetch and the panel were all paid for. This is the rule that finds the
 # fourth one without renting anything.
-EXPORTED_ROOTS = ("FIDELITY_FS_ROOT", "FIDELITY_K6_ROOT", "QP_PIPELINE_ROOT")
+EXPORTED_ROOTS = ("FIDELITY_FS_ROOT", "FIDELITY_ENGINE_ROOT", "QP_PIPELINE_ROOT")
 ON_INSTANCE = ("invoke_engine.py", "invoke_scorer.py", "stage_measure.sh",
                "bootstrap_measure.sh")
 here = os.path.dirname(os.path.abspath(__file__))

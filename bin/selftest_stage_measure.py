@@ -21,7 +21,7 @@ expensive bugs this project actually hit:
       paid for.
   H2  the same bug again in `score`, found only when a second run got that
       far.
-  H3  `FIDELITY_FS_ROOT` / `FIDELITY_K6_ROOT` never exported by the
+  H3  `FIDELITY_FS_ROOT` / `FIDELITY_ENGINE_ROOT` never exported by the
       controller, so a whole run would have been written into a container's
       ephemeral layer.
   H4  `jqget` printing a JSON null as the four-letter string "None", so every
@@ -37,7 +37,7 @@ lived inside that composition and a stub there would have hidden them.
 
 Four properties are asserted for every stage that has them:
 
-  S-ROOT   it resolves its roots from FIDELITY_FS_ROOT / FIDELITY_K6_ROOT /
+  S-ROOT   it resolves its roots from FIDELITY_FS_ROOT / FIDELITY_ENGINE_ROOT /
            QP_PIPELINE_ROOT and nothing it says, writes or hands onward names
            a provider path (`/home/jl_fs`, `/workspace`).
   S-CLOSED it fails closed on a missing input rather than proceeding.
@@ -195,7 +195,7 @@ class Sandbox:
         env = dict(os.environ)
         env["FIDELITY_FS_ROOT"] = str(self.fs)
         if self.engine_root_env:
-            env["FIDELITY_K6_ROOT"] = str(self.engine)
+            env["FIDELITY_ENGINE_ROOT"] = str(self.engine)
         env["STAGE_ARGV_LOG"] = str(self.argv_log)
         env["STAGE_REAL_PY"] = sys.executable
         env["STAGE_REAL_SCRIPTS"] = " ".join(self.real_scripts)

@@ -19,7 +19,10 @@ set -euo pipefail
 
 STAGE="${1:?usage: stage_measure.sh <stage>}"
 FS="${FIDELITY_FS_ROOT:-/home/jl_fs/fidelity}"
-ROOT="${FIDELITY_K6_ROOT:-/home/jl_fs/glm53-k6}"
+# The engine tree. FIDELITY_K6_ROOT is the pre-2026-08-31 spelling, kept
+# as a fallback so a controller and an instance from different checkouts
+# cannot silently disagree about where the venv is.
+ROOT="${FIDELITY_ENGINE_ROOT:-${FIDELITY_K6_ROOT:-/home/jl_fs/fidelity-engine}}"
 RCPT="$FS/receipts"
 DONE="$RCPT/done"
 LOGS="$FS/logs"

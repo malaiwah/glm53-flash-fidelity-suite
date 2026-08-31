@@ -214,7 +214,7 @@ STUB
 JSON
   cp -R "$ROOT/bin/." "$S/bin/"
   printf 'import sys\nprint("stage_panel_paths: stub")\n' > "$S/bin/stage_panel_paths.py"
-  FIDELITY_FS_ROOT="$FSD" FIDELITY_K6_ROOT="$K6D" \
+  FIDELITY_FS_ROOT="$FSD" FIDELITY_ENGINE_ROOT="$K6D" \
     "$MODERN_BASH" "$S/bin/stage_measure.sh" fetch_panel >"$S/stage.log" 2>&1 || true
   if [ -e "$PWNED" ] || [ -e "$PWNED.rev" ]; then
     no "SEC-01 fetch_panel does not execute a hostile panel.repo_id" \

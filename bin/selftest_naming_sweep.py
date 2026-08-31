@@ -12,13 +12,20 @@ published number:
       referenced it -- with no error anywhere.  `bin/published-identity.json`
       freezes all of them; this file refuses a tree where one has vanished.
 
-  N2  a two-file agreement broken on one side.  An env var the controller
+  N2  a filesystem ROOT on rented hardware with a MODEL or CAMPAIGN name
+      baked into it.  This is the same defect as a root with a PROVIDER name
+      baked in, one axis over.  Three `/home/jl_fs` roots were each found by a
+      paid run -- one of them stalled an A100 at 0% GPU for two hours -- and
+      `bin/selftest_provider_portability.py` is the rule that finds the fourth
+      without renting anything.  `/home/jl_fs/glm53-k6` was BOTH at once.
+
+  N3  a two-file agreement broken on one side.  An env var the controller
       exports but no on-instance script reads; an entrypoint `engines.json`
       names that the bundle does not ship; a convention path one file writes
       and another reads.  Each is silent until a rented box is already
       running.
 
-  N3  a helper duplicated in two places, free to drift.  The pattern is
+  N4  a helper duplicated in two places, free to drift.  The pattern is
       `bin/selftest_canonical_json.py`.  This rung is the general form.
 
 Offline.  Stock python3.9, no installs.
@@ -86,15 +93,65 @@ check("the freeze includes the GLM-era names a sweep would be tempted to fix "
 
 
 # ---------------------------------------------------------------------------
-# N2  two-file agreements
+# N3  two-file agreements
 # ---------------------------------------------------------------------------
-print("\n== N2: both sides of every two-file agreement ==")
-
 # Files bin/BUNDLE.txt uploads that RUN on rented hardware and construct paths.
 # Kept in step with selftest_provider_portability.py's list of the same name.
 ON_INSTANCE = ("invoke_engine.py", "invoke_scorer.py", "stage_measure.sh",
                "bootstrap_measure.sh", "watchdog.sh", "seal_receipt.py",
                "stage_panel_paths.py")
+
+
+# ---------------------------------------------------------------------------
+# N2  no model or campaign name inside an on-instance filesystem ROOT
+# ---------------------------------------------------------------------------
+print("\n== N2: a root on rented hardware names neither provider nor model ==")
+
+# A model, an architecture family, or a campaign profile.  None of these
+# belongs in a directory name on a box that may be measuring something else.
+MODEL_TOKENS = ("glm", "qwen", "minimax", "deepseek", "fruit", "kimi",
+                "k6", "k8", "tr3", "exl3", "gguf", "mlx", "nvfp4")
+
+# An absolute path rooted where a provider mounts storage.  Scoped to those
+# prefixes on purpose: `$FS/engines/patches-v2` is a path INSIDE the upload
+# tree and is named by the suite, while `/home/jl_fs/<x>` and `/workspace/<x>`
+# are the roots the controller has to choose and export.
+_ROOT_PATH = re.compile(
+    r'(?<![:\w/])(/(?:home|workspace|mnt|data|root|opt|srv)'
+    r'(?:/[A-Za-z0-9._$~{}*-]+)+)')
+
+offenders = []
+for fname in ON_INSTANCE:
+    path = os.path.join(HERE, fname)
+    if not os.path.isfile(path):
+        continue
+    for n, line in enumerate(_read(path).splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("//"):
+            continue          # a comment may name the history it explains
+        for hit in _ROOT_PATH.findall(line):
+            low = hit.lower()
+            if any(tok in low for tok in MODEL_TOKENS):
+                offenders.append("%s:%d %s" % (fname, n, hit))
+for o in offenders:
+    print("      %s" % o)
+check("no instance root in an on-instance tool names a model or a campaign",
+      not offenders,
+      "a run measuring MiniMax must not live in a directory called glm53-k6")
+
+# The rule is worthless if it never looks at anything, and worthless again if
+# it never looks at a path -- both of which a rename could quietly cause.
+scanned = [f for f in ON_INSTANCE if os.path.isfile(os.path.join(HERE, f))]
+check("...and it read %d on-instance files" % len(scanned), len(scanned) >= 6,
+      "found: %s" % ", ".join(scanned))
+seen = sum(len(_ROOT_PATH.findall(ln))
+           for f in scanned
+           for ln in _read(os.path.join(HERE, f)).splitlines()
+           if not ln.strip().startswith("#"))
+check("...and found %d instance-root literals to judge" % seen, seen >= 3)
+
+
+print("\n== N3: both sides of every two-file agreement ==")
 
 sys.path.insert(0, HERE)
 import measure_cloud as mc                                       # noqa: E402
@@ -114,7 +171,8 @@ stage_env = mc._stage_env(_td)
 
 # (a) every FIDELITY_*_ROOT the controller EXPORTS must be READ by an
 #     on-instance script, and every one they read must be exported.  The old
-#     spelling of one of these (FIDELITY_K6_ROOT) is deliberately still
+#     spelling of one of these (FIDELITY_K6_ROOT -> FIDELITY_ENGINE_ROOT) is
+#     deliberately still
 #     accepted as a fallback, so a fallback read does not count as the
 #     agreement -- the exported name has to appear.
 exported = sorted(set(re.findall(r"\b(FIDELITY_[A-Z0-9_]*ROOT)=", stage_env)))
@@ -197,9 +255,9 @@ check("every BUNDLE.txt entry exists", not absent, absent)
 
 
 # ---------------------------------------------------------------------------
-# N3  no helper duplicated byte-for-byte in two places
+# N4  no helper duplicated byte-for-byte in two places
 # ---------------------------------------------------------------------------
-print("\n== N3: one helper, one copy ==")
+print("\n== N4: one helper, one copy ==")
 
 import hashlib                                                   # noqa: E402
 

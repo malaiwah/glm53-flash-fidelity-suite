@@ -26,7 +26,7 @@ sys.path.insert(0, str(HERE))
 
 from fidelity.common import Console, run                # noqa: E402
 from fidelity.engines import load_engines               # noqa: E402
-from invoke_engine import engine_python                 # noqa: E402
+from invoke_engine import engine_python, engine_root    # noqa: E402
 
 
 def main() -> int:
@@ -95,7 +95,7 @@ def main() -> int:
     # for two hours; this one had the same shape and had simply not been
     # reached yet.
     pipeline_root = os.environ.get("QP_PIPELINE_ROOT") or (
-        "%s/pipeline" % os.environ.get("FIDELITY_K6_ROOT", "/home/jl_fs/glm53-k6"))
+        "%s/pipeline" % engine_root())
     if pipeline_root:
         argv += [flag.get("pipeline_root", "--pipeline-root"), pipeline_root]
 

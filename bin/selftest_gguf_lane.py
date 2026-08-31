@@ -193,7 +193,7 @@ def rung_argv(tmp: Path) -> None:
     }
     (tmp / "job.json").write_text(json.dumps(job), encoding="utf-8")
     env = dict(os.environ, FIDELITY_FS_ROOT="/fsroot",
-               FIDELITY_K6_ROOT="/fsroot-k6",
+               FIDELITY_ENGINE_ROOT="/fsroot-engine",
                FIDELITY_SUITE_ROOT=str(ROOT),
                FIDELITY_ENGINE_PYTHON=sys.executable)
     env.pop("QP_PIPELINE_ROOT", None)
@@ -229,8 +229,8 @@ def rung_argv(tmp: Path) -> None:
     # pipeline that does not exist -- and said so at the START of the measure
     # stage, i.e. after the bootstrap, a 200 GB fetch and the panel were all
     # paid for. It must follow the k6 root the controller DOES set.
-    check("--pipeline-root /fsroot-k6/pipeline" in argv,
-          "4i --pipeline-root follows FIDELITY_K6_ROOT rather than defaulting "
+    check("--pipeline-root /fsroot-engine/pipeline" in argv,
+          "4i --pipeline-root follows FIDELITY_ENGINE_ROOT rather than defaulting "
           "to a JarvisLabs path on a provider that is not JarvisLabs",
           argv)
 
@@ -337,7 +337,7 @@ def rung_fetch_scope(tmp: Path) -> None:
     proc = subprocess.run(
         [bash, str(stage / "stage_measure.sh"), "fetch_target"],
         capture_output=True, text=True,
-        env=dict(os.environ, FIDELITY_FS_ROOT=str(fs), FIDELITY_K6_ROOT=str(k6)))
+        env=dict(os.environ, FIDELITY_FS_ROOT=str(fs), FIDELITY_ENGINE_ROOT=str(k6)))
     got = argv_log.read_text(encoding="utf-8").splitlines() if argv_log.exists() else []
     check(got, "6a the fetch stage ran and called hf",
           (proc.stdout + proc.stderr)[-1200:])
