@@ -737,7 +737,7 @@ REV_UNPINNED = lambda what: disc(
 #     `.mlp.experts.<n>.` names only; lm_head.weight is a plain BF16
 #     [154880, 4096] tensor.
 #   * Our own K6/K8 checkpoints have the identical census, recorded in
-#     k6/K8-ANOMALY.json test_6_scope: native_tensor_count 1618,
+#     engines/K8-ANOMALY.json test_6_scope: native_tensor_count 1618,
 #     output_tensor_count 150226, routed_choice_count 37152,
 #     packed_tensor_count 148608, nonrouted_native_exact true.
 #
@@ -2510,7 +2510,7 @@ def build_measurements(artifacts_map):
     # tools/k6_kld_report.py --profile native-bf16-stream). Zero quantization is
     # involved: the divergence here is purely the cost of comparing across capture
     # stacks plus bf16 non-associativity across differing expert-combine orders --
-    # this streaming lane's zero-point. See k6/BF16-FLOOR.md for the full analysis.
+    # this streaming lane's zero-point. See engines/BF16-FLOOR.md for the analysis.
     #
     # It is NOT the cross-stack floor (measurement--glm53.bf16-replay-floor...,
     # 0.012712 nats, a different pipeline and a different comparability key): that
