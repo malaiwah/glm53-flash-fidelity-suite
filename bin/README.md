@@ -167,6 +167,13 @@ have been enough:
   (see `k6/BF16-FLOOR.md`), and it is also the shape a `tr3-published` reader
   would need. `--source dione` raises *"not enabled in this build"*.
 
+*(That last paragraph is history: `tr3-published`, `dione`, `exl3hf` and `gguf`
+readers have all landed since. The GGUF one is the odd member of the set -- it
+reads a llama.cpp container, whose repo is a shelf of a dozen builds and whose
+quantization covers the whole forward rather than the routed experts alone, so
+`--path` is required and its rows are not rankable against the others. See
+[`docs/GGUF-MEASUREMENT.md`](../docs/GGUF-MEASUREMENT.md).)*
+
 So no lane can read a third-party `tr3-published` artifact, which is what a
 stranger's quant almost always is. Until a `tr3-published` reader exists,
 measuring someone else's repo is refused at plan time by the surface check
