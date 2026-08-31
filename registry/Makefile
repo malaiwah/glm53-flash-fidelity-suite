@@ -8,16 +8,49 @@
 PY ?= python3
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: check validate render render-check selftest joint reseed reseed-check explain clean \
-        stat-selftest coverage
+.PHONY: check check-release validate validate-release render render-check selftest joint \
+        reseed reseed-check explain clean stat-selftest coverage
 
 check: validate render-check selftest joint
 	@echo
 	@echo "OK: schema + invariants clean, README tables match the data, self-tests pass."
+	@echo "    (validator WARNINGS do not block this target -- the banner above states"
+	@echo "     the count. 'make check-release' is the gate that fails on them.)"
 
+# Release gate: identical to `check` except that validator warnings FAIL it.
+# 78 warnings converted into a green exit is how evidence gaps stay invisible;
+# a release must look at zero.
+check-release: validate-release render-check selftest joint
+	@echo
+	@echo "OK (release): schema + invariants clean with ZERO validator warnings."
+
+# Dev gate: warnings do not block, but they are counted OUT LOUD, never
+# laundered into silence. The validator's own exit code 2 means "warnings only".
 validate:
-	$(PY) tools/registry_validate.py --strict --jsonschema-lib mini || \
-	  ( [ $$? -eq 2 ] && echo "(warnings only)" )
+	@out=$$(mktemp); \
+	$(PY) tools/registry_validate.py --strict --jsonschema-lib mini >$$out 2>&1; rc=$$?; \
+	cat $$out; \
+	warnings=$$(sed -n 's/.*validator: [0-9][0-9]* error(s), \([0-9][0-9]*\) warning(s).*/\1/p' $$out | tail -1); \
+	rm -f $$out; \
+	if [ "$$rc" = 2 ]; then \
+	  echo ""; \
+	  echo "================================================================================"; \
+	  echo "  VALIDATOR WARNINGS: $${warnings:-unknown count}."; \
+	  echo "  'make check' stays green on warnings for dev flow ONLY; they are not noise"; \
+	  echo "  and not resolved. 'make check-release' FAILS on them -- do not cut a release"; \
+	  echo "  while this count is nonzero without disposition."; \
+	  echo "================================================================================"; \
+	elif [ "$$rc" != 0 ]; then exit "$$rc"; fi
+
+validate-release:
+	@$(PY) tools/registry_validate.py --strict --jsonschema-lib mini; rc=$$?; \
+	if [ "$$rc" = 2 ]; then \
+	  echo ""; \
+	  echo "check-release: FAILED -- the validator reports warnings (exit 2) and the"; \
+	  echo "release gate does not convert warnings into success. Disposition each one"; \
+	  echo "or run plain 'make check' for dev flow."; \
+	  exit 2; \
+	elif [ "$$rc" != 0 ]; then exit "$$rc"; fi
 
 # Cross-check the vendored validator against the real library when it is importable.
 validate-both:
