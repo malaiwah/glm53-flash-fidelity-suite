@@ -36,7 +36,8 @@
 # NEVER `set -x` here: HF_TOKEN may be exported by the caller.
 set -euo pipefail
 
-ROOT="${FIDELITY_K6_ROOT:-/home/jl_fs/glm53-k6}"
+# FIDELITY_K6_ROOT is the pre-2026-08-31 spelling, still read as a fallback.
+ROOT="${FIDELITY_ENGINE_ROOT:-${FIDELITY_K6_ROOT:-/home/jl_fs/fidelity-engine}}"
 FS="${FIDELITY_FS_ROOT:-/home/jl_fs/fidelity}"
 VENV="$ROOT/venv"
 PY="$VENV/bin/python"

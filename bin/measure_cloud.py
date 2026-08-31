@@ -116,15 +116,17 @@ class Teardown:
         # Where the run lives on the instance. JarvisLabs mounts its
         # persistent filesystem at /home/jl_fs; a RunPod volume mounts at
         # /workspace. Both stage scripts already honour FIDELITY_FS_ROOT and
-        # FIDELITY_K6_ROOT -- what was missing is that nothing ever SET them,
+        # FIDELITY_ENGINE_ROOT -- what was missing is that nothing ever SET them,
         # so a non-JarvisLabs box would have written the whole run into the
         # container's ephemeral layer and lost it on the first restart.
         self.fs_root = ("/workspace/fidelity"
                         if getattr(jl, "provider", "jarvislabs") == "runpod"
                         else "/home/jl_fs/fidelity")
-        self.k6_root = ("/workspace/glm53-k6"
-                        if getattr(jl, "provider", "jarvislabs") == "runpod"
-                        else "/home/jl_fs/glm53-k6")
+        # Named for what it holds -- the venv, the pipeline clone and the
+        # patch series -- not for the K6 campaign that first paid for it.
+        self.engine_root = ("/workspace/fidelity-engine"
+                            if getattr(jl, "provider", "jarvislabs") == "runpod"
+                            else "/home/jl_fs/fidelity-engine")
         self.lease_path: Optional[Path] = None
         self.done = False
         # CLI-02(b): re-entrancy is a SEPARATE flag from completion, so a
@@ -731,10 +733,15 @@ def _stage_env(td: "Teardown") -> str:
     JarvisLabs (the values are identical to the defaults) and is the whole
     difference between a working and a lost run on any other provider.
     """
-    k6 = getattr(td, "k6_root", "/home/jl_fs/glm53-k6")
-    return ("FIDELITY_FS_ROOT=%s FIDELITY_K6_ROOT=%s QP_PIPELINE_ROOT=%s"
-            % (shlex.quote(td.fs_root), shlex.quote(k6),
-               shlex.quote("%s/pipeline" % k6)))
+    engine = getattr(td, "engine_root", "/home/jl_fs/fidelity-engine")
+    # FIDELITY_K6_ROOT is exported alongside the new name for one release: a
+    # container image or an instance script from an older checkout still reads
+    # only the old spelling, and a root that resolves to nothing is a run
+    # written into the container's ephemeral layer.
+    return ("FIDELITY_FS_ROOT=%s FIDELITY_ENGINE_ROOT=%s FIDELITY_K6_ROOT=%s "
+            "QP_PIPELINE_ROOT=%s"
+            % (shlex.quote(td.fs_root), shlex.quote(engine), shlex.quote(engine),
+               shlex.quote("%s/pipeline" % engine)))
 
 
 def _make_provider(name: str, *, dry: bool = False):
