@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""fidelity-bench -- what is this rental worth for scoring, and does the loop work?
+
+    bin/fidelity-bench --provider vast --gpu "A100 PCIE"
+    bin/fidelity-bench --provider runpod --gpu "NVIDIA A100-SXM4-80GB" --json out.json
+    bin/fidelity-bench --provider vast --ask-id 31921484
+
+Rents ONE instance, measures the three numbers that decide how long a fidelity
+measurement takes there, tears it down, and prints an estimate. Costs a few
+cents and about four minutes.
+
+Run it before committing hours to an untried provider or an untried host. It
+exercises the same rent -> wait for ssh -> upload -> exec -> collect -> destroy
+path a real measurement uses, so a provider that cannot do this cannot measure
+either -- and it says so for $0.05 instead of for $5.
+"""
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+SUITE_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SUITE_ROOT / "bin"))
+
+from fidelity.bench import estimate, render, run_bench          # noqa: E402
+from fidelity.common import Console                             # noqa: E402
+
+# GLM-5.3-Flash: 42 MoE layers x 288 experts x 3 projections. The default is a
+# real model's shape rather than a round number, so the estimate means something.
+DEFAULT_MATRICES = 42 * 288 * 3
+
+
+def make_provider(name: str):
+    if name == "runpod":
+        from fidelity.runpodapi import RunPod
+        return RunPod()
+    if name == "vast":
+        from fidelity.vastapi import Vast
+        return Vast()
+    if name == "lambda":
+        from fidelity.lambdaapi import LambdaCloud
+        return LambdaCloud()
+    from fidelity.jlapi import JL
+    return JL()
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(prog="fidelity-bench", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--provider", default="vast",
+                   choices=("jarvislabs", "runpod", "vast", "lambda"))
+    p.add_argument("--gpu", help="GPU model (or, on Lambda, the instance type)")
+    p.add_argument("--ask-id", help="Vast only: benchmark one specific offer")
+    p.add_argument("--storage", type=int, default=30)
+    p.add_argument("--matrices", type=int, default=DEFAULT_MATRICES,
+                   help="matrices per window for the estimate (default: "
+                        "GLM-5.3-Flash's 42x288x3)")
+    p.add_argument("--json", help="also write the raw result here")
+    p.add_argument("--keep", action="store_true",
+                   help="do NOT destroy the instance (it keeps billing)")
+    args = p.parse_args(argv)
+
+    if not args.gpu and not args.ask_id:
+        p.error("one of --gpu or --ask-id is required")
+
+    con = Console()
+    prov = make_provider(args.provider)
+    if not prov.available():
+        con.err("no credential for %s -- see docs/CLOUD-RECIPES.md" % args.provider)
+        return 3
+
+    con.say("fidelity-bench   provider %s" % args.provider)
+    con.rule()
+    try:
+        doc = run_bench(prov, gpu=args.gpu, ask_id=args.ask_id,
+                        storage=args.storage, con=con, keep=args.keep)
+    except Exception as exc:                              # noqa: BLE001
+        con.err(str(exc)[:500])
+        return 1
+
+    con.say("")
+    con.say(render(doc, estimate(doc, matrices_per_window=args.matrices)))
+    con.say("")
+    con.ok("rental loop", "rent -> ssh -> upload -> exec -> collect -> destroy, "
+                          "%.0fs" % doc.get("wall_seconds", 0))
+    if args.json:
+        Path(args.json).write_text(json.dumps(doc, indent=1) + "\n")
+        con.ok("written", args.json)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

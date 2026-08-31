@@ -158,14 +158,21 @@ class Vast(SSHTransport):
             return merged
         return self._search(min_vram_gb, min_disk_gb, limit)
 
-    def _search(self, min_vram_gb: int, min_disk_gb: int,
-                limit: int) -> List[GpuOffer]:
+    def _search(self, min_vram_gb: int, min_disk_gb: int, limit: int,
+                gpu_name: Optional[str] = None) -> List[GpuOffer]:
         q = {"rentable": {"eq": True}, "num_gpus": {"eq": 1},
              "disk_space": {"gte": int(min_disk_gb)},
              "order": [["dph_total", "asc"]], "limit": int(limit),
              "type": "on-demand"}
         if min_vram_gb:
             q["gpu_ram"] = {"gte": int(min_vram_gb) * 1024}
+        if gpu_name:
+            # Ask Vast for the card BY NAME rather than filtering a generic
+            # list. The banded catalogue returns the cheapest few per VRAM
+            # band, so a specifically-requested 20 GB card routinely is not in
+            # it and "no offer for RTX A4500" was reported while dozens were
+            # rentable.
+            q["gpu_name"] = {"eq": gpu_name}
         got = self._req("GET", "/bundles/?q=" + urllib.parse.quote(json.dumps(q)))
         offers = []
         for o in (got or {}).get("offers", []):
@@ -220,8 +227,14 @@ class Vast(SSHTransport):
             # Searching and renting must be one transaction on a marketplace --
             # an offer that vanishes in between is ordinary, not an error.
             want = (kw.get("gpu_type") or kw.get("gpu") or "").strip()
-            fits = self.gpus(min_vram_gb=int(kw.get("min_vram_gb") or 0),
-                             min_disk_gb=disk)
+            fits = []
+            if want:
+                # exact name first, then a substring pass over the catalogue
+                fits = self._search(int(kw.get("min_vram_gb") or 0), disk, 20,
+                                    gpu_name=want)
+            if not fits:
+                fits = self.gpus(min_vram_gb=int(kw.get("min_vram_gb") or 0),
+                                 min_disk_gb=disk)
             if want:
                 # HONOUR the requested GPU. Without this the "cheapest that
                 # fits" is whatever the marketplace is dumping -- on this
