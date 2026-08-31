@@ -1,0 +1,258 @@
+{
+  "corpus": {
+    "documents_considered": 16,
+    "documents_selected": 16,
+    "path_prefix": "corpus/text/",
+    "repository": "datasets/malaiwah/qwen38-27b-fidelity-suite-v5",
+    "revision": "7797fcce3ffed62b99871348887f4626dc9b2b3b"
+  },
+  "created_utc": "2026-08-30T02:47:22Z",
+  "documents": [
+    {
+      "bytes": 404518,
+      "document": "pg100.txt",
+      "document_sha256": "aea60c52db6edd47d57466ed780f4e91b7fe399a3cb9439879866ecdc445000c",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 106444,
+      "window_id": "final-0000"
+    },
+    {
+      "bytes": 399985,
+      "document": "pg10148.txt",
+      "document_sha256": "a0bcd8895139fb6d5f38bd197be514f4c30482a0a3c0958bb6baaab42f7b5d80",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 102928,
+      "window_id": "final-0001"
+    },
+    {
+      "bytes": 151025,
+      "document": "pg11.txt",
+      "document_sha256": "a4c81ef23eb99f8b14be2474be0410b708cc99293ce6d88cf6799335926639b9",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 36899,
+      "window_id": "final-0002"
+    },
+    {
+      "bytes": 414302,
+      "document": "pg1259.txt",
+      "document_sha256": "04c592e75517e70fe6695b38cf5156645a32b390bf3231e81080b1b75ada2fce",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 102094,
+      "window_id": "final-0003"
+    },
+    {
+      "bytes": 136178,
+      "document": "pg14244.txt",
+      "document_sha256": "000ef48120ef50ed7f3eff73fb99d603bac09ba22878cffa89ce763338d2b386",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 34246,
+      "window_id": "final-0004"
+    },
+    {
+      "bytes": 144366,
+      "document": "pg1513.txt",
+      "document_sha256": "42e5e2e9cb202341f37e397afc67130b739b97c71a23938f52af13abddbca42a",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 39361,
+      "window_id": "final-0005"
+    },
+    {
+      "bytes": 198440,
+      "document": "pg15381.txt",
+      "document_sha256": "b71eabce3564d09852f80528f13a727d6e322c7c28dfe890eabb6980a7d784e4",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 50048,
+      "window_id": "final-0006"
+    },
+    {
+      "bytes": 328860,
+      "document": "pg1695.txt",
+      "document_sha256": "016fff0e8cfe09a64ff0183157e9fcc4cc19aa3c0ebbbd060584986998f833d7",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 77581,
+      "window_id": "final-0007"
+    },
+    {
+      "bytes": 308016,
+      "document": "arxiv5-cs-AI-0000.txt",
+      "document_sha256": "ad29c470c08f5cb0601b9c45c61d229e84cbe798203138845ecd1fb3675be482",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 57673,
+      "window_id": "final-0008"
+    },
+    {
+      "bytes": 303134,
+      "document": "arxiv5-cs-AI-0200.txt",
+      "document_sha256": "9d5564bfc96a35baacfaf8cb0b4cb894648e4408488d02af36a59cb4212bd0b3",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 56304,
+      "window_id": "final-0009"
+    },
+    {
+      "bytes": 306851,
+      "document": "arxiv5-cs-AR-0000.txt",
+      "document_sha256": "11e0b37f99b9080c14a4680fcc820451b93cce25d65257c0b36a893dd13dc019",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 59401,
+      "window_id": "final-0010"
+    },
+    {
+      "bytes": 301131,
+      "document": "arxiv5-cs-AR-0200.txt",
+      "document_sha256": "99477b03e197c717aad43c258660867f7324b573fc2cd155f7fbe634973d7e12",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 58477,
+      "window_id": "final-0011"
+    },
+    {
+      "bytes": 260466,
+      "document": "arxiv5-cs-CC-0000.txt",
+      "document_sha256": "62ae90be0f7b9f299c48e2fcb0a30f8c59e4f0a009e0961fdbeb13695896a54e",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 58429,
+      "window_id": "final-0012"
+    },
+    {
+      "bytes": 269223,
+      "document": "arxiv5-cs-CC-0200.txt",
+      "document_sha256": "db5f6a05408f3280fb92049a64f4323bce340d1483bcf91a5c677e7dbebbf25e",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 58276,
+      "window_id": "final-0013"
+    },
+    {
+      "bytes": 313374,
+      "document": "arxiv5-cs-CE-0000.txt",
+      "document_sha256": "cd54e364028412b022a6d7cfbe41e6c123e84e75a66f9515641576a04f2943c3",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 56575,
+      "window_id": "final-0014"
+    },
+    {
+      "bytes": 315368,
+      "document": "arxiv5-cs-CE-0200.txt",
+      "document_sha256": "dc99c9d9c81f854cb4eae894c9c19ebaec3d381208414805c8851d774931a894",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 56540,
+      "window_id": "final-0015"
+    }
+  ],
+  "format_version": 1,
+  "panel_id": "panel--fruit.malaiwah.heldout-v1",
+  "panel_name": "GLM-5.2-SIQ-Fruit held-out fidelity panel v1 -- 16 windows x 2048",
+  "parameters": {
+    "context_length": 2048,
+    "prediction_positions_per_window": 2047,
+    "scored_positions_total": 32752,
+    "skip_tokens": 2048,
+    "strata": [
+      "literary",
+      "scientific"
+    ],
+    "windows_per_stratum": 8,
+    "windows_total": 16
+  },
+  "receipt_sha256": "3372cb0b55681457a4d1dc860dcd1a9772d09190c4ce97ea6063ebc57e03cf6e",
+  "schema": "malaiwah.token-panel-build-receipt.v1",
+  "selection_rule": "strata sorted ascending; within each stratum documents sorted by file name ascending; each document tokenized whole with add_special_tokens=False; a document is eligible only if it yields at least skip_tokens+context_length tokens; its window is tokens[skip_tokens : skip_tokens+context_length]; the first windows_per_stratum eligible documents are taken; windows are numbered from zero in (stratum, document) order. No RNG is used anywhere.",
+  "separation": {
+    "checked": false,
+    "method": "declaration only; this tool runs no lexical or n-gram scan",
+    "note": "Source-level separation only. Fruit's published pretraining recipe names nine sources: FineWeb-Edu, English and Chinese Wikipedia, TinyStories, two GLM-5.2 distillation corpora, REAP calibration text, SPDX licence text, and code. This panel draws ONLY from the literary (Project Gutenberg) and scientific (arXiv titles+abstracts) strata, neither of which appears in that list. No lexical or n-gram scan against Fruit's actual training shards was run, so incidental overlap through a web-crawl source such as FineWeb-Edu is NOT excluded."
+  },
+  "suite_token_hash_sha256": "a6d367cc3ba448800372dee435d2bb4f536d23ca68843628832fa3b122ceabe1",
+  "tokenizer": {
+    "add_special_tokens": false,
+    "chat_template_applied": false,
+    "files_sha256": {
+      "tokenizer.json": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+      "tokenizer_config.json": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"
+    },
+    "id": "glm-5.2-siq-fruit",
+    "repository": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+    "revision": "ef68013aa6e16453cf52b5b77647f72fbe258c3c",
+    "vocab_size": 154820
+  },
+  "tool": "k6/tools/build_token_panel.py",
+  "tool_sha256": "8fc028713b48b19fb9368f833dda61bcfa0dc3be37a8a67352abf1811f255c7e"
+}

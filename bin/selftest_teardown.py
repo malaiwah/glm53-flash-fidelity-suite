@@ -326,6 +326,92 @@ def main():
         check("L52  the controller ATTACHES rather than launching a duplicate",
               not jl2.launched, "launched: %s" % jl2.launched[:1])
 
+    # ---- a FAILED stage must end the poll, on every backend ---------------
+    # `jlapi.JL.run_status(run_id)` needs no instance; every SSH backend does,
+    # and `sshbase` says so by raising when machine_id is None. The controller
+    # asked with one argument, so on runpod, vast and lambda the call raised on
+    # every poll, `state` fell back to "" and BOTH verdict branches became
+    # unreachable: a stage that succeeded still ended the poll on its marker, a
+    # stage that FAILED never did, and the instance billed until
+    # --max-runtime. Observed live on a Lambda GH200 -- capture exited non-zero
+    # at 15:03, still un-noticed at 15:12, GPU 0%.
+    class SSHStyleJL(FakeJL):
+        """A backend with sshbase's signature: it must be TOLD the instance."""
+
+        def __init__(self):
+            super().__init__()
+            self.asked_with_machine = []
+
+        def get(self, mid):
+            # a HEALTHY instance, so the poll reaches the verdict branches
+            # instead of short-circuiting on "not running -> preempted".
+            return Instance(machine_id=mid, status="Running", gpu_type="GH200",
+                            num_gpus=1, region="us-east-3", is_spot=False,
+                            cost=0.0, runtime=None, fs_id=None, storage_gb=None,
+                            name=None, raw={})
+
+        def exec_stdout(self, mid, cmd, **k):
+            return "gone\n" if "pgrep" in cmd else "no\n"   # no marker, not alive
+
+        def run_job(self, mid, cmd):
+            return {"run_id": "r_fake"}
+
+        def run_status(self, run_id, machine_id=None):
+            if machine_id is None:
+                raise mc.JLError("run_status needs machine_id on this backend")
+            self.asked_with_machine.append(run_id)
+            return {"state": "succeeded", "exit_code": 0}
+
+        def run_logs(self, run_id, *, tail=50, machine_id=None):
+            if machine_id is None:
+                raise mc.JLError("run_logs needs machine_id on this backend")
+            return "launched capture\n"
+
+    jl3 = SSHStyleJL()
+    td3 = make_teardown(tmp, jl3)
+    # A SHORT deadline on purpose. Without the fix this loop never reaches a
+    # verdict, and a test that hangs the battery teaches nobody anything: with
+    # a 3 s deadline the regression reports "deadline" -- which is precisely
+    # the production symptom, "billed until --max-runtime" -- instead of
+    # wedging the suite.
+    real_sleep, time.sleep = time.sleep, lambda *_a: None
+    try:
+        verdict = mc._await_stage(QuietConsole(), jl3, td3, "r_fake", "capture",
+                                  time.time() + 3)
+    except Exception as exc:                            # noqa: BLE001
+        verdict = "raised: %s" % exc
+    finally:
+        time.sleep = real_sleep
+    check("SSH backend: a dead stage with no done marker is FAILED, not polled "
+          "until --max-runtime", verdict == "failed",
+          "verdict: %r (a 'deadline' here IS the bug: the poll never concluded)"
+          % verdict)
+    check("...because the controller told the backend which instance to ask",
+          bool(jl3.asked_with_machine), "run_status was never answered")
+
+    # And the JarvisLabs shape -- whose run_status takes NO machine_id -- must
+    # keep working through the same call site.
+    class CLIStyleJL(SSHStyleJL):
+        def run_status(self, run_id):                   # no machine_id at all
+            self.asked_with_machine.append(run_id)
+            return {"state": "succeeded", "exit_code": 0}
+
+        def run_logs(self, run_id, *, tail=50):
+            return "launched capture\n"
+
+    jl4 = CLIStyleJL()
+    td4 = make_teardown(tmp, jl4)
+    real_sleep, time.sleep = time.sleep, lambda *_a: None
+    try:
+        verdict4 = mc._await_stage(QuietConsole(), jl4, td4, "r_fake", "capture",
+                                   time.time() + 3)
+    except Exception as exc:                            # noqa: BLE001
+        verdict4 = "raised: %s" % exc
+    finally:
+        time.sleep = real_sleep
+    check("CLI backend (no machine_id parameter) still reaches the verdict",
+          verdict4 == "failed", "verdict: %r" % verdict4)
+
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
 

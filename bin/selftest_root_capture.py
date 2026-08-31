@@ -157,6 +157,55 @@ check("the capture stage refuses a non-root job",
 check("the capture stage is receipt-resumable",
       "already written at $OUT -- skipping" in stage_sh)
 
+print("\n== what the controller writes into job.json, the stage must FORWARD ==")
+# A knob the controller records and the stage ignores is worse than a missing
+# knob: the operator is told a thing happened that did not. Both of these were
+# real. `--sanity-expect Paris` reached job.json and only `race_capture` read
+# it, so on the DEFAULT capture path the generation probe ran unenforced -- the
+# one check that distinguishes "captured" from "captured nonsense".
+# `--allow-unexpected-tensors` had no controller flag at all, so a root capture
+# of any checkpoint carrying an MTP/draft block (this suite's own Fruit fixture;
+# GLM-5.3-Flash; GLM-5.3) died at the capture stage with the rental already paid
+# for.
+CAPTURE_STAGES = ("capture", "race_capture")
+
+
+def stage_body(name):
+    """The text of one `case` arm of stage_measure.sh."""
+    start = stage_sh.index("\n%s)\n" % name)
+    end = stage_sh.index("\n  ;;", start)
+    return stage_sh[start:end]
+
+
+for _st in CAPTURE_STAGES:
+    body = stage_body(_st)
+    check("%s reads capture.sanity_expect" % _st,
+          "capture.sanity_expect" in body)
+    check("...and forwards --sanity-expect to the engine" ,
+          "--sanity-expect" in body)
+    check("%s reads capture.allow_unexpected_tensors" % _st,
+          "capture.allow_unexpected_tensors" in body)
+    check("...and forwards --allow-unexpected-tensors when it is true",
+          "--allow-unexpected-tensors" in body)
+    # Data from job.json is passed as an ARRAY, never through an eval (SEC-01).
+    check("...via the EXTRA array, expanded into the %s invocation" % _st,
+          "EXTRA+=" in body and '"${EXTRA[@]}"' in body)
+    # PROVENANCE, not cosmetics. hf_capture resolves the weights' identity as
+    # `--weights-repository or --model`, and --model is the LOCAL tree the
+    # fetch wrote. Without the first flag a published root records the RENTED
+    # BOX'S ABSOLUTE PATH as the checkpoint repository, the panel's tokenizer
+    # id and the card's provenance line -- pointing at a filesystem that no
+    # longer exists, which is the exact defect AGENTS.md tells you to grep a
+    # published artifact for. It also makes the capture non-comparable: the
+    # tokenizer id is panel IDENTITY (PANEL-D6), so two roots of one model
+    # captured on two boxes declare two tokenizers and `compare` refuses them.
+    check("%s names the HF repo as the weights repository, not the local path"
+          % _st, "--weights-repository" in body)
+
+check("the controller has an --allow-unexpected-tensors flag to set it with",
+      "--allow-unexpected-tensors" in
+      (SUITE / "bin" / "measure_cloud.py").read_text(encoding="utf-8"))
+
 print("\n== race mode: a different stage sequence, and a different identity ==")
 # The whole point of race mode is that the fetch stops being a barrier. If the
 # sequence still contained fetch_target the overlap could not happen at all.
@@ -164,6 +213,51 @@ check("a race root runs setup/race_bootstrap/race_capture/verify",
       race == ("setup", "race_bootstrap", "race_capture", "verify"))
 check("...and race mode has no fetch_target stage (the fetch is IN the capture)",
       "fetch_target" not in race and "fetch_target" in root)
+
+print("\n== a plain full-precision tree must SNIFF as native-bf16, whatever "
+      "spelling its config uses for the dtype ==")
+# The surface check runs BEFORE the root guard above and refuses for $0.00,
+# which is right -- but it read the dtype from only two of the three places a
+# real config puts it.  `malaiwah/GLM-5.2-SIQ-Fruit-bf16` (transformers 5.12)
+# writes a TOP-LEVEL `dtype`, the current transformers default for a
+# single-modality config, and was refused as "no recognised surface marker":
+# a plain bf16 checkpoint, the one thing a root capture exists to read,
+# declared unreadable by every adapter.  One dict key, and the run that found
+# it was a paid rental away.
+from fidelity import hfmeta as HM                          # noqa: E402
+
+
+def sniff_plain(config):
+    meta = HM.RepoMeta(
+        repo_id="x/y", repo_type="model", revision="a" * 40,
+        requested_revision="main", last_modified=None,
+        files=[("config.json", 1846), ("model-layer-000.safetensors", 1 << 20),
+               ("model.safetensors.index.json", 4096)])
+    real, HM.fetch_json = HM.fetch_json, lambda *a, **k: config
+    try:
+        return HM.sniff_surface(meta)
+    finally:
+        HM.fetch_json = real
+
+
+for label, cfg in (
+        ("top-level `dtype` (transformers >= 5; the Fruit release)",
+         {"model_type": "glm_moe_dsa", "dtype": "bfloat16"}),
+        ("top-level `torch_dtype` (older configs)",
+         {"model_type": "llama", "torch_dtype": "bfloat16"}),
+        ("nested `text_config.dtype` (GLM-5.3-Flash)",
+         {"model_type": "glm4v_moe", "text_config": {"dtype": "bfloat16"}})):
+    got = sniff_plain(cfg)
+    check("%s sniffs as native-bf16" % label,
+          got.surface == "native-bf16" and got.codec_family == "bf16"
+          and got.bits == 16.0 and not got.problems)
+
+check("a config with NO dtype anywhere is still 'unknown' (not guessed)",
+      sniff_plain({"model_type": "llama"}).surface == "unknown")
+check("a quantized config is not promoted to native-bf16 by its dtype",
+      sniff_plain({"model_type": "llama", "dtype": "bfloat16",
+                   "quantization_config": {"quant_method": "fp8"}}
+                  ).surface == "unknown")
 
 print("\n== the panel travels with the bundle ==")
 bundle = (SUITE / "bin" / "BUNDLE.txt").read_text()

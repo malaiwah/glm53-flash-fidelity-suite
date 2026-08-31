@@ -530,10 +530,25 @@ capture)
   DSID="$(jqget capture.dataset_id)"
   DSNAME="$(jqget capture.dataset_name)"
   AUTHOR="$(jqget capture.author malaiwah)"
+  EXPECT="$(jqget capture.sanity_expect Paris)"
+  ALLOW_UNEXPECTED="$(jqget capture.allow_unexpected_tensors false)"
   OUT="$FS/dataset"
   [ -n "$DSID" ] || { echo "job.json has no capture.dataset_id" >&2; exit 2; }
   [ -n "$PANEL_REL" ] || { echo "job.json has no capture.panel_dir" >&2; exit 2; }
   [ -d "$FS/$PANEL_REL" ] || { echo "panel not uploaded: $FS/$PANEL_REL" >&2; exit 2; }
+  # An ARRAY, never an eval: these values come from job.json and the shell must
+  # not be parsing data (SEC-01). Same construction as race_capture below.
+  #
+  # --sanity-expect was written into job.json by the controller and read by
+  # race_capture only, so on THIS path -- the default one -- the probe ran
+  # unenforced: a capture that generated nonsense sealed clean, and the operator
+  # who passed `--sanity-expect Paris` was told a check had happened that had
+  # not. The two capture stages now forward the same two flags.
+  EXTRA=()
+  EXTRA+=(--sanity-expect "$EXPECT")
+  if [ "$ALLOW_UNEXPECTED" = "true" ] || [ "$ALLOW_UNEXPECTED" = "True" ]; then
+    EXTRA+=(--allow-unexpected-tensors)
+  fi
   if [ -d "$OUT" ]; then
     log "dataset already written at $OUT -- skipping (receipt-resumable)"
   else
@@ -544,12 +559,13 @@ capture)
     HF_HOME="$FS/hf" "$PY" "$FS/bin/fidelity_dataset.py" capture \
         --out "$OUT" --form "$FORM" --role root --lane "$LANE" \
         --engine hf-transformers -- \
-        --model "$MODELS/target" \
+        --model "$MODELS/target" --weights-repository "$REPO" \
         --repository "$REPO" --model-revision "$REV" \
         --panel "$FS/$PANEL_REL" --panel-id "$PANEL_ID" \
         --schedule "$SCHED" --dtype bfloat16 \
         --dataset-id "$DSID" --dataset-name "$DSNAME" \
         --author "$AUTHOR" --role root \
+        "${EXTRA[@]}" \
         2>&1 | tee -a "$LOGS/capture.log"
   fi
   du -sh "$OUT" | tee -a "$LOGS/capture.log"
@@ -624,6 +640,7 @@ race_capture)
   WORKERS="$(jqget capture.race_workers 8)"
   PREVIEW_OF="$(jqget capture.preview_of)"
   EXPECT="$(jqget capture.sanity_expect Paris)"
+  ALLOW_UNEXPECTED="$(jqget capture.allow_unexpected_tensors false)"
   OUT="$FS/dataset"
   [ -n "$DSID" ] || { echo "job.json has no capture.dataset_id" >&2; exit 2; }
   [ -n "$PANEL_REL" ] || { echo "job.json has no capture.panel_dir" >&2; exit 2; }
@@ -635,6 +652,9 @@ race_capture)
   EXTRA=()
   if [ -n "$PREVIEW_OF" ]; then EXTRA+=(--preview-of "$PREVIEW_OF"); fi
   EXTRA+=(--sanity-expect "$EXPECT")
+  if [ "$ALLOW_UNEXPECTED" = "true" ] || [ "$ALLOW_UNEXPECTED" = "True" ]; then
+    EXTRA+=(--allow-unexpected-tensors)
+  fi
   if [ -d "$OUT" ]; then
     log "dataset already written at $OUT -- skipping (receipt-resumable)"
   else
@@ -642,7 +662,7 @@ race_capture)
     HF_HOME="$FS/hf" HF_HUB_ENABLE_HF_TRANSFER=1 "$PY" "$FS/bin/fidelity_dataset.py" capture \
         --out "$OUT" --form "$FORM" --role root --lane "$LANE" \
         --engine hf-transformers -- \
-        --model "$MODELS/target" \
+        --model "$MODELS/target" --weights-repository "$REPO" \
         --repository "$REPO" --model-revision "$REV" \
         --panel "$FS/$PANEL_REL" --panel-id "$PANEL_ID" \
         --schedule "$SCHED" --layer-residency stream --dtype bfloat16 \

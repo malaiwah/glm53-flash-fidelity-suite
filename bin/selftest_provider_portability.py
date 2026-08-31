@@ -104,6 +104,27 @@ rp, jl = mc.Teardown(FakeJL([]), Con(), mc.Path(".")), \
     mc.Teardown(JLish(), Con(), mc.Path("."))
 check("runpod runs under /workspace", rp.fs_root.startswith("/workspace"))
 check("jarvislabs runs under /home/jl_fs", jl.fs_root.startswith("/home/jl_fs"))
+
+# EVERY backend's run root must be WRITABLE BY THE USER IT LOGS IN AS. Lambda
+# is the one that is not root: `ubuntu`, on an image whose `/home` is root-owned
+# 0755 -- so the `/home/jl_fs` default is EACCES and `mkdir -p
+# /home/jl_fs/fidelity/logs` kills the run during the bundle upload, two
+# minutes in, on every rental. Observed on a live gpu_1x_gh200 before this
+# check existed; the box had already been paid for.
+for _p in ("jarvislabs", "runpod", "vast", "lambda"):
+    _t = mc.Teardown(mc._make_provider(_p, dry=True), Con(), mc.Path("."))
+    _user = getattr(mc._make_provider(_p, dry=True), "ssh_user", "root")
+    # A non-root user may only be given a root under ITS OWN home (or a mount
+    # the image gives it, which a backend states via `run_base`).
+    _ok = _user == "root" or _t.fs_root.startswith("/home/%s/" % _user) \
+        or _t.fs_root.startswith("/workspace/")
+    check("%s (%s@) gets a run root that user can create: %s"
+          % (_p, _user, _t.fs_root), _ok)
+    check("...and its engine root sits beside it", _ok and
+          _t.engine_root.rsplit("/", 1)[0] == _t.fs_root.rsplit("/", 1)[0])
+    _env = mc._stage_env(_t)
+    check("...and the stage env exports that root, not the default",
+          _t.fs_root in _env and (_user == "root" or "/home/jl_fs" not in _env))
 # The root the controller CHOOSES, not just the ones it exports: it used to be
 # `/home/jl_fs/glm53-k6` -- one provider and one model baked into the same
 # path, on a box that may be measuring MiniMax.

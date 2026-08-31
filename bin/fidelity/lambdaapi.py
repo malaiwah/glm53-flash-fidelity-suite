@@ -57,6 +57,15 @@ class LambdaCloud(SSHTransport):
     provider = "lambda"
     ssh_user = "ubuntu"
     RUNS = "/home/ubuntu/.fidruns"
+    # Where a RUN may be written. Not cosmetic and not a preference: Lambda logs
+    # in as `ubuntu`, and `/home` on its images is root-owned 0755, so the
+    # controller's default `/home/jl_fs/...` is EACCES for every command this
+    # backend issues. That killed a real gpu_1x_gh200 rental two minutes in, at
+    # the bundle upload, with `mkdir: cannot create directory '/home/jl_fs':
+    # Permission denied` -- after the boot was paid for and before one line of
+    # the measurement ran. There is no separable filesystem here either, so the
+    # instance's own disk (3.9 TB on the GH200) is the only place a run can go.
+    run_base = "/home/ubuntu"
 
     def __init__(self, *, dry: bool = False, key_file: Optional[str] = None,
                  ssh_key: Optional[str] = None,

@@ -692,9 +692,18 @@ def sniff_surface(meta: RepoMeta, path: Optional[str] = None) -> SurfaceInfo:
             cfg = fetch_json(meta.repo_id, "config.json", revision=meta.revision)
             # dtype location probed against the real release: GLM-5.3-Flash
             # nests it as text_config.dtype; older HF configs use top-level
-            # torch_dtype.  Check both, never guess a third.
+            # torch_dtype; transformers >= 5 writes a TOP-LEVEL `dtype` on a
+            # single-modality config, which is the spelling every model saved
+            # by a current transformers has.  All three are read, and each one
+            # was added because a real release used it and was refused without
+            # it: `malaiwah/GLM-5.2-SIQ-Fruit-bf16` (transformers_version
+            # 5.12.0) declares only top-level `dtype: bfloat16` and reached
+            # "no recognised surface marker" -- a plain bf16 tree refused as
+            # unreadable.  The old comment said "check both, never guess a
+            # third"; the third was not a guess, it was the current default.
             nested = cfg.get("text_config") or {}
-            dtype = str(cfg.get("torch_dtype") or nested.get("dtype")
+            dtype = str(cfg.get("torch_dtype") or cfg.get("dtype")
+                        or nested.get("dtype")
                         or nested.get("torch_dtype") or "").lower()
             if "quantization_config" not in cfg and \
                     "quantization_config" not in nested and dtype in (

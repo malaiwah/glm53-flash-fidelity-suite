@@ -120,14 +120,26 @@ class Teardown:
         # FIDELITY_ENGINE_ROOT -- what was missing is that nothing ever SET them,
         # so a non-JarvisLabs box would have written the whole run into the
         # container's ephemeral layer and lost it on the first restart.
-        self.fs_root = ("/workspace/fidelity"
-                        if getattr(jl, "provider", "jarvislabs") == "runpod"
-                        else "/home/jl_fs/fidelity")
+        #
+        # The BASE is the backend's to declare, because it is a fact about that
+        # provider's image and not something this file can infer. Lambda is why:
+        # its instances log in as `ubuntu`, not root, and `/home` there is
+        # root-owned 0755 -- so `mkdir -p /home/jl_fs/fidelity` is EACCES and
+        # the run dies two minutes in, during the bundle upload, on every
+        # Lambda rental. Measured on a live gpu_1x_gh200:
+        #     drwxr-xr-x 3 root root /home
+        #     mkdir: cannot create directory '/home/jl_fs': Permission denied
+        # The provider classes already state where they may write (`RUNS`), so
+        # `run_base` states it once beside it rather than being re-derived from
+        # a provider name here. Unset -> the previous behaviour exactly, which
+        # is what keeps jarvislabs, runpod and vast byte-identical.
+        base = getattr(jl, "run_base", None) or (
+            "/workspace" if getattr(jl, "provider", "jarvislabs") == "runpod"
+            else "/home/jl_fs")
+        self.fs_root = base + "/fidelity"
         # Named for what it holds -- the venv, the pipeline clone and the
         # patch series -- not for the K6 campaign that first paid for it.
-        self.engine_root = ("/workspace/fidelity-engine"
-                            if getattr(jl, "provider", "jarvislabs") == "runpod"
-                            else "/home/jl_fs/fidelity-engine")
+        self.engine_root = base + "/fidelity-engine"
         self.lease_path: Optional[Path] = None
         self.done = False
         # CLI-02(b): re-entrancy is a SEPARATE flag from completion, so a
@@ -2210,6 +2222,20 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
             # '' means "run the probe, record it, do not enforce it"; the stage
             # script passes the value through verbatim.
             "sanity_expect": getattr(args, "sanity_expect", "Paris"),
+            # hf_capture REFUSES a checkpoint carrying tensors the architecture
+            # has no home for, because that is what a quantization path silently
+            # failing to engage looks like. A speculative-decoding block is the
+            # other thing it looks like, and the two are indistinguishable from
+            # the load report alone -- so the override exists and forces a
+            # BLOCKING disclosure. Nothing reached it from here: this runner had
+            # no flag, so a ROOT capture of any checkpoint that ships an MTP or
+            # draft block died at the capture stage with the box already paid
+            # for. Found on `malaiwah/GLM-5.2-SIQ-Fruit-bf16` -- this suite's own
+            # CI fixture, whose 791 unhoused tensors are its MTP layer 13 -- and
+            # the same shape applies to GLM-5.3-Flash and GLM-5.3, which is
+            # where the roots that matter are going.
+            "allow_unexpected_tensors": bool(
+                getattr(args, "allow_unexpected_tensors", False)),
         }
     return {
         "role": role,
@@ -2587,6 +2613,46 @@ def _progress_counter(text: str) -> "Optional[int]":
 progress_meter_PREFIX = "progress:"
 
 
+def _run_call(jl, method: str, td, run_id: str, **kw):
+    """Ask a backend about a detached run, whichever way it takes the question.
+
+    THIS IS A MONEY BUG FIX, not a tidy-up. `jlapi.JL.run_status(run_id)` needs
+    no instance -- the `jl` CLI knows which box a run belongs to. Every SSH
+    backend has to be told, and `sshbase` says so by RAISING:
+
+        def run_status(self, run_id, machine_id=None):
+            if machine_id is None:
+                raise JLError("run_status needs machine_id on this backend")
+
+    `_await_stage` called `jl.run_status(run_id)` with one argument. So on
+    runpod, vast and lambda -- three of the four providers -- that call raised
+    on EVERY poll, `state` fell back to "", both the `failed` and the
+    `succeeded` branches below became unreachable, and the loop degenerated to
+    "wait for the done marker, or for `--max-runtime`". A stage that SUCCEEDS
+    still ends the poll (its marker is authoritative). A stage that FAILS never
+    does. `run_logs` had the identical signature mismatch, so the text
+    fallback -- the one remaining way out -- could not read the log either, and
+    its `except JLError: continue` swallowed the evidence.
+
+    Measured on a live Lambda GH200: the capture stage exited non-zero at
+    15:03:2x and at 15:12 the controller had not noticed, across four 120 s
+    polls, with the instance ACTIVE and the GPU at 0%. On a Fruit-scale run
+    that is thirty cents; on an M2/M3 root it is bounded only by
+    `--max-runtime`, which is the "$3.07 sitting at 0% GPU" shape
+    `docs/CLOUD-RECIPES.md` section 6 already warns about, arriving through a
+    different door.
+
+    Passing `machine_id` positionally would break JL, whose signature has no
+    such parameter; passing it as a keyword and falling back on TypeError works
+    for both and needs no edit to either backend.
+    """
+    fn = getattr(jl, method)
+    try:
+        return fn(run_id, machine_id=td.machine_id, **kw)
+    except TypeError:
+        return fn(run_id, **kw)
+
+
 def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
     """Poll until the stage ends. Returns done | failed | preempted | deadline.
 
@@ -2646,7 +2712,7 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
             return "failed"
         if run_id:
             try:
-                st = jl.run_status(run_id)
+                st = _run_call(jl, "run_status", td, run_id)
                 if isinstance(st, dict):
                     state = str(st.get("state") or "").lower()
                     code = st.get("exit_code")
@@ -2676,7 +2742,7 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
         # 3. still running: surface an early diagnosis from the log if there is
         #    one, but never conclude success from text.
         try:
-            logs = jl.run_logs(run_id, tail=40) if run_id else ""
+            logs = _run_call(jl, "run_logs", td, run_id, tail=40) if run_id else ""
         except JLError:
             continue
         text = logs if isinstance(logs, str) else json.dumps(logs)
@@ -2865,6 +2931,16 @@ def build_parser() -> argparse.ArgumentParser:
                          "is genuinely expected to answer otherwise. The probe runs "
                          "either way: it is one extra window through a schedule that "
                          "is already loading every layer.")
+    rt.add_argument("--allow-unexpected-tensors", action="store_true",
+                    help="proceed when the checkpoint carries tensors this "
+                         "architecture has no home for. hf_capture refuses them by "
+                         "default because that is what a quantization path failing "
+                         "to engage looks like -- and it is ALSO what a "
+                         "speculative-decoding block looks like on a model whose MTP "
+                         "layer stock transformers does not build. Pass this only "
+                         "after checking the unhoused names ARE that block; it "
+                         "forces a BLOCKING disclosure into the sealed dataset "
+                         "either way.")
 
     pl = p.add_argument_group("panel (a parameter, never a constant)")
     pl.add_argument("--panel", help="HF dataset id of the panel/teacher")
