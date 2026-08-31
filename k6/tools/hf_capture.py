@@ -67,6 +67,11 @@ from fidelity import dsmanifest, dsvalidate  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import layer_outer  # noqa: E402
+# The capture loop is the other multi-hour silence in a stage log: a root
+# capture is 25 windows of full-vocabulary forward and, under the layer-outer
+# schedule, N layers x 25 windows inside a single `run_panel` call.  Same meter,
+# same file-vs-TTY rule -- see k6/tools/progress.py.
+import progress as progress_meter  # noqa: E402
 
 TOOL_VERSION = "hf_capture/1"
 
@@ -797,10 +802,21 @@ def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_se
             streamer.free_layer(index)
             watcher.sample()
 
+    # The layer-outer schedule runs len(layers) x len(windows) forwards inside
+    # ONE `run_panel` call, and only the per-layer boundary logged anything --
+    # so the longest layer looked like a hang.  The meter counts the real inner
+    # unit.  `layer_seconds` is already being accumulated here; the meter reads
+    # nothing else and adds one integer increment per forward.
+    inner_meter = progress_meter.Progress(
+        len(layers) * len(panel.windows), label="layer-outer forwards",
+        interval=getattr(args, "progress_seconds", progress_meter.DEFAULT_INTERVAL_SECONDS),
+    )
+
     def timed_forward(window_index: int) -> None:
         started = time.monotonic()
         forward_window(window_index)
         layer_seconds[window_index] += time.monotonic() - started
+        inner_meter.update(1)
 
     def collect(window_index: int):
         window = panel.windows[window_index]
@@ -816,6 +832,8 @@ def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_se
                                        on_layer_end=on_layer_end, collect=collect)
     except layer_outer.LayerOuterError as exc:
         raise fail(str(exc))
+    finally:
+        inner_meter.close()
     del tap[:]
     if streamer is not None:
         streamer.close()
@@ -990,6 +1008,13 @@ def run_capture(args: argparse.Namespace) -> int:
         precomputed = _run_layer_outer(args, model, streamer, panel, tap, forward_window,
                                        layer_seconds)
 
+    # The outer meter: how far through the panel, and when this capture ends.
+    # `every=1` because a window is minutes long -- every completed one earns a
+    # line even when the 30 s throttle has not elapsed.
+    window_meter = progress_meter.Progress(
+        len(panel.windows), label="windows", every=1,
+        interval=getattr(args, "progress_seconds", progress_meter.DEFAULT_INTERVAL_SECONDS),
+    )
     try:
         for index, window in enumerate(panel.windows):
             ids = window["token_ids"]
@@ -1062,8 +1087,10 @@ def run_capture(args: argparse.Namespace) -> int:
             log(stage="window", index=index, window_id=window["window_id"],
                 rows=int(selected.shape[0]), bytes=os.path.getsize(full),
                 seconds=round(elapsed, 3))
+            window_meter.update(1)
             del tap[:]
     finally:
+        window_meter.close(suffix="capture complete")
         handle.remove()
 
     # -- head ---------------------------------------------------------------
@@ -1489,6 +1516,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--windows", type=int, default=None,
                         help="cap the window count (a subset is disclosed in coverage)")
     parser.add_argument("--tokenizer-id", default=None)
+    parser.add_argument(
+        "--progress-seconds", type=float, default=progress_meter.interval_from_env(),
+        help="how often to print a progress line when stdout is a FILE (default 30; "
+             "0 disables). On a TTY the meter updates in place instead and this is "
+             "ignored. Env override: FIDELITY_PROGRESS_SECONDS.")
     parser.add_argument("--out", required=True, help="dataset root to WRITE (it is created)")
     parser.add_argument("--role", choices=["root", "quant", "derived"], required=True)
     parser.add_argument("--lane", required=True)

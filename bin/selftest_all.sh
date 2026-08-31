@@ -57,6 +57,17 @@ t "provider portability (T5d)"             0 python3 bin/selftest_provider_porta
 # landing half-wired.
 t "gguf lane: shelf, profile, argv, fetch scope, receipt (T13)" \
                                            0 python3 bin/selftest_gguf_lane.py
+# T14. The progress meter. Both capture engines print one line at the start and
+# one at the end, which on the streaming lane is a 2-3 hour silence in a stage
+# log that looks exactly like a hang. The rungs that matter are the ones about
+# the OUTPUT SHAPE: every stage runs `nohup ... > stage-<name>.log`, so a
+# carriage-return spinner writes one megabyte-long line, and the meter must fall
+# back to throttled newline-terminated lines when stdout is not a TTY. P11 is
+# the drift guard: a k6/tools module an engine imports but BUNDLE.txt does not
+# list is an ImportError at the start of the measure stage, i.e. after the
+# bootstrap, the 200 GB fetch and the panel have all been paid for.
+t "progress meter: file vs TTY, throttle, wiring, bundle, stall counter (T14)" \
+                                           0 python3 bin/selftest_progress.py
 t "stack fingerprint (T9: deterministic, engine-absent, MPS/CUDA-absent)" \
                                            0 python3 bin/selftest_stackprint.py
 # The money chokepoint (T11). `jl list` is the only thing that answers "is this

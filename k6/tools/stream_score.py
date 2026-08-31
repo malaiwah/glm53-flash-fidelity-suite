@@ -123,6 +123,12 @@ _TOOLS = Path(__file__).resolve().parent
 if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
+# stdlib-only, ~60 lines, and in bin/BUNDLE.txt beside this file: a fill takes
+# 27 s on the GGUF lane and a window up to 24 min, and both of those used to be
+# unbroken silence in `logs/stage-measure.log`.  See progress.py's docstring for
+# why this is not tqdm and why it renders differently into a file.
+import progress as progress_meter  # noqa: E402
+
 STREAM_PLAN_SCHEMA = "malaiwah.glm53-streaming-student-logit-capture-plan.v1"
 STREAM_BACKEND_SCHEMA = "malaiwah.glm53-streaming-offline-reader-backend.v1"
 # Lane-ONLY identity: a sha256 over just the fields that name the lane
@@ -720,6 +726,7 @@ class ExpertStreamer:
         cache_mode: str = "none",
         cache_dir: Optional[Path] = None,
         progress: bool = True,
+        progress_interval: float = progress_meter.DEFAULT_INTERVAL_SECONDS,
         dione_shards: Any = None,
         native_source: Optional[NativeCheckpointSource] = None,
         exl3hf_source: Optional[Tuple[Any, Any]] = None,
@@ -731,6 +738,10 @@ class ExpertStreamer:
         import torch
 
         self.progress = progress
+        self.progress_interval = float(progress_interval)
+        #: The in-fill meter, rebound by ``_begin_fill`` and ticked by whichever
+        #: of the three fill loops is running.  ``None`` outside a fill.
+        self._fill_meter: Optional[progress_meter.Progress] = None
         # when set, the routed surface is a Dione-style selective-EXL3 tree and
         # each matrix is assembled by dione_surface.load_decoded_module (decode
         # per TP slice, then rank-ordered concat) instead of the packed store.
@@ -907,6 +918,36 @@ class ExpertStreamer:
                 torch.from_numpy(raw).view(torch.bfloat16).reshape(self.slab_experts, 4096, cols)
             )
 
+    # -- in-fill progress --------------------------------------------------
+    #
+    # A fill is the unit that takes real time: ~4.5 s on the exl3/tr3 lanes,
+    # ~27 s on the GGUF lane.  The per-fill JSON record below `_fill_range`
+    # only appears once the fill is OVER, so a stage log went quiet for the
+    # whole of it -- and for a 24-minute window that is indistinguishable from
+    # a hang.  These two methods are the only thing the hot loops call: an
+    # integer add, and a clock read at most once per `check_every` matrices.
+    # No tensor is touched, nothing synchronizes, no reduction order moves.
+    _FILL_CHECK_EVERY = 8
+
+    def _begin_fill(self, layer: int, group: int, count: int) -> None:
+        self._fill_meter = progress_meter.Progress(
+            count * len(("gate_proj", "up_proj", "down_proj")),
+            label="fill L%03d/g%d matrices" % (layer, group),
+            interval=self.progress_interval,
+            enabled=self.progress,
+            check_every=self._FILL_CHECK_EVERY,
+        )
+
+    def _end_fill(self) -> None:
+        meter, self._fill_meter = self._fill_meter, None
+        if meter is not None:
+            meter.close()
+
+    def _tick(self, step: int = 3) -> None:
+        meter = self._fill_meter
+        if meter is not None:
+            meter.update(step)
+
     # -- fill -------------------------------------------------------------
     def ensure(self, layer: int, group: int = 0) -> None:
         import torch
@@ -947,7 +988,11 @@ class ExpertStreamer:
             cpu_down = torch.empty(288, 4096, 2048, dtype=torch.bfloat16, device="cpu")
         lo = group * self.slab_experts
         record_census = key not in self._census_layers
-        self._fill_range(layer, lo, self.slab_experts, cpu_gate_up, cpu_down, record_census)
+        self._begin_fill(layer, group, self.slab_experts)
+        try:
+            self._fill_range(layer, lo, self.slab_experts, cpu_gate_up, cpu_down, record_census)
+        finally:
+            self._end_fill()
         if record_census:
             self._census_layers.add(key)
         if want_cache:
@@ -1057,6 +1102,7 @@ class ExpertStreamer:
                     cpu_gate_up[expert].copy_(gate_up_bf16.to("cpu"))
                     cpu_down[expert].copy_(down_bf16.to("cpu"))
                 self.decoded_matrices += 3
+                self._tick(3)
                 if record_census:
                     self.census.append(
                         {"layer": layer, "global_expert": expert, "local_expert": offset,
@@ -1158,6 +1204,7 @@ class ExpertStreamer:
                     cpu_gate_up[expert].copy_(gate_up_bf16.to("cpu"))
                     cpu_down[expert].copy_(down_bf16.to("cpu"))
                 self.decoded_matrices += 3
+                self._tick(3)
                 if record_census:
                     self.census.append(
                         {"layer": layer, "global_expert": expert, "local_expert": offset,
@@ -1272,6 +1319,7 @@ class ExpertStreamer:
                     cpu_gate_up[expert].copy_(gate_up_bf16.to("cpu"))
                     cpu_down[expert].copy_(down_bf16.to("cpu"))
                 self.decoded_matrices += 3
+                self._tick(3)
                 choices = [row[1] for row in payloads]
                 if source is not None:
                     self.payload_bytes += sum(int(row["bytes"]) for row in choices)
@@ -1910,6 +1958,11 @@ def main() -> int:
                              "it is the only mode, because any layer-major driver would have to "
                              "re-implement Glm5NextTextModel.forward and lose exactly the parity "
                              "this tool exists to keep (use --decode-cache to amortise instead)")
+    stream.add_argument(
+        "--progress-seconds", type=float, default=progress_meter.interval_from_env(),
+        help="how often to print a progress line when stdout is a FILE (default 30; "
+             "0 disables). On a TTY the meter updates in place instead and this is "
+             "ignored. Env override: FIDELITY_PROGRESS_SECONDS.")
     stream.add_argument("--decode-cache", choices=("none", "ram", "disk"), default="none")
     stream.add_argument("--decode-cache-dir", type=Path)
     stream.add_argument("--work-dir", type=Path,
@@ -3357,6 +3410,7 @@ def main() -> int:
         layers=layers,
         slab_experts=memory["slab_experts"],
         decode_threads=args.decode_threads,
+        progress_interval=args.progress_seconds,
         unpack_device=unpack_device,
         cache_mode=args.decode_cache,
         cache_dir=args.decode_cache_dir.resolve() if args.decode_cache_dir else None,
@@ -3572,6 +3626,15 @@ def main() -> int:
     capture_started = time.monotonic()
     forward_seconds = 0.0
     stored_positions_total = 0
+    # The OUTER meter: how far through the panel, and when this capture ends.
+    # A fill meter answers "is it alive"; this one answers "will it finish
+    # inside --max-runtime", which is the question that decided the first GGUF
+    # run.  `every=1` because a window is minutes long, so every completed one
+    # is worth a line even when the 30 s throttle has not elapsed.
+    window_meter = progress_meter.Progress(
+        len(selection), label="windows",
+        interval=args.progress_seconds, every=1,
+    )
     for index, window in selection:
         tokens = np.load(window.token_path, allow_pickle=False)
         mask = np.load(window.attention_mask_path, allow_pickle=False)
@@ -3704,7 +3767,9 @@ def main() -> int:
             ),
             flush=True,
         )
+        window_meter.update(1)
         del ids, attention_mask, output_logits, selected, stored
+    window_meter.close(suffix="capture complete")
 
     expected_matrices = len(layers) * 288 * 3
     census_matrices = len(streamer.census) * 3

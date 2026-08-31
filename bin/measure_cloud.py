@@ -2466,6 +2466,51 @@ def _stage_is_alive(jl, td, stage: str) -> bool:
     return (out or "").strip().splitlines()[-1:] == ["alive"]
 
 
+#: How many consecutive 120 s polls may read the SAME progress counter before
+#: the controller says so out loud.  Five polls is ten minutes; the slowest unit
+#: any engine counts is a streaming window at ~24 min, but the meter emits
+#: mid-window lines every 30 s, so ten minutes of a frozen counter is not slow
+#: work -- it is a stalled one.  (The first GGUF run sat at 0% GPU for two hours
+#: and nothing said so.)
+_PROGRESS_STALL_POLLS = 5
+
+
+def _progress_counter(text: str) -> "Optional[int]":
+    """The item count from the newest ``progress:`` line in a log tail.
+
+    k6/tools/progress.py renders ``progress: <label> <n>/<total> ...`` (or
+    ``progress: <label> <n> ...`` when the total is unknown).  ``n`` counts
+    within one unit and RESETS when the next unit starts (each layer fill gets
+    its own meter), so this is not a monotonic stage-wide clock and must not be
+    read as one.  What it supports is the weaker, sufficient test: the newest
+    meter line reading the SAME number, poll after poll, means nothing has
+    advanced -- which is the one thing `_stage_is_alive`'s pgrep cannot see,
+    because a hung process is still a process.  A reset makes the numbers
+    differ, so a reset can only ever CLEAR the suspicion, never raise it.
+
+    Returns None when the tail carries no meter line at all -- an engine
+    predating the meter, or a stage that has not reached its loop yet.  None is
+    not evidence of a stall and never counts as one.
+    """
+    found = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith(progress_meter_PREFIX):
+            continue
+        for token in line[len(progress_meter_PREFIX):].split():
+            head = token.split("/")[0]
+            if head.isdigit():
+                found = int(head)
+                break
+    return found
+
+
+#: Duplicated from k6/tools/progress.py rather than imported: bin/ must run on
+#: stock python3.9 with no torch and no k6 tools on sys.path, and this is one
+#: seven-character string.  bin/selftest_progress.py asserts the two agree.
+progress_meter_PREFIX = "progress:"
+
+
 def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
     """Poll until the stage ends. Returns done | failed | preempted | deadline.
 
@@ -2479,6 +2524,8 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
     the run wrapper reports.
     """
     quiet = 0
+    last_progress: Optional[int] = None
+    stalled_polls = 0
     while True:
         if time.time() > deadline:
             return "deadline"
@@ -2559,6 +2606,31 @@ def _await_stage(con, jl, td, run_id, stage: str, deadline: float) -> str:
         text = logs if isinstance(logs, str) else json.dumps(logs)
         if "Traceback" in text or "REFUSED" in text or "stage_measure: error" in text:
             return "failed"
+
+        # 4. liveness is not progress.  `_stage_is_alive` answers "is the
+        #    process there", which a hung process answers yes to forever.  The
+        #    engine's meter publishes a monotonic item counter; a counter that
+        #    has not moved in _PROGRESS_STALL_POLLS polls is REPORTED, and only
+        #    reported.  This deliberately does NOT return a verdict: the run may
+        #    legitimately be inside a long non-counting phase (a 200 GB fetch, a
+        #    materialize), and killing a paid run on a heuristic is a worse
+        #    failure than watching a stalled one until --max-runtime.  Teardown
+        #    semantics are untouched; the operator gets told.
+        seen = _progress_counter(text)
+        if seen is None:
+            continue
+        if last_progress is not None and seen == last_progress:
+            stalled_polls += 1
+            if stalled_polls == _PROGRESS_STALL_POLLS:
+                con.warn(
+                    "stage %s: progress counter stuck at %d for %d polls (~%d min) "
+                    "-- the process is alive but not advancing; check GPU "
+                    "utilization before it burns the whole --max-runtime"
+                    % (stage, seen, stalled_polls, stalled_polls * 2))
+                stalled_polls = 0
+        else:
+            stalled_polls = 0
+        last_progress = seen
 
 
 def _recover(args, con, jl, td, plan_data) -> None:
