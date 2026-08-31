@@ -2193,6 +2193,15 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
             "dataset_id": args.dataset_id,
             "dataset_name": args.dataset_name or args.dataset_id,
             "author": args.measurer,
+            # Race mode: the fetch runs INSIDE the capture, ordered by the
+            # layer-outer schedule's own needs. `preview_of` is what makes the
+            # result a separate identity rather than a first draft of one.
+            "race": bool(getattr(args, "race", False)),
+            "race_workers": int(getattr(args, "race_workers", 8) or 8),
+            "preview_of": getattr(args, "preview_of", None) or None,
+            # '' means "run the probe, record it, do not enforce it"; the stage
+            # script passes the value through verbatim.
+            "sanity_expect": getattr(args, "sanity_expect", "Paris"),
         }
     return {
         "role": role,
@@ -2354,7 +2363,14 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
         # candidate to diverge from). `capture` writes the sealed dataset and
         # `verify` recomputes its digest chain before the box is destroyed --
         # the last moment at which a bad capture is free to discard.
-        stages = ["setup", "fetch_target", "capture", "verify"]
+        if getattr(args, "race", False):
+            # The fetch is not a stage any more: it is a thread inside the
+            # capture, ordered by which layer the schedule wants next.
+            # `race_bootstrap` pulls only the kilobytes that make the rest
+            # plannable -- config, tokenizer, and the shard index.
+            stages = ["setup", "race_bootstrap", "race_capture", "verify"]
+        else:
+            stages = ["setup", "fetch_target", "capture", "verify"]
     else:
         stages = ["setup", "fetch_target", "fetch_panel", "measure", "score", "seal"]
     if (plan_data.get("target") or {}).get("surface") in ("exl3hf", "tr3-published",
@@ -2834,6 +2850,30 @@ def build_parser() -> argparse.ArgumentParser:
                          "why published roots are hidden-form")
     rt.add_argument("--schedule", default="layer-outer",
                     choices=("layer-outer", "window-outer"))
+    rt.add_argument("--race", action="store_true",
+                    help="RACE MODE (docs/RACE-MODE.md): fetch the checkpoint WHILE "
+                         "capturing it, in the order the layer-outer schedule needs "
+                         "it, instead of waiting for the whole tree. Merges the "
+                         "fetch_target and capture stages. It changes when bytes "
+                         "arrive, never which -- the capture_content_digest is the "
+                         "one a fetch-then-capture run produces.")
+    rt.add_argument("--race-workers", type=int, default=8,
+                    help="parallel downloads for --race (default 8)")
+    rt.add_argument("--preview-of", metavar="FINAL_DATASET_ID",
+                    help="seal this capture as a PRELIMINARY dataset superseded by "
+                         "FINAL_DATASET_ID -- one cold run, determinism NOT "
+                         "demonstrated, its own dataset id, not_submittable, and a "
+                         "blocking disclosure. A preview and a final are two "
+                         "datasets, never two versions of one: `reference_id` is a "
+                         "comparability-key field, so updating a published root in "
+                         "place would silently make old and new rows share a table.")
+    rt.add_argument("--sanity-expect", default="Paris",
+                    help="the continuation the generation sanity probe requires for "
+                         "\"The capital of France is\" (default Paris). Pass '' to "
+                         "record the probe without enforcing it -- for a model that "
+                         "is genuinely expected to answer otherwise. The probe runs "
+                         "either way: it is one extra window through a schedule that "
+                         "is already loading every layer.")
 
     pl = p.add_argument_group("panel (a parameter, never a constant)")
     pl.add_argument("--panel", help="HF dataset id of the panel/teacher")
@@ -2931,6 +2971,32 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "dataset being written; a capture with no identity cannot "
                     "be published or cited)")
             return EXIT_REFUSED
+        if args.race and args.schedule != "layer-outer":
+            con.err("--race needs --schedule layer-outer: every other schedule "
+                    "materialises the whole model before the first window, so "
+                    "there is no not-yet-arrived layer to overlap the fetch "
+                    "with. Nothing was created. $0.00 spent.")
+            return EXIT_REFUSED
+        if args.preview_of and args.preview_of == args.dataset_id:
+            con.err("--preview-of is the same id as --dataset-id. A preview and "
+                    "a final are two DATASETS, not two versions of one: "
+                    "reference_id is a comparability-key field, so rows measured "
+                    "against the one-run bytes and rows measured against the "
+                    "full-evidence bytes would land in the SAME comparability "
+                    "group and be silently incomparable. Convention: give the "
+                    "preview the final id with a `.preview` suffix.")
+            return EXIT_REFUSED
+        if args.race and not args.preview_of:
+            # Not a refusal: racing run 2 of a two-run root under the final id is
+            # a perfectly good use of the flag. But sealing run 1 under the FINAL
+            # id and publishing it is the exact failure --preview-of exists to
+            # prevent, and the moment to say so is before the rental.
+            con.warn("--race without --preview-of",
+                     "this capture will be sealed under the FINAL dataset id from "
+                     "ONE cold run. Fine if a second cold capture and the "
+                     "self-compare come before you publish it; if you intend to "
+                     "publish now, pass --preview-of <final id> so the preliminary "
+                     "result gets its own identity")
         if args.panel_dir:
             # Checked HERE, before the plan and before any spend. The uploader
             # addresses bundle files by their path RELATIVE to the suite root,

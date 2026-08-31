@@ -246,6 +246,36 @@ thereafter downloaded rather than re-run. Step 2 is publishable **standalone**,
 before any comparison exists. Step 3 runs with **neither** set of weights
 present.
 
+### Race mode — `--role root --race`
+
+When a model lands on the Hub, the quants appear within hours and nobody can
+say how good any of them are, because there is no root to measure against.
+[`docs/RACE-MODE.md`](../docs/RACE-MODE.md) is the whole story; the short form:
+
+* **The fetch stops being a barrier.** `k6/tools/race_fetch.py` reads
+  `model.safetensors.index.json`, buckets every shard by the first layer that
+  needs it, and downloads in that order while the capture runs. The layer-outer
+  loader blocks on layer N's shards only when it is about to load layer N. Worst
+  case no slower than fetch-then-capture; every run writes a
+  `race-fetch-report.json` with `blocked_seconds` measured, so the saving is a
+  receipt rather than a claim. The digest is unchanged: race mode changes when
+  bytes arrive, never which.
+  The head is a **priority-0** file, not a last one — the resident load, the
+  vocab/hidden sizes and the capture tap all need it before layer 0.
+* **A preview is a different DATASET, not an earlier version of one.**
+  `--preview-of FINAL_ID` seals the first cold run under its own `dataset.id`
+  with `not_submittable: true` and a blocking `preview_capture` disclosure.
+  `reference_id` is a `COMPARABILITY_KEY_FIELDS` member, so updating a published
+  root in place would put rows measured against different bytes into ONE
+  comparability group; passing the same id for both is refused by name.
+* **The generation sanity check runs on EVERY capture**, race or not
+  (`k6/tools/generation_probe.py`). `"The capital of France is"` → `" Paris"`,
+  as one extra window through the schedule already loading every layer: ~1/N of
+  an N-window panel and zero extra weight loading. It is the only guard here
+  that sees a shard which loaded as ZEROS — names, shapes and tensor counts are
+  all correct in that case. Recorded always; fail-closed unconditionally on a
+  degenerate distribution and on a declared `--sanity-expect`.
+
 ### Before you start — what exists today, and what does not
 
 The format and the tooling are complete and tested; the **published artifacts

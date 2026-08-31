@@ -229,6 +229,52 @@ def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
         raise Refusal("form", "form_mismatch", "%s vs %s" % (form_a, form_b))
     gates["form"] = _gate(True, "%s vs %s" % (form_a, form_b))
 
+    # --- 2b. provenance: is either side a PREVIEW capture? ------------------
+    #
+    # A race-mode preview root is a real, sealed, verifiable dataset backed by
+    # ONE cold run, with cross-run determinism NOT demonstrated. It is published
+    # under its own dataset id -- which is the `reference_id` half of the
+    # comparability key computed a few hundred lines below -- so a row measured
+    # against it can never share a table with a row measured against the final.
+    # That is the identity half.
+    #
+    # This is the publishability half. A comparison against a preview is a real
+    # result and gets a real receipt; what it must never do is become a registry
+    # row, because the registry's whole contract is that a published number's
+    # reference is settled. Rather than invent a new refusal, this raises the
+    # marker the comparator ALREADY refuses on: SC-5 turns any blocking
+    # disclosure into a `NotAMeasurement` inside `emit_submission`, and DISC-003
+    # forces status pending/retracted downstream. One mechanism, already tested.
+    preview_sides = []
+    for label, dataset in (("reference", reference), ("candidate", candidate)):
+        block = dataset.manifest.get("preview") or {}
+        if dataset.manifest.get("not_submittable") is True or block:
+            preview_sides.append((label, dataset, block))
+    if preview_sides:
+        detail = "; ".join(
+            "%s %s is a PREVIEW capture (%s cold run(s), determinism not "
+            "demonstrated, superseded by %s)"
+            % (label, (ds.manifest.get("dataset") or {}).get("id"),
+               (ds.manifest.get("determinism") or {}).get("run_count"),
+               block.get("superseded_by") or "an unnamed final capture")
+            for label, ds, block in preview_sides)
+        findings["class"] = "advisory"
+        findings["usable_as_floor"] = False
+        findings["disclosures"].append({
+            "code": "preview_capture", "severity": "blocking",
+            "affects_comparability": True,
+            "detail": "%s. The number is a true statement about that PREVIEW dataset and "
+                      "about nothing else: it is not a distance from the final root, and "
+                      "the preview will never be updated in place to become one. Re-run "
+                      "the comparison against the final capture to obtain a publishable "
+                      "row." % detail,
+        })
+        gates["provenance"] = _gate(True, "preview capture on %d side(s); the receipt "
+                                          "stands, a registry row does not"
+                                    % len(preview_sides))
+    else:
+        gates["provenance"] = _gate(True, "neither side is a preview capture")
+
     # --- 3. panel -----------------------------------------------------------
     pa, pb = reference.manifest["panel"], candidate.manifest["panel"]
     if pa["suite_token_hash_sha256"] != pb["suite_token_hash_sha256"]:

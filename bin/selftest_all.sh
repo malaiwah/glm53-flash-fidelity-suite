@@ -48,6 +48,14 @@ t "preview estimator coverage (T3)"        0 python3 bin/selftest_preview_stats.
 t "submission refusability (T5)"           0 python3 bin/selftest_submission_refusal.py
 t "scope must match the release (T5b)"      0 python3 bin/selftest_scope_crosscheck.py
 t "root capture: --role root (T5c)"        0 python3 bin/selftest_root_capture.py
+# T15. Race mode: the overlapped fetch, the preview/final identity separation and
+# the generation sanity probe. The overlap is measured against a CONTROL arm on a
+# simulated link, because a schedule cannot be A/B-tested on a real 1.5 TB fetch;
+# the identity cases are the ones that matter most, because updating a published
+# root in place would put rows measured against different bytes in ONE
+# comparability group. Needs torch+transformers; SKIPs loudly without them.
+t "race mode: overlap, preview identity, generation probe (T15)" \
+                                           0 "$VPY" bin/selftest_race_mode.py
 t "provider portability (T5d)"             0 python3 bin/selftest_provider_portability.py
 t "fp8 -> bf16 losslessness (T5e)"         0 python3 bin/selftest_fp8_lossless.py
 # T13. The GGUF lane end to end: shelf -> plan -> argv -> fetch -> receipt. The

@@ -1,0 +1,144 @@
+{
+  "control_arm": {
+    "capture_content_digest": "38821f7c593db0b793cfd1593873e27afe07481d33cabbb87e892e3913e73361",
+    "capture_seconds": 18.86,
+    "description": "hf download the whole repo (8 workers), THEN capture",
+    "fetch_bytes_per_second": 119333531.9,
+    "fetch_seconds": 84.66,
+    "total_seconds": 103.52
+  },
+  "digest_equality_is_the_point": "Both arms produced capture_content_digest 38821f7c593db0b793cfd1593873e27afe07481d33cabbb87e892e3913e73361. Race mode changes when bytes arrive, never which bytes, never the order of any arithmetic.",
+  "host": {
+    "device": "cpu",
+    "layer_residency": "stream",
+    "note": "Apple Silicon laptop; no GPU rented for this measurement",
+    "schedule": "layer-outer"
+  },
+  "model": {
+    "bytes": 10102776813,
+    "decoder_layers_built": 13,
+    "index_layers_present": 14,
+    "repository": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+    "revision": "ef68013aa6e16453cf52b5b77647f72fbe258c3c",
+    "shards": 16
+  },
+  "not_submittable": true,
+  "panel": {
+    "context_length": 256,
+    "note": "synthetic; random token ids; wall-clock harness only",
+    "windows": 8
+  },
+  "race_arm": {
+    "capture_content_digest": "38821f7c593db0b793cfd1593873e27afe07481d33cabbb87e892e3913e73361",
+    "description": "bootstrap files only, then capture with the fetch overlapped (8 workers)",
+    "fetch": {
+      "blocked_seconds": 72.447,
+      "blocks": [
+        {
+          "seconds": 19.274,
+          "shards": [
+            "model-embed.safetensors",
+            "model-head.safetensors"
+          ],
+          "what": "resident-set shards"
+        },
+        {
+          "seconds": 8.915,
+          "shards": [
+            "model-layer-003.safetensors"
+          ],
+          "what": "layer 3 shards"
+        },
+        {
+          "seconds": 5.089,
+          "shards": [
+            "model-layer-006.safetensors"
+          ],
+          "what": "layer 6 shards"
+        },
+        {
+          "seconds": 5.869,
+          "shards": [
+            "model-layer-007.safetensors"
+          ],
+          "what": "layer 7 shards"
+        },
+        {
+          "seconds": 4.392,
+          "shards": [
+            "model-layer-008.safetensors"
+          ],
+          "what": "layer 8 shards"
+        },
+        {
+          "seconds": 7.376,
+          "shards": [
+            "model-layer-009.safetensors"
+          ],
+          "what": "layer 9 shards"
+        },
+        {
+          "seconds": 5.254,
+          "shards": [
+            "model-layer-010.safetensors"
+          ],
+          "what": "layer 10 shards"
+        },
+        {
+          "seconds": 7.977,
+          "shards": [
+            "model-layer-011.safetensors"
+          ],
+          "what": "layer 11 shards"
+        },
+        {
+          "seconds": 8.299,
+          "shards": [
+            "model-layer-012.safetensors"
+          ],
+          "what": "layer 12 shards"
+        }
+      ],
+      "fetch_thread_seconds_total": 509.431,
+      "fetch_wall_seconds": 86.663,
+      "files": 19,
+      "note": "blocked_seconds is measured: the time the capture spent waiting for bytes it needed next. fetch_wall_seconds is the background fetch's own wall clock. The saving claimed by a race run is (fetch_wall + capture_wall) - race_wall, and the control arm that supplies the first term must be RUN, not assumed.",
+      "schema": "malaiwah.race-fetch-report.v1",
+      "serial_fetch_seconds_estimate": 63.679,
+      "tail_join_seconds": 0.0,
+      "workers": 8
+    },
+    "plan_order": [
+      "model-embed.safetensors",
+      "model-head.safetensors",
+      "model-layer-000.safetensors",
+      "model-layer-001.safetensors",
+      "model-layer-002.safetensors",
+      "model-layer-003.safetensors",
+      "model-layer-004.safetensors",
+      "model-layer-005.safetensors",
+      "model-layer-006.safetensors",
+      "model-layer-007.safetensors",
+      "model-layer-008.safetensors",
+      "model-layer-009.safetensors",
+      "model-layer-010.safetensors",
+      "model-layer-011.safetensors",
+      "model-layer-012.safetensors",
+      "model-layer-013.safetensors"
+    ],
+    "resident_shards": [
+      "model-embed.safetensors",
+      "model-head.safetensors"
+    ],
+    "total_seconds": 91.01
+  },
+  "result": {
+    "capture_hidden_fraction": 0.6633,
+    "digests_equal": true,
+    "interpretation": "This run is in the FETCH-DOMINATED regime (85 s of fetch against 19 s of capture), so the ceiling on the saving is the CAPTURE, not the fetch: at most 18.86 s could be hidden and 12.51 s was. The measured blocked_seconds of 72.4 s is the fetch time the capture could not hide because there was not enough capture to hide it behind. A production root is the opposite regime -- hours of capture against tens of minutes of fetch -- where the same mechanism hides the whole fetch instead. The generalisable statement is: the saving is bounded above by min(fetch_wall, capture_wall), less the un-overlappable prefix (the resident set plus layer 0).",
+    "saved_fraction_of_total": 0.1208,
+    "saved_seconds": 12.51
+  },
+  "schema": "malaiwah.race-mode-ab-evidence.v1",
+  "what_this_is": "A controlled A/B of race mode against a real Hugging Face fetch. It is a WALL-CLOCK and DIGEST measurement of a scheduling change; it is not a fidelity measurement, the panel is a throwaway of random token ids, and neither capture is publishable (both carry blocking disclosures for --allow-unexpected-tensors over the MTP block)."
+}

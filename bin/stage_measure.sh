@@ -50,6 +50,13 @@ for part in sys.argv[2].split("."):
     else:
         cur = sys.argv[3]
         break
+# A JSON null is ABSENT, not the four-letter string "None". Without this line
+# every `[ -n "$X" ]` guard in this file reads a null as PRESENT: a job that set
+# no preview handed the capture `--preview-of None`, a dataset id spelled None,
+# and a job with no capture.panel_dir failed with "panel not uploaded: .../None"
+# instead of naming the missing key.
+if cur is None:
+    cur = sys.argv[3]
 print(cur if not isinstance(cur, (dict, list)) else json.dumps(cur))
 ' "$CONF" "$1" "${2-}"
 }
@@ -542,6 +549,121 @@ capture)
   log "done"
   ;;
 
+race_bootstrap)
+  # RACE MODE, step 1. Fetch ONLY the kilobytes that make everything else
+  # plannable: config.json (the architecture), the tokenizer (the sanity probe
+  # needs it), and above all model.safetensors.index.json -- whose weight_map is
+  # the map from tensor name to shard, i.e. the only statement of which shard
+  # holds which layer. Without it there is no fetch ORDER, only a download.
+  #
+  # This is deliberately NOT `fetch_target`: no shard is fetched here at all.
+  # The shards are fetched by the capture, in the order it needs them.
+  load_token
+  REPO="$(jqget target.repo_id)"
+  REV="$(jqget target.revision)"
+  DEST="$MODELS/target"
+  [ -n "$REPO" ] || { echo "job.json has no target.repo_id" >&2; exit 2; }
+  mkdir -p "$DEST"
+  log "fetching the bootstrap files of $REPO @ $REV (no shards)"
+  # `--include` per name rather than a whole-repo pull: the shards are the
+  # capture's business, and a sidecar the publisher adds tomorrow must not
+  # silently join a run whose receipt names today's file list.
+  HF_HUB_ENABLE_HF_TRANSFER=1 HF_HOME="$FS/hf" \
+    "$VENV/bin/hf" download "$REPO" --revision "$REV" --local-dir "$DEST" \
+      --include config.json \
+      --include model.safetensors.index.json \
+      --include generation_config.json \
+      --include "tokenizer*" \
+      --include special_tokens_map.json \
+      --include chat_template.jinja \
+      >>"$LOGS/race_bootstrap.log" 2>&1 || true
+  if [ ! -f "$DEST/model.safetensors.index.json" ]; then
+    echo "race mode needs $DEST/model.safetensors.index.json: it is the map from" >&2
+    echo "  tensor to shard, and without it the fetch cannot be ordered by layer." >&2
+    echo "  A single-shard checkpoint has nothing to overlap; run without --race." >&2
+    exit 3
+  fi
+  python3 -c 'import json,sys; wm=json.load(open(sys.argv[1])).get("weight_map") or {}; print("index: %d tensors over %d shards" % (len(wm), len(set(wm.values()))))' \
+      "$DEST/model.safetensors.index.json" | tee -a "$LOGS/race_bootstrap.log"
+  df -h "$FS" | tee -a "$LOGS/race_bootstrap.log"
+  touch "$marker"
+  log "done"
+  ;;
+
+race_capture)
+  # RACE MODE, step 2. The fetch and the capture are ONE process: hf_capture
+  # starts a priority-ordered background fetch (resident set, then layer 0,
+  # layer 1, ...) and the layer-outer loader blocks on the shards for layer N
+  # only when it is about to load layer N. Worst case this is no slower than
+  # fetch-then-capture; the report written at the end says what it actually
+  # was, measured, per block -- it is not asserted here.
+  ROLE="$(jqget role quant)"
+  if [ "$ROLE" != "root" ]; then
+    echo "the race_capture stage is --role root only (job.json says role=$ROLE)" >&2
+    exit 2
+  fi
+  load_token
+  REPO="$(jqget target.repo_id)"
+  REV="$(jqget target.revision)"
+  LANE="$(jqget lane streaming)"
+  FORM="$(jqget capture.form hidden)"
+  SCHED="$(jqget capture.schedule layer-outer)"
+  PANEL_REL="$(jqget capture.panel_dir)"
+  PANEL_ID="$(jqget capture.panel_id)"
+  DSID="$(jqget capture.dataset_id)"
+  DSNAME="$(jqget capture.dataset_name)"
+  AUTHOR="$(jqget capture.author malaiwah)"
+  WORKERS="$(jqget capture.race_workers 8)"
+  PREVIEW_OF="$(jqget capture.preview_of)"
+  EXPECT="$(jqget capture.sanity_expect Paris)"
+  OUT="$FS/dataset"
+  [ -n "$DSID" ] || { echo "job.json has no capture.dataset_id" >&2; exit 2; }
+  [ -n "$PANEL_REL" ] || { echo "job.json has no capture.panel_dir" >&2; exit 2; }
+  [ -d "$FS/$PANEL_REL" ] || { echo "panel not uploaded: $FS/$PANEL_REL" >&2; exit 2; }
+  [ "$SCHED" = "layer-outer" ] || {
+    echo "race mode needs schedule=layer-outer (job.json says $SCHED)" >&2; exit 2; }
+  # Built as an ARRAY, never an eval: these values come from job.json, and the
+  # shell must not be parsing data (SEC-01).
+  EXTRA=()
+  if [ -n "$PREVIEW_OF" ]; then EXTRA+=(--preview-of "$PREVIEW_OF"); fi
+  EXTRA+=(--sanity-expect "$EXPECT")
+  if [ -d "$OUT" ]; then
+    log "dataset already written at $OUT -- skipping (receipt-resumable)"
+  else
+    log "race capture $REPO @ $REV workers=$WORKERS panel=$PANEL_ID preview_of=${PREVIEW_OF:-none}"
+    HF_HOME="$FS/hf" HF_HUB_ENABLE_HF_TRANSFER=1 "$PY" "$FS/bin/fidelity_dataset.py" capture \
+        --out "$OUT" --form "$FORM" --role root --lane "$LANE" \
+        --engine hf-transformers -- \
+        --model "$MODELS/target" \
+        --repository "$REPO" --model-revision "$REV" \
+        --panel "$FS/$PANEL_REL" --panel-id "$PANEL_ID" \
+        --schedule "$SCHED" --layer-residency stream --dtype bfloat16 \
+        --dataset-id "$DSID" --dataset-name "$DSNAME" \
+        --author "$AUTHOR" --role root \
+        --race-repo "$REPO" --race-revision "$REV" \
+        --race-workers "$WORKERS" \
+        --race-report "$RCPT/race-fetch-report.json" \
+        "${EXTRA[@]}" \
+        2>&1 | tee -a "$LOGS/race_capture.log"
+  fi
+  # The release's published seal, verified once the tree is COMPLETE -- which
+  # under race mode is only true after the capture returns, not before it
+  # starts. Same instrument as fetch_target, moved to the moment it can run.
+  if [ -f "$MODELS/target/SHA256SUMS" ]; then
+    log "verifying published SHA256SUMS (weights fail-closed; absent sidecars reported)"
+    python3 "$FS/bin/verify_published_sums.py" --root "$MODELS/target" \
+        --out "$RCPT/shard-verification.json" \
+        2>&1 | tee "$RCPT/shard-verification.txt"
+  else
+    log "no SHA256SUMS published; recording that fact in the receipt"
+    echo "no SHA256SUMS in release" > "$RCPT/shard-verification.txt"
+  fi
+  du -sh "$OUT" | tee -a "$LOGS/race_capture.log"
+  df -h "$FS" | tee -a "$LOGS/race_capture.log"
+  touch "$marker"
+  log "done"
+  ;;
+
 verify)
   # Recompute the dataset's own seal and digest chain BEFORE the box is
   # destroyed. This is the last moment at which a bad capture is free to throw
@@ -563,6 +685,7 @@ verify)
   echo "unknown stage: $STAGE" >&2
   echo "stages: setup fetch_target fetch_panel materialize measure score seal" >&2
   echo "        capture verify   (--role root)" >&2
+  echo "        race_bootstrap race_capture verify   (--role root --race)" >&2
   exit 2
   ;;
 esac

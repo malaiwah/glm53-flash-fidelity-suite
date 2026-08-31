@@ -101,7 +101,7 @@ import json
 import os
 import re
 import struct
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 SCHEDULE_WINDOW_OUTER = "window-outer"
 SCHEDULE_LAYER_OUTER = "layer-outer"
@@ -191,8 +191,18 @@ def _safetensors_header(path: str) -> Tuple[Dict[str, Any], int]:
     return header, 8 + header_len + end
 
 
-def audit_checkpoint_tree(model_dir: str) -> Dict[str, Any]:
+def audit_checkpoint_tree(model_dir: str,
+                          shards: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """Refuse a checkpoint whose shards can hand back holes instead of weights.
+
+    `shards` restricts the audit to a NAMED SUBSET, for the overlapped fetch of
+    `k6/tools/race_fetch.py`: at the moment layer N is about to be loaded, the
+    shards for layer N+1 may legitimately still be downloading, and auditing
+    them would refuse a tree that is merely incomplete-so-far.  The subset audit
+    is not weaker on what it covers -- each named shard is still checked against
+    its own header length, and the index/header key-set comparison is still
+    exact, restricted on BOTH sides to the named shards.  Every shard is audited
+    exactly once, immediately before the first load that reads it.
 
     Stage A (docs/GLM53-ROOT-FEASIBILITY.md) found that `transformers`
     enumerates each shard's own header, not the pruned index.  A loader that
@@ -224,9 +234,27 @@ def audit_checkpoint_tree(model_dir: str) -> Dict[str, Any]:
         weight_map = index.get("weight_map") or {}
         index_keys = set(weight_map)
         shard_names = sorted(set(weight_map.values()))
+        if shards is not None:
+            wanted = set(shards)
+            unknown = sorted(wanted - set(shard_names))
+            if unknown:
+                raise LayerOuterError(
+                    "REFUSED: asked to audit %d shard(s) the checkpoint index does not "
+                    "name: %s. A shard nothing in the index points at holds tensors no "
+                    "load will ever ask for by name -- or the audit is being driven from "
+                    "a stale plan."
+                    % (len(unknown), ", ".join(unknown[:4])))
+            shard_names = sorted(wanted)
+            index_keys = {key for key, shard in weight_map.items() if shard in wanted}
     else:
         shard_names = sorted(name for name in os.listdir(model_dir)
                              if name.endswith(".safetensors"))
+        if shards is not None:
+            raise LayerOuterError(
+                "REFUSED: a subset audit needs model.safetensors.index.json, which %s "
+                "does not have. Without the index there is no map from shard to tensor, "
+                "so 'these shards are complete' cannot be stated about a partial tree."
+                % model_dir)
     if not shard_names:
         raise LayerOuterError("no *.safetensors shards in %s" % model_dir)
 
@@ -370,6 +398,44 @@ class StreamedModel(object):
         self.pointers = []
 
 
+class _LayerCounts(object):
+    """A live view of "how many checkpoint tensors does layer N have".
+
+    Not a snapshot: under a gate the layer subsets are still being filled in as
+    shards land, and a dict comprehension taken at build time would report 0 for
+    every layer that had not arrived yet -- in the log line whose whole job is to
+    say what was just loaded.
+    """
+
+    def __init__(self, layer_subset: Dict[int, Dict[str, Any]]):
+        self._subset = layer_subset
+
+    def get(self, index: int, default: Any = None) -> Any:
+        subset = self._subset.get(int(index))
+        return len(subset) if subset is not None else default
+
+    def __getitem__(self, index: int) -> int:
+        return len(self._subset[int(index)])
+
+    def __len__(self) -> int:
+        return len(self._subset)
+
+    def items(self):
+        return [(index, len(subset)) for index, subset in sorted(self._subset.items())]
+
+
+def _index_weight_map(model_dir: str) -> Dict[str, str]:
+    path = os.path.join(model_dir, "model.safetensors.index.json")
+    if not os.path.isfile(path):
+        raise LayerOuterError(
+            "REFUSED: a gated (race-mode) streamed load needs %s -- it is the only "
+            "statement of which tensors the complete checkpoint holds, and without it "
+            "a tree that is merely still downloading is indistinguishable from a tree "
+            "that is missing tensors." % path)
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle).get("weight_map") or {}
+
+
 def _model_device(device: str):
     import torch
 
@@ -378,9 +444,30 @@ def _model_device(device: str):
 
 def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: str,
                          log: Callable[..., None],
-                         layer_guard: Optional[Callable[[int, Dict[str, Any]], None]] = None
-                         ) -> StreamedModel:
-    """Instantiate on meta, load everything but the decoder layers, and return the streamer."""
+                         layer_guard: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+                         gate: Optional[Any] = None) -> StreamedModel:
+    """Instantiate on meta, load everything but the decoder layers, and return the streamer.
+
+    `gate` turns the loader from "the tree is complete" into "the tree arrives
+    while I work" -- the overlapped fetch of `k6/tools/race_fetch.py`.  It is any
+    object exposing `wait_for_shards(names)`, `wait_for_layer(i)` and `.plan`
+    (a `race_fetch.FetchPlan`).  With a gate:
+
+      * only the shards the RESIDENT load will read are opened and audited
+        before it -- computed here from the model's own stack prefix and the
+        conversion mapping's renames, not taken from the plan's bucket -- and
+        the audit is the same audit, restricted to them;
+      * layer N's shards are waited on, audited and opened inside `load_layer(N)`
+        -- i.e. at the last possible moment, which is the whole point;
+      * a buffer belonging to ONE layer rides with that layer rather than with
+        the resident set (see the comment on `deferred_buffers`);
+      * with `gate=None` the original code path runs untouched.
+
+    Nothing about the ARITHMETIC differs between the two: the same slices go to
+    the same converter in the same per-shard, per-header order.  What differs is
+    only when the bytes behind those slices arrived -- which
+    `bin/selftest_race_mode.py` R6 asserts by digest rather than by argument.
+    """
     import copy as _copy
 
     import torch
@@ -394,8 +481,14 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     torch_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16,
                    "float32": torch.float32}[dtype_name]
 
-    audit = audit_checkpoint_tree(model_dir)
-    log(stage="checkpoint_audit", **audit)
+    if gate is None:
+        audit = audit_checkpoint_tree(model_dir)
+        log(stage="checkpoint_audit", **audit)
+    # With a gate the audit is DEFERRED: which shards the resident load actually
+    # reads is not knowable until the module tree exists (it depends on the
+    # model's own buffer names and stack prefix), and auditing the whole tree
+    # would refuse a checkpoint that is merely still arriving. It happens a few
+    # dozen lines below, over exactly the shards the base load will open.
 
     # QUANTIZED CHECKPOINTS ARE NOT SUPPORTED BY THIS SCHEDULE, and the reason
     # this is a refusal rather than a comment is that one of the two ways it
@@ -473,13 +566,31 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     # The checkpoint, as lazy safetensors slices: opening every shard costs
     # mmap handles, not bytes.  Materialisation happens per parameter, inside
     # `convert_and_load_state_dict_in_model`.
-    shard_paths = sorted(os.path.join(model_dir, name) for name in os.listdir(model_dir)
-                         if name.endswith(".safetensors"))
-    pointers = [safe_open(path, framework="pt", device="cpu") for path in shard_paths]
-    lazy: Dict[str, Any] = {}
-    for pointer in pointers:
-        for key in pointer.keys():
-            lazy[key] = pointer.get_slice(key)
+    #
+    # With a gate only the shards that have landed are opened; the rest are
+    # opened in `do_load` as the capture reaches the layers that need them.
+    # Either way the keys are enumerated from each shard's OWN header, in shard
+    # order -- so the subsets handed to the converter carry the same keys in the
+    # same order on both paths.
+    pointers: List[Any] = []
+    opened_shards: Dict[str, Any] = {}
+
+    def _open_shards(names: Sequence[str]) -> Dict[str, Any]:
+        """Open shards not yet open; return {key: lazy slice} for the NEW ones only."""
+        fresh: Dict[str, Any] = {}
+        for name in sorted(names):
+            if name in opened_shards:
+                continue
+            pointer = safe_open(os.path.join(model_dir, name), framework="pt", device="cpu")
+            opened_shards[name] = pointer
+            pointers.append(pointer)
+            for key in pointer.keys():
+                fresh[key] = pointer.get_slice(key)
+        return fresh
+
+    ungated_shard_names = (sorted(name for name in os.listdir(model_dir)
+                                  if name.endswith(".safetensors"))
+                           if gate is None else [])
 
     # ROUTING IS DONE ON THE RENAMED KEY, not the raw one.
     #
@@ -520,19 +631,82 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
 
     base_subset: Dict[str, Any] = {}
     layer_subset: Dict[int, Dict[str, Any]] = {}
-    routed = 0
-    for key, value in lazy.items():
-        target = routing_key(key)
-        if target != key:
-            routed += 1
-        match = layer_pattern.match(target)
-        if match is None or key in buffer_names or target in buffer_names:
-            base_subset[key] = value
-        else:
-            layer_subset.setdefault(int(match.group(1)), {})[key] = value
-    if routed:
-        log(stage="stream_routing", renamed_checkpoint_keys=routed,
-            total_checkpoint_keys=len(lazy), layers_prefix=layers_prefix)
+    routing_counts = {"routed": 0, "seen": 0}
+
+    # A BUFFER THAT BELONGS TO ONE LAYER IS NOT PART OF THE RESIDENT SET, and
+    # under a gate it must not be treated as one.
+    #
+    # Found by running against the live `malaiwah/GLM-5.2-SIQ-Fruit-bf16`, not by
+    # reading the code: `model.layers.N.mlp.gate.e_score_correction_bias` is a
+    # router-correction BUFFER, so the ungated loader routes it to the resident
+    # load -- but it is four kilobytes living inside that layer's 845 MB shard.
+    # Blocking the resident load on it means blocking on ten of the fourteen
+    # shards, which serializes almost the whole fetch and deletes the overlap.
+    # And it is not a quiet failure either: `transformers` reported all ten
+    # MISSING, randomly initialised them, and CAPTURE-03 refused the capture.
+    #
+    # So under a gate these ride WITH their layer, which is the loop order's own
+    # logic -- layer N's everything loads when layer N loads, and the value is
+    # read only by layer N's forward. The set is derived from the MODULE TREE
+    # rather than from whichever shards happen to be open, because the resident
+    # load has to know which buffers it is not responsible for BEFORE it runs.
+    #
+    # The ungated path is untouched, deliberately: its bit-identity against
+    # `from_pretrained` is already proven, and two paths loading the same bytes
+    # at different moments is a scheduling difference, not an arithmetic one.
+    # `bin/selftest_race_mode.py` R6 asserts the two produce the same
+    # capture_content_digest rather than arguing that they must.
+    deferred_buffers: Set[str] = (
+        {name for name, _ in model.named_buffers() if layer_pattern.match(name)}
+        if gate is not None else set())
+
+    def bucket(slices: Dict[str, Any]) -> None:
+        """Route freshly opened keys into the resident subset or a layer's subset.
+
+        Called once for the whole tree without a gate, and once per landed
+        shard batch with one.
+        """
+        for key, value in slices.items():
+            routing_counts["seen"] += 1
+            target = routing_key(key)
+            if target != key:
+                routing_counts["routed"] += 1
+            match = layer_pattern.match(target)
+            is_buffer = key in buffer_names or target in buffer_names
+            if match is None or (is_buffer and gate is None):
+                base_subset[key] = value
+            else:
+                layer_subset.setdefault(int(match.group(1)), {})[key] = value
+
+    if gate is None:
+        bucket(_open_shards(ungated_shard_names))
+        resident_shards: List[str] = []
+    else:
+        # THE RESIDENT SET, computed rather than guessed. `gate.plan` decides the
+        # fetch ORDER; this decides what the base load actually blocks on, using
+        # the model's own stack prefix and the conversion mapping's renames. The
+        # two agree on every checkpoint whose keys the plan's regex matched, and
+        # where they do not, this one is right -- so the wait is for exactly
+        # these shards, not for the plan's bucket.
+        weight_map = _index_weight_map(model_dir)
+        resident_keys = [key for key in weight_map
+                         if layer_pattern.match(routing_key(key)) is None]
+        resident_shards = sorted({weight_map[key] for key in resident_keys})
+        if not resident_shards:
+            raise LayerOuterError(
+                "REFUSED: every tensor in the checkpoint index routes to a decoder "
+                "layer, so there is nothing to load resident -- no embeddings, no "
+                "final norm, no head. Either the index is partial or %s is not this "
+                "model's stack prefix." % layers_prefix)
+        waited = gate.wait_for_shards(resident_shards)
+        audit = audit_checkpoint_tree(model_dir, shards=resident_shards)
+        log(stage="checkpoint_audit", partial=True,
+            audited_shards=len(resident_shards), waited_seconds=round(waited, 3),
+            **audit)
+        bucket(_open_shards(resident_shards))
+    if routing_counts["routed"]:
+        log(stage="stream_routing", renamed_checkpoint_keys=routing_counts["routed"],
+            total_checkpoint_keys=routing_counts["seen"], layers_prefix=layers_prefix)
 
     aggregate = {"missing_keys": set(), "unexpected_keys": set(), "mismatched_keys": [],
                  "error_msgs": [], "conversion_errors": {}}
@@ -544,9 +718,28 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     # not hypothetical: GLM-5.3's MTP layer 78 (791 tensors, 18.5 GiB) and
     # Fruit's layer 13 are exactly this case -- `transformers` builds
     # `num_hidden_layers` layers and drops the next-token-prediction layer.
-    for index in sorted(layer_subset):
+    #
+    # With a gate the shards holding those tensors may not have landed yet, so
+    # the answer comes from the checkpoint INDEX -- which names every key in the
+    # tree without reading a byte of it -- rather than from the shards opened so
+    # far. Getting this from the index rather than from "what is on disk right
+    # now" is what stops race mode from quietly dropping a disclosure that the
+    # fetch-then-capture path would have made.
+    if gate is None:
+        over_index_keys = {index: set(subset) for index, subset in layer_subset.items()}
+    else:
+        over_index_keys = {}
+        for key in _index_weight_map(model_dir):
+            target = routing_key(key)
+            match = layer_pattern.match(target)
+            # Same buffer test `bucket` uses, so the two cannot disagree about
+            # what counts as a layer tensor.
+            if match is not None and key not in buffer_names \
+                    and target not in buffer_names:
+                over_index_keys.setdefault(int(match.group(1)), set()).add(key)
+    for index in sorted(over_index_keys):
         if index >= len(layers):
-            aggregate["unexpected_keys"] |= set(layer_subset[index])
+            aggregate["unexpected_keys"] |= over_index_keys[index]
 
     def _absorb(info) -> None:
         aggregate["unexpected_keys"] |= set(info.unexpected_keys or set())
@@ -567,13 +760,15 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     for name in streamed_params:
         model.get_parameter(name)._is_hf_initialized = True
     base_info.missing_keys = {key for key in base_info.missing_keys
-                              if key not in streamed_params}
+                              if key not in streamed_params
+                              and key not in deferred_buffers}
     cls._finalize_model_loading(model, load_config, base_info)
     aggregate["missing_keys"] |= set(base_info.missing_keys or set())
 
     stranded = [name for name, tensor in
                 list(model.named_parameters()) + list(model.named_buffers())
-                if tensor.device.type == "meta" and name not in streamed_params]
+                if tensor.device.type == "meta" and name not in streamed_params
+                and name not in deferred_buffers]
     if stranded:
         raise LayerOuterError(
             "REFUSED: %d parameter(s)/buffer(s) outside the streamed decoder layers are "
@@ -584,13 +779,34 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
 
     log(stage="stream_base", resident_tensors=len(base_subset),
         streamed_layers=len(layers), streamed_params=len(streamed_params),
+        deferred_buffers=len(deferred_buffers),
+        resident_shards=len(resident_shards) or None,
         layers_prefix=layers_prefix)
 
     def layer_param_names(index: int) -> List[str]:
         head = "%s.%d." % (layers_prefix, index)
         return sorted(name for name in streamed_params if name.startswith(head))
 
+    audited_shards: Set[str] = set(resident_shards)
+
     def do_load(index: int) -> None:
+        if gate is not None:
+            # THE BLOCK. Everything above this line ran while layer `index`'s
+            # bytes were still on the wire; this is where the capture stops and
+            # waits, and `race_fetch.ShardGate` records for how long. The audit
+            # runs on the shards that just landed, before a single tensor is
+            # read out of them -- a shard that arrived short would otherwise
+            # read as zeros, silently.
+            waited = gate.wait_for_layer(index)
+            wanted = gate.plan.shards_for_layer(index)
+            fresh = sorted(wanted - audited_shards)
+            if fresh:
+                audit_checkpoint_tree(model_dir, shards=fresh)
+                audited_shards.update(fresh)
+                bucket(_open_shards(fresh))
+            if waited > 0.0 or fresh:
+                log(stage="race_layer_ready", index=index,
+                    waited_seconds=round(waited, 3), audited_shards=len(fresh))
         subset = layer_subset.get(index)
         if not subset:
             raise LayerOuterError(
@@ -624,6 +840,25 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
         # deliver lands here, before any window is pushed through it.  This one
         # is NOT overridable: a meta parameter has no contents to disclose.
         stuck = [name for name in names if model.get_parameter(name).device.type == "meta"]
+        # A buffer deferred to this layer -- a router correction bias -- must
+        # actually have been DELIVERED by this load. Its meta-ness cannot answer
+        # that: model finalisation materialises non-persistent buffers, so a
+        # buffer nobody supplied is off meta and holding whatever finalisation
+        # put there. What the resident path checked by reporting it missing, this
+        # path checks by name, here, before a window is pushed through the layer.
+        expected = {name for name in deferred_buffers if name.startswith(head)}
+        if expected:
+            delivered = {routing_key(key) for key in subset}
+            undelivered = sorted(expected - delivered)
+            if undelivered:
+                aggregate["missing_keys"] |= set(undelivered)
+                raise LayerOuterError(
+                    "REFUSED: layer %d loaded but the checkpoint delivered none of "
+                    "%d buffer(s) this layer's forward reads: %s. Under the gated "
+                    "(race-mode) loader those ride with their layer instead of with "
+                    "the resident set, so an absent one would otherwise be silently "
+                    "replaced by whatever model finalisation initialised."
+                    % (index, len(undelivered), ", ".join(undelivered[:6])))
         if stuck:
             aggregate["missing_keys"] |= set(stuck)
             raise LayerOuterError(
@@ -648,8 +883,12 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     streamer = StreamedModel(model, layers_prefix, layers, layer_param_names,
                              do_load, do_free, aggregate)
     streamer.config = config
+    # `pointers` and `layer_subset` are the SAME objects the loader keeps
+    # appending to, so a gated build's later shards are closed at `close()` and
+    # counted here too. Snapshotting them would have made race mode leak mmap
+    # handles and under-report every layer that had not landed yet.
     streamer.pointers = pointers
-    streamer.layer_counts = {index: len(subset) for index, subset in layer_subset.items()}
+    streamer.layer_counts = _LayerCounts(layer_subset)
     return streamer
 
 

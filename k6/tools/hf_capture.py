@@ -67,6 +67,12 @@ from fidelity import dsmanifest, dsvalidate  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import layer_outer  # noqa: E402
+import race_fetch  # noqa: E402
+# "The capital of France is" -> " Paris", asked of every capture, as one extra
+# window through the schedule that is already running. It is the only guard here
+# that sees a shard which loaded as ZEROS: the names, the shapes and the tensor
+# count are all correct in that case, and only the model's own output is wrong.
+import generation_probe  # noqa: E402
 # The capture loop is the other multi-hour silence in a stage log: a root
 # capture is 25 windows of full-vocabulary forward and, under the layer-outer
 # schedule, N layers x 25 windows inside a single `run_panel` call.  Same meter,
@@ -753,7 +759,8 @@ def _source_files(args: argparse.Namespace) -> Dict[str, str]:
     return files
 
 
-def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_seconds):
+def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_seconds,
+                     window_count=None):
     """Drive `layer_outer.run_panel` and hand back one tapped hidden state per window.
 
     The saving is in weight LOADING, not compute.  `on_layer_start` /
@@ -769,8 +776,15 @@ def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_se
             _, layers = layer_outer.find_decoder_layers(model)
         except layer_outer.LayerOuterError as exc:
             raise fail(str(exc))
+    # The sanity probe rides along as ONE EXTRA WINDOW, so it costs one more
+    # forward per layer and no additional weight loading at all -- the layers are
+    # already being loaded for the panel. It is never a separate pass over the
+    # checkpoint, which for a 1.5 TB model would be the whole capture again.
+    if window_count is None:
+        window_count = len(panel.windows)
     log(stage="schedule", schedule=args.schedule, residency=args.layer_residency,
-        layers=len(layers), windows=len(panel.windows))
+        layers=len(layers), windows=len(panel.windows),
+        forward_windows=window_count)
 
     # The window-outer loop discovers a ragged panel on the window that differs,
     # having paid only for the windows before it. This schedule runs every
@@ -808,7 +822,7 @@ def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_se
     # unit.  `layer_seconds` is already being accumulated here; the meter reads
     # nothing else and adds one integer increment per forward.
     inner_meter = progress_meter.Progress(
-        len(layers) * len(panel.windows), label="layer-outer forwards",
+        len(layers) * window_count, label="layer-outer forwards",
         interval=getattr(args, "progress_seconds", progress_meter.DEFAULT_INTERVAL_SECONDS),
     )
 
@@ -819,15 +833,16 @@ def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_se
         inner_meter.update(1)
 
     def collect(window_index: int):
-        window = panel.windows[window_index]
+        window_id = (panel.windows[window_index]["window_id"]
+                     if window_index < len(panel.windows) else "sanity-probe")
         if len(tap) != 1:
             raise fail("window %s: the head hook fired %d times, expected exactly 1 -- an "
                        "extra forward would misalign the capture"
-                       % (window["window_id"], len(tap)))
+                       % (window_id, len(tap)))
         return tap[0]
 
     try:
-        hidden = layer_outer.run_panel(model, layers, timed_forward, len(panel.windows),
+        hidden = layer_outer.run_panel(model, layers, timed_forward, window_count,
                                        log, on_layer_start=on_layer_start,
                                        on_layer_end=on_layer_end, collect=collect)
     except layer_outer.LayerOuterError as exc:
@@ -844,6 +859,161 @@ def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_se
     return hidden
 
 
+def _prepare_probe(args: argparse.Namespace, model_dir: str) -> Dict[str, Any]:
+    """Tokenize the sanity prompt, or say why the probe cannot run.
+
+    A refusal here rather than a silent skip whenever the caller asked for
+    ENFORCEMENT: a fail-closed check that could not run has not passed.
+    """
+    prompt = getattr(args, "sanity_prompt", generation_probe.DEFAULT_PROMPT)
+    expect = getattr(args, "sanity_expect", None)
+    if expect is not None and not expect.strip():
+        expect = None
+    if not getattr(args, "sanity_check", True):
+        return {"stub": generation_probe.skipped(
+            "--no-sanity-check was passed; the probe did not run",
+            prompt=prompt, expect=expect, enforced=False)}
+    tokenizer, reason = generation_probe.load_tokenizer(model_dir)
+    if tokenizer is None:
+        if expect is not None:
+            raise fail(
+                "REFUSED: --sanity-expect %r asks for a FAIL-CLOSED generation check and "
+                "the tokenizer could not be loaded from %s (%s). A check that could not "
+                "run has not passed. Ship the tokenizer with the checkpoint, or pass "
+                "--sanity-expect '' to record the probe without enforcing it."
+                % (expect, model_dir, reason))
+        return {"stub": generation_probe.skipped(
+            "tokenizer unavailable: %s" % reason,
+            prompt=prompt, expect=expect, enforced=False)}
+    try:
+        token_ids = generation_probe.encode_prompt(tokenizer, prompt)
+    except generation_probe.ProbeRefusal as exc:
+        raise fail(str(exc))
+    log(stage="sanity_probe_planned", prompt=prompt, expect=expect,
+        prompt_tokens=len(token_ids))
+    return {"token_ids": token_ids, "tokenizer": tokenizer,
+            "prompt": prompt, "expect": expect}
+
+
+def _resolve_probe(args: argparse.Namespace, plan: Dict[str, Any],
+                   logits: List[Any]) -> Dict[str, Any]:
+    if not plan:
+        return None
+    if "stub" in plan:
+        log(stage="sanity_probe", **{k: v for k, v in plan["stub"].items()
+                                     if k != "schema"})
+        return plan["stub"]
+    if not logits:
+        if plan["expect"] is not None:
+            raise fail(
+                "REFUSED: the generation sanity probe was enforced but the model "
+                "returned no logits for its window. The head is where this capture "
+                "taps its hidden states, so a forward that produced none is a "
+                "malfunction of the capture itself, not of the probe.")
+        return generation_probe.skipped(
+            "the model returned no logits for the probe window",
+            prompt=plan["prompt"], expect=plan["expect"], enforced=False)
+    try:
+        verdict = generation_probe.evaluate(logits[0], plan["tokenizer"],
+                                            prompt=plan["prompt"],
+                                            expect=plan["expect"])
+    except generation_probe.ProbeRefusal as exc:
+        raise fail(str(exc))
+    log(stage="sanity_probe", status=verdict["status"], top1=verdict["top1_text"],
+        probability=round(verdict["top1_probability"], 6),
+        entropy_nats=round(verdict["entropy_nats"], 4),
+        uniform_entropy_nats=round(verdict["uniform_entropy_nats"], 4),
+        enforced=verdict["enforced"])
+    return verdict
+
+
+def _race_trailing_files(args: argparse.Namespace, model_dir: str, plan) -> List[str]:
+    """Every published file that is NOT a shard the plan already covers.
+
+    Best effort by design: if the repo listing cannot be obtained the capture
+    still runs -- the shards are what the arithmetic needs -- and the log says
+    the sidecars were not enumerated rather than pretending they were absent.
+    """
+    shards = set(plan.needed_at)
+    try:
+        if getattr(args, "race_simulate_source", None):
+            names = sorted(os.listdir(args.race_simulate_source))
+        else:
+            from huggingface_hub import list_repo_files
+
+            names = list_repo_files(
+                args.race_repo, revision=args.race_revision or args.model_revision,
+                token=os.environ.get("HF_TOKEN") or None)
+    except Exception as exc:  # pragma: no cover - network/listing dependent
+        log(stage="race_sidecars_unlisted", reason="%s: %s" % (type(exc).__name__, exc))
+        return []
+    # A file `race_bootstrap` already pinned at this revision is not re-fetched:
+    # it is on disk, at the same revision, and in the simulate harness a
+    # re-fetch would also charge it the injected delay -- which would make the
+    # A/B compare two different file sets.
+    return [name for name in sorted(names)
+            if name not in shards and not name.startswith(".")
+            and not os.path.exists(os.path.join(model_dir, name))]
+
+
+def _start_race_fetch(args: argparse.Namespace, model_dir: str):
+    """Start the overlapped fetch, or return None when --race-repo was not given.
+
+    Refuses rather than degrading: race mode only means anything under the
+    layer-outer/stream schedule (that is the only loop that reads layer N after
+    layer N-1 has already been used), and it needs the checkpoint index, which is
+    the file that says which shard holds which layer.
+    """
+    if not getattr(args, "race_repo", None):
+        return None
+    if args.schedule != layer_outer.SCHEDULE_LAYER_OUTER \
+            or args.layer_residency != layer_outer.RESIDENCY_STREAM:
+        raise fail(
+            "--race-repo needs --schedule layer-outer --layer-residency stream. Every "
+            "other schedule materialises the whole model before the first window, so "
+            "there is no point at which a not-yet-arrived layer could be waited for; "
+            "overlapping the fetch with it would just be downloading during a load.")
+    if not os.path.isdir(model_dir):
+        raise fail("--race-repo needs --model to be a LOCAL directory holding the "
+                   "bootstrap files (config.json, the tokenizer, "
+                   "model.safetensors.index.json); the shards land into it. Got %r"
+                   % model_dir)
+    try:
+        weight_map = race_fetch.read_index(model_dir)
+        plan = race_fetch.plan_shards(weight_map, args.race_layer_key_regex)
+    except race_fetch.RaceFetchError as exc:
+        raise fail(str(exc))
+    revision = args.race_revision or args.model_revision
+    if getattr(args, "race_simulate_source", None):
+        download = race_fetch.simulated_downloader(
+            args.race_simulate_source, model_dir, args.race_simulate_seconds)
+        log(stage="race_simulated_downloader", source=args.race_simulate_source,
+            seconds_per_file=args.race_simulate_seconds,
+            warning="TEST HARNESS: this capture is not a measurement and is "
+                    "stamped with a blocking disclosure")
+    else:
+        download = race_fetch.hf_downloader(args.race_repo, revision, model_dir,
+                                            token=os.environ.get("HF_TOKEN") or None)
+    # The whole repo, not just the shards: `fetch_target` pulls everything, and
+    # a race-mode tree that quietly lacked the release's own SHA256SUMS would
+    # skip a verification the ordinary path performs. They are queued AFTER every
+    # layer, so nothing ever waits on them.
+    trailing = _race_trailing_files(args, model_dir, plan)
+    fetcher = race_fetch.RaceFetcher(plan, download, workers=args.race_workers,
+                                     log=log, timeout=args.race_timeout_seconds,
+                                     trailing_files=trailing)
+    # A file already on disk (the bootstrap fetch put config/index/tokenizer
+    # there) is still enqueued: hf_hub_download is a no-op on an unchanged file
+    # and returns immediately, and enqueueing it keeps the gate's record the
+    # single source of truth about what has landed.
+    log(stage="race_plan", repo=args.race_repo, revision=revision,
+        shards=len(plan.needed_at), resident_shards=len(plan.resident_shards),
+        layers=plan.layer_count, unmatched_keys=plan.unmatched_keys,
+        layer_key_regex=plan.layer_key_regex)
+    fetcher.start()
+    return fetcher
+
+
 def run_capture(args: argparse.Namespace) -> int:
     import numpy as np
     import torch
@@ -857,8 +1027,20 @@ def run_capture(args: argparse.Namespace) -> int:
                                       local_dir=args.model_cache)
         log(stage="snapshot", repo=args.model, dir=model_dir)
 
-    identity, identity_files = checkpoint_identity(model_dir)
-    log(stage="checkpoint_identity", sha256=identity, files=len(identity_files))
+    # RACE MODE.  Start the background fetch before anything else touches the
+    # tree: from here on the checkpoint is arriving, not present.
+    fetcher = _start_race_fetch(args, model_dir)
+
+    # The checkpoint identity is a sha256 over EVERY shard, so in race mode it
+    # cannot be computed here -- most of the tree is still on the wire, and a
+    # digest over what happens to have landed would be an identity for a
+    # checkpoint that does not exist. It is computed at assembly time instead,
+    # once the fetch has joined, over the complete tree. Same preimage, same
+    # value; only the moment moves.
+    identity = identity_files = None
+    if fetcher is None:
+        identity, identity_files = checkpoint_identity(model_dir)
+        log(stage="checkpoint_identity", sha256=identity, files=len(identity_files))
 
     layer_outer.reset_peak_memory(args.device)
     max_memory = json.loads(args.max_memory) if args.max_memory else None
@@ -904,8 +1086,10 @@ def run_capture(args: argparse.Namespace) -> int:
         try:
             streamer = layer_outer.build_streamed_model(
                 model_dir, cls, config, args.dtype, args.device, log,
-                layer_guard=layer_guard)
+                layer_guard=layer_guard, gate=fetcher)
         except layer_outer.LayerOuterError as exc:
+            raise fail(str(exc))
+        except race_fetch.RaceFetchError as exc:
             raise fail(str(exc))
         model = streamer.model
         loading_info = layer_outer.streamed_loading_info(streamer)
@@ -993,20 +1177,49 @@ def run_capture(args: argparse.Namespace) -> int:
     # inputs it builds: same dtypes, same devices, same kwargs, same
     # `use_cache=False`.  What differs between the schedules is only WHEN this
     # is called and which layers are resident when it is.
+    # -- the generation sanity probe's window -------------------------------
+    # Prepared BEFORE the panel loop because under the layer-outer schedule it
+    # must be pushed through the same `run_panel` call: a probe run afterwards
+    # would need every layer a second time, i.e. a second read of the whole
+    # checkpoint.
+    probe_plan = _prepare_probe(args, model_dir)
+    probe_index = len(panel.windows) if probe_plan.get("token_ids") else None
+    probe_logits: List[Any] = []
+
     def forward_window(index: int) -> None:
-        window = panel.windows[index]
+        if probe_index is not None and index == probe_index:
+            token_ids = probe_plan["token_ids"]
+            mask = [1] * len(token_ids)
+        else:
+            window = panel.windows[index]
+            token_ids = window["token_ids"]
+            mask = window["mask"]
         del tap[:]
-        input_ids = torch.tensor([window["token_ids"]], dtype=torch.long, device=args.device)
+        input_ids = torch.tensor([token_ids], dtype=torch.long, device=args.device)
         attention_mask = torch.from_numpy(
-            np.asarray(window["mask"], dtype=np.int64).reshape(1, -1)).to(args.device)
+            np.asarray(mask, dtype=np.int64).reshape(1, -1)).to(args.device)
         with torch.inference_mode():
-            model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+            out = model(input_ids=input_ids, attention_mask=attention_mask,
+                        use_cache=False)
+        if probe_index is not None and index == probe_index:
+            logits = getattr(out, "logits", None)
+            if logits is None and isinstance(out, (tuple, list)) and out:
+                logits = out[0]
+            if logits is not None:
+                del probe_logits[:]
+                probe_logits.append(logits[0, -1].detach().to("cpu", copy=True))
 
     precomputed: Optional[List[Any]] = None
-    layer_seconds: List[float] = [0.0] * len(panel.windows)
+    forward_count = len(panel.windows) + (1 if probe_index is not None else 0)
+    layer_seconds: List[float] = [0.0] * forward_count
     if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER:
         precomputed = _run_layer_outer(args, model, streamer, panel, tap, forward_window,
-                                       layer_seconds)
+                                       layer_seconds, window_count=forward_count)
+    elif probe_index is not None:
+        # Window-outer: the model is fully resident, so the probe is one extra
+        # forward and costs nothing but its own compute.
+        forward_window(probe_index)
+    probe = _resolve_probe(args, probe_plan, probe_logits)
 
     # The outer meter: how far through the panel, and when this capture ends.
     # `every=1` because a window is minutes long -- every completed one earns a
@@ -1136,13 +1349,39 @@ def run_capture(args: argparse.Namespace) -> int:
             json.dump(memory, handle, indent=2, sort_keys=True)
             handle.write("\n")
 
+    # RACE MODE: the tail of the fetch. Every layer has been read by now, so
+    # what is left is whatever the plan did not need -- and the checkpoint
+    # IDENTITY is a digest over the complete tree, so it cannot be taken until
+    # this returns. The wait is measured and reported rather than hidden: it is
+    # the part of the fetch the overlap did NOT hide.
+    race_report = None
+    if fetcher is not None:
+        join_started = time.monotonic()
+        fetcher.join()
+        tail = time.monotonic() - join_started
+        race_report = fetcher.report()
+        race_report["tail_join_seconds"] = round(tail, 3)
+        log(stage="race_fetch_joined", tail_seconds=round(tail, 3),
+            blocked_seconds=race_report["blocked_seconds"],
+            files=race_report["files"])
+        identity, identity_files = checkpoint_identity(model_dir)
+        log(stage="checkpoint_identity", sha256=identity, files=len(identity_files))
+        if getattr(args, "race_report", None):
+            directory = os.path.dirname(os.path.abspath(args.race_report))
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(args.race_report, "w", encoding="utf-8") as handle:
+                json.dump({"plan": fetcher.plan.to_dict(), "fetch": race_report},
+                          handle, indent=2, sort_keys=True)
+                handle.write("\n")
+
     return _assemble(args, writer, panel, panel_records, capture_records,
                      context_length=context_length, vocab_size=vocab_size,
                      hidden_size=hidden_size, head_rel=head_rel, head_full=head_full,
                      head_content=head_content, head_shape=list(head_weight.shape),
                      model_dir=model_dir, identity=identity, identity_files=identity_files,
                      config=config, started=started, missing_weights=missing,
-                     load_report=report)
+                     load_report=report, probe=probe, race_report=race_report)
 
 
 # ---------------------------------------------------------------------------
@@ -1184,10 +1423,40 @@ def _scope(args: argparse.Namespace) -> Dict[str, Any]:
 
 
 
+def preview_banner(manifest) -> str:
+    """The preview warning, at the TOP of the card, in the reader's first screen.
+
+    Prepended in `render_card` rather than in `default_card_body` on purpose: a
+    capture run with `--readme` supplies its own body, and the one thing that
+    must never be lost by supplying your own body is the statement that this
+    dataset is preliminary.
+    """
+    block = manifest.get("preview") or {}
+    if not block:
+        return ""
+    return "\n".join([
+        "> ## ⚠ PRELIMINARY — NOT THE FINAL ROOT",
+        "> ",
+        "> " + block["statement"].replace("\n", "\n> "),
+        "> ",
+        "> | | |",
+        "> |---|---|",
+        "> | cold runs backing this dataset | **%s** |" % block.get("run_count"),
+        "> | cross-run determinism demonstrated | **no** |",
+        "> | will ever be updated in place | **no** |",
+        "> | superseded by | **`%s`** |" % block.get("superseded_by"),
+        "> | usable as a registry reference | **no** (`not_submittable`) |",
+        "",
+        "",
+    ])
+
+
 def render_card(args, manifest, body: str) -> str:
     """A dataset card whose frontmatter carries the required x_fidelity block."""
     sys.path.insert(0, os.path.join(REPO, "bin"))
     from fidelity import cardmeta
+
+    body = preview_banner(manifest) + body
 
     front = {
         "license": "mit",
@@ -1198,6 +1467,26 @@ def render_card(args, manifest, body: str) -> str:
     }
     front, _ = cardmeta.split_card(cardmeta.render_card(front, body))
     return cardmeta.render_card(front, body)
+
+
+def _probe_card_line(manifest) -> str:
+    """One sentence a reader can check without opening the manifest."""
+    probe = manifest.get("generation_sanity_probe") or {}
+    status = probe.get("status")
+    if status in ("pass", "recorded"):
+        return ("`%s` -> `%s` (p=%.4f, entropy %.3f of a possible %.3f nats). %s "
+                "One extra window through the same schedule; its hidden state was "
+                "discarded and is not part of this dataset."
+                % (probe.get("prompt"), probe.get("top1_text"),
+                   probe.get("top1_probability", float("nan")),
+                   probe.get("entropy_nats", float("nan")),
+                   probe.get("uniform_entropy_nats", float("nan")),
+                   ("Enforced against %r." % probe.get("expect")
+                    if probe.get("enforced") else "Recorded, not enforced.")))
+    return ("**The generation sanity probe did not run** (%s). Tensor counts, "
+            "shapes and the load report can all be clean while a shard loaded as "
+            "zeros; this dataset carries no evidence that the model generates "
+            "sensibly." % probe.get("reason", "no reason recorded"))
 
 
 def default_card_body(args, manifest, scope) -> str:
@@ -1231,6 +1520,10 @@ def default_card_body(args, manifest, scope) -> str:
         "| scope policy | %s |" % scope["policy"],
         "| lane | %s |" % args.lane,
         "",
+        "## Does the model still generate sensibly",
+        "",
+        _probe_card_line(manifest),
+        "",
         "## How to check it",
         "",
         "```",
@@ -1244,10 +1537,81 @@ def default_card_body(args, manifest, scope) -> str:
     return "\n".join(lines)
 
 
+PREVIEW_SCHEMA = "malaiwah.fidelity-dataset-preview.v1"
+
+PREVIEW_STATEMENT = (
+    "THIS IS A PRELIMINARY CAPTURE. It is backed by ONE cold run. Cross-run "
+    "determinism is NOT demonstrated: a second cold capture agreeing digest-for-"
+    "digest, plus the exactly-0.0 self-compare, is what would establish it, and "
+    "neither has happened here. It is sealed and immutable and will NEVER be "
+    "updated in place -- the complete-evidence capture is a SEPARATE dataset with "
+    "a separate id, named below. Numbers measured against this dataset are true "
+    "statements about THIS dataset; they do not become statements about the final "
+    "one, and the comparability key makes that mechanical rather than a matter of "
+    "care: reference_id is one of its seven fields."
+)
+
+
+def _apply_preview_identity(args, manifest) -> None:
+    """Seal this capture as a PREVIEW: a different identity, not an earlier version.
+
+    The property that must hold is that a measurement made against the preview
+    can never be silently read as a measurement against the final. Two
+    mechanisms, both structural:
+
+      * IDENTITY -- the preview's `dataset.id` differs from the final's, and
+        `bin/fidelity/dscompare.py` uses exactly that field as the `reference_id`
+        input to `registry_lib.comparability_key`. Different reference_id means a
+        different comparability group, which the renderer draws as a different
+        table and the validator refuses to merge. This is the same mechanism
+        `docs/DESIGNATED-REFERENCE.md` relies on, for the same reason.
+      * PUBLISHABILITY -- `not_submittable: true` is a marker
+        `bin/fidelity/receipt.py::_scan_for_unsubmittable` refuses at any depth,
+        and the blocking disclosure below is what `emit_submission`'s SC-5 check
+        refuses on. Neither is new machinery.
+
+    Updating a published root in place is the failure this exists to prevent:
+    the identity would stay the same while the CONTENT changed, so rows measured
+    against the old bytes and rows measured against the new bytes would land in
+    ONE comparability group and be quietly incomparable.
+    """
+    final_id = args.preview_of.strip()
+    if not final_id:
+        raise fail("--preview-of needs the final dataset's id, not an empty string")
+    if final_id == args.dataset_id:
+        raise fail(
+            "REFUSED: --preview-of %r is the same id as --dataset-id. A preview and a "
+            "final are two DATASETS, not two versions of one. Sharing the id is exactly "
+            "the corruption this flag exists to prevent: `reference_id` is a "
+            "comparability-key field, so rows measured against the one-run bytes and "
+            "rows measured against the full-evidence bytes would land in the same group "
+            "and be silently incomparable. Give the preview its own id (convention: the "
+            "final id with a `.preview` suffix)." % final_id)
+    manifest["not_submittable"] = True
+    manifest["preview"] = {
+        "schema": PREVIEW_SCHEMA,
+        "preliminary": True,
+        "superseded_by": final_id,
+        "run_count": manifest["determinism"]["run_count"],
+        "determinism_demonstrated": False,
+        "updated_in_place": False,
+        "immutable": True,
+        "statement": PREVIEW_STATEMENT,
+    }
+    manifest["disclosures"].append({
+        "code": "preview_capture", "severity": "blocking",
+        "affects_comparability": True,
+        "detail": "%s Final dataset id: %s." % (PREVIEW_STATEMENT, final_id),
+    })
+    log(stage="preview_identity", dataset_id=args.dataset_id, superseded_by=final_id,
+        not_submittable=True)
+
+
 def _assemble(args, writer, panel, panel_records, capture_records, *, context_length,
               vocab_size, hidden_size, head_rel, head_full, head_content, head_shape,
               model_dir, identity, identity_files, config, started,
-              missing_weights=(), load_report=None) -> int:
+              missing_weights=(), load_report=None, probe=None,
+              race_report=None) -> int:
     scope = _scope(args)
     quantized = scope["policy"] != "native"
 
@@ -1396,6 +1760,24 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                       "--self-compare`, whose exactly-0.0 result is the SC-1 reproduction "
                       "confirmation."})
 
+    # The generation sanity probe's verdict. Recorded on EVERY capture, including
+    # when it was skipped and when it was disabled, because a check nobody ran is
+    # not a check that passed and a reader must be able to tell the difference.
+    if probe is None:
+        probe = generation_probe.skipped(
+            "the capture engine did not run the probe",
+            prompt=getattr(args, "sanity_prompt", None),
+            expect=getattr(args, "sanity_expect", None), enforced=False)
+    if probe.get("status") == "skipped":
+        disclosures.append({
+            "code": "generation_sanity_probe_skipped", "severity": "caveat",
+            "affects_comparability": False,
+            "detail": "the generation sanity probe did not run (%s). Tensor counts, shapes "
+                      "and the load report can all be clean while a shard loaded as zeros "
+                      "or as randomly initialised weights; this capture carries no "
+                      "evidence that the model generates sensibly."
+                      % probe.get("reason", "no reason recorded")})
+
     manifest = dsmanifest.top_manifest(
         dataset={"id": args.dataset_id, "name": args.dataset_name, "role": args.role,
                  "structural_status": "sealed", "qualification": None,
@@ -1454,6 +1836,38 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
         determinism=determinism,
         coverage=coverage,
         disclosures=disclosures)
+
+    # Additive top-level blocks (the dataset schema is additionalProperties: true
+    # and section 1.3 requires v1 readers to ignore unknown keys). They are set
+    # BEFORE `writer.finish`, so the self-blanked `dataset_sha256` covers them --
+    # a preview marker outside the seal would be a label anyone could strip.
+    manifest["generation_sanity_probe"] = probe
+    if race_report is not None:
+        simulated = bool(getattr(args, "race_simulate_source", None))
+        manifest["race_mode"] = {
+            "schema": "malaiwah.race-mode-capture.v1",
+            "enabled": True,
+            "downloader": "simulated" if simulated else "huggingface_hub",
+            "repository": getattr(args, "race_repo", None),
+            "revision": getattr(args, "race_revision", None) or args.model_revision,
+            "fetch": race_report,
+            "statement": "the checkpoint was fetched WHILE this capture ran, in the order "
+                         "the layer-outer schedule needed it. Scheduling only: the same "
+                         "bytes went to the same converter in the same order, and the "
+                         "capture_content_digest is the one a fetch-then-capture run "
+                         "produces.",
+        }
+        if simulated:
+            manifest["not_submittable"] = True
+            manifest["disclosures"].append({
+                "code": "simulated_fetch", "severity": "blocking",
+                "affects_comparability": True,
+                "detail": "--race-simulate-source was used: the 'fetch' copied from a "
+                          "local directory with an injected delay. That is the offline "
+                          "harness for measuring the SCHEDULE, not a fetch of a published "
+                          "checkpoint. This dataset is not a measurement of anything."})
+    if getattr(args, "preview_of", None):
+        _apply_preview_identity(args, manifest)
 
     # The panel's own build receipt, byte-verbatim (spec section 2,
     # `panel/panel-receipt.json`).  Recording `panel_receipt_sha256` while
@@ -1599,6 +2013,64 @@ def build_parser() -> argparse.ArgumentParser:
                              "path silently did not engage; sometimes means a legitimately "
                              "unused MTP/draft block. Forces a BLOCKING disclosure.")
     parser.add_argument("--force", action="store_true")
+
+    race = parser.add_argument_group(
+        "race mode -- overlap the fetch with the capture (k6/tools/race_fetch.py)")
+    race.add_argument("--race-repo", default=None,
+                      help="fetch this HF repo IN THE BACKGROUND, in the order the "
+                           "layer-outer schedule needs it, while the capture runs. "
+                           "--model must be a directory already holding config.json, "
+                           "the tokenizer and model.safetensors.index.json; the shards "
+                           "land into it. Changes WHEN bytes arrive, never which.")
+    race.add_argument("--race-revision", default=None,
+                      help="the pinned revision to fetch (defaults to --model-revision)")
+    race.add_argument("--race-workers", type=int, default=8,
+                      help="parallel downloads (default 8). Ordering is by priority, so "
+                           "raising this does not reorder the queue, it widens it.")
+    race.add_argument("--race-timeout-seconds", type=float, default=7200.0,
+                      help="how long the capture will block for a layer's shards before "
+                           "REFUSING (default 7200). A timeout is never a proceed.")
+    race.add_argument("--race-layer-key-regex",
+                      default=race_fetch.DEFAULT_LAYER_KEY_REGEX,
+                      help="how a checkpoint key names its decoder layer index. The "
+                           "default matches model.layers.N., language_model.model."
+                           "layers.N. and a bare layers.N.")
+    race.add_argument("--race-report", default=None,
+                      help="write the measured fetch/overlap report to this JSON path")
+    race.add_argument("--race-simulate-source", default=None, metavar="DIR",
+                      help="TEST HARNESS ONLY: fetch from this local directory instead "
+                           "of the Hub, so the SCHEDULE can be measured offline and as a "
+                           "controlled A/B. Stamps a BLOCKING disclosure -- a capture "
+                           "made this way is not a measurement of anything.")
+    race.add_argument("--race-simulate-seconds", type=float, default=0.0,
+                      help="TEST HARNESS ONLY: per-file delay for --race-simulate-source")
+
+    sanity = parser.add_argument_group(
+        "generation sanity probe (k6/tools/generation_probe.py) -- on by default")
+    sanity.add_argument("--sanity-prompt", default=generation_probe.DEFAULT_PROMPT,
+                        help="the prompt whose next token is checked. One extra window "
+                             "through the schedule already running: ~1/N of an N-window "
+                             "capture, and no extra weight loading at all.")
+    sanity.add_argument("--sanity-expect", default=None,
+                        help="the expected continuation, e.g. Paris. Given, the probe is "
+                             "FAIL-CLOSED on it; omitted, the probe still runs and is "
+                             "still recorded, and only a degenerate (all-logits-equal) "
+                             "distribution refuses.")
+    preview = parser.add_argument_group(
+        "preview identity (docs/RACE-MODE.md) -- a preview is a DIFFERENT dataset, "
+        "never an earlier version of the final one")
+    preview.add_argument("--preview-of", default=None, metavar="FINAL_DATASET_ID",
+                         help="seal this capture as a PRELIMINARY dataset superseded by "
+                              "FINAL_DATASET_ID. It gets its own dataset id (which is the "
+                              "reference_id half of every comparability key computed "
+                              "against it), a blocking `preview_capture` disclosure, and "
+                              "not_submittable: true. It is sealed and immutable like any "
+                              "other capture and is NEVER updated in place.")
+    sanity.add_argument("--no-sanity-check", dest="sanity_check", action="store_false",
+                        default=True,
+                        help="do not run the probe at all. The manifest then records that "
+                             "it was disabled, because a check nobody ran is not a check "
+                             "that passed.")
     return parser
 
 

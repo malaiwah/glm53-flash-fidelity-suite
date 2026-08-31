@@ -183,3 +183,9 @@ bin/fidelity/k3compat.py
 bin/fidelity/cardmeta.py
 k6/tools/hf_capture.py
 k6/tools/layer_outer.py
+# Race mode (docs/RACE-MODE.md): the priority-ordered background fetch the
+# layer-outer loader blocks on, and the generation sanity probe every capture
+# runs. Both are imported by hf_capture.py at module scope, so a missing entry
+# here is an ImportError at hour zero of a rented capture.
+k6/tools/race_fetch.py
+k6/tools/generation_probe.py

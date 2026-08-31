@@ -20,6 +20,7 @@ infrastructure, and largely dissolves the same-lane floor problem.
 | [`CARD-ANNOTATION-SPEC.md`](CARD-ANNOTATION-SPEC.md) | machine-readable fidelity provenance on a HuggingFace card: a conformant `model-index` result plus a small additive `x_fidelity` block, with the Hub's real validation behaviour measured rather than assumed |
 | [`FIDELITY-DATASET-BUILD-PLAN.md`](FIDELITY-DATASET-BUILD-PLAN.md) | exact new file names, CLI signatures, what each command validates and refuses, which existing code each wraps (never edits), the synthetic test matrix, registry changes, and open items |
 | [`REGISTRY-INTEGRATION.md`](REGISTRY-INTEGRATION.md) | the three additive `registry/` changes a step-3 receipt needs — specified, and deliberately not applied while a concurrent workflow holds those files open |
+| [`RACE-MODE.md`](RACE-MODE.md) | capturing a root while the checkpoint is still downloading, for the hours-long window after a model lands: the priority-ordered overlapped fetch and what it measured, why the preview and the final are DIFFERENT identities rather than two versions of one, the generation sanity check every capture now runs, and an honest section on the tension between racing and trustworthy numbers |
 | [`cards/`](cards/) | the annotation applied to our own K6 and K8 cards: the reference implementation, generated and validated, not published |
 
 ## The tooling
