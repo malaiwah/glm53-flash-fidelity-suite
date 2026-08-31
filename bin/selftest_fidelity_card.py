@@ -269,7 +269,7 @@ def main(argv):
     leaky = dict(minimal_fidelity)
     leaky["registry"] = dict(leaky.get("registry") or {})
     leaky["registry"]["snapshot"] = {
-        "root": "/Users/someone/Projects/glm53-fidelity-suite/registry",
+        "root": "/Users/someone/Projects/quant-fidelity-suite/registry",
         "data_sha256": {"measurements": "00" * 32},
     }
     merged = cardmeta.merge_card(

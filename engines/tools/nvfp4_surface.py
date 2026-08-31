@@ -1005,7 +1005,7 @@ def fetch_shard_manifest(repo: str, revision: str, root) -> Dict[str, Any]:
         % (repo, revision)
     )
     while url:
-        request = urllib.request.Request(url, headers={"User-Agent": "glm53-fidelity-suite"})
+        request = urllib.request.Request(url, headers={"User-Agent": "quant-fidelity-suite"})
         with urllib.request.urlopen(request, timeout=120) as response:
             entries = json.loads(response.read().decode("utf-8"))
             link = response.headers.get("Link") or ""

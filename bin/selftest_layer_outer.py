@@ -7,7 +7,7 @@ Everything here runs offline on a randomly initialised tiny model.  No network,
 no GPU, no checkpoint download.  The two REAL-model bit-identity proofs (the
 0.1B `glm5_next` fixture and `malaiwah/GLM-5.2-SIQ-Fruit-bf16`, i.e. the
 `glm_moe_dsa` architecture GLM-5.3 uses) are not reproducible offline and live
-in `docs/GLM53-LAYER-OUTER.md` with their digests; what this file guards is
+in `docs/LAYER-OUTER.md` with their digests; what this file guards is
 that the mechanism behind them cannot silently regress.
 
     L1  layer-outer + --layer-residency resident reproduces the window-outer
@@ -40,7 +40,7 @@ that the mechanism behind them cannot silently regress.
 Fail-without-fix: L1, L2, L4-L9, L12, L13 fail against the tree before this
 change (L1/L2/L13 as an argparse refusal of --schedule, the rest as an
 ImportError for engines/tools/layer_outer.py).  Verified by running this file
-against a `git archive` of the parent commit; see docs/GLM53-LAYER-OUTER.md.
+against a `git archive` of the parent commit; see docs/LAYER-OUTER.md.
 """
 
 from __future__ import annotations

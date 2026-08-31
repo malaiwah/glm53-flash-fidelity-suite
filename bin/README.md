@@ -9,10 +9,12 @@ way the registry will, before it is sent anywhere.
 
 ## Why here and not in `engines/tools/`
 
-`engines/tools/` is campaign-scoped — its name is a campaign, its contents assume
-GLM-5.3-Flash and the K6 encode. The runners are meant for people who have
-never heard of K6 and are measuring some other model entirely. Putting them at
-the top level alongside `registry/` is what makes the pair read as a product
+`engines/tools/` holds the ENGINES — the things that read a checkpoint and emit
+logits. Every one of them is model-agnostic now (they have run GLM-5.3-Flash,
+Qwen3.8-27B, Fruit, MiniMax-M3 and DeepSeek V4), which is why the directory is
+no longer called `k6/`. But an engine is still a thing you point at a
+checkpoint, and the runners here are the thing a stranger types. Putting them
+at the top level alongside `registry/` is what makes the pair read as a product
 rather than as internal tooling.
 
 The measurement **engines** stay where they are. `bin/` orchestrates; it does

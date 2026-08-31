@@ -11,7 +11,7 @@ is opt-in and named on every receipt because it moves the last digits by
 
 **Measured 2026-08-30** (`766a7e8`). The layer-outer engine is built and
 bit-identical to the window-outer schedule on two architectures and two devices;
-`docs/GLM53-LAYER-OUTER.md` carries the digests. Measured on Fruit on an L4:
+`docs/LAYER-OUTER.md` carries the digests. Measured on Fruit on an L4:
 peak CUDA allocated **10.409 -> 2.167 GB (4.80x)**, resident weights **9.144 ->
 1.471 GB**. The GLM-5.3 projection below is revised accordingly and is now an
 extrapolation from measurement rather than from arithmetic alone.

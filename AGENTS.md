@@ -116,6 +116,11 @@ mirrors are the user's public record.
 ## Where the hard-won detail lives
 
 - [`JOURNAL.md`](JOURNAL.md) — 38 numbered lessons, each from a real failure.
+- [`docs/NAMING-SWEEP.md`](docs/NAMING-SWEEP.md) — which names in this tree
+  are incidental and which are IDENTITY. Registry ids are hashed into
+  `comparability.key`, receipt schema strings sit inside sealed receipts, and
+  a published row's `harness.code_digests[].path` is inside `harness_id`.
+  Read it before renaming anything; `bin/selftest_naming_sweep.py` enforces it.
 - [`engines/HANDOFF.md`](engines/HANDOFF.md) — twenty operational lessons for running a campaign.
 - [`WHAT-WE-MEASURE.md`](WHAT-WE-MEASURE.md) — what a number actually is.
 - [`docs/`](docs/) — the dataset format spec, card annotation spec, protocol alignment.

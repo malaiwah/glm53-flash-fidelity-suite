@@ -833,7 +833,7 @@ message when `accelerate` is absent instead of surfacing the library's.
 That unblocks the B-1 and B-2 lanes. It does **not** change their prices, and
 the layer-outer engine of B-3/C-3 is still unbuilt. §6's cost table stands.
 *(Superseded 2026-08-30: the layer-outer engine is now built and proven. See
-§10 and `docs/GLM53-LAYER-OUTER.md`.)*
+§10 and `docs/LAYER-OUTER.md`.)*
 
 **A new number for the Stage B budget: the converter's transient is one layer,
 not three.** Loading the truncation peaked at **48.2 GB RSS** against
@@ -932,7 +932,7 @@ now the dominant and least-measured term.
 
 Full evidence, the two digest proofs, the measured memory tables, what the
 schedule does **not** handle, and what would falsify the projection:
-**`docs/GLM53-LAYER-OUTER.md`**. Raw receipts:
+**`docs/LAYER-OUTER.md`**. Raw receipts:
 `engines/tools/layer-outer-evidence/`.
 
 **Stage B is unchanged as a decision and is not taken here.** No GLM-5.3

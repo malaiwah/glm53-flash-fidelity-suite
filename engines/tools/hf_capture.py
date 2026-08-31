@@ -86,7 +86,7 @@ TOOL_VERSION = "hf_capture/1"
 # `dscompare` reads to decide `stack_relation`, and a cross-stack verdict
 # stamps `usable_as_floor: false` and attaches a 1e-2-class bias block.  The
 # layer-outer schedule is proven bit-identical to the window-outer one on two
-# architectures (see docs/GLM53-LAYER-OUTER.md), so charging a capture a
+# architectures (see docs/LAYER-OUTER.md), so charging a capture a
 # comparability penalty for it would be asserting a difference the digests say
 # is not there.  It is still written down, in the sealed receipt, where a
 # reader can see which loop produced their tensors.
@@ -1998,7 +1998,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "for each window: push that window through it; free it }, so "
                              "the checkpoint tree is read once per RUN. Windows are still "
                              "pushed sequentially and the per-window arithmetic is "
-                             "bit-identical; see docs/GLM53-LAYER-OUTER.md for the proofs.")
+                             "bit-identical; see docs/LAYER-OUTER.md for the proofs.")
     parser.add_argument("--layer-residency", default=layer_outer.RESIDENCY_STREAM,
                         choices=[layer_outer.RESIDENCY_STREAM, layer_outer.RESIDENCY_RESIDENT],
                         help="layer-outer only. `stream` (default) builds the model on the "

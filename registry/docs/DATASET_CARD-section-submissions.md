@@ -10,7 +10,7 @@ Keep it self-contained: on HF this is often the only page a contributor reads.
 **Discussions are the primary channel.** No git, no fork, no CI.
 
 1. Run the measurement. Either runner in
-   [malaiwah/glm53-fidelity-suite](https://github.com/malaiwah/glm53-fidelity-suite)
+   [malaiwah/quant-fidelity-suite](https://github.com/malaiwah/quant-fidelity-suite)
    seals a submission receipt for you — `bin/measure-cloud` on a rented GPU (it
    destroys the instance for you, on every exit path, and prints the real dollar
    cost), or `bin/measure-local` on your own Mac or CUDA box. Both write the

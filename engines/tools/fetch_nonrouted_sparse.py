@@ -73,7 +73,7 @@ def _request(url: str, range_header: str = None, attempts: int = 6):
     last = None
     for attempt in range(attempts):
         try:
-            headers = {"User-Agent": "glm53-fidelity-suite/fetch_nonrouted_sparse"}
+            headers = {"User-Agent": "quant-fidelity-suite/fetch_nonrouted_sparse"}
             token = os.environ.get("HF_TOKEN")
             if token:
                 headers["Authorization"] = "Bearer " + token

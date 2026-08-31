@@ -11,7 +11,7 @@ scoring -- runs in minutes on a laptop.  It certifies plumbing and estimator
 correctness; it can NOT certify the real model's KLD distribution or wall
 clock (its tail is a different animal), and nothing here pretends otherwise.
 
-Cached under FIDELITY_CACHE_DIR (default ~/.cache/glm53-fidelity)/fixture/
+Cached under FIDELITY_CACHE_DIR (default ~/.cache/quant-fidelity)/fixture/
 <repo>/<40-hex commit>/ so re-runs cost one metadata request.  Unauthenticated
 unless the environment already carries an HF token (the repo is public).
 The LAST line of stdout is the fixture path -- callers parse exactly that.

@@ -33,7 +33,7 @@
       "type": "object",
       "required": ["tool", "revision", "entrypoint", "entrypoint_sha256"],
       "properties": {
-        "tool": { "type": "string", "minLength": 1, "description": "e.g. glm53-fidelity-suite/measure_cloud.sh" },
+        "tool": { "type": "string", "minLength": 1, "description": "e.g. quant-fidelity-suite/measure_cloud.sh" },
         "repository": { "type": ["string", "null"] },
         "revision": { "$ref": "common.schema.json#/$defs/git_revision" },
         "entrypoint": { "type": "string", "minLength": 1 },

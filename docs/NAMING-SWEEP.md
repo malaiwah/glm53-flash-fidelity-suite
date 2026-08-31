@@ -8,7 +8,19 @@ and Qwen3.8-Flash-Next. The GitHub repository was renamed
 name that says "glm53" on a MiniMax run is no longer quaint, it is wrong.
 
 This document is the decision list for that sweep, written **before** the
-changes, so every verdict is reviewable line by line.
+changes, so every verdict is reviewable line by line. It was landed in six
+commits, one concern each, each green on `bash bin/selftest_all.sh` and
+`cd registry && make check && make reseed-check`:
+
+| commit | concern |
+|---|---|
+| `docs/NAMING-SWEEP.md` | this inventory, before any file moved |
+| stage driver harness | `bin/selftest_stage_measure.py` — nine of eleven stages had only ever been grepped |
+| published-identity freeze | `bin/selftest_naming_sweep.py` + `bin/published-identity.json`, landed BEFORE the renames so it guarded them |
+| `FIDELITY_K6_ROOT` → `FIDELITY_ENGINE_ROOT` | and `/home/jl_fs/glm53-k6` → `/home/jl_fs/fidelity-engine` |
+| `k6_kld_report.py` → `kld_report.py` | and `k6_student_capture.py` → `student_capture.py` |
+| `k6_driver` / `k6_publish` / `stage_k6.sh` | → `campaign_driver` / `publish_release` / `stage_campaign.sh` |
+| `k6/` → `engines/` | 343 files, `git mv` |
 
 ## The rule the sweep runs on
 
@@ -63,7 +75,7 @@ breaks a seal is far worse than a name that reads oddly.
 | R9 | `engines/k6_publish.py` | *deleted* | — | **Byte-identical duplicate** of `engines/tools/k6_publish.py` (sha256 match). Nothing invokes the top-level copy: `stage_k6.sh` runs `$TOOLS/k6_publish.py`. This is the drift class `selftest_canonical_json.py` exists for, caught before it drifted. |
 | R10 | `engines/stage_k6.sh` | `engines/stage_campaign.sh` | `bin/bootstrap_measure.sh` prose, `bin/stage_measure.sh` prose, `bin/_check_kld_profiles.py`, docs | It is the encode-campaign staging script; the measurement lane has owned its own bootstrap since `bootstrap_measure.sh` landed. |
 | R11 | `~/.cache/glm53-fidelity` | `~/.cache/quant-fidelity` | `bin/fidelity/registry_client.py`, `bin/fixture_fetch.py` | `FIDELITY_CACHE_DIR`'s default. Renaming orphans an existing cache; the only thing in it is the 0.1B fixture and registry snapshots, both re-fetchable. |
-| R12 | `docs/GLM53-LAYER-OUTER.md` | `docs/LAYER-OUTER.md` | 8 references | The document's own first gate table is `glm5_next`, `glm_moe_dsa` **and** `minimax_m3_vl`, and its second line says "No GLM-5.3 capture was run". It is the design document for a general capture schedule. |
+| R12 | `docs/LAYER-OUTER.md` | `docs/LAYER-OUTER.md` | 8 references | The document's own first gate table is `glm5_next`, `glm_moe_dsa` **and** `minimax_m3_vl`, and its second line says "No GLM-5.3 capture was run". It is the design document for a general capture schedule. |
 | R13 | `selftest_progress.py` rung P11's hardcoded `engines/tools/` prefix | derived from `BUNDLE.txt` itself | `bin/selftest_progress.py` | The bundle-completeness rung was itself hardcoded to the campaign directory, so the directory rename would have silently reduced it to checking nothing. Deriving the engine directory from the bundle makes the rung rename-proof. |
 | R14 | prose: "`engines/tools/` … assumes GLM-5.3-Flash and the K6 encode" | prose naming the engine tree | `bin/README.md`, `bin/BUNDLE.txt`, `registry/CONTRIBUTING.md` | False as written: those surfaces read MLX, GGUF, NVFP4, EXL3 and stream four architectures. |
 | R15 | `/Users/someone/Projects/glm53-fidelity-suite/registry` | `…/quant-fidelity-suite/registry` | `bin/selftest_fidelity_card.py` fixture | A test fixture quoting the pre-rename repository name. |
@@ -118,27 +130,84 @@ merge.
 
 ## Tests added or strengthened by this sweep
 
-Each is verified to fail without its fix; the commit that adds it says so.
+Each was verified to FAIL without its fix, by reintroducing the defect in a
+scratch copy; the commit that adds it says which failure it produced.
 
-1. **`bin/selftest_naming_sweep.py` — published identity is frozen.**
-   A snapshot of every registry id and every receipt-schema literal in the tree
-   is checked in. The test fails if any of them *disappears or changes*
-   (additions are fine). This is the regression test for the very operation
-   this document describes.
-2. **`bin/selftest_naming_sweep.py` — no model-specific hardcoding on the
-   instance.** Extends the `/home/jl_fs` rule in
-   `selftest_provider_portability.py` from *provider* names to *model* names:
-   no uploaded, on-instance file may contain a model or campaign token
-   (`glm`, `k6`, `k8`, `qwen`, `minimax`, `deepseek`, `fruit`) inside a
-   filesystem path literal.
-3. **`bin/selftest_naming_sweep.py` — two-file agreements.** The engine-root
-   environment variable emitted by `measure_cloud._stage_env()` must be the one
-   every on-instance script reads; `stackprint.IMAGE_PIN_CONVENTION_PATH` must
-   be the path `remote/vm_setup.sh` writes; `bin/engines.json` entrypoints must
-   exist and be bundled.
-4. **`bin/selftest_naming_sweep.py` — no byte-identical duplicated module.**
-   The `k6_publish.py` pair is the instance this sweep found; the check is
-   general.
-5. **`bin/selftest_progress.py` P11** now derives the engine directory from
-   `BUNDLE.txt` instead of hardcoding `engines/tools/`, and follows imports for
-   every bundled Python file, not only the engines.
+1. **`bin/selftest_stage_measure.py` (T16) — the stage driver, EXECUTED.**
+   Before it, two of `bin/stage_measure.sh`'s eleven stages were ever run by a
+   test; the other nine were "covered" by grepping the file for a substring.
+   This drives every stage under a real bash with argv-logging stubs, running
+   `invoke_engine.py`, `invoke_scorer.py` and `seal_receipt.py` for real where
+   the thing under test is their argv composition. Four properties per stage:
+   roots come from the environment, a missing input fails CLOSED, the `.done`
+   marker appears only on success, and no argument names a path the environment
+   did not supply. **Acceptance test:** all four historical stage bugs were
+   reintroduced and it names each — `QP_PIPELINE_ROOT` hardcoded in `measure`
+   (an A100 at 0% GPU for two hours), the same defect in `score`, the roots
+   never exported (45 failures across every stage), and `jqget` printing a JSON
+   null as `"None"` (reproducing the exact `--preview-of None` argv and the
+   `panel not uploaded: .../fs/None` message).
+
+2. **`bin/selftest_naming_sweep.py` N1 — published identity is frozen.**
+   `bin/published-identity.json` holds every registry id (159), every sealed
+   receipt schema string (9), every schema literal the code emits (242) and
+   every provenance path a published row names (23). `harness_id` is a sha256
+   over `{boundary, [{role, PATH, sha256}], tool_versions}`, so those paths are
+   inside the hash. The test fails if one *disappears*; adding is always
+   allowed, because a new measurement adds ids. This is the regression test for
+   the very operation this document describes, and it landed **before** the
+   renames rather than after, so it guarded them.
+
+3. **`bin/selftest_naming_sweep.py` N2 — no model name in an instance root.**
+   Extends the `/home/jl_fs` rule in `selftest_provider_portability.py` from
+   *provider* names to *model* names: no path rooted where a provider mounts
+   storage (`/home`, `/workspace`, `/mnt`, `/data`, `/root`, `/opt`, `/srv`) in
+   an uploaded on-instance tool may contain `glm`, `k6`, `k8`, `qwen`,
+   `minimax`, `deepseek`, `fruit`, `tr3`, `exl3`, `gguf`, `mlx` or `nvfp4`. Two
+   further rungs assert the rule actually read files and actually found paths
+   to judge, because a check that silently stops looking is worse than none.
+   `selftest_provider_portability.py` gained the same rule for the root the
+   controller *chooses*, on both providers.
+
+4. **`bin/selftest_naming_sweep.py` N3 — two-file agreements.** Every
+   `FIDELITY_*_ROOT` that `measure_cloud._stage_env()` exports must be read by
+   an on-instance script; `stackprint.IMAGE_PIN_CONVENTION_PATH` must be the
+   path `remote/vm_setup.sh` actually writes; every non-local `engines.json`
+   entrypoint must exist AND be in `BUNDLE.txt` — with `bin/kld_preview.py`'s
+   deliberate absence asserted, so nobody "fixes" it; every `BUNDLE.txt` entry
+   must exist.
+
+5. **`bin/selftest_naming_sweep.py` N4 — no byte-identical duplicated script.**
+   `k6/k6_publish.py` was a sha256-identical copy of `k6/tools/k6_publish.py`
+   and only the second was ever invoked. Deleted. `.patchwork/a` vs
+   `.patchwork/b` are exempt: two pinned snapshots kept side by side on purpose.
+
+6. **`bin/selftest_progress.py` P11 / P11b** now derive the engine directories
+   from `BUNDLE.txt` instead of hardcoding `k6/tools`, and follow imports for
+   every bundled Python file rather than only the engines. Hardcoded, the
+   `k6/` → `engines/` rename would have left the rung scanning a directory that
+   no longer exists — PASSING vacuously, while the defect it guards (an
+   ImportError at the start of the measure stage, after the bootstrap, the
+   200 GB fetch and the panel are all paid for) stays invisible locally. P11b
+   asserts it read 46 modules across four directories.
+
+## What the sweep itself found
+
+* **`registry/tools/seed_registry.py` reads a path off disk.**
+  `scope_from_evidence("engines/tools/exl3hf-evidence/scope-turbo-2.05bpw.json")`
+  derives an artifact's published scope from that file. Skipping the whole file
+  as "published strings" left the read path dangling, and `make reseed-check`
+  caught it. Read paths follow the tree; published fields do not, and the file
+  now carries a comment saying which is which.
+* **`bin/stage_measure.sh`'s header had been false for weeks.** It claimed the
+  bootstrap lived in `k6/stage_k6.sh` and that this script "arranges the layout
+  stage_k6.sh expects and calls it". Both stopped being true when
+  `bin/bootstrap_measure.sh` landed — the code 80 lines below already called
+  `bootstrap_measure.sh`, and that file's own header explains why the
+  delegation could never work. Corrected rather than renamed.
+* **`k6/k6_publish.py` and `k6/tools/k6_publish.py` were byte-identical**, and
+  only the `tools/` copy was ever invoked.
+* **`bin/kld_preview.py` is an `engines.json` entrypoint that is deliberately
+  not bundled** — it is the *local* lanes' scorer and never runs on rented
+  hardware. That was undocumented, so a bundle-completeness check would have
+  looked like it had found a bug. It is now asserted as intentional.

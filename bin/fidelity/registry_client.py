@@ -57,7 +57,10 @@ class RegistryUnavailable(RuntimeError):
 
 def cache_dir() -> Path:
     root = os.environ.get("FIDELITY_CACHE_DIR")
-    return Path(root) if root else (Path.home() / ".cache" / "glm53-fidelity")
+    # Not `.cache/glm53-fidelity`: this cache holds registry snapshots and a
+    # fixture for whatever model is being measured. Renaming it orphans an
+    # old cache, which costs one re-download and nothing else.
+    return Path(root) if root else (Path.home() / ".cache" / "quant-fidelity")
 
 
 class RegistrySnapshot:
