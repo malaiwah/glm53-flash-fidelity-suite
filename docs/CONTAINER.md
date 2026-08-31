@@ -338,10 +338,21 @@ Three things that cost real money to learn:
   own committed panel on a rented L4: *"--panel-dir ... has no panel.json"*.
   `--require-all` proves every listed entry arrived; it cannot prove that what
   a capture needs was listed. `selftest_container.py` rung **C5l** now does.
-* **`docker_args` is one flat string**, so an argument containing a space
-  depends on how the provider splits it. Prefer flags without spaces; `--gpu`
-  is optional anyway, because the receipt's device name is read from torch by
-  `fidelity/stackprint.py`, not from that flag.
+* **`docker_args` is one flat string** *as this backend sends it*, because
+  `podFindAndDeployOnDemand` is GraphQL and takes `dockerArgs` as a single
+  string; an argument containing a space then depends on how the provider
+  splits it. Prefer flags without spaces for now — `--gpu` is optional anyway,
+  since the receipt's device name is read from torch by
+  `fidelity/stackprint.py`, not from that flag. The real fix is the REST API:
+  `POST /v1/pods` takes `dockerEntrypoint` and `dockerStartCmd` as **arrays**,
+  so argv is a list and the quoting question disappears. Verified live.
+* **A failed run's log is on a volume you cannot reach.** RunPod's REST API
+  serves no logs and no files, and this image runs no sshd, so when a capture
+  died at its `capture` stage the log had to be recovered by rewriting the
+  running pod's entrypoint to `tar /workspace | curl` it out. That is why
+  `--result-sink` now carries `logs/` (tail-capped) and why stdout prints the
+  failing stage's log inline. Two better answers exist and are not yet wired:
+  a `networkVolumeId` that outlives the pod, and the array entrypoint above.
 * **Configuration and secrets travel in `env`, never in `docker_args`** — the
   args string is argv and RunPod returns it verbatim from
   `query { pod { dockerArgs } }`.

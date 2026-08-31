@@ -19,10 +19,34 @@ What is genuinely different from JarvisLabs, and matters
   (pid, exit code, log) and `run_status` reads them. That is the same contract
   the stage runner already expects, and it is honest about the one thing that
   matters: a stage that died is distinguishable from a stage still running.
-* **Storage is not separable.** JarvisLabs filesystems outlive their instance;
-  a RunPod volume is created and destroyed with the pod. `fs_create` therefore
-  records the request and returns the pod's own volume, and `fs_delete` is a
-  no-op that says so rather than pretending to have deleted something.
+* **Storage is not separable AS THIS BACKEND DRIVES IT.** JarvisLabs
+  filesystems outlive their instance; the POD volume this backend creates is
+  made and destroyed with the pod. `fs_create` therefore records the request
+  and returns the pod's own volume, and `fs_delete` is a no-op that says so
+  rather than pretending to have deleted something.
+
+  That is a statement about this code, NOT about RunPod. The REST API has
+  `networkVolumeId` on pod creation, and RunPod's own field description says a
+  network volume persists "so that future Pods can access it". This backend
+  does not use one. The cost of not using one was paid on 2026-08-31: a
+  container-native capture failed at the `capture` stage, its log was on a
+  pod-scoped volume with no sshd and no log API in front of it, and the only
+  way to read it was to REWRITE THE LIVE POD'S ENTRYPOINT to tar /workspace
+  and curl it to an endpoint. Attaching a network volume is the better answer
+  and is deliberately left as a change with its own tests rather than bolted
+  on mid-run: it changes fs_create/fs_delete semantics, the disk-sizing rule
+  above, and introduces storage that keeps billing after teardown -- which is
+  exactly the class of thing this suite refuses to do carelessly.
+
+* **`docker_args` is a flat string only because this backend uses GraphQL.**
+  `podFindAndDeployOnDemand` takes `dockerArgs` as one string, so an argument
+  containing a space depends on how the provider splits it. REST
+  `POST /v1/pods` takes `dockerEntrypoint` and `dockerStartCmd` as ARRAYS,
+  where argv is passed as a list and no quoting question arises. Verified
+  live against `POST /v1/pods/{podId}/update`, which accepted an array
+  entrypoint on a running pod. The same call also exposes `gpuTypeIds` as a
+  priority list and `interruptible` for spot, both of which this backend
+  currently approximates.
 
 Everything the controller does with the returned objects -- `Instance`,
 `GpuOffer` -- uses the dataclasses from `jlapi`, imported rather than re-typed,
@@ -43,6 +67,9 @@ from .jlapi import GpuOffer, Instance, JLError, redact
 from .sshbase import SSHTransport
 
 GQL = "https://api.runpod.io/graphql"
+#: REST base. Used only where GraphQL cannot express the call -- today that
+#: is argv-as-a-list on pod creation. See RunPod._rest.
+REST = "https://rest.runpod.io/v1"
 # A REAL tag, read from the account's own template list rather than guessed.
 # CUDA 13.0 / torch 2.9.1 / Ubuntu 24.04 matches what bootstrap_measure.sh
 # builds exllamav3 against on JarvisLabs, and 24.04 ships python3.12 natively.
@@ -67,8 +94,12 @@ def _load_key(path: Optional[str] = None) -> str:
 
 class RunPod(SSHTransport):
     """Thin, auditable wrapper. `dry` short-circuits every mutating call."""
-    # This provider has NO filesystem that outlives its instance, so the
-    # whole run must fit on the instance's own disk: a RunPod volume is created with the pod and dies with it.
+    # False because THIS BACKEND creates a pod-scoped volume, which is made
+    # and destroyed with the pod -- so the whole run must fit on the
+    # instance's own disk. RunPod itself does offer network volumes that
+    # outlive a pod (`networkVolumeId` on REST pod creation); this code does
+    # not attach one. See the module docstring: the flag describes our
+    # driving of the provider, not the provider.
     # The controller reads this to size `create(storage=)`.
     separable_storage = False
 
@@ -109,6 +140,41 @@ class RunPod(SSHTransport):
             raise RunPodError("RunPod GraphQL: %s"
                               % redact(json.dumps(doc["errors"])[:300]))
         return doc.get("data") or {}
+
+    def _rest(self, path: str, payload: Optional[Dict[str, Any]] = None,
+              *, method: str = "POST", timeout: float = 180) -> Any:
+        """REST sibling of `_gql`, for the calls GraphQL cannot express.
+
+        The one that matters is pod creation: `podFindAndDeployOnDemand` takes
+        `dockerArgs` as a SINGLE STRING, so the container's argv is whatever
+        the provider's splitter makes of it. An argument containing a space is
+        already fragile; an argument that is the EMPTY STRING cannot survive at
+        all -- and `--sanity-expect ''` (record the generation probe without
+        enforcing it) is exactly that. A deliberately undertrained proxy model
+        is unreachable through the GraphQL path for that reason alone.
+
+        REST `POST /v1/pods` takes `dockerEntrypoint` and `dockerStartCmd` as
+        ARRAYS. argv is a list, nothing is re-split, and '' is a real element.
+        """
+        if self._key is None:
+            self._key = _load_key(self._key_file)
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        req = urllib.request.Request(
+            REST + path, data=data, method=method,
+            headers={"Content-Type": "application/json",
+                     "User-Agent": "quant-fidelity-suite/0.1",
+                     "Authorization": "Bearer " + self._key})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            raise RunPodError(
+                "RunPod REST %s %s -> HTTP %d: %s"
+                % (method, path, exc.code,
+                   redact(exc.read()[:300].decode("utf-8", "replace"))))
+        except Exception as exc:                          # noqa: BLE001
+            raise RunPodError("RunPod REST request failed: %s" % redact(str(exc)))
+        return json.loads(raw) if raw.strip() else {}
 
     # -- identity ----------------------------------------------------------
     def available(self) -> bool:
@@ -255,6 +321,40 @@ class RunPod(SSHTransport):
             env_pairs.append((key, (kw.get("env") or {})[key]))
         env_gql = ", ".join('{key:"%s", value:"%s"}' % (_q(k), _q(v))
                             for k, v in env_pairs)
+        # ARGV AS A LIST goes through REST; a flat string keeps the GraphQL
+        # path it has always used. Callers that need an argument containing a
+        # space -- or an EMPTY one -- pass `docker_cmd=[...]`.
+        docker_cmd = kw.get("docker_cmd")
+        if docker_cmd is not None:
+            if isinstance(docker_cmd, str):
+                raise RunPodError(
+                    "docker_cmd is argv as a LIST; pass docker_args= for a "
+                    "single pre-joined string")
+            payload = {
+                "name": name,
+                "imageName": kw.get("image") or DEFAULT_IMAGE,
+                "gpuTypeIds": [gpu],
+                "gpuCount": int(kw.get("num_gpus") or 1),
+                "cloudType": "SECURE" if secure else "COMMUNITY",
+                "volumeInGb": disk,
+                "containerDiskInGb": min(disk, 200),
+                "volumeMountPath": "/workspace",
+                "ports": ["22/tcp"],
+                "dockerStartCmd": [str(a) for a in docker_cmd],
+                "env": dict(kw.get("env") or {}, PUBLIC_KEY=pubkey.replace('"', "")),
+            }
+            entry = kw.get("docker_entrypoint")
+            if entry is not None:
+                payload["dockerEntrypoint"] = [str(a) for a in entry]
+            doc = self._rest("/pods", payload)
+            pod_id = doc.get("id")
+            if not pod_id:
+                raise RunPodError(
+                    "RunPod REST returned no pod id for gpuTypeIds=[%r] "
+                    "(usually means no capacity)" % gpu)
+            return {"machine_id": pod_id, "pod_id": pod_id,
+                    "name": doc.get("name"), "cost_per_hr": doc.get("costPerHr")}
+
         docker_args = kw.get("docker_args") or ""
         docker_gql = ('dockerArgs:"%s", ' % _q(docker_args)) if docker_args else ""
         q = ('mutation { podFindAndDeployOnDemand(input:{'

@@ -56,6 +56,11 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False):
     (root / ".secrets" / "hf_token").write_text("hf_TOKEN_MUST_NEVER_LEAVE",
                                                 encoding="utf-8")
     (root / "job.json").write_text('{"role":"quant"}', encoding="utf-8")
+    (root / "logs").mkdir(parents=True)
+    (root / "logs" / "setup.log").write_text("setup fine\n", encoding="utf-8")
+    (root / "logs" / "capture.log").write_text(
+        "b" * (RS.LOG_TAIL_BYTES + 5000) + "\nREFUSED [capture_failed]: the reason\n",
+        encoding="utf-8")
     return root
 
 
@@ -136,6 +141,37 @@ def rung_content():
               "result-summary.json" in names)
         check("R12 ... and no secret rides along in the tar either",
               not any(".secrets" in n for n in names), "%s" % names)
+
+
+def rung_logs():
+    print("[T26.7] the logs travel, because a failure report without one is not "
+          "a report")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _run_root(tmp)
+        summary = RS.build_summary(root, "capture", "failed",
+                                   ["setup", "capture"], None, "capture")
+        paths = [f["path"] for f in summary["files"]]
+        check("R28 stage logs are carried, not just receipts",
+              "logs/capture.log" in paths and "logs/setup.log" in paths,
+              "%s" % paths)
+        blob = RS._bundle(root, summary)
+        with tarfile.open(fileobj=io.BytesIO(blob)) as tar:
+            body = tar.extractfile("logs/capture.log").read()
+        check("R29 an oversize log is TAIL-capped, keeping the end where the "
+              "reason is", len(body) < RS.LOG_TAIL_BYTES + 500
+              and b"REFUSED [capture_failed]: the reason" in body)
+        check("R30 ... and the truncation is announced in the bytes, so nobody "
+              "reads a capped log as a whole one",
+              b"earlier bytes omitted" in body)
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            RS._deliver_stdout(root, summary, con)
+        text = buf.getvalue()
+        check("R31 stdout shows the FAILING stage's log inline -- the one thing "
+              "a pod-scoped volume takes to the grave",
+              "logs/capture.log (the stage that failed)" in text
+              and "REFUSED [capture_failed]: the reason" in text)
 
 
 def rung_http():
@@ -233,7 +269,8 @@ def rung_wired():
 
 def main():
     print("== T26 result sinks: getting the answer off the box ==")
-    for rung in (rung_parse, rung_content, rung_http, rung_cap, rung_wired):
+    for rung in (rung_parse, rung_content, rung_logs, rung_http, rung_cap,
+                 rung_wired):
         rung()
     print("\nT26: %d passed, %d failed" % (PASS, FAIL))
     for f in FAILED:

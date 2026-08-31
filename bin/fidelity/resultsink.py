@@ -151,12 +151,28 @@ def parse_sinks(values, env=None):
     return [Sink("stdout", "", "stdout")] + sinks
 
 
+#: Per-log tail, in bytes. A stage log is mostly a progress meter; the part
+#: that says why a run died is at the end. Whole logs would put a 200 MB
+#: `Loading weights:` bar through a PUT body.
+LOG_TAIL_BYTES = 64 * 1024
+
+
 def _relevant(fs_root):
-    """The files a caller actually wants, newest-first by directory."""
+    """The files a caller actually wants: receipts, the job, and the LOGS.
+
+    Logs were missing from the first version of this module, and the omission
+    cost a pod: a container-native Fruit capture failed at the `capture`
+    stage, the bundle arrived carrying setup receipts and no explanation, and
+    the log had to be recovered by REWRITING THE POD'S ENTRYPOINT to tar
+    /workspace and curl it out. Delivery-in-the-finally exists so a failed run
+    reports; a failure report with no log reports nothing.
+    """
     out = []
-    receipts = Path(fs_root) / "receipts"
-    if receipts.is_dir():
-        for path in sorted(receipts.rglob("*")):
+    for sub in ("receipts", "logs"):
+        base = Path(fs_root) / sub
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
             if not path.is_file():
                 continue
             rel = path.relative_to(fs_root)
@@ -167,6 +183,21 @@ def _relevant(fs_root):
     if job.is_file():
         out.append(job)
     return out
+
+
+def _payload(path, fs_root):
+    """A file's bytes for the bundle: logs tail-capped, everything else whole.
+
+    Truncation is ANNOUNCED in the bytes themselves rather than silently, so
+    nobody reads a capped log as a complete one.
+    """
+    rel = path.relative_to(fs_root)
+    data = path.read_bytes()
+    if rel.parts and rel.parts[0] == "logs" and len(data) > LOG_TAIL_BYTES:
+        head = (b"[... %d earlier bytes omitted; this is the last %d ...]\n"
+                % (len(data) - LOG_TAIL_BYTES, LOG_TAIL_BYTES))
+        return head + data[-LOG_TAIL_BYTES:]
+    return data
 
 
 def build_summary(fs_root, verb, status, stages, pin=None, failed_stage=None):
@@ -201,7 +232,12 @@ def _bundle(fs_root, summary):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for path in _relevant(fs_root):
-            tar.add(str(path), arcname=str(path.relative_to(fs_root)))
+            rel = str(path.relative_to(fs_root))
+            body = _payload(path, Path(fs_root))
+            info = tarfile.TarInfo(rel)
+            info.size = len(body)
+            info.mtime = 0
+            tar.addfile(info, io.BytesIO(body))
         blob = (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode("utf-8")
         info = tarfile.TarInfo("result-summary.json")
         info.size = len(blob)
@@ -214,6 +250,14 @@ def _deliver_stdout(fs_root, summary, con):
     """The universal channel: frame the answer into the container log."""
     print(BEGIN, flush=True)
     print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
+    failed = summary.get("failed_stage")
+    if failed:
+        log = Path(fs_root) / "logs" / ("%s.log" % failed)
+        if log.is_file():
+            body = _payload(log, Path(fs_root))
+            print("----- logs/%s.log (the stage that failed) -----" % failed,
+                  flush=True)
+            print(body.decode("utf-8", "replace"), flush=True)
     receipt = Path(fs_root) / "receipts" / "measurement-receipt.json"
     if receipt.is_file():
         size = receipt.stat().st_size
@@ -235,7 +279,7 @@ def _deliver_file(fs_root, summary, target, con):
     for path in _relevant(fs_root):
         out = dest / path.relative_to(fs_root)
         out.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(path), str(out))
+        out.write_bytes(_payload(path, Path(fs_root)))
         copied += 1
     (dest / "result-summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
