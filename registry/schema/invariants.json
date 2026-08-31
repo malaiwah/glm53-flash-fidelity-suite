@@ -589,6 +589,7 @@
     "calibration_panel_overlap",
     "contamination_unchecked",
     "cross_engine_capture",
+    "cross_hardware",
     "cross_model_reference",
     "cross_stack_capture",
     "declared_scheme_mismatch",

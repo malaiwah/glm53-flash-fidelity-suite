@@ -12,6 +12,7 @@ Usage:  python3 tools/seed_registry.py [--out DIR] [--check]
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -126,6 +127,7 @@ def _receipt_sha(rel):
 STREAM_K6_RECEIPT = "receipts/malaiwah/stream-k6-kld.json"
 STREAM_K6_VERDICT = "receipts/malaiwah/stream-k6-verdict.json"
 STREAM_TURBO405_RECEIPT = "receipts/malaiwah/stream-turbo-4.05bpw-kld.json"
+STREAM_TURBO205_RECEIPT = "receipts/malaiwah/stream-turbo-2.05bpw-kld.json"
 STREAM_TR34_RECEIPT = "receipts/malaiwah/stream-tr3-4bpw-kld.json"
 STREAM_TR34_RECEIPT_SHA = "1e790a0e2a69b1646ffee3c1c1529596bc2a5ac7d4f314039c6950b6e3ae1e6f"
 STREAM_DIONE30_RECEIPT = "receipts/malaiwah/stream-dione-3.0bpw-kld.json"
@@ -137,6 +139,7 @@ STREAM_BF16_RECEIPT = "receipts/malaiwah/stream-bf16-kld.json"
 STREAM_K6_RECEIPT_SHA = _receipt_sha(STREAM_K6_RECEIPT)
 STREAM_K6_VERDICT_SHA = _receipt_sha(STREAM_K6_VERDICT)
 STREAM_TURBO405_RECEIPT_SHA = _receipt_sha(STREAM_TURBO405_RECEIPT)
+STREAM_TURBO205_RECEIPT_SHA = _receipt_sha(STREAM_TURBO205_RECEIPT)
 STREAM_K8_RECEIPT_SHA = _receipt_sha(STREAM_K8_RECEIPT)
 STREAM_BF16_RECEIPT_SHA = _receipt_sha(STREAM_BF16_RECEIPT)
 HF_REGISTRY_RAW = "https://huggingface.co/datasets/malaiwah/quant-fidelity-registry/resolve/main/"
@@ -184,6 +187,39 @@ def asg(cls, treatment, fmt, bpw=None, layer_range="all", note=None):
 def scope(policy, assignments, head_policy, kv="bf16", act=None, mtp=None):
     return {"policy": policy, "assignments": assignments, "head_policy": head_policy,
             "kv_cache_dtype": kv, "activation_quantization": act, "mtp_included": mtp}
+
+
+def scope_from_evidence(rel_path, kv="not_applicable", mtp=None):
+    """Read an artifact's scope from the evidence file the GATE also reads.
+
+    `measure-cloud --scope-json` cross-checks that file against the release's
+    own published per-module rates before a run starts, and refuses on any
+    disagreement. Restating the same assignments here by hand would create a
+    second copy that the gate does not check -- which is exactly how the first
+    turbo-2.05bpw receipt came to claim the 4.05bpw branch's rates. One file,
+    two readers.
+    """
+    # SUITE root: this file is registry/tools/, so three dirnames up. The seed
+    # is a maintainer tool that runs in the suite checkout; the published
+    # dataset repo ships registry/ only and does not run it.
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    path = os.path.join(root, rel_path)
+    if not os.path.isfile(path):
+        raise SystemExit("seed_registry: scope evidence not found: %s\n"
+                         "  An artifact's scope is READ from the same file "
+                         "`measure-cloud --scope-json` verifies against the "
+                         "release; it is not restated here." % path)
+    with open(path, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    return scope(doc["policy"],
+                 [asg(a["tensor_class"], a["treatment"], a["format"],
+                      a.get("bits_per_weight"), a.get("layer_range") or "all",
+                      a.get("note"))
+                  for a in doc["assignments"]],
+                 doc["head_policy"],
+                 kv=doc.get("kv_cache_dtype", kv),
+                 act=doc.get("activation_quantization"),
+                 mtp=doc.get("mtp_included", mtp))
 
 
 def native_scope(fmt="bf16", kv="bf16", mtp=None):
@@ -651,6 +687,7 @@ A_DIONE = "artifact--0xsero.glm-5.3-flash-exl3-q4"
 A_DIONE30 = "artifact--0xsero.glm-5.3-flash-exl3-3.0bpw"
 A_B4 = "artifact--brandonmusic.glm-5.3-flash-tr3-4bpw"
 A_TURBO405 = "artifact--turboderp.glm-5.3-flash-exl3-4.05bpw"
+A_TURBO205 = "artifact--turboderp.glm-5.3-flash-exl3-2.05bpw"
 A_VCRUZK2 = "artifact--vcruz305.glm-5.3-flash-exl3-k2"
 VCRUZ_SRC = ("read from the release's OWN config.json quantization_config @ 1718dd40 (bits 2, codebook mcg, head_bits 16, quant_method exl3, scope glm53_routed_experts_only, non_routed_dtype_policy official_source_native, version 0.0.43) and confirmed by a name census of its own 150,226-entry model.safetensors.index.json: 148,608 routed payload tensors (43 layers x 288 experts x 3 projections x 4 objects) and exactly the official 1,618 non-routed names, unfused and under official names, no strays either way")
 A_TR3MIRROR = "artifact--mia-ailab.glm-5.3-flash-exl3-tr3-4bpw"
@@ -1187,6 +1224,57 @@ ARTIFACTS = [
                    "the official BF16 weight cast to fp16. Any measurement must say which it "
                    "used; ours uses the quantized split. The vision tower is not executed by "
                    "text-only scoring, so it does not affect the published number.")],
+             weights_extra={"size_basis": "repo_all_files", "shard_count": 19,
+                            "tensor_parallel": {"pre_sliced": False, "world_size": None}},
+             derived_from_artifact_ref=A_FP8,
+             availability={"status": "public",
+                           "uri": "https://huggingface.co/turboderp/GLM-5.3-Flash-exl3"},
+             cross_refs=lair(),
+             seal={"sealed": False, "note": "unsealed source; see the unsealed_source disclosure"}),
+    # turboderp's LOW-BIT rung, and the only artifact in this registry whose
+    # number has been reproduced on hardware we do not own. Its scope is READ
+    # from the evidence file `measure-cloud --scope-json` verifies against the
+    # release, rather than restated here: the FIRST 2.05bpw receipt carried the
+    # 4.05bpw branch's rates -- experts 4 where this release publishes 2, head 6
+    # where it declares 5 -- because a sibling branch's scope file is a valid
+    # file that names the same classes and is wrong in every rate.
+    artifact(A_TURBO205, GLM,
+             "turboderp GLM-5.3-Flash EXL3 2.05bpw (stock exllamav3, mul1, quantized head at 5 bits)",
+             "quant",
+             hf("turboderp/GLM-5.3-Flash-exl3",
+                "51058cd551c7e570d87bd32a4adee720edce2349", "hf_api",
+                path="branch 2.05bpw"),
+             "exl3", "2.05 bpw", 85233484348,
+             codec("exl3-mul1", 2.05, None, tool="exllamav3", version="1.4.4",
+                   calibration={"used": True, "corpus": None, "tokens": 250 * 2048,
+                                "overlaps_any_panel": None, "overlapping_panel_refs": []}),
+             scope_from_evidence("k6/tools/exl3hf-evidence/scope-turbo-2.05bpw.json"),
+             TURBODERP("quantizer"),
+             [src("url", "https://huggingface.co/api/models/turboderp/GLM-5.3-Flash-exl3?blobs=true",
+                  None, "24 files at revision 51058cd5; all-files sum 85,233,484,348"),
+              src("hf_file",
+                  "https://huggingface.co/turboderp/GLM-5.3-Flash-exl3/resolve/"
+                  "51058cd551c7e570d87bd32a4adee720edce2349/quantization_config.json",
+                  "22a0eb34458b7a5951a5f20aa30290b6cd330085db3585dd83993bf7bb83ae2c",
+                  "47,905,719 bytes, one tensor_storage entry per module stating "
+                  "bits_per_weight; the header declares bits 2.05, head_bits 5, "
+                  "vision_bits 5, mtp_bits 2. Every rate in scope was read from it "
+                  "and is re-verified against it at plan time.")],
+             [disc("unsealed_source", "caveat",
+                   "Stock exllamav3 releases ship no upstream receipts, reconstruction closures "
+                   "or sealed reader ABI. The packed surface was decoded WITHOUT seal "
+                   "verification; the immutable repo revision and the artifact's own "
+                   "quantization_config sha256 were recorded instead.", True),
+              disc("quantized_from_quantized_parent", "caveat",
+                   "The release's own quantization_config declares "
+                   "original_quantization_config.fmt = e4m3: this artifact was quantized from "
+                   "the FP8 release, not from BF16. Its divergence against a BF16 reference "
+                   "therefore includes the FP8 parent's.", True),
+              disc("quantized_head", "caveat",
+                   "head_bits 5 -- LOWER than the 6 that this producer's 4.05bpw and 3.05bpw "
+                   "branches declare. The head is APPLIED natively from the artifact's own "
+                   "weights, so measurements carry head_policy native_head; the quantization is "
+                   "artifact identity, recorded here.", True)],
              weights_extra={"size_basis": "repo_all_files", "shard_count": 19,
                             "tensor_parallel": {"pre_sliced": False, "world_size": None}},
              derived_from_artifact_ref=A_FP8,
@@ -2812,6 +2900,66 @@ def build_measurements(artifacts_map):
                        "0.9509916951636541, identical across both cold runs, read from the "
                        "per-run kld-report.json (the scalar summary family did not carry it "
                        "at the time this row was written; k6_kld_report now emits it)."))
+    STURBO205 = 0.12163767673339457
+    out.append(M("measurement--glm53.turbo-2.05bpw-stream.brandonmusic-final25", GLM,
+                 A_TURBO205, P_B25, R_B25, PL_STREAM, STURBO205,
+                 metric_name="mean_of_run_means_tokenwise_kld",
+                 top1=0.8891841719589644,
+                 scored_positions=51175, contexts=25, runs=2, cold=True,
+                 run_means=[STURBO205] * 2,
+                 identical=True, evidence_kind="tokenwise_kld_sha256",
+                 evidence_hashes=["9d27f2cbc2c1f27079ee7e80d0185268ef2d0b0ac4a5cf709ab7fd5dededed4e"],
+                 det_note="2 cold runs, 2 distinct kld_report_sha256, 1 distinct "
+                          "tokenwise_kld_sha256. The report-file digests differ per run and prove "
+                          "nothing; the tokenwise digest is the determinism evidence.",
+                 sources=[src("receipt_file", STREAM_TURBO205_RECEIPT, STREAM_TURBO205_RECEIPT_SHA,
+                              "malaiwah.glm53-turbo-2.05bpw-packed-kld-summary.v1"),
+                          src("hf_file", HF_REGISTRY_RAW + STREAM_TURBO205_RECEIPT,
+                              STREAM_TURBO205_RECEIPT_SHA)],
+                 receipt_schema="malaiwah.glm53-turbo-2.05bpw-packed-kld-summary.v1",
+                 cls="advisory",
+                 bias={"kind": "other", "direction": "unknown", "floor_measurement_ref": M_BF16_FLOOR,
+                       "estimated_magnitude": None,
+                       "detail": "Measured on the 'streaming' lane, whose offset against the sealed-ep8 "
+                                 "lane is known to be non-zero but was NOT measured for this artifact. "
+                                 "This lane's own measurement floor (%s) is %r nats; netting it out "
+                                 "gives an estimated quantization-attributable error of %r nats here -- "
+                                 "an estimate, not an identity, because KL is not additive, and it is "
+                                 "only meaningful because both terms share the same reference and lane."
+                                 % (M_BF16_FLOOR, BF16_FLOOR, STURBO205 - BF16_FLOOR)},
+                 gate={"metric": "mean_tokenwise_kld", "threshold_lt": 0.06, "threshold_gt": None,
+                       "passed": False},
+                 disclosures=[
+                     disc("unsealed_source", "caveat",
+                          "seal_disclosure (verbatim from the receipt): unsealed-source scoring: stock "
+                          "exllamav3 releases ship no upstream receipts, reconstruction closures or "
+                          "sealed reader ABI; the packed surface was decoded WITHOUT seal "
+                          "verification.", True),
+                     disc("reduced_run_count", "caveat",
+                          "cold_run_deviation (verbatim from the receipt): 2 cold runs, not 5 "
+                          "(budget; disclosed)", True),
+                     disc("quantized_head", "caveat",
+                          "declared_head_bits 5 -- lower than the 6 this producer's 4.05bpw and "
+                          "3.05bpw branches declare. Applied natively from the artifact's own "
+                          "weights, so estimator.head_policy is native_head.", True),
+                     disc("non_sealed_lane", "caveat",
+                          "Produced by the 'streaming' lane, not the sealed-ep8 lane. The lane's "
+                          "offset against the sealed lane is NOT measured for this artifact.", True),
+                     disc("cross_hardware", "info",
+                          "This value was measured on an H200, as were the other rows in its "
+                          "comparability group. It was independently REPRODUCED on A100 hardware at "
+                          "two different providers (Vast A100 PCIe and RunPod A100-SXM4), which "
+                          "agreed with each other BITWISE -- same tokenwise-KLD tensor hash -- and "
+                          "differ from this H200 value by 2.973e-04 nats (0.245%). The GPU model, "
+                          "not the provider or the host, is the discriminator; see "
+                          "docs/ARCHITECTURE-DETERMINISM.md. That term is larger than the gap "
+                          "between some 4-bpw rows in this registry, and it cancels only because "
+                          "those rows share this row's hardware.")]))
+    # Stamped after the row is built, the way the Qwen rows are: stamp_harness()
+    # honours a row that already carries a recorded block. This is the FIRST row
+    # in this registry with a recorded harness rather than the grandfather
+    # clause -- the allowlist froze on 2026-08-30 and this number came after it.
+    out[-1]["harness"] = stream_lane_harness()
     out.append(M(M_BF16_FLOOR, GLM, A_BF16_A6, P_B25, R_B25, PL_STREAM, BF16_FLOOR,
                  metric_name="mean_of_run_means_tokenwise_kld",
                  scored_positions=51175, contexts=25, runs=2, cold=True, run_means=[BF16_FLOOR] * 2,
@@ -3730,6 +3878,55 @@ FIDELITY_COMPARE_TOOL_VERSIONS = {
     "python": "3.10.20", "torch": "2.11.0+cu130", "transformers": "5.8.1",
     "numpy": "2.2.6", "safetensors": "0.8.0-rc.0",
 }
+
+
+# The streaming lane's closure, for the FIRST row this registry ever recorded a
+# harness for rather than grandfathering. The pin is not guessed: the receipt's
+# own `produced_by.entrypoint_sha256` for bin/measure_cloud.py is
+# 2d4ccd44f80b3ad9..., and `git show f3b6d823:bin/measure_cloud.py` hashes to
+# exactly that -- so the commit whose bytes were uploaded is identified by the
+# receipt itself, not by when someone thinks the run happened.
+STREAM_LANE_PIN = "f3b6d8234a1ccb9b3fa461f28ebdb9b043c2ae3a"
+STREAM_LANE_DIGESTS = [
+    {"role": "capture", "path": "k6/tools/stream_score.py",
+     "sha256": "f313ba248cd522016444123aa7353372105848a1b3b73f254c8c485c85bf5294"},
+    {"role": "estimator", "path": "k6/tools/k6_kld_report.py",
+     "sha256": "27c1c4c75ea2136b874b62dfa47c4799539e09029b640ab027a8d81b00c6bb5a"},
+    {"role": "front_end", "path": "bin/invoke_engine.py",
+     "sha256": "04917772e2e83b3f059160957ee3139f9190ae085a131918a18476c10a7129f5"},
+    {"role": "comparator", "path": "bin/invoke_scorer.py",
+     "sha256": "77aa5d160857db51411138776748433b74532aeabfd0c2feaf8b6f5ab4ede566"},
+    {"role": "format", "path": "bin/seal_receipt.py",
+     "sha256": "88a28532a85b0a80ee38b45250a3a8cc701620ff9c049bf010f975f27a988812"},
+]
+# Read off the measuring instance's own receipts (python-version.txt,
+# wheel-versions.txt), not off whoever runs `make reseed`.
+STREAM_LANE_TOOL_VERSIONS = {
+    "python": "3.12.13", "torch": "2.11.0+cu130", "transformers": "5.16.1",
+    "numpy": "2.5.2", "safetensors": "0.8.0",
+}
+
+
+def stream_lane_harness():
+    """RECORDED harness for a streaming-lane row this campaign computed."""
+    return {
+        "harness_id": H.compute_id(STREAM_LANE_DIGESTS, STREAM_LANE_TOOL_VERSIONS),
+        "recorded": True,
+        "boundary": H.BOUNDARY,
+        "covers": ["auxiliary_metrics", "determinism", "metric.value"],
+        "repository": {"url": HARNESS_REPOSITORY["url"],
+                       "commit": STREAM_LANE_PIN, "commit_role": "exact",
+                       "dirty": False},
+        "code_digests": STREAM_LANE_DIGESTS,
+        "tool_versions": dict(sorted(STREAM_LANE_TOOL_VERSIONS.items())),
+        "note": ("Covers metric.value: capture and estimation both ran from this "
+                 "commit's bytes on the measuring instance. The commit is "
+                 "identified BY THE RECEIPT -- its produced_by.entrypoint_sha256 "
+                 "matches `git show %s:bin/measure_cloud.py` -- rather than by "
+                 "recollection. Re-derive any row with "
+                 "`git show %s:<path> | sha256sum`."
+                 % (STREAM_LANE_PIN[:12], STREAM_LANE_PIN[:12])),
+    }
 
 
 def q38_hf_harness():
