@@ -223,6 +223,53 @@ def main(argv):
               "17-window row's zero-point)",
               bool(reason) and "scope" in reason, str(reason)[:110])
 
+    # -- K8c/K8d/K8e: XC-7 -- the card's scope must be the registry's --------
+    # P1-02. The published K6/K8 cards carried a FALSE scope (attention + dense
+    # MLP "quantized") for two days after the registry artifact was corrected,
+    # and validate passed, because nothing compared the card's scope_digest or
+    # artifact_id to the authoritative record. Each of these three fails on the
+    # pre-XC-7 validator.
+    if registry.get("artifacts"):
+        art_id = sorted(registry["artifacts"])[0]
+        real_scope = registry["artifacts"][art_id].get("scope_digest")
+        if real_scope:
+            fidelity = json.loads(json.dumps(minimal_fidelity))
+            fidelity["registry"] = {"artifact_id": art_id}
+            fidelity["scope_digest"] = "forged=quantized:fake@4|head=native|kv=bf16"
+            front = dict(base_front)
+            front["model-index"] = [{"name": "A", "results": [one_result("streaming")]}]
+            front["x_fidelity"] = fidelity
+            axis = cardmeta._our_axis(card_text(front), registry)
+            check("K8c a card scope_digest differing from the registry artifact's is "
+                  "refused (XC-7)",
+                  any("XC-7" in e and "scope_digest" in e for e in axis["errors"]),
+                  json.dumps(axis["errors"][:1])[:110])
+
+            fidelity = json.loads(json.dumps(fidelity))
+            fidelity["registry"] = {"artifact_id": "artifact--does.not.exist"}
+            front["x_fidelity"] = fidelity
+            axis = cardmeta._our_axis(card_text(front), registry)
+            check("K8d an artifact_id that does not resolve is refused (XC-7)",
+                  any("XC-7" in e and "does not resolve" in e for e in axis["errors"]),
+                  json.dumps(axis["errors"][:1])[:110])
+
+            fidelity = json.loads(json.dumps(minimal_fidelity))
+            fidelity["registry"] = {
+                "artifact_id": art_id,
+                "snapshot": {"data_sha256": {"measurements": "0" * 64}}}
+            fidelity["scope_digest"] = real_scope
+            front["x_fidelity"] = fidelity
+            axis = cardmeta._our_axis(card_text(front), registry)
+            stale_err = any("XC-7" in e and "STALE" in e for e in axis["errors"])
+            fidelity["registry"]["snapshot"]["archival"] = True
+            front["x_fidelity"] = fidelity
+            axis2 = cardmeta._our_axis(card_text(front), registry)
+            archival_ok = (not any("STALE" in e for e in axis2["errors"])
+                           and any("STALE" in w for w in axis2["warnings"]))
+            check("K8e a stale registry snapshot is an error, archival downgrades to a "
+                  "warning (XC-7)", stale_err and archival_ok,
+                  "stale_err=%s archival_warn=%s" % (stale_err, archival_ok))
+
     # -- K9: a measurement id the registry does not have ---------------------
     expect_refusal("K9  a model-index result for an unknown measurement is refused (XC-3)",
                    lambda: cardmeta.build_model_index(registry, ["measurement--nope"], "A"),

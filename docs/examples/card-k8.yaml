@@ -101,7 +101,7 @@ x_fidelity:
     artifact_id: artifact--malaiwah.glm-5.3-flash-tr3-8bpw
     measurement_ids:
       - measurement--glm53.k8-8bpw-stream.brandonmusic-final25
-  scope_digest: attn.o=quantized:exl3-mcg@8|attn.qkv=quantized:exl3-mcg@8|embed_tokens=native:bf16|lm_head=native:bf16|mlp.down=quantized:exl3-mcg@8|mlp.gate=quantized:exl3-mcg@8|mlp.up=quantized:exl3-mcg@8|moe.experts=quantized:exl3-mcg@8|norm=native:bf16|head=native|kv=bf16
+  scope_digest: attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@8|moe.router=native:fp32@32|moe.shared_expert=native:bf16@16|mtp=quantized:exl3-mcg@8|norm=native:bf16@16|other=native:bf16@16|head=native|kv=bf16
   head:
     policy: native
     quantized: false

@@ -69,8 +69,8 @@ model-index:
         determinism: bitwise_identical_across_runs
         measurement_id: measurement--glm53.k8-8bpw-stream.brandonmusic-final25
         comparability_key: cmp--202b717f3219c414
-    - type: kl_divergence_quantization_attributable
-      name: KLD attributable to quantization (same-lane floor removed), nats
+    - type: kl_divergence_excess_over_control
+      name: KLD excess over same-lane unquantized control, nats
       value: 0.0008782684041065674
       args:
         units: nats
@@ -143,13 +143,13 @@ x_fidelity:
     - measurement--glm53.k8-8bpw-stream.brandonmusic-final25.clean17
     snapshot:
       data_sha256:
-        models: 91c950e9708acce30a7210caa3286a40104a54c22e440d5c3a8279fb04b9d55a
-        artifacts: 3b4e3f14ee7989e933271efbabb4cde488ac52fc09ad005ac483784620163622
-        panels: c9843eeee142167dc8023f6b900159537a44296184b93722f8082e3fa919ede5
-        references: 9cca6aa5f1dfc58593f4c3c0a18fa31b6db7e0018281a53c3df1f5c013aed103
-        pipelines: 079820a5cf6f3c3ebe7275509a6c893e2e1b1f48d96d6eac30e8d3dd429bfcf4
-        measurements: 9e29ee25ca77784f9220d0f50d95106cc4df7d1645ed4a3d693e9f057046f662
-  scope_digest: attn.o=quantized:exl3-mcg@8|attn.qkv=quantized:exl3-mcg@8|embed_tokens=native:bf16|lm_head=native:bf16|mlp.down=quantized:exl3-mcg@8|mlp.gate=quantized:exl3-mcg@8|mlp.up=quantized:exl3-mcg@8|moe.experts=quantized:exl3-mcg@8|norm=native:bf16|head=native|kv=bf16
+        models: c2a33da659332578fcd803473a13fae811abee8990c5d05807ca48d884154ea8
+        artifacts: 7c8e848f8dd41727327f81337057eef6ce656d23564a09e39b7fe64405d2e551
+        panels: 38a33529d34b400ec92fd0b725de562324e486b9a6c59aaa79e251235e09b603
+        references: ca593279ddaab6c3338bfb214db7c95ec57d7607cb231b61c14020d4b18bebe8
+        pipelines: 4c143473c80b75d1cd9cec6d0e1a5985dc68a2c1e5df20b52dbb6a6183e5e694
+        measurements: 259d490cebd39571e4d1ecfefe7aa9f490a390f8cdf236f16ee901c51fb6e6f2
+  scope_digest: attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@8|moe.router=native:fp32@32|moe.shared_expert=native:bf16@16|mtp=quantized:exl3-mcg@8|norm=native:bf16@16|other=native:bf16@16|head=native|kv=bf16
   head:
     policy: native
     quantized: false
@@ -184,12 +184,13 @@ x_fidelity:
       evidence_hashes:
       - 763bc4a56a371e11a0f96469885b920deb6acb2c7c576d1268fb0907577f0942
     floor_measurement_id: measurement--glm53.bf16-stream-floor.brandonmusic-final25
-    quantization_attributable: 0.0008782684041065674
-    quantization_attributable_withheld: null
+    excess_over_control: 0.0008782684041065674
+    excess_over_control_withheld: null
     measured_by: self-measured
     disclosures:
     - reduced_run_count
     - non_sealed_lane
+    - harness_unrecorded
   - id: measurement--glm53.k8-8bpw-stream.brandonmusic-final25.clean17
     lane: streaming
     status: published
@@ -209,8 +210,8 @@ x_fidelity:
       evidence_hashes:
       - 763bc4a56a371e11a0f96469885b920deb6acb2c7c576d1268fb0907577f0942
     floor_measurement_id: null
-    quantization_attributable: null
-    quantization_attributable_withheld: null
+    excess_over_control: null
+    excess_over_control_withheld: null
     measured_by: self-measured
     disclosures:
     - reduced_run_count
@@ -260,22 +261,33 @@ official FP8 release's footprint, at 1.66× lower divergence.
 > | BF16 floor (cross-stack) | 0.012712 | 0.010648 | −16.24 % |
 > | brandonmusic 4bpw | 0.024555 | 0.024949 | **+1.61 %** |
 >
-> **The comparisons hold, and one of them weakens.** K8 beats the official FP8
-> on **17 of 17** clean windows, and the margin *widens*: 1.66× on panel25
-> becomes **1.72×** on clean17. The K8-over-K6 result survives but weakens — the
-> paired BCa interval still excludes zero, but its lower bound falls from
-> +0.000695 to +0.000153 and the sign test goes from p = 0.0041 to p = 0.049.
-> **We will not restate "K8 is better than K6" without naming the scope.**
+> **The comparisons hold as descriptions of this panel.** K8 beats the
+> official FP8 on **17 of 17** clean windows, and the margin *widens*: 1.66× on
+> panel25 becomes **1.72×** on clean17. The K8-over-K6 result survives but
+> weakens — the paired BCa interval still excludes zero on clean17, with its
+> lower bound falling from +0.000695 to +0.000153.
+>
+> **Statistical correction (2026-08-31, peer review P1-15).** This panel's 25
+> windows derive from only **four source documents** (clean17: three), so
+> window-level sign tests and intervals describe these exact windows rather
+> than independent evidence. At the document level the K8-over-K6 contrast
+> reads: all four (three) document means favour K8, exact sign test
+> **p = 0.125** (panel25) / **0.25** (clean17) — the previously printed
+> window-level p = 0.0041 / 0.049 are withdrawn as inferential statements. The
+> ordering survives on this panel; a population claim awaits a panel with many
+> independent documents per domain. **We will not restate "K8 is better than
+> K6" without naming the scope — or beyond this panel.**
 >
 > **Do not difference a panel25 number against a clean17 one.** They are answers
 > to different questions. Our registry enforces this structurally: `clean17` is
 > its own derived panel with its own comparability key.
 >
-> The **quantization-attributable** table below cannot be recomputed on the clean
-> scope — its floor is the *streaming* BF16 floor, whose receipt is scalar-only
-> (run means and a tokenwise digest, no per-window array), and substituting the
-> cross-stack floor would be the cross-lane subtraction our registry refuses. It
-> stands as a panel25 number.
+> The **excess-over-control** table below (formerly "quantization-attributable";
+> renamed 2026-08-31, P1-05) cannot be recomputed on the clean scope — its floor
+> is the *streaming* BF16 floor, whose receipt is scalar-only (run means and a
+> tokenwise digest, no per-window array), and substituting the cross-stack floor
+> would be the cross-lane subtraction our registry refuses. It stands as a
+> panel25 number.
 >
 > Full recompute, with per-domain tables, paired intervals and provenance:
 > [`reports/clean-scope-recompute.json`](https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1/blob/main/reports/clean-scope-recompute.json).
@@ -328,23 +340,29 @@ K8 appeared *worse* than K6; over the full panel it wins decisively. Never
 quote a single-window KLD as a rate comparison —
 [full write-up](https://github.com/malaiwah/quant-fidelity-suite/blob/main/engines/K8-ANOMALY.md).
 
-### Quantization-attributable error (the floor removed)
+### Excess over control (the floor removed)
+
+(Called "quantization-attributable error" before 2026-08-31; renamed per
+peer-review P1-05 — the difference estimates excess divergence over the
+same-lane unquantized control and is **not** a causal attribution.)
 
 Scoring the **unquantized BF16 weights** against this teacher on this panel
 already costs **0.011506 nats** — the price of the comparison itself (teacher
 captured on a different runtime; bf16 addition is not associative across
 differing expert-combine orders). Two cold runs, identical means. Removing it:
 
-| | panel KLD | attributable to quantization |
+| | panel KLD | excess over control |
 |---|---:|---:|
 | BF16 (floor) | 0.011506 | — |
 | K8 (331 GB) | 0.012384 | **0.000878** |
 | K6 (254 GB) | 0.013715 | **0.002209** |
 
-**K8's quantization error is 2.52x smaller than K6's**, against a raw ratio of
-only 1.11x — K8 removes ~60% of the divergence K6 leaves behind. Raw KLD
-understates differences between good quants because the floor is common to
-both. Method, receipts and the ways this subtraction can be misused:
+K8's residual is smaller than K6's — 0.000878 vs 0.002209 nats — where the raw
+means sit only 1.11x apart, because the floor is common to both rows and
+dominates both. **The previously published ratio of the two residuals
+("2.52x") is withdrawn**: a ratio of small residuals magnifies control error
+and carried no uncertainty. Read the residuals beside the raw values, with the
+floor named. Method, receipts and the ways this subtraction can be misused:
 [BF16-FLOOR.md](https://github.com/malaiwah/quant-fidelity-suite/blob/main/engines/BF16-FLOOR.md).
 
 ## What this is (and is not)
@@ -487,7 +505,8 @@ clock, thermal, driver, storage, or request mixes.
 ### K8 versus the K6 production default
 
 K8 lowers panel KLD from K6's 0.013723 to 0.012384. After subtracting the common
-BF16/runtime floor, its attributable quantization error is 2.52× smaller. The
+BF16/runtime floor, its excess over control is 0.000878 nats against K6's
+0.002209 (no residual ratio is quoted — P1-05). The
 cost is about 77 GB / 30% more checkpoint bytes, about 15.2 GiB more non-KV
 memory per GPU, and about 14.4 GiB less KV per GPU. K6 is 5.3–7.3× faster at
 short context and 8.3–24.4× faster when the measured 32K/128K prefill cost is

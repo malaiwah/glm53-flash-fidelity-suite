@@ -13,7 +13,7 @@ Two layers (docs/CARD-ANNOTATION-SPEC.md):
            model-index structurally cannot express: the dataset pointer, head
            identity, determinism evidence and the registry ids.
 
-Neither layer is trusted alone: XC-1..XC-5 cross-check them against each other
+Neither layer is trusted alone: XC-1..XC-7 cross-check them against each other
 and against `registry/data/measurements.jsonl`, which is what stops them
 drifting.
 
@@ -954,6 +954,50 @@ def _our_axis(text: str, registry: Dict[str, Any]) -> Dict[str, Any]:
             and head["lm_head_file_sha256"] == head["lm_head_tensor_content_sha256"]:
         errors.append("head file digest equals the content digest; one convention was "
                       "pasted twice (O-6)")
+
+    # XC-7 (P1-02).  Scope is a causal description of what changed, and the K6/K8
+    # cards proved a card can carry a FALSE one while validating green: the registry
+    # artifact was corrected on 2026-08-29 (routed experts only), the cards kept the
+    # pre-correction scope_digest (attention + dense MLP quantized), and validate
+    # passed because nothing compared the card's scope to the registry's.  The card's
+    # artifact must RESOLVE, its scope_digest must EQUAL the registry artifact's,
+    # and a stale registry snapshot is an error -- a reader attributing measured
+    # drift to layers that were never quantized is the exact misread this format
+    # exists to prevent.  A deliberately archival card says so in its own front
+    # matter (x_fidelity.registry.snapshot.archival: true) and is warned, not failed.
+    reg_block = fidelity.get("registry") or {}
+    if "artifacts" in (registry or {}):
+        artifact_id = reg_block.get("artifact_id")
+        artifact = (registry.get("artifacts") or {}).get(artifact_id)
+        if role == "quant":
+            if not artifact_id:
+                errors.append("XC-7: a quant card must name x_fidelity.registry.artifact_id")
+            elif artifact is None:
+                errors.append("XC-7: artifact_id %s does not resolve in the registry"
+                              % artifact_id)
+            else:
+                want = artifact.get("scope_digest")
+                if want and fidelity.get("scope_digest") != want:
+                    errors.append(
+                        "XC-7: card scope_digest does not match the registry artifact's. "
+                        "card: %r registry: %r -- the card asserts a different quantization "
+                        "scope than the authoritative artifact record; regenerate the card "
+                        "from the current registry"
+                        % (fidelity.get("scope_digest"), want))
+        snapshot = (reg_block.get("snapshot") or {})
+        declared = snapshot.get("data_sha256") or {}
+        live = ((registry.get("_snapshot") or {}).get("data_sha256")) or {}
+        stale = sorted(k for k in declared if live.get(k) and declared[k] != live[k])
+        if stale:
+            msg = ("XC-7: the card's registry snapshot is STALE (%s changed since it was "
+                   "generated). A stale card can carry claims the registry has since "
+                   "corrected; regenerate it, or mark it archival "
+                   "(x_fidelity.registry.snapshot.archival: true) if the old state is "
+                   "deliberate" % ", ".join(stale))
+            if snapshot.get("archival") is True:
+                warnings.append(msg + " [archival: warned, not failed]")
+            else:
+                errors.append(msg)
     return {"axis": "ours", "ran": True, "ok": not errors,
             "errors": errors, "warnings": warnings}
 

@@ -20,7 +20,7 @@ be verified without pushing:
 |---|---|
 | live Hub `POST /api/validate-yaml` (the same gate a `git push` runs) | clean, both cards |
 | `huggingface_hub` YAML → `ModelCardData` → YAML round-trip | structurally identical, both cards |
-| our XC-1..XC-5 cross-checks against `registry/data/measurements.jsonl` | clean, both cards |
+| our XC-1..XC-7 cross-checks against `registry/data/measurements.jsonl` | clean, both cards |
 
 What is **not** verified is how the eval widget *renders*, which needs one push
 to a private scratch model repo. The shape is byte-for-byte the structure

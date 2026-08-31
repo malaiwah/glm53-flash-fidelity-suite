@@ -464,7 +464,7 @@ Three independent axes, all must pass:
 2. **Round-trip axis** — parse with `huggingface_hub.ModelCard`, re-emit, and assert the
    YAML → `ModelCardData` → YAML round-trip is **structurally identical**. This catches the
    multi-entry collapse and the args-drop merge automatically, without hard-coding either.
-3. **Our axis** — role-conditional required fields (§3), XC-1..XC-5, `floor_lane == lane`,
+3. **Our axis** — role-conditional required fields (§3), XC-1..XC-7 (XC-7: artifact_id must resolve, card scope_digest must equal the registry artifact’s, stale registry snapshot = error unless marked archival), `floor_lane == lane`,
    head-digest presence before hidden replay is claimed, and that every `measurement_id` resolves in
    `registry/data/measurements.jsonl` with a matching `value`, `lane` and `comparability_key`.
 
@@ -587,6 +587,18 @@ refuses any two results that still collide (GEN-4), which is how this was found.
 row does not resolve, was measured on another lane, or was measured over another
 **scope**. Withholding an unverifiable number is the correct behaviour; printing
 it is not. Case K8b.
+
+**XC-7 — the card must agree with the CURRENT registry, or say it is archival**
+(added 2026-08-31, P1-02). The published K6/K8 cards carried a pre-correction
+scope for two days after the registry's artifact records were fixed, and
+`validate` passed, because nothing compared the card's `scope_digest` or
+`artifact_id` to the authoritative record. Now, for a quant card:
+`x_fidelity.registry.artifact_id` must **resolve** in the registry; the card's
+`x_fidelity.scope_digest` must **equal** the artifact record's; and a
+`registry.snapshot.data_sha256` that no longer matches the live data files is
+an **error** — a stale card can carry claims the registry has since corrected —
+unless the card marks itself `x_fidelity.registry.snapshot.archival: true`, in
+which case it is warned. Cases K8c/K8d/K8e.
 
 **A registry snapshot travels with the annotation.**
 `x_fidelity.registry.snapshot.data_sha256` records the digest of each

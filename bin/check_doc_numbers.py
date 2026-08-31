@@ -590,6 +590,22 @@ def main():
     # ====================================== 12. the single-window power arithmetic
     print()
     print("=" * 78)
+    # ============================================ 12b. the published row count
+    # P2 (peer review): README.md and llms.txt said "75 published rows" while the
+    # registry held 76. A hand-typed corpus count drifts on every added row; count
+    # the data and require every surface that states a total to state THIS one.
+    mpath = os.path.join(R, "registry/data/measurements.jsonl")
+    if os.path.exists(mpath):
+        n_rows = sum(1 for line in open(mpath, encoding="utf-8") if line.strip())
+        want = "%d published rows" % n_rows
+        for fname in ("README.md", "llms.txt"):
+            text = open(os.path.join(R, fname), encoding="utf-8").read()
+            stated = re.findall(r"(\d+) published rows", text)
+            if stated:
+                rep.check(all(int(x) == n_rows for x in stated),
+                          "%s row count" % fname,
+                          "says %s, registry holds %d" % ("/".join(stated), n_rows))
+
     print("12. THE POWER ARITHMETIC -- re-derived, not quoted")
     print("=" * 78)
     # CC-01. Six places in this repo, and the PUBLISHED K8 model card, said
