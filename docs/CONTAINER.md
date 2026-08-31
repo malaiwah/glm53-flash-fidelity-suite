@@ -206,6 +206,61 @@ so a second start copies nothing.
 
 ---
 
+## The container reproduced a published root, bitwise
+
+On 2026-08-31 the image captured `malaiwah/GLM-5.2-SIQ-Fruit-bf16` on a RunPod
+L4 — container-native, no SSH, no bundle upload, the panel read from inside the
+image — and published it to
+[`malaiwah/fruit-fidelity-root-container-v1`](https://huggingface.co/datasets/malaiwah/fruit-fidelity-root-container-v1).
+
+```
+capture_content_digest  b417acc22b8aa7f3294b8e62c4b619bc5051aef9fd8a073602572a30af6b3e1c   container
+                        b417acc22b8aa7f3294b8e62c4b619bc5051aef9fd8a073602572a30af6b3e1c   published root
+```
+
+Identical, and so is every field of the stack fingerprint — torch 2.11.0+cu130,
+transformers 5.16.1, CUDA 13.0, `NVIDIA L4`, `transformers-eager`, default
+matmul precision. The L4 was chosen deliberately: it is the card that produced
+the published root, and [`ARCHITECTURE-DETERMINISM.md`](ARCHITECTURE-DETERMINISM.md)
+established that the GPU MODEL, not the provider or the host, is what moves
+these bits. So this is a same-architecture reproduction through an entirely
+different transport, and it is the first row in this project whose
+`container.image_digest` is not null:
+`sha256:65425cfd9d31fb8f0e8d58d1548ad6b46704aabebfcc60d42b5e59d1f5f6f5f0`.
+
+`total_size_bytes` differs by 112 (67080528 vs 67080416): safetensors header
+padding, not content. The content digest covers the tensors, which is the point
+of having one.
+
+**The new capture is the more honest artifact.** It carries two disclosures the
+published root does not: a `checkpoint_tensors_not_loaded` caveat and a
+**blocking** `unexpected_tensors_overridden`, both about the 791 tensors of
+Fruit's layer-13 MTP draft head, which `transformers` does not build. The
+published root predates that guard and says nothing about them. The numbers
+agree exactly; only the disclosure does not.
+
+### It took four rentals, and every refusal was correct
+
+Total spend **$0.30**. Not one attempt produced a wrong number; each stopped:
+
+| # | stopped at | cause | now caught by |
+|---|---|---|---|
+| 1 | `--panel-dir has no panel.json` | the committed panels reached `engines/panels/` two commits before `bin/BUNDLE.txt`, so `container_prune` correctly stripped them | `selftest_container` **C5l**, statically |
+| 2 | 791 homeless tensors | Fruit's MTP draft head; indistinguishable from a quantizer that silently did not engage | `--allow-unexpected-tensors`, blocking disclosure |
+| 3 | generation sanity probe | Fruit answered `' the'`, not `Paris` — it is a proxy, not an assistant | `--sanity-expect ''`, which needs **argv as a list** |
+| 4 | driver 12040 vs a cu130 image | the host's CUDA was 12.4 | `require_accelerator()` **C12** + `allowedCudaVersions` |
+
+Attempt 3 is why `create(docker_cmd=[...])` exists: the documented remedy is an
+EMPTY argument, and no flat `dockerArgs` string can carry one.
+
+Attempt 4 is the one worth remembering. The bootstrap saw the dead accelerator
+and reported `PASS 1b accelerator decode parity: SKIPPED (no CUDA and no MPS on
+this host; the check RUNS on the instance, which is where it counts)` — on the
+instance. `setup` passed, 10 GB was fetched, and the capture died on the first
+`.to(cuda)`. Five cents here; a 117 GB fetch on a GLM-5.3 root.
+
+---
+
 ## Which image ran, recorded
 
 Two receipt fields that have been `null` on **every** capture this repository
