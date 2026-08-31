@@ -386,12 +386,12 @@ Attribution is a column, not a footnote: *measured by us*, *measured by us (thei
 
 | Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
 |---|---|---:|---:|---|---:|---|---|---|
-| malaiwah Qwen3.8-27B EXL3 K5K6 hydrated | `exl3-mcg @5` | 21.6 GB | **0.00275963** | [0.00254024, 0.00302032] | 97.70 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 | `exl3-mcg @5` | 30.6 GB | **0.00320988** | [0.00298238, 0.00348017] | 97.52 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 context | `exl3-mcg @5` | 20.7 GB | **0.00350936** | [0.00321967, 0.00385239] | 97.44 % | 1 run, unevidenced | measured by us | local receipt |
-| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00529394** | [0.00492736, 0.00572785] | 96.79 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0106039** | [0.00963981, 0.0117463] | 95.76 % | 1 run, unevidenced | measured by us | local receipt |
-| unsloth Qwen3.8-27B NVFP4 | `nvfp4 @4` | -- | **0.0310586** | [0.0279161, 0.0347947] | 92.90 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
+| malaiwah Qwen3.8-27B EXL3 K5K6 hydrated | `exl3-mcg @5` | 21.6 GB | **0.00275963** | [0.00254024, 0.00302032] | 97.70 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-10M-hyd.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 | `exl3-mcg @5` | 30.6 GB | **0.00320988** | [0.00298238, 0.00348017] | 97.52 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-10M-k5k6.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 context | `exl3-mcg @5` | 20.7 GB | **0.00350936** | [0.00321967, 0.00385239] | 97.44 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-10M-ctx.json) |
+| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00529394** | [0.00492736, 0.00572785] | 96.79 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-10M-fp8.json) |
+| malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0106039** | [0.00963981, 0.0117463] | 95.76 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-10M-k4.json) |
+| unsloth Qwen3.8-27B NVFP4 | `nvfp4 @4` | -- | **0.0310586** | [0.0279161, 0.0347947] | 92.90 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-10M-nvfp4.json) |
 
 > **The same artifact, measured elsewhere in this file.** 6 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
@@ -465,11 +465,11 @@ Derived from `panel--qwen38.malaiwah.suite-v5-10m` by **shard_subset**: shards 0
 
 | Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
 |---|---|---:|---:|---|---:|---|---|---|
-| malaiwah Qwen3.8-27B EXL3 K5K6 hydrated | `exl3-mcg @5` | 21.6 GB | **0.00275854** | [0.0025346, 0.00302484] | 97.75 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 | `exl3-mcg @5` | 30.6 GB | **0.00320026** | [0.00296909, 0.00347268] | 97.56 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 context | `exl3-mcg @5` | 20.7 GB | **0.00350243** | [0.00321244, 0.00384432] | 97.49 % | 1 run, unevidenced | measured by us | local receipt |
-| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00529563** | [0.00492561, 0.00572892] | 96.85 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0105726** | [0.0096214, 0.0117039] | 95.83 % | 1 run, unevidenced | measured by us | local receipt |
+| malaiwah Qwen3.8-27B EXL3 K5K6 hydrated | `exl3-mcg @5` | 21.6 GB | **0.00275854** | [0.0025346, 0.00302484] | 97.75 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-2M-tail-hyd.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 | `exl3-mcg @5` | 30.6 GB | **0.00320026** | [0.00296909, 0.00347268] | 97.56 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-2M-tail-k5k6.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 context | `exl3-mcg @5` | 20.7 GB | **0.00350243** | [0.00321244, 0.00384432] | 97.49 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-2M-tail-ctx.json) |
+| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00529563** | [0.00492561, 0.00572892] | 96.85 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-2M-tail-fp8.json) |
+| malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0105726** | [0.0096214, 0.0117039] | 95.83 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-2M-tail-k4.json) |
 
 > **The same artifact, measured elsewhere in this file.** 5 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
@@ -538,18 +538,18 @@ This panel carries **3 separate comparability groups**. They are different measu
 
 | Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
 |---|---|---:|---:|---|---:|---|---|---|
-| turboderp Qwen3.8-27B exl3 6.00bpw | `exl3-mcg @6` | 23.0 GB | **0.00158316** | [0.00149496, 0.00168324] | 98.28 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K6-parity | `exl3-mcg @6` | 23.1 GB | **0.00163382** | [0.00154118, 0.00174151] | 98.25 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 hydrated | `exl3-mcg @5` | 21.6 GB | **0.00269988** | [0.00251653, 0.00291183] | 97.80 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 | `exl3-mcg @5` | 30.6 GB | **0.00314136** | [0.00294675, 0.00336868] | 97.61 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 context | `exl3-mcg @5` | 20.7 GB | **0.00340941** | [0.00317041, 0.00368653] | 97.55 % | 1 run, unevidenced | measured by us | local receipt |
-| turboderp Qwen3.8-27B exl3 5.00bpw | `exl3-mcg @5` | 19.9 GB | **0.00400463** | [0.00371442, 0.00433631] | 97.37 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00519706** | [0.00487991, 0.00555746] | 96.92 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0103453** | [0.00956259, 0.0112458] | 95.91 % | 1 run, unevidenced | measured by us | local receipt |
-| Qwen3.8-27B AWQ-INT4 (upstream unattributed) | `awq @4` | -- | **0.0228179** | [0.0212457, 0.024624] | 93.94 % | 1 run, unevidenced | measured by us | local receipt |
-| unsloth Qwen3.8-27B NVFP4 | `nvfp4 @4` | -- | **0.0301154** | [0.0276372, 0.0329647] | 93.16 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| gittensor-model-hub Qwen3.8-27B NVFP4 (RTX5090) | `nvfp4 @4` | 20.6 GB | **0.0621631** | [0.0584911, 0.0663596] | 89.85 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| Qwen3.8-27B MTP-NVFP4 (upstream unattributed) | `nvfp4 @4` | -- | **0.15128** | [0.141538, 0.163025] | 84.74 % | 1 run, unevidenced | measured by us | local receipt |
+| turboderp Qwen3.8-27B exl3 6.00bpw | `exl3-mcg @6` | 23.0 GB | **0.00158316** | [0.00149496, 0.00168324] | 98.28 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-turbo6.json) |
+| malaiwah Qwen3.8-27B EXL3 K6-parity | `exl3-mcg @6` | 23.1 GB | **0.00163382** | [0.00154118, 0.00174151] | 98.25 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-k6parity.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 hydrated | `exl3-mcg @5` | 21.6 GB | **0.00269988** | [0.00251653, 0.00291183] | 97.80 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-tail-hyd.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 | `exl3-mcg @5` | 30.6 GB | **0.00314136** | [0.00294675, 0.00336868] | 97.61 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-tail-k5k6.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 context | `exl3-mcg @5` | 20.7 GB | **0.00340941** | [0.00317041, 0.00368653] | 97.55 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-tail-ctx.json) |
+| turboderp Qwen3.8-27B exl3 5.00bpw | `exl3-mcg @5` | 19.9 GB | **0.00400463** | [0.00371442, 0.00433631] | 97.37 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-turbo5.json) |
+| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00519706** | [0.00487991, 0.00555746] | 96.92 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-tail-fp8.json) |
+| malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0103453** | [0.00956259, 0.0112458] | 95.91 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-tail-k4.json) |
+| Qwen3.8-27B AWQ-INT4 (upstream unattributed) | `awq @4` | -- | **0.0228179** | [0.0212457, 0.024624] | 93.94 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-awq.json) |
+| unsloth Qwen3.8-27B NVFP4 | `nvfp4 @4` | -- | **0.0301154** | [0.0276372, 0.0329647] | 93.16 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-nvfp4.json) |
+| gittensor-model-hub Qwen3.8-27B NVFP4 (RTX5090) | `nvfp4 @4` | 20.6 GB | **0.0621631** | [0.0584911, 0.0663596] | 89.85 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-gt5090.json) |
+| Qwen3.8-27B MTP-NVFP4 (upstream unattributed) | `nvfp4 @4` | -- | **0.15128** | [0.141538, 0.163025] | 84.74 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-1M-saka.json) |
 
 > **The same artifact, measured elsewhere in this file.** 6 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
@@ -635,10 +635,10 @@ This panel carries **3 separate comparability groups**. They are different measu
 
 | Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
 |---|---|---:|---:|---|---:|---|---|---|
-| **unsloth Qwen3.8-27B-GGUF BF16** _(measurement floor)_ | `bf16` | 54.7 GB | **0.000507355** | [0.000492078, 0.00052326] | 99.07 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| unsloth Qwen3.8-27B-GGUF Q8_0 | `gguf-k-quant @8` | 29.0 GB | **0.00108681** | [0.00105026, 0.00112685] | 98.53 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| unsloth Qwen3.8-27B-GGUF Q6_K | `gguf-k-quant @6` | 22.9 GB | **0.00203522** | [0.00193876, 0.00214482] | 97.98 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| unsloth Qwen3.8-27B-GGUF UD-Q5_K_XL | `gguf-k-quant @5` | 20.2 GB | **0.00444353** | [0.00415816, 0.00476989] | 97.20 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
+| **unsloth Qwen3.8-27B-GGUF BF16** _(measurement floor)_ | `bf16` | 54.7 GB | **0.000507355** | [0.000492078, 0.00052326] | 99.07 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/gguf-report-engine-floor.json) |
+| unsloth Qwen3.8-27B-GGUF Q8_0 | `gguf-k-quant @8` | 29.0 GB | **0.00108681** | [0.00105026, 0.00112685] | 98.53 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/gguf-report-q8_0.json) |
+| unsloth Qwen3.8-27B-GGUF Q6_K | `gguf-k-quant @6` | 22.9 GB | **0.00203522** | [0.00193876, 0.00214482] | 97.98 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/gguf-report-q6_k.json) |
+| unsloth Qwen3.8-27B-GGUF UD-Q5_K_XL | `gguf-k-quant @5` | 20.2 GB | **0.00444353** | [0.00415816, 0.00476989] | 97.20 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/gguf-report-q5_k_xl.json) |
 
 > **Bias on unsloth Qwen3.8-27B-GGUF BF16** -- cross_stack_capture_replay, direction upward. THIS ROW IS THE FLOOR. Unquantized BF16 weights read by llama.cpp and scored against the vLLM BF16 reference: what two engines disagree by on identical weights. 0.000507 nats, 99.07% top-1. Every GGUF row on this panel contains this term; no EXL3 or FP8 row does.
 
@@ -748,11 +748,11 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 
 | Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
 |---|---|---:|---:|---|---:|---|---|---|
-| malaiwah Qwen3.8-27B EXL3 K5K6 hydrated | `exl3-mcg @5` | 21.6 GB | **0.00265978** | [0.0024736, 0.00287669] | 97.84 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 | `exl3-mcg @5` | 30.6 GB | **0.00310033** | [0.00290065, 0.00333055] | 97.64 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 context | `exl3-mcg @5` | 20.7 GB | **0.00334231** | [0.00310111, 0.00362553] | 97.59 % | 1 run, unevidenced | measured by us | local receipt |
-| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00509007** | [0.00477169, 0.00544966] | 96.97 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0101538** | [0.00936883, 0.0110793] | 95.98 % | 1 run, unevidenced | measured by us | local receipt |
+| malaiwah Qwen3.8-27B EXL3 K5K6 hydrated | `exl3-mcg @5` | 21.6 GB | **0.00265978** | [0.0024736, 0.00287669] | 97.84 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-window-hyd-from256.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 | `exl3-mcg @5` | 30.6 GB | **0.00310033** | [0.00290065, 0.00333055] | 97.64 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-window-k5k6-from256.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 context | `exl3-mcg @5` | 20.7 GB | **0.00334231** | [0.00310111, 0.00362553] | 97.59 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-window-ctx-from256.json) |
+| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00509007** | [0.00477169, 0.00544966] | 96.97 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-window-fp8-from256.json) |
+| malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.0101538** | [0.00936883, 0.0110793] | 95.98 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-window-k4-from256.json) |
 
 > **The same artifact, measured elsewhere in this file.** 5 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >
@@ -819,11 +819,11 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 
 | Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
 |---|---|---:|---:|---|---:|---|---|---|
-| malaiwah Qwen3.8-27B EXL3 K5K6 hydrated | `exl3-mcg @5` | 21.6 GB | **0.00257964** | [0.00239759, 0.00278828] | 97.86 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 | `exl3-mcg @5` | 30.6 GB | **0.0030196** | [0.0028234, 0.00324563] | 97.68 % | 1 run, unevidenced | measured by us | local receipt |
-| malaiwah Qwen3.8-27B EXL3 K5K6 context | `exl3-mcg @5` | 20.7 GB | **0.00324322** | [0.00300571, 0.00352013] | 97.62 % | 1 run, unevidenced | measured by us | local receipt |
-| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00495487** | [0.00463566, 0.005316] | 97.02 % | 1 run, unevidenced | measured by us (their artifact) | local receipt |
-| malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.00987561** | [0.00910329, 0.0107555] | 96.04 % | 1 run, unevidenced | measured by us | local receipt |
+| malaiwah Qwen3.8-27B EXL3 K5K6 hydrated | `exl3-mcg @5` | 21.6 GB | **0.00257964** | [0.00239759, 0.00278828] | 97.86 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-window-hyd-from1024.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 | `exl3-mcg @5` | 30.6 GB | **0.0030196** | [0.0028234, 0.00324563] | 97.68 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-window-k5k6-from1024.json) |
+| malaiwah Qwen3.8-27B EXL3 K5K6 context | `exl3-mcg @5` | 20.7 GB | **0.00324322** | [0.00300571, 0.00352013] | 97.62 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-window-ctx-from1024.json) |
+| Qwen3.8-27B FP8 (official) | `fp8_e4m3 @8` | 30.9 GB | **0.00495487** | [0.00463566, 0.005316] | 97.02 % | 1 run, unevidenced | measured by us (their artifact) | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-window-fp8-from1024.json) |
+| malaiwah Qwen3.8-27B K4 | `exl3-mcg @4` | 28.3 GB | **0.00987561** | [0.00910329, 0.0107555] | 96.04 % | 1 run, unevidenced | measured by us | [receipt](https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/8558b8ca3bba028f852f4b53167b79b4cd552f93/receipts/kld5-window-k4-from1024.json) |
 
 > **The same artifact, measured elsewhere in this file.** 5 of the artifacts below also carry a number in another table -- on a different panel, teacher or estimator -- and the widest of those spans 77%. None of the readings is wrong and none is interchangeable with another. Quoting one of them as *the* number for the artifact, without its table, is the misuse this registry exists to make obvious.
 >

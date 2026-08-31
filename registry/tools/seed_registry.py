@@ -4428,6 +4428,68 @@ def build_measurements_qwen38_hf(artifacts_map):
     return rows
 
 
+
+# The public mirror of the Qwen campaign's receipts, pinned. Every receipt the
+# rows below cite from the maintainer's checkout was verified byte-for-byte
+# against this commit (37 of 38 files; the exception is named below), which is
+# what turns "a receipt only we can see" into "a receipt anyone can fetch".
+# PROV-005 existed to say the mirror was missing; this is the mirror.
+QWEN_RECEIPTS_PUBLIC_REPO = "malaiwah/qwen38-27b-exl3"
+QWEN_RECEIPTS_PUBLIC_PIN = "8558b8ca3bba028f852f4b53167b79b4cd552f93"
+# Local copy differs from the public one at the pin -- verified, not assumed.
+# Its rows keep their PROV-005 warning honestly rather than citing a mirror
+# whose bytes do not match.
+QWEN_RECEIPTS_UNMIRRORED = {"receipts/cross-engine-comparator.json"}
+
+
+def add_public_receipt_mirrors(measurements):
+    """Append a pinned github_file mirror beside every local Qwen receipt source.
+
+    The local `receipt_file` entry is KEPT: it is the historical truth of what
+    the seeder read and hashed. The mirror carries the SAME sha256, so a reader
+    fetches the public URL and verifies against the digest the row always had.
+    An independent reviewer matched all these hashes to the public repository
+    before this function existed; this encodes that finding so the registry can
+    say it about itself.
+    """
+    base = "https://raw.githubusercontent.com/%s/%s/" % (
+        QWEN_RECEIPTS_PUBLIC_REPO, QWEN_RECEIPTS_PUBLIC_PIN)
+    local_prefix = "/Users/mbelleau/Projects/qwen38-27b-exl3/"
+
+    def walk(node):
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+            return
+        if not isinstance(node, list):
+            return
+        additions = []
+        for entry in node:
+            walk(entry)
+            if not (isinstance(entry, dict)
+                    and entry.get("kind") == "receipt_file"
+                    and str(entry.get("uri", "")).startswith(local_prefix)
+                    and entry.get("sha256")):
+                continue
+            rel = entry["uri"][len(local_prefix):]
+            if rel in QWEN_RECEIPTS_UNMIRRORED:
+                continue
+            if any(x.get("kind") == "github_file"
+                   and str(x.get("uri", "")).endswith(rel) for x in node
+                   if isinstance(x, dict)):
+                continue
+            additions.append({
+                "kind": "github_file", "uri": base + rel,
+                "sha256": entry["sha256"],
+                "note": "public mirror of the local receipt, pinned; byte-"
+                        "identical (same sha256) at this commit"})
+        node.extend(additions)
+
+    for m in measurements:
+        walk(m)
+    return measurements
+
+
 def stamp_harness(measurements):
     """Attach the harness block, and mark what predates it.
 
@@ -4521,6 +4583,7 @@ def main():
     # the rows are a function of their receipts.
     measurements = joint_enrich.apply(measurements)
     measurements = stamp_harness(measurements)
+    measurements = add_public_receipt_mirrors(measurements)
 
     # The clean17 scope is a derived PANEL with a derived REFERENCE, so it gets
     # its own comparability key and can never be tabled beside the parent panel.

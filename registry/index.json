@@ -10,7 +10,7 @@
       "file": "data/measurements.jsonl",
       "record_count": 76,
       "schema": "schema/measurement.schema.json",
-      "sha256": "07c9827f9098b083d40748133ee489d56c2d51731a8a001261d4bbf30b8badd3"
+      "sha256": "259d490cebd39571e4d1ecfefe7aa9f490a390f8cdf236f16ee901c51fb6e6f2"
     },
     "models": {
       "file": "data/models.jsonl",
