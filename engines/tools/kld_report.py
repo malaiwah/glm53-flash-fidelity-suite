@@ -202,6 +202,31 @@ def _record_map(receipt: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return {row["window_id"]: row for row in receipt["logit_files"]}
 
 
+def _per_window_top1_signature(report: Dict[str, Any]) -> Optional[tuple]:
+    """Exact top-1 counts, or None when a legacy/incomplete report has none."""
+    rows = report.get("per_window")
+    if not isinstance(rows, list) or not rows:
+        return None
+    signature = []
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        window_id = row.get("window_id")
+        matches = row.get("top1_matches")
+        positions = row.get("positions")
+        if (
+            not isinstance(window_id, str)
+            or type(matches) is not int
+            or type(positions) is not int
+            or positions <= 0
+            or matches < 0
+            or matches > positions
+        ):
+            return None
+        signature.append((window_id, matches, positions))
+    return tuple(signature)
+
+
 #: How the artifact this profile measures is STORED. Not the lane, and not the world size.
 #: The old expression suffixed every unrecognised profile "-tp4", so the two published
 #: streaming receipts carry `k6-stream-tp4` and `k8-tp4` -- a claim that the artifact ships
@@ -434,6 +459,7 @@ def _measure_run(
         teacher_row = teacher_rows[window_id]
         student_row = student_rows[window_id]
         count = int(teacher_row["prediction_positions"])
+        window_top1_matches = 0
         values = np.empty(count, dtype=np.float64)
         for start in range(0, count, chunk_positions):
             stop = min(start + chunk_positions, count)
@@ -445,7 +471,8 @@ def _measure_run(
                 raise _fail(f"logit geometry mismatch in {window_id}")
             chunk_values, chunk_matches = _token_kld(teacher_logits, student_logits, device)
             values[start:stop] = chunk_values
-            top1_matches += chunk_matches
+            window_top1_matches += chunk_matches
+        top1_matches += window_top1_matches
         token_values.append(values)
         per_window.append(
             {
@@ -453,6 +480,11 @@ def _measure_run(
                 "document_id": teacher_row["document_id"],
                 "domain": teacher_row["domain"],
                 "role": teacher_row["role"],
+                # Integer counts make any later window-subset top-1 recompute exact.
+                # `summary.count` is also the position count, but name it explicitly
+                # here to match hidden_replay.py's per-window contract.
+                "top1_matches": int(window_top1_matches),
+                "positions": count,
                 "summary": summarize(values),
             }
         )
@@ -965,6 +997,31 @@ def main() -> int:
         mean = means[0] if len(set(means)) == 1 else sum(means) / len(means)
         run_mean_spread = (max(means) - min(means)) if means else 0.0
         report_top1 = [report.get("top1_agreement") for report, _ in reports]
+        top1_signatures = [
+            _per_window_top1_signature(report) for report, _ in reports
+        ]
+        top1_counts_identical = (
+            len(set(top1_signatures)) == 1
+            if all(signature is not None for signature in top1_signatures)
+            else None
+        )
+        # One tokenwise-KLD digest proves the per-window means agree, but it says
+        # nothing about argmaxes. Counts get their own exact cross-run check.
+        if bitwise_deterministic and top1_counts_identical is True:
+            per_window_source = (
+                "run-1; tokenwise KLD and exact per-window top-1 counts identical "
+                "across runs"
+            )
+        elif bitwise_deterministic:
+            per_window_source = (
+                "run-1 ONLY; tokenwise KLD is bitwise identical, but exact per-window "
+                "top-1 counts are absent or differ"
+            )
+        else:
+            per_window_source = (
+                "run-1 ONLY; the runs are not bitwise identical and this block describes "
+                "one of them"
+            )
         summary = {
             "schema": f"malaiwah.glm53-{args.profile}-packed-kld-summary.v1",
             # STORAGE layout, not lane: the dione conversions ship TP4-sliced
@@ -1004,11 +1061,11 @@ def main() -> int:
             "teacher_receipt_sha256": teacher["receipt_sha256"],
             "teacher_source": teacher_source,
             "teacher_label": teacher_label,
-            # NUM-06. The per-run report computes a full per_window block -- window_id,
-            # document_id, domain, role, and count/mean/std/p50/p95/p99/cvar95/max -- and
-            # the summary dropped it, keeping only scalars. That block is the ONLY thing
-            # that makes a published row rescoreable on a different window scope without a
-            # GPU: bin/jointstd/stats.py's cluster-robust SE reads per_window[].count/
+            # NUM-06/NUM-17. The per-run report computes a full per_window block --
+            # window_id, document_id, domain, role, count/mean/std/p50/p95/p99/cvar95/max,
+            # plus exact top1_matches/positions -- and the summary once dropped it.
+            # The means make KLD rescoreable on another window scope; the integer counts do
+            # the same for top-1. bin/jointstd/stats.py reads per_window[].count/
             # .mean/.std, and the BCa block bootstrap and the domain table read
             # window_id/domain/count/mean. Its absence is why the streaming BF16 floor and
             # the Dione Q4 rows carry uncertainty.method "none" with null endpoints and
@@ -1021,15 +1078,7 @@ def main() -> int:
             "qualification_window_count": reports[0][0].get("qualification_window_count"),
             "token_panel_receipt_sha256": reports[0][0].get("token_panel_receipt_sha256"),
             "position_block": reports[0][0].get("position_block"),
-            # Asserting that the runs AGREE on per_window when they are bitwise identical
-            # is a tautology (one distinct tokenwise digest implies identical per-window
-            # means). The case that matters is the inverse: shipping run 1's block as
-            # though it described the campaign when the runs are NOT identical.
-            "per_window_source": (
-                "run-1; identical across runs (one distinct tokenwise_kld_sha256)"
-                if bitwise_deterministic else
-                "run-1 ONLY; the runs are not bitwise identical and this block describes "
-                "one of them"),
+            "per_window_source": per_window_source,
         }
         surface_family = _profile_surface_family(args.profile)
         if surface_family in ("dione", "exl3hf"):

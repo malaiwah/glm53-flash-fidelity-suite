@@ -22,6 +22,7 @@ exercises the whole aggregation path with no logits and no torch.  The few
   NUM-14  a malformed sibling receipt must not crash the comparison table
   NUM-15  the provenance branch dispatches on the capture SURFACE, not on a
           profile-name prefix (LESSON 48 recurring on a fourth profile)
+  NUM-17  per-window top-1 integer counts make subset rescoring exact
 """
 from __future__ import annotations
 
@@ -130,7 +131,8 @@ def _report(teacher_sha, panel_sha, mean, tokenwise, student_sha, label, block=1
     per_window = [{"window_id": "final-%04d" % i, "document_id": "doc-%d" % i,
                    "domain": "axis1_general", "role": "final",
                    "summary": {"count": 2047, "mean": mean, "std": 0.19, "p50": 0.0,
-                               "p95": 0.0, "p99": 0.0, "cvar95": 0.0, "max": 1.0}}
+                               "p95": 0.0, "p99": 0.0, "cvar95": 0.0, "max": 1.0},
+                   "top1_matches": 2026, "positions": 2047}
                   for i in range(25)]
     return {"schema": "quant-pipeline.glm53-packed-student-kld.v2",
             "teacher_receipt_sha256": teacher_sha,
@@ -142,8 +144,108 @@ def _report(teacher_sha, panel_sha, mean, tokenwise, student_sha, label, block=1
             "per_domain": {"axis1_general": {"count": 51175, "mean": mean}},
             "qualification_window_count": 25,
             "position_block": block,
-            "top1_agreement": 0.99,
+            "top1_agreement": 2026 / 2047,
             "tokenwise_kld_sha256": tokenwise}
+
+
+def _measured_top1_report(K, root, teacher_sha, panel_sha):
+    """Exercise the compute path cheaply: two tiny windows, no torch or logits."""
+    from pathlib import Path
+
+    import numpy as np
+
+    run_dir = Path(root) / "top1-counts"
+    run_dir.mkdir()
+    specs = (("final-0000", 3), ("final-0001", 2))
+
+    def rows(side):
+        return [
+            {
+                "window_id": window_id,
+                "document_id": "doc-" + window_id,
+                "domain": "axis1_general",
+                "role": "final",
+                "token_ids_sha256": window_id + "-tokens",
+                "attention_mask_sha256": window_id + "-mask",
+                "prediction_positions": count,
+                "path": str(run_dir / ("%s-%s.safetensors" % (side, window_id))),
+                "sha256": side[0] * 64,
+            }
+            for window_id, count in specs
+        ]
+
+    teacher = {
+        "receipt_sha256": teacher_sha,
+        "token_panel_receipt_sha256": panel_sha,
+        "vocab_size": 3,
+        "backend_identity_sha256": "t" * 64,
+        "logit_files": rows("teacher"),
+    }
+    student = {
+        "schema": "quant-pipeline.glm53-logit-capture.v1",
+        "receipt_sha256": "s" * 64,
+        "token_panel_receipt_sha256": panel_sha,
+        "vocab_size": 3,
+        "runtime_reader_sha256": "r" * 64,
+        "checkpoint_identity_sha256": "c" * 64,
+        "backend_identity_sha256": "b" * 64,
+        "logit_files": rows("student"),
+    }
+    with open(run_dir / "capture-receipt.json", "w", encoding="utf-8") as fh:
+        json.dump(student, fh)
+
+    saved = (
+        K.FINAL_WINDOW_IDS,
+        K.FINAL_PREDICTION_POSITIONS,
+        K._resolve_teacher_paths,
+        K._load_slice,
+        K._token_kld,
+    )
+    missing = object()
+    saved_torch = sys.modules.get("torch", missing)
+    fake_torch = types.ModuleType("torch")
+    fake_torch.get_num_threads = lambda: 1
+
+    def fake_load(path, start, stop):
+        marker = 1.0 if "final-0001" in str(path) else 0.0
+        return np.full((stop - start, 3), marker, dtype=np.float32)
+
+    def fake_kld(teacher_logits, student_logits, device):
+        del student_logits, device
+        positions = teacher_logits.shape[0]
+        matches = 0 if teacher_logits[0, 0] else positions
+        values = np.full(positions, 0.2 + teacher_logits[0, 0], dtype=np.float64)
+        return values, int(matches)
+
+    K.FINAL_WINDOW_IDS = tuple(window_id for window_id, _ in specs)
+    K.FINAL_PREDICTION_POSITIONS = sum(count for _, count in specs)
+    K._resolve_teacher_paths = lambda mapped, root_, sha: {
+        window_id: Path(row["path"]) for window_id, row in mapped.items()
+    }
+    K._load_slice = fake_load
+    K._token_kld = fake_kld
+    sys.modules["torch"] = fake_torch
+    try:
+        report_path = K._measure_run(
+            run_dir=run_dir,
+            teacher=teacher,
+            student_label="uniform-k8",
+            chunk_positions=2,
+            device="cpu",
+        )
+        return json.loads(report_path.read_text(encoding="utf-8"))
+    finally:
+        (
+            K.FINAL_WINDOW_IDS,
+            K.FINAL_PREDICTION_POSITIONS,
+            K._resolve_teacher_paths,
+            K._load_slice,
+            K._token_kld,
+        ) = saved
+        if saved_torch is missing:
+            sys.modules.pop("torch", None)
+        else:
+            sys.modules["torch"] = saved_torch
 
 
 def main():
@@ -209,6 +311,25 @@ def main():
         check("NUM-09  a report written before the field still resumes", ok,
               "a missing value is unknown, not a mismatch")
 
+        print("\n== NUM-17: exact per-window top-1 subset rescoring ==")
+        measured = _measured_top1_report(K, tmp, T1, PANEL)
+        measured_windows = measured["per_window"]
+        counts = [
+            (row.get("top1_matches"), row.get("positions"))
+            for row in measured_windows
+        ]
+        check("NUM-17  compute emits per-window top-1 matches and positions",
+              counts == [(3, 3), (0, 2)], str(counts))
+        subset_top1 = None
+        if all(isinstance(value, int) for pair in counts for value in pair):
+            subset_top1 = sum(row["top1_matches"] for row in measured_windows[1:]) / sum(
+                row["positions"] for row in measured_windows[1:])
+        check("NUM-17  a window subset recomputes top-1 exactly from integers",
+              subset_top1 == 0.0, str(subset_top1))
+        check("NUM-17  panel top-1 equals the ratio of emitted window counts",
+              measured["top1_agreement"] == 3 / 5,
+              str(measured["top1_agreement"]))
+
         print("\n== NUM-02 / NUM-03 / NUM-06: the summary branch ==")
         a = run_dir("a", teacher_sha=T1, panel_sha=PANEL, mean=0.010, tokenwise="1" * 64,
                     student_sha="a" * 64, label="uniform-k8")
@@ -234,9 +355,43 @@ def main():
                    and len(summary["per_window"]) == 25),
               "absent: a published row with no per_window can never be rescoped without "
               "a GPU, which is why the streaming BF16 floor and Dione Q4 have no CI")
+        check("NUM-06  the summary preserves exact per-window top-1 counts",
+              bool(summary and all(
+                  row.get("top1_matches") == 2026
+                  and row.get("positions") == row["summary"]["count"]
+                  for row in summary.get("per_window", []))),
+              "the run report had counts but the published summary dropped them")
         check("NUM-06  and says which run it describes when the runs disagree",
               bool(summary and "run-1 ONLY" in (summary.get("per_window_source") or "")),
               str((summary or {}).get("per_window_source")))
+
+        c = run_dir("c", teacher_sha=T1, panel_sha=PANEL, mean=0.010,
+                    tokenwise="3" * 64, student_sha="c" * 64, label="uniform-k8")
+        d = run_dir("d", teacher_sha=T1, panel_sha=PANEL, mean=0.010,
+                    tokenwise="3" * 64, student_sha="d" * 64, label="uniform-k8")
+        e = run_dir("e", teacher_sha=T1, panel_sha=PANEL, mean=0.010,
+                    tokenwise="3" * 64, student_sha="e" * 64, label="uniform-k8")
+        d_path = os.path.join(d, "kld-report.json")
+        with open(d_path, encoding="utf-8") as fh:
+            d_report = json.load(fh)
+        d_report["per_window"][0]["top1_matches"] -= 1
+        with open(d_path, "w", encoding="utf-8") as fh:
+            json.dump(d_report, fh)
+        counts_differ = K_summary(
+            K, teacher, [c, d], "uniform-k8",
+            os.path.join(tmp, "top1-counts-differ.json"))
+        check("NUM-17  a KLD digest cannot claim differing top-1 counts agree",
+              bool(counts_differ and counts_differ["bitwise_deterministic"]
+                   and "run-1 ONLY" in counts_differ["per_window_source"]
+                   and "counts are absent or differ" in counts_differ["per_window_source"]),
+              str((counts_differ or {}).get("per_window_source")))
+        counts_match = K_summary(
+            K, teacher, [c, e], "uniform-k8",
+            os.path.join(tmp, "top1-counts-match.json"))
+        check("NUM-17  exact cross-run counts can be declared identical",
+              bool(counts_match and "top-1 counts identical across runs"
+                   in counts_match["per_window_source"]),
+              str((counts_match or {}).get("per_window_source")))
         check("NUM-06  cold_run_deviation does not contradict itself",
               bool(summary and "not 5" in summary["cold_run_deviation"]),
               summary and summary["cold_run_deviation"])
