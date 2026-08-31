@@ -51,7 +51,8 @@ OFFICIAL_BF16_REVISION = "a6c167b62691b2bac901344b65cb651a70f53e43"
 from fidelity import census as C                       # noqa: E402
 from fidelity.common import (                          # noqa: E402
     Console, human_bytes, human_duration, parse_duration, read_json,
-    redact, register_secret, sha256_file, utcnow, write_json,
+    redact, register_secret, sha256_file, shred_secret_file, utcnow,
+    write_json, write_secret_file,
 )
 from fidelity.dsformat import resolve_inside                 # noqa: E402
 from fidelity.engines import EngineUnpinned, build_invocation, load_engines  # noqa: E402
@@ -2391,6 +2392,33 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
     }
 
 
+def _transport_hf_token(jl, td, outdir: Path, token: str) -> None:
+    """Move the token to the instance without one loose instant at either end.
+
+    Never on a command line: it would land in the remote process list and in
+    jl's local run records.  Locally the file is born 0600 inside a 0700
+    directory (write-then-chmod had a window a permissive umask left open --
+    peer review 2026-08-31).  Remotely the .secrets directory is chmod 700
+    BEFORE anything lands in it, the upload goes to a unique temporary name,
+    is tightened to 0600, and only then atomically renamed to the path the
+    stages read -- so no reader can ever observe a partial or loose-mode
+    token at `.secrets/hf_token`.
+    """
+    local = outdir / ".secrets-local" / "hf_token"
+    write_secret_file(str(local), token)
+    remote_dir = "%s/.secrets" % td.fs_root
+    remote_tmp = "%s/.hf_token.up.%d" % (remote_dir, os.getpid())
+    try:
+        jl.exec(td.machine_id,
+                "mkdir -p %s && chmod 700 %s" % (remote_dir, remote_dir))
+        jl.upload(td.machine_id, str(local), remote_tmp)
+        jl.exec(td.machine_id,
+                "chmod 600 %s && mv -f %s %s/hf_token"
+                % (remote_tmp, remote_tmp, remote_dir))
+    finally:
+        shred_secret_file(str(local))
+
+
 def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
     bundle = SUITE_ROOT / "bin" / "BUNDLE.txt"
     files = [ln.strip() for ln in bundle.read_text(encoding="utf-8").splitlines()
@@ -2467,18 +2495,9 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
 
     token = hf_token()
     if token:
-        # Never on a command line: it would land in the remote process list and
-        # in jl's local run records. Written to a 0600 file, shredded at teardown.
-        tmp = outdir / ".hf_token"
-        tmp.write_text(token, encoding="utf-8")
-        os.chmod(tmp, 0o600)
-        try:
-            jl.exec(td.machine_id, "mkdir -p %s/.secrets" % td.fs_root)
-            jl.upload(td.machine_id, str(tmp), "%s/.secrets/hf_token" % td.fs_root)
-            jl.exec(td.machine_id, "chmod 600 %s/.secrets/hf_token" % td.fs_root)
-        finally:
-            tmp.unlink(missing_ok=True)
-        con.ok("HF token transported", "0600 file, never argv, shredded at teardown")
+        _transport_hf_token(jl, td, outdir, token)
+        con.ok("HF token transported", "0600 in a 0700 dir at both ends, "
+               "renamed into place, never argv, shredded at teardown")
 
     jl.exec(td.machine_id, "mkdir -p %s/logs %s/receipts/done" % (td.fs_root, td.fs_root))
     con.step("arming on-instance watchdog")

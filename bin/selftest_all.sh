@@ -42,6 +42,10 @@ PANEL=brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits
 echo "== selftests (offline) =="
 t "fit estimator, 41 known-answer checks"  0 "$PY" bin/selftest_fit.py
 t "decode parity + timing (needs torch)"   0 "$PY" bin/selftest_decode_parity.py
+# P1-06. The replay comparator's KL reduction must run in float64 BEFORE the
+# vocabulary sum: the float32 reduction returned negative "KL" (~-8e-7) on
+# near-equal 50k-vocab distributions while its receipts declared fp64.
+t "fidelity reducer: fp64 known answers (P1-06)" 0 "$VPY" bin/selftest_fidelity_reducer.py
 t "registry client/viewer/matcher (T1)"    0 python3 bin/selftest_registry_view.py
 t "floor-aware stats known answers (T2)"   0 python3 bin/selftest_stats.py
 t "preview estimator coverage (T3)"        0 python3 bin/selftest_preview_stats.py
@@ -91,6 +95,13 @@ t "gguf lane: shelf, profile, argv, fetch scope, receipt (T13)" \
 # network, no real token. (Peer review 2026-08-31, security chapter.)
 t "no cross-origin bearer forwarding (T19: R1-R8)" \
                                            0 python3 bin/selftest_hf_redirect.py
+# T20. Secret files: 0600 from the first instant at both ends, chmod 700 on
+# the remote directory BEFORE upload, upload to a temp name + atomic rename,
+# exclusive/no-follow creation (a planted symlink on the container bind mount
+# used to be written THROUGH), and token cleanup in a finally. Stub provider,
+# no network, no real token. (Peer review 2026-08-31, security chapter.)
+t "secret file creation + transport + cleanup (T20: S1-S9)" \
+                                           0 python3 bin/selftest_secret_files.py
 # T14. The progress meter. Both capture engines print one line at the start and
 # one at the end, which on the streaming lane is a 2-3 hour silence in a stage
 # log that looks exactly like a hang. The rungs that matter are the ones about

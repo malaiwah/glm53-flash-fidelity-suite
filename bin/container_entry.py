@@ -68,6 +68,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from fidelity.common import shred_secret_file, write_secret_file  # noqa: E402
 from fidelity.stages import KNOWN_STAGES, stage_sequence  # noqa: E402
 
 EXIT_OK, EXIT_FAILED, EXIT_REFUSED = 0, 1, 3
@@ -253,9 +254,6 @@ def write_token(fs_root: Path, token_file, con) -> bool:
     because that is how every container runtime passes a secret, but it is
     written to the file and the file is what the stages read.
     """
-    secrets = fs_root / ".secrets"
-    secrets.mkdir(parents=True, exist_ok=True)
-    os.chmod(str(secrets), 0o700)
     token = ""
     if token_file:
         token = Path(token_file).read_text(encoding="utf-8").strip()
@@ -263,11 +261,13 @@ def write_token(fs_root: Path, token_file, con) -> bool:
         token = os.environ["HF_TOKEN"].strip()
     if not token:
         return False
-    dest = secrets / "hf_token"
-    with open(str(dest), "w", encoding="utf-8") as fh:
-        fh.write(token)
-    os.chmod(str(dest), 0o600)
-    con("HF token installed  0600 file, never argv")
+    # Exclusive, no-follow, 0600 from the first instant, inside a directory
+    # that is 0700 before the file exists.  The run root is a persistent bind
+    # mount, so a pre-planted symlink or a stale loose-mode file at this path
+    # must be impossible to write through or inherit (peer review 2026-08-31,
+    # "secret creation follows a pre-existing path").
+    write_secret_file(str(fs_root / ".secrets" / "hf_token"), token)
+    con("HF token installed  0600 file, never argv, removed when this run ends")
     return True
 
 
@@ -706,16 +706,25 @@ def main(argv=None) -> int:
         job_path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n",
                             encoding="utf-8")
         con("job.json written  %d bytes" % job_path.stat().st_size)
-        write_token(fs_root, args.token_file, con)
+        wrote_token = write_token(fs_root, args.token_file, con)
 
-        env = stage_env(fs_root, engine_root, pin)
-        for name in stages:
-            code = run_stage(name, fs_root, env, con)
-            if code != 0:
-                con("run failed at stage %s" % name)
-                return EXIT_FAILED
-        con("all stages complete; receipts under %s/receipts" % fs_root)
-        return EXIT_OK
+        # The run root is a persistent bind mount: without the finally, the
+        # token outlived the run on the host filesystem, forever, on success
+        # AND on failure (peer review 2026-08-31).  Success, a failed stage,
+        # an exception and ^C all pass through here.
+        try:
+            env = stage_env(fs_root, engine_root, pin)
+            for name in stages:
+                code = run_stage(name, fs_root, env, con)
+                if code != 0:
+                    con("run failed at stage %s" % name)
+                    return EXIT_FAILED
+            con("all stages complete; receipts under %s/receipts" % fs_root)
+            return EXIT_OK
+        finally:
+            if wrote_token:
+                shred_secret_file(str(fs_root / ".secrets" / "hf_token"))
+                con("HF token shredded from the run root")
     except Refusal as exc:
         sys.stderr.write("REFUSED: %s\n" % exc)
         for line in exc.advice:

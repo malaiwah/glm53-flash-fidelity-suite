@@ -62,6 +62,65 @@ def redact(text: str) -> str:
 
 
 # --------------------------------------------------------------------------
+# Secret files: 0600 from the first instant, never through a symlink
+# --------------------------------------------------------------------------
+
+
+def write_secret_file(path, data) -> None:
+    """Create `path` holding `data`, mode 0600 from the moment it exists.
+
+    The write-then-chmod spelling has a window in which a permissive umask
+    leaves the secret world-readable -- the project's own concurrency test
+    once captured a full token through it (peer review 2026-08-31, "token
+    file permissions are tightened after creation").  So:
+
+      * the parent directory is created 0700 (and forced back to 0700 when it
+        already exists);
+      * anything already at `path` is removed with unlink (lstat semantics:
+        a planted symlink is removed, never followed);
+      * the file is created with O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW at 0600,
+        so it can neither write through a link nor open a file some other
+        process created first.
+    """
+    p = os.fspath(path)
+    parent = os.path.dirname(p) or "."
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    os.chmod(parent, 0o700)
+    try:
+        os.unlink(p)
+    except FileNotFoundError:
+        pass
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(p, flags, 0o600)
+    try:
+        os.write(fd, data.encode("utf-8") if isinstance(data, str) else data)
+    finally:
+        os.close(fd)
+
+
+def shred_secret_file(path) -> None:
+    """Best-effort overwrite, then unlink.  Missing file is a no-op."""
+    p = os.fspath(path)
+    try:
+        size = os.lstat(p).st_size
+    except OSError:
+        return
+    try:
+        fd = os.open(p, os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            os.write(fd, b"\0" * size)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.unlink(p)
+    except OSError:
+        pass
+
+
+# --------------------------------------------------------------------------
 # HTTP: never forward Authorization across an origin boundary
 # --------------------------------------------------------------------------
 
