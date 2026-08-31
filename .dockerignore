@@ -1,0 +1,30 @@
+# The build context is deliberately narrow: everything is excluded and only the
+# four trees the image needs are let back in, then the heavy directories inside
+# them are excluded again -- by NAME, with the files bin/BUNDLE.txt actually
+# lists re-included one by one.
+#
+# This is not micro-optimisation, and the exceptions are not decoration.
+# `k6/tools/` is 208 MB in this checkout and 187 MB of it is `dione-evidence`,
+# of which the bundle lists exactly two files -- because a setup-time selftest
+# opens them, fail-closed. An over-eager exclusion here does not fail the
+# build; it produces an image that dies in the `setup` stage on a rented box,
+# which is the same shape as the bug that had a MiniMax root capture die on
+# GGUF test data that was never bundled. `bin/selftest_container.py` rung C5
+# therefore checks every BUNDLE.txt entry against these patterns.
+*
+!bin
+!registry
+!k6
+k6/*
+!k6/tools
+!k6/patches-v2
+k6/tools/dione-evidence/*
+!k6/tools/dione-evidence/bf16-config.json
+!k6/tools/dione-evidence/bf16-index.json
+k6/tools/newarch-stagea-evidence
+k6/tools/glm53-stagea-evidence
+k6/tools/layer-outer-evidence
+k6/tools/hidden-replay-evidence
+**/__pycache__
+**/*.pyc
+**/.DS_Store

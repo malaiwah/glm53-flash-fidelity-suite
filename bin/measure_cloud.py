@@ -61,6 +61,7 @@ from fidelity.hfmeta import (                          # noqa: E402
 )
 from fidelity.jlapi import JL, JLError, JLNotInstalled, select_offer  # noqa: E402
 from fidelity.receipt import produced_by_block                      # noqa: E402
+from fidelity.stages import stage_sequence                          # noqa: E402
 
 VERSION = "0.1.0"
 LEASE_DIR = Path.home() / ".fidelity-cloud" / "leases"
@@ -1685,7 +1686,7 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                  "bpw, student label), and the --profile argparse choices"
                  % PROFILE_TABLE_NAMES.get(surface.surface,
                                            "the <SURFACE>_PROFILES table"),
-                 "  2. k6/tools/k6_kld_report.py   the run-label map, "
+                 "  2. k6/tools/kld_report.py   the run-label map, "
                  "PROFILE_SURFACE_FAMILY, the student-label map and its "
                  "--profile choices (the display strings are PER PROFILE -- "
                  "read head_bits off the release rather than copying a "
@@ -2364,30 +2365,13 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
             % (td.fs_root, int(plan_data["deadline_epoch"]),
                int(args.heartbeat_timeout), td.fs_root, td.fs_root))
 
-    if getattr(args, "role", "quant") == "root":
-        # A root capture has no second side: nothing is materialized (the
-        # reference IS the checkpoint) and nothing is scored (there is no
-        # candidate to diverge from). `capture` writes the sealed dataset and
-        # `verify` recomputes its digest chain before the box is destroyed --
-        # the last moment at which a bad capture is free to discard.
-        if getattr(args, "race", False):
-            # The fetch is not a stage any more: it is a thread inside the
-            # capture, ordered by which layer the schedule wants next.
-            # `race_bootstrap` pulls only the kilobytes that make the rest
-            # plannable -- config, tokenizer, and the shard index.
-            stages = ["setup", "race_bootstrap", "race_capture", "verify"]
-        else:
-            stages = ["setup", "fetch_target", "capture", "verify"]
-    else:
-        stages = ["setup", "fetch_target", "fetch_panel", "measure", "score", "seal"]
-    if (plan_data.get("target") or {}).get("surface") in ("exl3hf", "tr3-published",
-                                                          "dione"):
-        # Both surfaces read --bf16 from a tree of the artifact's own non-routed
-        # tensors: exl3hf because they are quantized and must be decoded,
-        # tr3-published because they share shards with the routed payloads and
-        # transformers keys its load off the shard files (there the
-        # materializer decodes nothing and copies verbatim).
-        stages.insert(2, "materialize")
+    # The sequence itself lives in fidelity/stages.py, because the container
+    # entrypoint drives the SAME stages and two copies of this list is two
+    # chances to drift -- a drift that does not crash, it just skips
+    # `materialize` and measures a tree nothing decoded.
+    stages = stage_sequence(getattr(args, "role", "quant"),
+                            race=bool(getattr(args, "race", False)),
+                            surface=(plan_data.get("target") or {}).get("surface"))
     for stage in stages:
         _run_stage(args, con, jl, td, plan_data, stage)
         if stage == "setup":

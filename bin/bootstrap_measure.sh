@@ -28,7 +28,7 @@
 # calibration trees.
 #
 # exllamav3 is built ONLY IF the pipeline cannot import without it.  Neither
-# stream_score.py nor k6_kld_report.py imports the package; the CUDA toolkit +
+# stream_score.py nor kld_report.py imports the package; the CUDA toolkit +
 # extension build is ~20 minutes of rental that a decode-only run should not
 # pay for on faith.  The probe decides, not an assumption.
 #
@@ -207,6 +207,28 @@ else
   cat "$RCPT/pipeline-import.txt"
   log "exllamav3 NOT built: the measurement path imports the pipeline without it"
   echo "not-built: pipeline imports cleanly without exllamav3" > "$RCPT/exllamav3-build.txt"
+fi
+
+# ---- INSTALL/CHECK SPLIT (container build) --------------------------------
+# Steps 1-4 INSTALL; steps 5-6 CHECK.  `container/Dockerfile` runs this script
+# at image build time with FIDELITY_BOOTSTRAP_INSTALL_ONLY=1 so the four
+# minutes of apt/pip/git every rental used to pay are baked into a layer -- and
+# then runs the SAME script unset at container start, where every install step
+# is guarded and no-ops, and the checks run.
+#
+# The split is not tidiness.  The gguf battery's rung 1b re-decodes the
+# committed real bytes on THIS BOX'S CUDA device and demands torch.equal
+# against the reference; a docker builder has no GPU, so running it there would
+# either fail a good build or, worse, pass vacuously and retire a check that
+# only means something on the measuring machine.  Same reasoning for the other
+# three adapter batteries: they are pre-flight, and pre-flight belongs to the
+# flight.
+#
+# Unset (every existing caller) the behaviour below is byte-for-byte unchanged.
+if [ -n "${FIDELITY_BOOTSTRAP_INSTALL_ONLY:-}" ]; then
+  log "install-only: steps 5-6 (adapter import + offline selftests) deferred to run time"
+  log "bootstrap complete (install-only)"
+  exit 0
 fi
 
 # ---- 5. the surface adapters must import too ------------------------------

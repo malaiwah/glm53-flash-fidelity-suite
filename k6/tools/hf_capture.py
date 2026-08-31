@@ -1389,6 +1389,54 @@ def run_capture(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _container_identity() -> Optional[Dict[str, Any]]:
+    """Which image produced these tensors -- or None, which is what it was.
+
+    `dsmanifest.capture_runtime` has carried a `container` block since the
+    format landed and nothing has ever filled it, so every capture this repo
+    has sealed says `image_digest: null` whether it ran in a pinned container
+    or on a hand-bootstrapped box.  A containerised capture can answer, and the
+    convention for how is already in this tree: `fidelity/stackprint.py` reads
+    `STACKPRINT_IMAGE_PIN`, falling back to a pin FILE, precisely because
+    `docker load` strips the registry digest and the file is then the only
+    trustworthy source.
+
+    Two properties this must keep, and a test asserts both:
+
+    * With no pin present it returns None, so `capture_runtime` uses the same
+      all-null default it always did and a non-container capture's bytes are
+      UNCHANGED.  A published dataset must not shift because a field learned
+      how to be filled.
+    * It is not an input to `stack_fingerprint_sha256`.  That digest is what
+      `dscompare` reads to decide `stack_relation`, and a cross-stack verdict
+      stamps `usable_as_floor: false`.  The container is where the stack ran,
+      not what the stack IS -- so recording it must not make a containerised
+      capture incomparable with the identical computation run outside one.
+      That is also the acceptance test for the image: same capture_content_digest.
+    """
+    pin = (os.environ.get("STACKPRINT_IMAGE_PIN") or "").strip()
+    source = "env:STACKPRINT_IMAGE_PIN"
+    if not pin:
+        for path in (os.environ.get("FIDELITY_IMAGE_PIN_FILE"),
+                     "/opt/fidelity/image-pin.txt", "/glm53/out/image-pin.txt"):
+            if not path:
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    pin = fh.read().strip().split()[0]
+            except Exception:                              # noqa: BLE001
+                continue
+            if pin:
+                source = "image-pin-file:%s" % path
+                break
+    if not pin:
+        return None
+    return {"image_digest": pin,
+            "image_reference": os.environ.get("FIDELITY_IMAGE_REFERENCE") or None,
+            "image_repository_digest": None,
+            "source": source}
+
+
 def _stack_fingerprint(device: str) -> Dict[str, Any]:
     import torch
 
@@ -1660,6 +1708,7 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
         lane_identity_sha256=hashlib.sha256(
             ("%s|%s|%s" % (args.lane, fingerprint.get("torch_version"),
                            fingerprint.get("device_name"))).encode("utf-8")).hexdigest(),
+        container=_container_identity(),
         weights={"repository": args.weights_repository or args.model,
                  "revision": args.model_revision,
                  "model_revision": args.model_revision,

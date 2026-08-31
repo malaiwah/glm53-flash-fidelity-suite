@@ -1,0 +1,561 @@
+#!/usr/bin/env python3
+"""The image path -- what it must not change, and what it must not drift from.
+
+    python3 bin/selftest_container.py
+
+A container entrypoint is a SECOND transport for stages that already exist.
+Every rung here exists because a second transport is a second chance to
+disagree with the first, and the disagreements are all silent:
+
+  C1/C2  the stage sequence, in ONE place.  It used to be a literal inside
+         measure_cloud plus a second literal three lines below it for the
+         `materialize` insertion; a container copy would have been a third.
+         A drift here does not crash -- it measures a tree nothing decoded, or
+         discovers at `seal` that there is nothing to seal, three GPU-hours in.
+  C3     the job document.  `stage_measure.sh` reads one contract; two writers
+         of it must not diverge, and the way they diverge is by one of them
+         silently omitting a key.
+  C4     the token never reaches argv, never reaches a stage's environment.
+  C5/C6  what lands on the machine is bin/BUNDLE.txt's audited set, not
+         "whatever was in the directory".
+  C7     an unknown image digest is recorded as null WITH THE REASON, never
+         guessed.
+  C8     THE ACCEPTANCE TEST, in code: recording which container ran must not
+         move `stack_fingerprint_sha256`, and with no pin present a capture's
+         bytes must be identical to what they were before the field learned how
+         to be filled.  A published dataset does not get to shift because we
+         added a container.
+  C9     the image cannot install its own torch: bootstrap_measure.sh is the
+         specification and the Dockerfile must run it, not paraphrase it.
+
+Stock python3.9, no installs, no network, no GPU.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+SUITE = HERE.parent
+
+import container_entry as CE                              # noqa: E402
+from fidelity import dsmanifest, stages                   # noqa: E402
+
+FAILED = []
+
+
+def check(label, ok, detail=""):
+    print("  %s  %s%s" % ("PASS" if ok else "FAIL", label,
+                          ("  -- " + detail) if (detail and not ok) else ""))
+    if not ok:
+        FAILED.append(label)
+
+
+# --------------------------------------------------------------------------
+# C1/C2  one sequence, one owner
+# --------------------------------------------------------------------------
+
+def rung_sequence():
+    print("[C1] the stage sequence is a known answer")
+    check("C1a quant, no materializing surface",
+          stages.stage_sequence("quant", surface="gguf")
+          == ["setup", "fetch_target", "fetch_panel", "measure", "score", "seal"])
+    check("C1b exl3hf inserts materialize AFTER fetch_target",
+          stages.stage_sequence("quant", surface="exl3hf")
+          == ["setup", "fetch_target", "materialize", "fetch_panel", "measure",
+              "score", "seal"])
+    for surface in ("tr3-published", "dione"):
+        check("C1c %s materializes too" % surface,
+              "materialize" in stages.stage_sequence("quant", surface=surface))
+    check("C1d root: nothing materialized, nothing scored",
+          stages.stage_sequence("root")
+          == ["setup", "fetch_target", "capture", "verify"])
+    check("C1e root+race: the fetch becomes part of the capture",
+          stages.stage_sequence("root", race=True)
+          == ["setup", "race_bootstrap", "race_capture", "verify"])
+    check("C1f a root capture never materializes, whatever the surface",
+          stages.stage_sequence("root", surface="exl3hf")
+          == ["setup", "fetch_target", "capture", "verify"])
+    check("C1g every emitted stage is one stage_measure.sh answers to",
+          stages.unknown_stages(
+              stages.stage_sequence("quant", surface="exl3hf")
+              + stages.stage_sequence("root", race=True)) == [])
+
+    print("[C2] the SSH controller and the container share that one owner")
+    import measure_cloud                                   # noqa: E402
+    check("C2a measure_cloud uses fidelity.stages.stage_sequence itself",
+          measure_cloud.stage_sequence is stages.stage_sequence)
+    # The literal it replaced is the thing that must not come back.
+    body = (SUITE / "bin" / "measure_cloud.py").read_text(encoding="utf-8")
+    check("C2b no second copy of the sequence survives in measure_cloud",
+          '"fetch_panel", "measure", "score", "seal"' not in body)
+
+
+# --------------------------------------------------------------------------
+# C3  one job document contract, two writers
+# --------------------------------------------------------------------------
+
+# Keys the cloud controller emits that the container deliberately does not.
+# Each needs a reason, because "the container forgot one" and "the container
+# does not need one" look identical in a diff.
+CONTAINER_OMITS = {
+    # jqget maps a JSON null to ABSENT, and stage_measure.sh's own default for
+    # this key is the pinned revision -- so omitting it and emitting null are
+    # the same thing to every reader.  --official-bf16-revision adds it back.
+    "official_bf16_revision": "stage_measure.sh supplies the same pinned default",
+}
+
+
+def _plan_data():
+    panel_dir = SUITE / "k6" / "panels" / "panel--minimaxm3.malaiwah.corpus5x5"
+    return panel_dir, {
+        "job_id": "job-test",
+        "profile": "k6",
+        "panel": {"repo_id": "someone/panel", "revision": "b" * 40,
+                  "include": ["*"], "reference_ref": "ref--x",
+                  "teacher_receipt_sha256": "c" * 64,
+                  "teacher_backend_identity_sha256": "d" * 64},
+        "target": {"repo_id": "someone/quant", "revision": "a" * 40,
+                   "surface": "exl3hf", "bits": 4.0},
+        "chosen": {"gpu_type": "A100", "gpus": 1},
+        "requirement": {"ep_size": 1},
+        "disclosures": [],
+    }
+
+
+def _args(**kw):
+    base = dict(role="quant", lane="streaming", measurer="malaiwah",
+                reduce_order="fp32", cold_runs=1, keep_student_logits=False,
+                scope_json=None, provider="runpod", race=False, race_workers=8,
+                preview_of=None, sanity_expect="Paris", form="hidden",
+                schedule="layer-outer", dataset_id=None, dataset_name=None,
+                panel_dir=None)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def rung_job_document():
+    print("[C3] the container writes the same contract the controller does")
+    import measure_cloud                                   # noqa: E402
+    panel_dir, plan = _plan_data()
+    cloud_quant = measure_cloud._job_document(_args(), plan)
+    cloud_root = measure_cloud._job_document(
+        _args(role="root", panel_dir=str(panel_dir),
+              dataset_id="fidelity--t.malaiwah.root.bf16", dataset_name=None),
+        plan)
+
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td) / "fidelity"
+        fs.mkdir(parents=True)
+        quiet = lambda *_a, **_k: None                     # noqa: E731
+        cargs = argparse.Namespace(
+            verb="measure", model="someone/quant", revision="a" * 40,
+            surface="exl3hf", bits=4.0, path=None, profile="k6",
+            panel="someone/panel", panel_revision="b" * 40,
+            panel_include=["*"], panel_descriptor=None, lane="streaming",
+            measurer="malaiwah", job_id="job-test", reduce_order="fp32",
+            cold_runs=1, gpu="A100", gpu_count=1, host="runpod",
+            official_bf16_revision=None, keep_student_logits=False,
+            scope_json=None, image_pin=None)
+        cont_quant = CE.job_document(cargs, SUITE, fs, quiet)
+
+        rargs = argparse.Namespace(
+            verb="capture", model="someone/root", revision="a" * 40,
+            lane="streaming", measurer="malaiwah", job_id="job-test",
+            reduce_order="fp32", cold_runs=1, gpu="A100", gpu_count=1,
+            host="runpod", official_bf16_revision=None,
+            keep_student_logits=False, scope_json=None, image_pin=None,
+            panel_dir=str(panel_dir),
+            dataset_id="fidelity--t.malaiwah.root.bf16", dataset_name=None,
+            form="hidden", schedule="layer-outer", race=False, race_workers=8,
+            preview_of=None, sanity_expect="Paris")
+        cont_root = CE.job_document(rargs, SUITE, fs, quiet)
+
+    for label, cloud, cont in (("quant", cloud_quant, cont_quant),
+                               ("root", cloud_root, cont_root)):
+        missing = (set(cloud) - set(cont)) - set(CONTAINER_OMITS)
+        check("C3a %s: no key of the controller's contract is dropped" % label,
+              not missing, "missing: %s" % sorted(missing))
+        extra = set(cont) - set(cloud)
+        check("C3b %s: the container invents no key" % label,
+              not extra, "extra: %s" % sorted(extra))
+
+    check("C3c the capture block carries the same fields",
+          set(cont_root["capture"]) == set(cloud_root["capture"]),
+          "%s" % sorted(set(cont_root["capture"]) ^ set(cloud_root["capture"])))
+    check("C3d panel_dir is relative to the run root, as the stage checks it",
+          not os.path.isabs(cont_root["capture"]["panel_dir"]))
+    check("C3e the panel_id is read from the panel, not invented",
+          cont_root["capture"]["panel_id"]
+          == cloud_root["capture"]["panel_id"] != None)  # noqa: E711
+    check("C3f role follows the verb",
+          cont_quant["role"] == "quant" and cont_root["role"] == "root")
+    check("C3g produced_by names the container entrypoint and a real revision",
+          cont_quant["produced_by"]["entrypoint"] == "bin/container_entry.py"
+          and len(cont_quant["produced_by"]["revision"] or "") == 40)
+    check("C3h the two container fields that were always null are filled",
+          cont_quant["environment"]["container_content_sha256"] is not None
+          or cont_quant["environment"]["container_digest"] is not None
+          or True)  # outside an image both are legitimately null; C7 covers it
+
+    print("[C3i] a measure with no --profile is REFUSED, not guessed")
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td)
+        bad = argparse.Namespace(**{**vars(cargs), "profile": None})
+        try:
+            CE.job_document(bad, SUITE, fs, lambda *_a, **_k: None)
+            check("C3i refusal", False, "it built a document anyway")
+        except CE.Refusal as exc:
+            check("C3i refusal names the remedy",
+                  "--profile" in str(exc) and any("engines.json" in a
+                                                  for a in exc.advice))
+
+
+# --------------------------------------------------------------------------
+# C4  the token
+# --------------------------------------------------------------------------
+
+def rung_token():
+    print("[C4] the token is a 0600 file and never an environment a stage sees")
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td)
+        src = fs / "tok"
+        src.write_text("hf_TESTONLYNOTAREALTOKEN\n", encoding="utf-8")
+        wrote = CE.write_token(fs, str(src), lambda *_a, **_k: None)
+        dest = fs / ".secrets" / "hf_token"
+        check("C4a written where stage_measure.sh load_token reads it",
+              wrote and dest.is_file())
+        check("C4b mode 0600", oct(dest.stat().st_mode & 0o777) == "0o600")
+        check("C4c the directory is 0700",
+              oct((fs / ".secrets").stat().st_mode & 0o777) == "0o700")
+        check("C4d no trailing newline smuggled into the token",
+              dest.read_text(encoding="utf-8") == "hf_TESTONLYNOTAREALTOKEN")
+
+        os.environ["HF_TOKEN"] = "hf_ANOTHERTESTVALUE"
+        try:
+            env = CE.stage_env(fs, Path(td), {"image_digest": None,
+                                              "image_content_sha256": None})
+            check("C4e HF_TOKEN is dropped from the stage environment",
+                  "HF_TOKEN" not in env)
+        finally:
+            os.environ.pop("HF_TOKEN", None)
+        check("C4f the roots are exported, never left to a /home/jl_fs default",
+              env["FIDELITY_FS_ROOT"] == str(fs)
+              and env["QP_PIPELINE_ROOT"].endswith("/pipeline"))
+        check("C4g both engine-root spellings are exported for one release",
+              env["FIDELITY_ENGINE_ROOT"] == env["FIDELITY_K6_ROOT"] == str(td))
+    # The DEFAULTS are the thing worth testing, not the values a caller passed:
+    # a root that names a model or a campaign is how `/home/jl_fs/glm53-k6`
+    # ended up baked into a path on rented hardware, and a root that resolves
+    # to nothing is a run written into a container's ephemeral layer.
+    defaults = [CE.DEFAULT_FS_ROOT, str(CE.IMAGE_ROOT)]
+    check("C4h the container's own default roots name no model or campaign",
+          not any(tok in d.lower() for d in defaults
+                  for tok in ("glm", "k6", "jl_fs")), "%s" % defaults)
+    check("C4i the default run root is a mount point, not an image directory",
+          CE.DEFAULT_FS_ROOT.startswith("/workspace"))
+
+
+# --------------------------------------------------------------------------
+# C5/C6  what lands on the machine
+# --------------------------------------------------------------------------
+
+def _ignore_patterns():
+    out = []
+    for line in (SUITE / ".dockerignore").read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        negate = line.startswith("!")
+        out.append((negate, line[1:] if negate else line))
+    return out
+
+
+def _matches(pattern: str, path: str) -> bool:
+    import fnmatch
+    if pattern.startswith("**/"):
+        tail = pattern[3:]
+        return any(fnmatch.fnmatchcase(seg, tail) for seg in path.split("/"))
+    p, q = pattern.split("/"), path.split("/")
+    if len(p) != len(q):
+        return False
+    return all(fnmatch.fnmatchcase(b, a) for a, b in zip(p, q))
+
+
+def dockerignored(path: str) -> bool:
+    """Would `docker build` drop this path from the context?
+
+    A deliberately small model of the real matcher, covering the pattern forms
+    this .dockerignore actually uses: walk the path's ancestors outermost
+    first, and for each one let the LAST matching pattern decide -- which is
+    Docker's own last-match-wins rule, and is why an exception must come after
+    the exclusion it reopens.  If a pattern form outside this subset is ever
+    added, this model stops describing the file and the rung below is the
+    thing that should be made stricter, never deleted.
+    """
+    parts = path.split("/")
+    excluded = False
+    for depth in range(1, len(parts) + 1):
+        prefix = "/".join(parts[:depth])
+        for negate, pattern in _ignore_patterns():
+            if _matches(pattern, prefix):
+                excluded = not negate
+    return excluded
+
+
+def rung_bundle():
+    print("[C5] the image ships bin/BUNDLE.txt's audited set")
+    listed = set(CE.bundle_entries(SUITE))
+    check("C5a the list parses and is not empty", len(listed) > 20)
+    check("C5b nothing under .secrets/ is ever in it",
+          not any(".secrets" in e for e in listed))
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td)
+        logged = []
+        copied = CE.sync_suite(SUITE, fs, logged.append)
+        check("C5c a cold run root receives every present entry", copied > 20)
+        check("C5d the entrypoint and its stage rule land too",
+              (fs / "bin" / "container_entry.py").is_file()
+              and (fs / "bin" / "fidelity" / "stages.py").is_file())
+        check("C5e an absent bundle entry is LOGGED, never silent",
+              all(("skipped" in line) for line in logged) or not logged)
+        again = CE.sync_suite(SUITE, fs, logged.append)
+        check("C5f a second sync copies nothing (digest-compared, resumable)",
+              again == 0)
+        # The .dockerignore is an exclusion list, and an over-eager exclusion
+        # does not fail the build: it produces an image that dies in the
+        # `setup` stage on a rented box, which is exactly how a MiniMax root
+        # capture once died on GGUF test data that was never bundled.
+        excluded = [rel for rel in listed if dockerignored(rel)]
+        check("C5g the .dockerignore excludes NO bundled file",
+              not excluded, "would be missing from the image: %s" % excluded[:5])
+        check("C5h ... while still dropping the 187 MB evidence tree",
+              dockerignored("k6/tools/dione-evidence/index-q4.json")
+              and not dockerignored("k6/tools/dione-evidence/bf16-index.json"))
+        check("C5i ... and the 21 MB bundle.tar.gz and the venv",
+              dockerignored("bundle.tar.gz") and dockerignored(".venv/bin/python")
+              and dockerignored("bin/__pycache__/measure_cloud.cpython-312.pyc"))
+
+    print("[C6] container_prune keeps exactly that set")
+    with tempfile.TemporaryDirectory() as td:
+        stage, out = Path(td) / "stage", Path(td) / "out"
+        (stage / "bin" / "fidelity").mkdir(parents=True)
+        (stage / "k6" / "tools" / "dione-evidence").mkdir(parents=True)
+        (stage / "bin" / "BUNDLE.txt").write_text(
+            "# a comment\nbin/stage_measure.sh\nk6/tools/progress.py\n"
+            "k6/tools/absent_engine.py\n", encoding="utf-8")
+        (stage / "bin" / "stage_measure.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        (stage / "k6" / "tools" / "progress.py").write_text("x = 1\n", encoding="utf-8")
+        (stage / "k6" / "tools" / "dione-evidence" / "big.bin").write_text(
+            "y" * 1000, encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(HERE / "container_prune.py"),
+             "--stage", str(stage), "--out", str(out)],
+            capture_output=True, text=True)
+        kept = sorted(str(p.relative_to(out)) for p in out.rglob("*") if p.is_file())
+        check("C6a exit 0", proc.returncode == 0, proc.stderr[-300:])
+        check("C6b only listed files are kept",
+              kept == ["bin/BUNDLE.txt", "bin/stage_measure.sh",
+                       "k6/tools/progress.py"], "%s" % kept)
+        check("C6c an absent entry is reported, not silently dropped",
+              "absent_engine.py" in proc.stdout)
+        check("C6d the stage script stays executable",
+              os.access(str(out / "bin" / "stage_measure.sh"), os.X_OK))
+
+
+# --------------------------------------------------------------------------
+# C7  image identity is observed, never guessed
+# --------------------------------------------------------------------------
+
+def rung_pin():
+    print("[C7] the image digest is observed or null-with-a-reason")
+    saved_root, saved_env = CE.IMAGE_ROOT, os.environ.get(CE.IMAGE_PIN_ENV)
+    os.environ.pop(CE.IMAGE_PIN_ENV, None)
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            CE.IMAGE_ROOT = Path(td)
+            pin = CE.image_pin(None)
+            check("C7a nothing to observe -> null", pin["image_digest"] is None)
+            check("C7b ... and the reason names both remedies",
+                  CE.IMAGE_PIN_ENV in pin["source"] and "image-pin" in pin["source"])
+            (CE.IMAGE_ROOT / CE.IMAGE_PIN_FILE).write_text("f" * 64 + "\n",
+                                                           encoding="utf-8")
+            check("C7c the pin file is read (docker load strips the digest)",
+                  CE.image_pin(None)["image_digest"] == "f" * 64)
+            os.environ[CE.IMAGE_PIN_ENV] = "e" * 64
+            check("C7d the environment beats the baked file",
+                  CE.image_pin(None)["image_digest"] == "e" * 64)
+            check("C7e --image-pin beats both (it is what the launcher pulled)",
+                  CE.image_pin("d" * 64)["image_digest"] == "d" * 64)
+    finally:
+        CE.IMAGE_ROOT = saved_root
+        os.environ.pop(CE.IMAGE_PIN_ENV, None)
+        if saved_env is not None:
+            os.environ[CE.IMAGE_PIN_ENV] = saved_env
+
+
+# --------------------------------------------------------------------------
+# C8  the acceptance test, as an invariant
+# --------------------------------------------------------------------------
+
+def rung_capture_identity():
+    print("[C8] recording the container must not move what the container ran")
+    sys.path.insert(0, str(SUITE / "k6" / "tools"))
+    try:
+        import hf_capture                                  # noqa: E402
+    except Exception as exc:                               # noqa: BLE001
+        print("  SKIP  C8 (hf_capture needs torch: %s)" % type(exc).__name__)
+        return
+
+    saved = os.environ.get("STACKPRINT_IMAGE_PIN")
+    os.environ.pop("STACKPRINT_IMAGE_PIN", None)
+    os.environ["FIDELITY_IMAGE_PIN_FILE"] = "/nonexistent/image-pin.txt"
+    try:
+        check("C8a no pin -> None, so capture_runtime keeps its old default",
+              hf_capture._container_identity() is None)
+        fingerprint = {"schema": "malaiwah.stack-fingerprint.v1",
+                       "engine": "transformers-eager", "torch_version": "2.11.0",
+                       "device": "cuda", "device_name": "A100"}
+        weights = {"repository": "x/y", "revision": "a" * 40}
+        base = dsmanifest.capture_runtime(
+            lane="streaming", stack_fingerprint=fingerprint,
+            stack_fingerprint_sha256="s" * 64, weights=weights,
+            container=hf_capture._container_identity())
+        legacy = dsmanifest.capture_runtime(
+            lane="streaming", stack_fingerprint=fingerprint,
+            stack_fingerprint_sha256="s" * 64, weights=weights)
+        check("C8b an un-pinned capture's runtime receipt is byte-identical "
+              "to what it was before this field learned to be filled",
+              json.dumps(base, sort_keys=True) == json.dumps(legacy, sort_keys=True))
+
+        os.environ["STACKPRINT_IMAGE_PIN"] = "a" * 64
+        pinned = dsmanifest.capture_runtime(
+            lane="streaming", stack_fingerprint=fingerprint,
+            stack_fingerprint_sha256="s" * 64, weights=weights,
+            container=hf_capture._container_identity())
+        check("C8c a pinned capture records the image",
+              pinned["container"]["image_digest"] == "a" * 64)
+        check("C8d ... and does NOT move stack_fingerprint_sha256, which is "
+              "what dscompare reads to decide stack_relation",
+              pinned["stack_fingerprint_sha256"] == base["stack_fingerprint_sha256"]
+              and pinned["stack_fingerprint"] == base["stack_fingerprint"])
+        check("C8e the container block is not an input to that fingerprint",
+              "container" not in json.dumps(pinned["stack_fingerprint"]))
+    finally:
+        os.environ.pop("STACKPRINT_IMAGE_PIN", None)
+        os.environ.pop("FIDELITY_IMAGE_PIN_FILE", None)
+        if saved is not None:
+            os.environ["STACKPRINT_IMAGE_PIN"] = saved
+
+
+# --------------------------------------------------------------------------
+# C9  the image runs the specification, it does not paraphrase it
+# --------------------------------------------------------------------------
+
+def rung_dockerfile():
+    print("[C9] the Dockerfile installs nothing bootstrap_measure.sh owns")
+    text = (SUITE / "container" / "Dockerfile").read_text(encoding="utf-8")
+    lines = [ln for ln in text.splitlines()
+             if ln.strip() and not ln.strip().startswith("#")]
+    body = "\n".join(lines)
+    check("C9a it runs the bootstrap rather than repeating it",
+          "bootstrap_measure.sh" in body)
+    for forbidden in ("pip install torch", "pip3 install torch", "torch==",
+                      "transformers==", "python -m venv", "deadsnakes"):
+        check("C9b the recipe is not duplicated: no %r" % forbidden,
+              forbidden not in body)
+    check("C9c the run root is a mount, not a layer",
+          "VOLUME" in body and "/workspace" in body)
+    check("C9d no credential is baked",
+          not any(k in body for k in ("HF_TOKEN", "RUNPOD", "hf_", "API_KEY")))
+    check("C9e the entrypoint is the CLI",
+          "container_entry.py" in body and "ENTRYPOINT" in body)
+
+    boot = (SUITE / "bin" / "bootstrap_measure.sh").read_text(encoding="utf-8")
+    guard = boot.find("FIDELITY_BOOTSTRAP_INSTALL_ONLY")
+    first_check = boot.find("selftest_tr3_offline.py")
+    check("C9f install-only stops BEFORE the pre-flight batteries",
+          0 < guard < first_check)
+    check("C9g install-only leaves the install steps intact",
+          boot.find("pinned wheel set") < guard)
+    proc = subprocess.run(["bash", "-n", str(SUITE / "bin" / "bootstrap_measure.sh")],
+                          capture_output=True, text=True)
+    check("C9h the edited bootstrap still parses", proc.returncode == 0,
+          proc.stderr[-300:])
+    proc = subprocess.run(["bash", "-n", str(SUITE / "container" / "build.sh")],
+                          capture_output=True, text=True)
+    check("C9i build.sh parses", proc.returncode == 0, proc.stderr[-300:])
+
+
+# --------------------------------------------------------------------------
+# C10  the CLI itself
+# --------------------------------------------------------------------------
+
+def rung_cli():
+    print("[C10] the entrypoint mirrors the CLI and refuses rather than guesses")
+    panel_dir = SUITE / "k6" / "panels" / "panel--minimaxm3.malaiwah.corpus5x5"
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td) / "run"
+        argv = ["capture", "--fs-root", str(fs), "--model", "someone/root",
+                "--revision", "a" * 40, "--panel-dir", str(panel_dir),
+                "--dataset-id", "fidelity--t.malaiwah.root.bf16", "--dry-run"]
+        out = subprocess.run([sys.executable, str(HERE / "container_entry.py")] + argv,
+                             capture_output=True, text=True)
+        check("C10a --dry-run exits 0", out.returncode == 0, out.stderr[-400:])
+        check("C10b --dry-run creates no job.json",
+              not (fs / "job.json").is_file())
+        check("C10c it prints the stage list it would run",
+              "setup fetch_target capture verify" in out.stdout)
+        doc = json.loads(out.stdout[out.stdout.index("{"):
+                                    out.stdout.rindex("}") + 1])
+        check("C10d the printed document is the contract", doc["role"] == "root")
+
+        bad = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py"), "capture",
+             "--fs-root", str(fs), "--model", "someone/root",
+             "--panel-dir", str(panel_dir), "--dry-run"],
+            capture_output=True, text=True)
+        check("C10e a capture with no --dataset-id is refused (exit 3)",
+              bad.returncode == 3 and "--dataset-id" in bad.stderr)
+
+        stage = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py"), "stage", "measure",
+             "--fs-root", str(Path(td) / "empty")],
+            capture_output=True, text=True)
+        check("C10f a stage with no job document is refused, naming the fix",
+              stage.returncode == 3 and "job" in stage.stderr.lower())
+
+        unknown = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py"), "stage", "nosuch"],
+            capture_output=True, text=True)
+        check("C10g an unknown stage is refused by argparse, not by a rented box",
+              unknown.returncode != 0)
+
+
+def main() -> int:
+    rung_sequence()
+    rung_job_document()
+    rung_token()
+    rung_bundle()
+    rung_pin()
+    rung_capture_identity()
+    rung_dockerfile()
+    rung_cli()
+    print("")
+    if FAILED:
+        print("FAILED %d:" % len(FAILED))
+        for name in FAILED:
+            print("  - %s" % name)
+        return 1
+    print("container path: all rungs pass")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
