@@ -202,6 +202,34 @@ Declare `separable_storage = False` unless the provider's disk genuinely
 outlives its instance. Getting that wrong is not a create error — it is
 `No space left on device` three stages into a paid run.
 
+**Then run `bin/selftest_provider_portability.py` and believe it.** Porting to
+RunPod found five assumptions, and not one of them was about the measurement.
+Three could have leaked a billing instance (machine ids are ints; the running
+state is spelled `"Running"`; ids compare as ints inside a set — that last one
+is the "is it really gone?" check, and a type mismatch there reports a *live*
+box as destroyed). Two only lost money quietly:
+
+* the run root, and then the **pipeline** root, each defaulting to a
+  JarvisLabs path that nothing exported. The second one is the expensive
+  shape to understand: it fails on the *first line of the measure stage*, into
+  a per-run log nobody is watching, after the bootstrap, a 200 GB fetch and
+  the panel are all paid for — and the box then sits **RUNNING at 0% GPU**
+  until something notices. That cost $3.07 before it was caught.
+
+The test now enforces the general rule rather than the three instances: in the
+on-instance tools, a `/home/jl_fs` literal is legal only as the fallback of a
+root the controller actually exports. A fourth one cannot be introduced
+silently.
+
+**And check the GPU is doing work**, not just that the stage started:
+
+```bash
+nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader
+```
+
+`0 %, 0 MiB` twenty minutes into a measure stage means the stage died and the
+controller has not noticed yet.
+
 The honest test that a backend works is **not** that it ran. It is
 re-measuring an artifact that already has a sealed receipt and getting the same
 number: for `turboderp/GLM-5.3-Flash-exl3` @ 2.05bpw that is
