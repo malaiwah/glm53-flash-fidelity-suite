@@ -935,9 +935,15 @@ def plan_drill(args: Any, provider: Any, *, seams: Optional[DrillSeams] = None) 
                     item.get("reservation_kind")
                         == "bootstrap-controller-loss-drill"
                     and item.get("phase") != "CANCELLED_BEFORE_CREATE"
+                    and not (
+                        item.get("phase") == "RECONCILED"
+                        and item.get("released") is True
+                        and item.get("maximum_remaining_liability_usd") == "0"
+                        and isinstance(item.get("billing"), Mapping)
+                        and isinstance(item.get("deletion"), Mapping))
                     for item in prior_attempts)):
             raise DrillError(
-                "bootstrap drill must precede measurements and paid drills")
+                "bootstrap drill must precede measurements and unsettled paid drills")
         classified = ledger.classify_provider_resources(inventory_rows)
         expected_unknown = [
             {"family": row["family"], "id": row["id"]}
@@ -1049,7 +1055,9 @@ transfer['receipt_sha256'] = hashlib.sha256(canonical).hexdigest()
 def _snapshot_remote_helpers() -> Tuple[Tuple[str, bytes, str], ...]:
     here = Path(__file__).resolve().parent
     rows = [("build_archive.py", _remote_builder_source().encode("utf-8"))]
-    for name in ("__init__.py", "common.py", "jobcontract.py", "resultsink.py"):
+    for name in (
+            "__init__.py", "common.py", "jobcontract.py", "panel.py",
+            "resultsink.py"):
         rows.append(("lib/fidelity/%s" % name, (here / name).read_bytes()))
     return tuple(
         (name, body, _sha256_bytes(body)) for name, body in rows)
@@ -1071,7 +1079,7 @@ def _prepare_remote_payload(
     expected_names = {
         "build_archive.py", "lib/fidelity/__init__.py",
         "lib/fidelity/common.py", "lib/fidelity/jobcontract.py",
-        "lib/fidelity/resultsink.py",
+        "lib/fidelity/panel.py", "lib/fidelity/resultsink.py",
     }
     if {row[0] for row in helpers} != expected_names:
         raise DrillError("frozen remote helper snapshot is incomplete")
@@ -1889,6 +1897,39 @@ def _persist_deadline_observation(
 
 
 
+def _request_failed_controller_cleanup(
+        plan: DrillPlan, ledger: CampaignLedger,
+        lease_store_factory: Callable[[Path], LeaseStore]) -> bool:
+    """Give the reaper immediate authority after a pre-loss controller failure."""
+    lease_path = plan.lease_dir / (
+        "%s.%s.json" % (plan.job_hash, plan.attempt_id))
+    if not lease_path.exists() and not lease_path.is_symlink():
+        return False
+    store = lease_store_factory(plan.lease_dir)
+    document = store.read(lease_path)
+    if document.get("state") == "DESTROYING":
+        return True
+    if document.get("state") != "ACTIVE":
+        return False
+    provider_ids = list(document.get("provider_resource_ids") or [])
+    if not provider_ids:
+        raise DrillError("active failed-controller lease has no cleanup target")
+    snapshot = ledger.snapshot()
+    item = (snapshot.get("attempts") or {}).get(plan.attempt_key)
+    if isinstance(item, Mapping) and not item.get("provider_ids"):
+        cleanup = ledger.bind_provider_for_cleanup(
+            snapshot["generation"], plan.attempt_key, provider_ids,
+            campaign_cleanup_binding_evidence(document))
+        _require_transition(
+            cleanup, "failed-controller campaign cleanup binding")
+    ref = store.ref(lease_path, document)
+    store.request_destroy(ref, {
+        "reason": "controller failed before intentional loss; immediate cleanup",
+        "provider_ids": provider_ids,
+    })
+    return True
+
+
 def _cancel_unreserved_prepared_lease(
         plan: DrillPlan, ledger: CampaignLedger,
         lease_store_factory: Callable[[Path], LeaseStore]) -> bool:
@@ -2133,6 +2174,8 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
                 controller, ready_path, plan.workload_deadline_epoch,
                 seams.clock, prepare_controller)
         except BaseException:
+            _request_failed_controller_cleanup(
+                plan, ledger, seams.lease_store_factory)
             # supervise() does not unwind until its child has been reaped.
             _cancel_unreserved_prepared_lease(
                 plan, ledger, seams.lease_store_factory)

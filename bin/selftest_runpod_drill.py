@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline failure-closure and evidence fixtures for runpoddrill."""
 from __future__ import annotations
-import base64, hashlib, json, os, shlex, shutil, signal, sys, tempfile, time
+import base64, hashlib, json, os, shlex, shutil, signal, subprocess, sys, tempfile, time
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -79,6 +79,7 @@ class Provider:
         self.bounded_modes = {}
         self.download_replacements = {}
         self.receipt_padding_bytes = 0
+        self.remote_archive_failure = False
         self.gpu_queries = []
     def require(self):
         if not self.key: raise RD.DrillError("missing key")
@@ -198,6 +199,8 @@ class Provider:
             shutil.rmtree(self.remote / "fidelity-drill", ignore_errors=True)
             self.remote.mkdir(parents=True, exist_ok=True)
         elif command.startswith("python3"):
+            if self.remote_archive_failure:
+                raise RuntimeError("fixture remote archive builder failed")
             root = self.remote / "fidelity-drill" / "result"
             (root / "logs" / "drill.log").write_text(
                 "intentional controller-loss drill\n", encoding="utf-8")
@@ -618,6 +621,25 @@ def main():
                        {"observed": {"cost_per_hr": graphql_rate}},
                        {"cost_per_hr": rest_rate}),
             RD.DrillError))
+    with tempfile.TemporaryDirectory() as td:
+        helper_root = Path(td)
+        helpers = RD._snapshot_remote_helpers()
+        for name, body, digest in helpers:
+            check("remote helper snapshot digest",
+                  hashlib.sha256(body).hexdigest() == digest)
+            target = helper_root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(body)
+        isolated = subprocess.run(
+            [sys.executable, "-I", "-S", "-c",
+             "import sys; sys.path.insert(0, %r); "
+             "from fidelity import resultsink; "
+             "assert callable(resultsink.write_archive)"
+             % str(helper_root / "lib")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, check=False)
+        check("remote helper closure imports in isolation",
+              isolated.returncode == 0)
 
     with tempfile.TemporaryDirectory() as td:
         args, provider, seams, ledger = fixture(td)
@@ -656,6 +678,40 @@ def main():
               plan.planned_at == "2026-09-01T00:00:00Z"
               and ledger.snapshot() == before
               and provider.create_calls == 0)
+    with tempfile.TemporaryDirectory() as td:
+        args, provider, seams, ledger = fixture(td)
+        provider.remote_archive_failure = True
+        plan = RD.plan_drill(args, provider, seams=seams)
+        args.dry_run = False; args.yes = True
+        check("pre-loss controller failure refuses drill", refuses(
+            lambda: RD.execute_drill(plan, args, provider, seams=seams),
+            RuntimeError))
+        lease_path = Path(args.lease_dir) / (
+            "%s.%s.json" % (plan.job_hash, plan.attempt_id))
+        failed = LeaseStore(Path(args.lease_dir)).read(lease_path)
+        check("pre-loss controller failure grants immediate cleanup",
+              failed["state"] == "DESTROYING"
+              and failed["provider_resource_ids"] == ["pod-1"])
+        timer = seams.reaper_health_check.__self__
+        timer.tick(plan=plan, store=seams.lease_store_factory(
+            Path(args.lease_dir)), provider=provider, now=seams.clock.time())
+        seams.clock.sleep(300)
+        timer.tick(plan=plan, store=seams.lease_store_factory(
+            Path(args.lease_dir)), provider=provider, now=seams.clock.time())
+        terminal = LeaseStore(Path(args.lease_dir)).read(lease_path)
+        closed = ledger.snapshot()["attempts"][plan.attempt_key]
+        check("failed drill is fully reconciled before retry",
+              terminal["state"] == RD.TERMINAL
+              and closed["phase"] == "RECONCILED"
+              and closed["released"] is True
+              and provider.list_instances() == [])
+        provider.remote_archive_failure = False
+        seams.attempt_id_factory = lambda: "e" * 24
+        args.dry_run = True; args.yes = False
+        retry = RD.plan_drill(args, provider, seams=seams)
+        check("fully reconciled failed drill remains retryable",
+              retry.attempt_id == "e" * 24
+              and retry.ledger_generation == ledger.snapshot()["generation"])
     with tempfile.TemporaryDirectory() as td:
         args, provider, seams, ledger = fixture(td)
         empty_sha = hashlib.sha256(b"").hexdigest()
