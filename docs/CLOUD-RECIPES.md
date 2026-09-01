@@ -14,17 +14,20 @@ the operational boundary.
 
 - RunPod API bytes come from an absolute owner-only mode-0600 regular file.
   They never appear in argv, logs, receipts or bundles.
-- The rented pod receives no Hugging Face credential. All admitted artifacts,
-  panels and exact revisions must be anonymously readable from the literal
-  `https://huggingface.co` endpoint.
+- Official target identity is still resolved anonymously from the literal
+  `https://huggingface.co` endpoint. The high-bandwidth target download then
+  uses the explicit read-scoped `--hf-download-token-file`: the controller
+  transports it as `.secrets/hf_token` with mode 0600 inside a 0700 directory,
+  never puts its bytes in argv or logs, and confirms erasure immediately after
+  `fetch_target`. Panels remain anonymous.
 - An ED25519 public key must exist locally before create.
 - Before the first SSH byte, the operator reads the pod's ED25519 fingerprint
   in the authenticated RunPod web terminal. The controller compares that
   out-of-band value to the untrusted network keyscan, then writes a fresh
   per-attempt `known_hosts` file and uses `StrictHostKeyChecking=yes`.
-- A token used for optional root publication stays on the controller. Local
-  publication is possible only after qualification, verified retrieval,
-  provider-confirmed absence and billing reconciliation.
+- A separate owner/write token used for optional root publication stays on the
+  controller. Local publication is possible only after qualification, verified
+  retrieval, provider-confirmed absence and billing reconciliation.
 
 ## Lifecycle prerequisites
 

@@ -64,16 +64,19 @@ def load_measure_cloud():
 class StubJL:
     """Records every remote operation, in order."""
 
-    def __init__(self, fail_upload=False):
+    def __init__(self, fail_upload=False, events=None):
         self.ops = []
         self.fail_upload = fail_upload
+        self.events = events if events is not None else []
 
     def exec(self, machine_id, command, **kw):
         self.ops.append(("exec", command))
+        self.events.append(("exec", command))
         return {"exit_code": 0, "stdout": "", "stderr": ""}
 
     def upload(self, machine_id, local, remote):
         self.ops.append(("upload", local, remote))
+        self.events.append(("upload", remote))
         if self.fail_upload:
             raise RuntimeError("upload failed (stub)")
         return {"ok": True}
@@ -118,16 +121,38 @@ def main():
 
             # S4
             shred_secret_file(str(loose))
+
+            # S4c: paid RunPod accepts only an explicit owned 0600 token file.
+            mc = load_measure_cloud()
+            download_token = td / "download-token"
+            write_secret_file(str(download_token), TOKEN)
+            check("S4c required download token reads the exact 0600 file",
+                  mc._load_required_hf_download_token(
+                      str(download_token)) == TOKEN)
+            download_token.chmod(0o644)
+            bad_mode_refused = False
+            try:
+                mc._load_required_hf_download_token(str(download_token))
+            except mc.Refusal:
+                bad_mode_refused = True
+            missing_refused = False
+            try:
+                mc._load_required_hf_download_token(
+                    str(td / "missing-download-token"))
+            except mc.Refusal:
+                missing_refused = True
+            check("S4d loose or missing download token refuses before transport",
+                  bad_mode_refused and missing_refused)
+
             check("S4 shred removes the file", not loose.exists())
             shred_secret_file(str(td / "never-existed"))
-            check("S4b shredding a missing file is a no-op", True)
 
             # S5/S6: the controller's remote transport, against a stub.
-            mc = load_measure_cloud()
             jl = StubJL()
             outdir = td / "out"
             outdir.mkdir()
-            mc._transport_hf_token(jl, StubTD(), outdir, TOKEN)
+            mc._transport_hf_token(
+                jl, StubTD.machine_id, StubTD.fs_root, outdir, TOKEN)
             kinds = [op[0] for op in jl.ops]
             check("S5a exactly exec, upload, exec", kinds == ["exec", "upload", "exec"],
                   jl.ops)
@@ -161,12 +186,57 @@ def main():
             outdir2.mkdir()
             raised = False
             try:
-                mc._transport_hf_token(jl2, StubTD(), outdir2, TOKEN)
+                mc._transport_hf_token(
+                    jl2, StubTD.machine_id, StubTD.fs_root, outdir2, TOKEN)
             except RuntimeError:
                 raised = True
             check("S7 a failed upload still shreds the local copy (and "
                   "propagates)",
                   raised and not (outdir2 / ".secrets-local" / "hf_token").exists())
+
+            # S7a/S7b: the RunPod target-fetch wrapper scopes credential use
+            # to that one stage and cleans up on both success and failure.
+            events = []
+            runpod = StubJL(events=events)
+            original_stage = mc._runpod_stage
+            try:
+                mc._runpod_stage = lambda *_a, **_kw: events.append(
+                    ("stage", "fetch_target"))
+                mc._transport_hf_token(
+                    runpod, StubTD.machine_id, StubTD.fs_root,
+                    td / "runpod-success", TOKEN)
+                cleanup = mc._runpod_fetch_target_and_remove_token(
+                    runpod, StubTD.machine_id, StubTD.fs_root, "/engine",
+                    1.0, "image@sha256:" + "a" * 64)
+                check("S7a RunPod authenticates only fetch_target, then confirms "
+                      "remote cleanup",
+                      cleanup.get("confirmed") is True
+                      and [kind for kind, _value in events]
+                          == ["exec", "upload", "exec", "stage", "exec"]
+                      and "shred -u" in events[-1][1],
+                      events)
+
+                events.clear()
+                def fail_stage(*_args, **_kwargs):
+                    events.append(("stage", "fetch_target"))
+                    raise RuntimeError("fetch failed")
+                mc._runpod_stage = fail_stage
+                failed = False
+                try:
+                    mc._transport_hf_token(
+                        runpod, StubTD.machine_id, StubTD.fs_root,
+                        td / "runpod-failure", TOKEN)
+                    mc._runpod_fetch_target_and_remove_token(
+                        runpod, StubTD.machine_id, StubTD.fs_root, "/engine",
+                        1.0, "image@sha256:" + "a" * 64)
+                except RuntimeError as exc:
+                    failed = str(exc) == "fetch failed"
+                check("S7b failed RunPod fetch still removes the remote token",
+                      failed and events[-1][0] == "exec"
+                      and "shred -u" in events[-1][1],
+                      events)
+            finally:
+                mc._runpod_stage = original_stage
 
             # S8: the container entrypoint's writer.
             spec = importlib.util.spec_from_file_location(

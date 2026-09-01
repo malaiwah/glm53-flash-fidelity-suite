@@ -13,10 +13,12 @@ publication, ambient Hugging Face credentials, and any target without exact
 checked-in scientific evidence.
 
 Before provider mutation it requires: official anonymous Hugging Face identity,
-a clean unchanged checkout, a healthy independently installed user reaper, a
-successful controller-loss drill proof, a fresh full provider inventory and
-balance snapshot, cumulative campaign admission, exact runtime/cost limits and
-explicit confirmation. `--dry-run` never creates a provider resource.
+an explicit owned 0600 Hugging Face read-token file for the high-bandwidth
+target download, a clean unchanged checkout, a healthy independently installed
+user reaper, a successful controller-loss drill proof, a fresh full provider
+inventory and balance snapshot, cumulative campaign admission, exact
+runtime/cost limits and explicit confirmation. `--dry-run` never creates a
+provider resource.
 
 Run `bin/measure-cloud --help` for the full flag list.
 """
@@ -2980,6 +2982,7 @@ def _runpod_forbidden(args) -> List[str]:
     required = (
         "campaign_ledger", "campaign_ceiling", "campaign_reserve",
         "campaign_reaper_margin", "runpod_safety_proof",
+        "hf_download_token_file",
     )
     for name in required:
         if getattr(args, name, None) in (None, ""):
@@ -3420,6 +3423,13 @@ def _plan_runpod_anonymous(
     forbidden = _runpod_forbidden(args)
     if forbidden:
         raise Refusal("safe RunPod profile refuses: %s" % ", ".join(forbidden), [])
+    download_token = _load_required_hf_download_token(
+        args.hf_download_token_file)
+    del download_token
+    gate_verified(
+        plan_data, "explicit-download-credential",
+        storage="owned-mode-0600-file",
+        remote_lifecycle="fetch-target-only")
     outdir = Path(args.out).resolve() if args.out else None
     if outdir is None:
         raise Refusal("real-safe RunPod planning requires explicit --out", [])
@@ -4625,7 +4635,9 @@ def _runpod_stage(
         time.sleep(15)
     raise RuntimeError("workload deadline reached during stage %s" % stage)
 
-def execute_runpod(args, con: Console, provider, plan_data) -> Dict[str, Any]:
+def execute_runpod(
+        args, con: Console, provider, plan_data,
+        download_token: str) -> Dict[str, Any]:
     """One reserved attempt, one POST, one SSH pod and one archive download."""
     from fidelity.campaign import (
         CostQuote, attempt_key as campaign_attempt_key)
@@ -4639,6 +4651,11 @@ def execute_runpod(args, con: Console, provider, plan_data) -> Dict[str, Any]:
         validate_width_two_root_archive)
     from fidelity.runpodapi import DEFAULT_IMAGE, RunPodCreateResponseError
     from fidelity.resultsink import extract_verified_archive, verify_archive
+    if (not isinstance(download_token, str) or not download_token
+            or any(character.isspace() for character in download_token)):
+        raise Refusal("exact Hugging Face download token is unavailable", [])
+    register_secret(download_token)
+
 
     outdir = Path(args.out).resolve()
     output_parent = outdir.parent
@@ -5024,7 +5041,7 @@ def execute_runpod(args, con: Console, provider, plan_data) -> Dict[str, Any]:
         raise
 
     pod_id = None
-    token_transported = False
+    token_cleanup_required = False
     secret_cleanup = {"confirmed": True, "not_applicable": True}
     run_error = None
     primary_error = None
@@ -5783,14 +5800,32 @@ def execute_runpod(args, con: Console, provider, plan_data) -> Dict[str, Any]:
             "--heartbeat-timeout {heartbeat}".format(
                 fs=shlex.quote(fs_root), deadline=int(workload_epoch),
                 heartbeat=int(args.heartbeat_timeout)))
+        token_cleanup_required = True
+        try:
+            _transport_hf_token(
+                provider, pod_id, fs_root, outdir, download_token)
+        finally:
+            download_token = ""
+        con.ok(
+            "HF download token installed",
+            "0600 file, never argv; target-fetch scope only")
         for stage in stage_sequence(
                 args.role, race=False,
                 surface=plan_data["target"]["surface"],
                 publish_root=False):
             failed_stage = stage
-            _runpod_stage(
-                provider, pod_id, fs_root, engine_root, stage,
-                workload_epoch, job["environment"]["image"])
+            if stage == "fetch_target":
+                secret_cleanup = _runpod_fetch_target_and_remove_token(
+                    provider, pod_id, fs_root, engine_root,
+                    workload_epoch, job["environment"]["image"])
+                token_cleanup_required = False
+                con.ok(
+                    "HF download token removed",
+                    "authenticated target fetch complete; remote erasure confirmed")
+            else:
+                _runpod_stage(
+                    provider, pod_id, fs_root, engine_root, stage,
+                    workload_epoch, job["environment"]["image"])
             stages_done.append(stage)
             if stage == "setup":
                 bench_doc = _preflight_bench(
@@ -5844,13 +5879,13 @@ def execute_runpod(args, con: Console, provider, plan_data) -> Dict[str, Any]:
                         event="WORKLOAD_EXITED", evidence=exit_evidence)
             except BaseException as exc:
                 run_error = record_operational_error(exc)
-            if token_transported:
+            if token_cleanup_required:
                 secret_cleanup = _cleanup_remote_secret(
                     provider, pod_id, fs_root)
                 if not secret_cleanup.get("confirmed"):
                     run_error = record_operational_error(RuntimeError(
                         "remote token erasure is unconfirmed; revoke the "
-                        "RunPod-scoped Hugging Face token immediately"))
+                        "RunPod-scoped Hugging Face read token immediately"))
             try:
                 remote_archive = "/tmp/fidelity-result-%s-%s.tar.gz" % (
                     plan_data["job_id"], attempt)
@@ -6516,7 +6551,7 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
 
 
 def _load_secure_hf_token(path_value: str) -> Optional[str]:
-    """Read an optional owner-only regular token file without following links."""
+    """Read an optional owned 0600 token file without following links."""
     path = Path(path_value).expanduser()
     try:
         descriptor = os.open(
@@ -6546,31 +6581,40 @@ def _load_secure_hf_token(path_value: str) -> Optional[str]:
     return token
 
 
-def _transport_hf_token(jl, td, outdir: Path, token: str) -> None:
+def _load_required_hf_download_token(path_value: Optional[str]) -> str:
+    """Load the explicit read credential used only for the remote target fetch."""
+    if not path_value:
+        raise Refusal("--hf-download-token-file is required", [])
+    token = _load_secure_hf_token(path_value)
+    if token is None:
+        raise Refusal("Hugging Face download token file does not exist", [])
+    return token
+
+
+def _transport_hf_token(
+        provider, machine_id, fs_root: str, outdir: Path, token: str) -> None:
     """Move the token to the instance without one loose instant at either end.
 
     Never on a command line: it would land in the remote process list and in
-    jl's local run records.  Locally the file is born 0600 inside a 0700
-    directory (write-then-chmod had a window a permissive umask left open --
-    peer review 2026-08-31).  Remotely the .secrets directory is chmod 700
-    BEFORE anything lands in it, the upload goes to a unique temporary name,
-    is tightened to 0600, and only then atomically renamed to the path the
-    stages read -- so no reader can ever observe a partial or loose-mode
-    token at `.secrets/hf_token`.
+    provider request records. Locally the file is born 0600 inside a 0700
+    directory. Remotely the .secrets directory is chmod 700 BEFORE anything
+    lands in it, the upload goes to a unique temporary name, is tightened to
+    0600, and only then atomically renamed to the path the stages read. No
+    reader can observe a partial or loose-mode token at `.secrets/hf_token`.
     """
     local = outdir / ".secrets-local" / "hf_token"
     write_secret_file(str(local), token)
-    remote_dir = "%s/.secrets" % td.fs_root
+    remote_dir = "%s/.secrets" % fs_root
     remote_tmp = "%s/.hf_token.up.%d" % (remote_dir, os.getpid())
     try:
-        jl.exec(
-            td.machine_id,
+        provider.exec(
+            machine_id,
             "set -eu; test ! -e {0}; test ! -L {0}; "
             "mkdir -m 700 -- {0}; test ! -e {1}; test ! -L {1}"
             .format(shlex.quote(remote_dir), shlex.quote(remote_tmp)))
-        jl.upload(td.machine_id, str(local), remote_tmp)
-        jl.exec(
-            td.machine_id,
+        provider.upload(machine_id, str(local), remote_tmp)
+        provider.exec(
+            machine_id,
             "set -eu; test ! -L {tmp}; test -f {tmp}; "
             "chmod 600 -- {tmp}; test ! -e {final}; test ! -L {final}; "
             "mv -- {tmp} {final}"
@@ -6578,6 +6622,30 @@ def _transport_hf_token(jl, td, outdir: Path, token: str) -> None:
                     final=shlex.quote("%s/hf_token" % remote_dir)))
     finally:
         shred_secret_file(str(local))
+
+
+def _runpod_fetch_target_and_remove_token(
+        provider, pod_id, fs_root: str, engine_root: str, deadline: float,
+        image_reference: str) -> Dict[str, Any]:
+    """Run the authenticated target fetch and always remove its remote token."""
+    stage_error = None
+    try:
+        _runpod_stage(
+            provider, pod_id, fs_root, engine_root, "fetch_target",
+            deadline, image_reference)
+    except BaseException as exc:
+        stage_error = exc
+    cleanup = _cleanup_remote_secret(provider, pod_id, fs_root)
+    if not cleanup.get("confirmed"):
+        failure = RuntimeError(
+            "remote token erasure after target fetch is unconfirmed; revoke "
+            "the RunPod-scoped Hugging Face read token immediately")
+        if stage_error is not None:
+            raise failure from stage_error
+        raise failure
+    if stage_error is not None:
+        raise stage_error.with_traceback(stage_error.__traceback__)
+    return cleanup
 
 
 def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
@@ -6656,7 +6724,8 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
 
     token = hf_token()
     if token:
-        _transport_hf_token(jl, td, outdir, token)
+        _transport_hf_token(
+            jl, td.machine_id, td.fs_root, outdir, token)
         con.ok("HF token transported", "0600 in a 0700 dir at both ends, "
                "renamed into place, never argv, shredded at teardown")
 
@@ -7352,6 +7421,8 @@ def _main_runpod(args, con: Console, provider) -> int:
                     args.campaign_reserve))
             if answer.strip().lower() not in ("y", "yes"):
                 return EXIT_REFUSED
+        download_token = _load_required_hf_download_token(
+            args.hf_download_token_file)
         previous = {}
 
         def _interrupt(signum, _frame):
@@ -7360,8 +7431,10 @@ def _main_runpod(args, con: Console, provider) -> int:
         for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             previous[signum] = signal.signal(signum, _interrupt)
         try:
-            result = execute_runpod(args, con, provider, plan_data)
+            result = execute_runpod(
+                args, con, provider, plan_data, download_token)
         finally:
+            download_token = ""
             for signum, handler in previous.items():
                 signal.signal(signum, handler)
         con.ok("RunPod result archive verified",
@@ -7593,6 +7666,11 @@ def build_parser() -> argparse.ArgumentParser:
     rp = p.add_argument_group("safe RunPod paid admission")
     rp.add_argument("--runpod-key-file")
     rp.add_argument("--runpod-safety-proof")
+    rp.add_argument(
+        "--hf-download-token-file",
+        help="required owned 0600 read-token file; transported to the pod "
+             "without argv/log exposure, used only for the exact target "
+             "download, then shredded immediately")
     rp.add_argument("--campaign-ledger")
     rp.add_argument("--campaign-name", default="fidcloud-")
     rp.add_argument("--campaign-ceiling")

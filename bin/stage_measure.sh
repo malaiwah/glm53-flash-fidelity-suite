@@ -782,10 +782,11 @@ fetch_panel)
   log "fetching panel $REPO @ $REV (include-scoped)"
   # Include-scoping is not an optimisation, it is the difference between 32 GB
   # and 1.3 TB. The globs come from the panel descriptor, never from a constant.
-  # This is a PUBLIC dataset fetch.  It must not call load_token or inherit any
-  # Hugging Face credential: safe RunPod deliberately transports no token.
-  # Pin the official endpoint, disable implicit credential discovery, and use
-  # a cache/token namespace isolated from authenticated target downloads.
+  # This is a PUBLIC dataset fetch. It must not call load_token or inherit any
+  # Hugging Face credential: safe RunPod removes the explicit target-download
+  # token immediately after fetch_target. Pin the official endpoint, disable
+  # implicit credential discovery, and use a cache/token namespace isolated
+  # from that authenticated target download.
   #
   # SEC-01.  This used to be an `eval`, which existed only to word-split
   # $INCLUDES -- and gave $REPO and $REV a SECOND round of shell parsing.

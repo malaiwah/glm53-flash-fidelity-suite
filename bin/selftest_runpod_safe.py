@@ -133,13 +133,19 @@ def main():
           and MC._safe_runpod_target_allowed(
               "root", "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
               "ef68013aa6e16453cf52b5b77647f72fbe258c3c"))
+    parser_defaults = MC.build_parser().parse_args([])
     check("parser no longer invents maintainer attribution",
-          MC.build_parser().parse_args([]).measurer is None)
+          parser_defaults.measurer is None)
+    check("RunPod download credential has no ambient/default source",
+          parser_defaults.hf_download_token_file is None)
     placeholder_quant = type("IdentityArgs", (), {
         "role": "quant", "measurer": "YOUR_HF_HANDLE", "spot": False,
     })()
     check("documented measurer placeholder is refused",
           any("--measurer" in item
+              for item in MC._runpod_forbidden(placeholder_quant)))
+    check("safe RunPod requires an explicit download-token file",
+          any("--hf-download-token-file" in item
               for item in MC._runpod_forbidden(placeholder_quant)))
     placeholder_root = type("RootIdentityArgs", (), {
         "role": "root", "measurer": "real-handle", "spot": False,
@@ -257,6 +263,30 @@ def main():
     check("response-loss handling cannot issue a second provider POST",
           len(function_calls(
               MC.execute_runpod, "submit_prepared_create")) == 1)
+    check("paid executor installs and scopes the authenticated target token",
+          len(function_calls(MC.execute_runpod, "_transport_hf_token")) == 1
+          and len(function_calls(
+              MC.execute_runpod,
+              "_runpod_fetch_target_and_remove_token")) == 1)
+    token_install_calls = function_calls(
+        MC.execute_runpod, "_transport_hf_token")
+    stage_sequence_calls = function_calls(
+        MC.execute_runpod, "stage_sequence")
+    target_fetch_calls = function_calls(
+        MC.execute_runpod, "_runpod_fetch_target_and_remove_token")
+    check("token is installed before setup can create .secrets and removed "
+          "inside fetch_target",
+          len(token_install_calls) == len(stage_sequence_calls)
+              == len(target_fetch_calls) == 1
+          and token_install_calls[0].lineno < stage_sequence_calls[0].lineno
+              < target_fetch_calls[0].lineno)
+    check("paid planning validates the download token before provider access",
+          len(function_calls(
+              MC._plan_runpod_anonymous,
+              "_load_required_hf_download_token")) == 1)
+    check("paid execution reloads the token immediately before mutation",
+          len(function_calls(
+              MC._main_runpod, "_load_required_hf_download_token")) == 1)
     check("live-checkout reaper commands cannot author installed health",
           function_calls(
               MC._runpod_reaper_command, "write_reaper_health") == [])

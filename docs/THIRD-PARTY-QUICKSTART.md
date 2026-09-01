@@ -16,12 +16,15 @@ explicitly marked **PAID**. No command here publishes externally.
   index, worktree and untracked state again immediately before provider POST.
 - A RunPod API key in an absolute owner-only regular file; never in argv or an
   environment value.
+- A Hugging Face read token in a separate owner-only mode-0600 regular file.
+  It authenticates the high-bandwidth target download on the pod.
 - `~/.ssh/id_ed25519.pub`, accepted by RunPod at create.
 - A `systemd --user` session on the controller machine.
 - Explicit campaign limits chosen below the account's available balance.
 
 ```bash
 export RUNPOD_KEY_FILE="$HOME/.config/runpod/api_key"
+export HF_DOWNLOAD_TOKEN_FILE="$HOME/.config/huggingface/runpod_read_token"
 export FIDELITY_STATE="$HOME/.fidelity-cloud"
 export CAMPAIGN_LEDGER="$FIDELITY_STATE/campaign.json"
 export CAMPAIGN_CEILING_USD="REPLACE"
@@ -31,8 +34,16 @@ export DRILL_CAP_USD="REPLACE"
 export ATTEMPT_CAP_USD="REPLACE"
 
 chmod 600 "$RUNPOD_KEY_FILE"
+chmod 600 "$HF_DOWNLOAD_TOKEN_FILE"
 test -f "$HOME/.ssh/id_ed25519.pub"
 ```
+
+Use a read-scoped token for `HF_DOWNLOAD_TOKEN_FILE`. The controller verifies
+the exact target anonymously, transports this token separately as a 0600 file,
+uses it only during `fetch_target`, and confirms its removal immediately after
+that stage. It never enters argv, logs, the bundle, `job.json`, or a receipt.
+The owner/write token used by optional root publication is a separate
+`--hf-token-file` and remains on the controller.
 
 `REPLACE` is deliberate: the suite must not invent the user's financial
 limits. Each value is validated as a finite decimal. The campaign ceiling is a
@@ -113,6 +124,7 @@ bin/measure-cloud \
     --panel brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
     --lane streaming --schedule window-major --cold-runs 2 --gpu H200 \
     --runpod-key-file "$RUNPOD_KEY_FILE" \
+    --hf-download-token-file "$HF_DOWNLOAD_TOKEN_FILE" \
     --reaper-state-dir "$FIDELITY_STATE" \
     --lease-dir "$FIDELITY_STATE/leases-v2" \
     --runpod-safety-proof "$FIDELITY_STATE/drill/proof.json" \
@@ -167,6 +179,7 @@ bin/measure-cloud \
     --replay-device numpy --replay-dtype float32 \
     --replay-vocab-chunk 8192 \
     --runpod-key-file "$RUNPOD_KEY_FILE" \
+    --hf-download-token-file "$HF_DOWNLOAD_TOKEN_FILE" \
     --reaper-state-dir "$FIDELITY_STATE" \
     --lease-dir "$FIDELITY_STATE/leases-v2" \
     --runpod-safety-proof "$FIDELITY_STATE/drill/proof.json" \
