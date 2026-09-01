@@ -606,7 +606,10 @@ def main() -> int:
 
     mini_bf16 = scratch / "mini-bf16"
     mini_bf16.mkdir()
-    vision = {"model.visual.blocks.0.mlp.fc1.weight": torch.randn(8, 8, dtype=torch.bfloat16)}
+    vision = {
+        "model.visual.blocks.0.mlp.fc1.weight":
+            torch.arange(64, dtype=torch.float32).reshape(8, 8).to(torch.bfloat16)
+    }
     save_file(vision, str(mini_bf16 / "vision.safetensors"))
     # a real official shard carrying the non-routed names at their OFFICIAL
     # dtypes, so verify_official_dtypes actually reads headers here

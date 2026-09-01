@@ -34,6 +34,7 @@ end to end with no network and no weights.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -75,7 +76,8 @@ def write_shard(path: Path, tensors: Dict[str, Tuple[str, List[int], int]]) -> D
         handle.write(struct.pack("<Q", len(blob)))
         handle.write(blob)
         for name in sorted(tensors):
-            handle.write(bytes([(hash(name) + i) & 0xFF for i in range(tensors[name][2])]))
+            first = hashlib.sha256(name.encode("utf-8")).digest()[0]
+            handle.write(bytes([(first + i) & 0xFF for i in range(tensors[name][2])]))
     return header
 
 

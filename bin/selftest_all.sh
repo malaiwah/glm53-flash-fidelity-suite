@@ -8,6 +8,9 @@
 # ever issue read-only queries. Nothing here creates an instance, downloads a
 # checkpoint, or publishes anything.
 set -u
+# Many component selftests use `assert`; an inherited optimization flag must
+# not turn their checks into no-ops while this battery reports them as passed.
+unset PYTHONOPTIMIZE
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 PY="${FIDELITY_PYTHON:-python3}"
@@ -344,40 +347,62 @@ echo "== cloud planner (NETWORK, ACCOUNT; --dry-run creates nothing) =="
 # --skip-registry-check everywhere below: these cases test the PLANNER's own
 # refusals; the registry front gate (tested separately) would otherwise answer
 # "already measured" first, because this target has published rows.
-t "sealed-ep8 refuses: no reader for tr3-published" 3 \
-  "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
-    --lane sealed-ep8 --spot --max-runtime 30h --i-accept-leak-risk \
-    --skip-registry-check --dry-run --out "$TMP/c1"
+cloud_isolated() {
+  local py="$PY"
+  case "$py" in
+    */*) ;;
+    *) py="$(command -v "$py")" || return 1 ;;
+  esac
+  mkdir -p "$TMP/no-reaper-home"
+  HOME="$TMP/no-reaper-home" PATH="/usr/bin:/bin" \
+    "$py" bin/measure_cloud.py "$@"
+}
+cloud_refusal_check() {
+  local log="$1" needle="$2"; shift 2
+  cloud_isolated "$@" >"$log" 2>&1
+  local rc=$?
+  if [ "$rc" -ne 0 ] && grep -Fq -- "$needle" "$log"; then
+    return 0
+  fi
+  tail -20 "$log"
+  return 1
+}
+t "sealed-ep8 refuses specifically because tr3-published has no reader" 0 \
+  cloud_refusal_check "$TMP/c1.log" "has no --profile" \
+    --model "$MODEL" --panel "$PANEL" --lane sealed-ep8 --spot \
+    --max-runtime 30h --i-accept-leak-risk --skip-registry-check \
+    --dry-run --out "$TMP/c1"
 t "streaming PLANS a tr3-published target (reader landed in M2)" 0 \
-  "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
+  cloud_isolated --model "$MODEL" --panel "$PANEL" \
     --lane streaming --gpu H200 --spot --max-runtime 12h --i-accept-leak-risk \
     --skip-registry-check --dry-run --out "$TMP/c2"
 grep -q '"seal_verification"' "$TMP/c2/plan.json" \
   && grep -q '"checks_passed": 12' "$TMP/c2/plan.json" \
   && t "the tr3 plan carries a 12/12 seal recompute" 0 true \
   || t "the tr3 plan carries a 12/12 seal recompute" 0 false
-t "refuses without a teardown backstop" 3 \
-  "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
-    --lane sealed-ep8 --spot --max-runtime 30h --skip-registry-check \
-    --dry-run --out "$TMP/c3"
-t "refuses a max-runtime shorter than the work" 3 \
-  "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
-    --lane sealed-ep8 --spot --max-runtime 2h --i-accept-leak-risk \
-    --skip-registry-check --dry-run --out "$TMP/c4"
+t "a 12h run without a reaper specifically refuses its teardown risk" 0 \
+  cloud_refusal_check "$TMP/c3.log" "no teardown backstop for a 12h run" \
+    --model "$MODEL" --panel "$PANEL" --lane streaming --gpu H200 --spot \
+    --max-runtime 12h --skip-registry-check --dry-run --out "$TMP/c3"
+t "a 2h streaming plan specifically refuses its 3h+ workload" 0 \
+  cloud_refusal_check "$TMP/c4.log" \
+    "--max-runtime 2h is shorter than the estimated work" \
+    --model "$MODEL" --panel "$PANEL" --lane streaming --gpu H200 --spot \
+    --max-runtime 2h --i-accept-leak-risk --skip-registry-check \
+    --dry-run --out "$TMP/c4"
 # A dry-run refusal must carry its REMEDY, not just its complaint. Five of the
 # six would-refuse sites used to print `refusal.reason` alone, so the advice --
 # which flag to raise, which files a new engine profile needs -- reached nobody,
 # in the one mode the docs tell a newcomer to start with.
 #
 # $MODEL is tr3-published, which the sealed-ep8 lane has no profile for, so the
-# profile would-refuse fires deterministically here. Deliberately NOT keyed on
-# the teardown-backstop refusal: that one depends on whether the reaper happens
-# to be installed on the machine running the suite, which is exactly the kind of
-# environment-dependent assertion that goes green for the wrong reason.
+# profile would-refuse fires deterministically here. The teardown refusal has
+# its own empty-HOME test above; this invocation accepts that risk explicitly,
+# so a host reaper cannot add or remove the condition being inspected.
 # The exit code is not asserted -- a dry run may go on to hit a HARD refusal
 # (no instance capacity today) and exit 1 rather than 3. What is asserted is
 # that the advice reached stdout, and that it names a table that exists.
-"$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
+cloud_isolated --model "$MODEL" --panel "$PANEL" \
   --lane sealed-ep8 --spot --max-runtime 30h --i-accept-leak-risk \
   --skip-registry-check --dry-run --out "$TMP/c3b" >"$TMP/c3b.log" 2>&1 || true
 if grep -q 'WOULD REFUSE (real run): .*has no --profile' "$TMP/c3b.log" \
@@ -407,18 +432,86 @@ t "cloud front gate: already-measured artifact answers for \$0.00" 0 \
     --dry-run --out "$TMP/c5"
 
 echo "== local planner (NETWORK) =="
-# rc expectations CHANGED 2026-08-29: the streaming/local lanes are now PINNED,
-# so a clean --estimate-only plan exits 0 (it used to exit 3 on "engine
-# unpinned"). --skip-registry-check isolates the planner from the front gate.
-t "this machine, auto device (clean plan now exits 0)" 0 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --estimate-only --skip-registry-check --out "$TMP/l1"
-t "RTX 5090 32GB honours a 30GB budget" 0 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --simulate-device "RTX 5090:32" --vram-budget 30 --estimate-only --skip-registry-check --out "$TMP/l2"
-t "128GB Mac fits"                   0 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --simulate-device "Mac Studio:128::unified" --estimate-only --skip-registry-check --out "$TMP/l3"
-t "4GB card is REFUSED"              3 "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" --simulate-device "GTX 1650:4" --skip-registry-check --out "$TMP/l4"
+# Capacity checks are facts about the host running this battery. A valid planner
+# therefore exits 0 on a large volume and 3 with ONLY a disk-capacity refusal on
+# a small one. Treating a developer's 400 GB mount as a test prerequisite made
+# these hardware-planning checks platform-dependent.
+local_plan_check() {
+  local mode="$1" out="$2"; shift 2
+  "$PY" bin/measure_local.py "$@" --out "$out"
+  local rc=$?
+  PLAN_RC="$rc" PLAN_MODE="$mode" "$PY" - "$out/local-plan.json" <<'PYEOF'
+import json, os, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+rc = int(os.environ["PLAN_RC"])
+blockers = doc.get("would_refuse") or []
+if rc != (3 if blockers else 0):
+    raise SystemExit("return code %d disagrees with blockers %r" % (rc, blockers))
+for key in ("device", "lane", "storage_need", "disk_free_bytes"):
+    if key not in doc:
+        raise SystemExit("plan omitted %s" % key)
+if os.environ["PLAN_MODE"] == "known-fit":
+    if "memory_plan" not in doc:
+        raise SystemExit("known-fit simulated device produced no memory plan")
+    other = [b for b in blockers if not b.startswith("not enough disk:")]
+    if other:
+        raise SystemExit("known-fit device had non-disk blockers: %r" % other)
+PYEOF
+}
+t "this machine auto device reports an internally consistent plan" 0 \
+  local_plan_check host "$TMP/l1" --artifact "$MODEL" --panel "$PANEL" \
+    --estimate-only --skip-registry-check
+t "RTX 5090 32GB honours a 30GB budget; host disk gate remains real" 0 \
+  local_plan_check known-fit "$TMP/l2" --artifact "$MODEL" --panel "$PANEL" \
+    --simulate-device "RTX 5090:32" --vram-budget 30 \
+    --estimate-only --skip-registry-check
+t "128GB Mac fits; host disk gate remains real" 0 \
+  local_plan_check known-fit "$TMP/l3" --artifact "$MODEL" --panel "$PANEL" \
+    --simulate-device "Mac Studio:128::unified" \
+    --estimate-only --skip-registry-check
+local_small_device_check() {
+  "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" \
+    --simulate-device "GTX 1650:4" --skip-registry-check --out "$TMP/l4" \
+    >"$TMP/l4.log" 2>&1
+  local rc=$?
+  [ "$rc" = 3 ] \
+    && grep -q "no schedule fits a .* GB budget" "$TMP/l4.log" \
+    && grep -q "minimum viable budget" "$TMP/l4.log"
+}
+t "4GB card has a capacity refusal independent of host disk" 0 \
+  local_small_device_check
+t "--simulate-device rejects non-finite capacity at argparse" 2 \
+  "$PY" bin/measure_local.py --artifact x/y --panel z \
+    --simulate-device "invalid:nan" --estimate-only
+t "--simulate-device rejects overflowing capacity at argparse" 2 \
+  "$PY" bin/measure_local.py --artifact x/y --panel z \
+    --simulate-device "invalid:1e308" --estimate-only
+t "--simulate-device cannot authorize execution on different hardware" 3 \
+  "$PY" bin/measure_local.py --artifact x/y --panel z \
+    --simulate-device "RTX 5090:32" --execute
 t "--kld-device mps is refused (no fp64 on MPS)" 3 "$PY" bin/measure_local.py --artifact x/y --panel z --kld-device mps
 t "engine probe (all five lanes pinned, flags found)" 0 "$PY" bin/measure_local.py --probe-engines
-t "--execute preflight-refuses with remedies (no traceback)" 3 \
-  "$PY" bin/measure_local.py --artifact "$MODEL" --panel "$PANEL" \
-    --skip-registry-check --execute --work "$TMP/lw" --out "$TMP/l7"
+local_preflight_check() {
+  "$PY" - "$TMP" <<'PYEOF'
+import sys
+from pathlib import Path
+sys.path.insert(0, "bin")
+from fidelity.engines import load_engines, preflight
+root = Path(sys.argv[1])
+problems = preflight(
+    load_engines()["local-cuda-budget"], suite_root=Path("."),
+    pipeline_root=str(root / "missing-pipeline"),
+    teacher_dir=root / "missing-teacher")
+missing = [row.get("missing", "") for row in problems]
+if not any("quant_pipeline package under --pipeline-root" in text for text in missing):
+    raise SystemExit("preflight did not name the missing pipeline: %r" % missing)
+if not any("teacher tree with a sealed capture receipt" in text for text in missing):
+    raise SystemExit("preflight did not name the missing teacher: %r" % missing)
+if not all(row.get("remedy") for row in problems):
+    raise SystemExit("preflight returned a problem without a remedy: %r" % problems)
+PYEOF
+}
+t "--execute preflight accumulates missing inputs with remedies" 0 local_preflight_check
 
 echo "== registry front gate + one-command (NETWORK) =="
 t "measure-local gate: already-measured exits 0" 0 \

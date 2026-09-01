@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import shutil
@@ -72,22 +73,42 @@ MATRICES_PER_PASS = 36288
 
 
 def parse_simulated(spec: str) -> C.Device:
-    """`--simulate-device NAME:VRAM_GB[:count][:unified]`.
-
-    Planning for hardware you do not have in front of you is a real need --
-    "will this fit on a 5090 before I buy one", "will it fit on the box in the
-    other office" -- and it is also the only way to TEST the fit estimator
-    against devices nobody here owns. It plans and refuses exactly as the real
-    thing would; it just cannot micro-benchmark, and says so.
-    """
+    """Parse `--simulate-device NAME:VRAM_GB[:count][:unified]`."""
     parts = spec.split(":")
-    if len(parts) < 2:
-        raise ValueError("--simulate-device wants NAME:VRAM_GB[:count][:unified]")
-    name, vram = parts[0], float(parts[1])
-    count = int(parts[2]) if len(parts) > 2 and parts[2] else 1
-    unified = len(parts) > 3 and parts[3].lower() in ("unified", "1", "true")
-    return C.Device(name, "mps" if unified else "cuda", vram * GB, count=count,
-                    unified=unified, host_ram_bytes=(vram * GB if unified else None),
+    if not 2 <= len(parts) <= 4:
+        raise argparse.ArgumentTypeError(
+            "wants NAME:VRAM_GB[:count][:unified]")
+    name = parts[0].strip()
+    if not name:
+        raise argparse.ArgumentTypeError("device NAME must not be empty")
+    try:
+        vram = float(parts[1])
+        count = int(parts[2]) if len(parts) > 2 and parts[2] else 1
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "VRAM_GB must be a number and count must be an integer") from exc
+    if not math.isfinite(vram) or vram <= 0:
+        raise argparse.ArgumentTypeError("VRAM_GB must be finite and greater than zero")
+    if count < 1:
+        raise argparse.ArgumentTypeError("count must be at least one")
+    vram_bytes = vram * GB
+    try:
+        total_bytes = vram_bytes * count
+    except OverflowError as exc:
+        raise argparse.ArgumentTypeError(
+            "VRAM_GB times count is too large") from exc
+    if not math.isfinite(total_bytes):
+        raise argparse.ArgumentTypeError("VRAM_GB times count must be finite")
+    unified = False
+    if len(parts) == 4:
+        kind = parts[3].strip().lower()
+        if kind in ("unified", "1", "true"):
+            unified = True
+        elif kind not in ("", "dedicated", "0", "false"):
+            raise argparse.ArgumentTypeError(
+                "memory kind must be unified/true/1 or dedicated/false/0")
+    return C.Device(name, "mps" if unified else "cuda", vram_bytes, count=count,
+                    unified=unified, host_ram_bytes=(vram_bytes if unified else None),
                     note="SIMULATED")
 
 
@@ -250,9 +271,8 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
         out["would_refuse"].append(reason)
 
     # -- device ------------------------------------------------------------
-    simulated = bool(args.simulate_device)
-    device = (parse_simulated(args.simulate_device) if simulated
-              else detect_device(args.device, con))
+    simulated = args.simulate_device is not None
+    device = args.simulate_device if simulated else detect_device(args.device, con)
     con.say("MACHINE" + ("   (SIMULATED -- planning only, nothing measured on it)"
                          if simulated else ""))
     con.kv("device", "%s (%s)" % (device.name, device.kind))
@@ -624,10 +644,11 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--kld-device", default="cpu", choices=("cpu", "cuda", "mps"),
                    help="device for the SCORER (kld_report/kld_preview); "
                         "mps is refused: fp64 accumulation cannot run on MPS")
-    d.add_argument("--simulate-device", metavar="NAME:VRAM_GB[:count][:unified]",
+    d.add_argument("--simulate-device", type=parse_simulated,
+                   metavar="NAME:VRAM_GB[:count][:unified]",
                    help="plan for hardware you do not have in front of you, e.g. "
                         "'RTX 5090:32' or 'Mac Studio:128::unified'. Refuses "
-                        "exactly as the real device would; cannot benchmark.")
+                        "exactly as the real device would; cannot benchmark or execute.")
 
     r = p.add_argument_group("run")
     r.add_argument("--runs", type=int, default=2,
@@ -722,6 +743,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.artifact or not args.panel:
         con.err("--artifact and --panel are required "
                 "(or use --probe-engines / --selftest / --fixture)")
+        return EXIT_REFUSED
+    if args.execute and args.simulate_device is not None:
+        con.err("--simulate-device is planning-only and cannot be combined with "
+                "--execute; remove it so execution is planned from the actual device")
         return EXIT_REFUSED
 
     if args.kld_device == "mps":

@@ -588,6 +588,11 @@
       "id": "PROV-016",
       "severity": "error",
       "statement": "On an artifact or model record, a disclosure whose detail names a source-code file (.py/.sh/.c/.cc/.cpp/.cu/.h/.rs/.go, or such a name followed by a line range) must set asserts_provenance=true. Without this the marker is opt-in and PROV-014 is decorative: the failure PROC-01 describes is exactly an author writing a mechanism claim and not thinking of it as one."
+    },
+    {
+      "id": "PROV-017",
+      "severity": "error",
+      "statement": "No published uri field may be a host-absolute POSIX, file:, UNC, home-relative or Windows drive path. Evidence that resolves only on one maintainer's filesystem is unavailable evidence; cite an immutable public URL or a committed repository-relative path."
     }
   ],
   "known_disclosure_codes": [

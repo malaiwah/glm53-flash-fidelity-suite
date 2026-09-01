@@ -375,6 +375,9 @@ def main():
         with open(d_path, encoding="utf-8") as fh:
             d_report = json.load(fh)
         d_report["per_window"][0]["top1_matches"] -= 1
+        check("NUM-17  contradictory panel and window top-1 counts are invalid",
+              K._per_window_top1_signature(d_report) is None,
+              "the provenance gate accepted counts that do not reproduce top1_agreement")
         with open(d_path, "w", encoding="utf-8") as fh:
             json.dump(d_report, fh)
         counts_differ = K_summary(
@@ -385,10 +388,16 @@ def main():
                    and "run-1 ONLY" in counts_differ["per_window_source"]
                    and "counts are absent or differ" in counts_differ["per_window_source"]),
               str((counts_differ or {}).get("per_window_source")))
+        e_path = os.path.join(e, "kld-report.json")
+        with open(e_path, encoding="utf-8") as fh:
+            e_report = json.load(fh)
+        e_report["per_window"].reverse()
+        with open(e_path, "w", encoding="utf-8") as fh:
+            json.dump(e_report, fh)
         counts_match = K_summary(
             K, teacher, [c, e], "uniform-k8",
             os.path.join(tmp, "top1-counts-match.json"))
-        check("NUM-17  exact cross-run counts can be declared identical",
+        check("NUM-17  exact cross-run counts are order-independent",
               bool(counts_match and "top-1 counts identical across runs"
                    in counts_match["per_window_source"]),
               str((counts_match or {}).get("per_window_source")))

@@ -12,13 +12,14 @@ skipped rungs run there before any paid capture.
   [1b] mcg LUT: pinned by a frozen digest and recomputed by an independent
       pure-integer route; needs NO private package.
   [2] anybits unpack parity vs dione_surface (bitwise, K3/K4/K6/K8).
-  [3] decode determinism: golden sha256 over a fixed synthetic payload
-      (mul1, K4/K6) -- pins the whole decode ABI (unpack+LUT+permute+hadamard).
+  [3] decode parity against an independent fp64 reference (mul1, K4/K6),
+      pinning unpack+LUT+permute+hadamard without requiring CPU BLAS guard
+      bits to be identical across platforms.
   [4] mcg parity vs the campaign reader (bitwise at K4/K6) -- proves the
       shared math is verbatim; skipped without quant_pipeline.
   [6] K2 codec evidence (M4): the anybits unpack inverts the exllamav3
       pack.cu transliteration at K2, agrees with dione's copy, and the MCG K2
-      decode is pinned by a golden digest.
+      decode agrees with the same independent fp64 reference.
   [5] materializer mapping on a synthetic mini-checkpoint: KDA qkv/conv split,
       visual qkv fusion, bias adoption, routed skip + virtual entries,
       official-index completeness gate, sealed inventory + receipt.
@@ -58,6 +59,60 @@ def check(name, ok, detail=""):
 def skip(name, why):
     RESULTS.append((name, True, f"SKIPPED: {why}"))
     print(f"[skip] {name} - {why}")
+
+
+def reference_decode_hf(trellis, suh, svh, codebook):
+    """Independent fp64 transcription of EXL3's permute + two Hadamards."""
+    states = xs.unpack_trellis_states_anybits(trellis, trellis.shape[-1] // 16)
+    indices = states.numpy().astype(np.int64) & 0xFFFF
+    values = xs.codebook_lut(codebook).numpy().astype(np.float64)[indices]
+
+    permutation = [0] * 256
+    for thread in range(32):
+        rows = (
+            (thread % 4) * 2,
+            (thread % 4) * 2 + 1,
+            (thread % 4) * 2 + 8,
+            (thread % 4) * 2 + 9,
+        )
+        columns = (thread // 4, thread // 4 + 8)
+        pairs = [(row, column) for column in columns for row in rows]
+        for offset, (row, column) in enumerate(pairs):
+            permutation[thread * 8 + offset] = row * 16 + column
+    values = values[..., np.argsort(np.asarray(permutation))]
+    k_tiles, n_tiles, _ = values.shape
+    exl = (
+        values.reshape(k_tiles, n_tiles, 16, 16)
+        .transpose(0, 2, 1, 3)
+        .reshape(k_tiles * 16, n_tiles * 16)
+    )
+
+    hadamard = np.ones((1, 1), dtype=np.float64)
+    while hadamard.shape[0] < 128:
+        hadamard = np.block(
+            [[hadamard, hadamard], [hadamard, -hadamard]])
+    hadamard *= 1.0 / math.sqrt(128.0)
+    left = np.matmul(
+        hadamard, exl.reshape(-1, 128, exl.shape[1])).reshape(exl.shape)
+    left *= suh.float().numpy().astype(np.float64).reshape(-1, 1)
+    right = np.matmul(
+        left.reshape(left.shape[0], -1, 128), hadamard).reshape(exl.shape)
+    right *= svh.float().numpy().astype(np.float64).reshape(1, -1)
+    return np.ascontiguousarray(right.T)
+
+
+def check_decode_reference(name, got, trellis, suh, svh, codebook):
+    reference = reference_decode_hf(trellis, suh, svh, codebook)
+    actual = got.float().numpy().astype(np.float64)
+    delta = np.abs(actual - reference)
+    # Two 128-term fp32 reductions have gamma_128 ~= 7.6e-6 each. The
+    # tolerance is >10x that forward-error scale, but far below errors from a
+    # wrong LUT, permutation, orientation, or scale axis.
+    close = np.allclose(actual, reference, rtol=2e-4, atol=2e-5)
+    check(name, close,
+          "max_abs=%.3e max_rel=%.3e" % (
+              float(delta.max()),
+              float(np.max(delta / np.maximum(np.abs(reference), 1e-12)))))
 
 
 # [1] LUT exactness -----------------------------------------------------------
@@ -124,25 +179,21 @@ for bits in (3, 4, 6, 8):
     theirs = ds._unpack_trellis_states_anybits(tr, bits)
     check(f"anybits unpack parity vs dione (K{bits})", torch.equal(ours, theirs))
 
-# [3] decode determinism golden -----------------------------------------------
-golden = {}
+# [3] materialized decode against an independent reference --------------------
+# PyTorch's fp32 SGEMM guard bits are not a cross-platform ABI: x86/Linux,
+# arm64/Linux, and macOS can produce different raw and even once-rounded BF16
+# digests from the same two Hadamard products. Test the algorithm instead:
+# a separate fp64 transcription with a forward-error tolerance derived above.
 for bits in (4, 6):
     tr = torch.randint(-32768, 32767, (8, 8, bits * 16), generator=gen, dtype=torch.int16)
     suh = (torch.randint(0, 2, (8 * 16,), generator=gen).float() * 2 - 1).half()
     svh = ((torch.randint(0, 2, (8 * 16,), generator=gen).float() * 2 - 1) * 0.02).half()
     out = xs.decode_payload_hf(tr, suh, svh, codebook="mul1")
-    golden[bits] = xs._sha256_bytes(out.numpy().tobytes())
     check(f"mul1 decode runs and is finite (K{bits})", torch.isfinite(out).all().item(),
           f"shape {tuple(out.shape)}")
-GOLDEN = {
-    4: "781baa7618e5afb96a7aa19152d95e7c2de19e6398657d78807f5c16f9bc9fca",
-    6: "0a1b47c8162ad0c17edb3b9cbc30794904d228f7ed0cd66b9c53888f7c71e997",
-}
-for bits in (4, 6):
-    if GOLDEN[bits] == "PIN-ME":
-        print(f"    golden K{bits}: {golden[bits]}")
-    else:
-        check(f"mul1 decode golden sha (K{bits})", golden[bits] == GOLDEN[bits], golden[bits])
+    check_decode_reference(
+        f"mul1 decode agrees with independent fp64 reference (K{bits})",
+        out, tr, suh, svh, "mul1")
 
 # [4] mcg parity vs the campaign reader ---------------------------------------
 reader = None
@@ -339,9 +390,8 @@ for bits in (2,):
           torch.equal(ours, want))
     check(f"K{bits}: anybits unpack parity vs dione", torch.equal(ours, theirs))
 
-# K2 decode golden: pins the whole MCG decode ABI (unpack + LUT + permute +
-# hadamard) at the rate M4 publishes, so a later refactor cannot move the
-# number quietly.
+# K2 decode reference: covers unpack + LUT + permutation + Hadamards at the
+# rate M4 publishes without treating one CPU BLAS implementation as the ABI.
 tr2 = torch.randint(-32768, 32767, (8, 8, 2 * 16), generator=k2gen, dtype=torch.int16)
 suh2 = (torch.randint(0, 2, (8 * 16,), generator=k2gen).float() * 2 - 1).half()
 svh2 = ((torch.randint(0, 2, (8 * 16,), generator=k2gen).float() * 2 - 1) * 0.02).half()
@@ -351,12 +401,9 @@ check("K2 mcg decode is finite", torch.isfinite(out2_mcg).all().item(),
       f"shape {tuple(out2_mcg.shape)}")
 check("K2 mcg and mul1 decodes differ (the codebook is load-bearing at K2 too)",
       not torch.equal(out2_mcg, out2_mul1))
-GOLDEN_K2_MCG = "ee76ee58e63b11e24e70258e31a9edd613540d07aa091ae3a100abccf2cf24c3"
-got_k2 = xs._sha256_bytes(out2_mcg.numpy().tobytes())
-if GOLDEN_K2_MCG == "PIN-ME":
-    print(f"    golden K2 mcg: {got_k2}")
-else:
-    check("mcg decode golden sha (K2)", got_k2 == GOLDEN_K2_MCG, got_k2)
+check_decode_reference(
+    "mcg decode agrees with independent fp64 reference (K2)",
+    out2_mcg, tr2, suh2, svh2, "mcg")
 
 if CAMPAIGN_READER is not None:
     if 2 in getattr(CAMPAIGN_READER, "SUPPORTED_BITS", ()):

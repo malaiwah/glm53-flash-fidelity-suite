@@ -387,6 +387,8 @@ class RaceFetcher(object):
         self._queue: List[Tuple[int, int, str]] = []
         self._seq = 0
         self._qlock = threading.Lock()
+        self._worker_lock = threading.Lock()
+        self._workers_remaining = 0
         self._threads: List[threading.Thread] = []
         self._stop = threading.Event()
         self.completed: List[Dict[str, Any]] = []
@@ -430,6 +432,8 @@ class RaceFetcher(object):
 
     def start(self) -> "RaceFetcher":
         self.started_monotonic = time.monotonic()
+        with self._worker_lock:
+            self._workers_remaining = self._workers
         for index in range(self._workers):
             thread = threading.Thread(target=self._run, name="race-fetch-%d" % index,
                                       daemon=True)
@@ -440,29 +444,40 @@ class RaceFetcher(object):
         return self
 
     def _run(self) -> None:
-        while not self._stop.is_set():
-            item = self._pop()
-            if item is None:
-                return
-            priority, name = item
-            started = time.monotonic()
-            try:
-                self._download(name)
-            except BaseException as exc:  # noqa: BLE001 - reported through the gate
-                self.gate.fail(RaceFetchError("%s: %s" % (name, exc)))
-                return
-            seconds = time.monotonic() - started
-            self.completed.append({"file": name, "needed_at": priority,
-                                   "seconds": round(seconds, 3),
-                                   "bytes": self._sizes.get(name)})
-            self.gate.mark(name)
-            self._log(stage="race_fetched", file=name, needed_at=priority,
-                      seconds=round(seconds, 3), pending=self.pending)
+        try:
+            while not self._stop.is_set():
+                item = self._pop()
+                if item is None:
+                    return
+                priority, name = item
+                started = time.monotonic()
+                try:
+                    self._download(name)
+                except BaseException as exc:  # noqa: BLE001 - reported through the gate
+                    self.gate.fail(RaceFetchError("%s: %s" % (name, exc)))
+                    return
+                seconds = time.monotonic() - started
+                self.completed.append({"file": name, "needed_at": priority,
+                                       "seconds": round(seconds, 3),
+                                       "bytes": self._sizes.get(name)})
+                self.gate.mark(name)
+                self._log(stage="race_fetched", file=name, needed_at=priority,
+                          seconds=round(seconds, 3), pending=self.pending)
+        finally:
+            with self._worker_lock:
+                self._workers_remaining -= 1
+                if self._workers_remaining == 0:
+                    # Record when the fetch actually finished. `join()` can be
+                    # delayed until capture assembly, so its wall clock is not
+                    # a measure of download duration or useful overlap.
+                    self.finished_monotonic = time.monotonic()
 
     def join(self, timeout: Optional[float] = None) -> None:
         for thread in self._threads:
             thread.join(timeout)
-        self.finished_monotonic = time.monotonic()
+        if self.finished_monotonic is None \
+                and not any(thread.is_alive() for thread in self._threads):
+            self.finished_monotonic = time.monotonic()
 
     def stop(self) -> None:
         self._stop.set()

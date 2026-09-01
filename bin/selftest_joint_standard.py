@@ -276,6 +276,32 @@ def t_stats_refusals() -> None:
     else:
         bad("STAT-19: numeric deff", repr(nz.get("deff_window")))
 
+    # STAT-20: sqrt(...)/n rounded twice. One real clean17/domain cell landed on
+    # opposite sides of the registry's 15-digit publication boundary on macOS
+    # and Linux, so an untouched checkout failed reseed-check by one last digit.
+    # The six persisted means below exercise both decimal boundaries affected by
+    # choosing one final rounding rather than two binary64 roundings.
+    rows = [
+        {"count": 2047, "mean": 0.03466187346059615},
+        {"count": 2047, "mean": 0.028857424448609826},
+        {"count": 2047, "mean": 0.014052645155265445},
+        {"count": 2047, "mean": 0.02141688791286256},
+        {"count": 2047, "mean": 0.018552089065258237},
+        {"count": 2047, "mean": 0.04810889011367935},
+    ]
+    five = stats_mod.se_from_window_summaries(rows[:5])["se_clustered_window"]
+    six = stats_mod.se_from_window_summaries(rows)["se_clustered_window"]
+    got = [(five.hex(), format(five, ".15g")), (six.hex(), format(six, ".15g"))]
+    want = [
+        ("0x1.e2cd98e64b56cp-9", "0.00368349544000661"),
+        ("0x1.4d3ec465f06bfp-8", "0.00508491797330784"),
+    ]
+    if got == want:
+        ok("STAT-20: clustered SE has one final, platform-stable rounding",
+           repr(got))
+    else:
+        bad("STAT-20: clustered SE rounding", "got %r want %r" % (got, want))
+
     # STAT-13: a window shorter than the n-gram width was reported as perfectly
     # clean. The fixture below is a VERBATIM PREFIX of the calibration corpus.
     cal = ngram_mod.token_ngrams(list(range(100)), 13)

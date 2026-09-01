@@ -1,0 +1,192 @@
+{
+  "commit": "8558b8ca3bba028f852f4b53167b79b4cd552f93",
+  "files": [
+    {
+      "bytes": 343118,
+      "path": "gguf-report-engine-floor.json",
+      "sha256": "a57b10a7f9c45eca3695770926325784a63885d7c65d81060e462136f9e283a8"
+    },
+    {
+      "bytes": 340562,
+      "path": "gguf-report-q5_k_xl.json",
+      "sha256": "aa9d9605520bee48e0de5fc62dd01344ab34b24d36296eb7eb104dcc9ba79466"
+    },
+    {
+      "bytes": 341382,
+      "path": "gguf-report-q6_k.json",
+      "sha256": "9f6db7df302e69a48dbc9550a5ffc3b79be0fc37e7571e60b6fca0395010259f"
+    },
+    {
+      "bytes": 342084,
+      "path": "gguf-report-q8_0.json",
+      "sha256": "da7a103f77846ee27cc4b8a2fe8027e06f714e43521eb98162e412c610db5aa6"
+    },
+    {
+      "bytes": 1414549,
+      "path": "kld5-10M-ctx.json",
+      "sha256": "2d605b7005f1e0cef1342eb8e939c9e8afa8d3cbb4ed6a427e86842a6921af31"
+    },
+    {
+      "bytes": 1418567,
+      "path": "kld5-10M-fp8.json",
+      "sha256": "03b18684e1bacaad3f65300db96e578626fe47cd22e03d34a09a3b9f79951ac3"
+    },
+    {
+      "bytes": 1415347,
+      "path": "kld5-10M-hyd.json",
+      "sha256": "2e4a28c487d22b0ed152306443169fe34e1d1c713f8bbd6c75b668812e65ce0e"
+    },
+    {
+      "bytes": 1409734,
+      "path": "kld5-10M-k4.json",
+      "sha256": "aff87959aa147e85b78491d3986897bbbfa27003fbb9e976738e71370bea347c"
+    },
+    {
+      "bytes": 1414922,
+      "path": "kld5-10M-k5k6.json",
+      "sha256": "da1da6c34fecd4ba6b814f6de83ac2ea4c47bef9f9cc83e68e65164d1196b038"
+    },
+    {
+      "bytes": 1432145,
+      "path": "kld5-10M-nvfp4.json",
+      "sha256": "9fd6e3b44541235837ad4414ab66de4ff277d3df6407e6b59b52a3145276caba"
+    },
+    {
+      "bytes": 177200,
+      "path": "kld5-1M-awq.json",
+      "sha256": "9304335b7283f964be39bb679d88e6a3e8a0b7f96406d32885ebf6c25d1c4738"
+    },
+    {
+      "bytes": 176477,
+      "path": "kld5-1M-gt5090.json",
+      "sha256": "a868ca61ab145921934e3925ba0a273b298841a88cb69817945d2c0db32753bb"
+    },
+    {
+      "bytes": 178064,
+      "path": "kld5-1M-k6parity.json",
+      "sha256": "f83647b2df38c5d2f9e6fde97bac50ac0e53dab203b2181a390bcc9d1779b6eb"
+    },
+    {
+      "bytes": 176738,
+      "path": "kld5-1M-nvfp4.json",
+      "sha256": "02ce3f336d2ca3d93f2fbeebf4f003adf026df2862ff4e862ce0a2cb0dd43865"
+    },
+    {
+      "bytes": 175805,
+      "path": "kld5-1M-saka.json",
+      "sha256": "eca1a0dadf3267fe8ce3a51ed83e92ee17298fd6c628d821ed6e5a3daa2e4e51"
+    },
+    {
+      "bytes": 177550,
+      "path": "kld5-1M-tail-ctx.json",
+      "sha256": "ed5c09e9414e2c0c418dffbe82f20ca1398550dcf1cf74772bda44057269f28f"
+    },
+    {
+      "bytes": 183334,
+      "path": "kld5-1M-tail-fp8.json",
+      "sha256": "526b18c122fa9c68d6541abdff9e604f0dd5f4620733242b4db0b8ff15079331"
+    },
+    {
+      "bytes": 177640,
+      "path": "kld5-1M-tail-hyd.json",
+      "sha256": "7298b7aeb1b4b5f7fac24485f4da6fb07007870fbb289c5f333f2f04e0a08995"
+    },
+    {
+      "bytes": 177241,
+      "path": "kld5-1M-tail-k4.json",
+      "sha256": "0f7494fa256f0154e9a30b4e7b1ed9e6d9224da5d965e4d998fb5dbb69455c3f"
+    },
+    {
+      "bytes": 177611,
+      "path": "kld5-1M-tail-k5k6.json",
+      "sha256": "42fef9468e4a3fa40f675e1ff8d2d1eeeab9538cf626d830927971dfd25f9471"
+    },
+    {
+      "bytes": 177898,
+      "path": "kld5-1M-turbo5.json",
+      "sha256": "7a3164055fa9ba465d7dad55f2d270e7c79de284589a8433eeb96f0a04af91da"
+    },
+    {
+      "bytes": 178149,
+      "path": "kld5-1M-turbo6.json",
+      "sha256": "793be2033a5aa4df03673eca34da1c58d58cf0d8751bc50440ba5e627fcd50c9"
+    },
+    {
+      "bytes": 318053,
+      "path": "kld5-2M-tail-ctx.json",
+      "sha256": "0cc610ca8576fa07a198cdb2b9a35d6e7c3a6f77694d401679e3bae2444ac5c5"
+    },
+    {
+      "bytes": 323712,
+      "path": "kld5-2M-tail-fp8.json",
+      "sha256": "108f07bed8214103ae93451d50adc736a2c48291362d33c9f7d6eb81be052536"
+    },
+    {
+      "bytes": 318255,
+      "path": "kld5-2M-tail-hyd.json",
+      "sha256": "3938bc40c0ae81038901606e3d7c4955366f08c1a6a9d7d40149dd2e3dec55e3"
+    },
+    {
+      "bytes": 317219,
+      "path": "kld5-2M-tail-k4.json",
+      "sha256": "186d55d8b42d3f6446669ec15c5dfb1ad45a57de169a693da13bea5032036408"
+    },
+    {
+      "bytes": 318107,
+      "path": "kld5-2M-tail-k5k6.json",
+      "sha256": "fa5cc9fa69332094ee1ab536d743c4368573a34f63a089824758bfbf17e8f2fa"
+    },
+    {
+      "bytes": 340214,
+      "path": "kld5-window-ctx-from1024.json",
+      "sha256": "6d75d6155d362dadcf7840b9af8ce1c3a8c735b3a42163169ab10346310ece8d"
+    },
+    {
+      "bytes": 340180,
+      "path": "kld5-window-ctx-from256.json",
+      "sha256": "4f1d726cf312c97834a2fcd696b94579afca3e750ecdf8690a0f9a94dbd80138"
+    },
+    {
+      "bytes": 345601,
+      "path": "kld5-window-fp8-from1024.json",
+      "sha256": "d2ed734506012dc654180de75570f75c5f63b114bc334072f782ea10ff4cabdb"
+    },
+    {
+      "bytes": 345638,
+      "path": "kld5-window-fp8-from256.json",
+      "sha256": "09878b22e36127aafabd35a61845029c00e299a90897c1a560b3abc038f9b4d2"
+    },
+    {
+      "bytes": 340491,
+      "path": "kld5-window-hyd-from1024.json",
+      "sha256": "3d3800038e2e2796451e25b780263455a3508a047942128327d27fa1c08aa5e2"
+    },
+    {
+      "bytes": 340380,
+      "path": "kld5-window-hyd-from256.json",
+      "sha256": "2baf1560d54aa41563bbe5ea929da8b868f3a0aff7b14b3187bfd09cc1a29466"
+    },
+    {
+      "bytes": 338922,
+      "path": "kld5-window-k4-from1024.json",
+      "sha256": "f10cb43465bc33ae8b87537b9b44252d072b23c8735a70466703f6e706e9b3a7"
+    },
+    {
+      "bytes": 338805,
+      "path": "kld5-window-k4-from256.json",
+      "sha256": "7d175b41cc3877eddee8891b88d42e9176ff27fa4d831e8be4fb333f6629912b"
+    },
+    {
+      "bytes": 340311,
+      "path": "kld5-window-k5k6-from1024.json",
+      "sha256": "bf92881d9f406a9ccc818d9fb09368bb4687692b323b485b5e937c342599404b"
+    },
+    {
+      "bytes": 340348,
+      "path": "kld5-window-k5k6-from256.json",
+      "sha256": "cae38384ae92ec600b41c4789f41f5776d847740e4875273ff1035e8287a4b89"
+    }
+  ],
+  "repository": "https://github.com/malaiwah/qwen38-27b-exl3",
+  "schema": "quant-fidelity.qwen38-receipt-fixture.v1"
+}

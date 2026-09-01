@@ -203,9 +203,14 @@ def _record_map(receipt: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def _per_window_top1_signature(report: Dict[str, Any]) -> Optional[tuple]:
-    """Exact top-1 counts, or None when a legacy/incomplete report has none."""
+    """Internally consistent exact top-1 counts, else None."""
     rows = report.get("per_window")
-    if not isinstance(rows, list) or not rows:
+    if (
+        not isinstance(rows, list)
+        or not rows
+        or type(report.get("qualification_window_count")) is not int
+        or report["qualification_window_count"] != len(rows)
+    ):
         return None
     signature = []
     for row in rows:
@@ -214,17 +219,32 @@ def _per_window_top1_signature(report: Dict[str, Any]) -> Optional[tuple]:
         window_id = row.get("window_id")
         matches = row.get("top1_matches")
         positions = row.get("positions")
+        summary = row.get("summary")
+        summary_count = summary.get("count") if isinstance(summary, dict) else None
         if (
             not isinstance(window_id, str)
             or type(matches) is not int
             or type(positions) is not int
+            or type(summary_count) is not int
             or positions <= 0
             or matches < 0
             or matches > positions
+            or positions != summary_count
         ):
             return None
         signature.append((window_id, matches, positions))
-    return tuple(signature)
+    if len({row[0] for row in signature}) != len(signature):
+        return None
+    top1 = report.get("top1_agreement")
+    total_matches = sum(row[1] for row in signature)
+    total_positions = sum(row[2] for row in signature)
+    if (
+        type(top1) not in (int, float)
+        or not math.isfinite(float(top1))
+        or float(top1) != total_matches / total_positions
+    ):
+        return None
+    return tuple(sorted(signature))
 
 
 #: How the artifact this profile measures is STORED. Not the lane, and not the world size.

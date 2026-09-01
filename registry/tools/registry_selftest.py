@@ -443,7 +443,7 @@ def m_domain_method_unstated(C):
     return "STAT-009", "an interval must name the procedure that produced it"
 
 
-# --- C. provenance assertions (PROV-014/015/016) ---------------------------
+# --- C. provenance assertions and source portability (PROV-014..017) -------
 # PROC-01: metric rows have always needed a hashed receipt; an ASSERTION about
 # mechanism or lineage needed nothing, so a prose provenance claim reached two
 # dataset cards and two registry rows uncited and validated clean.
@@ -471,6 +471,12 @@ def m_provenance_unmarked(C):
         if d.get("asserts_provenance"):
             d["asserts_provenance"] = False
     return "PROV-016", "an author who does not think of a mechanism claim as one is the case"
+
+
+def m_host_absolute_source(C):
+    model = C["models"]["model--qwen.qwen3.8-27b"]
+    model["sources"][0]["uri"] = "/home/reviewer/private-receipt.json"
+    return "PROV-017", "published evidence must resolve beyond its author's workstation"
 
 
 def m_non_canonical_line(C):
@@ -547,6 +553,7 @@ MUTATIONS = [
     ("provenance-assertion-with-no-source", m_provenance_uncited),
     ("provenance-cited-against-a-branch", m_provenance_cited_by_branch),
     ("mechanism-claim-not-marked", m_provenance_unmarked),
+    ("host-absolute-source-uri", m_host_absolute_source),
 ]
 
 
@@ -593,6 +600,7 @@ def main():
              len([f for f in rep.get("findings", []) if f["severity"] == "warn"])))
     passed += ok
     failed += not ok
+
 
     print()
     print("=" * 78)
@@ -938,7 +946,8 @@ def main():
         # scope and the measurer; a claim is worth nothing until it is checked against the
         # record it names.
         def redteam(label, want_exit, want_text, edits):
-            path = os.path.join(tmp, "redteam-%d.json" % abs(hash(label)))
+            path = os.path.join(
+                tmp, "redteam-%s.json" % L.sha256_hex(label)[:16])
             with open(ex, encoding="utf-8") as fh:
                 s = json.load(fh)
             for dotted, value in edits.items():
@@ -1212,6 +1221,27 @@ def main():
     print("  %-58s %s" % ("seed_registry.py --check on the committed data", "PASS" if ok else "FAIL"))
     passed += ok
     failed += not ok
+    qwen_override = os.path.join(tmp, "tampered-qwen-receipts")
+    os.mkdir(qwen_override)
+    qwen_name = "kld5-10M-fp8.json"
+    qwen_source = os.path.join(
+        args.root, "protocol", "qwen38-receipts-public-8558b8c", qwen_name)
+    qwen_tampered = os.path.join(qwen_override, qwen_name)
+    shutil.copyfile(qwen_source, qwen_tampered)
+    with open(qwen_tampered, "ab") as fh:
+        fh.write(b"\n")
+    qwen_env = dict(os.environ)
+    qwen_env["FIDELITY_QWEN_RECEIPTS_DIR"] = qwen_override
+    out = subprocess.run(
+        [PY, os.path.join(HERE, "seed_registry.py"), "--check"],
+        capture_output=True, text=True, cwd=args.root, env=qwen_env)
+    ok = out.returncode != 0 and "differs from public pin" in (out.stdout + out.stderr)
+    print("  %-58s %s" % (
+        "a byte-edited frozen receipt is rejected by its public pin",
+        "PASS" if ok else "FAIL"))
+    passed += ok
+    failed += not ok
+
     tampered = os.path.join(tmp, "tampered-data")
     shutil.copytree(os.path.join(args.root, "data"), tampered)
     tp = os.path.join(tampered, "measurements.jsonl")

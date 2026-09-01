@@ -641,6 +641,46 @@ def check_control_chars(C, rep):
             walk(row, rid, "")
 
 
+def _host_absolute_uri(uri):
+    low = uri.lower()
+    return (
+        uri.startswith(("/", "\\", "~"))
+        or low.startswith("file:")
+        or (
+            len(uri) >= 3
+            and uri[0].isalpha()
+            and uri[1] == ":"
+            and uri[2] in ("/", "\\")
+        )
+    )
+
+
+def check_source_uris(C, rep):
+    """PROV-017: published evidence must not point into one host filesystem."""
+
+    def walk(node, rid, path):
+        if isinstance(node, dict):
+            uri = node.get("uri")
+            if isinstance(uri, str) and _host_absolute_uri(uri):
+                rep.err(
+                    "PROV-017",
+                    "%s%s publishes host-local uri %r; another reader cannot "
+                    "retrieve that evidence" % (rid, path + "/uri", uri),
+                    rid,
+                    remedy="cite an immutable public URL or a committed "
+                           "repository-relative path")
+            for key, value in node.items():
+                walk(value, rid, "%s/%s" % (path, key))
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, rid, "%s/%d" % (path, index))
+
+    for coll in ("models", "artifacts", "panels", "references", "pipelines",
+                 "measurements"):
+        for rid, row in (C.get(coll) or {}).items():
+            walk(row, rid, "")
+
+
 def check_provenance(C, rep):
     for mid, m in C["measurements"].items():
         pv = m.get("provenance") or {}
@@ -1737,6 +1777,7 @@ def main():
         check_referential(C, rep)
         check_receipts_on_disk(args.root, C, rep)
         check_control_chars(C, rep)
+        check_source_uris(C, rep)
         groups = check_comparability(C, rep)
         check_provenance(C, rep)
         check_determinism(C, rep)

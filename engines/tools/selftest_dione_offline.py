@@ -140,7 +140,10 @@ def main() -> int:
     trellis3 = torch.from_numpy(
         rng.integers(-(2 ** 15), 2 ** 15, size=(32, 16, 48), dtype=np.int64).astype(np.int16)
     )
-    d3 = ds.decode_slice(trellis3, torch.randn(512).half(), torch.randn(256).half(), bits=3)
+    rng3 = np.random.default_rng(0xD10E03)
+    suh3 = torch.from_numpy(rng3.standard_normal(512).astype(np.float16))
+    svh3 = torch.from_numpy(rng3.standard_normal(256).astype(np.float16))
+    d3 = ds.decode_slice(trellis3, suh3, svh3, bits=3)
     assert tuple(d3.shape) == (256, 512), "K3 decode orientation differs"
     passed.append("2 decode identity vs campaign reader: bitwise equal (K4/K6), K3 shape ok")
 

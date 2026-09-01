@@ -237,12 +237,12 @@ x_fidelity:
     - measurement--glm53.k6-6bpw.brandonmusic-final25.clean17
     snapshot:
       data_sha256:
-        models: c2a33da659332578fcd803473a13fae811abee8990c5d05807ca48d884154ea8
-        artifacts: 7c8e848f8dd41727327f81337057eef6ce656d23564a09e39b7fe64405d2e551
-        panels: 38a33529d34b400ec92fd0b725de562324e486b9a6c59aaa79e251235e09b603
-        references: ca593279ddaab6c3338bfb214db7c95ec57d7607cb231b61c14020d4b18bebe8
-        pipelines: 4c143473c80b75d1cd9cec6d0e1a5985dc68a2c1e5df20b52dbb6a6183e5e694
-        measurements: 259d490cebd39571e4d1ecfefe7aa9f490a390f8cdf236f16ee901c51fb6e6f2
+        models: 5ad19a1055adb9e9f210310c019d0f6b580f59d5672113c551b19bf4b3e60ee9
+        artifacts: d60c0901b3e84697598ac8ebdf14cc4e7f55c2868c234a9dd8668534fdc23f02
+        panels: c01ab44df32e5836e4c408e44716d9e48aeb6cd094105b961edeaf36dd78f8b4
+        references: 781bfd507719670d4f7256fa57cd229c49d97d374a7fbede863ad2d4fcb49b1c
+        pipelines: a016bbff583036e50215161f1fc9093cc21f91262c67f1a03813201b5a0e45ab
+        measurements: 819d5a49ac8c66b54e29421d6436529b21a819e45b33779668d1e78ca16c163f
   scope_digest: attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@6|moe.router=native:fp32@32|moe.shared_expert=native:bf16@16|mtp=quantized:exl3-mcg@6|norm=native:bf16@16|other=native:bf16@16|head=native|kv=bf16
   head:
     policy: native

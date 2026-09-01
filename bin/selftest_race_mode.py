@@ -23,7 +23,8 @@ SCHEDULE, which a simulated link exercises exactly.
          name
     R6   THE HEADLINE: a race capture and a fetch-then-capture capture of the
          same checkpoint produce the SAME capture_content_digest, and the race
-         one finishes sooner. Both numbers are printed.
+         report proves fetch time overlapped useful capture work. Controlled
+         wall times are printed as evidence, but scheduler noise is not a verdict.
     R7   a layer whose shard never lands REFUSES by name -- it does not read a
          hole
     R8   the generation sanity probe answers "The capital of France is" and
@@ -98,12 +99,14 @@ def run(argv, **kwargs):
 
 def tiny_sharded_model(path, vocab=23, hidden=16, layers=4, seed=0,
                        shard_size="20KB"):
-    """A tiny causal LM saved across SEVERAL shards, with a real index.json.
+    """A tiny causal LM with one resident shard and one shard per layer.
 
-    Multi-shard is the point: with one shard there is no ordering to get right
-    and nothing for the gate to block on.
+    Semantic sharding is the point: a generic size-based split can put resident
+    tensors in every shard, forcing the gate to fetch the whole model before
+    capture and leaving no fetch work that could actually overlap.
     """
     import torch
+    from safetensors.torch import load_file, save_file
     from transformers import LlamaConfig, LlamaForCausalLM
 
     torch.manual_seed(seed)
@@ -113,6 +116,37 @@ def tiny_sharded_model(path, vocab=23, hidden=16, layers=4, seed=0,
                          max_position_embeddings=64, tie_word_embeddings=False)
     model = LlamaForCausalLM(config).to(torch.bfloat16)
     model.save_pretrained(path, safe_serialization=True, max_shard_size=shard_size)
+
+    index_path = os.path.join(path, "model.safetensors.index.json")
+    with open(index_path, encoding="utf-8") as handle:
+        original_index = json.load(handle)
+    original_shards = sorted(set(original_index["weight_map"].values()))
+    tensors = {}
+    for name in original_shards:
+        tensors.update(load_file(os.path.join(path, name)))
+
+    groups = {"resident": {}}
+    for name, tensor in tensors.items():
+        marker = ".layers."
+        suffix = name.split(marker, 1)[1] if marker in name else ""
+        layer_text = suffix.split(".", 1)[0]
+        label = "layer-%03d" % int(layer_text) if layer_text.isdigit() else "resident"
+        groups.setdefault(label, {})[name] = tensor
+
+    for name in original_shards:
+        os.remove(os.path.join(path, name))
+    weight_map = {}
+    for label in sorted(groups, key=lambda value: (value != "resident", value)):
+        filename = "model-%s.safetensors" % label
+        group = groups[label]
+        save_file(dict(sorted(group.items())), os.path.join(path, filename),
+                  metadata={"format": "pt"})
+        weight_map.update({name: filename for name in group})
+    with open(index_path, "w", encoding="utf-8") as handle:
+        json.dump({"metadata": original_index.get("metadata", {}),
+                   "weight_map": dict(sorted(weight_map.items()))},
+                  handle, indent=2, sort_keys=True)
+        handle.write("\n")
     return path
 
 
@@ -356,6 +390,26 @@ def _body(work):
               and "reads as zeros" in timed_out,
               (waited, timed_out))
 
+        # `join()` happens during final assembly, potentially long after the
+        # downloader threads finish. Rejoining must not rewrite fetch duration
+        # to include unrelated capture work.
+        timestamp_plan = race_fetch.FetchPlan(
+            {"only.safetensors": race_fetch.RESIDENT}, {}, 0, 1, 1,
+            race_fetch.DEFAULT_LAYER_KEY_REGEX)
+        timestamp_fetcher = race_fetch.RaceFetcher(
+            timestamp_plan, lambda name: name, workers=1).start()
+        timestamp_fetcher.join()
+        finished = timestamp_fetcher.finished_monotonic
+        real_monotonic = race_fetch.time.monotonic
+        try:
+            race_fetch.time.monotonic = lambda: finished + 123.0
+            timestamp_fetcher.join()
+        finally:
+            race_fetch.time.monotonic = real_monotonic
+        check("R4b late join does not inflate background fetch wall time",
+              timestamp_fetcher.finished_monotonic == finished,
+              (finished, timestamp_fetcher.finished_monotonic))
+
     # ------------------------------------------------------------------- R5
     import layer_outer
 
@@ -418,7 +472,7 @@ def _body(work):
                  if not name.endswith(".safetensors")]
 
     if race_fetch is None:
-        needs_race("R6 race capture == serial capture (same digest, less wall clock)")
+        needs_race("R6 race capture == serial capture (same digest, measured overlap)")
         needs_race("R7 a shard that never lands REFUSES rather than reading a hole")
         race_saving = None
     else:
@@ -427,9 +481,9 @@ def _body(work):
         # --- control arm: fetch, THEN capture -----------------------------
         serial_dir = os.path.join(work, "serial-model")
         os.makedirs(serial_dir, exist_ok=True)
-        control_started = time.monotonic()
         for name in bootstrap:
             shutil.copyfile(os.path.join(remote, name), os.path.join(serial_dir, name))
+        control_started = time.monotonic()
         download = slow_copy_downloader(remote, serial_dir, per_file)
         # Same worker count as the race arm, so the two differ only in overlap.
         pending = list(shard_names)
@@ -472,19 +526,38 @@ def _body(work):
                    "--race-simulate-source", remote]))
         race_total = time.monotonic() - race_started
 
+        race_fetch_report = {}
+        if race_result.returncode == 0 and os.path.isfile(race_report):
+            try:
+                race_fetch_report = json.load(open(race_report, encoding="utf-8")).get("fetch", {})
+            except (OSError, ValueError, AttributeError):
+                race_fetch_report = {}
+        fetch_wall = race_fetch_report.get("fetch_wall_seconds")
+        blocked = race_fetch_report.get("blocked_seconds")
+        tail_join = race_fetch_report.get("tail_join_seconds")
+        useful_overlap = None
+        if all(isinstance(value, (int, float))
+               for value in (fetch_wall, blocked, tail_join)):
+            # Time spent blocked on a shard and time spent joining after capture
+            # are not useful overlap. What remains is fetch work concurrent with
+            # model work, measured inside the race rather than inferred from two
+            # noisy process wall clocks.
+            useful_overlap = max(0.0, fetch_wall - blocked - tail_join)
         same = (result.returncode == 0 and race_result.returncode == 0
                 and digest_of(serial_out) == digest_of(race_out))
         race_saving = control_total - race_total
         print("        control: fetch %.2fs + capture %.2fs = %.2fs total"
               % (control_fetch, control_total - control_fetch, control_total))
-        print("        race:    %.2fs total  ->  %.2fs saved (%.0f%% of the fetch hidden)"
+        print("        race:    %.2fs total  ->  %.2fs A/B delta; "
+              "%.3fs measured useful overlap"
               % (race_total, race_saving,
-                 100.0 * race_saving / control_fetch if control_fetch else 0.0))
-        check("R6 race capture == serial capture (same digest, less wall clock)",
-              same and race_total < control_total,
+                 useful_overlap if useful_overlap is not None else -1.0))
+        check("R6 race capture == serial capture (same digest, measured overlap)",
+              same and race_fetch_report.get("files") == len(shard_names)
+              and useful_overlap is not None and useful_overlap > 0.0,
               (result.returncode, race_result.returncode,
                (race_result.stderr or "")[-1200:],
-               control_total, race_total))
+               control_total, race_total, len(shard_names), race_fetch_report))
 
         # --- R7: a shard that never lands ---------------------------------
         stall_dir = os.path.join(work, "stall-model")

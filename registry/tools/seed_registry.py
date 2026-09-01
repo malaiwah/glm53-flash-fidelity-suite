@@ -47,9 +47,9 @@ HARNESS_REPOSITORY = {
     # this reseed is what changes it). If the closure is ever edited without
     # being committed, this must go back to commit_role=parent with dirty=true
     # rather than pointing at a tree that does not contain the code that ran.
-    "commit": "c562f769e39a6fd74121771ac248a57d53d23029",
-    "commit_role": "exact",
-    "dirty": False,
+    "commit": "79bb216b181e8b39f22dff64f094c59de84467b1",
+    "commit_role": "parent",
+    "dirty": True,
 }
 HARNESS_UNRECORDED_DETAIL = (
     "metric.value on this row was produced before this registry recorded harness "
@@ -101,6 +101,20 @@ def src(kind, uri, sha256=None, note=None, lines=None):
     if note:
         d["note"] = note
     return d
+
+QWEN_RECEIPTS_PUBLIC_REPOSITORY = (
+    "https://github.com/malaiwah/qwen38-27b-exl3")
+QWEN_RECEIPTS_PUBLIC_PIN = "8558b8ca3bba028f852f4b53167b79b4cd552f93"
+QWEN_RECEIPTS_PUBLIC_BASE = (
+    "https://raw.githubusercontent.com/malaiwah/qwen38-27b-exl3/"
+    + QWEN_RECEIPTS_PUBLIC_PIN + "/receipts")
+
+
+def qwen_receipt_source(fname, note=None, sha256=None):
+    """An immutable public Qwen campaign receipt source."""
+    return src(
+        "github_file", QWEN_RECEIPTS_PUBLIC_BASE + "/" + fname,
+        sha256, note)
 
 
 def attr(name, role, handle=None, url=None, maintainer=False):
@@ -331,9 +345,11 @@ MODELS = [
         "canonical_weights": {"artifact_ref": Q_BF16, "precision": "bf16"},
         "license": None,
         "cross_refs": lair(),
-        "sources": [src("receipt_file", "/Users/mbelleau/Projects/qwen38-27b-exl3/receipts/kld5-suite-manifest.json",
-                        "c79dfad3767ca5b3015129077f20dbb9282a2e51ca8bca9ed09be8c7a9c73019",
-                        "qwen38-distribution-fidelity/6 suite manifest; carries model_identity.tokenizer_sha256")],
+        "sources": [qwen_receipt_source(
+            "kld5-suite-manifest.json",
+            "qwen38-distribution-fidelity/6 suite manifest; carries "
+            "model_identity.tokenizer_sha256",
+            "c79dfad3767ca5b3015129077f20dbb9282a2e51ca8bca9ed09be8c7a9c73019")],
         "disclosures": [disc(
             "revision_unpinned", "caveat",
             "No receipt in this registry pins a Hub revision for the Qwen3.8-27B BF16 base: every kld5 "
@@ -506,7 +522,7 @@ PANELS = [
                      "panel_receipt_sha256": None, "shard_token_sha256": {}},
         "contamination": {"checked": True, "method": MAL_SUITE_CONTAM,
                           "benchmarks_scanned": [], "hits": 0,
-                          "receipt": src("receipt_file", "/Users/mbelleau/Projects/glm53-fidelity-suite/suite/suite-manifest.json",
+                          "receipt": src("receipt_file", "suite/suite-manifest.json",
                                          "0d49ef4b3960e324bebde1b24d448004eb4181d368582852bb9614b1a5a70af6",
                                          "glm53flash-distribution-fidelity/6; document_scan reports 941 scanned, "
                                          "44 excluded, and contamination_scan reports total_hits 0")},
@@ -514,7 +530,7 @@ PANELS = [
         "availability": {"status": "public",
                          "uri": "https://huggingface.co/datasets/malaiwah/GLM-5.3-Flash-fidelity-suite-v1"},
         "cross_refs": lair(),
-        "sources": [src("receipt_file", "/Users/mbelleau/Projects/glm53-fidelity-suite/suite/suite-manifest.json",
+        "sources": [src("receipt_file", "suite/suite-manifest.json",
                         "0d49ef4b3960e324bebde1b24d448004eb4181d368582852bb9614b1a5a70af6")],
         "disclosures": NONE_DISC,
     },
@@ -623,16 +639,16 @@ def _mal_qwen_panel(pid, name, contexts, positions, token_sha, derived=None, der
                      "manifest_sha256": "c79dfad3767ca5b3015129077f20dbb9282a2e51ca8bca9ed09be8c7a9c73019",
                      "panel_receipt_sha256": None, "shard_token_sha256": shard_hashes or {}},
         "contamination": {"checked": True, "method": MAL_SUITE_CONTAM, "benchmarks_scanned": [], "hits": 0,
-                          "receipt": src("receipt_file",
-                                         "/Users/mbelleau/Projects/qwen38-27b-exl3/receipts/kld5-suite-manifest.json",
-                                         "c79dfad3767ca5b3015129077f20dbb9282a2e51ca8bca9ed09be8c7a9c73019")},
+                          "receipt": qwen_receipt_source(
+                              "kld5-suite-manifest.json",
+                              sha256="c79dfad3767ca5b3015129077f20dbb9282a2e51ca8bca9ed09be8c7a9c73019")},
         "sealed": bool(token_sha), "derived_from": derived, "derivation": derivation,
         "availability": {"status": "private",
                          "uri": None},
         "cross_refs": lair(),
-        "sources": sources or [src("receipt_file",
-                                   "/Users/mbelleau/Projects/qwen38-27b-exl3/receipts/kld5-suite-manifest.json",
-                                   "c79dfad3767ca5b3015129077f20dbb9282a2e51ca8bca9ed09be8c7a9c73019")],
+        "sources": sources or [qwen_receipt_source(
+            "kld5-suite-manifest.json",
+            sha256="c79dfad3767ca5b3015129077f20dbb9282a2e51ca8bca9ed09be8c7a9c73019")],
         "disclosures": (extra_disc or []) + [disc(
             "unsealed_source", "caveat",
             "The qwen38 v5 token suite is pinned by suite_token_sha256 and by its manifest digest "
@@ -1712,8 +1728,7 @@ for build, aid in ORCA_IDS.items():
         cross_refs=lair(), seal={"sealed": False}))
 
 # --- Qwen3.8-27B artifacts -------------------------------------------------
-QREC = lambda f, note=None: src(
-    "receipt_file", "/Users/mbelleau/Projects/qwen38-27b-exl3/receipts/" + f, None, note)
+QREC = qwen_receipt_source
 
 QWEN_NOREV = REV_UNPINNED(
     "Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on "
@@ -2243,7 +2258,12 @@ PIPELINES = [
              numerics={"accumulation_dtype": "fp32", "two_pass": True, "vocab_chunk": 24832,
                        "determinism_controls": []},
              hardware={"gpu": "cuda", "gpu_count": None, "tensor_parallel": None},
-             sources=[QREC("cross-engine-comparator.json"), QREC("gguf-report-engine-floor.json")],
+             sources=[
+                 QREC(
+                     "cross-engine-comparator.json",
+                     "pinned public comparator; contextual only, not the byte "
+                     "source for metric.value"),
+                 QREC("gguf-report-engine-floor.json")],
              cross_refs=lair()),
     pipeline(PL_BM_PACKED, "brandonmusic packed-surface KLD scorer (k4-tp2)",
              ["replay", "scorer", "aggregator"], None, None, None, BRANDON("toolchain-author"),
@@ -3307,7 +3327,60 @@ def build_measurements_runtime(artifacts_map):
                      notes="Perplexity reported alongside on the same card: %s (FP8 reference 2.7797)." % ppl))
     return out
 
-QREC_DIR = "/Users/mbelleau/Projects/qwen38-27b-exl3/receipts"
+QREC_FIXTURE_DIR = os.path.join(
+    L.repo_root(__file__), "protocol", "qwen38-receipts-public-8558b8c")
+QREC_FIXTURE_MANIFEST = os.path.join(QREC_FIXTURE_DIR, "manifest.json")
+_QREC_EXPECTED = None
+
+
+def _qrec_expected():
+    global _QREC_EXPECTED
+    if _QREC_EXPECTED is not None:
+        return _QREC_EXPECTED
+    try:
+        with open(QREC_FIXTURE_MANIFEST, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(
+            "seed: frozen Qwen receipt manifest is unreadable: %s (%s)"
+            % (QREC_FIXTURE_MANIFEST, exc))
+    if (not isinstance(manifest, dict)
+            or manifest.get("schema") != "quant-fidelity.qwen38-receipt-fixture.v1"
+            or manifest.get("repository") != QWEN_RECEIPTS_PUBLIC_REPOSITORY
+            or manifest.get("commit") != QWEN_RECEIPTS_PUBLIC_PIN):
+        raise SystemExit(
+            "seed: frozen Qwen receipt manifest has the wrong schema or public pin")
+    rows = manifest.get("files")
+    if not isinstance(rows, list):
+        raise SystemExit("seed: frozen Qwen receipt manifest has no files list")
+    expected = {}
+    for row in rows:
+        if (not isinstance(row, dict)
+                or not isinstance(row.get("path"), str)
+                or row["path"] in ("", ".", "..")
+                or os.path.basename(row["path"]) != row["path"]
+                or not isinstance(row.get("sha256"), str)
+                or len(row["sha256"]) != 64
+                or any(ch not in "0123456789abcdef" for ch in row["sha256"])
+                or type(row.get("bytes")) is not int
+                or row["bytes"] < 1):
+            raise SystemExit("seed: malformed frozen Qwen receipt manifest entry: %r" % row)
+        if row["path"] in expected:
+            raise SystemExit(
+                "seed: duplicate frozen Qwen receipt manifest entry: %s" % row["path"])
+        expected[row["path"]] = row
+    required = {"gguf-report-engine-floor.json"}
+    required.update(
+        fname for _, _, _, entries in _QPANEL for _, fname in entries)
+    required.update(fname for _, _, fname, _ in _QGGUF)
+    if set(expected) != required:
+        raise SystemExit(
+            "seed: frozen Qwen receipt manifest does not exactly cover the "
+            "seeder inputs (missing=%r, extra=%r)"
+            % (sorted(required - set(expected)),
+               sorted(set(expected) - required)))
+    _QREC_EXPECTED = expected
+    return expected
 
 _QART = {"fp8": Q_FP8, "k5k6": Q_K5K6, "hyd": Q_HYD, "ctx": Q_CTX, "k4": Q_K4, "nvfp4": Q_NVFP4,
          "gt5090": Q_GT5090, "awq": Q_AWQ, "saka": Q_MTP, "turbo5": Q_T5, "turbo6": Q_T6,
@@ -3342,12 +3415,38 @@ _QGGUF = [("q8-0", Q_GGUF_Q8, "gguf-report-q8_0.json", "Q8_0"),
 
 
 def _read_receipt(fname):
-    import json as _json
-    path = os.path.join(QREC_DIR, fname)
+    expected = _qrec_expected().get(fname)
+    if expected is None:
+        raise SystemExit(
+            "seed: receipt is not pinned by the frozen Qwen fixture manifest: %s"
+            % fname)
+    load_dir = os.environ.get("FIDELITY_QWEN_RECEIPTS_DIR") or QREC_FIXTURE_DIR
+    path = os.path.join(load_dir, fname)
     if not os.path.exists(path):
-        raise SystemExit("seed: receipt not found, refusing to invent its numbers: %s" % path)
-    with open(path, "r", encoding="utf-8") as fh:
-        return _json.load(fh), path, L.sha256_file(path)
+        raise SystemExit(
+            "seed: receipt not found, refusing to invent its numbers: %s "
+            "(restore the committed fixture or set FIDELITY_QWEN_RECEIPTS_DIR)"
+            % path)
+    try:
+        with open(path, "rb") as fh:
+            payload = fh.read()
+    except OSError as exc:
+        raise SystemExit("seed: receipt is unreadable: %s (%s)" % (path, exc))
+    actual_sha = L.sha256_hex(payload)
+    actual_bytes = len(payload)
+    if actual_sha != expected["sha256"] or actual_bytes != expected["bytes"]:
+        raise SystemExit(
+            "seed: receipt differs from public pin 8558b8c: %s "
+            "(got %d bytes %s, expected %d bytes %s)"
+            % (path, actual_bytes, actual_sha,
+               expected["bytes"], expected["sha256"]))
+    try:
+        # Parse the exact bytes just hashed. A concurrent replacement must not
+        # let the manifest validate one receipt while the seeder consumes another.
+        receipt = json.loads(payload)
+    except ValueError as exc:
+        raise SystemExit("seed: receipt is unreadable: %s (%s)" % (path, exc))
+    return receipt, actual_sha
 
 
 # P1-06 (peer review 2026-08-31). The producer behind every row in this section --
@@ -3384,7 +3483,7 @@ def build_measurements_qwen(artifacts_map):
     out = []
     for panel, ref, pslug, entries in _QPANEL:
         for cand, fname in entries:
-            r, path, fsha = _read_receipt(fname)
+            r, fsha = _read_receipt(fname)
             cb = r.get("context_bootstrap") or {}
             cmp_ = r.get("comparator") or {}
             ds = [QWEN_NOREV]
@@ -3416,11 +3515,14 @@ def build_measurements_qwen(artifacts_map):
                 clusters=cb.get("clusters"), samples=cb.get("samples"),
                 scored_positions=r.get("scored_positions"), contexts=r.get("contexts"),
                 runs=1, evidence_kind="none",
-                sources=[src("receipt_file", path, fsha, "%s, candidate '%s'" % (r.get("schema"), cand))],
+                sources=[qwen_receipt_source(
+                    fname,
+                    note="%s, candidate '%s'" % (r.get("schema"), cand),
+                    sha256=fsha)],
                 receipt_schema=r.get("schema"), cls="advisory", disclosures=ds))
 
     # --- GGUF: cross-engine, with a measured floor on the same panel -----------
-    fr, fpath, fsha = _read_receipt("gguf-report-engine-floor.json")
+    fr, fsha = _read_receipt("gguf-report-engine-floor.json")
     fcb = fr.get("context_bootstrap") or {}
     fcmp = fr.get("comparator") or {}
     GGUF_DISC = lambda extra: [
@@ -3443,9 +3545,13 @@ def build_measurements_qwen(artifacts_map):
                  clusters=fcb.get("clusters"), samples=fcb.get("samples"),
                  scored_positions=fr.get("scored_positions"), contexts=fr.get("contexts"),
                  runs=1, evidence_kind="none",
-                 sources=[src("receipt_file", fpath, fsha, fr.get("schema")),
-                          src("receipt_file", os.path.join(QREC_DIR, "cross-engine-comparator.json"),
-                              None, "qwen38-cross-engine-comparator/1")],
+                 sources=[qwen_receipt_source(
+                              "gguf-report-engine-floor.json",
+                              note=fr.get("schema"), sha256=fsha),
+                          qwen_receipt_source(
+                              "cross-engine-comparator.json",
+                              "pinned public comparator; contextual only, not "
+                              "the byte source for metric.value")],
                  receipt_schema=fr.get("schema"), cls="advisory",
                  bias={"kind": "cross_stack_capture_replay", "direction": "upward",
                        "floor_measurement_ref": None, "estimated_magnitude": None,
@@ -3456,7 +3562,7 @@ def build_measurements_qwen(artifacts_map):
                  disclosures=GGUF_DISC([]),
                  notes="CONTROL ROW / CROSS-ENGINE FLOOR."))
     for slug, art, fname, label in _QGGUF:
-        r, path, fsha = _read_receipt(fname)
+        r, fsha = _read_receipt(fname)
         cb = r.get("context_bootstrap") or {}
         cmp_ = r.get("comparator") or {}
         naive = r["token_mean_kld"] - fr["token_mean_kld"]
@@ -3472,7 +3578,9 @@ def build_measurements_qwen(artifacts_map):
                      clusters=cb.get("clusters"), samples=cb.get("samples"),
                      scored_positions=r.get("scored_positions"), contexts=r.get("contexts"),
                      runs=1, evidence_kind="none",
-                     sources=[src("receipt_file", path, fsha, "%s, %s" % (r.get("schema"), label))],
+                     sources=[qwen_receipt_source(
+                         fname, note="%s, %s" % (r.get("schema"), label),
+                         sha256=fsha)],
                      receipt_schema=r.get("schema"), cls="advisory",
                      bias={"kind": "cross_stack_capture_replay", "direction": "upward",
                            "floor_measurement_ref": M_FLOOR_GGUF,
@@ -4428,74 +4536,12 @@ def build_measurements_qwen38_hf(artifacts_map):
     return rows
 
 
-
-# The public mirror of the Qwen campaign's receipts, pinned. Every receipt the
-# rows below cite from the maintainer's checkout was verified byte-for-byte
-# against this commit (37 of 38 files; the exception is named below), which is
-# what turns "a receipt only we can see" into "a receipt anyone can fetch".
-# PROV-005 existed to say the mirror was missing; this is the mirror.
-QWEN_RECEIPTS_PUBLIC_REPO = "malaiwah/qwen38-27b-exl3"
-QWEN_RECEIPTS_PUBLIC_PIN = "8558b8ca3bba028f852f4b53167b79b4cd552f93"
-# Local copy differs from the public one at the pin -- verified, not assumed.
-# Its rows keep their PROV-005 warning honestly rather than citing a mirror
-# whose bytes do not match.
-QWEN_RECEIPTS_UNMIRRORED = {"receipts/cross-engine-comparator.json"}
-
-
-def add_public_receipt_mirrors(measurements):
-    """Append a pinned github_file mirror beside every local Qwen receipt source.
-
-    The local `receipt_file` entry is KEPT: it is the historical truth of what
-    the seeder read and hashed. The mirror carries the SAME sha256, so a reader
-    fetches the public URL and verifies against the digest the row always had.
-    An independent reviewer matched all these hashes to the public repository
-    before this function existed; this encodes that finding so the registry can
-    say it about itself.
-    """
-    base = "https://raw.githubusercontent.com/%s/%s/" % (
-        QWEN_RECEIPTS_PUBLIC_REPO, QWEN_RECEIPTS_PUBLIC_PIN)
-    local_prefix = "/Users/mbelleau/Projects/qwen38-27b-exl3/"
-
-    def walk(node):
-        if isinstance(node, dict):
-            for v in node.values():
-                walk(v)
-            return
-        if not isinstance(node, list):
-            return
-        additions = []
-        for entry in node:
-            walk(entry)
-            if not (isinstance(entry, dict)
-                    and entry.get("kind") == "receipt_file"
-                    and str(entry.get("uri", "")).startswith(local_prefix)
-                    and entry.get("sha256")):
-                continue
-            rel = entry["uri"][len(local_prefix):]
-            if rel in QWEN_RECEIPTS_UNMIRRORED:
-                continue
-            if any(x.get("kind") == "github_file"
-                   and str(x.get("uri", "")).endswith(rel) for x in node
-                   if isinstance(x, dict)):
-                continue
-            additions.append({
-                "kind": "github_file", "uri": base + rel,
-                "sha256": entry["sha256"],
-                "note": "public mirror of the local receipt, pinned; byte-"
-                        "identical (same sha256) at this commit"})
-        node.extend(additions)
-
-    for m in measurements:
-        walk(m)
-    return measurements
-
-
 def stamp_harness(measurements):
     """Attach the harness block, and mark what predates it.
 
     Two populations, and the difference between them is the entire point:
 
-    * the 12 rows whose `uncertainty` / `by_domain` / `protocol` blocks are
+    * the rows whose `uncertainty` / `by_domain` / `protocol` blocks are
       DERIVED here, from per-window means this repository publishes, by code
       this repository ships. Those get a RECORDED harness covering exactly those
       three fields -- and deliberately NOT metric.value, which came from a GPU
@@ -4583,7 +4629,6 @@ def main():
     # the rows are a function of their receipts.
     measurements = joint_enrich.apply(measurements)
     measurements = stamp_harness(measurements)
-    measurements = add_public_receipt_mirrors(measurements)
 
     # The clean17 scope is a derived PANEL with a derived REFERENCE, so it gets
     # its own comparability key and can never be tabled beside the parent panel.

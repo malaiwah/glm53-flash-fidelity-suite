@@ -657,6 +657,78 @@ means.
 
 ---
 
+## 9. One platform-dependent clustered-SE last digit (STAT-20)
+
+**Corrected in source 2026-08-31.** This changes one derived uncertainty value,
+not a measured KLD, interval endpoint, rank, comparability key, or receipt.
+
+### What was wrong
+
+`se_from_window_summaries` evaluated the last step as
+`math.sqrt(scale * ssq) / n`. That rounds at `sqrt` and again at division.
+For the persisted binary64 window means, macOS and Linux landed on opposite
+sides of a 15-significant-digit publication boundary. An untouched checkout
+therefore reported `RESEED DRIFT` even though its receipt inputs were identical.
+
+### What changed
+
+The historical binary64 residual and `math.fsum` evaluation order is retained.
+Only the final square-root/division expression is evaluated at high precision
+and converted to binary64 once. `STAT-20` pins both real boundary cases.
+
+Exactly one published field moves:
+
+| row | domain | field | old | new | delta (new − old) |
+|---|---|---|---:|---:|---:|
+| `glm53.brandonmusic-4bpw.brandonmusic-final25` | `axis2_legal` | `by_domain[].se_clustered` | 0.00508491797330785 | 0.00508491797330784 | −9.54e−18 |
+
+The relative change is $1.88\times10^{-15}$ ($1.88\times10^{-13}\%$). No
+headline `metric.value`, confidence interval, domain mean, ordering, or
+scientific conclusion changes. Harness code digests and harness ids on the
+derived GLM rows also move, as required: they now identify the corrected
+statistics implementation instead of claiming the old bytes produced them.
+
+---
+
+## 10. Registry receipt links no longer point at one workstation
+
+**Corrected in source 2026-08-31.** This changes provenance links only. No
+measured value, uncertainty, interval, rank, comparability key, receipt digest,
+or registry id changes.
+
+### What was wrong
+
+Sixty-eight registry records contained 76 `uri` fields that named absolute
+paths on the maintainer's former workstation. Thirty-seven Qwen measurement
+rows also carried a public mirror beside the inaccessible local source, so the
+registry both published a dead path and duplicated the usable evidence.
+`seed_registry.py` depended on the same uncommitted directory, which made
+`make reseed-check` fail on a clean clone.
+
+### What changed
+
+* The 37 Qwen receipts that supply measurement values are committed under
+  `registry/protocol/qwen38-receipts-public-8558b8c/`. Their manifest binds
+  every filename, byte count and SHA-256 to public repository commit
+  `8558b8ca3bba028f852f4b53167b79b4cd552f93`; the seeder hashes the exact
+  bytes it parses and refuses a missing or changed file.
+* All 74 Qwen source-URI occurrences now point directly at that immutable
+  public commit. The cross-engine comparator is labelled contextual rather
+  than represented as the byte source for `metric.value`.
+* The two GLM suite-manifest occurrences now cite the committed
+  `suite/suite-manifest.json`; its existing SHA-256 is unchanged.
+* The 37 redundant local-plus-mirror source pairs are each one direct public
+  source. `PROV-017` makes the validator refuse POSIX, `file:`, UNC,
+  home-relative and Windows drive-absolute host paths in every published
+  `uri`; the selftest mutates a clean record to prove the gate fires.
+
+Collection hashes and the two repository copies of the generated model-card
+registry-snapshot hashes move because their provenance bytes changed. They are
+metadata digests, not scientific measurements. Publishing the regenerated
+cards to the Hub remains a separate, permissioned action.
+
+---
+
 ## Not published, deliberately
 
 Nothing from `docs/REVIEW-DEFERRED.md` is now held back for an operator decision on

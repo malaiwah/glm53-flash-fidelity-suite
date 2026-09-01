@@ -41,6 +41,7 @@ they differ (``--allow-unequal-windows`` to override deliberately), and
 from __future__ import annotations
 
 import math
+from decimal import Decimal, localcontext
 import hashlib
 import random
 import statistics
@@ -106,6 +107,29 @@ def clustered_se(
             "mean": mean, "n": n}
 
 
+def _summary_clustered_se(
+    counts: Sequence[int], means: Sequence[float], grand: float
+) -> float:
+    """Clustered SE with one final, platform-independent rounding.
+
+    Residuals and ``ssq`` retain the standard's historical binary64 evaluation
+    order. The old final ``math.sqrt(scale * ssq) / n`` rounded once at sqrt and
+    again at division; a one-ULP platform difference crossed the registry's
+    15-significant-digit boundary. Decimal evaluates only that final expression
+    before converting once to binary64.
+    """
+    n = sum(counts)
+    g = len(counts)
+    ssq = math.fsum(
+        (count * mean - count * grand) ** 2
+        for count, mean in zip(counts, means)
+    )
+    scaled = g / (g - 1.0) * ssq
+    with localcontext() as context:
+        context.prec = 80
+        return float(Decimal.from_float(scaled).sqrt() / Decimal(n))
+
+
 def se_from_window_summaries(
     per_window: Sequence[Dict[str, Any]]
 ) -> Dict[str, Any]:
@@ -151,10 +175,9 @@ def se_from_window_summaries(
         var = (within + between) / (n - 1) if n > 1 else float("nan")
         out["pooled_std"] = math.sqrt(var)
         out["se_naive"] = math.sqrt(var / n)
-    ssq = math.fsum((c * m - c * grand) ** 2 for c, m in zip(counts, means))
     g = len(counts)
     if g >= 2:
-        se = math.sqrt(g / (g - 1.0) * ssq) / n
+        se = _summary_clustered_se(counts, means, grand)
         out["se_clustered_window"] = se
         # STAT-19. Gated on TRUTHINESS, so a panel whose per-window stds are all
         # exactly 0.0 (se_naive == 0.0) silently dropped the key rather than saying the
