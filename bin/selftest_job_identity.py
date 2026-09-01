@@ -1,249 +1,218 @@
 #!/usr/bin/env python3
-"""Job identity is resolved-first and wide; liveness is tri-state.
-
-WHY THIS EXISTS
----------------
-P1-12: the job id was sha1(requested args)[:8] -- it hashed `--revision main`
-BEFORE resolution, ignored the suite's own code state, and 32 bits of it
-named the instance.  A rerun after upstream `main` (or this repo) moved would
-adopt the old machine and relabel outputs older bytes produced.
-P1-14: a liveness probe that could not run answered False -- the same value
-as CONFIRMED DEAD -- and the controller then launched a second writer into a
-live capture.
-
-  J1  identity is derived from the RESOLVED revision: two resolutions of the
-      same command are two identities; the full id is 256-bit hex and the
-      display id is its 8-char prefix.
-  J2  the suite HEAD is part of the identity.
-  J3  the panel's resolved revision is part of the identity.
-  J4  adoption: an instance wearing this job's display prefix whose lease
-      does NOT carry this job's full identity is REFUSED, and nothing is
-      created; a matching lease adopts.
-  J5  _stage_liveness answers alive / dead / unknown, distinctly.
-  J6  _stage_is_alive: only a CONFIRMED dead authorizes a launch; unknown
-      retries and then refuses the launch.
-  J7  sshbase.run_status: a probe that cannot run reports state=unknown,
-      never "failed".
-
-Stub provider, no network, $0.00.
-"""
-import argparse
-import importlib.util
+"""Offline collision and semantic tests for the shared job.v2 identity."""
+import copy
+import hashlib
+import json
 import sys
-import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bin"))
 
-from fidelity import sshbase  # noqa: E402
-from fidelity.jlapi import JLError  # noqa: E402
-
-FAILED = []
-
-
-def check(label, ok, detail=""):
-    print("  %s  %s" % ("PASS" if ok else "FAIL", label))
-    if not ok:
-        FAILED.append(label)
-        for line in str(detail).splitlines()[:10]:
-            print("        %s" % line)
+from fidelity.jobcontract import (  # noqa: E402
+    JobContractError, finalize_bundle_manifest, finalize_job,
+    validate_execution_job, verify_job,
+)
 
 
-def load_mc():
-    spec = importlib.util.spec_from_file_location(
-        "measure_cloud", str(ROOT / "bin" / "measure_cloud.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+def check(name, condition):
+    if not condition:
+        raise AssertionError(name)
 
 
-MC = load_mc()
+def fixture():
+    payload = b"bundle-byte"
+    bundle = finalize_bundle_manifest([{
+        "path": "bin/stages.py", "bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }], "BUNDLE.txt")
+    control = finalize_bundle_manifest([{
+        "path": "bin/measure_cloud.py", "bytes": 1,
+        "sha256": "9" * 64,
+    }], "authored-control-plane-closure")
+    control["schema"] = "fidelity-suite/control-plane-manifest.v1"
+    registry = {"path": "bin/BUNDLE.txt", "bytes": 20,
+                "sha256": "2" * 64}
+    bundle_contract = hashlib.sha256(json.dumps(
+        {"bundle": bundle, "registry": registry}, sort_keys=True,
+        separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+    shards = [{"path": "model-00001-of-00001.safetensors", "bytes": 123}]
+    shard_digest = hashlib.sha256(json.dumps(
+        shards, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False).encode("utf-8")).hexdigest()
+    download_manifest = [
+        {"path": "config.json", "bytes": 1},
+        shards[0],
+        {"path": "model.safetensors.index.json", "bytes": 1},
+    ]
+    download_digest = hashlib.sha256(json.dumps(
+        download_manifest, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False).encode("utf-8")).hexdigest()
+    return {
+        "schema": "fidelity-suite/job.v2", "role": "quant",
+        "recipe": "cloud", "lane": "streaming", "cold_runs": 2,
+        "target": {
+            "repo_id": "owner/model", "revision": "1" * 40,
+            "path": None, "surface": "native-bf16",
+            "codec": "bf16", "bits": 16,
+            "config_sha256": "a" * 64, "index_sha256": "b" * 64,
+            "model_bytes": 123, "shards": shards,
+            "shard_manifest_sha256": shard_digest,
+            "download_manifest": download_manifest,
+            "download_bytes_total": 125,
+            "download_manifest_sha256": download_digest,
+        },
+        "bundle": bundle, "bundle_registry": registry,
+        "bundle_contract_sha256": bundle_contract,
+        "control_plane": control,
+        "panel": {
+            "panel_id": "p", "roles": "final",
+            "resolved_binding": {"revision": "3" * 40},
+            "panel_receipt_sha256": "1" * 64,
+            "reference_ref": "root@pin",
+            "teacher_receipt_sha256": "2" * 64,
+            "teacher_backend_identity_sha256": "3" * 64,
+        },
+        "reference": {
+            "reference_ref": "root@pin",
+            "teacher_receipt_sha256": "2" * 64,
+            "teacher_backend_identity_sha256": "3" * 64,
+        },
+        "profile": {
+            "profile_id": "native-bf16", "lane": "streaming",
+            "source": "native", "surface": "native-bf16", "bits": 16},
+        "timing": {"cold_runs": 2, "window_count": 25},
+        "runtime": {},
+        "scoring": {
+            "schema": "fidelity-suite/kld-scoring.v1",
+            "device": "cuda", "chunk_positions": 512,
+            "compute_dtype": "float64",
+            "direction": "reference_to_candidate",
+            "vocabulary": "full",
+            "reduction": "mean_of_run_means_tokenwise_kld",
+        },
+        "capture": {"replay_dtype": "float32", "replay_vocab_chunk": 8192,
+                    "unexpected_tensor_allowlist": {
+                        "path": "engines/evidence/a.json",
+                        "artifact_sha256": "4" * 64,
+                        "canonical_sorted_names_sha256": "5" * 64}},
+        "scope": {"policy": "known"},
+        "produced_by": {"name": "suite", "revision": "6" * 40},
+        "measurer": {"name": "selftest"},
+        "resource_requirements": {
+            "workspace_available_bytes_minimum": 1,
+            "container_available_bytes_minimum": 1,
+            "min_vcpu_count": 1,
+            "min_memory_gb": 1,
+            "expected_vram_bytes": 1,
+        },
+        "environment": {"provider": "runpod", "gpu": "H200",
+                        "offer": "on-demand", "secure_cloud": True},
+        "execution_attempt": {
+            "kind": "runpod-ssh",
+            "attempt_id": None,
+            "cost_quote": None,
+            "engine_root": None,
+            "execution_contract_sha256": None,
+            "lease_path": None,
+            "planned_at": "2026-09-01T00:00:00Z",
+            "pre_create_safety": None,
+            "prepared_create": None,
+            "remote_root": None,
+            "provider_terminate_after": None,
+            "workload_deadline_utc": None,
+        },
+    }
 
 
-def mk_args(**kw):
-    base = dict(model="org/model", revision="main", panel="org/panel",
-                lane="streaming", spot=True, cold_runs=2,
-                provider="jarvislabs", gpu="H200", role="quant",
-                out=None, keep_fs=False)
-    base.update(kw)
-    return argparse.Namespace(**base)
+def mutate_registry(document):
+    document["bundle_registry"]["bytes"] += 1
+    document["bundle_contract_sha256"] = hashlib.sha256(json.dumps(
+        {"bundle": document["bundle"],
+         "registry": document["bundle_registry"]},
+        sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
-class Inst:
-    def __init__(self, machine_id, name, status="running"):
-        self.machine_id, self.name, self.status = machine_id, name, status
-        self.fs_id = 42
-
-
-class StubJL:
-    dry = False
-
-    def __init__(self, instances=()):
-        self.instances = list(instances)
-        self.created = []
-
-    def list_instances(self):
-        return list(self.instances)
-
-    def fs_create(self, **kw):
-        self.created.append(("fs", kw))
-        return {"fs_id": 1}
-
-    def create(self, **kw):
-        self.created.append(("inst", kw))
-        return {"machine_id": 999}
-
-    def exec(self, *a, **kw):
-        return {"exit_code": 0, "stdout": "", "stderr": ""}
-
-
-class Con:
-    def __getattr__(self, name):
-        return lambda *a, **kw: None
+def changed(base, mutator):
+    candidate = copy.deepcopy(base)
+    mutator(candidate)
+    return finalize_job(candidate)["job_id_full"]
 
 
 def main():
-    rev_a, rev_b = "a" * 40, "b" * 40
-
-    # J1
-    i1 = MC.job_identity(mk_args(), resolved_revision=rev_a)
-    i2 = MC.job_identity(mk_args(), resolved_revision=rev_b)
-    i1_again = MC.job_identity(mk_args(), resolved_revision=rev_a)
-    check("J1 two resolved revisions are two identities; same inputs are one",
-          i1["job_id_full"] != i2["job_id_full"]
-          and i1 == i1_again, (i1, i2))
-    check("J1b full id is 256-bit hex; display is its 8-char prefix",
-          len(i1["job_id_full"]) == 64
-          and all(c in "0123456789abcdef" for c in i1["job_id_full"])
-          and i1["job_id"] == i1["job_id_full"][:8], i1)
-
-    # J2: the suite head moves -> the identity moves.
-    orig_head = MC._suite_head
+    base = fixture()
+    finalized = finalize_job(base)
+    check("full identity verifies",
+          verify_job(finalized) == finalized["job_id_full"])
+    mutations = [
+        ("target", lambda d: d["target"].update(config_sha256="c" * 64)),
+        ("provider", lambda d: d["environment"].update(gpu="L4")),
+        ("bundle registry", mutate_registry),
+        ("panel", lambda d: d["panel"].update(panel_id="other")),
+        ("profile", lambda d: d["profile"].update(profile_id="other-profile")),
+        ("timing", lambda d: d["timing"].update(cold_runs=3)),
+        ("replay", lambda d: d["capture"].update(replay_dtype="float64")),
+        ("allowlist", lambda d: d["capture"]["unexpected_tensor_allowlist"].update(
+            artifact_sha256="7" * 64)),
+        ("scope", lambda d: d["scope"].update(policy="other")),
+        ("producer", lambda d: d["produced_by"].update(revision="8" * 40)),
+        ("unknown top-level",
+         lambda d: d.update(future_identity={"x": 1})),
+    ]
+    for name, mutate in mutations:
+        check(name + " moves identity", changed(base, mutate) != finalized["job_id_full"])
+    attempt_only = copy.deepcopy(base)
+    attempt_only["execution_attempt"].update(
+        attempt_id="a" * 24, lease_path="/leases/a.json",
+        workload_deadline_utc="2026-09-01T01:00:00Z",
+        provider_terminate_after="2026-09-01T01:30:00Z")
+    check("attempt and deadlines do not move identity",
+          finalize_job(attempt_only)["job_id_full"] == finalized["job_id_full"])
+    malformed = copy.deepcopy(finalized)
+    malformed["bundle"]["extra"] = True
     try:
-        MC._suite_head = lambda: "c" * 40
-        moved = MC.job_identity(mk_args(), resolved_revision=rev_a)
-    finally:
-        MC._suite_head = orig_head
-    check("J2 the suite HEAD is part of the identity",
-          moved["job_id_full"] != i1["job_id_full"])
-
-    # J3
-    p1 = MC.job_identity(mk_args(), resolved_revision=rev_a,
-                         panel_revision=rev_a)
-    p2 = MC.job_identity(mk_args(), resolved_revision=rev_a,
-                         panel_revision=rev_b)
-    check("J3 the panel's resolved revision is part of the identity",
-          p1["job_id_full"] != p2["job_id_full"])
-
-    # J4: the adoption gate.
-    with tempfile.TemporaryDirectory() as td:
-        MC.LEASE_DIR = Path(td)
-        args = mk_args(out=str(Path(td) / "out"))
-        ident = MC.job_identity(args, resolved_revision=rev_a)
-        plan = {"job_id": ident["job_id"], "job_id_full": ident["job_id_full"],
-                "instance_name": "fidcloud-%s-x0" % ident["job_id"],
-                "deadline_epoch": 4102444800.0,
-                "chosen": {"gpu_type": "H200", "gpus": 1, "region": "us"},
-                "storage_gb": 100, "requirement": {"ep_size": 1}}
-        running = Inst("m-1", "fidcloud-%s-xzz" % ident["job_id"])
-
-        # A lease from a DIFFERENT identity (the resume-relabel case).
-        MC.write_lease(ident["job_id"], name=plan["instance_name"],
-                       deadline=4102444800.0, machine_id="m-1", fs_id=None,
-                       job_id_full="f" * 64)
-        jl = StubJL([running])
-        td_obj = MC.Teardown(jl, Con(), Path(td) / "out")
+        verify_job(malformed)
+    except JobContractError:
+        pass
+    else:
+        raise AssertionError("noncanonical bundle accepted")
+    missing_panel_receipt = copy.deepcopy(base)
+    del missing_panel_receipt["panel"]["panel_receipt_sha256"]
+    mismatched_reference = copy.deepcopy(base)
+    mismatched_reference["reference"]["teacher_receipt_sha256"] = "9" * 64
+    expanded_reference = copy.deepcopy(base)
+    expanded_reference["reference"]["unbound"] = True
+    for name, invalid in (
+            ("missing panel receipt", missing_panel_receipt),
+            ("mismatched panel/reference", mismatched_reference),
+            ("unbound reference field", expanded_reference)):
         try:
-            MC.execute(args, Con(), jl, dict(plan), td_obj)
-            check("J4 a prefix-matching instance with a foreign lease refuses",
-                  False, "no Refusal")
-        except MC.Refusal as exc:
-            check("J4 a prefix-matching instance with a foreign lease refuses",
-                  "full identity" in str(exc) and not jl.created,
-                  "%s created=%s" % (exc, jl.created))
-
-        # A lease carrying THIS identity: adoption proceeds (we stop the run
-        # right after by making the bootstrap raise a sentinel).
-        MC.write_lease(ident["job_id"], name=plan["instance_name"],
-                       deadline=4102444800.0, machine_id="m-1", fs_id=None,
-                       job_id_full=ident["job_id_full"])
-
-        class Sentinel(RuntimeError):
+            finalize_job(invalid)
+        except JobContractError:
             pass
-
-        orig_boot = MC._bootstrap_and_run
-        orig_hb = MC._start_heartbeat
-        MC._bootstrap_and_run = lambda *a, **kw: (_ for _ in ()).throw(Sentinel())
-        MC._start_heartbeat = lambda *a, **kw: None
+        else:
+            raise AssertionError("%s accepted" % name)
+    print("PASS: job.v2 identity collision and semantic checks")
+    for rows in ([], [
+            {"path": "./bin/stages.py", "bytes": 1, "sha256": "0" * 64}]):
         try:
-            jl = StubJL([running])
-            td_obj = MC.Teardown(jl, Con(), Path(td) / "out")
-            try:
-                MC.execute(args, Con(), jl, dict(plan), td_obj)
-                check("J4b a matching lease adopts", False, "no Sentinel")
-            except Sentinel:
-                check("J4b a matching lease adopts (nothing new created)",
-                      td_obj.machine_id == "m-1" and not jl.created,
-                      (td_obj.machine_id, jl.created))
-        finally:
-            MC._bootstrap_and_run = orig_boot
-            MC._start_heartbeat = orig_hb
-
-    # J5 / J6: tri-state liveness.
-    class LiveJL:
-        dry = False
-
-        def __init__(self, answer):
-            self.answer = answer
-            self.calls = 0
-
-        def exec_stdout(self, mid, cmd, **kw):
-            self.calls += 1
-            if isinstance(self.answer, Exception):
-                raise self.answer
-            return self.answer
-
-    class TD:
-        machine_id = 7
-
-    check("J5 alive / dead / unknown are distinct verdicts",
-          MC._stage_liveness(LiveJL("alive\n"), TD(), "measure") == "alive"
-          and MC._stage_liveness(LiveJL("gone\n"), TD(), "measure") == "dead"
-          and MC._stage_liveness(LiveJL(JLError("boom")), TD(), "measure")
-          == "unknown"
-          and MC._stage_liveness(LiveJL("garbled"), TD(), "measure")
-          == "unknown")
-
-    jl = LiveJL(JLError("api down"))
-    verdict = MC._stage_is_alive(jl, TD(), "measure", retries=3,
-                                 sleep=lambda *_: None)
-    check("J6 unknown-after-retries REFUSES the launch (returns True) and "
-          "actually retried",
-          verdict is True and jl.calls == 4, jl.calls)
-    check("J6b only a confirmed dead authorizes a launch",
-          MC._stage_is_alive(LiveJL("gone\n"), TD(), "measure",
-                             sleep=lambda *_: None) is False
-          and MC._stage_is_alive(LiveJL("alive\n"), TD(), "measure",
-                                 sleep=lambda *_: None) is True)
-
-    # J7: sshbase.run_status probe failure is unknown, not failed.
-    class T(sshbase.SSHTransport):
-        def _endpoint(self, machine_id, *, wait=900):
-            return ("h", 22)
-
-        def exec_stdout(self, *a, **kw):
-            raise JLError("ssh flaked")
-
-    st = T().run_status("r_1", machine_id=5)
-    check("J7 a failed probe reports state=unknown, never failed",
-          st.get("state") == "unknown", st)
-
-    print()
-    if FAILED:
-        print("selftest_job_identity: %d FAILED" % len(FAILED))
-        return 1
-    print("selftest_job_identity: all passed")
+            finalize_bundle_manifest(rows, "fixture")
+        except JobContractError:
+            pass
+        else:
+            raise AssertionError("empty/aliased bundle accepted")
+    executed = copy.deepcopy(finalized)
+    executed["execution_attempt"].update(
+        attempt_id="a" * 24, lease_path="/private/lease.json",
+        workload_deadline_utc="2026-09-01T01:00:00Z",
+        provider_terminate_after="2026-09-01T01:30:00Z")
+    try:
+        validate_execution_job(executed)
+    except JobContractError:
+        pass
+    else:
+        raise AssertionError("absolute lease path accepted")
     return 0
 
 

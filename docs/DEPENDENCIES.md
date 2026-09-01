@@ -43,20 +43,18 @@ several rows below:
 | tree | runs where | third-party available? |
 |---|---|---|
 | `registry/tools/` | contributor's stock interpreter | **no** — this is the point |
-| `bin/` (controller: `measure_cloud.py`, the provider backends, `sshbase.py`) | the operator's laptop, stock `python3` | **no by policy**; see the `jl` caveat below |
+| `bin/` (controller: `measure_cloud.py`, the provider backends, `sshbase.py`) | the operator's laptop, stock `python3` | **no by policy**; the admitted RunPod path is stdlib-only |
 | `bin/fidelity/` files listed in `bin/BUNDLE.txt` | *both* laptop and rented instance | laptop is the binding constraint |
 | `engines/tools/` engines | the rented instance **after** `bootstrap_measure.sh` | **yes** — torch, transformers, `rich`, and `tqdm` are all installed |
 
 Two facts complicate the policy and are recorded here rather than argued away:
 
-- **The default provider path already breaks "no installs."** `bin/fidelity/jlapi.py:15`
-  instructs the user to `uv tool install jarvislabs`, and raises `JLNotInstalled` without
-  it. The stdlib purity of the other backends buys a zero-install property the *default*
-  code path does not have.
-- **None of the provider backends is ever uploaded to an instance.** `bin/BUNDLE.txt`
-  contains zero entries for `jlapi`/`runpodapi`/`vastapi`/`lambdaapi`/`sshbase`. They are
-  controller-side only. Their stdlib-only style is a policy choice, not a deployment
-  necessity.
+- Historical `jlapi.py` can call an externally installed JarvisLabs CLI, but
+  JarvisLabs is no longer an admitted paid provider. The current RunPod
+  controller uses stock-stdlib HTTP and OpenSSH subprocesses.
+- Provider backends are controller-side only and are not uploaded in
+  `bin/BUNDLE.txt`. Their stdlib-only style is still load-bearing: planning,
+  leasing, reaping, retrieval and teardown run on the operator's stock Python.
 
 ---
 
@@ -70,7 +68,7 @@ Two facts complicate the policy and are recorded here rather than argued away:
 | 4 | `bin/fidelity/runpodapi.py` (`urllib`) | `requests`/`httpx` | **KEEP-BUT-DOCUMENT** — urllib demonstrably cost one live incident |
 | 5 | `bin/fidelity/vastapi.py` 429 backoff | `urllib3.Retry` | **KEEP-BUT-DOCUMENT** — the hand-rolled retry is incomplete in a way that matters |
 | 6 | `bin/fidelity/lambdaapi.py` Basic auth | `requests(auth=…)` | **KEEP-BUT-DOCUMENT** — textbook reinvention, zero observed cost |
-| 7 | `bin/fidelity/sshbase.py` | `paramiko`/`fabric` | **KEEP** — but it is missing three free `-o` flags |
+| 7 | `bin/fidelity/sshbase.py` | `paramiko`/`fabric` | **KEEP** — strict per-attempt `known_hosts` plus operator-authenticated ED25519 fingerprint evidence |
 | 8 | `bin/fidelity/common.py` `Console` | `logging`, `rich` | **KEEP** |
 | 9 | `bin/fidelity_stats.py` statistics | `scipy.stats` | **KEEP** — the strongest keep in the repo |
 | 10 | `canonical_json` duplicated per tree | one shared copy | **KEEP** |
@@ -334,19 +332,20 @@ code because `wait` does not know a subshell's children; liveness cannot use the
 pid because the launching shell forks and exits immediately). The DRY refactor paid off
 visibly — the commit notes *"Vast worked on the first try because of that shared base."*
 
-What is missing is **three `-o` flags, not a dependency**: `ControlMaster` /
-`ControlPersist` / `ControlPath`. `_ssh_opts()` opens a full SSH handshake for every exec
-and every scp, and `JOURNAL.md` already lists *"ControlMaster from minute one"* as a lesson —
-it was configured by hand in `~/.ssh/config` for the JarvisLabs box and never made it into
-the shared transport, where it would apply to all three SSH providers. Combined with the
-per-file delta uploader, that is one handshake per file.
+What remains missing is an optional performance optimization, not a dependency:
+`ControlMaster` / `ControlPersist` / `ControlPath`. `_ssh_opts()` opens a full
+SSH handshake for every exec and every scp. The first safe RunPod path favors
+an independently authenticated, attempt-local connection over multiplexing;
+revisit only with a proof that one control socket cannot cross attempt or
+endpoint identity.
 
-Also undocumented: `StrictHostKeyChecking=no` + `UserKnownHostsFile=/dev/null`, over the
-channel that carries the HF token. TOFU on ephemeral marketplace instances is genuinely
-hard and the endpoint is discovered over an authenticated TLS API — but in a file this
-heavily commented, the silence stands out.
-
-Both are recorded in `REVIEW-DEFERRED.md`. Campaign-owned; not edited.
+The load-bearing host-authentication gap is closed. Before the first SSH byte,
+the operator copies the pod's ED25519 fingerprint from the authenticated
+RunPod web terminal. `ssh-keyscan` is treated as untrusted input and must match
+that out-of-band fingerprint exactly. The resulting owner-only per-attempt
+`known_hosts` file is then used with `StrictHostKeyChecking=yes`; ambient
+agents, password/interactive authentication and forwarding are disabled.
+The initial safe RunPod route transports no Hugging Face credential.
 
 ## 8. `bin/fidelity/common.py` — **KEEP**
 

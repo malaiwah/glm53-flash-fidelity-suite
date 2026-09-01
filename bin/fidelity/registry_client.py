@@ -642,7 +642,9 @@ def stale_scope_hint(match: Dict[str, Any]) -> List[str]:
 
 def front_gate(*, repo: str, revision: Optional[str], path_hint: Optional[str],
                source: str, force: bool, accept_measured_revision: bool,
-               con: Console) -> Dict[str, Any]:
+               con: Console, already_measured_advice: Optional[str] =
+               "Pass --force to measure anyway (e.g. to reproduce)."
+               ) -> Dict[str, Any]:
     """The scorer checks the registry BEFORE planning or spending anything.
 
     Returns {"status": ...}:
@@ -724,8 +726,10 @@ def front_gate(*, repo: str, revision: Optional[str], path_hint: Optional[str],
             result["status"] = "proceed-forced"
             return result
         con.say("")
-        con.say("ALREADY MEASURED: the rows above answer this request. "
-                "Pass --force to measure anyway (e.g. to reproduce).")
+        message = "ALREADY MEASURED: the rows above answer this request."
+        if already_measured_advice:
+            message += " " + already_measured_advice
+        con.say(message)
         result["status"] = "already-measured"
         return result
     # STALE only

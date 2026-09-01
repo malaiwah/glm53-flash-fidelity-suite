@@ -5,9 +5,9 @@
 # directory" -- which is how a stray note, a scratch receipt, or somebody's
 # token file ends up on somebody else's machine.
 #
-# One path per line, relative to the suite root. Missing files are skipped
-# (the controller logs which), so a lane whose engine is not present in this
-# checkout does not break the upload.
+# One path per line, relative to the suite root. Every entry is mandatory: the
+# paid planner refuses missing files, symlinks, duplicate normalized paths and
+# paths escaping the checkout before admission.
 #
 # Nothing under .secrets/ is ever listed here. The HF token is transported
 # separately, as a 0600 file, and shredded during teardown.
@@ -21,8 +21,13 @@ bin/verify_published_sums.py
 # engines/stage_campaign.sh, which was never uploaded (so `setup` ran a file that did not
 # exist) and gates a decode-only run on an ENCODER closure it never needs.
 bin/bootstrap_measure.sh
+bin/requirements-cu130-py312.lock
 bin/watchdog.sh
 bin/invoke_engine.py
+# Stock-Python remote archive writer; stdout is only path/bytes/SHA transfer
+# identity, and resultsink verifies the archive again after the one download.
+bin/result_archive.py
+bin/container_entry.py
 # The scorer stage: stream_score CAPTURES logits, kld_report turns them into
 # the divergence. Without this the seal stage has nothing to seal.
 bin/invoke_scorer.py
@@ -34,8 +39,14 @@ bin/engines.json
 bin/fidelity/__init__.py
 bin/fidelity/census.py
 bin/fidelity/common.py
+bin/fidelity/cardbench_payload.py
 bin/fidelity/resultsink.py
 bin/fidelity/engines.py
+bin/fidelity/jobcontract.py
+bin/fidelity/panel.py
+bin/fidelity/runpodsafety.py
+bin/fidelity/runpoddrill.py
+bin/fidelity/stages.py
 bin/fidelity/hfmeta.py
 bin/fidelity/receipt.py
 # Stack fingerprint (WHAT-WE-MEASURE.md section 7): uploaded so on-instance
@@ -58,6 +69,9 @@ engines/tools/progress.py
 # The sealed EP8 lane. Verified present and flag-checked by the planner.
 engines/tools/student_capture.py
 engines/tools/kld_report.py
+# Exact root-capture unexpected-tensor allowlists; job.json binds one digest.
+engines/tools/layer-outer-evidence/fruit-layer13-unexpected-keys.json
+engines/tools/dione-evidence/m2-layer45-unexpected-keys.json
 # The UNSEALED Dione (0xSero) selective-EXL3 surface. It serves BOTH lanes:
 # student_capture --surface dione (sealed EP8) and stream_score --source
 # dione (streaming), and it owns its own `materialize` stage. Like tr3 it needs

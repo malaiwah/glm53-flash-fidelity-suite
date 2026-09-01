@@ -23,6 +23,8 @@ exercises the whole aggregation path with no logits and no torch.  The few
   NUM-15  the provenance branch dispatches on the capture SURFACE, not on a
           profile-name prefix (LESSON 48 recurring on a fourth profile)
   NUM-17  per-window top-1 integer counts make subset rescoring exact
+  NUM-18  public TR3 scoring refuses capture/profile checkpoint identity mismatch
+
 """
 from __future__ import annotations
 
@@ -252,6 +254,64 @@ def main():
     _stub_pipeline(HERE)
     sys.path.insert(0, HERE)
     import kld_report as K
+    import tr3_surface as T3
+
+    print("\n== NUM-18: public TR3 capture/scoring identity agreement ==")
+    policy = T3.PUBLIC_PROFILE_POLICIES["tr3-6bpw"]
+    identity = policy["checkpoint_identity_sha256"]
+    shard_proof = "fixture receipt shard map == SHA256SUMS"
+    profile_evidence = {
+        "schema": T3.TR3_PROFILE_EVIDENCE_SCHEMA,
+        "profile": "tr3-6bpw",
+        "student_label": policy["student_label"],
+        "repo": policy["repo"],
+        "revision": policy["revision"],
+        "declared_bits": policy["bits"],
+        "raw_sha256": policy["raw_sha256"],
+        "verdict_path": policy["verdict_path"],
+        "verdict_schema": "malaiwah.glm53-streaming-measurement-verdict.v1",
+        "scored_the_sealed_surface": True,
+        "scored_the_sealed_k6_surface": True,
+        "checkpoint_identity_sha256": identity,
+        "student_checkpoint_identity_sha256": identity,
+        "sealed_checkpoint_identity_sha256": identity,
+        "shard_verification": shard_proof,
+        "shard_verification_mode": "crosscheck",
+        "shard_count": 2,
+        "shards_agreed": 2,
+        "shard_verification_succeeded": True,
+    }
+    public_capture = {
+        "checkpoint_identity_sha256": identity,
+        "tr3_repo": policy["repo"],
+        "tr3_revision": policy["revision"],
+        "profile_evidence": profile_evidence,
+        "seal_verification": {
+            "verified": True,
+            "checks": [{"check": "fixture", "passed": True}],
+        },
+        "shard_verification": {
+            "mode": "crosscheck",
+            "shards": 2,
+            "agreed": 2,
+            "verification": shard_proof,
+        },
+    }
+    try:
+        admitted = K._validate_public_profile_checkpoint_identity(
+            public_capture, "tr3-6bpw")
+        ok, detail = admitted == identity, str(admitted)
+    except SystemExit as exc:
+        ok, detail = False, "matching identity was refused: %s" % exc
+    check("NUM-18  exact public capture/profile identity is admitted", ok, detail)
+    mismatched_capture = dict(
+        public_capture, checkpoint_identity_sha256="0" * 64)
+    refused = _stderr_of(
+        lambda: K._validate_public_profile_checkpoint_identity(
+            mismatched_capture, "tr3-6bpw"))
+    check("NUM-18  capture/scoring checkpoint identity mismatch refuses",
+          refused is not None and "checkpoint identity mismatch" in refused,
+          "mismatch was admitted" if refused is None else refused)
 
     tmp = tempfile.mkdtemp(prefix="kld-report-selftest-")
     try:

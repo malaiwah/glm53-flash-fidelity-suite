@@ -172,6 +172,7 @@ EXL3HF_PROFILES = {
 # EXL3HF_PROFILES and the same rule: the label must match kld_report's map.
 TR3_PROFILES = {
     "tr3-4bpw": (4.0, "tr3-exl3-mcg-4bpw"),
+    "tr3-6bpw": (6.0, "tr3-exl3-mcg-6bpw"),
 }
 # Dione (0xSero selective-EXL3, TP4-sliced, routed experts only) profiles.
 # Same rule again: the label must match kld_report's map for the profile,
@@ -1941,7 +1942,8 @@ def main() -> int:
                         choices=("k6", "k8", "k6k8", "native-bf16", "mlx", "gguf", "nvfp4",
                                  "turbo-4.05bpw", "turbo-3.05bpw", "turbo-2.05bpw",
                                  "vcruz-k2-2bpw",
-                                 "tr3-4bpw", "dione-q4", "dione-3.0bpw"))
+                                 "tr3-4bpw", "tr3-6bpw",
+                                 "dione-q4", "dione-3.0bpw"))
     parser.add_argument("--roles", default="final")
     parser.add_argument("--windows", help="comma-separated window ids to score (default: all)")
     parser.add_argument("--pipeline-root")
@@ -2268,6 +2270,7 @@ def main() -> int:
             repo=args.tr3_repo,
             revision=args.tr3_revision,
             verify_shards=args.tr3_verify_shards,
+            profile=args.profile,
         )
         want_bits = TR3_PROFILES[args.profile][0]
         if abs(tr3.declared_bits - want_bits) > 1e-6:
@@ -3303,6 +3306,7 @@ def main() -> int:
                     tr3.seal["materialization"]["receipt_sha256"],
                 "materialization_receipt_sha256": materialization["receipt_sha256"],
                 "seal_verification": tr3.seal,
+                "profile_evidence": tr3.profile_evidence,
                 "shard_verification": tr3.shard_verification,
                 "scope_census_sha256": tr3.scope_census_sha256(),
                 "seal_disclosure": tr3_module.SEAL_DISCLOSURE,
@@ -4035,6 +4039,7 @@ def main() -> int:
             tr3.seal["materialization"]["receipt_sha256"]
         receipt["materialization_receipt_sha256"] = materialization["receipt_sha256"]
         receipt["seal_verification"] = tr3.seal
+        receipt["profile_evidence"] = tr3.profile_evidence
         receipt["shard_verification"] = tr3.shard_verification
         receipt["scope_census_sha256"] = tr3.scope_census_sha256()
         receipt["seal_disclosure"] = tr3_module.SEAL_DISCLOSURE

@@ -1,115 +1,78 @@
-# Cloud providers: the contract, and a wish list
+# Cloud providers: paid execution boundary
 
-This suite rents GPUs to capture roots and measure quants. Today it can only
-rent them from **one** provider, JarvisLabs, because `bin/fidelity/jlapi.py`
-is the only backend and `measure_cloud.py` calls it directly. Nothing about
-the measurement science requires that, and depending on a single vendor is a
-liability for a project whose whole claim is that its numbers are
-reproducible by other people.
+The current paid controller admits exactly one backend: **RunPod secure
+on-demand pods over SSH**. `bin/measure-cloud` refuses JarvisLabs, Vast, Lambda,
+provider-native containers, spot instances, recovery/adoption, volumes and
+pause/hold modes before provider mutation.
 
-This document says exactly what a provider has to be able to do before the
-driver can use it, scores the plausible candidates against that, and names the
-one thing that is *not* a portability problem but looks like one.
+This is narrower than the adapters present in `bin/fidelity/providers/`.
+Adapter existence means code can describe or test a control plane; it does not
+authorize spending or establish the lifecycle proof required for measurements.
+The executable procedure is
+[`THIRD-PARTY-QUICKSTART.md`](THIRD-PARTY-QUICKSTART.md); the safety explanation
+is [`CLOUD-RECIPES.md`](CLOUD-RECIPES.md).
 
-## 1. The contract
+## Required provider properties
 
-Extracted from what the driver actually calls, not from what providers
-advertise. A backend must supply all of **A**, or the safety guarantees this
-suite makes are not true on it.
+A paid backend cannot be admitted unless live evidence proves all of these:
 
-### A. Required — a run cannot be safe without these
-
-| capability | why the driver needs it | JL method |
-|---|---|---|
-| enumerate offers: GPU model, VRAM, $/hr, spot flag, region, free count | the fit check refuses a GPU that cannot hold the model, and the cost band is computed before anything is created | `gpus()` |
-| create with an explicit disk size | roots are 100 GB–1.5 TB; a fixed-disk provider cannot host a capture | `create()` |
-| **destroy**, idempotent and confirmable | L0/L2/L3 teardown; "confirmable" means a later query can prove it is gone | `destroy()` |
-| list instances **from any machine on the account** | L3 name-deadline sweep runs from a laptop that did not create the instance | `list_instances()` |
-| set an instance **name** at creation | the deadline is encoded in it (`fidcloud-<job>-exp<epoch>`), which is the only teardown layer that survives losing the lease file | `create(name=)` |
-| exec a shell command, returning stdout **and exit code** | every stage is one exec; a provider that returns only logs cannot tell a finished stage from a dead one | `exec()` |
-| upload / download files | the 74-file bundle in, the receipts tree out | `upload()` / `download()` |
-
-### B. Strongly wanted — buys money or safety, not correctness
-
-| capability | what it buys |
+| property | safety reason |
 |---|---|
-| spot / interruptible instances | ~2-3x cheaper; the stage design is already preemption-tolerant (every stage is receipt-resumable) |
-| queryable **billed cost** per instance | the run reconciles estimated / computed / billed / balance-delta, because any one of them can lie |
-| account balance | refuse to start a run the account cannot pay for |
-| persistent filesystem separable from the instance | a preempted spot instance keeps its 300 GB of fetched weights |
-| region selection | data-residency, and fetch bandwidth to the Hub |
+| complete account-wide inventory of every chargeable resource class | absence cannot be inferred from one pod lookup or a local lease |
+| unique operator-authored resource names | response-loss reconciliation and independent cleanup need exact ownership |
+| idempotent deletion plus exact-absence confirmation | `EXITED`, a stopped process or a successful DELETE response may still bill |
+| provider-enforced termination deadline | cleanup must survive controller and reaper loss |
+| current balance and billing history | campaign exposure and settlement cannot be inferred from estimates |
+| stable offer identity, hardware, price and region | the pre-create quote must bind the resource actually created |
+| authenticated SSH host identity | API-supplied IP/port plus network keyscan alone permits machine-in-the-middle execution |
 
-### C. Nice to have
+File transfer and command execution do not have to be provider APIs. The current
+route deliberately uses audited SSH transport after out-of-band host-key
+authentication.
 
-Startup scripts; VPC; an SDK that is not a CLI subprocess; per-second billing.
+## RunPod closure
 
-## 2. The wish list
+The RunPod backend uses official HTTPS control-plane endpoints: REST/v2 for
+read-only inventory, balance, offers and billing, and GraphQL for one pod
+create plus deletion. A durable lease and
+campaign record are written before the create request. Each attempt has one
+full job hash plus random 96-bit id; no ambiguous response is retried as a
+fresh science attempt.
 
-Scored on the contract above. **Nothing here has been tested** — this is a
-survey to decide what to try, and every row needs its A-column claims verified
-against the live API before it is trusted.
+The account inventory includes pods and network volumes. The controller binds
+only exact ids carrying its unique attempt identity, but never adopts them for
+science after an ambiguous create response. Such resources are cleanup-only.
+Deletion is complete only when a fresh full inventory proves every exact id
+absent and billing reconciliation binds those same ids.
 
-| provider | spot | disk control | exec + exit code | notes |
-|---|---|---|---|---|
-| **JarvisLabs** (current) | yes, containers | yes, and separable filesystems | yes, via `jl exec` | the reference implementation; the only one actually exercised |
-| **RunPod** | yes (community + secure) | yes, network volumes | yes, REST + SSH | closest match to the contract; probably the cheapest port |
-| **Vast.ai** | yes, marketplace | yes | yes, SSH | cheapest per FLOP, **but see §3** — heterogeneous hosts are a methodological problem, not just an ops one |
-| **Lambda** | limited | fixed per instance type | SSH | reliable, simple, fewer spot options; good for a *known-hardware* lane |
-| **CoreWeave** | yes | yes | k8s-native | enterprise-shaped; heavier to drive than the others |
-| **Modal** | serverless | ephemeral + volumes | function-shaped, not shell-shaped | would need the stage model rewritten; strong for the *comparison* step |
-| **Paperspace / DigitalOcean** | limited | yes | SSH | |
-| **Nebius / DataCrunch / Prime Intellect / SF Compute** | varies | varies | SSH | worth pricing for the 1.5 TB GLM-5.3 root specifically |
+The independent user-systemd reaper uses the same owner-only API-key file,
+account-bound state directory and v2 lease directory as the controller. The
+provider `terminateAfter` setting is a separate backstop, not a substitute.
 
-**Which to do first.** RunPod, because it satisfies column A without
-qualification and its spot pricing is comparable to JarvisLabs, so the port can
-be validated by re-running a measurement we already have a sealed receipt for
-and checking the number is bitwise identical.
+## Portability does not imply comparability
 
-> **Open question for Michel:** which of these do you already hold credits on?
-> That should decide the order, ahead of anything in this table.
+Full-vocabulary KLD in fp64 is provider-independent arithmetic. Measurement
+identity is not. GPU model, engine profile, artifact surface, panel, reference,
+schedule and code closure remain bound in the receipt and comparability key.
+Moving the same target to another hardware or engine profile does not make its
+number comparable by assertion.
 
-## 3. The thing that is not a portability problem, and the one that is
+The first admitted RunPod quant is the exact authored K6 target/profile. The
+Fruit root route is separately authored. A K6 seal cannot authorize K8, another
+quant, another revision or a filename-near checkpoint.
 
-**Not a problem: the arithmetic.** Full-vocabulary KLD in fp64 is
-deterministic given the same weights, the same panel and the same reduction
-order. Nothing about it is vendor-specific.
+## Admitting another backend
 
-**Actually a problem: the hardware, and it is already half-solved.**
-`measure-cloud` refuses to run on a GPU the lane was not validated on, because
-both constants the plan depends on — minutes/window and the observed VRAM peak
-— were *measured* on an H200, and it records `on_validated_hardware` in the
-plan. That guard is provider-agnostic and it is what makes a multi-provider
-world safe: a new provider does not weaken any claim, it just needs its own
-validated-hardware entry.
+Adding an adapter is insufficient. A new paid backend needs:
 
-Two things follow that must not be glossed over:
+1. full inventory and exact-absence semantics for every chargeable resource;
+2. one-create response-loss and ownership tests;
+3. a provider-enforced lifetime plus an independent account-wide reaper;
+4. fresh price, balance, campaign-ledger and billing reconciliation;
+5. authenticated host identity and credential-file transport;
+6. controller-loss and provider-deadline drills on the real control plane;
+7. a bitwise/content-digest comparison against an already sealed target under
+   the exact same scientific profile.
 
-1. **Bitwise determinism is a per-device property, not a global one.** Our
-   determinism evidence is "N cold runs produced one distinct tokenwise-KLD
-   tensor hash" — on one device. Two H200s from two vendors should agree, and
-   an H200 and an A100 should *not* be assumed to. Cross-device reproduction is
-   a result worth publishing, not an assumption worth making.
-2. **Vast.ai's heterogeneity is the sharp edge.** Its cheapness comes from
-   renting whatever a host happens to own — different driver versions, different
-   host CPUs, sometimes different silicon under one GPU name. That is fine for
-   capture *throughput* and hostile to a claim of bitwise reproduction. If we
-   use Vast, it should be for work whose output is content-digested and verified
-   (`verify` recomputes the whole digest chain before teardown), never for
-   establishing a determinism claim.
-
-## 4. What porting actually costs
-
-The driver is already close to portable and was not designed to be, which is
-luck rather than foresight:
-
-* `Teardown` (all four layers), the lease file, the deadline-encoded name, the
-  cost reconciliation and every stage in `stage_measure.sh` are provider-neutral
-  — they speak the contract in §1, not JarvisLabs.
-* `jlapi.py` is 489 lines and is the entire vendor surface.
-
-So the port is: define `Provider` as the §1-A protocol, rename the current
-class to `JarvisLabsProvider`, add `--provider`, and write the second backend.
-The honest test that it worked is not "it ran" — it is **re-measuring an
-artifact we already have a sealed receipt for and getting the same number**,
-which for `turboderp/GLM-5.3-Flash-exl3` @ 2.05bpw means reproducing
-`0.12163767673339457` and its tokenwise-KLD tensor hash.
+Until that closure is implemented, tested and drilled, the command must refuse
+the provider before any create request.

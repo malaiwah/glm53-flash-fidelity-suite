@@ -217,7 +217,7 @@ block says so in its own `note`.
 |---|---|
 | `measure`, `measure-cloud`, `measure-local`, `registry-view`, `registry-submit`, `fidelity-stats`, `kld-preview`, `fixture` | one-line wrappers, so the headline paste has no `python3` in it |
 | `measure_one.py` | the one-command front-end: resolve, gate, lineage, pick, sniff, hand off |
-| `measure_cloud.py` | the cloud controller: registry gate, preflight, fit, instance selection, cost, four-layer teardown, reaper |
+| `measure_cloud.py` | the paid controller: exact RunPod-only admission, sealed job contract, campaign/lease state, authenticated SSH, bounded retrieval, exact absence and billing closure |
 | `measure_local.py` | the local runner: registry gate, device discovery, memory solver, micro-benchmark, window-major cost, `--execute` with preflight |
 | `registry_view.py` | check / rows / lineage against the local clone or the public dataset |
 | `fidelity_stats.py` | floor-aware attributable + paired-window deltas (stdlib statistics) |
@@ -228,10 +228,10 @@ block says so in its own `note`.
 | `fidelity/registry_client.py` | load local/HF registry, tier matcher, renderer, the front gate |
 | `fidelity/lineage.py` | base_model walk → registry model → panel/teacher pick |
 | `fidelity/previewstats.py` | stratified estimator + FPC + position bootstrap (pure stdlib, unit-tested) |
-| `fidelity/jlapi.py` | the single chokepoint for every `jl` call |
+| `fidelity/runpodapi.py`, `fidelity/runpodsafety.py`, `fidelity/cloudlease.py`, `fidelity/campaign.py` | RunPod control plane, authored scientific/lifecycle gates, v2 leases plus systemd reaper, and locked cumulative spend admission |
 | `fidelity/engines.py`, `engines.json` | which scorer each lane invokes, how, and `preflight` |
 | `fidelity/receipt.py`, `seal_receipt.py` | build and seal a `submission-receipt.v1` — written as `measurement-receipt.json`, which IS the submission receipt a contributor sends; the preview/teacher denylist |
-| `fidelity-doctor` | one read-only command: is THIS machine ready (credentials present, reaper installed, engines pinned) for a $0.00 dry-run? Prints no secret |
+| `fidelity-doctor` | offline local prerequisite check; paid authorization remains the exact `measure-cloud --dry-run` pre-POST gate |
 | `render_support_matrix.py` | renders the README support matrix from `engines.json` (`--write`/`--check`); the end of hand-written support claims |
 | `stage_measure.sh`, `watchdog.sh`, `invoke_engine.py` | the on-instance side |
 | `BUNDLE.txt` | exactly what gets uploaded to rented hardware |
@@ -321,7 +321,7 @@ bin/fidelity-dataset describe ds-bf16
 
 # step 3 -- compare
 bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-k6 --out cmp \
-    --vocab-chunk 9680            # must divide vocab_size exactly (154880 / 16)
+    --vocab-chunk 8192            # fixed safe profile; final block may be partial
 bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-bf16 --out repro \
     --self-compare --force-compute
         # A == B is a REPRODUCTION CONFIRMATION: exactly 0.0, top-1 exactly 1.0,
@@ -360,7 +360,7 @@ bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-k6 --out cmp \
 # step 3 -- a registry submission (needs identities a dataset cannot know)
 bin/fidelity-dataset provenance-template --out prov.json     # skeleton; fill it in
 bin/fidelity-dataset compare --reference ds-bf16 --candidate ds-k6 --out cmp \
-    --vocab-chunk 9680 --emit-submission --submission-provenance prov.json
+    --vocab-chunk 8192 --emit-submission --submission-provenance prov.json
         # refuses rather than writing empty blocks, then runs the registry's own
         # `registry_validate.py --submission` on the file it just wrote.
 
@@ -390,7 +390,7 @@ bin/fidelity-dataset verify-k3-compat ds-bf16
 | `head_substitution_vacuous` (HEAD-1c) | the capture content digests are **equal** and the head digests **differ** — a head-only quant (stock EXL3 `head_bits` 6–8). Hidden replay through one head erases the only difference there is and would report an exact reproduction. **No override**: publish logit-form captures, where each side runs its own head. |
 | `lane_mismatch` | different lanes. `--allow-cross-lane` proceeds and stamps `usable_as_floor: false`, so **BIAS-006** cannot be laundered downstream. |
 | `unlisted_file` / `missing_file` | the tree is not exactly what `checksums.txt` covers. `--allow-partial` narrows this to capture tensors and stamps `covers_full_panel: false`. |
-| `bad_vocab_chunk` | `--vocab-chunk` must divide `vocab_size`. For GLM-5.3-Flash use **9680**; kimi-k3's default 10240 does **not** divide 154880. |
+| `bad_vocab_chunk` | `--vocab-chunk` must be a positive integer. A final partial vocabulary block is processed exactly; the safe root qualification profile binds **8192**. |
 | `replay_device_mismatch` | `--replay-device` names a device the estimator does not use. The replayed logits would cross the bus twice per position block, which is slower than the numpy path it replaces. Set `--device` to the same value. |
 | `replay_backend_unavailable` | `--replay-device` other than `numpy` needs torch. The default needs nothing. |
 | `bad_replay_dtype` | `--replay-dtype` is `float32` or `float64`. |
@@ -458,9 +458,9 @@ python3 engines/tools/stream_score_selftest.py --only g,h,i,j,k # engine-edit ru
 bin/registry-view --selftest-live          # live dataset, keys, value tripwire
 ```
 
-The reaper section is safe by default: the selftest runs `reaper --sweep
---dry-run`, which reports what WOULD be destroyed and destroys nothing (a
-real sweep is `bin/measure-cloud reaper --sweep`, run deliberately). On a
-machine without the `jl` CLI the sweep test SKIPs with the install remedy
-instead of failing. `SELFTEST_SKIP_ACCOUNT=1` still skips the whole section
-(e.g. to avoid even read-only account API calls while another session rents).
+The current paid reaper is RunPod-only and user-systemd-backed. Selftests use
+stubs or `reaper --sweep --dry-run`, which destroys nothing. Installation
+requires the canonical owner mode-0600 RunPod key, account-bound state and v2
+lease directory; the initial sweep and health stamp must succeed. The paid
+controller revalidates timer activity, login persistence, control-file digests,
+account id, lease path and health freshness before every create POST.

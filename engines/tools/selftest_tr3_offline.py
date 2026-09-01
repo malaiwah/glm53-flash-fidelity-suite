@@ -13,22 +13,24 @@ name-set digest, the count algebra, the official-name bijection -- is exercised
 against the same arithmetic the live release satisfies.  Only the BYTES are
 small.
 
-  [1] a well-formed sealed release loads, and all 12 seal claims reproduce
+  [1] a well-formed sealed release loads, and every declared seal claim reproduces
   [2] every seal claim is LOAD-BEARING: tamper with one, get a refusal
   [3] scope refusals: wrong codebook / wrong scope / wrong non-routed policy /
       a quantized head are each refused BEFORE any decode
-  [4] the shard binding: SHA256SUMS agreement is proven, disagreement refused,
-      and `full` re-hashing agrees with both
-  [5] the decode is exl3hf's, verbatim: tr3.expert_source's decode is bitwise
+  [4] the shard map agrees with SHA256SUMS and full re-hashing
+  [5] pinned public K6 bridge and K8 pre-spend refusal
+  [6] the decode is exl3hf's, verbatim: tr3.expert_source's decode is bitwise
       equal to calling exl3hf_surface directly on the same payload
-  [6] the published scope reports no `unknown`, and the digest is stable
-  [7] the routed census closes the executed surface and names the MTP layer as
+  [7] the published scope reports no `unknown`, and the digest is stable
+  [8] the materializer preserves every non-routed tensor bitwise
+  [9] the routed census closes the executed surface and names the MTP layer as
       present-but-not-executed
 """
 
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 import json
 import shutil
 import sys
@@ -149,6 +151,8 @@ def build_release(root: Path, *, bits=4, codebook="mcg", scope=t3.EXPECTED_SCOPE
         "text_config": {"model_type": "glm5_next_text", "num_hidden_layers": 45},
     }
     (root / "config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    (root / t3.QUANTIZATION_FILE).write_text(
+        json.dumps(config["quantization_config"], indent=2) + "\n", encoding="utf-8")
 
     index = {"metadata": {"total_size": 1}, "weight_map": weight_map}
     if mutate_index:
@@ -182,7 +186,7 @@ def build_release(root: Path, *, bits=4, codebook="mcg", scope=t3.EXPECTED_SCOPE
         "output_tensor_names_sha256": names_digest,
         "packed_tensor_count": packed_count,
         "plan_sha256": "a" * 64,
-        "quantization_config_sha256": "b" * 64,
+        "quantization_config_sha256": sha_file(root / t3.QUANTIZATION_FILE),
         "routed_choice_count": routed_choices,
         "serving_reader_qualified": False,
         "shard_sha256": shard_sha,
@@ -193,7 +197,7 @@ def build_release(root: Path, *, bits=4, codebook="mcg", scope=t3.EXPECTED_SCOPE
     (root / t3.MATERIALIZATION_FILE).write_text(
         json.dumps(mat, indent=2) + "\n", encoding="utf-8")
 
-    abi = {
+    abi_body = {
         "schema": t3.ABI_SCHEMA, "bits": bits, "codec_family": "exl3-mcg",
         "exllamav3": {"git_commit": "c" * 40, "version": "0.0.43",
                       "module_key_rule": "official_weight_name_without_.weight",
@@ -205,12 +209,12 @@ def build_release(root: Path, *, bits=4, codebook="mcg", scope=t3.EXPECTED_SCOPE
         "plan_sha256": mat_body["plan_sha256"],
         "qualified_tp_sizes": [],
         "reason": "ExLlamaV3 v0.0.43 has no audited GLM-5.3 TP model load/inference receipt",
-        "receipt_sha256": "e" * 64,
         "serving_reader_qualified": False,
         "storage_checkpoint_verified": True,
     }
     if mutate_abi:
-        mutate_abi(abi)
+        mutate_abi(abi_body)
+    abi = dict(abi_body, receipt_sha256=sha_bytes(canonical(abi_body)))
     (root / t3.ABI_FILE).write_text(json.dumps(abi, indent=2) + "\n", encoding="utf-8")
 
     sums = {name: digest for name, digest in shard_sha.items()}
@@ -232,7 +236,20 @@ try:
     check("sealed release loads", surface.declared_bits == 4.0 and surface.codebook == "mcg")
     check("every seal claim reproduced", all(c["passed"] for c in checks),
           "%d checks" % len(checks))
-    check("seal covers all 12 published claims", len(checks) == 12,
+    required_checks = {
+        "materialization_schema", "abi_receipt_self_seal",
+        "materialization_receipt_self_seal",
+        "config_sha256", "index_sha256", "quantization_config_sha256",
+        "bits_agreement", "codec_family_agreement", "materialization_complete",
+        "storage_checkpoint_verified", "output_tensor_names_sha256",
+        "output_tensor_names_agreement", "output_tensor_count_agreement",
+        "plan_sha256_agreement", "payload_objects_per_choice",
+        "tensor_count_algebra", "nonrouted_native_exact",
+        "nonrouted_name_set_equals_official", "native_tensor_count_matches_names",
+        "mcg_multiplier",
+    }
+    check("seal covers every required binding",
+          required_checks <= {c["check"] for c in checks},
           ", ".join(c["check"] for c in checks))
     check("index shape is the real one", len(surface.exl3.weight_map) == 150226,
           str(len(surface.exl3.weight_map)))
@@ -316,7 +333,133 @@ try:
           noskip.shard_verification["mode"] == "skip"
           and "NOT bound" in noskip.shard_verification["verification"])
 
-    # [5] the decode is exl3hf's, verbatim ------------------------------------
+
+    # [5] pinned public profile admission ------------------------------------
+    pin_root = build_release(work / "public-k6-evidence", bits=6)
+    (pin_root / "receipts").mkdir(parents=True)
+    evidence_files = (
+        t3.ABI_FILE, t3.MATERIALIZATION_FILE, t3.QUANTIZATION_FILE,
+        "config.json", "model.safetensors.index.json",
+    )
+    fixture_identity = t3.TR3_6BPW_V1_CHECKPOINT_IDENTITY_SHA256
+    check("published K6 v1 identity constant remains pinned",
+          fixture_identity
+          == "a8668be3592493035e98a52994e0e3c43548a9757eadb79f7ae939f2f32de1c1")
+    verdict_path = "receipts/stream-k6-verdict.json"
+    verdict = {
+        "schema": "malaiwah.glm53-streaming-measurement-verdict.v1",
+        "scored_the_sealed_k6_surface": True,
+        "student_checkpoint_identity_sha256": fixture_identity,
+        "sealed_checkpoint_identity_sha256": fixture_identity,
+    }
+    (pin_root / verdict_path).write_text(
+        json.dumps(verdict, indent=2) + "\n", encoding="utf-8")
+    fixture_repo = "fixture/public-k6"
+    fixture_rev = "6" * 40
+
+    def fixture_policy():
+        return {
+            "repo": fixture_repo,
+            "revision": fixture_rev,
+            "bits": 6.0,
+            "student_label": "tr3-exl3-mcg-6bpw",
+            "verdict_path": verdict_path,
+            "checkpoint_identity_sha256": fixture_identity,
+            "raw_sha256": {
+                name: sha_file(pin_root / name)
+                for name in evidence_files + (verdict_path,)
+            },
+        }
+
+    published_policy = t3.PUBLIC_PROFILE_POLICIES["tr3-6bpw"]
+    try:
+        t3.PUBLIC_PROFILE_POLICIES["tr3-6bpw"] = fixture_policy()
+        public_surface = t3.load_tr3_surface(
+            pin_root, repo=fixture_repo, revision=fixture_rev,
+            profile="tr3-6bpw")
+        profile_evidence = public_surface.profile_evidence
+        check("public K6 exact pinned evidence is admitted",
+              profile_evidence["scored_the_sealed_surface"] is True
+              and profile_evidence["shard_verification_succeeded"] is True
+              and profile_evidence["checkpoint_identity_sha256"] == fixture_identity)
+        check("admitted public K6 surface returns its historical identity exactly",
+              public_surface.checkpoint_identity_sha256() == fixture_identity,
+              public_surface.checkpoint_identity_sha256())
+        expanded_evidence = dict(
+            profile_evidence,
+            expanded_verification_transcript={
+                "new_check": "additive disclosure outside v1 identity preimage"})
+        check("expanded verification evidence stays outside the v1 identity preimage",
+              replace(public_surface, profile_evidence=expanded_evidence)
+              .checkpoint_identity_sha256() == fixture_identity)
+        refuses("runtime public identity/evidence mismatch is refused",
+                lambda: replace(
+                    public_surface,
+                    profile_evidence=dict(
+                        profile_evidence,
+                        checkpoint_identity_sha256="2" * 64),
+                ).checkpoint_identity_sha256(),
+                "admission evidence mismatches")
+        refuses("malformed public profile evidence is refused",
+                lambda: replace(
+                    public_surface,
+                    profile_evidence={"profile": "tr3-6bpw"},
+                ).checkpoint_identity_sha256(),
+                "admission evidence mismatches")
+        refuses("public K6 wrong revision is refused",
+                lambda: t3.preflight_public_profile(
+                    "tr3-6bpw", repo=fixture_repo, revision="7" * 40),
+                "only at pinned revision")
+        refuses("public K6 wrong bitrate is refused",
+                lambda: t3.validate_public_profile_bits("tr3-6bpw", 4),
+                "requires bits=6")
+        refuses("public K6 cannot skip shard binding",
+                lambda: t3.verify_public_profile_evidence(
+                    pin_root, "tr3-6bpw", repo=fixture_repo, revision=fixture_rev,
+                    shard_verification={"mode": "skip"}),
+                "refuses --tr3-verify-shards skip")
+
+        receipt_path = pin_root / t3.MATERIALIZATION_FILE
+        receipt_bytes = receipt_path.read_bytes()
+        receipt_path.write_bytes(receipt_bytes + b" ")
+        refuses("public K6 wrong materialization receipt bytes are refused",
+                lambda: t3.verify_public_profile_evidence(
+                    pin_root, "tr3-6bpw", repo=fixture_repo, revision=fixture_rev,
+                    shard_verification=public_surface.shard_verification),
+                "pinned evidence bytes changed")
+        receipt_path.write_bytes(receipt_bytes)
+
+        verdict["student_checkpoint_identity_sha256"] = "2" * 64
+        (pin_root / verdict_path).write_text(
+            json.dumps(verdict, indent=2) + "\n", encoding="utf-8")
+        t3.PUBLIC_PROFILE_POLICIES["tr3-6bpw"] = fixture_policy()
+        refuses("public K6 wrong verdict identity is refused",
+                lambda: t3.verify_public_profile_evidence(
+                    pin_root, "tr3-6bpw", repo=fixture_repo, revision=fixture_rev,
+                    shard_verification=public_surface.shard_verification),
+                "historical verdict student identity")
+
+        verdict["student_checkpoint_identity_sha256"] = fixture_identity
+        verdict["scored_the_sealed_k6_surface"] = False
+        (pin_root / verdict_path).write_text(
+            json.dumps(verdict, indent=2) + "\n", encoding="utf-8")
+        t3.PUBLIC_PROFILE_POLICIES["tr3-6bpw"] = fixture_policy()
+        refuses("public K6 unsealed-surface verdict is refused",
+                lambda: t3.verify_public_profile_evidence(
+                    pin_root, "tr3-6bpw", repo=fixture_repo, revision=fixture_rev,
+                    shard_verification=public_surface.shard_verification),
+                "scored_the_sealed_k6_surface=true")
+    finally:
+        t3.PUBLIC_PROFILE_POLICIES["tr3-6bpw"] = published_policy
+
+    refuses("public K8 fails before spend with the evidence gap",
+            lambda: t3.preflight_public_profile(
+                "tr3-8bpw", repo=t3.K8_REFUSAL["repo"],
+                revision=t3.K8_REFUSAL["revision"]),
+            "missing_sealed_surface_measurement_bridge")
+
+
+    # [6] the decode is exl3hf's, verbatim ------------------------------------
     exl3, reader = t3.expert_source(surface)
     check("expert_source hands back the exl3hf pair",
           isinstance(reader, xs.Exl3HfShardReader) and exl3 is surface.exl3)
@@ -347,7 +490,7 @@ try:
                                          device="cpu"),
                 "marker differs")
 
-    # [6] the published scope -------------------------------------------------
+    # [7] the published scope -------------------------------------------------
     scope = t3.published_scope(surface)
     digest = t3.scope_digest(surface)
     classes = {a["tensor_class"] for a in scope["assignments"]}
@@ -358,6 +501,14 @@ try:
     check("no class is recorded as unknown", "unknown" not in digest, digest[:120])
     check("the head is native in the digest", "lm_head=native:bf16@16" in digest
           and "head=native" in digest)
+    six_scope = t3.published_scope(replace(surface, declared_bits=6.0))
+    six_quant = [row for row in six_scope["assignments"]
+                 if row["treatment"] == "quantized"]
+    four_quant = [row for row in scope["assignments"]
+                  if row["treatment"] == "quantized"]
+    check("scope bit rate follows the sealed profile without weakening 4bpw",
+          {row["bits_per_weight"] for row in six_quant} == {6.0}
+          and {row["bits_per_weight"] for row in four_quant} == {4.0})
     # The digest must equal what the registry already holds for these weights.
     # A mirror's scope that disagrees with its upstream's is refused at
     # submission with exit 7 -- on the box, at the seal stage, after both cold
@@ -419,7 +570,7 @@ try:
           t3.scope_digest(t3.load_tr3_surface(good, repo="fixture/tr3", revision=REV))
           == digest)
 
-    # [7] the materializer, on a TR3 tree ------------------------------------
+    # [8] the materializer, on a TR3 tree ------------------------------------
     # The non-routed tensors cannot serve transformers from the artifact's own
     # shards: they are interleaved with 148,608 routed payload objects, and
     # transformers derives its checkpoint key set from the shard FILES. So the
@@ -466,12 +617,17 @@ try:
     check("the materialized config drops quantization_config",
           "quantization_config" not in matcfg)
 
-    # [8] the routed census ---------------------------------------------------
+    # [9] the routed census ---------------------------------------------------
     cens = t3.routed_census(surface)
     check("executed routed surface closes",
           cens["executed_modules"] == 42 * 288 * 3, str(cens["executed_modules"]))
     check("MTP is present and named as not executed",
           cens["mtp_layer_present"] and "NEVER" in cens["mtp_note"])
+    check("non-public identity remains deterministic local hashing",
+          surface.checkpoint_identity_sha256()
+          == t3.load_tr3_surface(
+              good, repo="fixture/tr3", revision=REV)
+          .checkpoint_identity_sha256())
     check("identity binds repo, revision, seal and scope",
           len(surface.checkpoint_identity_sha256()) == 64
           and surface.checkpoint_identity_sha256()

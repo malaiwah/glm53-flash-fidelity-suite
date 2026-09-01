@@ -1,19 +1,27 @@
 # Which GPU cloud, and what a measurement actually costs on it
 
-**Snapshot: 2026-08-31 UTC. 32 measured rentals across four providers.** Prices and stock move fast; every number below is
-dated, and every number is derived from a committed benchmark receipt under
-[`reports/provider-bench/`](../reports/provider-bench/) rather than typed into
-prose. Regenerate the tables at any time:
+**Historical snapshot: 2026-08-31 UTC. 32 measured rentals across four
+providers.** Prices and stock move fast; every number below is dated and
+derived from a committed benchmark receipt under
+[`reports/provider-bench/`](../reports/provider-bench/), not typed into prose.
+The table can be regenerated offline:
 
 ```bash
 python3 bin/provider_bench_table.py reports/provider-bench
 python3 bin/provider_bench_table.py reports/provider-bench --per-rental
 ```
 
+**Safety status.** These receipts are evidence, not an executable paid recipe.
+The historical `fidelity-bench` provider paths do not implement the current
+RunPod lease, independent-reaper, campaign-budget, host-authentication and
+billing closure. Do not rerun them against a provider account. Current paid
+execution is the exact RunPod-only route in
+[`THIRD-PARTY-QUICKSTART.md`](THIRD-PARTY-QUICKSTART.md).
+
 **No affiliation.** This project has no relationship with Vast.ai, RunPod,
 Lambda or JarvisLabs beyond holding prepaid credit on each and paying retail.
-Nothing here is sponsored and no provider reviewed it. The whole survey cost
-about four dollars, and you can re-run it yourself for the same.
+Nothing here is sponsored and no provider reviewed it. The survey's historical
+spend is bound in its receipts; it is not a current price or budget promise.
 
 ---
 
@@ -24,17 +32,10 @@ wash. What decides the bill for a fidelity measurement is **dollars per
 window**, and that is `minutes/window x $/hour` — two numbers that are only
 comparable when they come from the same rental.
 
-So the instrument here is not a price scrape. `bin/fidelity-bench` rents one
-instance, measures what actually decides a measurement's wall clock, reads the
-hourly rate back off the instance that is billing, tears the box down, and
-writes a receipt. It takes under a minute on a fast provider and costs a few
-cents.
-
-```bash
-bin/fidelity-bench --provider vast   --gpu "A100 PCIE"          --json out.json
-bin/fidelity-bench --provider lambda --gpu gpu_1x_gh200         --json out.json
-bin/fidelity-bench --provider runpod --gpu "NVIDIA B200"        --json out.json
-```
+The historical instrument rented one instance, measured the inner loop, read
+the rate back from that resource, tore it down and wrote a receipt. Those
+receipts remain auditable; the old controller is no longer an admitted paid
+path.
 
 **What the streaming lane spends its time on.** Per window it walks every
 routed expert matrix, uploads it, dequantises it, does one skinny GEMM against
@@ -507,45 +508,29 @@ moment a bad machine is still cheap to walk away from.
 
 ---
 
-## So which one should a stranger pick?
+## How to read this snapshot now
 
-* **Cheapest per measurement, today: Lambda `gpu_1x_gh200` at $2.29/h.** Nothing
-  else measured comes within 2x, and it is fleet hardware at a fixed published
-  price, reproducing to 2% across three rentals. Check capacity first — Lambda's
-  is thin (this type was rentable in 47 of 66 two-minute polls), its catalogue
-  can promise a type it then refuses to launch, and its boots are slow: 165–478 s
-  to a usable box against RunPod's 28–67 s.
-* **Cheapest per measurement on PCIe: Vast, an A100 80GB PCIe around
-  $0.58/h.** Pass `--gpu` (without it, "cheapest that fits ≥63 GB" once picked a
-  CMP 170HX mining card), pass `--min-h2d-gbps`, and expect one rental in
-  several to be a dud you pay a little for and abandon.
-* **Best-behaved API and the shortest rent→run loop: RunPod**, 28–67 s to a
-  finished benchmark across twelve rentals. Pay for that in variance: even
-  secure hosts spread 2.2x, so budget for sampling rather than for one rental.
-* **Most predictable, and the only separable storage: JarvisLabs.** Its H200
-  reproduced to within 0.5% across three rentals — and measured *slower per matrix
-  than an A100 PCIe* despite Gen5 x16 and 769 TFLOP/s, because that host's cost
-  is per-transfer overhead rather than link width. At $3.99 on-demand it is the
-  dearest row in the table; at $1.99 spot it halves, and the resumable
-  filesystem is worth more than the difference on a long capture.
-* **Lambda for anything PCIe-attached** only when predictability is worth 5x —
-  and check the box has a GPU before you commit hours to it, which
-  `bin/fidelity-bench` and `measure-cloud --min-h2d-gbps` both now do.
+The rows answer one historical question: what each measured host charged for
+the benchmarked inner loop on that date. They do not answer whether capacity,
+prices, lifecycle APIs or safety closure are current. They also do not
+authorize selecting the numerically cheapest provider.
+
+Current paid support is narrower: one exact secure on-demand RunPod/SSH route.
+The controller still probes host-to-device bandwidth after setup and before the
+large fetch, but it reaches that point only after the current lifecycle,
+campaign and scientific gates pass.
 
 ---
 
-## Reproducing this
+## Reproducing the tables offline
 
 ```bash
-export VAST_KEY_FILE=~/.vast_key RUNPOD_KEY_FILE=~/.runpod_key LAMBDA_KEY_FILE=~/.lambda_key
-bin/fidelity-bench --provider <p> --gpu <card> --json reports/provider-bench/<p>-<card>-s1.json
 python3 bin/provider_bench_table.py reports/provider-bench
+python3 bin/provider_bench_table.py reports/provider-bench --per-rental
 ```
 
-Every instance is destroyed in a `finally`, including when the benchmark
-raises — a benchmark that leaks an instance has cost more than it measured.
-Take **at least two samples per card**: one rental is an anecdote.
-
-See [`CLOUD-RECIPES.md`](CLOUD-RECIPES.md) for the full measurement recipes and
-[`CLOUD-PROVIDERS.md`](CLOUD-PROVIDERS.md) for the eighteen-method contract a
-backend has to satisfy.
+Do not use the historical benchmark controller to create rentals. New provider
+receipts require a separately reviewed and drilled lifecycle closure before any
+paid reproduction. See [`CLOUD-RECIPES.md`](CLOUD-RECIPES.md) for the current
+safety boundary and [`CLOUD-PROVIDERS.md`](CLOUD-PROVIDERS.md) for admission
+requirements.

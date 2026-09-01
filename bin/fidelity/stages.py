@@ -31,15 +31,20 @@ from typing import List, Optional, Sequence
 MATERIALIZING_SURFACES = ("exl3hf", "tr3-published", "dione")
 
 QUANT_STAGES = ("setup", "fetch_target", "fetch_panel", "measure", "score", "seal")
-ROOT_STAGES = ("setup", "fetch_target", "capture", "verify")
-ROOT_RACE_STAGES = ("setup", "race_bootstrap", "race_capture", "verify")
+ROOT_STAGES = (
+    "setup", "fetch_target",
+    "capture", "verify",
+    "capture_repeat", "verify_repeat",
+    "compare_root", "qualify_root",
+)
 
 # Every stage name `stage_measure.sh` answers to.  Kept here so a caller can
 # refuse an unknown --stage locally instead of paying for a box to print
 # "unknown stage" and exit 2.
 KNOWN_STAGES = ("setup", "fetch_target", "fetch_panel", "materialize", "measure",
-                "score", "seal", "capture", "verify", "race_bootstrap",
-                "race_capture", "publish_root")
+                "score", "seal", "capture", "verify", "capture_repeat",
+                "verify_repeat", "compare_root", "qualify_root",
+                "race_bootstrap", "race_capture", "publish_root")
 
 
 def stage_sequence(role: str = "quant", *, race: bool = False,
@@ -47,30 +52,27 @@ def stage_sequence(role: str = "quant", *, race: bool = False,
                    publish_root: bool = False) -> List[str]:
     """The ordered stage list for one job.
 
-    role="root"  -- there is no candidate and no divergence: the reference IS
-                    the checkpoint, so nothing is materialized and nothing is
-                    scored.  `verify` recomputes the dataset's digest chain
-                    while the box still exists, which is the last moment a bad
-                    capture is free to throw away.
-    race=True    -- root only: the fetch stops being a stage and becomes a
-                    thread inside the capture, so `fetch_target` is replaced by
-                    `race_bootstrap` (the kilobytes that make the rest
-                    plannable) plus `race_capture`.
-    publish_root -- root only: append `publish_root`, which uploads the sealed
-                    dataset to the Hub AFTER `verify` passes and records the
-                    published revision (ROOT-1).
+    role="root"  -- two fresh processes capture the same reference into
+                    distinct roots.  Each is verified independently, then a
+                    forced self-compare and outer qualification bind the proof.
+                    Neither public manifest is relabeled as a multi-run capture.
+    race=True    -- explicitly unsupported for a paid root in the first safe
+                    SSH-driven path.  There is no recovery proof for a
+                    fetch/capture race, so this refuses before composing stages.
+    publish_root -- refused here. Publication is controller-local only after
+                    qualified results are retrieved, the paid pod is absent,
+                    and the extracted evidence verifies.
     surface      -- only consulted for role="quant"; see MATERIALIZING_SURFACES.
     """
     if role == "root":
-        stages = list(ROOT_RACE_STAGES if race else ROOT_STAGES)
+        if race:
+            raise ValueError(
+                "race/preview root capture is unsupported by the first safe paid path")
         if publish_root:
-            # ROOT-1: a sealed, twice-validated root was destroyed at teardown
-            # because nothing published it -- $6.59 of GPU time and the only
-            # copy of the evidence. When the job names a destination repo the
-            # publish is a STAGE, after `verify`, on the instance, where the
-            # dataset and the (networked-phase) token both already are.
-            stages.append("publish_root")
-        return stages
+            raise ValueError(
+                "root publication is controller-local after qualified result "
+                "retrieval and provider-confirmed teardown; no remote stage may publish")
+        return list(ROOT_STAGES)
     stages = list(QUANT_STAGES)
     if surface in MATERIALIZING_SURFACES:
         # After fetch_target, before fetch_panel: the tree it writes is what the

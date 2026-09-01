@@ -50,6 +50,7 @@ ships bash 3.2 as /bin/bash, so a modern one is located and the whole file
 SKIPs loudly if there is none, rather than passing on a shell that cannot run
 the code under test.
 """
+import hashlib
 import json
 import os
 import shutil
@@ -59,18 +60,107 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "bin"))
+from fidelity import common, jobcontract
 FAILED = []
 SKIPPED = []
 
 REV_A = "a" * 40
 REV_B = "b" * 40
 REV_C = "c" * 40
+PANEL_BINDING = {"schema": "fidelity.resolved-panel.v1", "panel_id": "panel--x.y.z"}
+PANEL_BINDING_BYTES = json.dumps(
+    PANEL_BINDING, sort_keys=True, separators=(",", ":"),
+    ensure_ascii=False, allow_nan=False).encode("utf-8")
+PANEL_BINDING_SHA = hashlib.sha256(PANEL_BINDING_BYTES).hexdigest()
+
+def execution_attempt(attempt_id="1" * 24):
+    return {"number": 1, "kind": "local-container", "attempt_id": attempt_id}
+
+
+def canonical(value):
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+SELFTEST_BUNDLE = jobcontract.finalize_bundle_manifest(
+    [{"path": "bin/stage_measure.sh", "bytes": 1, "sha256": "d" * 64}],
+    "stage-selftest")
+SELFTEST_CONTROL = jobcontract.finalize_bundle_manifest(
+    [{"path": "bin/fidelity/jobcontract.py", "bytes": 1,
+      "sha256": "e" * 64}], "stage-selftest-control")
+SELFTEST_CONTROL["schema"] = "fidelity-suite/control-plane-manifest.v1"
+SELFTEST_REGISTRY = {
+    "path": "bin/BUNDLE.txt", "bytes": 1, "sha256": "f" * 64}
+SELFTEST_BUNDLE_CONTRACT = hashlib.sha256(canonical({
+    "bundle": SELFTEST_BUNDLE, "registry": SELFTEST_REGISTRY})).hexdigest()
+SELFTEST_SHARDS = [{"path": "model-00001-of-00001.safetensors", "bytes": 17}]
+SELFTEST_ALLOWLIST_BYTES = b'["model.unused"]'
+SELFTEST_ALLOWLIST_SHA = hashlib.sha256(SELFTEST_ALLOWLIST_BYTES).hexdigest()
+SELFTEST_CONFIG_BYTES = b"{}\n"
+SELFTEST_INDEX_BYTES = canonical({
+    "weight_map": {"model.x": SELFTEST_SHARDS[0]["path"]}})
+SELFTEST_SHARD_BYTES = b"x" * 17
+SELFTEST_BF16_CONFIG_BYTES = b"{}"
+SELFTEST_BF16_INDEX_BYTES = json.dumps({
+    "weight_map": {"model.visual.x": "s-00001.safetensors"}
+}).encode("utf-8")
+
+
+def target_contract(repo, revision, surface):
+    download_manifest = [
+        {"path": "config.json", "bytes": len(SELFTEST_CONFIG_BYTES)},
+        {"path": SELFTEST_SHARDS[0]["path"],
+         "bytes": SELFTEST_SHARDS[0]["bytes"]},
+        {"path": "model.safetensors.index.json",
+         "bytes": len(SELFTEST_INDEX_BYTES)},
+    ]
+    target = {
+        "repo_id": repo,
+        "revision": revision,
+        "path": None,
+        "surface": surface,
+        "codec": "exl3-mcg" if surface == "tr3-published" else "bf16",
+        "config_sha256": hashlib.sha256(SELFTEST_CONFIG_BYTES).hexdigest(),
+        "index_sha256": hashlib.sha256(SELFTEST_INDEX_BYTES).hexdigest(),
+        "shard_manifest_sha256":
+            hashlib.sha256(canonical(SELFTEST_SHARDS)).hexdigest(),
+        "model_bytes": 17,
+        "download_manifest": download_manifest,
+        "download_bytes_total":
+            sum(row["bytes"] for row in download_manifest),
+        "download_manifest_sha256":
+            hashlib.sha256(canonical(download_manifest)).hexdigest(),
+        "bits": 6 if surface == "tr3-published" else 16,
+        "shards": SELFTEST_SHARDS,
+    }
+    if surface == "tr3-published":
+        target["official_bf16_identity"] = {
+            "config_sha256":
+                hashlib.sha256(SELFTEST_BF16_CONFIG_BYTES).hexdigest(),
+            "index_sha256":
+                hashlib.sha256(SELFTEST_BF16_INDEX_BYTES).hexdigest(),
+            "config_bytes": len(SELFTEST_BF16_CONFIG_BYTES),
+            "index_bytes": len(SELFTEST_BF16_INDEX_BYTES),
+        }
+    return target
 
 # The two provider roots.  Neither may appear in anything a stage emits when
 # the environment named somewhere else.  H1, H2 and H3 were all this.
 PROVIDER_ROOTS = ("/home/jl_fs", "/workspace/")
 
 
+
+def self_consistent_job(document):
+    job = json.loads(json.dumps(document))
+    job.pop("job_id", None)
+    job.pop("job_id_full", None)
+    digest = hashlib.sha256(canonical(
+        jobcontract.job_identity_projection(job))).hexdigest()
+    job["job_id_full"] = digest
+    job["job_id"] = digest[:16]
+    return job
 def check(label, ok, detail=""):
     print("  %s  %s" % ("PASS" if ok else "FAIL", label))
     if not ok:
@@ -128,6 +218,36 @@ exit 0
 """
 
 STUB_HF = r"""#!/usr/bin/env bash
+if [ -n "${HF_TOKEN:-}${HUGGING_FACE_HUB_TOKEN:-}${HUGGINGFACE_HUB_TOKEN:-}" ]; then
+  printf 'HF_TOKEN_ENV_LEAK\n' >> "$STAGE_ARGV_LOG"
+  exit 89
+fi
+public=0
+previous=
+for argument in "$@"; do
+  if [ "$previous" = "--repo-type" ] && [ "$argument" = "dataset" ]; then
+    public=1
+  fi
+  previous="$argument"
+done
+if [ "$public" = 1 ]; then
+  expected_home="$FIDELITY_FS_ROOT/.hf-public-panel"
+  if [ "${HF_ENDPOINT:-}" != "https://huggingface.co" ] \
+      || [ "${HF_HUB_DISABLE_IMPLICIT_TOKEN:-}" != 1 ] \
+      || [ "${HF_HOME:-}" != "$expected_home" ] \
+      || [ "${HF_HUB_CACHE:-}" != "$expected_home/hub" ] \
+      || [ "${HF_TOKEN_PATH:-}" != "$expected_home/no-token" ]; then
+    printf 'HF_PUBLIC_ENV_WRONG\t%s\t%s\t%s\t%s\t%s\n' \
+      "${HF_ENDPOINT:-UNSET}" "${HF_HUB_DISABLE_IMPLICIT_TOKEN:-UNSET}" \
+      "${HF_HOME:-UNSET}" "${HF_HUB_CACHE:-UNSET}" \
+      "${HF_TOKEN_PATH:-UNSET}" >> "$STAGE_ARGV_LOG"
+    exit 91
+  fi
+  printf 'HF_PUBLIC_ENV\tanonymous\tofficial\tisolated\n' >> "$STAGE_ARGV_LOG"
+elif [ "${HF_TOKEN_PATH:-}" != "$FIDELITY_FS_ROOT/.secrets/hf_token" ]; then
+  printf 'HF_TOKEN_PATH_WRONG\t%s\n' "${HF_TOKEN_PATH:-UNSET}" >> "$STAGE_ARGV_LOG"
+  exit 90
+fi
 printf 'HF' >> "$STAGE_ARGV_LOG"
 for a in "$@"; do printf '\t%s' "$a" >> "$STAGE_ARGV_LOG"; done
 printf '\n' >> "$STAGE_ARGV_LOG"
@@ -145,7 +265,7 @@ class Sandbox:
     """One instance-shaped filesystem, plus the stubs, plus a runner."""
 
     def __init__(self, tmp, job, *, real_scripts=(), engine_root_env=True,
-                 pipeline_root=None):
+                 pipeline_root=None, finalize_job_doc=True):
         self.tmp = Path(tmp)
         self.fs = self.tmp / "fs"
         self.engine = self.tmp / "engine"
@@ -153,9 +273,10 @@ class Sandbox:
         self.argv_log = self.tmp / "argv.log"
         self.real_scripts = list(real_scripts)
         self.engine_root_env = engine_root_env
-
-        for d in (".secrets", "receipts/done", "logs", "models/bf16", "panel",
-                  "models/target"):
+        if finalize_job_doc:
+            job = jobcontract.finalize_job(job)
+        for d in ("receipts", "logs", "models/target", "models/bf16",
+                  ".secrets"):
             (self.fs / d).mkdir(parents=True, exist_ok=True)
         (self.engine / "venv" / "bin").mkdir(parents=True, exist_ok=True)
 
@@ -180,16 +301,64 @@ class Sandbox:
         # The official metadata skeleton `setup` would otherwise fetch over the
         # network.  Present => the stage's fetch block is a no-op and this file
         # stays offline.
-        (self.fs / "models" / "bf16" / "config.json").write_text("{}")
-        (self.fs / "models" / "bf16" / "model.safetensors.index.json").write_text(
-            json.dumps({"weight_map": {"model.visual.x": "s-00001.safetensors"}}))
+        (self.fs / "models" / "target" / "config.json").write_bytes(
+            SELFTEST_CONFIG_BYTES)
+        (self.fs / "models" / "target" /
+         "model.safetensors.index.json").write_bytes(SELFTEST_INDEX_BYTES)
+        (self.fs / "models" / "target" /
+         SELFTEST_SHARDS[0]["path"]).write_bytes(SELFTEST_SHARD_BYTES)
+        (self.fs / "models" / "bf16" / "config.json").write_bytes(
+            SELFTEST_BF16_CONFIG_BYTES)
+        (self.fs / "models" / "bf16" /
+         "model.safetensors.index.json").write_bytes(
+             SELFTEST_BF16_INDEX_BYTES)
 
         (self.fs / "job.json").write_text(json.dumps(job), encoding="utf-8")
         (self.fs / ".secrets" / "hf_token").write_text("not-a-real-token")
+        (self.fs / ".secrets" / "hf_token").chmod(0o600)
+        binding_rel = (job.get("panel") or {}).get("binding_path")
+        if binding_rel == "panel-binding.json":
+            (self.fs / binding_rel).write_bytes(PANEL_BINDING_BYTES)
+        allowlist_rel = ((job.get("capture") or {}).get(
+            "unexpected_tensor_allowlist") or {}).get("path")
+        if allowlist_rel == "allowlist.json":
+            (self.fs / allowlist_rel).write_bytes(SELFTEST_ALLOWLIST_BYTES)
 
     # -- helpers ----------------------------------------------------------
     def marker(self, stage):
         return self.fs / "receipts" / "done" / ("%s.done" % stage)
+
+    def write_bound_marker(self, stage):
+        raw = (self.fs / "job.json").read_bytes()
+        job = json.loads(raw.decode("utf-8"))
+        self.marker(stage).parent.mkdir(parents=True, exist_ok=True)
+        self.marker(stage).write_text(
+            "job_id_full=%s\njob_sha256=%s\nstage=%s\n"
+            "completed_at=2026-01-02T03:04:05Z\n"
+            % (job["job_id_full"], hashlib.sha256(raw).hexdigest(), stage),
+            encoding="utf-8")
+
+    def write_target_census(self):
+        raw = (self.fs / "job.json").read_bytes()
+        job = jobcontract.parse_job_bytes(raw)
+        target = job["target"]
+        common.write_json(
+            self.fs / "receipts" / "fetch-target-census.json",
+            common.seal({
+                "schema": "fidelity.fetch-target-census.v1",
+                "verified_at": "2026-01-02T03:04:05Z",
+                "job_id_full": job["job_id_full"],
+                "job_file_sha256": hashlib.sha256(raw).hexdigest(),
+                "repository": target["repo_id"],
+                "revision": target["revision"],
+                "config_sha256": target["config_sha256"],
+                "index_sha256": target["index_sha256"],
+                "shard_manifest_sha256": target["shard_manifest_sha256"],
+                "model_bytes": target["model_bytes"],
+                "shards": target["shards"],
+                "index_shards": [row["path"] for row in target["shards"]],
+            }))
+        self.write_bound_marker("fetch_target")
 
     def env(self, **extra):
         env = dict(os.environ)
@@ -208,7 +377,10 @@ class Sandbox:
         env.update(extra)
         return env
 
-    def run(self, stage, bash, **extra):
+    def run(self, stage, bash, provision_target=True, **extra):
+        if provision_target and stage in (
+                "materialize", "measure", "capture", "capture_repeat"):
+            self.write_target_census()
         if self.argv_log.exists():
             self.argv_log.unlink()
         proc = subprocess.run(
@@ -229,19 +401,15 @@ class Sandbox:
         return roots
 
     def foreign_paths(self, calls):
-        """Absolute path arguments that no root in this environment explains."""
-        allowed = tuple(self.sandbox_roots()) + (
-            "/usr/", "/bin/", "/sbin/", "/opt/", "/Library/", "/System/",
-            "/private/", "/var/", "/tmp/", "/etc/", "/dev/", "/Applications/",
-            os.path.dirname(sys.executable) + "/")
+        roots = tuple(self.sandbox_roots())
         bad = []
-        for _, argv in calls:
-            for tok in argv:
-                if not tok.startswith("/"):
+        for _kind, argv in calls:
+            for token in argv:
+                if not token.startswith("/"):
                     continue
-                if tok.startswith(allowed):
+                if token.startswith(roots):
                     continue
-                bad.append(tok)
+                bad.append(token)
         return sorted(set(bad))
 
 
@@ -253,36 +421,156 @@ def provider_leak(text):
 
 
 def job_quant(surface="tr3-published", **over):
+    if surface == "tr3-published":
+        profile_id, source, bits = "tr3-6bpw", "tr3", 6
+    elif surface == "native-bf16":
+        profile_id, source, bits = "native-bf16", "native", 16
+    else:
+        profile_id, source, bits = "fixture-%s" % surface, "native", 16
     job = {
-        "lane": "streaming", "cold_runs": 2, "profile": "tr3-4bpw",
+        "schema": "fidelity-suite/job.v2",
+        "execution_attempt": execution_attempt(),
+        "bundle": SELFTEST_BUNDLE,
+        "control_plane": SELFTEST_CONTROL,
+        "bundle_registry": SELFTEST_REGISTRY,
+        "bundle_contract_sha256": SELFTEST_BUNDLE_CONTRACT,
+        "scope": {"kind": "stage-selftest"},
+        "timing": {
+            "kind": "stage-selftest",
+            "runtime_profile": {
+                "decode_cache": "none",
+                "decode_threads": 28,
+                "reader_threads": 28,
+            },
+        },
+        "lane": "streaming", "cold_runs": 2,
+        "profile": {
+            "profile_id": profile_id, "lane": "streaming",
+            "source": source, "surface": surface, "bits": bits,
+        },
         "reduce_order": "fp32", "role": "quant",
+        "recipe": "cloud",
+        "runtime": {
+            "decode_cache": "none",
+            "decode_threads": 28,
+            "reader_threads": 28,
+            "device": "cuda",
+            "reduce_order": "fp32",
+        },
+        "environment": {}, "measurer": {},
+        "produced_by": {
+            "dependencies": {
+                "profile": profile_id,
+                "lane": "streaming", "provider": "runpod"}},
+        "resource_requirements": {
+            "workspace_available_bytes_minimum": 1,
+            "container_available_bytes_minimum": 1,
+            "min_vcpu_count": 1, "min_memory_gb": 1,
+            "expected_vram_bytes": 1,
+        },
         "keep_student_logits": False,
         "official_bf16_revision": REV_C,
-        "panel": {"repo_id": "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits",
-                  "revision": REV_B, "roles": "final",
-                  "include": ["logits/window-*.safetensors", "*.json"]},
-        "target": {"repo_id": "malaiwah/GLM-5.3-Flash-TR3-6bpw",
-                   "revision": REV_A, "surface": surface},
+        "reference": {
+            "reference_ref": "hf://selftest/reference@" + REV_B,
+            "teacher_receipt_sha256": "4" * 64,
+            "teacher_backend_identity_sha256": "5" * 64,
+        },
+        "scoring": {
+            "schema": "fidelity-suite/kld-scoring.v1",
+            "device": "cuda", "chunk_positions": 512,
+            "compute_dtype": "float64",
+            "direction": "reference_to_candidate",
+            "vocabulary": "full",
+            "reduction": "mean_of_run_means_tokenwise_kld",
+        },
+        "panel": {
+            "repo_id": "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits",
+            "revision": REV_B, "role": "final", "roles": "final",
+            "include": ["logits/window-*.safetensors", "*.json"],
+            "panel_receipt_sha256": "6" * 64,
+            "reference_ref": "hf://selftest/reference@" + REV_B,
+            "teacher_receipt_sha256": "4" * 64,
+            "teacher_backend_identity_sha256": "5" * 64,
+        },
+        "target": target_contract(
+            "malaiwah/GLM-5.3-Flash-TR3-6bpw", REV_A, surface),
     }
     job.update(over)
-    return job
+    job.pop("job_id", None)
+    job.pop("job_id_full", None)
+    return jobcontract.finalize_job(job)
 
 
 def job_root(**over):
     job = {
-        "lane": "streaming", "cold_runs": 1, "role": "root",
-        "profile": "native-bf16", "official_bf16_revision": REV_C,
-        "panel": {"repo_id": "malaiwah/panel", "revision": REV_B},
-        "target": {"repo_id": "MiniMaxAI/MiniMax-M3", "revision": REV_A,
-                   "surface": "native-bf16"},
+        "schema": "fidelity-suite/job.v2",
+        "execution_attempt": execution_attempt(),
+        "bundle": SELFTEST_BUNDLE,
+        "control_plane": SELFTEST_CONTROL,
+        "bundle_registry": SELFTEST_REGISTRY,
+        "bundle_contract_sha256": SELFTEST_BUNDLE_CONTRACT,
+        "scope": {"kind": "stage-selftest"},
+        "timing": {"kind": "stage-selftest"},
+        "lane": "streaming", "cold_runs": 2, "role": "root",
+        "recipe": "cloud",
+        "runtime": {}, "environment": {}, "measurer": {},
+        "produced_by": {
+            "dependencies": {
+                "profile": "root-hf-transformers-bf16",
+                "lane": "streaming", "provider": "local-container"}},
+        "resource_requirements": {
+            "workspace_available_bytes_minimum": 1,
+            "container_available_bytes_minimum": 1,
+            "min_vcpu_count": 1, "min_memory_gb": 1,
+            "expected_vram_bytes": 1,
+        },
+        "profile": {
+            "profile_id": "root-hf-transformers-bf16",
+            "lane": "root", "source": "native",
+            "surface": "native-bf16", "form": "hidden",
+            "engine": "hf-transformers",
+            "compute_dtype": "bfloat16",
+            "device": "cuda",
+            "schedule": "two-fresh-process-qualification",
+        },
+        "official_bf16_revision": REV_C,
+        "panel": {"repo_id": "malaiwah/panel", "revision": REV_B,
+                  "binding_path": "panel-binding.json",
+                  "binding_file_sha256": PANEL_BINDING_SHA,
+                  "resolved_binding": PANEL_BINDING},
+        "target": target_contract(
+            "MiniMaxAI/MiniMax-M3", REV_A, "native-bf16"),
         "capture": {"form": "hidden", "schedule": "layer-outer",
+                    "engine": "hf-transformers", "dtype": "bfloat16",
+                    "device": "cuda",
                     "panel_dir": "panel-src", "panel_id": "panel--x.y.z",
                     "dataset_id": "malaiwah/ds", "dataset_name": "ds",
+                    "dataset_repository": "malaiwah/mm3-root-v1",
                     "author": "malaiwah", "race_workers": 4,
-                    "preview_of": None, "sanity_expect": "Paris"},
+                    "publish_root_to": "malaiwah/mm3-root-v1",
+                    "preview_of": None, "race": False,
+                    "replay_device": "numpy", "replay_dtype": "float32",
+                    "vocab_chunk": 8192,
+                    "replay": {
+                        "device": "numpy", "dtype": "float32",
+                        "vocab_chunk": 8192},
+                    "root_protocol": {
+                        "schedule": "two-fresh-process-qualification",
+                        "fresh_processes": 2, "run_count_per_process": 1,
+                        "exact_self_comparison": True,
+                        "qualification_required": True,
+                        "canonical_publication_required": True,
+                        "publication_mode": "canonical-public"},
+                    "unexpected_tensor_allowlist": {
+                        "path": "allowlist.json",
+                        "artifact_sha256": SELFTEST_ALLOWLIST_SHA,
+                        "canonical_sorted_names_sha256":
+                            SELFTEST_ALLOWLIST_SHA}},
     }
     job.update(over)
-    return job
+    job.pop("job_id", None)
+    job.pop("job_id_full", None)
+    return jobcontract.finalize_job(job)
 
 
 def main():
@@ -316,15 +604,31 @@ def main():
               sorted(p.name for p in (sb.engine).glob("*")))
         check("S-ROOT setup names no provider path", not provider_leak(out),
               out[-600:])
+        wrong_official = job_quant()
+        wrong_official["target"]["official_bf16_identity"][
+            "config_sha256"] = "0" * 64
+        refused_setup = Sandbox(td / "setup-wrong-official", wrong_official)
+        proc, calls = refused_setup.run("setup", bash)
+        check("setup refuses official BF16 metadata outside the sealed job",
+              proc.returncode != 0
+              and not [call for call in calls if call[0] == "BOOTSTRAP"]
+              and not refused_setup.marker("setup").exists()
+              and "differs from job identity" in proc.stderr,
+              proc.stdout + proc.stderr)
 
         # ---------------------------------------------------------------
         print("\n== fetch_target: scoped download + the artifact's own seal ==")
         sb = Sandbox(td / "ft", job_quant())
-        proc, calls = sb.run("fetch_target", bash)
+        proc, calls = sb.run(
+            "fetch_target", bash, HF_TOKEN="ambient-secret",
+            HUGGING_FACE_HUB_TOKEN="ambient-secret-two",
+            HF_TOKEN_PATH="/hostile/token")
         out = proc.stdout + proc.stderr
         hf = [c for c in calls if c[0] == "HF"]
-        check("fetch_target exits 0 and calls hf once", proc.returncode == 0
-              and len(hf) == 1, out[-900:])
+        check("fetch_target exits 0, uses file-only token path, and calls hf once",
+              proc.returncode == 0 and len(hf) == 1
+              and not [c for c in calls if c[0].startswith("HF_TOKEN_")],
+              proc.stdout + proc.stderr)
         if hf:
             argv = hf[0][1]
             check("S-ARGV the download lands under FIDELITY_FS_ROOT",
@@ -333,6 +637,14 @@ def main():
                   == str(sb.fs / "models" / "target"), argv)
             check("the pinned revision reaches hf",
                   "--revision" in argv and REV_A in argv, argv)
+            included = [
+                argv[index + 1] for index, value in enumerate(argv)
+                if value == "--include"]
+            check("target fetch names every sealed download path and no others",
+                  included == [
+                      row["path"]
+                      for row in job_quant()["target"]["download_manifest"]],
+                  included)
         seal_calls = [c for c in calls if c[0] == "PY"
                       and any("tr3_surface.py" in a for a in c[1])]
         check("a tr3 release has its published seal verified AND its scope "
@@ -340,28 +652,109 @@ def main():
               [c[1][:3] for c in calls])
         check("S-MARK fetch_target writes its marker",
               sb.marker("fetch_target").is_file())
+        census_path = sb.fs / "receipts" / "fetch-target-census.json"
+        census = json.loads(census_path.read_text()) if census_path.is_file() else {}
+        check("fetch_target writes a self-sealed exact job/target census",
+              census.get("schema") == "fidelity.fetch-target-census.v1"
+              and common.verify_seal(census)
+              and census.get("job_id_full") == job_quant()["job_id_full"]
+              and census.get("config_sha256")
+              == hashlib.sha256(SELFTEST_CONFIG_BYTES).hexdigest()
+              and census.get("shards") == SELFTEST_SHARDS,
+              census)
         check("S-ARGV no argument names a path the environment did not supply",
               not sb.foreign_paths(calls), sb.foreign_paths(calls))
         check("S-ROOT fetch_target names no provider path", not provider_leak(out),
               out[-600:])
 
         # S-CLOSED
-        sb2 = Sandbox(td / "ft2", job_quant(target={"revision": REV_A,
-                                                    "surface": "tr3-published"}))
-        proc2, _ = sb2.run("fetch_target", bash)
-        check("S-CLOSED a job with no target.repo_id is refused (exit 2)",
-              proc2.returncode == 2, proc2.stdout + proc2.stderr)
+        sb2 = Sandbox(td / "ft2", job_quant())
+        invalid = json.loads((sb2.fs / "job.json").read_text())
+        del invalid["target"]["repo_id"]
+        (sb2.fs / "job.json").write_text(json.dumps(invalid))
+        proc2, calls2 = sb2.run("fetch_target", bash)
+        check("S-CLOSED a job with no target.repo_id is refused before download",
+              proc2.returncode != 0 and not calls2,
+              proc2.stdout + proc2.stderr)
         check("S-MARK ...and no marker is left behind",
               not sb2.marker("fetch_target").is_file())
+
+        duplicate_index_raw = (
+            b'{"weight_map":{"a":"model-00001-of-00001.safetensors"},'
+            b'"weight_map":{"b":"model-00001-of-00001.safetensors"}}')
+        duplicate_index_job = job_quant()
+        duplicate_index_job["target"] = dict(
+            duplicate_index_job["target"],
+            index_sha256=hashlib.sha256(duplicate_index_raw).hexdigest())
+        duplicate_index = Sandbox(
+            td / "ft-duplicate-index",
+            jobcontract.finalize_job(duplicate_index_job))
+        (duplicate_index.fs / "models" / "target" /
+         "model.safetensors.index.json").write_bytes(duplicate_index_raw)
+        proc2, calls2 = duplicate_index.run("fetch_target", bash)
+        check("duplicate index keys refuse before the fetch marker",
+              proc2.returncode != 0
+              and not duplicate_index.marker("fetch_target").exists()
+              and "duplicate key" in (proc2.stdout + proc2.stderr),
+              proc2.stdout + proc2.stderr)
+
+        wrong_size = Sandbox(td / "ft-wrong-shard-size", job_quant())
+        (wrong_size.fs / "models" / "target" /
+         SELFTEST_SHARDS[0]["path"]).write_bytes(b"x" * 16)
+        proc2, calls2 = wrong_size.run("fetch_target", bash)
+        check("shard size/model census drift refuses before the fetch marker",
+              proc2.returncode != 0
+              and not wrong_size.marker("fetch_target").exists()
+              and "shard size differs" in (proc2.stdout + proc2.stderr),
+              proc2.stdout + proc2.stderr)
 
         # ---------------------------------------------------------------
         print("\n== fetch_panel: include-scoped, data never parsed by the shell ==")
         sb = Sandbox(td / "fp", job_quant())
-        proc, calls = sb.run("fetch_panel", bash)
+        secret = sb.fs / ".secrets" / "hf_token"
+        secret.unlink()
+        secret.mkdir()
+        proc, calls = sb.run(
+            "fetch_panel", bash, HF_TOKEN="ambient-secret",
+            HUGGING_FACE_HUB_TOKEN="ambient-secret-two",
+            HUGGINGFACE_HUB_TOKEN="ambient-secret-three",
+            HF_TOKEN_PATH="/hostile/token",
+            HF_HOME="/hostile/cache",
+            HF_ENDPOINT="https://hostile.invalid")
         out = proc.stdout + proc.stderr
         hf = [c for c in calls if c[0] == "HF"]
+        extra_index_raw = canonical({
+            "weight_map": {
+                "model.a": SELFTEST_SHARDS[0]["path"],
+                "model.b": "extra.safetensors",
+            }})
+        extra_index_job = job_quant()
+        extra_index_job["target"] = dict(
+            extra_index_job["target"],
+            index_sha256=hashlib.sha256(extra_index_raw).hexdigest())
+        extra_index = Sandbox(
+            td / "ft-extra-index",
+            jobcontract.finalize_job(extra_index_job))
+        (extra_index.fs / "models" / "target" /
+         "model.safetensors.index.json").write_bytes(extra_index_raw)
+        proc2, _ = extra_index.run("fetch_target", bash)
+        check("missing/extra index shard names refuse before the fetch marker",
+              proc2.returncode != 0
+              and not extra_index.marker("fetch_target").exists()
+              and "missing/extra indexed shards" in
+              (proc2.stdout + proc2.stderr),
+              proc2.stdout + proc2.stderr)
         check("fetch_panel exits 0 and calls hf once",
               proc.returncode == 0 and len(hf) == 1, out[-900:])
+        public_env = [c for c in calls if c[0] == "HF_PUBLIC_ENV"]
+        check("fetch_panel never loads .secrets/hf_token and emits one "
+              "anonymous official-endpoint isolated-cache command",
+              proc.returncode == 0
+              and public_env == [
+                  ("HF_PUBLIC_ENV", ["anonymous", "official", "isolated"])]
+              and not [c for c in calls if c[0].startswith(
+                  ("HF_TOKEN_", "HF_PUBLIC_ENV_WRONG"))],
+              calls)
         if hf:
             argv = hf[0][1]
             check("the panel is fetched as a DATASET repo",
@@ -438,15 +831,19 @@ def main():
               not provider_leak(out), out[-800:])
         check("S-MARK measure writes its marker", sb.marker("measure").is_file())
 
-        # ...and an explicit QP_PIPELINE_ROOT still wins.
+        # Ambient pipeline overrides are overwritten by the exact staged engine root.
         sb = Sandbox(td / "meas2", job_quant(), real_scripts=["invoke_engine.py"],
-                     pipeline_root=str(td / "meas2" / "explicit-pipe"))
-        _, calls = sb.run("measure", bash)
+                     pipeline_root=str(td / "meas2" / "hostile-pipe"))
+        _, calls = sb.run(
+            "measure", bash, BF16="/hostile/bf16",
+            TR3_BF16="/hostile/tr3", FIDELITY_ENGINE_PYTHON="/hostile/python")
         ec = [c for c in calls if c[0] == "PY"
               and any("stream_score.py" in a for a in c[1])]
-        check("an explicit QP_PIPELINE_ROOT overrides the derivation",
+        check("ambient root/interpreter overrides cannot alter paid invoker",
               ec and ec[0][1][ec[0][1].index("--pipeline-root") + 1]
-              == str(td / "meas2" / "explicit-pipe"), ec[0][1] if ec else calls)
+              == str(sb.engine / "pipeline")
+              and "/hostile" not in "\n".join(ec[0][1]),
+              ec[0][1] if ec else calls)
 
         # S-CLOSED: the stage refuses before it runs anything when the venv is
         # absent.  A bare `exit 127` used to be the only signal.
@@ -471,12 +868,20 @@ def main():
             (d / "capture-receipt.json").write_text("{}")
             (d / "logits").mkdir()
             (d / "logits" / "w.safetensors").write_bytes(b"x" * 16)
-        proc, calls = sb.run("score", bash)
+        proc, calls = sb.run("score", bash, KLD_DEVICE="cpu")
         out = proc.stdout + proc.stderr
         sc = [c for c in calls if c[0] == "PY"
               and any("kld_report" in a for a in c[1])]
         check("score runs the lane's pinned scorer once",
               proc.returncode == 0 and len(sc) == 1, out[-1200:])
+        wrapper = [c[1] for c in calls if c[0] == "PY"
+                   and any("invoke_scorer.py" in a for a in c[1])]
+        check("paid score argv leaves device/chunk solely to sealed job.json",
+              len(wrapper) == 1
+              and "--device" not in wrapper[0]
+              and "--vocab-chunk" not in wrapper[0]
+              and "--chunk-positions" not in wrapper[0],
+              wrapper)
         if sc:
             argv = sc[0][1]
             pr = argv[argv.index("--pipeline-root") + 1] \
@@ -537,25 +942,255 @@ def main():
         sb = Sandbox(td / "cap", job_root())
         (sb.fs / "panel-src").mkdir()
         proc, calls = sb.run("capture", bash)
+        capture_returncode = proc.returncode
+        capture_calls = calls
         out = proc.stdout + proc.stderr
-        cap = [c for c in calls if c[0] == "PY"
+        no_census = Sandbox(td / "cap-no-target-census", job_root())
+        (no_census.fs / "panel-src").mkdir()
+        proc, calls = no_census.run(
+            "capture", bash, provision_target=False)
+        check("capture refuses before compute without the bound target census",
+              proc.returncode != 0 and not calls
+              and "fetch_target" in (proc.stdout + proc.stderr),
+              proc.stdout + proc.stderr)
+
+        cap = [c for c in capture_calls if c[0] == "PY"
                and any("fidelity_dataset.py" in a for a in c[1])]
         check("capture runs the dataset writer once",
-              proc.returncode == 0 and len(cap) == 1, out[-1000:])
+              capture_returncode == 0 and len(cap) == 1, out[-1000:])
         if cap:
             argv = cap[0][1]
             check("S-ARGV the panel is the uploaded one, resolved under the fs root",
                   str(sb.fs / "panel-src") in argv, argv)
             check("S-ARGV the model is the LOCAL tree fetch_target wrote",
                   str(sb.fs / "models" / "target") in argv, argv)
-            check("the recorded identity stays the PUBLISHED repo, not a path "
-                  "on a machine that will not exist",
+            check("dataset destination and executed weights repositories stay distinct",
                   "--repository" in argv
-                  and argv[argv.index("--repository") + 1] == "MiniMaxAI/MiniMax-M3",
+                  and argv[argv.index("--repository") + 1] == "malaiwah/mm3-root-v1"
+                  and argv[argv.index("--weights-repository") + 1]
+                  == "MiniMaxAI/MiniMax-M3",
                   argv)
+            check("first capture has a stable cold-process label",
+                  argv[argv.index("--run-name") + 1] == "root-cold-1"
+                  and argv[argv.index("--cold-run") + 1] == "root-cold-1", argv)
+            check("capture binds the exact uploaded panel contract and tokenizer root",
+                  argv[argv.index("--panel-binding") + 1]
+                  == str(sb.fs / "panel-binding.json")
+                  and argv[argv.index("--panel-binding-sha256") + 1]
+                  == PANEL_BINDING_SHA
+                  and argv[argv.index("--panel-tokenizer-root") + 1]
+                  == str(sb.fs / "models" / "target"), argv)
         check("S-MARK capture writes its marker", sb.marker("capture").is_file())
-        check("S-ARGV no foreign path", not sb.foreign_paths(calls),
-              sb.foreign_paths(calls))
+        check("S-ARGV no foreign path", not sb.foreign_paths(capture_calls),
+              sb.foreign_paths(capture_calls))
+        unpublished = job_root()
+        unpublished_capture = dict(
+            unpublished["capture"], publish_root_to=None)
+        unpublished_capture["root_protocol"] = dict(
+            unpublished_capture["root_protocol"],
+            canonical_publication_required=False,
+            publication_mode="qualified-unpublished")
+        unpublished["capture"] = unpublished_capture
+        no_publish = Sandbox(td / "cap-qualified-unpublished", unpublished)
+        (no_publish.fs / "panel-src").mkdir()
+        proc, calls = no_publish.run("capture", bash)
+        capture_calls = [c[1] for c in calls if c[0] == "PY"
+                         and any("fidelity_dataset.py" in a for a in c[1])]
+        argv = capture_calls[0] if capture_calls else []
+        check("capture allows a qualified-unpublished intended dataset identity",
+              proc.returncode == 0 and argv
+              and argv[argv.index("--repository") + 1]
+              == "malaiwah/mm3-root-v1",
+              proc.stdout + proc.stderr)
+        missing_binding = job_root()
+        missing_binding["panel"] = dict(
+            missing_binding["panel"], binding_path="absent-panel-binding.json")
+        bad = Sandbox(td / "cap-missing-binding", missing_binding)
+        (bad.fs / "panel-src").mkdir()
+        proc, calls = bad.run("capture", bash)
+        check("missing panel binding refuses before capture",
+              proc.returncode != 0 and not calls and "panel binding file is absent" in
+              (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        mismatched_binding = job_root()
+        mismatched_binding["panel"] = dict(
+            mismatched_binding["panel"], binding_file_sha256="0" * 64)
+        bad = Sandbox(td / "cap-binding-mismatch", mismatched_binding)
+        (bad.fs / "panel-src").mkdir()
+        proc, calls = bad.run("capture", bash)
+        check("panel binding raw-hash mismatch refuses before capture",
+              proc.returncode != 0 and not calls and "binding_file_sha256 mismatch" in
+              (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        legacy = job_root()
+        legacy["capture"] = dict(legacy["capture"], allow_unexpected_tensors=False)
+        bad = Sandbox(td / "cap-legacy-unexpected", legacy)
+        (bad.fs / "panel-src").mkdir()
+        proc, calls = bad.run("capture", bash)
+        check("even a false legacy broad unexpected-tensor boolean refuses",
+              proc.returncode != 0 and not calls and "obsolete" in
+              (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        partial = job_root()
+        partial["capture"] = dict(
+            partial["capture"],
+            unexpected_tensor_allowlist={"path": "allowlist.json"})
+        partial = self_consistent_job(partial)
+        bad = Sandbox(
+            td / "cap-partial-allowlist", partial,
+            finalize_job_doc=False)
+        (bad.fs / "panel-src").mkdir()
+        (bad.fs / "allowlist.json").write_text('["model.unused"]')
+        proc, calls = bad.run("capture", bash)
+        check("partial exact unexpected-tensor allowlist refuses in job validation",
+              proc.returncode != 0 and not calls
+              and "root capture contract is incomplete" in
+              (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        allowlist_raw = b'["model.unused"]'
+        allowlist_names_sha = hashlib.sha256(allowlist_raw).hexdigest()
+        mismatched = job_root()
+        mismatched["capture"] = dict(
+            mismatched["capture"],
+            unexpected_tensor_allowlist={
+                "path": "allowlist.json", "artifact_sha256": "0" * 64,
+                "canonical_sorted_names_sha256": allowlist_names_sha})
+        bad = Sandbox(td / "cap-allowlist-mismatch", mismatched)
+        (bad.fs / "panel-src").mkdir()
+        (bad.fs / "allowlist.json").write_bytes(allowlist_raw)
+        proc, calls = bad.run("capture", bash)
+        check("unexpected-tensor allowlist raw-hash mismatch refuses",
+              proc.returncode != 0 and not calls and "raw SHA-256 mismatch" in
+              (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        exact = job_root()
+        allowlist_sha = hashlib.sha256(allowlist_raw).hexdigest()
+        exact["capture"] = dict(
+            exact["capture"],
+            unexpected_tensor_allowlist={
+                "path": "allowlist.json", "artifact_sha256": allowlist_sha,
+                "canonical_sorted_names_sha256": allowlist_names_sha})
+        allowed = Sandbox(td / "cap-exact-allowlist", exact)
+        (allowed.fs / "panel-src").mkdir()
+        (allowed.fs / "allowlist.json").write_bytes(allowlist_raw)
+        proc, calls = allowed.run("capture", bash)
+        exact_calls = [c[1] for c in calls if c[0] == "PY"
+                       and any("fidelity_dataset.py" in a for a in c[1])]
+        argv = exact_calls[0] if exact_calls else []
+        check("complete, correctly hashed allowlist passes all exact flags",
+              proc.returncode == 0 and argv
+              and argv[argv.index("--unexpected-tensors-allowlist") + 1]
+              == str(allowed.fs / "allowlist.json")
+              and argv[argv.index("--unexpected-tensors-allowlist-sha256") + 1]
+              == allowlist_sha
+              and argv[argv.index("--unexpected-tensors-name-sha256") + 1]
+              == allowlist_names_sha,
+              argv)
+
+        for case_name, raw, refusal in (
+                ("empty", b"[]", "non-empty"),
+                ("duplicate", b'["model.unused","model.unused"]', "duplicate")):
+            names = json.loads(raw.decode("utf-8"))
+            canonical_names = json.dumps(
+                sorted(names), separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False).encode("utf-8")
+            guarded = job_root()
+            guarded["capture"] = dict(
+                guarded["capture"],
+                unexpected_tensor_allowlist={
+                    "path": "allowlist.json",
+                    "artifact_sha256": hashlib.sha256(raw).hexdigest(),
+                    "canonical_sorted_names_sha256":
+                        hashlib.sha256(canonical_names).hexdigest()})
+            bad = Sandbox(td / ("cap-allowlist-" + case_name), guarded)
+            (bad.fs / "panel-src").mkdir()
+            (bad.fs / "allowlist.json").write_bytes(raw)
+            proc, calls = bad.run("capture", bash)
+            check("%s unexpected-tensor allowlist refuses" % case_name,
+                  proc.returncode != 0 and not calls and refusal in
+                  (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        escaped_panel = job_root()
+        escaped_panel["capture"] = dict(
+            escaped_panel["capture"], panel_dir="../outside-panel")
+        bad = Sandbox(td / "cap-panel-traversal", escaped_panel)
+        proc, calls = bad.run("capture", bash)
+        check("capture.panel_dir traversal refuses before capture",
+              proc.returncode != 0 and not calls and "canonical relative path" in
+              (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        symlink_panel = job_root()
+        symlink_panel["capture"] = dict(
+            symlink_panel["capture"], panel_dir="panel-link")
+        bad = Sandbox(td / "cap-panel-symlink", symlink_panel)
+        outside_panel = bad.tmp / "outside-panel"
+        outside_panel.mkdir()
+        (bad.fs / "panel-link").symlink_to(outside_panel, target_is_directory=True)
+        proc, calls = bad.run("capture", bash)
+        check("capture.panel_dir symlink escape refuses before capture",
+              proc.returncode != 0 and not calls and "may not traverse a symlink" in
+              (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        for case_name, bad_path in (
+                ("dot", "./panel-src"),
+                ("double-slash", "panel//src"),
+                ("backslash", "panel\\src")):
+            noncanonical = job_root()
+            noncanonical["capture"] = dict(
+                noncanonical["capture"], panel_dir=bad_path)
+            bad = Sandbox(td / ("cap-panel-" + case_name), noncanonical)
+            proc, calls = bad.run("capture", bash)
+            check("capture.panel_dir %s normalization refuses" % case_name,
+                  proc.returncode != 0 and not calls and "canonical relative" in
+                  (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        for case_name, bad_path in (
+                ("dot", "./panel-binding.json"),
+                ("double-slash", "panel//binding.json"),
+                ("backslash", "panel\\binding.json")):
+            noncanonical = job_root()
+            noncanonical["panel"] = dict(
+                noncanonical["panel"], binding_path=bad_path)
+            bad = Sandbox(td / ("cap-binding-" + case_name), noncanonical)
+            (bad.fs / "panel-src").mkdir()
+            proc, calls = bad.run("capture", bash)
+            check("panel.binding_path %s normalization refuses" % case_name,
+                  proc.returncode != 0 and not calls and "canonical relative" in
+                  (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        duplicate_binding_raw = (
+            b'{"schema":"fidelity.resolved-panel.v1",'
+            b'"schema":"fidelity.resolved-panel.v1","panel_id":"panel--x.y.z"}')
+        duplicate_binding = job_root()
+        duplicate_binding["panel"] = dict(
+            duplicate_binding["panel"],
+            binding_file_sha256=hashlib.sha256(
+                duplicate_binding_raw).hexdigest())
+        bad = Sandbox(td / "cap-binding-duplicate-json", duplicate_binding)
+        (bad.fs / "panel-src").mkdir()
+        (bad.fs / "panel-binding.json").write_bytes(duplicate_binding_raw)
+        proc, calls = bad.run("capture", bash)
+        check("duplicate keys in the bound panel JSON refuse before capture",
+              proc.returncode != 0 and not calls and "duplicate key" in
+              (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+        for case_name, bad_path in (
+                ("dot", "./allowlist.json"),
+                ("double-slash", "tensor//allowlist.json"),
+                ("backslash", "tensor\\allowlist.json")):
+            noncanonical = job_root()
+            allowlist = dict(
+                noncanonical["capture"]["unexpected_tensor_allowlist"],
+                path=bad_path)
+            noncanonical["capture"] = dict(
+                noncanonical["capture"],
+                unexpected_tensor_allowlist=allowlist)
+            bad = Sandbox(td / ("cap-allowlist-path-" + case_name), noncanonical)
+            (bad.fs / "panel-src").mkdir()
+            proc, calls = bad.run("capture", bash)
+            check("allowlist %s path normalization refuses" % case_name,
+                  proc.returncode != 0 and not calls and "canonical relative" in
+                  (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
 
         # H4: a JSON null must read as ABSENT.
         j = job_root()
@@ -587,77 +1222,77 @@ def main():
               (proc.stdout + proc.stderr)[-400:])
 
         sb = Sandbox(td / "ver", job_root())
-        (sb.fs / "dataset").mkdir()
+        (sb.fs / "panel-src").mkdir()
+        sb.run("capture", bash)
         proc, calls = sb.run("verify", bash)
         ver = [c for c in calls if c[0] == "PY"
                and any("fidelity_dataset.py" in a for a in c[1])]
-        check("verify recomputes the seal AND describes the dataset, before "
-              "the box is destroyed",
+        check("verify recomputes the first seal, writes its receipt, and describes",
               proc.returncode == 0 and len(ver) == 2
-              and "verify" in ver[0][1] and "describe" in ver[1][1], calls)
+              and "verify" in ver[0][1] and "describe" in ver[1][1]
+              and str(sb.fs / "receipts" / "dataset-verify.json") in ver[0][1],
+              calls)
         check("S-MARK verify writes its marker", sb.marker("verify").is_file())
 
+        proc, calls = sb.run("capture_repeat", bash)
+        repeat = [c for c in calls if c[0] == "PY"
+                  and any("fidelity_dataset.py" in a for a in c[1])]
+        repeat_argv = repeat[0][1] if repeat else []
+        check("second root capture invokes a fresh process into a distinct tree",
+              proc.returncode == 0 and len(repeat) == 1
+              and str(sb.fs / "dataset-repeat") in repeat_argv
+              and repeat_argv[repeat_argv.index("--run-name") + 1] == "root-cold-2"
+              and repeat_argv[repeat_argv.index("--cold-run") + 1] == "root-cold-2",
+              repeat_argv)
+        sb.write_bound_marker("verify_repeat")
+        proc, calls = sb.run("compare_root", bash)
+        compare_calls = [c for c in calls if c[0] == "PY"
+                         and any("fidelity_dataset.py" in a for a in c[1])]
+        compare_argv = compare_calls[0][1] if compare_calls else []
+        check("root comparison is forced and binds the job's explicit replay profile",
+              proc.returncode == 0 and len(compare_calls) == 1
+              and "--self-compare" in compare_argv
+              and "--force-compute" in compare_argv
+              and compare_argv[compare_argv.index("--replay-device") + 1] == "numpy"
+              and compare_argv[compare_argv.index("--replay-dtype") + 1] == "float32"
+              and compare_argv[compare_argv.index("--vocab-chunk") + 1] == "8192",
+              compare_argv)
+
+        no_backend = job_root()
+        del no_backend["capture"]["replay_device"]
+        no_backend = self_consistent_job(no_backend)
+        bad = Sandbox(
+            td / "compare-no-backend", no_backend,
+            finalize_job_doc=False)
+        (bad.fs / "dataset").mkdir()
+        for stage in ("verify", "verify_repeat"):
+            bad.write_bound_marker(stage)
+        proc, calls = bad.run("compare_root", bash)
+        check("root compare refuses a missing explicit replay backend",
+              proc.returncode != 0 and not calls
+              and "root capture contract is incomplete" in
+              (proc.stdout + proc.stderr), proc.stdout + proc.stderr)
+
+
         # ---------------------------------------------------------------
-        print("\n== race mode (--role root --race) ==")
-        sb = Sandbox(td / "rb", job_root())
-        proc, calls = sb.run("race_bootstrap", bash)
-        check("S-CLOSED race_bootstrap refuses when the fetch produced no "
-              "weight_map: without it there is no fetch ORDER, only a download",
-              proc.returncode == 3
-              and "map from" in (proc.stdout + proc.stderr),
-              (proc.stdout + proc.stderr)[-500:])
-        check("S-MARK ...and leaves no marker",
-              not sb.marker("race_bootstrap").is_file())
+        print("\n== unsupported preview/race paid roots ==")
+        for stage in ("race_bootstrap", "race_capture"):
+            bad = Sandbox(td / ("unsupported-" + stage), job_root())
+            proc, calls = bad.run(stage, bash)
+            check("%s explicitly refuses before any command" % stage,
+                  proc.returncode == 3 and not calls
+                  and "unsupported" in (proc.stdout + proc.stderr),
+                  proc.stdout + proc.stderr)
+        preview_job = job_root()
+        preview_job["capture"] = dict(preview_job["capture"], preview_of="final-root")
+        bad = Sandbox(td / "unsupported-preview", preview_job)
+        (bad.fs / "panel-src").mkdir()
+        proc, calls = bad.run("capture", bash)
+        check("preview capture refuses before the first paid capture process",
+              proc.returncode == 3 and not calls
+              and "preview/race" in (proc.stdout + proc.stderr),
+              proc.stdout + proc.stderr)
 
-        sb = Sandbox(td / "rb2", job_root())
-        (sb.fs / "models" / "target" / "model.safetensors.index.json").write_text(
-            json.dumps({"weight_map": {"a": "s1", "b": "s2"}}))
-        proc, calls = sb.run("race_bootstrap", bash)
-        out = proc.stdout + proc.stderr
-        check("race_bootstrap succeeds once the index is there, and reports "
-              "the shard count it will order by",
-              proc.returncode == 0 and "2 tensors over 2 shards" in out,
-              out[-600:])
-        check("S-MARK race_bootstrap writes its marker",
-              sb.marker("race_bootstrap").is_file())
-        hf = [c for c in calls if c[0] == "HF"]
-        check("race_bootstrap fetches NO shard (--include per name only)",
-              hf and not any(a.endswith(".safetensors") for a in hf[0][1]),
-              hf[0][1] if hf else calls)
-
-        sb = Sandbox(td / "rc", job_root())
-        (sb.fs / "panel-src").mkdir()
-        proc, calls = sb.run("race_capture", bash)
-        out = proc.stdout + proc.stderr
-        cap = [c for c in calls if c[0] == "PY"
-               and any("fidelity_dataset.py" in a for a in c[1])]
-        check("race_capture runs the fused fetch+capture once",
-              proc.returncode == 0 and len(cap) == 1, out[-1000:])
-        if cap:
-            argv = cap[0][1]
-            check("H4 a null capture.preview_of drops the flag entirely -- it "
-                  "does not become `--preview-of None`",
-                  "--preview-of" not in argv and "None" not in argv, argv)
-            check("the race report is written under the receipts tree",
-                  str(sb.fs / "receipts" / "race-fetch-report.json") in argv, argv)
-            check("race mode streams layers rather than resident-loading them",
-                  "--layer-residency" in argv
-                  and argv[argv.index("--layer-residency") + 1] == "stream", argv)
-        check("S-ARGV no foreign path", not sb.foreign_paths(calls),
-              sb.foreign_paths(calls))
-        check("S-MARK race_capture writes its marker",
-              sb.marker("race_capture").is_file())
-
-        j = job_root()
-        j["capture"] = dict(j["capture"], schedule="window-outer")
-        sb = Sandbox(td / "rc2", j)
-        (sb.fs / "panel-src").mkdir()
-        proc, _ = sb.run("race_capture", bash)
-        check("S-CLOSED race mode refuses a window-outer schedule (it would "
-              "read the tree once per window)",
-              proc.returncode == 2
-              and "layer-outer" in (proc.stdout + proc.stderr),
-              (proc.stdout + proc.stderr)[-400:])
 
         # ---------------------------------------------------------------
         print("\n== cross-cutting ==")
@@ -667,8 +1302,9 @@ def main():
               "stage this file implements", proc.returncode == 2
               and all(s in proc.stderr for s in
                       ("setup", "fetch_target", "fetch_panel", "measure",
-                       "score", "seal", "capture", "verify",
-                       "race_bootstrap", "race_capture")),
+                       "score", "seal", "capture", "verify", "capture_repeat",
+                       "verify_repeat", "compare_root", "qualify_root",
+                       "publish_root", "race_bootstrap", "race_capture")),
               proc.stderr)
 
         # Every stage in that usage line must actually be reachable, or the
@@ -677,90 +1313,219 @@ def main():
         unknown = []
         for stage in ("setup", "fetch_target", "fetch_panel", "materialize",
                       "measure", "score", "seal", "capture", "verify",
-                      "race_bootstrap", "race_capture"):
+                      "capture_repeat", "verify_repeat", "compare_root",
+                      "qualify_root", "publish_root", "race_bootstrap", "race_capture"):
             p, _ = Sandbox(td / ("xy-" + stage), job_quant()).run(stage, bash)
             if "unknown stage" in p.stderr:
                 unknown.append(stage)
         check("every stage the controller can ask for is implemented",
               not unknown, unknown)
 
-        # A finished stage is a no-op: this is what makes a spot preemption
-        # cost one stage instead of the whole run.
+        # A valid marker for the exact uploaded job attempt is the sole resume
+        # shape.  Legacy/unbound/torn markers are never adopted.
         sb = Sandbox(td / "resume", job_quant())
-        sb.marker("fetch_panel").parent.mkdir(parents=True, exist_ok=True)
-        sb.marker("fetch_panel").write_text("")
+        sb.write_bound_marker("fetch_panel")
         proc, calls = sb.run("fetch_panel", bash)
-        check("a stage whose marker exists is skipped without re-running it",
+        check("an exact job+attempt-bound marker skips without re-running",
               proc.returncode == 0 and not calls
               and "already done" in proc.stdout, proc.stdout)
 
-        # ---------------------------------------------------------------
-        # P1-12 / P1-13: a marker is bound to the JOB, not just to the stage.
-        # A bare marker in a reused run root silently returned model A's
-        # receipts for model B; a cloud resume relabeled old outputs with a
-        # newly resolved revision.  The stage runner now refuses a marker
-        # whose job_id_full differs, and only skips on a MATCH.
-        print("\n== markers bind to the job identity (P1-12/P1-13) ==")
-        FULL_A = "a1" * 32
-        FULL_B = "b2" * 32
-
-        # M1: marker written by THIS job -> skip.
-        sb = Sandbox(td / "bind1", job_quant(job_id_full=FULL_A))
-        proc, calls = sb.run("fetch_panel", bash)   # writes a bound marker
+        print("\n== markers bind the full job file and execution attempt ==")
+        job_a = job_quant(execution_attempt=execution_attempt("a" * 24))
+        full_a = job_a["job_id_full"]
+        sb = Sandbox(td / "bind1", job_a)
+        proc, calls = sb.run("fetch_panel", bash)
         bound = sb.marker("fetch_panel").read_text()
-        check("M1 a completed stage writes a job-bound marker",
+        check("M1 a completed stage atomically writes all four bound fields",
               proc.returncode == 0
-              and ("job_id_full=%s" % FULL_A) in bound
-              and "job_sha256=" in bound, bound)
+              and ("job_id_full=%s" % full_a) in bound
+              and "job_sha256=" in bound
+              and "stage=fetch_panel" in bound
+              and "completed_at=" in bound, bound)
         proc, calls = sb.run("fetch_panel", bash)
-        check("M1b the SAME job skips on its own marker",
+        check("M1b the identical job attempt skips on its own marker",
               proc.returncode == 0 and not calls
               and "already done" in proc.stdout, proc.stdout)
 
-        # M2: marker from ANOTHER job -> refusal, exit 7, nothing runs.
-        (sb.fs / "job.json").write_text(
-            json.dumps(job_quant(job_id_full=FULL_B)), encoding="utf-8")
+        job_b = job_quant("gguf", execution_attempt=execution_attempt("b" * 24))
+        (sb.fs / "job.json").write_text(json.dumps(job_b), encoding="utf-8")
         proc, calls = sb.run("fetch_panel", bash)
-        check("M2 a marker bound to a DIFFERENT job REFUSES (exit 7), "
-              "nothing re-runs",
+        check("M2 a different scientific job refuses the stale marker",
               proc.returncode == 7 and not calls
-              and "REFUSING marker" in proc.stderr,
+              and "invalid/stale marker" in proc.stderr,
               "rc=%s\n%s" % (proc.returncode, proc.stderr))
 
-        # M3: a legacy EMPTY marker under a job that carries an identity is
-        # exactly the container-reuse shape: refuse, do not skip.
-        sb = Sandbox(td / "bind3", job_quant(job_id_full=FULL_A))
-        sb.marker("fetch_panel").parent.mkdir(parents=True, exist_ok=True)
-        sb.marker("fetch_panel").write_text("")
+        # execution_attempt is intentionally excluded from job_id_full.  The
+        # raw job-file binding must still prevent recovery/adoption.
+        attempt_b = jobcontract.finalize_job(
+            dict(job_a, execution_attempt=execution_attempt("b" * 24)))
+        check("M3 test setup preserves scientific id across attempts",
+              attempt_b["job_id_full"] == full_a)
+        (sb.fs / "job.json").write_text(
+            json.dumps(attempt_b), encoding="utf-8")
         proc, calls = sb.run("fetch_panel", bash)
-        check("M3 an unbound legacy marker under an identified job refuses",
-              proc.returncode == 7 and not calls,
+        check("M3 same science but a different attempt refuses old outputs",
+              proc.returncode == 7 and not calls
+              and "job_sha256 mismatch" in proc.stderr,
               "rc=%s\n%s" % (proc.returncode, proc.stderr))
-        # ... and the documented operator override adopts it.
-        proc, calls = sb.run("fetch_panel", bash, FIDELITY_ADOPT_MARKERS="1")
-        check("M3b FIDELITY_ADOPT_MARKERS=1 is the deliberate override",
-              proc.returncode == 0 and not calls
-              and "already done" in proc.stdout, proc.stdout)
 
-        # M4: a job document WITHOUT an identity keeps the legacy behavior
-        # (the live campaign's job.json predates the binding).
-        sb = Sandbox(td / "bind4", job_quant())
-        sb.marker("fetch_panel").parent.mkdir(parents=True, exist_ok=True)
-        sb.marker("fetch_panel").write_text("")
-        proc, calls = sb.run("fetch_panel", bash)
-        check("M4 a legacy job document still skips on a bare marker",
-              proc.returncode == 0 and not calls, proc.stderr)
+        torn = Sandbox(td / "bind-torn", job_quant())
+        torn.marker("fetch_panel").parent.mkdir(parents=True, exist_ok=True)
+        torn.marker("fetch_panel").write_text(
+            "job_id_full=%s\n" % job_quant()["job_id_full"])
+        proc, calls = torn.run(
+            "fetch_panel", bash, FIDELITY_ADOPT_MARKERS="1")
+        check("M4 a torn first-line-only marker refuses without an adoption escape",
+              proc.returncode == 7 and not calls
+              and "torn/legacy" in proc.stderr,
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
 
+        tampered = Sandbox(td / "job-tamper", job_quant())
+        bad_job = json.loads((tampered.fs / "job.json").read_text())
+        bad_job["target"]["revision"] = REV_B
+        (tampered.fs / "job.json").write_text(json.dumps(bad_job))
+        proc, calls = tampered.run("fetch_panel", bash)
+        check("job self-identity is verified before any stage action",
+              proc.returncode != 0 and not calls
+              and "self-identity REFUSED" in proc.stderr
+              and not tampered.marker("fetch_panel").exists(),
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+
+        duplicate = Sandbox(td / "job-duplicate-key", job_quant())
+        original = (duplicate.fs / "job.json").read_text(encoding="utf-8")
+        (duplicate.fs / "job.json").write_text(
+            '{"role":"root",' + original[1:], encoding="utf-8")
+        for rel in ("receipts", "logs", "models", "panel", ".secrets"):
+            shutil.rmtree(duplicate.fs / rel, ignore_errors=True)
+        proc, calls = duplicate.run("fetch_panel", bash)
+        check("duplicate job keys refuse before mkdir or any stage action",
+              proc.returncode != 0 and not calls
+              and "duplicate key" in proc.stderr
+              and not (duplicate.fs / "receipts").exists()
+              and not (duplicate.fs / "logs").exists(),
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+
+
+        incomplete_execution = job_quant()
+        incomplete_execution["execution_attempt"] = {
+            "kind": "runpod-ssh",
+            "attempt_id": None, "cost_quote": None, "engine_root": None,
+            "execution_contract_sha256": None, "lease_path": None,
+            "planned_at": None, "pre_create_safety": None,
+            "remote_root": None, "provider_terminate_after": None,
+            "workload_deadline_utc": None,
+        }
+        incomplete_execution["execution_attempt"]["execution_contract_sha256"] = (
+            jobcontract.execution_contract_sha256(incomplete_execution))
+        incomplete_execution = self_consistent_job(incomplete_execution)
+        incomplete = Sandbox(
+            td / "job-incomplete-execution", incomplete_execution,
+            finalize_job_doc=False)
+        for rel in ("receipts", "logs", "models"):
+            shutil.rmtree(incomplete.fs / rel)
+        proc, calls = incomplete.run("fetch_panel", bash)
+        check("incomplete execution contract refuses before mkdir or stage action",
+              proc.returncode != 0 and not calls
+              and "runpod-ssh execution_attempt fields differ" in proc.stderr
+              and not (incomplete.fs / "receipts").exists()
+              and not (incomplete.fs / "logs").exists(),
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+
+        unknown_profile = job_quant()
+        unknown_profile["profile"]["ambient_override"] = "forbidden"
+        unknown_profile = self_consistent_job(unknown_profile)
+        malformed = Sandbox(
+            td / "job-unknown-profile", unknown_profile,
+            finalize_job_doc=False)
+        for rel in ("receipts", "logs", "models"):
+            shutil.rmtree(malformed.fs / rel)
+        proc, calls = malformed.run("fetch_panel", bash)
+        check("unknown profile field refuses before mkdir or stage action",
+              proc.returncode != 0 and not calls
+              and "profile contract is incomplete" in proc.stderr
+              and not (malformed.fs / "receipts").exists()
+              and not (malformed.fs / "logs").exists(),
+              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+
+        bad_token_mode = Sandbox(td / "token-mode", job_quant())
+        (bad_token_mode.fs / ".secrets" / "hf_token").chmod(0o644)
+        proc, calls = bad_token_mode.run("fetch_target", bash)
+        check("fetch refuses non-0600 token file before any Hub command",
+              proc.returncode != 0 and not calls
+              and "mode must be exactly 0600" in proc.stderr,
+              proc.stdout + proc.stderr)
+
+        token_symlink = Sandbox(td / "token-symlink", job_quant())
+        token_path = token_symlink.fs / ".secrets" / "hf_token"
+        outside_token = token_symlink.tmp / "outside-token"
+        outside_token.write_text("secret")
+        outside_token.chmod(0o600)
+        token_path.unlink()
+        token_path.symlink_to(outside_token)
+        proc, calls = token_symlink.run("fetch_target", bash)
+        check("fetch refuses symlinked token file before any Hub command",
+              proc.returncode != 0 and not calls
+              and "HF token file REFUSED" in proc.stderr,
+              proc.stdout + proc.stderr)
+
+        replay_mutations = (
+            ("missing replay", lambda capture: capture.pop("replay")),
+            ("mismatched replay chunk",
+             lambda capture: capture["replay"].update(vocab_chunk=4096)),
+            ("unexpected replay field",
+             lambda capture: capture["replay"].update(ambient=True)),
+        )
+        for index, (label, mutate) in enumerate(replay_mutations):
+            replay_job = job_root()
+            mutate(replay_job["capture"])
+            replay_job = self_consistent_job(replay_job)
+            replay_box = Sandbox(
+                td / ("replay-contract-%d" % index), replay_job,
+                finalize_job_doc=False)
+            for rel in ("receipts", "logs", "models"):
+                shutil.rmtree(replay_box.fs / rel)
+            proc, calls = replay_box.run("fetch_panel", bash)
+            check("%s refuses before mkdir or stage action" % label,
+                  proc.returncode != 0 and not calls
+                  and "root capture contract is incomplete" in proc.stderr
+                  and not (replay_box.fs / "receipts").exists(),
+                  proc.stdout + proc.stderr)
+
+        provenance_mutations = (
+            ("missing producer profile",
+             lambda deps: deps.pop("profile")),
+            ("mismatched producer profile",
+             lambda deps: deps.update(profile="some-other-profile")),
+            ("mismatched producer lane",
+             lambda deps: deps.update(lane="other-lane")),
+            ("mismatched producer provider",
+             lambda deps: deps.update(provider="other-provider")),
+        )
+        for index, (label, mutate) in enumerate(provenance_mutations):
+            provenance_job = job_root()
+            mutate(provenance_job["produced_by"]["dependencies"])
+            provenance_job = self_consistent_job(provenance_job)
+            provenance_box = Sandbox(
+                td / ("producer-contract-%d" % index), provenance_job,
+                finalize_job_doc=False)
+            for rel in ("receipts", "logs", "models"):
+                shutil.rmtree(provenance_box.fs / rel)
+            proc, calls = provenance_box.run("fetch_panel", bash)
+            check("%s refuses before mkdir or stage action" % label,
+                  proc.returncode != 0 and not calls
+                  and "producing-code" in proc.stderr
+                  and not (provenance_box.fs / "receipts").exists(),
+                  proc.stdout + proc.stderr)
         # ---------------------------------------------------------------
         # P1-14: the atomic per-stage lock.  An unknown liveness probe must
         # never authorize a second writer; the lock is the on-box guarantee.
         print("\n== the per-stage lock refuses a second writer (P1-14) ==")
-        sb = Sandbox(td / "lock1", job_quant(job_id_full=FULL_A))
+        sb = Sandbox(td / "lock1", job_a)
         lock = sb.fs / "receipts" / "locks" / "fetch_panel.lock"
         lock.mkdir(parents=True)
         (lock / "owner").write_text(
             "job_id_full=%s\npid=%d\nhost=x\nstarted=t\n"
-            % (FULL_A, os.getpid()))    # a LIVE pid: this process
+            % (full_a, os.getpid()))    # a LIVE pid: this process
         proc, calls = sb.run("fetch_panel", bash)
         check("L1 a lock held by a LIVE process refuses (exit 8), nothing runs",
               proc.returncode == 8 and not calls
@@ -769,7 +1534,7 @@ def main():
 
         # L2: a lock whose owner is dead is stale -> taken over, stage runs.
         (lock / "owner").write_text(
-            "job_id_full=%s\npid=99999999\nhost=x\nstarted=t\n" % FULL_A)
+            "job_id_full=%s\npid=99999999\nhost=x\nstarted=t\n" % full_a)
         proc, calls = sb.run("fetch_panel", bash)
         check("L2 a stale lock (dead owner) is taken over and the stage runs",
               proc.returncode == 0 and len(calls) >= 1
@@ -779,86 +1544,47 @@ def main():
               not lock.exists())
 
         # ---------------------------------------------------------------
-        # ROOT-1: the publish_root stage. A sealed, twice-validated root was
-        # destroyed at teardown because nothing published it; when job.json
-        # names capture.publish_root_to the sealed dataset is uploaded from
-        # the box -- but only AFTER verify passed there.
-        print("\n== publish_root: only after verify, correct argv (ROOT-1) ==")
-
-        def job_pub():
-            job = job_root()
-            job["capture"]["publish_root_to"] = "malaiwah/mm3-root-v1"
-            job["job_id"] = "ab12cd34"
-            return job
-
-        # PR1: verify has not passed -> refusal, nothing runs, no marker.
-        sb = Sandbox(td / "pub1", job_pub())
+        print("\n== publish_root: controller-local only, never on the pod ==")
+        sb = Sandbox(td / "pub-qualified", job_root())
         (sb.fs / "dataset").mkdir()
-        proc, calls = sb.run("publish_root", bash)
-        check("PR1 publish_root REFUSES before verify passed (exit 3, "
-              "no upload attempted)",
+        for stage in ("verify", "verify_repeat", "compare_root", "qualify_root"):
+            sb.write_bound_marker(stage)
+        (sb.fs / "receipts" / "root-qualification.json").write_text("{}")
+        secret = sb.fs / ".secrets" / "hf_token"
+        secret.unlink()
+        secret.mkdir()
+        proc, calls = sb.run(
+            "publish_root", bash, HF_TOKEN="ambient-secret",
+            HUGGING_FACE_HUB_TOKEN="ambient-secret-two",
+            HF_TOKEN_PATH="/hostile/token")
+        refusal = proc.stdout + proc.stderr
+        check("even a qualified root refuses on-pod publication before any "
+              "command or token read",
               proc.returncode == 3 and not calls
-              and not sb.marker("publish_root").is_file()
-              and "verify has not completed" in proc.stderr,
-              "rc=%s\n%s" % (proc.returncode, proc.stderr))
+              and not sb.marker("publish_root").exists()
+              and "controller-local only" in refusal
+              and "verified retrieval" in refusal
+              and "provider-confirmed pod absence" in refusal
+              and "billing reconciliation" in refusal,
+              refusal)
 
-        # PR2: verify.done present -> publish argv, receipt path, marker.
-        sb.marker("verify").write_text("")
+        preview = job_root()
+        preview["capture"] = dict(preview["capture"], preview_of="mm3-root-v1")
+        sb = Sandbox(td / "pub-preview", preview)
         proc, calls = sb.run("publish_root", bash)
-        pub = [c for c in calls if c[0] == "PY"
-               and any("fidelity_dataset.py" in a for a in c[1])]
-        check("PR2 publish_root exits 0 and drives fidelity_dataset publish",
-              proc.returncode == 0 and len(pub) == 1,
+        check("preview publication reaches the same unconditional controller "
+              "refusal without a command",
+              proc.returncode == 3 and not calls
+              and "controller-local only" in (proc.stdout + proc.stderr),
               proc.stdout + proc.stderr)
-        if pub:
-            argv = pub[0][1]
-            check("PR2b argv: the sealed dataset, the destination repo, and "
-                  "a receipt under receipts/",
-                  "publish" in argv
-                  and str(sb.fs / "dataset") in argv
-                  and "--repo" in argv
-                  and argv[argv.index("--repo") + 1] == "malaiwah/mm3-root-v1"
-                  and "--receipt" in argv
-                  and argv[argv.index("--receipt") + 1]
-                  == str(sb.fs / "receipts" / "publish-root.json"), argv)
-        check("PR2c S-MARK publish_root writes its marker",
-              sb.marker("publish_root").is_file())
-        check("PR2d S-ARGV no foreign path", not sb.foreign_paths(calls),
-              sb.foreign_paths(calls))
 
-        # PR4/PR5: race-mode identity separation. A PREVIEW must never be
-        # published under the FINAL repo name (the in-place update race mode
-        # forbids); its own -preview repo is fine.
-        def job_prev(repo):
-            job = job_root()
-            job["capture"]["preview_of"] = "mm3-root-v1"
-            job["capture"]["dataset_id"] = "mm3-root-v1.preview"
-            job["capture"]["race"] = True
-            job["capture"]["publish_root_to"] = repo
-            return job
-
-        sb = Sandbox(td / "pub4", job_prev("malaiwah/mm3-root-v1"))
-        (sb.fs / "dataset").mkdir()
-        sb.marker("verify").write_text("")
+        sb = Sandbox(td / "pub-quant", job_quant())
         proc, calls = sb.run("publish_root", bash)
-        check("PR4 a PREVIEW is refused the FINAL repo name (exit 3)",
+        check("quant publication reaches the same unconditional controller "
+              "refusal before role/job parsing",
               proc.returncode == 3 and not calls
-              and "wears the FINAL name" in proc.stderr,
-              "rc=%s\n%s" % (proc.returncode, proc.stderr))
-        sb = Sandbox(td / "pub5", job_prev("malaiwah/mm3-root-v1-preview"))
-        (sb.fs / "dataset").mkdir()
-        sb.marker("verify").write_text("")
-        proc, calls = sb.run("publish_root", bash)
-        check("PR5 a preview publishes under its OWN repo",
-              proc.returncode == 0 and len(calls) == 1
-              and "malaiwah/mm3-root-v1-preview" in calls[0][1],
-              "rc=%s\n%s" % (proc.returncode, proc.stderr))
-
-        # PR3: quant jobs have no root to publish.
-        sb = Sandbox(td / "pub3", job_quant())
-        proc, calls = sb.run("publish_root", bash)
-        check("PR3 publish_root refuses a quant job (exit 2)",
-              proc.returncode == 2 and not calls, proc.stderr)
+              and "controller-local only" in (proc.stdout + proc.stderr),
+              proc.stdout + proc.stderr)
 
     print()
     if FAILED:

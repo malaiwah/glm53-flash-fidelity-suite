@@ -1017,10 +1017,12 @@ Fixed, not configurable except where noted:
   `direction_label: "KL(reference || candidate)"` (Festr's literal string, which his receipt
   comparator refuses to read anything else in place of).
 * Non-finite intermediate ⇒ hard refusal, never a clamp.
-* Streamed in `--chunk-positions` slices; `--vocab-chunk` must divide `vocab_size` exactly.
-  **For GLM-5.3-Flash, `vocab_size = 154,880` is NOT divisible by kimi-k3's default 10,240.**
-  `154880 = 2^7 × 5 × 11 × 22`; working values include **9,680** (154880/16), 15,488, 7,744.
-  Ship 9,680 in the README of any k3-compat dataset.
+* Streamed in `--chunk-positions` slices. `--vocab-chunk` is a positive block
+  size; the final vocabulary block MAY be shorter and MUST be processed without
+  padding or omission. Chunk choices MUST agree within the QUAL-2 tolerance.
+  The safe root qualification profile binds **8,192**; for GLM-5.3-Flash's
+  `vocab_size = 154,880`, that produces 18 full blocks and one 7,424-column
+  final block. Earlier 9,680-divisor examples remain valid comparator settings.
 * Statistics block shape `{mean, median, p95, p99, p99_9, max}` — identical to what
   `kld_report.py` already emits and to Festr's, so the numbers line up field-for-field.
 * Aggregation: `kl_micro_token_mean` (the headline), plus `kl_macro_*_mean` per declared stratum, per
@@ -1055,6 +1057,33 @@ test. The comparator asserts, **without running the matmul** (the T1 hash proof)
 the short-circuit. CI runs both.
 
 Receipt: `comparison_kind = "reproduction_confirmation"`. **Not a measurement row.**
+
+The outer `fidelity.root-qualification-receipt.v1` binds a **closed**
+`job_contract` projection.  It carries the exact target
+(`repository`, pinned revision, surface, codec, bits and path), the complete
+root profile, the complete resolved panel binding, both the semantic and raw
+panel-receipt identities, the tokenizer identity, the panel-binding file, and
+the unexpected-tensor allowlist.  Qualification and publication both require
+the exact `job.json`, recompute its canonical identity and raw file digest, and
+derive `job_contract` from those verified bytes.  Off-box archive acceptance
+does the same before any result is retained or published.
+
+Publication is authorized only from the canonical members of one private,
+owned `0700` verified extraction and the original result archive under the
+exact byte count and SHA-256 reported before transfer.  Archive verification
+proves both dataset trees, both independent verification receipts, the forced
+comparison, the qualification and the job; publication additionally binds the
+selected job, qualification, manifest, checksums and complete canonical file
+set byte-for-byte to that archive.  After the one immutable public commit, the
+publisher anonymously streams every canonical member through the archive's
+exact per-file size and SHA-256 bounds and discards the bytes.  It separately
+refetches the small qualification under the same bounds.  It never materializes
+an unbudgeted second dataset and never reads an unbounded response.
+
+These paths bind each qualified dataset's top manifest, capture manifest,
+runtime manifest, `checksums.txt`, and shipped raw panel receipt back to that
+job projection.  Self-sealing a coherently substituted dataset, repeat proof,
+comparison or qualification receipt is therefore a refusal, not new evidence.
 
 **SC-2 — run-to-run floor.** Digests differ but `weights_identity` is equal
 (`model_revision` + `checkpoint_identity_sha256` + `scope_digest` all equal).

@@ -28,7 +28,10 @@ Rungs:
 Stock python3, stdlib only, offline, $0.00 — parsing never contacts anything.
 """
 
+import contextlib
+import io
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -64,6 +67,23 @@ PLACEHOLDERS = {
     "<your-hf-handle>": "example-handle",
     "<token>": "EXAMPLE",
     "...": "PLACEHOLDER",
+}
+
+SHELL_PLACEHOLDERS = {
+    "$RUNPOD_KEY_FILE": "/tmp/example-runpod-key",
+    "$FIDELITY_STATE": "/tmp/example-fidelity-state",
+    "$CAMPAIGN_LEDGER": "/tmp/example-fidelity-state/campaign.json",
+    "$CAMPAIGN_CEILING_USD": "100",
+    "$CAMPAIGN_RESERVE_USD": "10",
+    "$CAMPAIGN_REAPER_MARGIN_USD": "2",
+    "$DRILL_CAP_USD": "5",
+    "$ATTEMPT_CAP_USD": "20",
+    "$ROOT_DATASET_ID": "example-root",
+    "$ROOT_DATASET_REPOSITORY": "example-org/example-root",
+    "$ROOT_DATASET_NAME": "Example Root",
+    "$ROOT_ATTEMPT_CAP_USD": "20",
+    "$ROOT_MAX_RUNTIME": "12h",
+    "$HOME": "/tmp/example-home",
 }
 
 # argv[0] -> module with build_parser(). Probed, never guessed.
@@ -115,8 +135,10 @@ def commands(block):
 
 
 def substitute(cmd):
-    for k, v in PLACEHOLDERS.items():
-        cmd = cmd.replace(k, v)
+    for key in sorted(SHELL_PLACEHOLDERS, key=len, reverse=True):
+        cmd = cmd.replace(key, SHELL_PLACEHOLDERS[key])
+    for key, value in PLACEHOLDERS.items():
+        cmd = cmd.replace(key, value)
     return cmd
 
 
@@ -125,10 +147,13 @@ def try_parse(module_name, argv):
     mod = importlib.import_module(module_name)
     parser = mod.build_parser()
     try:
-        parser.parse_args(argv)
+        with contextlib.redirect_stderr(io.StringIO()):
+            parser.parse_args(argv)
         return None
     except SystemExit as exc:
         return "argparse exit %s" % exc.code
+    except Exception as exc:                                  # noqa: BLE001
+        return "parser raised %s: %s" % (type(exc).__name__, exc)
 
 
 def main():
@@ -144,7 +169,7 @@ def main():
           "only %d found" % len(cmds))
 
     for cmd in cmds:
-        argv = cmd.split()
+        argv = shlex.split(cmd)
         tool, rest = argv[0], argv[1:]
         if tool in PARSER_MODULES:
             # 'reaper' subcommand form parses through the same parser.
@@ -162,6 +187,10 @@ def main():
         else:
             check("R1: recipe names a tool this selftest knows: %s" % tool,
                   False, "add it to PARSER_MODULES or WRAPPERS")
+
+    malformed = try_parse("measure_cloud", ["--max-cost", "not-a-decimal"])
+    check("R6: malformed decimal is an argparse refusal, not a traceback",
+          malformed == "argparse exit 2", malformed or "accepted")
 
     # Prose rungs for the recipe-2 fix. These FAIL on the pre-fix README.
     m = re.search(r"### Recipe 2 — local(.*?)### Recipe 3", section, re.S)

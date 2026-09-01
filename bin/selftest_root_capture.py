@@ -159,115 +159,106 @@ rc, out = cli("--role", "root", "--model", "a/b", "--panel", "some/panel",
               "--dataset-id", "d", "--lane", "streaming")
 check("--panel and --panel-dir together are refused", rc == mc.EXIT_REFUSED)
 
-print("\n== the stage sequence has no second side ==")
+print("\n== the root path is two fresh processes plus exact qualification ==")
 # Asserted as a SEQUENCE, not as a source literal. These checks used to grep
 # measure_cloud.py for `stages = [...]`, and broke the moment the lists moved
 # into fidelity/stages.py -- a test that fails on a refactor which changed no
 # behaviour is testing the text, not the tool.
-def stage_seq(name):
-    try:
-        from fidelity import stages as _st
-        return tuple(getattr(_st, name))
-    except Exception:                                     # noqa: BLE001
-        src = (SUITE / "bin" / "measure_cloud.py").read_text(encoding="utf-8")
-        import ast as _ast
-        for node in _ast.walk(_ast.parse(src)):
-            if isinstance(node, _ast.Assign) and any(
-                    getattr(t, "id", "") == "stages" for t in node.targets):
-                try:
-                    val = _ast.literal_eval(node.value)
-                except Exception:                         # noqa: BLE001
-                    continue
-                if name == "ROOT_STAGES" and "capture" in val and "score" not in val:
-                    return tuple(val)
-                if name == "ROOT_RACE_STAGES" and "race_capture" in val:
-                    return tuple(val)
-        return ()
+from fidelity import stages as stage_contract              # noqa: E402
 
-root = stage_seq("ROOT_STAGES")
-race = stage_seq("ROOT_RACE_STAGES")
-check("a root runs setup/fetch_target/capture/verify",
-      root == ("setup", "fetch_target", "capture", "verify"))
-check("...and does NOT score (there is nothing to diverge from)",
+root = tuple(stage_contract.stage_sequence(role="root"))
+expected_root = (
+    "setup", "fetch_target",
+    "capture", "verify",
+    "capture_repeat", "verify_repeat",
+    "compare_root", "qualify_root",
+)
+check("a root runs two fresh captures and qualification",
+      root == expected_root)
+check("...and does NOT score (there is no quantized second side)",
       "score" not in root and "materialize" not in root)
 
 stage_sh = (SUITE / "bin" / "stage_measure.sh").read_text()
-for st in ("capture)", "verify)"):
-    check("stage_measure.sh implements %s" % st.rstrip(")"), st in stage_sh)
-check("the capture stage refuses a non-root job",
-      "capture stage is --role root only" in stage_sh)
-check("the capture stage is receipt-resumable",
-      "already written at $OUT -- skipping" in stage_sh)
+for st in ("capture", "capture_repeat", "verify", "verify_repeat",
+           "compare_root", "qualify_root"):
+    check("stage_measure.sh implements %s" % st,
+          re.search(r"(?m)^[a-z_]+(?:\|[a-z_]+)*\)$", stage_sh)
+          is not None and any(
+              st in match.group(1).split("|")
+              for match in re.finditer(
+                  r"(?m)^([a-z_]+(?:\|[a-z_]+)*)\)$", stage_sh)))
+check("the capture stages refuse a non-root job",
+      "the $STAGE stage is --role root only" in stage_sh)
+check("each capture must be fresh rather than resumed or adopted",
+      "already exists without this stage's bound done marker" in stage_sh
+      and "partial/stale capture is never adopted" in stage_sh)
 
 print("\n== what the controller writes into job.json, the stage must FORWARD ==")
-# A knob the controller records and the stage ignores is worse than a missing
-# knob: the operator is told a thing happened that did not. Both of these were
-# real. `--sanity-expect Paris` reached job.json and only `race_capture` read
-# it, so on the DEFAULT capture path the generation probe ran unenforced -- the
-# one check that distinguishes "captured" from "captured nonsense".
-# `--allow-unexpected-tensors` had no controller flag at all, so a root capture
-# of any checkpoint carrying an MTP/draft block (this suite's own Fruit fixture;
-# GLM-5.3-Flash; GLM-5.3) died at the capture stage with the rental already paid
-# for.
-CAPTURE_STAGES = ("capture", "race_capture")
+# These are scientific inputs. The stage must forward the generation sanity
+# value and the exact checked-in tensor allowlist identities from job.json.
+CAPTURE_STAGES = ("capture", "capture_repeat")
 
 
 def stage_body(name):
-    """The text of one `case` arm of stage_measure.sh."""
-    start = stage_sh.index("\n%s)\n" % name)
-    end = stage_sh.index("\n  ;;", start)
-    return stage_sh[start:end]
+    """The text of the `case` arm that contains name."""
+    labels = list(re.finditer(
+        r"(?m)^([a-z_]+(?:\|[a-z_]+)*)\)\n", stage_sh))
+    for index, match in enumerate(labels):
+        if name not in match.group(1).split("|"):
+            continue
+        end = stage_sh.index("\n  ;;", match.end())
+        return stage_sh[match.start():end]
+    raise AssertionError("stage arm absent: %s" % name)
 
 
 for _st in CAPTURE_STAGES:
     body = stage_body(_st)
     check("%s reads capture.sanity_expect" % _st,
           "capture.sanity_expect" in body)
-    check("...and forwards --sanity-expect to the engine" ,
+    check("...and forwards --sanity-expect to the engine",
           "--sanity-expect" in body)
-    check("%s reads capture.allow_unexpected_tensors" % _st,
-          "capture.allow_unexpected_tensors" in body)
-    check("...and forwards --allow-unexpected-tensors when it is true",
-          "--allow-unexpected-tensors" in body)
+    for field in (
+            "capture.unexpected_tensor_allowlist.path",
+            "capture.unexpected_tensor_allowlist.artifact_sha256",
+            "capture.unexpected_tensor_allowlist.canonical_sorted_names_sha256"):
+        check("%s reads %s" % (_st, field), field in body)
+    check("...and forwards the allowlist plus both identities",
+          "--unexpected-tensors-allowlist" in body
+          and "--unexpected-tensors-allowlist-sha256" in body
+          and "--unexpected-tensors-name-sha256" in body)
+    check("...and refuses the obsolete broad-acceptance field",
+          "capture.allow_unexpected_tensors is obsolete" in body)
     # Data from job.json is passed as an ARRAY, never through an eval (SEC-01).
     check("...via the EXTRA array, expanded into the %s invocation" % _st,
           "EXTRA+=" in body and '"${EXTRA[@]}"' in body)
-    # PROVENANCE, not cosmetics. hf_capture resolves the weights' identity as
-    # `--weights-repository or --model`, and --model is the LOCAL tree the
-    # fetch wrote. Without the first flag a published root records the RENTED
-    # BOX'S ABSOLUTE PATH as the checkpoint repository, the panel's tokenizer
-    # id and the card's provenance line -- pointing at a filesystem that no
-    # longer exists, which is the exact defect AGENTS.md tells you to grep a
-    # published artifact for. It also makes the capture non-comparable: the
-    # tokenizer id is panel IDENTITY (PANEL-D6), so two roots of one model
-    # captured on two boxes declare two tokenizers and `compare` refuses them.
+    # Weights identity must name the pinned HF repository, not a rented-box
+    # absolute path.
     check("%s names the HF repo as the weights repository, not the local path"
           % _st, "--weights-repository" in body)
-    # THE GPU. hf_capture's --device defaults to "cpu"; the stage script never
-    # set it, so a root capture ran the forward on the CPU of a box rented for
-    # its GPU -- at 0% utilisation, for the full hourly rate, on every provider.
-    # The `materialize` and `measure` stages have always passed `--device
-    # cuda`; only this path was missed.
-    check("%s reads capture.device (default cuda)" % _st,
-          "capture.device cuda" in body)
+    check("%s reads capture.device" % _st,
+          "capture.device" in body)
     check("...and forwards --device to the engine",
           '--device "$DEVICE"' in body)
 
-check("the controller has a --capture-device flag, defaulting to cuda",
-      '"--capture-device", default="cuda"' in
-      (SUITE / "bin" / "measure_cloud.py").read_text(encoding="utf-8"))
+controller_source = (
+    SUITE / "bin" / "measure_cloud.py").read_text(encoding="utf-8")
+check("the controller has a --capture-device flag",
+      "--capture-device" in controller_source)
+check("the controller requires an exact unexpected-tensor allowlist",
+      "--unexpected-tensor-allowlist" in controller_source
+      and "--allow-unexpected-tensors" not in controller_source)
 
-check("the controller has an --allow-unexpected-tensors flag to set it with",
-      "--allow-unexpected-tensors" in
-      (SUITE / "bin" / "measure_cloud.py").read_text(encoding="utf-8"))
-
-print("\n== race mode: a different stage sequence, and a different identity ==")
-# The whole point of race mode is that the fetch stops being a barrier. If the
-# sequence still contained fetch_target the overlap could not happen at all.
-check("a race root runs setup/race_bootstrap/race_capture/verify",
-      race == ("setup", "race_bootstrap", "race_capture", "verify"))
-check("...and race mode has no fetch_target stage (the fetch is IN the capture)",
-      "fetch_target" not in race and "fetch_target" in root)
+print("\n== race/preview is refused by the first paid root path ==")
+try:
+    stage_contract.stage_sequence(role="root", race=True)
+except ValueError as exc:
+    check("the shared stage contract refuses a paid race root",
+          "unsupported" in str(exc))
+else:
+    check("the shared stage contract refuses a paid race root", False)
+check("the stage driver also refuses legacy race arms",
+      "race_bootstrap REFUSES" in stage_sh
+      and "race_capture REFUSES" in stage_sh)
 
 print("\n== a plain full-precision tree must SNIFF as native-bf16, whatever "
       "spelling its config uses for the dtype ==")

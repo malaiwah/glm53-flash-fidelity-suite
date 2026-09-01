@@ -196,7 +196,7 @@ done
 if [ -z "$MODERN_BASH" ]; then
   printf '  SKIP  %s\n' "SEC-01 needs bash 4.4+ (mapfile -d); none found on this host"
 else
-  S="$TMP/sec01"; FSD="$S/fs"; K6D="$S/k6"
+  S="$TMP/sec01"; FSD="$S"; K6D="$S/k6"
   mkdir -p "$FSD/.secrets" "$FSD/logs" "$K6D/venv/bin" "$S/bin"
   PWNED="$S/PWNED.txt"
   cat > "$K6D/venv/bin/hf" <<STUB
@@ -207,11 +207,25 @@ STUB
   chmod +x "$K6D/venv/bin/hf"
   ln -sf "$(command -v python3)" "$K6D/venv/bin/python"
   echo "not-a-real-token" > "$FSD/.secrets/hf_token"
-  cat > "$FSD/job.json" <<JSON
-{"panel": {"repo_id": "org/panel\$(id -un > $PWNED)",
-           "revision": "main\$(touch $PWNED.rev)",
-           "include": ["logits/window-*.safetensors", "*.json"]}}
-JSON
+  python3 - "$ROOT" "$FSD/job.json" "$PWNED" <<'PY'
+import json, sys
+sys.path.insert(0, sys.argv[1] + "/bin")
+from fidelity.jobcontract import finalize_job
+from selftest_runpod_drill import job_fixture
+
+job = job_fixture()
+job.pop("job_id", None)
+job.pop("job_id_full", None)
+job["execution_attempt"] = {
+    "number": 1, "kind": "local-container", "attempt_id": "1" * 24}
+job["panel"] = {
+    "repo_id": "org/panel$(id -un > %s)" % sys.argv[3],
+    "revision": "main$(touch %s.rev)" % sys.argv[3],
+    "include": ["logits/window-*.safetensors", "*.json"],
+}
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    json.dump(finalize_job(job), handle)
+PY
   cp -R "$ROOT/bin/." "$S/bin/"
   printf 'import sys\nprint("stage_panel_paths: stub")\n' > "$S/bin/stage_panel_paths.py"
   FIDELITY_FS_ROOT="$FSD" FIDELITY_ENGINE_ROOT="$K6D" \

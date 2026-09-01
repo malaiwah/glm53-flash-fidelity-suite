@@ -603,19 +603,6 @@ def bucket_for_position(row: int) -> Optional[str]:
     return None
 
 
-def divisors_hint(vocab_size: int, limit: int = 6) -> List[int]:
-    """Working `--vocab-chunk` values, largest first.
-
-    154,880 is NOT divisible by kimi-k3's default 10,240; 9,680 is the value to
-    ship in a k3-compat README (spec section 10.2).
-    """
-    out = []
-    for candidate in range(min(vocab_size, 32768), 0, -1):
-        if vocab_size % candidate == 0:
-            out.append(candidate)
-            if len(out) >= limit:
-                break
-    return out
 
 
 def stats_block(values) -> Dict[str, float]:

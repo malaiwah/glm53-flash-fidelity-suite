@@ -138,7 +138,9 @@ bin/fidelity-dataset capture
    `hidden-capture.json`; assert `len(hiddens) == len(logit_files)`.
 4. Build the dataset tree, compute all digests, write `checksums.txt`, seal the manifest.
 5. Run `validate --verify-tensors` on the result and **refuse to finish** if it fails.
-6. `--publish` runs `verify` again on the fetched copy after upload.
+6. `--publish` anonymously streams every immutable public member through the
+   verified source archive's exact size and SHA-256, without materializing a
+   second dataset.
 
 **`--dry-run` is the CI hook.** `stream_score --dry-run` validates every input, seal and layout and
 exits 0 **without touching weights or a GPU**; the capture command forwards it and then validates the
@@ -198,7 +200,7 @@ bin/fidelity-dataset compare
     --candidate B
     --out DIR
     [--device auto|cpu|cuda:N|mps]
-    [--vocab-chunk N]               must divide vocab_size exactly; 9680 for GLM-5.3-Flash
+    [--vocab-chunk N]               positive block size; final block may be partial
     [--chunk-positions N]
     [--head PATH]                   only with --disclose-head-substitution
     [--self-compare]                assert A and B are the same capture
@@ -273,12 +275,19 @@ his artifact publishes no candidate captures at all, only compare receipts.
 
 ```
 bin/fidelity-dataset describe DATASET [--format {text,json,markdown}]
-bin/fidelity-dataset publish DATASET --repo REPO [--private] [--revision-message TEXT]
+bin/fidelity-dataset publish EXTRACTED/dataset --repo REPO \
+    --qualification EXTRACTED/receipts/root-qualification.json \
+    --job EXTRACTED/job.json --result-archive result.tar.gz \
+    --expected-archive-sha256 SHA256 --expected-archive-bytes BYTES \
+    --expected-head absent --token-file TOKEN_FILE --receipt RECEIPT
 ```
 
-`describe` prints the identity card: role, form, lane, panel, head digest, coverage, determinism,
-seal, divergences. `publish` refuses unless `verify --verify-tensors` passes first, refuses to push
-a dataset whose `structural_status` is `draft`, and re-verifies the fetched copy afterwards.
+`describe` prints the identity card: role, form, lane, panel, head digest,
+coverage, determinism, seal and divergences. `publish` accepts only the
+canonical members of the private verified result extraction, binds them to the
+original two-capture archive under its pre-transfer size and digest, refuses a
+`draft` structural status, and anonymously stream-verifies every immutable
+public byte afterwards.
 
 ### 2.7 `bin/fidelity-card annotate` / `validate`
 
@@ -428,8 +437,8 @@ network, no GPU, no torch. Each case names the spec rule it exercises.
 | N4 | N3 with `--force-compute` | the computed array is bitwise identical to the short-circuit answer |
 | N5 | **the T1 constant**: `tokenwise-kld.npy` for a 51,175-position panel | **409,528 bytes**, sha256 `3ffddc61af8350782afd24c7a69de1f37c260bf5489c4e0f6e3ad89b0ab9be17` |
 | N6 | same weights identity, different capture content | `comparison_kind = run_to_run_floor`, never `reproduction_confirmation` (SC-2) |
-| N7 | vocab-chunk invariance: two chunk sizes | mean difference `< 1e-12` |
-| N8 | `--vocab-chunk` that does not divide `vocab_size` | refused with the divisor hint (154880 → 9680) |
+| N7 | vocab-chunk invariance: dividing and remainder chunk sizes | mean difference `< 1e-12` |
+| N8 | non-positive/non-integer `--vocab-chunk`; fixed 8,192 against vocab 154,880 | invalid values refused; the 7,424-column final block agrees exactly |
 | N9 | a NaN injected into one capture | hard refusal, never a clamp |
 | N10 | a permuted head applied at replay | KLD is large (order 10, cf. `hidden_replay_selftest` rung c: 11.33 vs 1.013e-4) — proves the estimator has teeth |
 | N11 | reproduction-confirmation receipt fed to `build_submission` | `NotSubmittable` (SC-3) |

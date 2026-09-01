@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
-"""measure-cloud -- rent a GPU, measure a quant's fidelity, seal a receipt, tear down.
+"""measure-cloud -- safely capture or measure one exact authored RunPod target.
 
-    export JL_API_KEY=...
-    bin/measure-cloud --model <hf-repo> --panel <hf-dataset> --lane streaming --spot
+    bin/measure-cloud --provider runpod ... --on-demand --region secure \
+        --on-preempt fail --cold-runs 2 --max-cost <usd> \
+        --max-runtime <duration> --dry-run
 
-It spends other people's money, so the safety properties are not optional and
-are not configurable away:
+Paid measurement is currently RunPod-only and SSH-only. The admitted route is
+one fresh secure-cloud on-demand pod, one durable POST intent, one provider
+POST, and unconditional delete after bounded verified result retrieval. It
+refuses spot, adoption/recovery, persistent volumes, race/preview, remote
+publication, ambient Hugging Face credentials, and any target without exact
+checked-in scientific evidence.
 
-  * TEARDOWN IS GUARANTEED on every exit path -- success, failure, exception,
-    SIGINT, SIGTERM, SIGHUP -- by a trap that runs before anything else, and by
-    three further layers underneath it (see `Teardown` below), because a trap
-    does not run when the laptop's battery dies.
-  * A COST ESTIMATE is printed and confirmed BEFORE anything is created.
-    `--dry-run` stops there and creates nothing at all.
-  * A HARD MAX-RUNTIME kill switch is enforced by the controller AND by an
-    on-instance watchdog that does not need the controller to be alive.
-  * NO TOKEN is ever echoed, put on a command line, or written to a receipt or
-    log. Every captured stream passes through a redaction filter first.
-  * The runner REFUSES, with advice, when the target obviously will not fit --
-    before an instance exists, not after a 200 GB download.
+Before provider mutation it requires: official anonymous Hugging Face identity,
+a clean unchanged checkout, a healthy independently installed user reaper, a
+successful controller-loss drill proof, a fresh full provider inventory and
+balance snapshot, cumulative campaign admission, exact runtime/cost limits and
+explicit confirmation. `--dry-run` never creates a provider resource.
 
 Run `bin/measure-cloud --help` for the full flag list.
 """
@@ -27,16 +25,27 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import contextlib
+import gzip
 import hashlib
+import io
 import json
+import math
 import os
 import re
 import shlex
+import secrets
 import signal
 import sys
+import subprocess
+import stat
+import tempfile
+import tarfile
 import threading
 import time
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
 SUITE_ROOT = Path(__file__).resolve().parent.parent
@@ -47,22 +56,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # a convenience default: resolving `main` instead would let the reference move
 # between two measurements of the same artifact.
 OFFICIAL_BF16_REVISION = "a6c167b62691b2bac901344b65cb651a70f53e43"
+POST_CREATE_CONVERGENCE_SECONDS = 180
+POST_CREATE_CONVERGENCE_POLL_SECONDS = 10
 
 from fidelity import census as C                       # noqa: E402
 from fidelity.common import (                          # noqa: E402
-    Console, human_bytes, human_duration, parse_duration, read_json,
-    redact, register_secret, sha256_file, shred_secret_file, utcnow,
-    write_json, write_secret_file,
+    Console, human_bytes, human_duration, parse_duration,
+    private_directory_chain_error, read_json, redact, register_secret,
+    sha256_file, shred_secret_file, utcnow, write_json, write_secret_file,
 )
 from fidelity.dsformat import resolve_inside                 # noqa: E402
-from fidelity.engines import EngineUnpinned, build_invocation, load_engines  # noqa: E402
+from fidelity.engines import (EngineProfileRefused, EngineUnpinned,
+                              build_invocation, load_engines,
+                              require_supported_profile, resolve_profile_timing,
+                              resolve_root_timing)                    # noqa: E402
 from fidelity.hfmeta import (                          # noqa: E402
     HF_ENDPOINT, HFError, RepoMeta, fetch_file, fetch_json, hf_token,
     load_panel_descriptor, repo_meta, safetensors_header, sniff_surface,
 )
 from fidelity.jlapi import JL, JLError, JLNotInstalled, select_offer  # noqa: E402
-from fidelity.receipt import produced_by_block                      # noqa: E402
-from fidelity.stages import stage_sequence                          # noqa: E402
+from fidelity.jobcontract import (JobContractError, finalize_bundle_manifest,
+                                  finalize_job, parse_job_bytes,
+                                  seal_execution_job, validate_execution_job,
+                                  verify_job)  # noqa: E402
+from fidelity.receipt import produced_by_block                              # noqa: E402
+from fidelity.stages import stage_sequence                                  # noqa: E402
 
 VERSION = "0.1.0"
 LEASE_DIR = Path.home() / ".fidelity-cloud" / "leases"
@@ -75,12 +93,16 @@ EXIT_LEAK = 90          # teardown could not be confirmed -- the loudest failure
 
 
 # ==========================================================================
-# Teardown
+# Legacy provider teardown helpers
 # ==========================================================================
 
 
 class Teardown:
-    """Four independent layers, because any one of them can fail.
+    """Historical non-RunPod controller closure, unreachable from paid main.
+
+    Kept for cleanup of pre-v2 leases and offline portability evidence. The
+    current RunPod path uses `cloudlease.py` plus provider `terminateAfter`.
+    These are the legacy four independent layers, because any one can fail.
 
     L0  controller trap        -- try/finally + SIGINT/SIGTERM/SIGHUP + atexit.
                                   Covers everything except the controller dying
@@ -104,8 +126,8 @@ class Teardown:
                                   returning a NEW machine id and the lease file
                                   being rewritten.
 
-    The teeth: the runner refuses to start unless the reaper is installed, or
-    --max-runtime <= 2h, or the caller explicitly accepts the leak risk.
+    The legacy runner required its reaper, a short runtime, or an explicit risk
+    override. The current paid route accepts none of those alternatives.
     """
 
     def __init__(self, jl: JL, con: Console, outdir: Path, *,
@@ -1107,6 +1129,147 @@ def job_id_for(args: argparse.Namespace) -> str:
     return job_identity(args)["job_id"]
 
 
+@contextlib.contextmanager
+def _anonymous_hf_environment():
+    """Isolate every paid-plan model/panel read from controller credentials."""
+    official = "https://huggingface.co"
+    ambient_endpoint = os.environ.get("HF_ENDPOINT")
+    if ambient_endpoint not in (None, "", official):
+        raise Refusal(
+            "safe RunPod metadata requires exact https://huggingface.co",
+            ["ambient HF_ENDPOINT: %s" % ambient_endpoint])
+    names = (
+        "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN",
+        "HF_TOKEN_PATH", "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE",
+        "TRANSFORMERS_OFFLINE", "HUGGINGFACE_CO_STAGING",
+        "HUGGINGFACE_CO_URL_TEMPLATE", "HF_INFERENCE_ENDPOINT",
+        "HF_ENDPOINT", "HF_HOME", "HF_HUB_CACHE",
+        "HUGGINGFACE_HUB_CACHE", "HF_ASSETS_CACHE",
+        "HUGGINGFACE_ASSETS_CACHE", "HF_XET_CACHE", "TRANSFORMERS_CACHE",
+        "HF_DATASETS_CACHE", "XDG_CACHE_HOME",
+        "HF_HUB_DISABLE_IMPLICIT_TOKEN")
+    saved = {name: os.environ.get(name) for name in names}
+    with tempfile.TemporaryDirectory(prefix="fidelity-anonymous-hf-") as home:
+        try:
+            for name in names:
+                os.environ.pop(name, None)
+            os.environ["HF_ENDPOINT"] = official
+            os.environ["HF_HOME"] = home
+            os.environ["HF_TOKEN_PATH"] = str(Path(home) / "no-token")
+            os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+            yield {
+                "schema": "fidelity-suite/anonymous-hf-access.v1",
+                "endpoint": official,
+                "isolated_hf_home": True,
+                "implicit_token_disabled": True,
+                "cleared_token_sources": sorted(names),
+            }
+        finally:
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
+def _source_checkout_proof(*, include_untracked: bool) -> Dict[str, Any]:
+    """Return a no-write proof of the exact clean suite checkout."""
+    head_result = subprocess.run(
+        ["git", "-C", str(SUITE_ROOT), "rev-parse", "--verify", "HEAD"],
+        capture_output=True, text=True, timeout=30, check=False)
+    head = (head_result.stdout or "").strip()
+    if (head_result.returncode != 0
+            or re.fullmatch(r"[0-9a-f]{40}", head) is None):
+        raise Refusal("suite source is not an exact 40-hex Git HEAD", [])
+    mode = "all" if include_untracked else "no"
+    status_result = subprocess.run(
+        ["git", "-C", str(SUITE_ROOT), "status", "--porcelain=v1",
+         "--untracked-files=%s" % mode],
+        capture_output=True, text=True, timeout=30, check=False)
+    if status_result.returncode != 0:
+        raise Refusal(
+            "suite Git cleanliness check failed",
+            [redact((status_result.stderr or "")[-500:])])
+    status = (status_result.stdout or "").encode("utf-8")
+    if status:
+        raise Refusal(
+            "safe RunPod execution requires a clean source checkout",
+            ["git status mode: %s" % mode])
+    return {
+        "schema": "fidelity-suite/source-checkout-proof.v1",
+        "head": head,
+        "status_mode": mode,
+        "status_sha256": hashlib.sha256(status).hexdigest(),
+    }
+
+
+def _probe_root_stage_clis() -> Dict[str, Any]:
+    """Execute every root-stage CLI help and bind all flags we will emit."""
+    probes = (
+        ("capture-wrapper", ("bin/fidelity_dataset.py", "capture", "--help"),
+         ("--out", "--form", "--role", "--lane", "--engine")),
+        ("capture-engine", ("engines/tools/hf_capture.py", "--help"), (
+            "--model", "--model-revision", "--panel", "--panel-id",
+            "--panel-binding", "--panel-binding-sha256",
+            "--panel-tokenizer-root", "--weights-repository", "--repository",
+            "--schedule", "--device", "--dtype", "--dataset-id",
+            "--dataset-name", "--run-name", "--cold-run", "--author",
+            "--sanity-expect", "--unexpected-tensors-allowlist",
+            "--unexpected-tensors-allowlist-sha256",
+            "--unexpected-tensors-name-sha256")),
+        ("verify", ("bin/fidelity_dataset.py", "verify", "--help"),
+         ("--json",)),
+        ("describe", ("bin/fidelity_dataset.py", "describe", "--help"), ()),
+        ("compare", ("bin/fidelity_dataset.py", "compare", "--help"), (
+            "--reference", "--candidate", "--reference-label",
+            "--candidate-label", "--self-compare", "--force-compute",
+            "--device", "--replay-device", "--replay-dtype",
+            "--vocab-chunk", "--out")),
+        ("qualify-root",
+         ("bin/fidelity_dataset.py", "qualify-root", "--help"), (
+             "--job", "--first", "--repeat", "--first-label",
+             "--repeat-label", "--first-verify", "--repeat-verify",
+             "--comparison", "--out")),
+        ("publish", ("bin/fidelity_dataset.py", "publish", "--help"), (
+            "--repo", "--qualification", "--job", "--result-archive",
+            "--expected-archive-sha256", "--expected-archive-bytes",
+            "--expected-head", "--token-file", "--receipt",
+            "--revision-message")),
+    )
+    rows = []
+    for name, argv, required_flags in probes:
+        result = subprocess.run(
+            [sys.executable] + [str(SUITE_ROOT / argv[0])] + list(argv[1:]),
+            cwd=str(SUITE_ROOT), stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=30, check=False)
+        output = (result.stdout or "") + (result.stderr or "")
+        help_tokens = set(re.findall(
+            r"(?<![\w-])(--[a-z0-9][a-z0-9-]+)", output.lower()))
+        missing = [
+            flag for flag in required_flags if flag.lower() not in help_tokens]
+        if result.returncode != 0 or missing:
+            raise Refusal(
+                "root stage CLI help probe failed for %s" % name,
+                ["missing flags: %s" % ",".join(missing),
+                 "return code: %d" % result.returncode])
+        rows.append({
+            "name": name, "help_ok": True,
+            "help_sha256": hashlib.sha256(
+                output.encode("utf-8")).hexdigest(),
+            "required_flags": list(required_flags),
+        })
+    proof = {
+        "schema": "fidelity-suite/root-cli-probe.v1",
+        "interpreter": "%d.%d" % (
+            sys.version_info.major, sys.version_info.minor),
+        "probes": rows,
+        "probe_sha256": "",
+    }
+    proof["probe_sha256"] = hashlib.sha256(
+        _canonical_bytes(proof)).hexdigest()
+    return proof
+
+
 def _suite_head() -> str:
     """The code state that will produce the receipts, as one string.
 
@@ -1516,7 +1679,7 @@ def _refuse_scope_contradicted_by_release(con: Console, repo_id: str,
 
 
 def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
-                     plan: Dict[str, Any], *, args) -> None:
+                     plan: Dict[str, Any], *, args, profile: str) -> None:
     """Recompute the release's OWN seal from its metadata, before renting.
 
     A TR3-published release is the one third-party surface in this suite that
@@ -1544,11 +1707,31 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
     import tempfile
 
     try:
-        weight_map = fetch_json(repo_id, "model.safetensors.index.json",
-                                revision=revision)["weight_map"]
-        blobs = {name: fetch_file(repo_id, name, revision=revision)
-                 for name in ("config.json", tr3s.ABI_FILE, tr3s.MATERIALIZATION_FILE)}
-    except HFError as exc:
+        policy = tr3s.preflight_public_profile(
+            profile, repo=repo_id, revision=revision)
+    except ValueError as exc:
+        gate_failed(plan, "tr3-public-profile", redact(str(exc)))
+        raise Refusal(
+            "TR3 public profile is not admitted before evidence fetch",
+            [redact(str(exc)), "Nothing was created. $0.00 spent."])
+    required_files = {
+        "config.json", "model.safetensors.index.json",
+        tr3s.ABI_FILE, tr3s.MATERIALIZATION_FILE,
+    }
+    if policy is not None:
+        required_files.update(policy["raw_sha256"])
+    try:
+        blobs = {
+            name: fetch_file(repo_id, name, revision=revision)
+            for name in sorted(required_files)
+        }
+        index_doc = parse_job_bytes(
+            blobs["model.safetensors.index.json"])
+        weight_map = index_doc.get("weight_map")
+        if not isinstance(weight_map, dict) or not weight_map:
+            raise JobContractError(
+                "TR3 index has no non-empty weight_map")
+    except (HFError, JobContractError, UnicodeError, ValueError) as exc:
         gate_not_checked(con, plan, args, "tr3-seal",
                          "could not fetch the release's seal metadata: %s"
                          % redact(str(exc)))
@@ -1556,17 +1739,24 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
     with tempfile.TemporaryDirectory(prefix="tr3-seal-") as tmp:
         root = Path(tmp)
         for name, blob in blobs.items():
-            (root / name).write_bytes(blob)
-        # the index is re-serialised byte-exactly by re-fetching it raw: the
-        # seal digests the FILE, not our parse of it
-        index_bytes = fetch_file(repo_id, "model.safetensors.index.json",
-                                 revision=revision)
-        (root / "model.safetensors.index.json").write_bytes(index_bytes)
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(blob)
         try:
             seal = tr3s.verify_seal(
                 root, weight_map,
                 config_path=root / "config.json",
                 index_path=root / "model.safetensors.index.json")
+            profile_evidence = tr3s.verify_public_profile_evidence(
+                root, profile, repo=repo_id, revision=revision,
+                shard_verification={
+                    "mode": "crosscheck",
+                    "verification": {
+                        "status": "deferred-to-remote-crosscheck",
+                        "verified": False,
+                        "required_mode": "crosscheck",
+                    },
+                })
         except ValueError as exc:
             gate_failed(plan, "tr3-seal", redact(str(exc)))
             raise Refusal(
@@ -1587,6 +1777,15 @@ def _verify_tr3_seal(con: Console, repo_id: str, revision: str,
         "nonrouted_native_exact": seal["materialization"]["nonrouted_native_exact"],
         "serving_reader_qualified": seal["abi"]["serving_reader_qualified"],
     }
+    if profile_evidence is not None:
+        plan["target"]["public_profile_evidence"] = profile_evidence
+        gate_verified(
+            plan, "tr3-public-profile",
+            profile=profile,
+            verdict_raw_sha256=profile_evidence["verdict_raw_sha256"],
+            checkpoint_identity_sha256=
+            profile_evidence["checkpoint_identity_sha256"],
+            shard_verification="deferred-to-remote-crosscheck")
     plan["target"]["nonrouted_completeness"] = {
         "official_nonrouted": seal["materialization"]["native_tensor_count"],
         "planned": seal["materialization"]["native_tensor_count"],
@@ -2013,8 +2212,12 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
                 read_json(args.scope_json) if getattr(args, "scope_json", None) else None,
                 plan)
         if surface.surface == "tr3-published" and not surface.problems:
-            _verify_tr3_seal(con, target.repo_id, target.revision, plan,
-                             args=args)
+            if surface.bits is None:
+                raise Refusal(
+                    "TR3 surface has no exact public bit profile", [])
+            _verify_tr3_seal(
+                con, target.repo_id, target.revision, plan, args=args,
+                profile="tr3-%gbpw" % float(surface.bits))
         if surface.surface == "gguf" and not surface.problems:
             _verify_gguf_readable(con, target.repo_id, target.revision,
                                   surface, plan, args=args)
@@ -2338,13 +2541,26 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     # the lane's for a surface nobody has timed yet, and say which was used.
     by_surface = timing.get("minutes_per_window_by_surface") or {}
     surface_key = (plan["target"] or {}).get("surface")
-    per_window = float(timing.get("minutes_per_window", 9.05))
-    measured = bool(timing.get("measured"))
     timing_basis = "lane"
+    authored_per_window = timing.get("minutes_per_window")
     if surface_key in by_surface:
-        per_window = float(by_surface[surface_key])
-        measured = True
+        authored_per_window = by_surface[surface_key]
         timing_basis = "surface %s" % surface_key
+    try:
+        per_window = float(authored_per_window)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise Refusal(
+            "lane %s has no numeric timing evidence for surface %s"
+            % (args.lane, surface_key),
+            ["author an exact target/profile/hardware timing before paid use",
+             "Nothing was created. $0.00 spent."]) from exc
+    if not math.isfinite(per_window) or per_window <= 0:
+        raise Refusal(
+            "lane %s timing evidence for surface %s is not positive finite"
+            % (args.lane, surface_key),
+            ["correct bin/engines.json before paid use",
+             "Nothing was created. $0.00 spent."])
+    measured = bool(timing.get("measured") or surface_key in by_surface)
     phases = [
         ("bootstrap", 0.42, "apt + cuda13 + torch + exllamav3 build"),
         ("fetch", max(0.05, fetch_gb / 190.0 / 3600.0 * 1000.0), "%.0f GB @ ~190 MB/s" % fetch_gb),
@@ -2454,7 +2670,8 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
             raise refusal
         would_refuse(con, plan, refusal)
 
-    if args.max_cost and band_hi is not None and band_hi > args.max_cost:
+    if (args.max_cost and band_hi is not None
+            and band_hi > float(args.max_cost)):
         refusal = Refusal(
             "estimated band high $%.2f exceeds --max-cost $%.2f" % (band_hi, args.max_cost),
             ["raise --max-cost, or pick a cheaper lane/GPU",
@@ -2480,141 +2697,3664 @@ def plan(args: argparse.Namespace, con: Console, jl: JL) -> Dict[str, Any]:
     return plan
 
 
+
+# ==========================================================================
+# Safe RunPod controller (one fresh SSH pod, no adoption/recovery)
+# ==========================================================================
+
+CONTROL_PLANE_PATHS = (
+    "bin/measure_cloud.py", "bin/result_archive.py",
+    "bin/fidelity/campaign.py", "bin/fidelity/cloudlease.py",
+    "bin/fidelity/common.py", "bin/fidelity/engines.py",
+    "bin/fidelity/hfmeta.py", "bin/fidelity/jlapi.py",
+    "bin/fidelity/jobcontract.py", "bin/fidelity/panel.py",
+    "bin/fidelity/resultsink.py", "bin/fidelity/runpodapi.py",
+    "bin/fidelity/runpoddrill.py", "bin/fidelity/runpodsafety.py",
+    "bin/fidelity/sshbase.py", "bin/fidelity/stages.py",
+)
+
+
+def _canonical_bytes(document: Any) -> bytes:
+    return json.dumps(document, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+_RUNPOD_TEMP_HOLDS = []
+
+
+
+def _strict_file_manifest(paths, *, registry_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Hash an authored path closure; missing/symlink/escape/duplicate all refuse."""
+    root = SUITE_ROOT.resolve()
+    seen, rows = set(), []
+    for raw in paths:
+        if not isinstance(raw, str) or not raw or "\\" in raw:
+            raise Refusal("manifest contains an invalid path %r" % raw, [])
+        pure = PurePosixPath(raw)
+        if pure.is_absolute() or any(part in ("", ".", "..") for part in pure.parts):
+            raise Refusal("manifest path escapes the suite: %r" % raw, [])
+        rel = str(pure)
+        if rel in seen:
+            raise Refusal("manifest contains duplicate path %s" % rel, [])
+        seen.add(rel)
+        path = root.joinpath(*pure.parts)
+        cursor = root
+        for part in pure.parts:
+            cursor = cursor / part
+            try:
+                mode = cursor.lstat().st_mode
+            except OSError:
+                raise Refusal("manifest file is missing: %s" % rel, [])
+            if stat.S_ISLNK(mode):
+                raise Refusal("manifest path contains a symlink: %s" % rel, [])
+        try:
+            path.resolve().relative_to(root)
+        except ValueError:
+            raise Refusal("manifest path escapes the suite: %s" % rel, [])
+        mode = path.stat().st_mode
+        if not stat.S_ISREG(mode):
+            raise Refusal("manifest entry is not a regular file: %s" % rel, [])
+        rows.append({"path": rel, "bytes": path.stat().st_size,
+                     "sha256": sha256_file(str(path))})
+    rows.sort(key=lambda row: row["path"])
+    if registry_path is not None:
+        result = finalize_bundle_manifest(rows, "BUNDLE.txt")
+    else:
+        result = {
+            "schema": "fidelity-suite/control-plane-manifest.v1",
+            "source": "authored-control-plane-closure",
+            "files": rows,
+            "manifest_sha256": hashlib.sha256(
+                _canonical_bytes(rows)).hexdigest(),
+        }
+    return result
+
+
+def _bundle_manifest() -> Dict[str, Any]:
+    registry = SUITE_ROOT / "bin" / "BUNDLE.txt"
+    if not registry.is_file() or registry.is_symlink():
+        raise Refusal("BUNDLE.txt is missing or symlinked", [])
+    entries = []
+    for line in registry.read_text(encoding="utf-8").splitlines():
+        value = line.strip()
+        if value and not value.startswith("#"):
+            entries.append(value)
+    return _strict_file_manifest(entries, registry_path=registry)
+
+
+def _bundle_registry_identity() -> Dict[str, Any]:
+    registry = SUITE_ROOT / "bin" / "BUNDLE.txt"
+    if (not registry.is_file() or registry.is_symlink()
+            or registry.resolve().parent != (SUITE_ROOT / "bin").resolve()):
+        raise Refusal("BUNDLE.txt must be an exact regular suite file", [])
+    return {
+        "path": "bin/BUNDLE.txt", "bytes": registry.stat().st_size,
+        "sha256": sha256_file(str(registry)),
+    }
+
+
+def _control_manifest() -> Dict[str, Any]:
+    return _strict_file_manifest(CONTROL_PLANE_PATHS)
+
+
+def _model_file_identity(target: RepoMeta) -> Dict[str, Any]:
+    if re.fullmatch(r"[0-9a-f]{40}", target.revision) is None:
+        raise Refusal("RunPod target revision is not an exact 40-hex pin", [])
+    try:
+        config_raw = fetch_file(target.repo_id, "config.json",
+                                revision=target.revision)
+        index_raw = fetch_file(target.repo_id, "model.safetensors.index.json",
+                               revision=target.revision)
+        index = parse_job_bytes(index_raw)
+        config = parse_job_bytes(config_raw)
+    except (HFError, JobContractError, UnicodeError, ValueError) as exc:
+        raise Refusal("target config/index identity is unavailable: %s" % exc, [])
+    weight_map = index.get("weight_map") if isinstance(index, dict) else None
+    if not isinstance(weight_map, dict) or not weight_map:
+        raise Refusal("target index has no non-empty weight_map", [])
+    mapped_shards = list(weight_map.values())
+    if any(not isinstance(name, str) for name in mapped_shards):
+        raise Refusal("target index contains a non-string shard path", [])
+    shard_names = sorted(set(mapped_shards))
+    for name in shard_names:
+        pure = PurePosixPath(name)
+        if (("\\" in name) or pure.is_absolute()
+                or pure.as_posix() != name
+                or any(part in ("", ".", "..") for part in pure.parts)):
+            raise Refusal("target index contains an unsafe shard path", [])
+    if len({path for path, _size in target.files}) != len(target.files):
+        raise Refusal("target repository contains duplicate file paths", [])
+    sizes = dict(target.files)
+    if any(name not in sizes or sizes[name] <= 0 for name in shard_names):
+        raise Refusal("target index names a missing or size-unknown shard", [])
+    repository_shards = sorted(
+        path for path, _size in target.files
+        if path.endswith(".safetensors"))
+    if repository_shards != shard_names:
+        raise Refusal(
+            "repository safetensors census differs from indexed shards", [])
+    shards = [{"path": name, "bytes": sizes[name]} for name in shard_names]
+    repository_files = []
+    for path, size in sorted(target.files):
+        pure = PurePosixPath(path)
+        if (("\\" in path) or pure.is_absolute()
+                or pure.as_posix() != path
+                or any(part in ("", ".", "..") for part in pure.parts)
+                or isinstance(size, bool) or not isinstance(size, int)
+                or size < 0):
+            raise Refusal(
+                "target repository contains an unsafe or size-unknown file",
+                [])
+        repository_files.append({"path": path, "bytes": size})
+    vocab_size = config.get("vocab_size")
+    if (isinstance(vocab_size, bool)
+            or not isinstance(vocab_size, int) or vocab_size <= 0):
+        raise Refusal("target config lacks positive exact vocab_size", [])
+    hidden_size = config.get("hidden_size")
+    if (isinstance(hidden_size, bool)
+            or not isinstance(hidden_size, int) or hidden_size <= 0):
+        raise Refusal("target config lacks positive exact hidden_size", [])
+    return {
+        "config_sha256": hashlib.sha256(config_raw).hexdigest(),
+        "index_sha256": hashlib.sha256(index_raw).hexdigest(),
+        "config_bytes": len(config_raw),
+        "index_bytes": len(index_raw),
+        "model_bytes": sum(row["bytes"] for row in shards),
+        "shards": shards,
+        "download_bytes_total": sum(
+            row["bytes"] for row in repository_files),
+        "download_manifest": repository_files,
+        "download_manifest_sha256": hashlib.sha256(
+            _canonical_bytes(repository_files)).hexdigest(),
+        "vocab_size": vocab_size,
+        "hidden_size": hidden_size,
+        "shard_manifest_sha256": hashlib.sha256(
+            _canonical_bytes(shards)).hexdigest(),
+    }
+
+
+_DOCUMENTED_IDENTITY_SENTINELS = frozenset({
+    "change-me", "changeme", "example", "example root", "example-handle",
+    "example-root", "example-org/example-root", "none", "null", "owner/name",
+    "placeholder", "replace", "tbd", "todo", "unknown", "unset",
+    "your-hf-handle", "your hf handle", "your_hf_handle",
+    "your_handle/replace",
+})
+
+
+def _identity_is_placeholder(value: Any) -> bool:
+    """Reject recipe substitutions and conventional unknown-value sentinels."""
+    if not isinstance(value, str) or not value or value != value.strip():
+        return True
+    folded = value.casefold()
+    return (
+        folded in _DOCUMENTED_IDENTITY_SENTINELS
+        or folded.startswith("$")
+        or (folded.startswith("<") and folded.endswith(">"))
+        or "placeholder" in folded
+        or folded.startswith("example-")
+        or folded.startswith("example/")
+        or folded.startswith("example-org/")
+    )
+
+
+def _runpod_forbidden(args) -> List[str]:
+    forbidden = []
+    checks = (
+        ("spot/interruptible offer", bool(args.spot)),
+        ("--fs-id", getattr(args, "fs_id", None) is not None),
+        ("--keep-fs", bool(getattr(args, "keep_fs", False))),
+        ("--hold-on-failure", bool(getattr(args, "hold_on_failure", False))),
+        ("--i-accept-leak-risk", bool(getattr(args, "i_accept_leak_risk", False))),
+        ("--allow-unpublished-root", bool(getattr(args, "allow_unpublished_root", False))),
+        ("--race", bool(getattr(args, "race", False))),
+        ("--preview-of", bool(getattr(args, "preview_of", None))),
+        ("--skip-registry-check", bool(getattr(args, "skip_registry_check", False))),
+        ("--force", bool(getattr(args, "force", False))),
+        ("--accept-measured-revision", bool(getattr(args, "accept_measured_revision", False))),
+        ("--no-preflight-bench", bool(getattr(args, "no_preflight_bench", False))),
+        ("--keep-student-logits", bool(getattr(args, "keep_student_logits", False))),
+        ("--designated-reference", bool(getattr(args, "designated_reference", False))),
+    )
+    forbidden.extend(label for label, present in checks if present)
+    measurer = getattr(args, "measurer", None)
+    if (_identity_is_placeholder(measurer)
+            or re.fullmatch(
+                r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,94}[A-Za-z0-9])?",
+                measurer or "") is None):
+        forbidden.append(
+            "--measurer must be an explicit non-placeholder Hub handle")
+    if getattr(args, "on_preempt", None) != "fail":
+        forbidden.append("--on-preempt must be fail")
+    if getattr(args, "cold_runs", None) != 2:
+        forbidden.append("--cold-runs must be 2")
+    if getattr(args, "max_cost", None) is None:
+        forbidden.append("--max-cost is required")
+    decimal_rules = {
+        "max_cost": True,
+        "campaign_ceiling": True,
+        "campaign_reserve": True,
+        "campaign_reaper_margin": False,
+        "runpod_container_running_tariff": False,
+        "runpod_container_stopped_tariff": False,
+        "runpod_pod_running_tariff": False,
+        "runpod_pod_stopped_tariff": False,
+        "runpod_network_tariff": False,
+    }
+    for name, positive in decimal_rules.items():
+        value = getattr(args, name, None)
+        if value is None:
+            continue
+        try:
+            parsed = Decimal(str(value))
+        except Exception:
+            forbidden.append(
+                "--%s must be finite decimal" % name.replace("_", "-"))
+            continue
+        if (not parsed.is_finite() or parsed < 0
+                or (positive and parsed <= 0)):
+            forbidden.append(
+                "--%s must be %s finite decimal"
+                % (name.replace("_", "-"),
+                   "positive" if positive else "nonnegative"))
+    integer_bounds = {
+        "heartbeat_timeout": 86400,
+        "retrieval_delete_reserve": 604800,
+        "timer_api_lag": 86400,
+        "runpod_billing_wait": 86400,
+    }
+    for name, maximum in integer_bounds.items():
+        value = getattr(args, name, None)
+        if (isinstance(value, bool) or not isinstance(value, int)
+                or value <= 0 or value > maximum):
+            forbidden.append(
+                "--%s must be in 1..%d"
+                % (name.replace("_", "-"), maximum))
+    if (getattr(args, "role", None) == "root"
+            and getattr(args, "sanity_expect", None) != "Paris"):
+        forbidden.append("--sanity-expect must be exactly Paris for root")
+    if getattr(args, "campaign_name", None) != "fidcloud-":
+        forbidden.append(
+            "--campaign-name is fixed to fidcloud- in safe RunPod mode")
+    if not getattr(args, "max_runtime", None):
+        forbidden.append("--max-runtime is required")
+    required = (
+        "campaign_ledger", "campaign_ceiling", "campaign_reserve",
+        "campaign_reaper_margin", "runpod_safety_proof",
+    )
+    for name in required:
+        if getattr(args, name, None) in (None, ""):
+            forbidden.append("--%s is required" % name.replace("_", "-"))
+    if (getattr(args, "campaign_width", 1) == 2
+            and not getattr(args, "width_two_root_archive", None)):
+        forbidden.append("--width-two-root-archive is required for width 2")
+    if getattr(args, "campaign_width", 1) not in (1, 2):
+        forbidden.append("--campaign-width must be 1 or 2")
+    expected_schedule = (
+        "layer-outer" if getattr(args, "role", None) == "root"
+        else "window-major")
+    if getattr(args, "schedule", None) != expected_schedule:
+        forbidden.append("--schedule must be %s" % expected_schedule)
+    if getattr(args, "lane", None) != "streaming":
+        forbidden.append("--lane must be streaming")
+    if getattr(args, "capture_device", None) != "cuda":
+        forbidden.append("--capture-device must be cuda")
+    if getattr(args, "reduce_order", None) != "fp32":
+        forbidden.append("--reduce-order must be fp32")
+    if getattr(args, "role", None) == "root":
+        for name in ("dataset_id", "dataset_name", "dataset_repository"):
+            if _identity_is_placeholder(getattr(args, name, None)):
+                forbidden.append(
+                    "--%s must be explicit and non-placeholder"
+                    % name.replace("_", "-"))
+        dataset_repository = getattr(args, "dataset_repository", None)
+        publish_root_to = getattr(args, "publish_root_to", None)
+        if (not dataset_repository
+                or re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9._-]*/"
+                    r"[A-Za-z0-9][A-Za-z0-9._-]*",
+                    dataset_repository) is None):
+            forbidden.append(
+                "--dataset-repository must be an exact owner/name repo id")
+        if publish_root_to and publish_root_to != dataset_repository:
+            forbidden.append(
+                "--publish-root-to must equal --dataset-repository")
+        if getattr(args, "replay_device", None) != "numpy":
+            forbidden.append("--replay-device must be numpy")
+        if getattr(args, "replay_dtype", None) != "float32":
+            forbidden.append("--replay-dtype must be float32")
+        if getattr(args, "replay_vocab_chunk", None) != 8192:
+            forbidden.append("--replay-vocab-chunk must be 8192")
+        if getattr(args, "form", None) != "hidden":
+            forbidden.append("--form must be hidden")
+    if getattr(args, "region", None) != "secure":
+        forbidden.append("--region secure is required explicitly")
+    return forbidden
+
+
+def _exact_utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _runpod_quote(args, chosen, target, profile, timing, storage_gb,
+                  container_disk_gb, workload_seconds, result_archive_contract):
+    from fidelity.campaign import CostQuote, RUNPOD_TARIFF_SOURCE
+
+    official = {
+        "runpod_container_running_tariff": Decimal("0.10"),
+        "runpod_container_stopped_tariff": Decimal("0.00"),
+        "runpod_pod_running_tariff": Decimal("0.10"),
+        "runpod_pod_stopped_tariff": Decimal("0.20"),
+        "runpod_network_tariff": Decimal("0.07"),
+    }
+    drift = [name for name, expected in official.items()
+             if Decimal(str(getattr(args, name))) != expected]
+    if drift:
+        raise Refusal("RunPod tariff flags differ from pinned official rates",
+                      ["drift: " + ", ".join(drift)])
+    if (args.tariff_effective_at != "2026-08-31T00:00:00Z"
+            or args.tariff_valid_until != "2026-09-07T00:00:00Z"):
+        raise Refusal("RunPod tariff as-of/validity differs from authored current evidence", [])
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    tariff_effective = datetime.strptime(
+        args.tariff_effective_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc)
+    tariff_until = datetime.strptime(
+        args.tariff_valid_until, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc)
+    if not tariff_effective <= now < tariff_until:
+        raise Refusal("authored RunPod tariff is not currently valid", [])
+    quote_until = min(now + timedelta(minutes=5), tariff_until)
+    reserve = Decimal(str(args.retrieval_delete_reserve))
+    lag = Decimal(str(args.timer_api_lag))
+    workload = Decimal(str(workload_seconds))
+    provider_deadline = workload + reserve
+    rate = Decimal(str(chosen["price_per_gpu_hour"])) * Decimal(chosen["gpus"])
+    quote = CostQuote(
+        reserved_compute_usd_per_hour=rate,
+        live_compute_usd_per_hour=rate,
+        container_disk_size_gb=Decimal(int(container_disk_gb)),
+        container_disk_running_usd_per_gb_month=official[
+            "runpod_container_running_tariff"],
+        container_disk_stopped_usd_per_gb_month=official[
+            "runpod_container_stopped_tariff"],
+        pod_disk_size_gb=Decimal(int(storage_gb)),
+        pod_disk_running_usd_per_gb_month=official[
+            "runpod_pod_running_tariff"],
+        pod_disk_stopped_usd_per_gb_month=official[
+            "runpod_pod_stopped_tariff"],
+        network_volume_size_gb=Decimal(0),
+        network_volume_usd_per_gb_month=official["runpod_network_tariff"],
+        storage_month_hours=Decimal(672),
+        network_billing_increment_seconds=Decimal(3600),
+        tariff_source=RUNPOD_TARIFF_SOURCE,
+        tariff_effective_at=args.tariff_effective_at,
+        quoted_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        valid_until=quote_until.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        target="%s@%s" % (target.repo_id, target.revision),
+        profile=profile,
+        timing_kind=("named-conservative-bound" if args.role == "root"
+                     else "exact-target-profile"),
+        timing_evidence=hashlib.sha256(_canonical_bytes(timing)).hexdigest(),
+        workload_deadline_seconds=workload,
+        provider_termination_deadline_seconds=provider_deadline,
+        retrieval_delete_reserve_seconds=reserve,
+        timer_api_lag_seconds=lag,
+        hard_cap_usd=Decimal(str(args.max_cost)))
+    if quote.calculated_maximum_usd() > Decimal(str(args.max_cost)):
+        raise Refusal("all-in RunPod liability %s exceeds --max-cost %s"
+                      % (quote.calculated_maximum_usd(), args.max_cost), [])
+    return quote
+
+
+def _write_verified_panel_archive(panel_root: Path, destination: Path,
+                                  tokenizer_root: Optional[str]):
+    from fidelity.panel import resolve_panel, write_panel_archive
+    temporary = None
+    selected_root = Path(tokenizer_root).resolve() if tokenizer_root else None
+    if selected_root is None:
+        preliminary = resolve_panel(panel_root, role="final").to_dict()
+        tokenizer = preliminary.get("tokenizer") or {}
+        if tokenizer.get("files_verified") is not True:
+            repository, revision = tokenizer.get("repository"), tokenizer.get("revision")
+            files = tokenizer.get("files")
+            if (not repository or re.fullmatch(r"[0-9a-f]{40}",
+                                               str(revision or "")) is None
+                    or not isinstance(files, list) or not files):
+                raise Refusal("panel tokenizer receipt cannot be prefetched exactly", [])
+            temporary = tempfile.TemporaryDirectory(
+                prefix="fidelity-tokenizer-receipt-")
+            selected_root = Path(temporary.name)
+            for row in files:
+                pure = PurePosixPath(row.get("name", ""))
+                if (pure.is_absolute()
+
+
+                        or any(part in ("", ".", "..") for part in pure.parts)):
+                    raise Refusal("tokenizer receipt contains unsafe file path", [])
+                body = fetch_file(repository, str(pure), revision=revision)
+                output = selected_root.joinpath(*pure.parts)
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(body)
+    archive = write_panel_archive(
+        panel_root, destination, role="final", tokenizer_root=selected_root)
+    if (archive["binding"].get("tokenizer") or {}).get("files_verified") is not True:
+        raise Refusal("panel tokenizer receipt files are not verified before spend", [])
+    return archive, temporary
+def _prefetch_quant_panel(meta: RepoMeta) -> Dict[str, Any]:
+    """Fetch and validate only the pinned final25 token/mask panel bytes."""
+    import stage_panel_paths
+
+    receipt_candidates = [
+        path for path, _size in meta.files
+        if path.endswith("token-panel-receipt.json")]
+    if len(receipt_candidates) != 1:
+        raise Refusal(
+            "pinned panel tree lacks one exact token-panel receipt", [])
+    temporary = tempfile.TemporaryDirectory(
+        prefix="fidelity-quant-panel-preflight-")
+    _RUNPOD_TEMP_HOLDS.append(temporary)
+    root = Path(temporary.name)
+    receipt_rel = receipt_candidates[0]
+    receipt_path = root / receipt_rel
+    receipt_path.parent.mkdir(parents=True, exist_ok=False)
+    receipt_path.write_bytes(fetch_file(
+        meta.repo_id, receipt_rel, repo_type="dataset",
+        revision=meta.revision, timeout=120))
+    artifacts = stage_panel_paths.validate_receipt(receipt_path)
+    rows = []
+    for artifact in artifacts:
+        relative = "calibration/panel-v1/%s" % "/".join(
+            artifact.relative_parts)
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        data = fetch_file(
+            meta.repo_id, relative, repo_type="dataset",
+            revision=meta.revision, timeout=120)
+        if (len(data) != artifact.bytes
+                or hashlib.sha256(data).hexdigest() != artifact.sha256):
+            raise Refusal("pinned panel byte drift: %s" % relative, [])
+        destination.write_bytes(data)
+        rows.append({
+            "path": relative, "bytes": len(data),
+            "sha256": artifact.sha256})
+    check = stage_panel_paths.stage_panel(
+        root, receipt_path, check_only=True,
+        destination_prefix=root / "destination/calibration/panel-v1",
+        destination_anchor=root)
+    if check.get("artifacts") != 667 or check.get("unresolved") != 0:
+        raise Refusal("pinned final25 panel validation is incomplete", [])
+    rows.append({
+        "path": receipt_rel, "bytes": receipt_path.stat().st_size,
+        "sha256": sha256_file(str(receipt_path))})
+    rows.sort(key=lambda row: row["path"])
+    return {
+        "local_root": str(root), "files": rows,
+        "manifest_sha256": hashlib.sha256(_canonical_bytes(rows)).hexdigest(),
+        "receipt_sha256": stage_panel_paths.PINNED_RECEIPT_SHA256,
+        "token_panel_sha256": stage_panel_paths.PINNED_PANEL_SHA256,
+        "contexts": stage_panel_paths.PINNED_FINAL_WINDOWS,
+        "prediction_positions":
+            stage_panel_paths.PINNED_FINAL_PREDICTION_POSITIONS,
+    }
+
+
+def _validate_quant_panel_descriptor(
+        descriptor, meta: RepoMeta, panel_validation: Dict[str, Any],
+        reference_manifest: Dict[str, Any]) -> None:
+    """Bind every descriptor field to the fetched, sealed final25 evidence."""
+    expected = {
+        "panel_ref": "panel--glm53.brandonmusic.final25",
+        "repo_id": reference_manifest["repo_id"],
+        "revision": reference_manifest["revision"],
+        "contexts": reference_manifest["contexts"],
+        "positions_per_context":
+            reference_manifest["positions_per_context"],
+        "scored_positions": reference_manifest["prediction_positions"],
+        "roles": "final",
+        "panel_token_sha256": panel_validation["token_panel_sha256"],
+        "panel_receipt_sha256":
+            reference_manifest["token_panel_receipt_sha256"],
+        "reference_ref": reference_manifest["reference_ref"],
+        "teacher_receipt_sha256":
+            reference_manifest["capture_receipt_sha256"],
+        "teacher_backend_identity_sha256":
+            reference_manifest["backend_identity_sha256"],
+    }
+    actual = {
+        name: getattr(descriptor, name)
+        for name in expected
+    }
+    drift = {
+        name: {"expected": expected[name], "actual": actual[name]}
+        for name in expected if actual[name] != expected[name]
+    }
+    includes = list(descriptor.include)
+    expected_includes = list(reference_manifest["include"])
+    if (len(includes) != len(set(includes))
+            or sorted(includes) != sorted(expected_includes)):
+        drift["include"] = {
+            "expected": expected_includes,
+            "actual": includes,
+        }
+    fetched_bytes = meta.bytes_matching(includes)
+    if fetched_bytes != reference_manifest["included_repo_bytes"]:
+        drift["fetch_bytes"] = {
+            "expected": reference_manifest["included_repo_bytes"],
+            "actual": fetched_bytes,
+        }
+    if panel_validation["receipt_sha256"] != (
+            reference_manifest["token_panel_receipt_sha256"]):
+        drift["validated_panel_receipt"] = {
+            "expected": reference_manifest["token_panel_receipt_sha256"],
+            "actual": panel_validation["receipt_sha256"],
+        }
+    if drift:
+        raise Refusal(
+            "panel descriptor differs from the fetched sealed final25 evidence",
+            [json.dumps(drift, sort_keys=True)])
+
+
+def _resolve_authored_quant_scope(args, target, con):
+    """Return exact registry-authored scope and its immutable source binding."""
+    from fidelity.registry_client import load as load_registry
+    expected = {
+        ("malaiwah/GLM-5.3-Flash-TR3-6bpw",
+         "9ab94105a71708a19c6d960d24b4aa6d459f5623"):
+            "artifact--malaiwah.glm-5.3-flash-tr3-6bpw",
+    }
+    artifact_id = expected.get((target.repo_id, target.revision))
+    if artifact_id is None:
+        raise Refusal("target has no authored exact scope source", [])
+    try:
+        registry = load_registry(args.registry, purpose="check", con=con)
+        artifact = registry.collections["artifacts"][artifact_id]
+    except Exception as exc:
+        raise Refusal("authored exact scope is unavailable: %s" % exc, [])
+    hf = artifact.get("huggingface") or {}
+    if ((hf.get("repository") or "").lower() != target.repo_id.lower()
+            or artifact.get("id") != artifact_id):
+        raise Refusal("authored scope source targets different bytes", [])
+    scope = artifact.get("scope")
+    digest = artifact.get("scope_digest")
+    if not isinstance(scope, dict) or not scope or not isinstance(digest, str):
+        raise Refusal("authored artifact scope is incomplete", [])
+    supplied = read_json(args.scope_json) if args.scope_json else None
+    if supplied is not None and _canonical_bytes(supplied) != _canonical_bytes(scope):
+        raise Refusal("--scope-json differs from exact authored artifact scope",
+                      [])
+    source_sha = hashlib.sha256(_canonical_bytes(artifact)).hexdigest()
+    return json.loads(_canonical_bytes(scope).decode("utf-8")), {
+        "artifact_id": artifact_id, "scope_digest": digest,
+        "source_sha256": source_sha,
+        "registry_snapshot": registry.snapshot_id,
+    }
+
+
+_SAFE_RUNPOD_TARGETS = frozenset({
+    ("root", "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+     "ef68013aa6e16453cf52b5b77647f72fbe258c3c"),
+    ("root", "zai-org/GLM-5.3-Flash-BF16", OFFICIAL_BF16_REVISION),
+    ("quant", "malaiwah/GLM-5.3-Flash-TR3-6bpw",
+     "9ab94105a71708a19c6d960d24b4aa6d459f5623"),
+})
+
+
+def _safe_runpod_target_allowed(role: str, repo_id: str, revision: str) -> bool:
+    return (role, repo_id, revision) in _SAFE_RUNPOD_TARGETS
+
+
+def _open_existing_runpod_campaign(args, provider_account_id: str):
+    """Open the drill-proven paid campaign without creating replacement state."""
+    from fidelity.campaign import CampaignLedger, CampaignLedgerError
+    campaign_path = str(Path(args.campaign_ledger).resolve())
+    if not Path(campaign_path).is_file():
+        raise Refusal(
+            "paid measurement requires the existing drill-proven campaign ledger",
+            [])
+    try:
+        ledger = CampaignLedger(
+            campaign_path, "runpod", provider_account_id)
+        snapshot = ledger.snapshot()
+    except (CampaignLedgerError, OSError, ValueError) as exc:
+        raise Refusal(
+            "existing drill-proven campaign ledger is unavailable: %s"
+            % redact(str(exc)), [])
+    expected = (
+        Decimal(str(args.campaign_ceiling)),
+        Decimal(str(args.campaign_reserve)),
+        Decimal(str(args.campaign_reaper_margin)),
+        2, "USD", "runpod", provider_account_id)
+    actual = (
+        Decimal(snapshot["hard_ceiling_usd"]),
+        Decimal(snapshot["reserve_floor_usd"]),
+        Decimal(snapshot["cleanup_reaper_margin_usd"]),
+        snapshot["max_concurrent_attempts"], snapshot["currency"],
+        snapshot["provider"], snapshot["provider_account_id"])
+    if actual != expected:
+        raise Refusal(
+            "existing campaign ledger identity differs from this measurement",
+            [])
+    return campaign_path, ledger
+
+
+def _plan_runpod_anonymous(
+        args, con: Console, provider,
+        anonymous_access: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the complete finalized job and every paid gate before admission."""
+    from fidelity.cloudlease import (
+        DEFAULT_STATE_DIR, LeaseStore, systemd_reaper_health,
+        validate_unresolved_lease_scope)
+    from fidelity.panel import (
+        PanelError, validate_reference_manifest, validate_root_panel_binding)
+    from fidelity.runpodsafety import (
+        validate_current_public_root, validate_safety_proof,
+        validate_unexpected_tensor_allowlist, validate_width_two_root_archive,
+    )
+
+    plan_data: Dict[str, Any] = {
+        "provider": "runpod", "created": False, "gates": {},
+        "would_refuse": [], "safe_runpod": True,
+    }
+    plan_data["anonymous_access"] = anonymous_access
+    target = repo_meta(args.model, "model", args.revision or "main")
+    if target.private is not False:
+        raise Refusal(
+            "target repository is not anonymously public", [])
+    known_k8_target = (
+        "quant", "malaiwah/GLM-5.3-Flash-TR3-8bpw",
+        "7199f6f1a211084c240614806f046f11a52dad64")
+    if (args.role, target.repo_id, target.revision) == known_k8_target:
+        refusal_engine = load_engines().get(args.lane)
+        if refusal_engine is None:
+            raise Refusal("K8 refusal evidence has no configured lane", [])
+        try:
+            require_supported_profile(
+                refusal_engine, surface="tr3-published", bits=8.0)
+        except EngineProfileRefused as exc:
+            raise Refusal(str(exc), [])
+        raise Refusal(
+            "K8 is refused before spend because its pinned target has no "
+            "sealed surface-to-measurement verdict bridge", [])
+    if not _safe_runpod_target_allowed(
+            args.role, target.repo_id, target.revision):
+        raise Refusal(
+            "initial safe RunPod path is restricted to exact authored targets",
+            [])
+    from fidelity.registry_client import front_gate
+    registry_gate = None
+    if args.role == "quant":
+        registry_gate = front_gate(
+            repo=args.model, revision=target.revision,
+            path_hint=getattr(args, "path", None), source=args.registry,
+            force=False, accept_measured_revision=False, con=con,
+            already_measured_advice=(
+                "Safe RunPod refuses --force and performs no duplicate "
+                "paid quant measurement."))
+        if registry_gate.get("status") == "already-measured":
+            return {
+                "provider": "runpod", "created": False, "no_spend": True,
+                "status": "already-measured",
+                "target": {
+                    "repo_id": target.repo_id,
+                    "revision": target.revision,
+                    "requested_revision": target.requested_revision,
+                },
+            }
+        if registry_gate.get("status") != "proceed":
+            raise Refusal(
+                "registry identity gate refuses an unavailable output",
+                ["status: %s" % registry_gate.get("status")])
+    initial_source_proof = _source_checkout_proof(include_untracked=True)
+    plan_data["source_checkout"] = {
+        "initial": initial_source_proof,
+        "pre_post": dict(initial_source_proof),
+    }
+    gate_verified(
+        plan_data, "clean-source-checkout",
+        head=initial_source_proof["head"])
+    if args.role == "root":
+        plan_data["cli_probe"] = _probe_root_stage_clis()
+        gate_verified(
+            plan_data, "root-stage-cli-probe",
+            probe_sha256=plan_data["cli_probe"]["probe_sha256"])
+    forbidden = _runpod_forbidden(args)
+    if forbidden:
+        raise Refusal("safe RunPod profile refuses: %s" % ", ".join(forbidden), [])
+    outdir = Path(args.out).resolve() if args.out else None
+    if outdir is None:
+        raise Refusal("real-safe RunPod planning requires explicit --out", [])
+    if outdir.exists():
+        raise Refusal("output path already exists", [])
+    gate_verified(plan_data, "safe-profile", offer="on-demand", preemption="fail",
+                  cold_runs=2, controller="one-ssh-fresh-pod")
+
+    bundle = _bundle_manifest()
+    bundle_registry = _bundle_registry_identity()
+    bundle_contract_sha256 = hashlib.sha256(_canonical_bytes({
+        "bundle": bundle, "registry": bundle_registry})).hexdigest()
+    control = _control_manifest()
+    plan_data["bundle"] = bundle
+    plan_data["bundle_registry"] = bundle_registry
+    plan_data["bundle_contract_sha256"] = bundle_contract_sha256
+    plan_data["control_plane"] = control
+
+    if not provider.available():
+        raise Refusal("RunPod key file is missing, unreadable, unstable or invalid", [])
+    provider.require()
+    gate_verified(plan_data, "stable-runpod-key")
+    initial_status = provider.status()
+    initial_account_id = str(initial_status.get("id") or "").strip()
+    if not initial_account_id:
+        raise Refusal("RunPod status lacks exact myself.id", [])
+    health = systemd_reaper_health(
+        state_dir=Path(args.reaper_state_dir),
+        lease_dir=Path(args.lease_dir), provider="runpod",
+        provider_account_id=initial_account_id)
+    if not health.get("ok"):
+        raise Refusal("systemd-user RunPod reaper is not healthy", [])
+    gate_verified(plan_data, "reaper-health", **health)
+
+    surface = sniff_surface(target, getattr(args, "path", None))
+    identity = _model_file_identity(target)
+    if surface.problems:
+        raise Refusal("target surface metadata is not usable", list(surface.problems))
+    if args.role == "root":
+        _refuse_quantized_root(con, target, surface, plan_data, args=args)
+    _refuse_scope_contradicted_by_release(
+        con, target.repo_id, target.revision, surface,
+        read_json(args.scope_json) if args.scope_json else None, plan_data)
+    if surface.surface == "tr3-published":
+        if surface.bits is None:
+            raise Refusal("TR3 surface has no exact public bit profile", [])
+        tr3_profile = "tr3-%gbpw" % float(surface.bits)
+        _verify_tr3_seal(
+            con, target.repo_id, target.revision, plan_data,
+            args=args, profile=tr3_profile)
+    if args.role == "root":
+        registry_gate = front_gate(
+            repo=args.model, revision=target.revision,
+            path_hint=getattr(args, "path", None), source=args.registry,
+            force=False, accept_measured_revision=False, con=con,
+            already_measured_advice=(
+                "Safe RunPod refuses --force; a separately identified root "
+                "qualification continues only through its own gates."))
+        if registry_gate.get("status") not in ("proceed", "already-measured"):
+            raise Refusal(
+                "registry identity gate refuses an unavailable output",
+                ["status: %s" % registry_gate.get("status")])
+    gate_verified(plan_data, "scientific-precedent-and-surface",
+                  registry=registry_gate.get("status"),
+                  surface=surface.surface)
+    target_doc = {
+        "repo_id": target.repo_id, "revision": target.revision,
+        "requested_revision": target.requested_revision,
+        "surface": surface.surface, "codec": surface.codec_family,
+        "bits": surface.bits, "path": surface.path,
+        "size_bytes": (
+            surface.artifact_bytes
+            if surface.artifact_bytes is not None else identity["model_bytes"]),
+        "precision_label": (
+            "bfloat16" if surface.surface == "native-bf16"
+            else ("%g bpw" % surface.bits
+                  if surface.bits is not None else None)),
+        "codebook": surface.codebook,
+        "container": {
+            "native-bf16": "safetensors",
+            "tr3-published": "tr3",
+            "exl3hf": "exl3",
+            "dione": "exl3",
+            "gguf": "gguf",
+        }.get(surface.surface),
+        "shard_hash_verification": "full",
+        "bits_per_weight_effective": None,
+        "group_size": None,
+        "exllamav3_pin": surface.exllamav3_pin,
+        "quantizer_tool": surface.codec_family,
+        "quantizer_version": surface.exllamav3_pin,
+        "config_sha256": identity["config_sha256"],
+        "index_sha256": identity["index_sha256"],
+        "config_bytes": identity["config_bytes"],
+        "index_bytes": identity["index_bytes"],
+        "model_bytes": identity["model_bytes"],
+        "vocab_size": identity["vocab_size"],
+        "hidden_size": identity["hidden_size"],
+        "shards": identity["shards"],
+        "shard_manifest_sha256": identity["shard_manifest_sha256"],
+        "download_bytes_total": identity["download_bytes_total"],
+        "download_manifest": identity["download_manifest"],
+        "download_manifest_sha256": identity["download_manifest_sha256"],
+    }
+    for evidence_key in (
+            "seal_verification", "nonrouted_completeness",
+            "public_profile_evidence"):
+        evidence = (plan_data.get("target") or {}).get(evidence_key)
+        if evidence is not None:
+            target_doc[evidence_key] = evidence
+    plan_data["target"] = target_doc
+    gate_verified(plan_data, "target-byte-identity",
+                  revision=target.revision,
+                  shard_manifest_sha256=identity["shard_manifest_sha256"])
+    if args.role == "quant":
+        job_scope, scope_binding = _resolve_authored_quant_scope(
+            args, target, con)
+        gate_verified(
+            plan_data, "authored-exact-scope",
+            artifact_id=scope_binding["artifact_id"],
+            source_sha256=scope_binding["source_sha256"])
+    else:
+        job_scope = {
+            "kind": "root-capture", "engine": "hf-transformers",
+            "dtype": "bfloat16", "form": args.form,
+        }
+        scope_binding = {
+            "source": "root-capture-contract",
+            "source_sha256": hashlib.sha256(
+                _canonical_bytes(job_scope)).hexdigest(),
+        }
+
+    engines = load_engines()
+    engine = engines.get(args.lane)
+    if engine is None:
+        raise Refusal("no engine configured for lane %r" % args.lane, [])
+    if args.role == "root":
+        if not (SUITE_ROOT / "engines/tools/hf_capture.py").is_file():
+            raise Refusal("root capture engine is absent", [])
+        gpu = ("L4" if target.repo_id
+               == "malaiwah/GLM-5.2-SIQ-Fruit-bf16" else "H200")
+    else:
+        probe = engine.probe(
+            SUITE_ROOT, paid=True, python="python3", env=dict(os.environ))
+        if not engine.pinned or not probe["help_ok"]:
+            raise Refusal(
+                "quant engine/scorer live CLI help probe failed",
+                [json.dumps(probe, sort_keys=True)])
+        gpu = "H200"
+        plan_data["cli_probe"] = probe
+    normalized_arg_gpu = (args.gpu or gpu).upper().replace("-", "").replace(" ", "")
+    if normalized_arg_gpu != gpu.upper().replace("-", ""):
+        raise Refusal("exact target timing requires GPU %s" % gpu, [])
+    descriptor = None
+    pmeta = None
+    reference_manifest = None
+    if args.role == "quant":
+        descriptor = load_panel_descriptor(args.panel_descriptor or args.panel)
+        pmeta = repo_meta(descriptor.repo_id, "dataset",
+                          args.panel_revision or descriptor.revision)
+        if (pmeta.repo_id
+                != "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits"
+                or pmeta.revision
+                != "95f4fdd94bf29989db2e0d1054e4931f55edb6aa"):
+            raise Refusal(
+                "initial safe quant path requires the exact authored panel pin",
+                [])
+        quant_panel_validation = _prefetch_quant_panel(pmeta)
+        if quant_panel_validation["contexts"] != descriptor.contexts:
+            raise Refusal(
+                "validated token panel count differs from descriptor", [])
+        reference_manifest = validate_reference_manifest(
+            pmeta.repo_id, pmeta.revision, repo_meta=pmeta)
+        _validate_quant_panel_descriptor(
+            descriptor, pmeta, quant_panel_validation, reference_manifest)
+    if args.role == "root":
+        timing = resolve_root_timing(
+            target_repo=target.repo_id, target_revision=target.revision,
+            gpu=gpu, form=args.form,
+            schedule="two-fresh-process-qualification")
+        timing_identity = timing["model_identity"]
+        for key, actual in (("model_bytes", identity["model_bytes"]),
+                            ("config_sha256", identity["config_sha256"]),
+                            ("index_sha256", identity["index_sha256"])):
+            if timing_identity.get(key) != actual:
+                raise Refusal("root timing evidence differs from target %s" % key, [])
+        profile = "root-hf-transformers-bf16"
+        estimated_seconds = Decimal(str(timing["conservative_upper_hours"])) * 3600
+    else:
+        profile = resolve_profile(engine, surface.surface, surface.bits)
+        if not profile:
+            raise Refusal("target has no exact engine profile", [])
+        try:
+            require_supported_profile(
+                engine, surface=surface.surface, bits=surface.bits)
+        except EngineProfileRefused as exc:
+            raise Refusal(str(exc), [])
+        if profile.lower().startswith("k8") or surface.bits == 8:
+            raise Refusal("K8 is refused before spend", [])
+        if profile != "tr3-6bpw":
+            raise Refusal(
+                "initial safe RunPod quant path permits only the K6 bridge", [])
+    if args.role == "root":
+        profile_doc = {
+            "profile_id": "root-hf-transformers-bf16",
+            "lane": "root", "source": "native",
+            "surface": surface.surface, "form": args.form,
+            "engine": "hf-transformers", "compute_dtype": "bfloat16",
+            "device": "cuda",
+            "schedule": "two-fresh-process-qualification",
+        }
+    else:
+        profile_source = {"tr3-6bpw": "tr3"}.get(profile)
+        if profile_source is None:
+            raise Refusal("quant profile has no authored source identity", [])
+        profile_doc = {
+            "profile_id": profile, "lane": args.lane,
+            "source": profile_source, "surface": surface.surface,
+            "bits": surface.bits,
+        }
+        timing = resolve_profile_timing(
+            engine, profile=profile, surface=surface.surface, bits=surface.bits,
+            target_repo=target.repo_id, target_revision=target.revision, gpu=gpu)
+        runtime_windows = (timing.get("runtime_profile") or {}).get("window_count")
+        if pmeta.private is not False:
+            raise Refusal(
+                "panel repository is not anonymously public", [])
+        if runtime_windows != descriptor.contexts:
+            raise Refusal("timing window_count differs from resolved panel contexts", [])
+        estimated_seconds = (
+            Decimal(str(timing["minutes_per_window"])) * 60
+            * Decimal(descriptor.contexts) * Decimal(args.cold_runs))
+    plan_data["profile"], plan_data["timing"] = profile, timing
+    if args.role == "quant":
+        runtime = dict(timing.get("runtime_profile") or {})
+        expected_cache = "none"
+        required_runtime = {
+            "gpu": "H200", "gpu_count": 1,
+            "window_count": descriptor.contexts,
+            "decode_cache": expected_cache, "decode_threads": 28,
+            "reader_threads": 28, "min_vcpu_count": 28,
+            "min_memory_gb": 300, "controller_processes_per_pod": 1,
+        }
+        drift = {
+            key: {"expected": value, "actual": runtime.get(key)}
+            for key, value in required_runtime.items()
+            if runtime.get(key) != value}
+        if drift:
+            raise Refusal(
+                "timing evidence lacks the exact invocation/resource contract",
+                [json.dumps(drift, sort_keys=True)])
+        runtime_contract = dict(
+            required_runtime,
+            device="cuda",
+            expert_parallel={"mode": "single_device", "world_size": 1},
+            reduce_order="fp32",
+            capacity_basis="authored-profile-measured-host")
+    else:
+        if target.repo_id == "malaiwah/GLM-5.2-SIQ-Fruit-bf16":
+            min_vcpu_count, min_memory_gb = 4, 32
+        elif target.repo_id == "zai-org/GLM-5.3-Flash-BF16":
+            min_vcpu_count, min_memory_gb = 28, 300
+        else:
+            raise Refusal("root target lacks conservative controller capacity",
+                          [])
+        runtime_contract = {
+            "min_vcpu_count": min_vcpu_count,
+            "min_memory_gb": min_memory_gb,
+            "gpu_count": 1, "device": "cuda",
+            "expert_parallel": {"mode": "single_device", "world_size": 1},
+            "reduce_order": "fp32",
+            "capacity_basis": "controller-conservative-capacity",
+        }
+    plan_data["runtime_contract"] = runtime_contract
+    max_runtime = parse_duration(args.max_runtime)
+    if estimated_seconds > Decimal(max_runtime):
+        raise Refusal("target-specific timing exceeds --max-runtime", [])
+    gate_verified(plan_data, "target-profile-timing", profile=profile,
+                  evidence_sha256=hashlib.sha256(_canonical_bytes(timing)).hexdigest())
+
+    panel_doc: Dict[str, Any]
+    panel_local = None
+    binding_local = None
+    if args.role == "root":
+        if not args.panel_dir:
+            raise Refusal("safe RunPod root requires local --panel-dir", [])
+        panel_root = Path(args.panel_dir).resolve()
+        panel_temp = tempfile.TemporaryDirectory(prefix="fidelity-panel-plan-")
+        _RUNPOD_TEMP_HOLDS.append(panel_temp)
+        panel_local = Path(panel_temp.name) / "panel.tar"
+        archive, tokenizer_temp = _write_verified_panel_archive(
+            panel_root, panel_local, args.panel_tokenizer_root)
+        validated_root_binding = validate_root_panel_binding(
+            archive["binding"], target.repo_id, target.revision)
+        if validated_root_binding != archive["binding"]:
+            raise PanelError(
+                "root panel validator changed the resolved binding")
+        if tokenizer_temp is not None:
+            _RUNPOD_TEMP_HOLDS.append(tokenizer_temp)
+        binding_bytes = _canonical_bytes(archive["binding"])
+        binding_local = panel_local.with_suffix(".binding.json")
+        binding_local.write_bytes(binding_bytes)
+        panel_doc = {
+            "resolved_binding": archive["binding"],
+            "binding_path": "inputs/panel.binding.json",
+            "binding_file_sha256": hashlib.sha256(binding_bytes).hexdigest(),
+            "archive_path": "inputs/panel.tar",
+            "archive_bytes": archive["bytes"],
+            "archive_sha256": archive["sha256"],
+            "content_path": "inputs/panel",
+        }
+        plan_data["_panel_archive_local"] = str(panel_local)
+        plan_data["_panel_binding_local"] = str(binding_local)
+    else:
+        panel_doc = dict(
+            descriptor.to_dict(), revision=pmeta.revision,
+            fetch_bytes=pmeta.bytes_matching(descriptor.include),
+            validated_reference_manifest=reference_manifest,
+            validated_token_panel={
+                key: value for key, value in quant_panel_validation.items()
+                if key != "local_root"})
+        plan_data["_quant_panel_root"] = quant_panel_validation["local_root"]
+    plan_data["panel"] = panel_doc
+    gate_verified(plan_data, "panel-binding",
+                  binding_sha256=panel_doc.get("binding_file_sha256",
+                                               hashlib.sha256(_canonical_bytes(panel_doc)).hexdigest()))
+    plan_data["anonymous_access"]["target"] = {
+        "repo_id": target.repo_id, "revision": target.revision,
+        "private": target.private,
+        "config_sha256": identity["config_sha256"],
+        "index_sha256": identity["index_sha256"],
+    }
+    plan_data["anonymous_access"]["panel"] = (
+        {
+            "repo_id": pmeta.repo_id, "revision": pmeta.revision,
+            "private": pmeta.private,
+            "reference_manifest_sha256":
+                reference_manifest["manifest_sha256"],
+            "token_panel_validated": True,
+        } if args.role == "quant" else {
+            "mode": "local-job-bound-archive",
+            "binding_sha256": panel_doc["binding_file_sha256"],
+        })
+    gate_verified(
+        plan_data, "anonymous-public-metadata",
+        target_config_sha256=identity["config_sha256"],
+        target_index_sha256=identity["index_sha256"],
+        panel_private=(pmeta.private if pmeta is not None else False))
+
+    allowlist = None
+    if args.role == "root":
+        if not args.unexpected_tensor_allowlist:
+            raise Refusal("root requires an exact checked-in unexpected tensor allowlist", [])
+        allowlist = validate_unexpected_tensor_allowlist(
+            args.unexpected_tensor_allowlist, target_repo=target.repo_id,
+            target_revision=target.revision, suite_root=SUITE_ROOT)
+        gate_verified(
+            plan_data, "exact-unexpected-tensor-allowlist",
+            artifact_sha256=allowlist["artifact_sha256"],
+            names_sha256=allowlist[
+                "canonical_sorted_names_sha256"])
+        allowlist_bundle_rows = [
+            row for row in bundle["files"]
+            if row["path"] == allowlist["path"]]
+        if (len(allowlist_bundle_rows) != 1
+                or allowlist_bundle_rows[0]["sha256"]
+                != allowlist["artifact_sha256"]):
+            raise Refusal(
+                "authored allowlist differs from frozen bundle manifest", [])
+
+    offers = provider.gpus()
+    provider_gpu_id = {
+        "L4": "NVIDIA L4",
+        "H200": "NVIDIA H200",
+    }[gpu]
+    candidates = [offer for offer in offers
+                  if offer.gpu_type == provider_gpu_id
+                  and offer.spot is False
+                  and offer.region == "secure"
+                  and offer.free_devices >= 1]
+    if not candidates:
+        raise Refusal("no secure on-demand RunPod %s offer is available" % gpu, [])
+    def _offer_exact_rate(candidate):
+        raw_rate = (candidate.raw or {}).get(
+            "uninterruptablePriceDecimal")
+        try:
+            parsed = Decimal(str(raw_rate))
+        except Exception as exc:
+            raise Refusal(
+                "RunPod offer lacks exact decimal on-demand rate", []) from exc
+        if not parsed.is_finite() or parsed <= 0:
+            raise Refusal(
+                "RunPod offer exact decimal rate is not positive finite", [])
+        return parsed
+    offer = sorted(
+        candidates,
+        key=lambda item: (_offer_exact_rate(item), item.gpu_type))[0]
+    exact_offer_rate = _offer_exact_rate(offer)
+    chosen = {
+        "provider": "runpod", "provider_gpu_id": provider_gpu_id,
+        "provider_gpu_display": provider_gpu_id,
+        "gpu_type": gpu, "gpus": 1, "region": offer.region,
+        "hard_cap_usd": str(Decimal(str(args.max_cost))),
+        "vram_bytes": int(offer.vram_bytes),
+        "price_per_gpu_hour": format(exact_offer_rate, "f"),
+        "price_per_gpu_hour_display": offer.price,
+        "ssh_host_key_policy":
+            "strict-ed25519-out-of-band-runpod-web-terminal",
+        "ssh_endpoint_binding": "provider-api-exact-pod-id",
+    }
+    plan_data["chosen"] = chosen
+    gate_verified(plan_data, "exact-offer", **chosen)
+
+    if args.role == "root":
+        vocab_size = identity["vocab_size"]
+        hidden_size = identity["hidden_size"]
+        scored_positions = (
+            panel_doc["resolved_binding"]["panel"]
+            .get("scored_positions_total"))
+        if (isinstance(scored_positions, bool)
+                or not isinstance(scored_positions, int)
+                or scored_positions <= 0):
+            raise Refusal(
+                "root panel lacks exact selected prediction positions", [])
+        hidden_bytes = scored_positions * hidden_size * 2
+        shared_head_bytes = vocab_size * hidden_size * 2
+        capture_bytes_per_process = hidden_bytes + shared_head_bytes
+        panel_bytes = int(panel_doc["archive_bytes"])
+        artifact_bytes = identity["download_bytes_total"]
+        # Archive creation can coexist with both raw fresh-process captures.
+        extra_bytes = capture_bytes_per_process * 2
+        archive_uncompressed = extra_bytes + 67108864
+        archive_transfer = (
+            archive_uncompressed
+            + ((archive_uncompressed + 16382) // 16383) * 5 + 64)
+        target_doc["root_capture_storage"] = {
+            "form": "hidden", "storage_dtype": "bfloat16",
+            "selected_prediction_positions": scored_positions,
+            "vocab_size": vocab_size, "hidden_size": hidden_size,
+            "bytes_per_element": 2, "fresh_processes": 2,
+            "hidden_bytes_per_process": hidden_bytes,
+            "shared_head_bytes_per_process": shared_head_bytes,
+            "bytes_per_process": capture_bytes_per_process,
+            "capture_bytes_total": capture_bytes_per_process * 2,
+            "capture_archive_duplicate_upper_bound_bytes":
+                capture_bytes_per_process * 2,
+            "required_dataset_trees": 2,
+            "result_archive_max_members": scored_positions * 2 + 128,
+            "result_archive_max_uncompressed_bytes": archive_uncompressed,
+            "result_archive_max_transfer_bytes": archive_transfer,
+        }
+    else:
+        panel_bytes = panel_doc["fetch_bytes"]
+        artifact_bytes = identity["download_bytes_total"]
+        extra_bytes = 0
+    if args.role == "root":
+        result_archive_contract = {
+            name: target_doc["root_capture_storage"][name]
+            for name in (
+                "required_dataset_trees", "result_archive_max_members",
+                "result_archive_max_uncompressed_bytes",
+                "result_archive_max_transfer_bytes")
+        }
+    else:
+        quant_archive_uncompressed = 2 * 1024 ** 3
+        result_archive_contract = {
+            "retained_content": [
+                "receipts", "reports", "bounded-log-tails", "control"],
+            "result_archive_max_members": 2048,
+            "result_archive_max_uncompressed_bytes":
+                quant_archive_uncompressed,
+            "result_archive_max_transfer_bytes":
+                quant_archive_uncompressed
+                + ((quant_archive_uncompressed + 16382) // 16383) * 5 + 64,
+        }
+    target_doc["result_archive_contract"] = result_archive_contract
+    if args.role == "quant" and profile == "tr3-6bpw":
+        official_target = repo_meta(
+            "zai-org/GLM-5.3-Flash-BF16", "model", OFFICIAL_BF16_REVISION)
+        official_identity = _model_file_identity(official_target)
+        artifact_bytes += (
+            official_identity["config_bytes"] + official_identity["index_bytes"])
+        target_doc["official_bf16_identity"] = official_identity
+    if (args.role == "quant"
+            and surface.surface in ("exl3hf", "tr3-published", "dione", "gguf")):
+        extra_bytes += C.glm53_flash_census().nonrouted_bytes
+    storage_need = C.storage_need(
+        artifact_bytes=float(artifact_bytes), panel_bytes=float(panel_bytes),
+        keep_student_logits=False, cold_runs=2, extra_bytes=float(extra_bytes))
+    computed_storage = C.round_up_storage_gb(storage_need.total_bytes)
+    if args.storage is not None and args.storage < computed_storage:
+        raise Refusal("--storage is smaller than exact storage arithmetic", [])
+    storage_gb = int(args.storage or computed_storage)
+    plan_data["storage_need"] = storage_need.to_dict()
+    plan_data["storage_gb"] = storage_gb
+    archive_container_bytes = result_archive_contract[
+        "result_archive_max_transfer_bytes"]
+    plan_data["container_disk_gb"] = max(
+        20, C.round_up_storage_gb(archive_container_bytes + 67108864))
+    workspace_available_bytes_minimum = int(
+        Decimal(str(storage_need.total_bytes)).to_integral_value(
+            rounding=ROUND_CEILING))
+    container_available_bytes_minimum = int(
+        archive_container_bytes + 67108864)
+    plan_data["resource_requirements"] = {
+        "workspace_available_bytes_minimum":
+            workspace_available_bytes_minimum,
+        "container_available_bytes_minimum":
+            container_available_bytes_minimum,
+        "min_vcpu_count": runtime_contract["min_vcpu_count"],
+        "min_memory_gb": runtime_contract["min_memory_gb"],
+        "expected_vram_bytes": chosen["vram_bytes"],
+    }
+    result_archive_bound = archive_container_bytes
+    local_verify_bound_seconds = max(
+        60, (result_archive_bound + 16777215) // 16777216)
+    retrieval_attempts = 3
+    retrieval_delete_minimum = (
+        1800
+        + retrieval_attempts * (3600 + local_verify_bound_seconds)
+        + 300)
+    if int(args.retrieval_delete_reserve) < retrieval_delete_minimum:
+        raise Refusal(
+            "--retrieval-delete-reserve is below three bounded downloads, "
+            "their local verification work, archive build, and deletion reserve",
+            ["minimum seconds: %d" % retrieval_delete_minimum])
+    plan_data["retrieval_delete_contract"] = {
+        "remote_archive_build_timeout_seconds": 1800,
+        "download_attempts": retrieval_attempts,
+        "download_timeout_seconds_per_attempt": 3600,
+        "local_verify_extract_bound_seconds_per_attempt":
+            local_verify_bound_seconds,
+        "final_delete_reserve_seconds": 300,
+        "minimum_reserve_seconds": retrieval_delete_minimum,
+        "bound_archive_bytes": result_archive_bound,
+    }
+    plan_data["post_create_convergence"] = {
+        "schema": "fidelity-suite/runpod-post-create-convergence.v1",
+        "timeout_seconds": POST_CREATE_CONVERGENCE_SECONDS,
+        "poll_seconds": POST_CREATE_CONVERGENCE_POLL_SECONDS,
+    }
+    quote = _runpod_quote(
+        args, chosen, target, profile, timing, storage_gb,
+        plan_data["container_disk_gb"], Decimal(max_runtime),
+        result_archive_contract)
+    plan_data["cost_quote"] = quote.to_dict()
+    from fidelity.runpodapi import DEFAULT_IMAGE as RUNPOD_IMAGE
+    chosen["image"] = RUNPOD_IMAGE
+    chosen["image_reference_mutable"] = (
+        "@sha256:" not in RUNPOD_IMAGE)
+    plan_data["max_runtime_seconds"] = max_runtime
+    plan_data["provider_termination_seconds"] = int(
+        quote.provider_termination_deadline_seconds)
+    gate_verified(plan_data, "all-in-decimal-quote",
+                  calculated_maximum_usd=str(quote.calculated_maximum_usd()),
+                  hard_cap_usd=str(quote.hard_cap_usd))
+
+    plan_status = provider.status()
+    provider_account_id = str(plan_status.get("id") or "").strip()
+    if not provider_account_id:
+        raise Refusal("RunPod status lacks exact myself.id", [])
+    chosen["provider_account_id"] = provider_account_id
+    plan_data["provider_account_id"] = provider_account_id
+    inventory = provider.chargeable_inventory()
+    if not inventory.get("complete"):
+        raise Refusal("RunPod pod/network-volume inventory is incomplete", [])
+    if provider_account_id != initial_account_id:
+        raise Refusal("RunPod account identity changed during planning", [])
+    if (Path(args.campaign_ledger).resolve().parent
+            != Path(args.lease_dir).resolve().parent):
+        raise Refusal(
+            "campaign ledger must be a sibling of the lease directory", [])
+    publication_preflight = None
+    if args.role == "root" and args.publish_root_to is not None:
+        from fidelity import dshub
+        try:
+            publication_preflight = dshub.preflight_create(
+                args.publish_root_to, args.hf_token_file)
+        except Exception as exc:
+            raise Refusal(
+                "local root publication preflight failed: %s"
+                % redact(str(exc)), [])
+    plan_data["inventory_plan"] = inventory
+    gate_verified(plan_data, "complete-chargeable-inventory",
+                  pods=len(inventory["families"]["pods"]["resources"]),
+                  network_volumes=len(
+                      inventory["families"]["network_volumes"]["resources"]))
+
+    proof = validate_safety_proof(
+        args.runpod_safety_proof, bundle_contract_sha256,
+        control["manifest_sha256"], provider_account_id,
+        str(Path(args.campaign_ledger).resolve()))
+    proof_account_id = str(
+        (proof.get("proof") or {}).get("provider_account_id") or "")
+    if proof_account_id != provider_account_id:
+        raise Refusal(
+            "RunPod safety proof belongs to a different provider account", [])
+    plan_data["safety_proof_sha256"] = proof["proof"]["proof_sha256"]
+    gate_verified(plan_data, "current-paid-fault-drill",
+                  proof_sha256=proof["proof"]["proof_sha256"])
+
+    capture: Dict[str, Any] = {}
+    if args.role == "root":
+        allowlist_job = {
+            key: allowlist[key] for key in (
+                "path", "artifact_sha256", "canonical_sorted_names_sha256")}
+        binding_panel = panel_doc["resolved_binding"]["panel"]
+        capture = {
+            "engine": "hf-transformers",
+            "dtype": "bfloat16",
+            "dataset_repository": args.dataset_repository,
+            "role": "root", "form": args.form,
+            "schedule": "layer-outer",
+            "panel_dir": panel_doc["content_path"],
+            "panel_id": binding_panel["id"],
+            "dataset_id": args.dataset_id,
+            "dataset_name": args.dataset_name or args.dataset_id,
+            "author": args.measurer,
+            "race": False, "preview_of": None,
+            "sanity_expect": args.sanity_expect,
+            "device": args.capture_device,
+            "publish_root_to": args.publish_root_to,
+            "unexpected_tensor_allowlist": allowlist_job,
+            "replay_device": args.replay_device,
+            "replay_dtype": args.replay_dtype,
+            "vocab_chunk": args.replay_vocab_chunk,
+            "replay": {"device": args.replay_device, "dtype": args.replay_dtype,
+                       "vocab_chunk": args.replay_vocab_chunk},
+            "root_protocol": {
+                "schedule": "two-fresh-process-qualification",
+                "fresh_processes": 2, "run_count_per_process": 1,
+                "exact_self_comparison": True,
+                "qualification_required": True,
+                "canonical_publication_required":
+                    args.publish_root_to is not None,
+                "publication_mode": (
+                    "canonical-public" if args.publish_root_to
+                    else "qualified-unpublished"),
+            },
+        }
+    job = finalize_job({
+        "schema": "fidelity-suite/job.v2",
+        "role": args.role, "recipe": "cloud", "lane": args.lane,
+        "cold_runs": 2, "profile": profile_doc, "timing": timing,
+        "target": target_doc, "panel": panel_doc,
+        "reference": {
+            "reference_ref": panel_doc.get("reference_ref"),
+            "teacher_receipt_sha256": panel_doc.get("teacher_receipt_sha256"),
+            "teacher_backend_identity_sha256":
+                panel_doc.get("teacher_backend_identity_sha256"),
+        },
+        "resource_requirements": plan_data["resource_requirements"],
+        "post_create_convergence": plan_data["post_create_convergence"],
+        "source_checkout": plan_data["source_checkout"],
+        "cli_probe": plan_data["cli_probe"],
+        "anonymous_access": plan_data["anonymous_access"],
+        "capture": capture,
+        **({
+            "scoring": {
+                "schema": "fidelity-suite/kld-scoring.v1",
+                "device": "cuda", "chunk_positions": 512,
+                "compute_dtype": "float64",
+                "direction": "reference_to_candidate",
+                "vocabulary": "full",
+                "reduction": "mean_of_run_means_tokenwise_kld",
+            },
+        } if args.role == "quant" else {}),
+        "environment": chosen,
+        "bundle": bundle, "bundle_registry": bundle_registry,
+        "bundle_contract_sha256": bundle_contract_sha256,
+        "scope": job_scope,
+        "scope_binding": scope_binding,
+        "control_plane": control,
+        "publication_preflight": publication_preflight,
+        "measurer": {
+            "name": args.measurer, "handle": args.measurer,
+            "url": "https://huggingface.co/%s" % args.measurer,
+            "is_artifact_author":
+                args.measurer == target.repo_id.split("/", 1)[0],
+        },
+        "attribution_binding": {
+            "target_owner": target.repo_id.split("/", 1)[0],
+            "measurer_handle": args.measurer,
+            "rule": "exact-handle-equality",
+        },
+        "runtime": runtime_contract,
+        "reduce_order": args.reduce_order,
+        "disclosures": plan_data.get("disclosures") or [],
+        "keep_student_logits": False,
+        "official_bf16_revision": OFFICIAL_BF16_REVISION,
+        "produced_by": produced_by_block(
+            SUITE_ROOT, "bin/measure_cloud.py",
+            dependencies={
+                "lane": args.lane, "provider": "runpod",
+                "profile": profile_doc["profile_id"]}),
+        "execution_attempt": {
+            "kind": "runpod-ssh",
+            "attempt_id": None, "cost_quote": None, "engine_root": None,
+            "execution_contract_sha256": None,
+            "lease_path": None, "pre_create_safety": None,
+            "prepared_create": None,
+            "remote_root": None,
+            "workload_deadline_utc": None, "provider_terminate_after": None,
+            "planned_at": None,
+        },
+    })
+    verify_job(job)
+    if (job["produced_by"]["revision"]
+            != plan_data["source_checkout"]["initial"]["head"]):
+        raise Refusal(
+            "produced_by revision differs from clean source HEAD", [])
+    plan_data["job"] = job
+    plan_data["job_id"], plan_data["job_id_full"] = job["job_id"], job["job_id_full"]
+    preview_now = _exact_utc_now()
+    preview_valid = (
+        datetime.now(timezone.utc) + timedelta(minutes=5)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    provider_resources = []
+    for family_name, family in (inventory.get("families") or {}).items():
+        for row in family.get("resources") or []:
+            resource = {
+                "family": family_name,
+                "id": str(row.get("id") or "").strip(),
+                "name": str(row.get("name") or "").strip(),
+                "status": str(row.get("status") or "").strip(),
+            }
+            if not all(resource.values()):
+                raise Refusal(
+                    "provider inventory lacks exact id/name/status", [])
+            provider_resources.append(resource)
+    preview_common = {
+        "provider": "runpod",
+        "provider_account_id": provider_account_id,
+        "balance_available_usd": plan_status.get("clientBalance"),
+        "balance_observed_at": preview_now,
+        "balance_valid_until": preview_valid,
+        "balance_source": "RunPod myself.clientBalance",
+        "inventory_observed_at": inventory["observed_at_utc"],
+        "inventory_valid_until": preview_valid,
+        "inventory_complete": True,
+        "provider_resources": provider_resources,
+        "inventory_source": inventory["schema"],
+    }
+    preview_attempt = "0" * 24
+    campaign_path, preview_ledger = _open_existing_runpod_campaign(
+        args, provider_account_id)
+    try:
+        unresolved_scope = validate_unresolved_lease_scope(
+            LeaseStore(Path(args.lease_dir)), health,
+            provider="runpod", provider_account_id=provider_account_id,
+            campaign_ledger_path=Path(campaign_path))
+    except Exception as exc:
+        raise Refusal(
+            "unresolved leases are outside current reaper/campaign scope: %s"
+            % exc, [])
+    plan_data["unresolved_lease_scope"] = unresolved_scope
+    gate_verified(
+        plan_data, "canonical-unresolved-lease-scope", **unresolved_scope)
+    preview_snapshot = preview_ledger.snapshot()
+    decision = preview_ledger.preview_reserve_with_provider_snapshot(
+        preview_snapshot["generation"], job["job_id_full"],
+        preview_attempt, quote, preview_now,
+        effective_width=args.campaign_width, **preview_common)
+    plan_data["campaign_admission_preview"] = decision.to_dict()
+    if not decision.admitted:
+        raise Refusal(
+            "campaign admission preview refused [%s]: %s"
+            % (decision.code, decision.message), [])
+    if args.campaign_width == 2:
+        width_two = validate_width_two_root_archive(
+            args.width_two_root_archive, job)
+        current_public = validate_current_public_root(
+            width_two["publication"])
+        gate_verified(
+            plan_data, "width-two-fruit-root",
+            publication_sha256=hashlib.sha256(
+                _canonical_bytes(current_public)).hexdigest())
+        plan_data["_width_two_authorization"] = {
+            "fruit_public_archive_sha256":
+                sha256_file(args.width_two_root_archive),
+            "fruit_proof_sha256": hashlib.sha256(
+                _canonical_bytes(current_public)).hexdigest(),
+        }
+    else:
+        gate_verified(plan_data, "campaign-width", width=1)
+    con.say("SAFE RUNPOD PLAN")
+    con.kv("target", "%s@%s" % (target.repo_id, target.revision))
+    con.kv("profile timing", "%s / %s" % (profile, timing.get("evidence")))
+    con.kv("job hash", job["job_id_full"])
+    con.kv("all-in hard cap", "$%s (calculated $%s)"
+           % (quote.hard_cap_usd, quote.calculated_maximum_usd()))
+    for name in sorted(plan_data["gates"]):
+        con.ok(name)
+    return plan_data
+
+
+def plan_runpod(args, con: Console, provider) -> Dict[str, Any]:
+    """Plan using only the same anonymous official-Hub access the pod has."""
+    with _anonymous_hf_environment() as anonymous_access:
+        return _plan_runpod_anonymous(
+            args, con, provider, anonymous_access)
+
+
+def _ledger_transition(ledger, method: str, *args, **kwargs):
+    for _unused in range(8):
+        result = getattr(ledger, method)(
+            ledger.snapshot()["generation"], *args, **kwargs)
+        if result.code != "GENERATION_CONFLICT":
+            return result
+    raise Refusal("campaign ledger remained generation-conflicted", [])
+
+
+def _authenticate_runpod_ssh_host(
+        args, con: Console, provider, pod_id: str,
+        outdir: Path) -> Dict[str, Any]:
+    """Require an authenticated-console fingerprint before the first SSH byte."""
+    provider.set_known_hosts(outdir / "ssh_known_hosts")
+    expected = getattr(args, "runpod_host_key_sha256", None)
+    if expected is None:
+        if not sys.stdin.isatty():
+            raise RuntimeError(
+                "RunPod SSH host-key verification needs an interactive "
+                "authenticated web-terminal fingerprint")
+        con.say("")
+        con.say("SSH HOST AUTHENTICATION REQUIRED")
+        con.say("Open the authenticated RunPod web terminal for pod %s." % pod_id)
+        con.say(
+            "Run: ssh-keygen -E sha256 -lf "
+            "/etc/ssh/ssh_host_ed25519_key.pub")
+        con.say(
+            "Paste only its SHA256:... fingerprint. Do not copy a fingerprint "
+            "from this network connection.")
+        expected = input("RunPod console ED25519 fingerprint: ").strip()
+    verified = provider.verify_host_key(pod_id, expected)
+    proof = {
+        "schema": "fidelity-suite/runpod-ssh-host-key-proof.v1",
+        "provider": "runpod",
+        "provider_id": str(pod_id),
+        "verified_at_utc": _exact_utc_now(),
+        "verification_source":
+            "operator-authenticated-runpod-web-terminal",
+        "algorithm": verified.get("algorithm"),
+        "fingerprint": verified.get("fingerprint"),
+        "host": verified.get("host"),
+        "port": verified.get("port"),
+        "known_hosts_sha256": sha256_file(str(outdir / "ssh_known_hosts")),
+        "proof_sha256": "",
+    }
+    proof["proof_sha256"] = hashlib.sha256(
+        _canonical_bytes(proof)).hexdigest()
+    path = outdir / "runpod-ssh-host-key-proof.json"
+    with path.open("xb") as stream:
+        stream.write(
+            json.dumps(
+                proof, indent=2, sort_keys=True, ensure_ascii=False,
+                allow_nan=False).encode("utf-8") + b"\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    return {"path": path, "proof": proof}
+
+
+def _bind_lease_cleanup_to_campaign(
+        ledger_path: str, lease: Dict[str, Any]) -> None:
+    """Bind the lease's complete exact ID set without projecting terminal proof."""
+    from fidelity.campaign import CampaignLedger
+    from fidelity.cloudlease import campaign_cleanup_binding_evidence
+    request = (lease.get("create") or {}).get("request") or {}
+    key = request.get("campaign_attempt_key")
+    ids = sorted(set(str(value)
+                     for value in lease.get("provider_resource_ids") or []))
+    if not isinstance(key, str) or not ids:
+        return
+    ledger = CampaignLedger(
+        ledger_path, request.get("provider"),
+        request.get("provider_account_id"))
+    item = (ledger.snapshot().get("attempts") or {}).get(key)
+    if item is None:
+        return
+    if not item.get("provider_ids"):
+        evidence = campaign_cleanup_binding_evidence(lease, ids)
+        bound = _ledger_transition(
+            ledger, "bind_provider_for_cleanup", key, ids, evidence)
+        if bound.code not in (
+                "PROVIDER_BOUND_FOR_CLEANUP",
+                "PROVIDER_CLEANUP_BINDING_UNCHANGED"):
+            raise Refusal("campaign cleanup binding failed: %s"
+                          % bound.message, [])
+        item = (ledger.snapshot().get("attempts") or {}).get(key) or {}
+    if sorted(item.get("provider_ids") or []) != ids:
+        raise Refusal("campaign and lease exact provider ID sets differ", [])
+
+
+def _cleanup_remote_secret(provider, pod_id, fs_root):
+    secret_dir = "%s/.secrets" % fs_root
+    secret = "%s/hf_token" % secret_dir
+    command = (
+        "set -eu; "
+        "[ ! -L {directory} ]; [ ! -L {secret} ]; "
+        "if [ -f {secret} ]; then "
+        "(command -v shred >/dev/null && shred -u -- {secret}) "
+        "|| rm -f -- {secret}; fi; "
+        "rm -rf -- {directory}; "
+        "[ ! -e {directory} ] && [ ! -L {directory} ]"
+    ).format(directory=shlex.quote(secret_dir), secret=shlex.quote(secret))
+    try:
+        provider.exec(pod_id, command, timeout=60)
+        return {"confirmed": True, "path": secret}
+    except Exception as exc:
+        return {"confirmed": False, "path": secret,
+                "error": redact(str(exc))}
+
+
+def _freeze_verified_bundle(bundle, outdir: Path) -> Dict[str, Any]:
+    """Seal every bundle byte before any campaign reservation/provider POST."""
+    local = outdir / ".frozen-bundle"
+    local.mkdir(mode=0o700)
+    archive = local / "bundle.tar.gz"
+    manifest_path = local / "manifest.json"
+    manifest_bytes = _canonical_bytes(bundle)
+    manifest_path.write_bytes(manifest_bytes)
+    helper_paths = {}
+    helper_names = ("__init__.py", "jobcontract.py", "runpodsafety.py")
+    with archive.open("xb") as output:
+        with gzip.GzipFile(
+                filename="", mode="wb", fileobj=output, mtime=0) as compressed:
+            with tarfile.open(
+                    fileobj=compressed, mode="w",
+                    format=tarfile.USTAR_FORMAT) as tar:
+                for row in bundle["files"]:
+                    data = (SUITE_ROOT / row["path"]).read_bytes()
+                    if (len(data) != row["bytes"]
+                            or hashlib.sha256(data).hexdigest()
+                            != row["sha256"]):
+                        raise RuntimeError(
+                            "bundle source changed before paid admission: %s"
+                            % row["path"])
+                    info = tarfile.TarInfo(row["path"])
+                    info.size = len(data); info.mode = 0o644
+                    info.uid = info.gid = 0
+                    info.uname = info.gname = ""; info.mtime = 0
+                    tar.addfile(info, io.BytesIO(data))
+                    frozen_file = local / "suite" / row["path"]
+                    frozen_file.parent.mkdir(parents=True, exist_ok=True)
+                    frozen_file.write_bytes(data)
+                    name = PurePosixPath(row["path"]).name
+                    if row["path"] == "bin/fidelity/%s" % name and name in helper_names:
+                        helper = local / name
+                        helper.write_bytes(data)
+                        helper_paths[name] = {
+                            "path": str(helper), "sha256": row["sha256"]}
+        output.flush()
+        os.fsync(output.fileno())
+    if set(helper_paths) != set(helper_names):
+        raise RuntimeError("frozen bundle lacks remote verification helpers")
+    return {
+        "archive_path": str(archive),
+        "archive_sha256": sha256_file(str(archive)),
+        "archive_bytes": archive.stat().st_size,
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "helpers": helper_paths,
+        "suite_root": str(local / "suite"),
+    }
+
+
+def _freeze_root_inputs(plan_data: Dict[str, Any], outdir: Path) -> None:
+    """Copy the two job-bound panel files before any campaign reservation."""
+    destination = outdir / ".frozen-inputs"
+    destination.mkdir(mode=0o700)
+    rows = (
+        ("_panel_archive_local", "panel.tar",
+         plan_data["job"]["panel"]["archive_sha256"],
+         plan_data["job"]["panel"]["archive_bytes"]),
+        ("_panel_binding_local", "panel.binding.json",
+         plan_data["job"]["panel"]["binding_file_sha256"], None),
+    )
+    for key, name, expected_sha, expected_bytes in rows:
+        source = Path(plan_data[key])
+        metadata = source.lstat()
+        if (source.is_symlink() or not source.is_file()
+                or metadata.st_uid != os.getuid()):
+            raise RuntimeError(
+                "root panel input is not an owned regular file: %s" % source)
+        data = source.read_bytes()
+        if (hashlib.sha256(data).hexdigest() != expected_sha
+                or (expected_bytes is not None
+                    and len(data) != int(expected_bytes))):
+            raise RuntimeError(
+                "root panel input changed before paid admission: %s" % source)
+        frozen = destination / name
+        with frozen.open("xb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        plan_data[key] = str(frozen)
+    directory_fd = os.open(str(destination), os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+
+def _verify_frozen_suite(frozen: Dict[str, Any],
+                         bundle: Dict[str, Any]) -> None:
+    """Revalidate every local executable byte against its pre-spend seal."""
+    manifest = Path(frozen["manifest_path"])
+    if (sha256_file(str(manifest)) != frozen["manifest_sha256"]
+            or json.loads(manifest.read_text(encoding="utf-8")) != bundle):
+        raise RuntimeError("frozen bundle manifest changed after paid admission")
+    suite = Path(frozen["suite_root"])
+    for row in bundle["files"]:
+        path = suite / row["path"]
+        metadata = path.lstat()
+        if (path.is_symlink() or not path.is_file()
+                or metadata.st_uid != os.getuid()
+                or metadata.st_size != row["bytes"]
+                or sha256_file(str(path)) != row["sha256"]):
+            raise RuntimeError(
+                "frozen suite byte changed after paid admission: %s"
+                % row["path"])
+
+def _upload_verified_bundle(provider, pod_id, fs_root, bundle, frozen):
+    archive = Path(frozen["archive_path"])
+    manifest_path = Path(frozen["manifest_path"])
+    archive_sha = frozen["archive_sha256"]
+    archive_bytes = frozen["archive_bytes"]
+    if (sha256_file(str(archive)) != archive_sha
+            or archive.stat().st_size != archive_bytes
+            or sha256_file(str(manifest_path)) != frozen["manifest_sha256"]):
+        raise RuntimeError("frozen bundle changed before transfer")
+    suffix = re.sub(r"[^A-Za-z0-9_-]", "_", str(pod_id))
+    remote_archive = "/workspace/.fidelity-bundle-%s.tar.gz" % suffix
+    remote_manifest = "/workspace/.fidelity-manifest-%s.json" % suffix
+    remote_helper_dir = "/workspace/.fidelity-helper-%s" % suffix
+    provider.exec(
+        pod_id,
+        "set -eu; test ! -e {root}; test ! -L {root}; "
+        "test ! -e {archive}; test ! -e {manifest}; "
+        "test ! -e {helper}; mkdir -m 700 -- {helper}; "
+        "mkdir -m 700 -- {helper}/fidelity".format(
+            root=shlex.quote(fs_root), archive=shlex.quote(remote_archive),
+            manifest=shlex.quote(remote_manifest),
+            helper=shlex.quote(remote_helper_dir)))
+    provider.upload(pod_id, str(archive), remote_archive)
+    provider.upload(pod_id, str(manifest_path), remote_manifest)
+    for name, helper in frozen["helpers"].items():
+        provider.upload(
+            pod_id, helper["path"],
+            "%s/fidelity/%s" % (remote_helper_dir, name))
+    transfer_checks = [
+        (remote_archive, archive_sha),
+        (remote_manifest, frozen["manifest_sha256"]),
+    ] + [
+        ("%s/fidelity/%s" % (remote_helper_dir, name), helper["sha256"])
+        for name, helper in sorted(frozen["helpers"].items())
+    ]
+    provider.exec(
+        pod_id, "set -eu; " + "; ".join(
+            "test \"$(sha256sum {path} | cut -d' ' -f1)\" = {digest}".format(
+                path=shlex.quote(path), digest=digest)
+            for path, digest in transfer_checks))
+    provider.exec(
+        pod_id,
+        "PYTHONPATH={helper} python3 -m fidelity.runpodsafety "
+        "extract-bundle --archive {archive} --manifest {manifest} "
+        "--destination {root} --sha256 {sha} --bytes {size}".format(
+            helper=shlex.quote(remote_helper_dir),
+            archive=shlex.quote(remote_archive),
+            manifest=shlex.quote(remote_manifest),
+            root=shlex.quote(fs_root), sha=archive_sha, size=archive_bytes),
+        timeout=1800)
+    provider.exec(
+        pod_id, "rm -rf -- %s; rm -f -- %s %s" % (
+            shlex.quote(remote_helper_dir), shlex.quote(remote_archive),
+            shlex.quote(remote_manifest)))
+def _cleanup_ambiguous_runpod_create(
+        provider, lease_store, lease_ref, ledger, campaign_key):
+    """Bind, terminate and reconcile every exact ambiguous create candidate."""
+    from fidelity.cloudlease import (
+        ABSENCE_CONFIRMED, campaign_cleanup_binding_evidence,
+        finalize_campaign_after_absence, runpod_authoritative_listing)
+    lease = lease_store.read(lease_ref)
+    ids = sorted(set(str(value)
+                     for value in lease.get("provider_resource_ids") or []))
+    if not ids:
+        raise RuntimeError(
+            "ambiguous RunPod create has no exact cleanup candidate; "
+            "lease liability retained")
+    evidence = campaign_cleanup_binding_evidence(lease, ids)
+    item = (ledger.snapshot().get("attempts") or {}).get(campaign_key) or {}
+    if not item.get("provider_ids"):
+        bound = _ledger_transition(
+            ledger, "bind_provider_for_cleanup",
+            campaign_key, ids, evidence)
+        if bound.code not in (
+                "PROVIDER_BOUND_FOR_CLEANUP",
+                "PROVIDER_CLEANUP_BINDING_UNCHANGED"):
+            raise RuntimeError(
+                "cannot bind ambiguous candidates for cleanup: %s"
+                % bound.message)
+    current = lease_store.read(lease_ref)
+    if current["state"] not in ("DESTROYING", "ABSENCE_CONFIRMED", "TERMINAL"):
+        lease_ref = lease_store.request_destroy(
+            lease_ref, {"reason": "ambiguous create cleanup",
+                        "provider_ids": ids})
+    destroy_errors = []
+    for provider_id in ids:
+        try:
+            provider.destroy(provider_id)
+        except Exception as exc:
+            destroy_errors.append("%s: %s" % (provider_id, redact(str(exc))))
+    expected_account_id = str(
+        (lease.get("create") or {}).get("request", {}).get(
+            "provider_account_id") or "")
+    for _unused in range(20):
+        status = provider.status()
+        observed_account_id = str(status.get("id") or "").strip()
+        if observed_account_id != expected_account_id:
+            raise RuntimeError(
+                "ambiguous cleanup cannot verify the lease provider account")
+        graphql_pods = provider.list_lifecycle_resources()
+        inventory = provider.chargeable_inventory()
+        listing, absence_proof = runpod_authoritative_listing(
+            provider, graphql_pods, observed_account_id,
+            inventory=inventory)
+        lease_ref = lease_store.confirm_exact_absence(
+            lease_ref, listing, authoritative_inventory=absence_proof)
+        if lease_ref.state == ABSENCE_CONFIRMED:
+            break
+        time.sleep(3)
+    if lease_ref.state != ABSENCE_CONFIRMED:
+        raise RuntimeError(
+            "ambiguous RunPod candidates remain chargeable; liability retained"
+            + ("; destroy errors: " + "; ".join(destroy_errors)
+               if destroy_errors else ""))
+    billing = provider.reconcile_billing(lease_store.read(lease_ref))
+    lease_ref = lease_store.stage_billing_reconciliation(
+        lease_ref, billing)
+    finalize_campaign_after_absence(
+        provider, lease_store.read(lease_ref), lease_store.root)
+    lease_ref = lease_store.record_billing_reconciled(
+        lease_ref, billing)
+    released = (
+        (ledger.snapshot().get("attempts") or {})
+        .get(campaign_key, {}).get("released"))
+    if released is not True:
+        raise RuntimeError(
+            "ambiguous-create campaign liability was not durably released")
+    return lease_ref
+
+
+def _runpod_stage(
+        provider, pod_id, fs_root, engine_root, stage, deadline,
+        image_reference):
+    image_match = re.fullmatch(
+        r".+@(sha256:[0-9a-f]{64})", str(image_reference))
+    if image_match is None:
+        raise RuntimeError("stage image reference is not immutable")
+    image_digest = image_match.group(1)
+    command = (
+        "set -eu; "
+        "setsid env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN "
+        "-u HUGGINGFACE_HUB_TOKEN -u HF_HUB_OFFLINE "
+        "-u HF_DATASETS_OFFLINE -u TRANSFORMERS_OFFLINE "
+        "-u HUGGINGFACE_CO_STAGING -u HUGGINGFACE_CO_URL_TEMPLATE "
+        "-u HF_INFERENCE_ENDPOINT -u HF_HUB_CACHE "
+        "-u HUGGINGFACE_HUB_CACHE -u HF_ASSETS_CACHE "
+        "-u HUGGINGFACE_ASSETS_CACHE -u HF_XET_CACHE "
+        "-u TRANSFORMERS_CACHE -u HF_DATASETS_CACHE -u XDG_CACHE_HOME "
+        "HF_ENDPOINT=https://huggingface.co "
+        "HF_HUB_DISABLE_IMPLICIT_TOKEN=1 HF_TOKEN_PATH={fs}/.no-token "
+        "HF_HOME={fs}/hf-anonymous "
+        "FIDELITY_FS_ROOT={fs} FIDELITY_SUITE_ROOT={fs} "
+        "FIDELITY_ENGINE_ROOT={engine} "
+        "STACKPRINT_IMAGE_PIN={image_digest} "
+        "FIDELITY_IMAGE_REFERENCE={image_reference} "
+        "bash {fs}/bin/stage_measure.sh {stage} "
+        ">>{fs}/logs/stage-{stage}.log 2>&1 </dev/null & "
+        "leader=$!; "
+        "if ! bash {fs}/bin/watchdog.sh --record-stage-pgid "
+        "{fs} \"$leader\"; then "
+        "kill -TERM -- \"-$leader\" 2>/dev/null || true; "
+        "wait \"$leader\" 2>/dev/null || true; exit 70; fi; "
+        "wait \"$leader\""
+    ).format(
+        fs=shlex.quote(fs_root), engine=shlex.quote(engine_root),
+        stage=shlex.quote(stage),
+        image_digest=shlex.quote(image_digest),
+        image_reference=shlex.quote(str(image_reference)))
+    run = provider.run_job(pod_id, command)
+    run_id = (run or {}).get("run_id") or (run or {}).get("id")
+    if not run_id:
+        raise RuntimeError("stage launch returned no run id")
+    while time.time() < deadline:
+        status = provider.run_status(run_id, machine_id=pod_id)
+        state = str(status.get("state") or "").lower()
+        if state == "succeeded":
+            return
+        if state in ("failed", "error", "unknown"):
+            raise RuntimeError("stage %s ended in %s; recovery is refused"
+                               % (stage, state))
+        time.sleep(15)
+    raise RuntimeError("workload deadline reached during stage %s" % stage)
+
+def execute_runpod(args, con: Console, provider, plan_data) -> Dict[str, Any]:
+    """One reserved attempt, one POST, one SSH pod and one archive download."""
+    from fidelity.campaign import (
+        CostQuote, attempt_key as campaign_attempt_key)
+    from fidelity.cloudlease import (
+        ABSENCE_CONFIRMED, CreateResponsePersistenceError, LeaseStore,
+        campaign_cleanup_binding_evidence, exact_resource_name,
+        finalize_campaign_after_absence, runpod_authoritative_listing,
+        systemd_reaper_health, utc_iso, validate_unresolved_lease_scope)
+    from fidelity.runpodsafety import (
+        validate_current_public_root, validate_safety_proof,
+        validate_width_two_root_archive)
+    from fidelity.runpodapi import DEFAULT_IMAGE, RunPodCreateResponseError
+    from fidelity.resultsink import extract_verified_archive, verify_archive
+
+    outdir = Path(args.out).resolve()
+    output_parent = outdir.parent
+    parent_metadata = output_parent.lstat()
+    if (not stat.S_ISDIR(parent_metadata.st_mode)
+            or stat.S_ISLNK(parent_metadata.st_mode)
+            or parent_metadata.st_uid != os.getuid()):
+        raise Refusal(
+            "output parent must be an existing owned non-symlink directory", [])
+    chain_error = private_directory_chain_error(
+        output_parent, owner_uid=os.getuid())
+    if chain_error:
+        raise Refusal(
+            "output parent is not protected from cross-uid replacement",
+            [chain_error, "choose an owned path with no group/world-writable "
+             "non-sticky ancestor"])
+    archive_bound = int(
+        plan_data["retrieval_delete_contract"]["bound_archive_bytes"])
+    uncompressed_bound = int(
+        (plan_data["target"].get("root_capture_storage") or {}).get(
+            "result_archive_max_uncompressed_bytes", archive_bound))
+    if args.role == "root" and args.publish_root_to:
+        # Preserve the qualified archive A and extracted tree U while building
+        # the final archive A. HfApi streams the source tree; no second U exists.
+        local_capacity_required = (
+            2 * archive_bound + uncompressed_bound + 67108864)
+    else:
+        local_capacity_required = archive_bound + uncompressed_bound + 67108864
+    filesystem = os.statvfs(str(output_parent))
+    local_capacity_free = filesystem.f_bavail * filesystem.f_frsize
+    if local_capacity_free < local_capacity_required:
+        raise Refusal(
+            "local output filesystem lacks archive and extraction capacity",
+            ["required bytes: %d" % local_capacity_required,
+             "available bytes: %d" % local_capacity_free])
+    plan_data["local_output_capacity"] = {
+        "required_free_bytes": local_capacity_required,
+        "observed_free_bytes": local_capacity_free,
+        "filesystem_device": parent_metadata.st_dev,
+    }
+    if (args.role == "root" and args.publish_root_to
+            and args.publish_root_to != args.dataset_repository):
+        raise Refusal(
+            "root publication authorization differs from destination", [])
+    ledger_file = Path(args.campaign_ledger).resolve()
+    if ledger_file.parent != Path(args.lease_dir).resolve().parent:
+        raise Refusal(
+            "campaign ledger must be a sibling of the lease directory", [])
+    ledger_path, ledger = _open_existing_runpod_campaign(
+        args, plan_data["provider_account_id"])
+
+    # Refresh all admission facts immediately under durable ledger locking.
+    status = provider.status()
+    current_account_id = str(status.get("id") or "").strip()
+    if current_account_id != plan_data["provider_account_id"]:
+        raise Refusal(
+            "RunPod provider account changed after planning; freeze", [])
+    fresh_health = systemd_reaper_health(
+        state_dir=Path(args.reaper_state_dir),
+        lease_dir=Path(args.lease_dir), provider="runpod",
+        provider_account_id=current_account_id)
+    if not fresh_health.get("ok"):
+        raise Refusal(
+            "RunPod reaper health expired before paid admission",
+            [str(value) for value in fresh_health.get("reasons") or []])
+    try:
+        fresh_unresolved_scope = validate_unresolved_lease_scope(
+            LeaseStore(Path(args.lease_dir)), fresh_health,
+            provider="runpod", provider_account_id=current_account_id,
+            campaign_ledger_path=Path(ledger_path))
+    except Exception as exc:
+        raise Refusal(
+            "RunPod unresolved lease scope changed before paid admission: %s"
+            % exc, [])
+    fresh_proof = validate_safety_proof(
+        args.runpod_safety_proof,
+        plan_data["bundle_contract_sha256"],
+        plan_data["control_plane"]["manifest_sha256"],
+        current_account_id, ledger_path)
+    fresh_safety = {
+        "checked_at": _exact_utc_now(),
+        "reaper_health_sha256": hashlib.sha256(
+            _canonical_bytes(fresh_health)).hexdigest(),
+        "safety_proof_file_sha256": sha256_file(
+            args.runpod_safety_proof),
+        "safety_proof_sha256": fresh_proof["proof"]["proof_sha256"],
+        "provider_account_id": current_account_id,
+        "provider_gpu_id": plan_data["chosen"]["provider_gpu_id"],
+        "image": plan_data["chosen"]["image"],
+        "bundle_contract_sha256": plan_data["bundle_contract_sha256"],
+        "control_manifest_sha256":
+            plan_data["control_plane"]["manifest_sha256"],
+    }
+    balance = status.get("clientBalance")
+    inventory = provider.chargeable_inventory()
+    if balance is None or not inventory.get("complete"):
+        raise Refusal("immediate RunPod balance/inventory is unknown", [])
+    fresh_offers = provider.gpus()
+    provider_gpu_id = plan_data["chosen"]["provider_gpu_id"]
+    fresh_candidates = [
+        offer for offer in fresh_offers
+        if offer.gpu_type == provider_gpu_id
+        and offer.spot is False and offer.region == "secure"
+        and offer.free_devices >= 1]
+    if not fresh_candidates:
+        raise Refusal(
+            "exact secure on-demand RunPod offer disappeared before reserve",
+            [])
+    try:
+        exact_fresh = [
+            (Decimal(str(
+                (candidate.raw or {}).get("uninterruptablePriceDecimal"))),
+             candidate)
+            for candidate in fresh_candidates
+        ]
+        if any(not rate.is_finite() or rate <= 0 for rate, _ in exact_fresh):
+            raise ValueError("non-positive or non-finite rate")
+        fresh_rate, fresh_offer = sorted(
+            exact_fresh, key=lambda item: (item[0], item[1].gpu_type))[0]
+    except Exception as exc:
+        raise Refusal(
+            "fresh RunPod offer lacks exact decimal rate", []) from exc
+    if (not fresh_rate.is_finite() or fresh_rate <= 0
+            or fresh_rate
+            != Decimal(plan_data["chosen"]["price_per_gpu_hour"])
+            or int(fresh_offer.vram_bytes)
+            != int(plan_data["chosen"]["vram_bytes"])):
+        raise Refusal(
+            "RunPod offer changed after plan; re-plan before paying", [])
+    quote_target = type("_QuoteTarget", (), {
+        "repo_id": plan_data["target"]["repo_id"],
+        "revision": plan_data["target"]["revision"]})()
+    quote = _runpod_quote(
+        args, plan_data["chosen"], quote_target, plan_data["profile"],
+        plan_data["timing"], plan_data["storage_gb"],
+        plan_data["container_disk_gb"],
+        Decimal(plan_data["max_runtime_seconds"]),
+        plan_data["target"]["result_archive_contract"])
+    current_provider_resources = []
+    for family_name, family in (inventory.get("families") or {}).items():
+        for row in family.get("resources") or []:
+            resource = {
+                "family": family_name,
+                "id": str(row.get("id") or "").strip(),
+                "name": str(row.get("name") or "").strip(),
+                "status": (
+                    "PRESENT" if family_name == "network_volumes"
+                    else str(row.get("status") or "").strip()),
+            }
+            if not all(resource.values()):
+                raise Refusal(
+                    "provider inventory lacks exact id/name/status", [])
+            current_provider_resources.append(resource)
+    now_dt = datetime.now(timezone.utc)
+    observed = now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    valid = (now_dt + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    recorded = _ledger_transition(
+        ledger, "record_provider_snapshot",
+        balance_available_usd=balance, balance_observed_at=observed,
+        balance_valid_until=valid,
+        balance_source="RunPod myself.clientBalance",
+        inventory_observed_at=inventory["observed_at_utc"],
+        inventory_valid_until=valid, inventory_complete=True,
+        provider_resources=current_provider_resources,
+        inventory_source=inventory["schema"],
+        provider="runpod", provider_account_id=current_account_id)
+    if not recorded.applied:
+        raise Refusal("campaign snapshot was not recorded", [])
+    canonical_inventory = ledger.snapshot()["inventory"]
+    unknown_resources = canonical_inventory["unknown_resources"]
+    if unknown_resources:
+        raise Refusal(
+            "canonical campaign classifier found unknown chargeable resources",
+            ["unknown: %s" % value for value in unknown_resources])
+    outstanding = sum(
+        1 for item in ledger.snapshot()["attempts"].values()
+        if not item["released"])
+    if outstanding >= args.campaign_width:
+        raise Refusal("campaign outstanding count reached width", [])
+
+    fresh_safety["server_time"] = provider.server_time_evidence(
+        max_clock_delta_seconds=30, max_evidence_age_seconds=30)
+    attempt = secrets.token_hex(12)
+    fs_root = "/workspace/fidelity/%s/%s" % (
+        plan_data["job_id_full"], attempt)
+    engine_root = "/workspace/fidelity-engine/%s/%s" % (
+        plan_data["job_id_full"], attempt)
+    container_disk_gb = plan_data["container_disk_gb"]
+    quote_epoch = datetime.strptime(
+        quote.quoted_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc).timestamp()
+    workload_epoch = quote_epoch + float(
+        quote.workload_deadline_seconds)
+    terminate_epoch = quote_epoch + float(
+        quote.provider_termination_deadline_seconds)
+    if time.time() >= terminate_epoch:
+        raise Refusal("fresh quote provider deadline already elapsed", [])
+    terminate_after = utc_iso(terminate_epoch)
+    lease_store = LeaseStore(Path(args.lease_dir))
+    expected_lease_name = "%s.%s.json" % (
+        plan_data["job_id_full"], attempt)
+    exact_pod_name = exact_resource_name(plan_data["job_id_full"], attempt)
+    prepared_create = provider.prepare_safe_create(
+        gpu_type=plan_data["chosen"]["provider_gpu_id"],
+        num_gpus=1, spot=False, region="secure", offer="on-demand",
+        storage_gb=plan_data["storage_gb"],
+        container_disk_gb=container_disk_gb,
+        min_vcpu=plan_data["runtime_contract"]["min_vcpu_count"],
+        min_ram_gb=plan_data["runtime_contract"]["min_memory_gb"],
+        name=exact_pod_name,
+        image=plan_data["job"]["environment"]["image"],
+        terminate_after=terminate_after)
+    prepared_create_doc = prepared_create.to_dict()
+    job = json.loads(_canonical_bytes(plan_data["job"]).decode("utf-8"))
+    job["execution_attempt"] = {
+        "kind": "runpod-ssh", "attempt_id": attempt,
+        "cost_quote": quote.to_dict(),
+        "execution_contract_sha256": None,
+        "pre_create_safety": fresh_safety,
+        "prepared_create": prepared_create_doc,
+        "engine_root": engine_root,
+        "lease_path": expected_lease_name, "remote_root": fs_root,
+        "workload_deadline_utc": utc_iso(workload_epoch),
+        "provider_terminate_after": terminate_after,
+        "planned_at": quote.quoted_at,
+    }
+    job = seal_execution_job(job)
+    validate_execution_job(job)
+    job_bytes = (
+        json.dumps(job, indent=2, sort_keys=True, ensure_ascii=False,
+                   allow_nan=False) + "\n").encode("utf-8")
+    outdir.mkdir(mode=0o700, parents=True, exist_ok=False)
+    outdir.chmod(0o700)
+    job_path = outdir / "job.json"
+    with job_path.open("xb") as stream:
+        stream.write(job_bytes)
+        stream.flush()
+        os.fsync(stream.fileno())
+    output_directory_fd = os.open(str(outdir), os.O_RDONLY)
+    try:
+        os.fsync(output_directory_fd)
+    finally:
+        os.close(output_directory_fd)
+    frozen_bundle = _freeze_verified_bundle(plan_data["bundle"], outdir)
+    if args.role == "root":
+        _freeze_root_inputs(plan_data, outdir)
+    campaign_key = campaign_attempt_key(plan_data["job_id_full"], attempt)
+    lease_ref = None
+    request = {
+        "attempt_key": attempt,
+        "campaign_attempt_key": campaign_key,
+        "campaign_ledger": Path(ledger_path).name,
+        "provider": "runpod",
+        "provider_account_id": current_account_id,
+        "gpu_type": plan_data["chosen"]["provider_gpu_id"],
+        "normalized_gpu": plan_data["chosen"]["gpu_type"],
+        "num_gpus": 1, "secure_cloud": True,
+        "storage_gb": plan_data["storage_gb"],
+        "remote_root": fs_root,
+        "execution_contract_sha256":
+            job["execution_attempt"]["execution_contract_sha256"],
+        "grounding_bundle": {
+            "schema": "fidelity-suite/grounding-bundle.v1",
+            "archive_sha256": frozen_bundle["archive_sha256"],
+            "archive_bytes": frozen_bundle["archive_bytes"],
+            "manifest_sha256": frozen_bundle["manifest_sha256"],
+        },
+        "engine_root": engine_root,
+        "container_disk_gb": container_disk_gb,
+        "image": DEFAULT_IMAGE,
+        "min_vcpu_count": plan_data["runtime_contract"]["min_vcpu_count"],
+        "min_memory_gb": plan_data["runtime_contract"]["min_memory_gb"],
+        "workload_contract": plan_data["runtime_contract"],
+        "offer": "on-demand", "network_volume": None,
+        "terminate_after": terminate_after, "quote": quote.to_dict(),
+        "pre_create_safety": fresh_safety["server_time"],
+        "prepared_create": prepared_create_doc,
+    }
+    if (request["quote"] != job["execution_attempt"]["cost_quote"]
+            or request["pre_create_safety"]
+            != job["execution_attempt"]["pre_create_safety"]["server_time"]
+            or request["prepared_create"]
+            != job["execution_attempt"]["prepared_create"]
+            or request["execution_contract_sha256"]
+            != job["execution_attempt"]["execution_contract_sha256"]
+            or request["engine_root"]
+            != job["execution_attempt"]["engine_root"]
+            or request["remote_root"]
+            != job["execution_attempt"]["remote_root"]
+            or request["provider_account_id"]
+            != job["environment"]["provider_account_id"]
+            or request["workload_contract"] != job["runtime"]
+            or request["min_vcpu_count"]
+            != job["runtime"]["min_vcpu_count"]
+            or request["min_memory_gb"]
+            != job["runtime"]["min_memory_gb"]):
+        raise Refusal(
+            "lease workload/quote contract differs from finalized job", [])
+    pre_resources = inventory["families"]["pods"]["resources"]
+    pre_network_volumes = (
+        inventory["families"]["network_volumes"]["resources"])
+    try:
+        with lease_store.paid_admission_lock():
+            validate_unresolved_lease_scope(
+                lease_store, fresh_health,
+                provider="runpod",
+                provider_account_id=current_account_id,
+                campaign_ledger_path=Path(ledger_path))
+            # PREPARED and the campaign reservation become visible together
+            # while every paid controller sharing this lease root is excluded.
+            lease_ref = lease_store.begin_create(
+                job_hash=plan_data["job_id_full"], provider="runpod",
+                request=request, pre_create_resources=pre_resources,
+                pre_create_network_volumes=pre_network_volumes,
+                create_deadline_epoch=time.time() + 300,
+                workload_deadline_epoch=workload_epoch, attempt_id=attempt)
+            if lease_ref.path.name != expected_lease_name:
+                raise RuntimeError(
+                    "prepared lease path differs from finalized execution job")
+            if args.campaign_width == 2:
+                width_two = validate_width_two_root_archive(
+                    args.width_two_root_archive, job)
+                current_public = validate_current_public_root(
+                    width_two["publication"])
+                current_authorization = {
+                    "fruit_public_archive_sha256":
+                        sha256_file(args.width_two_root_archive),
+                    "fruit_proof_sha256": hashlib.sha256(
+                        _canonical_bytes(current_public)).hexdigest(),
+                }
+                if current_authorization != plan_data[
+                        "_width_two_authorization"]:
+                    raise Refusal(
+                        "width-two Fruit publication proof changed before "
+                        "reserve", [])
+                width_result = ledger.authorize_concurrent_width_two(
+                    ledger.snapshot()["generation"], _exact_utc_now(),
+                    current_authorization["fruit_public_archive_sha256"],
+                    current_authorization["fruit_proof_sha256"])
+                if not width_result.applied:
+                    raise Refusal(
+                        "campaign width-two authorization refused [%s]: %s"
+                        % (width_result.code, width_result.message), [])
+            admitted = ledger.reserve(
+                ledger.snapshot()["generation"],
+                plan_data["job_id_full"], attempt,
+                quote, observed, effective_width=args.campaign_width)
+            if not admitted.admitted:
+                raise Refusal(
+                    "campaign admission refused [%s]: %s"
+                    % (admitted.code, admitted.message), [])
+            if admitted.attempt_key != campaign_key:
+                raise RuntimeError(
+                    "campaign reservation key differs from prepared lease")
+    except BaseException:
+        lease_path = Path(args.lease_dir) / expected_lease_name
+        if lease_path.exists():
+            document = lease_store.read(lease_path)
+            if document.get("state") == "PREPARED":
+                prepared_ref = lease_store.ref(lease_path, document)
+                cancellation_evidence = hashlib.sha256(
+                    _canonical_bytes(document)).hexdigest()
+                item = (
+                    (ledger.snapshot().get("attempts") or {})
+                    .get(campaign_key))
+                campaign_cancel_code = "ATTEMPT_ABSENT"
+                if item is not None:
+                    cancelled = _ledger_transition(
+                        ledger, "cancel_before_create", campaign_key,
+                        _exact_utc_now(), "PREPARED",
+                        cancellation_evidence)
+                    if not cancelled.applied:
+                        raise RuntimeError(
+                            "pre-create reservation could not be cancelled: %s"
+                            % cancelled.message)
+                    campaign_cancel_code = cancelled.code
+                lease_store.cancel_prepared(
+                    prepared_ref, {
+                        "campaign_cancel_code": campaign_cancel_code,
+                        "campaign_evidence_sha256": cancellation_evidence,
+                        "reason": "controller failure before provider POST",
+                    })
+        raise
+
+    pod_id = None
+    token_transported = False
+    secret_cleanup = {"confirmed": True, "not_applicable": True}
+    run_error = None
+    primary_error = None
+    operational_errors = []
+
+    def record_operational_error(exc):
+        operational_errors.append(exc)
+        return run_error if run_error is not None else exc
+
+    def response_loss_resources(pods, volumes):
+        resources = []
+        for family, rows in (("pods", pods), ("network_volumes", volumes)):
+            for row in rows:
+                resource = {
+                    "family": family,
+                    "id": str(_machine_id_of(row) or "").strip(),
+                    "name": str(row.get("name") or "").strip(),
+                    "status": (
+                        "PRESENT" if family == "network_volumes"
+                        else str(row.get("status") or "").strip()),
+                }
+                if not all(resource.values()):
+                    raise RuntimeError(
+                        "response-loss inventory lacks exact id/name/status")
+                resources.append(resource)
+        return resources
+
+    def authoritative_account_inventory():
+        fresh_status = provider.status()
+        fresh_account_id = str(fresh_status.get("id") or "").strip()
+        if (fresh_account_id != current_account_id
+                or fresh_status.get("clientBalance") is None):
+            raise RuntimeError(
+                "authoritative inventory cannot verify the RunPod account")
+        graphql_pods = provider.list_lifecycle_resources()
+        strict_inventory = provider.chargeable_inventory()
+        union_pods, absence_proof = runpod_authoritative_listing(
+            provider, graphql_pods, fresh_account_id,
+            inventory=strict_inventory)
+        strict_volumes = list(
+            strict_inventory["families"]["network_volumes"]["resources"])
+        response_loss_resources(union_pods, strict_volumes)
+        return (
+            fresh_status, graphql_pods, union_pods, strict_volumes,
+            strict_inventory, absence_proof)
+
+    def authorized_response_loss_siblings(
+            pods, volumes, intended_provider_id=None):
+        resources = response_loss_resources(pods, volumes)
+        classified = ledger.classify_provider_resources(resources)
+        pre_ids = set(
+            lease_store.read(lease_ref)["create"]["pre_create_provider_ids"])
+        new_pods = {
+            row["id"] for row in resources
+            if row["family"] == "pods" and row["id"] not in pre_ids}
+        intended = (
+            set() if intended_provider_id is None
+            else {str(intended_provider_id)})
+        return sorted(
+            (set(classified["known_pod_ids"]) & new_pods) - intended)
+
+    def record_response_loss_inventory(
+            pods, volumes, fresh_status, strict_inventory):
+        now = datetime.now(timezone.utc)
+        inventory_valid_until = (now + timedelta(minutes=5)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        recorded = _ledger_transition(
+            ledger, "record_provider_snapshot",
+            provider="runpod", provider_account_id=current_account_id,
+            balance_available_usd=fresh_status["clientBalance"],
+            balance_observed_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            balance_valid_until=inventory_valid_until,
+            balance_source="RunPod myself.clientBalance",
+            inventory_observed_at=strict_inventory["observed_at_utc"],
+            inventory_valid_until=inventory_valid_until,
+            inventory_complete=True,
+            provider_resources=response_loss_resources(pods, volumes),
+            inventory_source=strict_inventory["schema"])
+        if not recorded.applied:
+            raise RuntimeError(
+                "response-loss campaign inventory could not be recorded")
+        lease = lease_store.read(lease_ref)
+        ids = lease.get("provider_resource_ids") or []
+        if ids:
+            bound = _ledger_transition(
+                ledger, "bind_provider_for_cleanup", campaign_key, ids,
+                campaign_cleanup_binding_evidence(lease, ids))
+            if bound.code not in (
+                    "PROVIDER_BOUND_FOR_CLEANUP",
+                    "PROVIDER_CLEANUP_BINDING_UNCHANGED"):
+                raise RuntimeError(
+                    "response-loss exact IDs could not be bound for cleanup")
+    failed_stage = None
+    stages_done = []
+    host_key_evidence = None
+    archive_verified = None
+    post_create_convergence_evidence = None
+    local_archive = outdir / "result.tar.gz"
+    heartbeat_stop = threading.Event()
+    try:
+        response = None
+        try:
+            pre_post_source = _source_checkout_proof(
+                include_untracked=True)
+            if pre_post_source != job["source_checkout"]["pre_post"]:
+                raise RuntimeError(
+                    "suite HEAD/index/worktree changed before provider POST")
+            _verify_frozen_suite(frozen_bundle, plan_data["bundle"])
+            precreate_now = time.time()
+            sealed_server_time = fresh_safety["server_time"]
+            server_evidence_age = (
+                precreate_now
+                - float(sealed_server_time["local_received_epoch"]))
+            if (not math.isfinite(server_evidence_age)
+                    or server_evidence_age < -1
+                    or server_evidence_age > 30
+                    or abs(float(
+                        sealed_server_time[
+                            "local_minus_server_seconds"])) > 30):
+                raise RuntimeError(
+                    "sealed RunPod server-time evidence expired before "
+                    "provider POST")
+            snapshot_valid_epoch = datetime.strptime(
+                valid, "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=timezone.utc).timestamp()
+            if precreate_now >= snapshot_valid_epoch:
+                raise RuntimeError(
+                    "sealed RunPod balance/inventory snapshot expired "
+                    "before POST")
+            if (precreate_now >= workload_epoch
+                    or precreate_now >= terminate_epoch - 300):
+                raise RuntimeError(
+                    "sealed RunPod quote no longer leaves a safe "
+                    "execution window")
+            creating = _ledger_transition(
+                ledger, "mark_creating", campaign_key)
+            if not creating.applied:
+                raise RuntimeError(
+                    "campaign CREATING was not recorded: %s"
+                    % creating.message)
+            lease_ref = lease_store.record_post_intent(lease_ref)
+        except BaseException:
+            current = lease_store.read(lease_ref)
+            if current.get("state") == "PREPARED":
+                evidence = hashlib.sha256(
+                    _canonical_bytes(current)).hexdigest()
+                cancelled = _ledger_transition(
+                    ledger, "cancel_before_create", campaign_key,
+                    _exact_utc_now(), "PREPARED", evidence)
+                if not cancelled.applied:
+                    raise RuntimeError(
+                        "prepared campaign cancellation failed: %s"
+                        % cancelled.message)
+                lease_ref = lease_store.cancel_prepared(
+                    lease_ref, {
+                        "campaign_cancel_code": cancelled.code,
+                        "campaign_evidence_sha256": evidence,
+                        "reason": "controller failure before provider POST",
+                    })
+                # Preserve sealed pre-POST evidence for diagnosis.
+                pass
+            raise
+        try:
+            # Sole create POST. The lease-side submission lock excludes a
+            # concurrent response-loss reconciliation until its exact response
+            # ID is durably recorded.
+            lease_ref, response = lease_store.submit_create_and_record(
+                lease_ref,
+                lambda: provider.submit_prepared_create(prepared_create))
+        except RunPodCreateResponseError as create_exc:
+            returned_provider_id = str(create_exc.provider_id)
+            pod_id = returned_provider_id
+            failed_stage = "provision"
+            lease_ref = getattr(create_exc, "durable_lease_ref", None)
+            if (lease_ref is None
+                    or lease_store.read(lease_ref).get("provider_resource_ids")
+                    != [returned_provider_id]):
+                raise RuntimeError(
+                    "structured create response lacks its durable exact-ID "
+                    "lease binding") from create_exc
+            _bind_lease_cleanup_to_campaign(
+                ledger_path, lease_store.read(lease_ref))
+            try:
+                (response_status, unused_graphql, post_pods, post_volumes,
+                 response_inventory, unused_proof) = (
+                    authoritative_account_inventory())
+            except BaseException as inventory_exc:
+                raise RuntimeError(
+                    "RunPod create response was unqualified; its exact "
+                    "provider ID is durably bound, but complete account-bound "
+                    "recovery inventory is unavailable: %s"
+                    % redact(str(inventory_exc))) from create_exc
+            response_siblings = authorized_response_loss_siblings(
+                post_pods, post_volumes, pod_id)
+            lease_ref = lease_store.bind_post_create_inventory(
+                lease_ref, post_pods, network_volumes=post_volumes,
+                authorized_sibling_pod_ids=response_siblings)
+            record_response_loss_inventory(
+                post_pods, post_volumes, response_status, response_inventory)
+            if lease_ref.state == "AMBIGUOUS":
+                _cleanup_ambiguous_runpod_create(
+                    provider, lease_store, lease_ref, ledger, campaign_key)
+            raise RuntimeError(
+                "RunPod returned an unqualified create response for durable "
+                "pod id %s; cleanup only" % pod_id)
+        except CreateResponsePersistenceError as persistence_exc:
+            returned_id = str(persistence_exc.provider_id or "")
+            if not returned_id:
+                raise RuntimeError(
+                    "committed create response lacks a recoverable exact ID"
+                ) from persistence_exc
+            pod_id = returned_id
+            failed_stage = "provision"
+            lease = lease_store.read(lease_ref)
+            lease_ids = sorted(lease.get("provider_resource_ids") or [])
+            if lease_ids:
+                if lease_ids != [returned_id]:
+                    raise RuntimeError(
+                        "persisted lease IDs differ from committed response ID")
+                lease_ref = lease_store.ref(lease_ref.path, lease)
+            cleanup_binding = _ledger_transition(
+                ledger, "bind_provider_for_cleanup", campaign_key,
+                [returned_id],
+                campaign_cleanup_binding_evidence(lease, [returned_id]))
+            if cleanup_binding.code not in (
+                    "PROVIDER_BOUND_FOR_CLEANUP",
+                    "PROVIDER_CLEANUP_BINDING_UNCHANGED"):
+                raise RuntimeError(
+                    "returned RunPod ID could not be durably authorized "
+                    "for cleanup: %s" % cleanup_binding.message
+                ) from persistence_exc
+            raise RuntimeError(
+                "RunPod committed pod %s, but its lease response binding "
+                "failed; campaign cleanup liability is retained"
+                % returned_id) from persistence_exc
+        except Exception as create_exc:
+            try:
+                (response_status, unused_graphql, complete, complete_volumes,
+                 response_inventory, unused_proof) = (
+                    authoritative_account_inventory())
+            except BaseException as inventory_exc:
+                raise RuntimeError(
+                    "RunPod create response was lost and complete "
+                    "account-bound recovery inventory is unavailable; "
+                    "the CREATING liability is retained: %s"
+                    % redact(str(inventory_exc))) from create_exc
+            response_siblings = authorized_response_loss_siblings(
+                complete, complete_volumes)
+            lease_ref = lease_store.reconcile_response_lost(
+                lease_ref, complete, network_volumes=complete_volumes,
+                response_provider_id=None,
+                create_window_closed=False,
+                authorized_sibling_pod_ids=response_siblings,
+                response_error=redact(str(create_exc)))
+            record_response_loss_inventory(
+                complete, complete_volumes, response_status,
+                response_inventory)
+            ids = lease_store.read(lease_ref).get(
+                "provider_resource_ids") or []
+            if not ids:
+                raise RuntimeError(
+                    "RunPod create response was lost with no exact cleanup "
+                    "candidate; the %s liability is retained for reaping: %s"
+                    % (lease_ref.state, redact(str(create_exc))))
+            if len(ids) > 1:
+                _cleanup_ambiguous_runpod_create(
+                    provider, lease_store, lease_ref, ledger, campaign_key)
+                raise RuntimeError(
+                    "ambiguous RunPod create candidates were terminated; "
+                    "scientific execution is refused: %s"
+                    % redact(str(create_exc)))
+            pod_id = str(ids[0])
+            failed_stage = "provision"
+            raise RuntimeError(
+                "RunPod create response was lost; sole reconciled candidate "
+                "%s is cleanup-only and scientific execution is refused: %s"
+                % (pod_id, redact(str(create_exc))))
+        if response is not None:
+            returned_id = str(_machine_id_of(response) or "")
+            if not returned_id:
+                raise RuntimeError("RunPod create returned no exact pod id")
+            pod_id = returned_id
+            failed_stage = "provision"
+            durable_ids = lease_store.read(
+                lease_ref).get("provider_resource_ids") or []
+            if durable_ids != [returned_id]:
+                raise RuntimeError(
+                    "RunPod response ID differs from its durable lease binding")
+            if str(response.get("image_name") or "") != job["environment"]["image"]:
+                raise RuntimeError(
+                    "RunPod create response image differs from finalized job")
+            try:
+                acknowledged_rate = Decimal(str(response.get("cost_per_hr")))
+            except (ValueError, TypeError, InvalidOperation) as exc:
+                raise RuntimeError(
+                    "RunPod create response lacks an exact acknowledged "
+                    "hourly rate") from exc
+            if (not acknowledged_rate.is_finite()
+                    or acknowledged_rate <= 0):
+                raise RuntimeError(
+                    "RunPod create response acknowledged hourly rate is invalid")
+        convergence_contract = job["post_create_convergence"]
+        convergence_started = time.time()
+        convergence_deadline = min(
+            convergence_started + convergence_contract["timeout_seconds"],
+            terminate_epoch)
+        convergence_observations = []
+        convergence_ready = False
+        convergence_failure = None
+        expected_pod_name = lease_store.read(
+            lease_ref)["create"]["exact_name"]
+        pre_pod_ids = {
+            str(row.get("id") or "")
+            for row in inventory["families"]["pods"]["resources"]}
+        pre_volume_ids = {
+            str(row.get("id") or "")
+            for row in
+            inventory["families"]["network_volumes"]["resources"]}
+        post_create_status = {}
+        post_graphql_pods = []
+        post_lifecycle_pods = []
+        post_identity_volumes = []
+        post_create_resources = []
+        post_create_inventory = {"complete": False}
+        authorized_sibling_ids = []
+        post_authoritative_observed = False
+        while True:
+            observed_at = _exact_utc_now()
+            try:
+                (post_create_status, post_graphql_pods,
+                 post_lifecycle_pods, post_identity_volumes,
+                 post_create_inventory, unused_absence_proof) = (
+                    authoritative_account_inventory())
+                post_authoritative_observed = True
+                strict_families = post_create_inventory["families"]
+                strict_pods = strict_families["pods"]["resources"]
+                strict_volumes = strict_families[
+                    "network_volumes"]["resources"]
+                lifecycle_resources = response_loss_resources(
+                    post_lifecycle_pods, post_identity_volumes)
+                graphql_resources = response_loss_resources(
+                    post_graphql_pods, post_identity_volumes)
+                strict_resources = response_loss_resources(
+                    strict_pods, strict_volumes)
+                post_create_resources = lifecycle_resources
+                malformed_nonown_pod_ids = []
+                classified_post = ledger.classify_provider_resources(
+                    lifecycle_resources)
+                classified_strict = ledger.classify_provider_resources(
+                    strict_resources)
+                new_post_pod_ids = {
+                    row["id"] for row in lifecycle_resources
+                    if row["family"] == "pods"
+                    and row["id"] not in pre_pod_ids}
+                authorized_sibling_ids = sorted(
+                    (set(classified_post["known_pod_ids"])
+                     & new_post_pod_ids) - {str(pod_id)})
+                exact_name_ids = {
+                    row["id"] for row in lifecycle_resources
+                    if row["family"] == "pods"
+                    and row["id"] not in pre_pod_ids
+                    and row["name"] == expected_pod_name}
+                wrong_name_ids = (
+                    new_post_pod_ids - exact_name_ids - {str(pod_id)})
+                blockers = wrong_name_ids - set(authorized_sibling_ids)
+                new_volume_ids = {
+                    row["id"] for row in lifecycle_resources
+                    if row["family"] == "network_volumes"
+                    and row["id"] not in pre_volume_ids}
+                intended_rows = [
+                    row for row in post_graphql_pods
+                    if str(_machine_id_of(row) or "") == str(pod_id)]
+                intended_name = (
+                    str(intended_rows[0].get("name") or "").strip()
+                    if len(intended_rows) == 1 else "")
+                intended_status = (
+                    str(intended_rows[0].get("status") or "").strip().upper()
+                    if len(intended_rows) == 1 else "")
+                intended_wrong_name = bool(
+                    intended_name and intended_name != expected_pod_name)
+                intended_terminal = intended_status in {
+                    "EXITED", "FAILED", "STOPPED", "TERMINATED", "DELETED"}
+                intended_exact = (
+                    len(intended_rows) == 1
+                    and intended_name == expected_pod_name
+                    and intended_status == "RUNNING")
+                try:
+                    lifecycle_rate = Decimal(str(
+                        intended_rows[0].get("cost_per_hr")))
+                    lifecycle_economics = (
+                        lifecycle_rate.is_finite() and lifecycle_rate > 0)
+                except (IndexError, ValueError, TypeError, InvalidOperation):
+                    lifecycle_rate = None
+                    lifecycle_economics = False
+                extra_exact = exact_name_ids - {str(pod_id)}
+                account_id = str(post_create_status.get("id") or "").strip()
+                account_changed = bool(
+                    account_id and account_id != current_account_id)
+                strict_rows = [
+                    row for row in strict_pods
+                    if str(row.get("id") or "") == str(pod_id)]
+                strict_name = (
+                    str(strict_rows[0].get("name") or "").strip()
+                    if len(strict_rows) == 1 else "")
+                strict_status = (
+                    str(strict_rows[0].get("status") or "").strip().upper()
+                    if len(strict_rows) == 1 else "")
+                strict_wrong_name = bool(
+                    strict_name and strict_name != expected_pod_name)
+                strict_terminal = strict_status in {
+                    "EXITED", "FAILED", "STOPPED", "TERMINATED", "DELETED"}
+                strict_exact = (
+                    len(strict_rows) == 1
+                    and strict_name == expected_pod_name
+                    and strict_status == "RUNNING")
+                try:
+                    strict_rate = Decimal(str(
+                        strict_rows[0].get("cost_per_hr")))
+                    strict_economics = (
+                        strict_rate.is_finite() and strict_rate > 0)
+                except (IndexError, ValueError, TypeError, InvalidOperation):
+                    strict_rate = None
+                    strict_economics = False
+                rate_views_exact = bool(
+                    lifecycle_economics and strict_economics
+                    and acknowledged_rate == lifecycle_rate == strict_rate)
+                rate_views_mismatch = bool(
+                    (lifecycle_economics
+                     and lifecycle_rate != acknowledged_rate)
+                    or (strict_economics
+                        and strict_rate != acknowledged_rate))
+                graphql_keys = {
+                    (row["family"], row["id"])
+                    for row in graphql_resources}
+                strict_keys = {
+                    (row["family"], row["id"])
+                    for row in strict_resources}
+                family_closure_exact = graphql_keys == strict_keys
+                strict_unknown_beyond_intended = [
+                    row for row in classified_strict["unknown_resources"]
+                    if row != {"family": "pods", "id": str(pod_id)}]
+                fatal_delta = bool(
+                    blockers or new_volume_ids or extra_exact
+                    or malformed_nonown_pod_ids
+                    or len(intended_rows) > 1
+                    or intended_wrong_name or intended_terminal
+                    or strict_wrong_name or strict_terminal
+                    or strict_unknown_beyond_intended
+                    or account_changed or rate_views_mismatch)
+                convergence_ready = bool(
+                    intended_exact and strict_exact and rate_views_exact
+                    and post_create_inventory.get("complete")
+                    and family_closure_exact
+                    and account_id == current_account_id
+                    and not fatal_delta)
+                convergence_observations.append({
+                    "observed_at": observed_at,
+                    "identity_resources": lifecycle_resources,
+                    "strict_chargeable_resources": strict_resources,
+                    "combined_resources": post_create_resources,
+                    "chargeable_inventory_complete":
+                        bool(post_create_inventory.get("complete")),
+                    "chargeable_family_completeness": {
+                        family_name: bool(family.get("complete"))
+                        for family_name, family in sorted(
+                            strict_families.items())
+                    },
+                    "strict_pod": (
+                        {
+                            "id": str(strict_rows[0].get("id") or ""),
+                            "name": strict_name,
+                            "status": strict_status,
+                            "cost_per_hr":
+                                strict_rows[0].get("cost_per_hr"),
+                        } if len(strict_rows) == 1 else None),
+                    "account_id": account_id or None,
+                    "intended_identity_exact_running": intended_exact,
+                    "strict_identity_exact_running": strict_exact,
+                    "strict_economics_positive": strict_economics,
+                    "hourly_rate_views": {
+                        "create_acknowledged": format(
+                            acknowledged_rate, "f"),
+                        "graphql_lifecycle": (
+                            format(lifecycle_rate, "f")
+                            if lifecycle_economics else None),
+                        "rest_chargeable_inventory": (
+                            format(strict_rate, "f")
+                            if strict_economics else None),
+                        "exactly_equal": rate_views_exact,
+                    },
+                    "full_family_id_closure": family_closure_exact,
+                    "authorized_sibling_pod_ids": authorized_sibling_ids,
+                    "unattributed_sibling_pod_ids": sorted(blockers),
+                    "malformed_nonown_pod_ids":
+                        sorted(malformed_nonown_pod_ids),
+                    "strict_unknown_beyond_intended":
+                        strict_unknown_beyond_intended,
+                    "extra_exact_name_pod_ids": sorted(extra_exact),
+                    "new_network_volume_ids": sorted(new_volume_ids),
+                })
+                if fatal_delta:
+                    convergence_failure = (
+                        "post-create hourly rate views disagree"
+                        if rate_views_mismatch else
+                        "post-create identity family delta is unsafe")
+                    break
+                if convergence_ready:
+                    break
+            except Exception as exc:
+                convergence_observations.append({
+                    "observed_at": observed_at,
+                    "error": redact(str(exc)),
+                })
+            if time.time() >= convergence_deadline:
+                convergence_failure = (
+                    "post-create identity/economics convergence timed out")
+                break
+            time.sleep(convergence_contract["poll_seconds"])
+        if post_authoritative_observed:
+            lease_ref = lease_store.bind_post_create_inventory(
+                lease_ref, post_lifecycle_pods,
+                network_volumes=post_identity_volumes,
+                authorized_sibling_pod_ids=authorized_sibling_ids)
+        post_create_convergence_evidence = {
+            "schema": "fidelity-suite/runpod-post-create-convergence-evidence.v1",
+            "contract": convergence_contract,
+            "started_at": datetime.fromtimestamp(
+                convergence_started, timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"),
+            "deadline_at": datetime.fromtimestamp(
+                convergence_deadline, timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"),
+            "finished_at": _exact_utc_now(),
+            "converged": convergence_ready,
+            "failure": convergence_failure,
+            "observations": convergence_observations,
+            "evidence_sha256": None,
+        }
+        post_create_convergence_evidence["evidence_sha256"] = hashlib.sha256(
+            _canonical_bytes(post_create_convergence_evidence)).hexdigest()
+        convergence_path = outdir / "runpod-post-create-convergence.json"
+        with convergence_path.open("xb") as stream:
+            stream.write(
+                json.dumps(
+                    post_create_convergence_evidence, indent=2,
+                    sort_keys=True, ensure_ascii=False,
+                    allow_nan=False).encode("utf-8") + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        convergence_directory_fd = os.open(str(outdir), os.O_RDONLY)
+        try:
+            os.fsync(convergence_directory_fd)
+        finally:
+            os.close(convergence_directory_fd)
+        snapshot_now = datetime.now(timezone.utc)
+        snapshot_observed = snapshot_now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        snapshot_valid = (
+            snapshot_now + timedelta(minutes=5)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
+        post_balance = post_create_status.get("clientBalance")
+        post_balance_observed = snapshot_observed
+        post_balance_valid = snapshot_valid
+        post_balance_source = "RunPod myself.clientBalance"
+        if post_balance is None:
+            post_balance = balance
+            post_balance_observed = observed
+            post_balance_valid = valid
+            post_balance_source = (
+                "RunPod myself.clientBalance sealed pre-create fallback")
+        post_snapshot = _ledger_transition(
+            ledger, "record_provider_snapshot",
+            provider="runpod", provider_account_id=current_account_id,
+            balance_available_usd=post_balance,
+            balance_observed_at=post_balance_observed,
+            balance_valid_until=post_balance_valid,
+            balance_source=post_balance_source,
+            inventory_observed_at=snapshot_observed,
+            inventory_valid_until=snapshot_valid,
+            inventory_complete=bool(
+                convergence_ready and post_create_inventory.get("complete")),
+            provider_resources=post_create_resources,
+            inventory_source=
+                "fidelity-suite/runpod-post-create-identity+chargeable.v1")
+        if not post_snapshot.applied:
+            raise RuntimeError(
+                "post-create campaign inventory snapshot was not recorded")
+        if not convergence_ready or lease_ref.state != "ACTIVE":
+            cleanup_lease = lease_store.read(lease_ref)
+            cleanup_ids = (
+                cleanup_lease.get("provider_resource_ids")
+                or [str(pod_id)])
+            cleanup_binding = _ledger_transition(
+                ledger, "bind_provider_for_cleanup", campaign_key,
+                cleanup_ids,
+                campaign_cleanup_binding_evidence(
+                    cleanup_lease, cleanup_ids))
+            if cleanup_binding.code not in (
+                    "PROVIDER_BOUND_FOR_CLEANUP",
+                    "PROVIDER_CLEANUP_BINDING_UNCHANGED"):
+                raise RuntimeError(
+                    "campaign exact provider cleanup binding failed: %s"
+                    % cleanup_binding.message)
+            if lease_ref.state != "ACTIVE":
+                _cleanup_ambiguous_runpod_create(
+                    provider, lease_store, lease_ref, ledger, campaign_key)
+            raise RuntimeError(
+                "%s; exact acknowledged pod is cleanup-only"
+                % (convergence_failure or "post-create family delta"))
+        canonical_post_inventory = ledger.snapshot()["inventory"]
+        if canonical_post_inventory["unknown_resources"] != [
+                {"family": "pods", "id": str(pod_id)}]:
+            raise RuntimeError(
+                "post-create campaign classifier found resources beyond the "
+                "single acknowledged pod; cleanup is restricted to attributed IDs")
+        lease = lease_store.read(lease_ref)
+        binding = provider.validate_safe_resource_binding(
+            pod_id, expected_name=lease["create"]["exact_name"],
+            gpu_type_id=plan_data["chosen"]["provider_gpu_id"],
+            secure_cloud=True, gpu_count=1,
+            volume_gb=plan_data["storage_gb"],
+            container_disk_gb=container_disk_gb,
+            image_name=request["image"], terminate_after=terminate_after)
+        host_key_evidence = _authenticate_runpod_ssh_host(
+            args, con, provider, str(pod_id), outdir)
+        live_attestation = provider.attest_live_resource(
+            pod_id,
+            expected_gpu_model=plan_data["chosen"]["provider_gpu_display"],
+            expected_vram_bytes=plan_data["chosen"]["vram_bytes"],
+            min_vcpu=plan_data["runtime_contract"]["min_vcpu_count"],
+            min_ram_gb=plan_data["runtime_contract"]["min_memory_gb"],
+            volume_gb=plan_data["storage_gb"],
+            container_disk_gb=container_disk_gb,
+            workspace_available_bytes_minimum=job["resource_requirements"][
+                "workspace_available_bytes_minimum"],
+            container_available_bytes_minimum=job["resource_requirements"][
+                "container_available_bytes_minimum"])
+        lease_ref = lease_store.record_identity_attestation(
+            lease_ref, live_attestation)
+        filesystems = (
+            (live_attestation.get("observed") or {}).get("filesystems") or {})
+        workspace_available = (
+            filesystems.get("workspace", {}).get("available_bytes"))
+        container_available = (
+            filesystems.get("container", {}).get("available_bytes"))
+        required_remote_peak = int(
+            job["resource_requirements"][
+                "workspace_available_bytes_minimum"])
+        if (live_attestation.get("ok") is not True
+                or isinstance(workspace_available, bool)
+                or not isinstance(workspace_available, int)
+                or workspace_available < required_remote_peak
+                or isinstance(container_available, bool)
+                or not isinstance(container_available, int)
+                or container_available < job["resource_requirements"][
+                    "container_available_bytes_minimum"]):
+            raise RuntimeError(
+                "live RunPod resource attestation failed resource floors")
+        attestation_path = outdir / "runpod-live-attestation.json"
+        with attestation_path.open("xb") as stream:
+            stream.write(
+                json.dumps(
+                    live_attestation, indent=2, sort_keys=True,
+                    ensure_ascii=False, allow_nan=False).encode("utf-8")
+                + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        live_rate = Decimal(str(binding["observed"]["cost_per_hr"]))
+        quoted_rate = Decimal(str(quote.live_compute_usd_per_hour))
+        if (not live_rate.is_finite() or live_rate <= 0
+                or not strict_rate.is_finite() or strict_rate <= 0
+                or live_rate != acknowledged_rate
+                or lifecycle_rate != acknowledged_rate
+                or strict_rate != acknowledged_rate
+                or live_rate != quoted_rate):
+            raise RuntimeError(
+                "create, GraphQL lifecycle, REST inventory, refreshed binding "
+                "and quoted hourly rates are not exactly equal")
+        actual_quote = quote
+        bound = _ledger_transition(
+            ledger, "bind_actual_quote", campaign_key, pod_id, actual_quote)
+        if (not bound.applied or bound.code != "ACTUAL_QUOTE_BOUND"
+                or bound.action == "TERMINATE_IMMEDIATELY"):
+            raise RuntimeError(
+                "campaign provider/rate binding failed: %s" % bound.message)
+        if ledger.snapshot()["inventory"]["unknown_resources"]:
+            raise RuntimeError(
+                "campaign inventory remains unknown after exact quote binding")
+        running = _ledger_transition(
+            ledger, "mark_phase", campaign_key, "RUNNING")
+        if (not running.applied
+                or running.code not in ("PHASE_RECORDED", "PHASE_UNCHANGED")):
+            raise RuntimeError(
+                "campaign RUNNING transition failed: %s" % running.message)
+
+        _upload_verified_bundle(
+            provider, pod_id, fs_root, plan_data["bundle"], frozen_bundle)
+        provider.exec(pod_id, "mkdir -p {0}/inputs {0}/logs "
+                      "{0}/receipts/done {0}/runtime".format(
+                          shlex.quote(fs_root)))
+        provider.upload(pod_id, str(job_path), "%s/job.json" % fs_root)
+        provider.upload(
+            pod_id, str(attestation_path),
+            "%s/receipts/runpod-live-attestation.json" % fs_root)
+        provider.upload(
+            pod_id, str(host_key_evidence["path"]),
+            "%s/receipts/runpod-ssh-host-key-proof.json" % fs_root)
+        if args.role == "root":
+            provider.upload(pod_id, plan_data["_panel_archive_local"],
+                            "%s/inputs/panel.tar" % fs_root)
+            provider.upload(pod_id, plan_data["_panel_binding_local"],
+                            "%s/inputs/panel.binding.json" % fs_root)
+            provider.exec(
+                pod_id,
+                "python3 {fs}/bin/fidelity/runpodsafety.py extract-panel "
+                "--archive {fs}/inputs/panel.tar "
+                "--binding {fs}/inputs/panel.binding.json "
+                "--destination {fs}/inputs/panel".format(
+                    fs=shlex.quote(fs_root)), timeout=900)
+        provider.upload(
+            pod_id, str(convergence_path),
+            "%s/receipts/runpod-post-create-convergence.json" % fs_root)
+        provider.exec(
+            pod_id,
+            "python3 -c {code} {job} {digest}".format(
+                code=shlex.quote(
+                    "import hashlib,sys;"
+                    "sys.path.insert(0,sys.argv[1].rsplit('/',1)[0]+'/bin');"
+                    "p=sys.argv[1];b=open(p,'rb').read();"
+                    "assert hashlib.sha256(b).hexdigest()==sys.argv[2];"
+                    "from fidelity.jobcontract import "
+                    "parse_job_bytes,validate_execution_job;"
+                    "validate_execution_job(parse_job_bytes(b))"),
+                job=shlex.quote("%s/job.json" % fs_root),
+                digest=hashlib.sha256(job_bytes).hexdigest()))
+        provider.exec(
+            pod_id,
+            "umask 077; tmp={fs}/.heartbeat.$$; : > \"$tmp\"; "
+            "mv \"$tmp\" {fs}/heartbeat; chmod 600 {fs}/heartbeat".format(
+                fs=shlex.quote(fs_root)))
+        heartbeat_td = type("_TD", (), {
+            "machine_id": pod_id, "fs_root": fs_root})()
+        _start_heartbeat(provider, heartbeat_td, heartbeat_stop, con)
+        provider.exec(
+            pod_id,
+            "nohup setsid bash {fs}/bin/watchdog.sh {deadline} {heartbeat} "
+            "{fs} >{fs}/logs/watchdog.log 2>&1 </dev/null &".format(
+                fs=shlex.quote(fs_root), deadline=int(workload_epoch),
+                heartbeat=int(args.heartbeat_timeout)))
+        provider.exec(
+            pod_id,
+            "i=0; while [ ! -f {fs}/receipts/watchdog-armed.json ] "
+            "&& [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; "
+            "test -f {fs}/receipts/watchdog-armed.json; "
+            "python3 {fs}/bin/fidelity/runpodsafety.py verify-watchdog "
+            "--fs-root {fs} --deadline {deadline} "
+            "--heartbeat-timeout {heartbeat}".format(
+                fs=shlex.quote(fs_root), deadline=int(workload_epoch),
+                heartbeat=int(args.heartbeat_timeout)))
+        for stage in stage_sequence(
+                args.role, race=False,
+                surface=plan_data["target"]["surface"],
+                publish_root=False):
+            failed_stage = stage
+            _runpod_stage(
+                provider, pod_id, fs_root, engine_root, stage,
+                workload_epoch, job["environment"]["image"])
+            stages_done.append(stage)
+            if stage == "setup":
+                bench_doc = _preflight_bench(
+                    args, con, provider, heartbeat_td, plan_data,
+                    fail_closed=True,
+                    python_executable="%s/venv/bin/python" % engine_root,
+                    remote_payload=(
+                        "%s/bin/fidelity/cardbench_payload.py" % fs_root))
+                bench_bytes = (
+                    json.dumps(
+                        bench_doc, indent=2, sort_keys=True,
+                        ensure_ascii=False, allow_nan=False) + "\n").encode(
+                            "utf-8")
+                bench_path = outdir / "preflight-bench.json"
+                with bench_path.open("xb") as stream:
+                    stream.write(bench_bytes)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                remote_bench = "%s/receipts/preflight-bench.json" % fs_root
+                provider.upload(pod_id, str(bench_path), remote_bench)
+                provider.exec(
+                    pod_id,
+                    "test \"$(sha256sum {path} | cut -d' ' -f1)\" = {digest}"
+                    .format(
+                        path=shlex.quote(remote_bench),
+                        digest=hashlib.sha256(bench_bytes).hexdigest()))
+        failed_stage = None
+    except BaseException as exc:
+        primary_error = exc
+        run_error = exc
+    finally:
+        if pod_id is not None:
+            exit_evidence = {
+                "failed_stage": failed_stage,
+                "run_error": redact(str(run_error)) if run_error else None,
+                "stages_done": list(stages_done),
+            }
+            try:
+                exited = _ledger_transition(
+                    ledger, "mark_phase", campaign_key, "EXITED")
+                if (not exited.applied
+                        or exited.code not in (
+                            "PHASE_RECORDED", "PHASE_UNCHANGED")):
+                    raise RuntimeError(
+                        "campaign EXITED transition failed: %s"
+                        % exited.message)
+                current_lease = lease_store.read(lease_ref)
+                if current_lease["state"] == "ACTIVE":
+                    lease_ref = lease_store.transition(
+                        lease_ref, to_state="ACTIVE",
+                        event="WORKLOAD_EXITED", evidence=exit_evidence)
+            except BaseException as exc:
+                run_error = record_operational_error(exc)
+            if token_transported:
+                secret_cleanup = _cleanup_remote_secret(
+                    provider, pod_id, fs_root)
+                if not secret_cleanup.get("confirmed"):
+                    run_error = record_operational_error(RuntimeError(
+                        "remote token erasure is unconfirmed; revoke the "
+                        "RunPod-scoped Hugging Face token immediately"))
+            try:
+                remote_archive = "/tmp/fidelity-result-%s-%s.tar.gz" % (
+                    plan_data["job_id"], attempt)
+                archive_failed_stage = failed_stage
+                if primary_error is not None and archive_failed_stage is None:
+                    archive_failed_stage = "post-run"
+                argv = [
+                    "python3", "%s/bin/result_archive.py" % fs_root,
+                    "--fs-root", fs_root,
+                    "--verb", "capture" if args.role == "root" else "measure",
+                    "--status", (
+                        "failed" if primary_error is not None
+                        else ("qualified-unpublished"
+                              if args.role == "root" else "completed")),
+                    "--stages", ",".join(stages_done),
+                    "--out", remote_archive,
+                ]
+                if archive_failed_stage:
+                    argv += ["--failed-stage", archive_failed_stage]
+                transfer = json.loads(provider.exec_stdout(
+                    pod_id, " ".join(shlex.quote(value) for value in argv),
+                    timeout=1800).strip())
+                if (not isinstance(transfer, dict)
+                        or set(transfer) != {"path", "bytes", "sha256"}
+                        or transfer.get("path") != remote_archive
+                        or isinstance(transfer.get("bytes"), bool)
+                        or not isinstance(transfer.get("bytes"), int)
+                        or transfer["bytes"] <= 0
+                        or transfer["bytes"] > job["target"][
+                            "result_archive_contract"][
+                                "result_archive_max_transfer_bytes"]
+                        or re.fullmatch(
+                            r"[0-9a-f]{64}", str(transfer.get("sha256", "")))
+                        is None):
+                    raise RuntimeError(
+                        "remote result archive transfer record is noncanonical "
+                        "or exceeds the finalized transfer cap")
+                observed_lines = provider.exec_stdout(
+                    pod_id,
+                    "set -eu; sha256sum {path} | cut -d' ' -f1; "
+                    "stat -c %s {path}".format(
+                        path=shlex.quote(remote_archive))).strip().splitlines()
+                if (len(observed_lines) != 2
+                        or observed_lines[0] != transfer["sha256"]
+                        or int(observed_lines[1]) != int(transfer["bytes"])):
+                    raise RuntimeError(
+                        "independent on-pod archive digest/size differs "
+                        "from writer transfer record")
+                extracted = outdir / "result"
+                download_error = None
+                retrieval_contract = plan_data["retrieval_delete_contract"]
+                total_attempts = retrieval_contract["download_attempts"]
+                verify_bound = retrieval_contract[
+                    "local_verify_extract_bound_seconds_per_attempt"]
+                delete_reserve = retrieval_contract[
+                    "final_delete_reserve_seconds"]
+                for download_attempt in range(1, total_attempts + 1):
+                    remaining = terminate_epoch - time.time()
+                    attempts_left = total_attempts - download_attempt + 1
+                    required_remaining = (
+                        attempts_left * (
+                            retrieval_contract[
+                                "download_timeout_seconds_per_attempt"]
+                            + verify_bound)
+                        + delete_reserve)
+                    if remaining < required_remaining:
+                        download_error = RuntimeError(
+                            "provider deadline cannot fund every remaining "
+                            "bounded retrieval attempt and final DELETE")
+                        break
+                    commit_started = False
+                    try:
+                        with tempfile.TemporaryDirectory(
+                                prefix=".result-download-%d-" % download_attempt,
+                                dir=str(outdir)) as hold:
+                            os.chmod(hold, 0o700)
+                            downloaded = Path(hold) / "result.tar.gz"
+                            attempt_extracted = Path(hold) / "result"
+                            provider.download_bounded(
+                                pod_id, remote_archive, str(downloaded),
+                                expected_bytes=transfer["bytes"],
+                                max_bytes=job["target"][
+                                    "result_archive_contract"][
+                                        "result_archive_max_transfer_bytes"],
+                                timeout=retrieval_contract[
+                                    "download_timeout_seconds_per_attempt"])
+                            metadata = downloaded.lstat()
+                            if (downloaded.is_symlink()
+                                    or not downloaded.is_file()
+                                    or metadata.st_uid != os.getuid()):
+                                raise RuntimeError(
+                                    "downloaded result is not an owned regular file")
+                            verified_attempt = extract_verified_archive(
+                                downloaded, attempt_extracted,
+                                expected_sha256=transfer["sha256"],
+                                expected_bytes=transfer["bytes"])
+                            with downloaded.open("rb") as stream:
+                                os.fsync(stream.fileno())
+                            commit_started = True
+                            os.link(str(downloaded), str(local_archive))
+                            os.rename(str(attempt_extracted), str(extracted))
+                            directory_fd = os.open(str(outdir), os.O_RDONLY)
+                            try:
+                                os.fsync(directory_fd)
+                            finally:
+                                os.close(directory_fd)
+                            archive_verified = verified_attempt
+                        download_error = None
+                        break
+                    except BaseException as exc:
+                        download_error = exc
+                        if commit_started:
+                            break
+                if archive_verified is None:
+                    raise RuntimeError(
+                        "verified result retrieval exhausted: %s"
+                        % redact(str(download_error)))
+                archived_job = (extracted / "job.json").read_bytes()
+                if (archived_job != job_bytes
+                        or json.loads(archived_job.decode("utf-8")) != job):
+                    raise RuntimeError(
+                        "verified archive carries a different finalized job.json")
+                archived_attestation_bytes = (
+                    extracted / "receipts"
+                    / "runpod-live-attestation.json").read_bytes()
+                local_attestation_bytes = attestation_path.read_bytes()
+                if archived_attestation_bytes != local_attestation_bytes:
+                    raise RuntimeError(
+                        "archived live attestation differs from exact local bytes")
+                archived_host_key_bytes = (
+                    extracted / "receipts"
+                    / "runpod-ssh-host-key-proof.json").read_bytes()
+                local_host_key_bytes = host_key_evidence["path"].read_bytes()
+                if archived_host_key_bytes != local_host_key_bytes:
+                    raise RuntimeError(
+                        "archived SSH host-key proof differs from exact local "
+                        "operator-authenticated bytes")
+                archived_attestation = parse_job_bytes(
+                    archived_attestation_bytes)
+                durable_provider_ids = lease_store.read(
+                    lease_ref).get("provider_resource_ids") or []
+                if (archived_attestation.get("provider_id") != str(pod_id)
+                        or durable_provider_ids != [str(pod_id)]):
+                    raise RuntimeError(
+                        "live attestation provider id differs from durable lease")
+            except BaseException as exc:
+                if run_error is None:
+                    primary_error = exc
+                    run_error = exc
+            heartbeat_stop.set()
+            destroy_intent_recorded = False
+            try:
+                current = lease_store.read(lease_ref)
+                if current["state"] not in (
+                        "DESTROYING", "ABSENCE_CONFIRMED", "TERMINAL"):
+                    lease_ref = lease_store.request_destroy(
+                        lease_ref, {"reason": "controller exit",
+                                    "provider_id": pod_id})
+                _bind_lease_cleanup_to_campaign(
+                    ledger_path, lease_store.read(lease_ref))
+                phase = _ledger_transition(
+                    ledger, "mark_phase", campaign_key,
+                    "TERMINATE_REQUESTED")
+                if not phase.applied:
+                    raise RuntimeError(
+                        "campaign destroy intent was not recorded: %s"
+                        % phase.message)
+                destroy_intent_recorded = True
+            except BaseException as exc:
+                run_error = record_operational_error(exc)
+            if destroy_intent_recorded:
+                try:
+                    provider.exec(
+                        pod_id,
+                        "python3 {fs}/bin/fidelity/runpodsafety.py "
+                        "disarm-watchdog --fs-root {fs} --deadline {deadline} "
+                        "--heartbeat-timeout {heartbeat}".format(
+                            fs=shlex.quote(fs_root),
+                            deadline=int(workload_epoch),
+                            heartbeat=int(args.heartbeat_timeout)))
+                except BaseException as exc:
+                    run_error = record_operational_error(exc)
+            if not destroy_intent_recorded:
+                run_error = record_operational_error(RuntimeError(
+                    "durable destroy intent failed; controller issued no DELETE; "
+                    "watchdog/reaper/provider deadline retain liability"))
+            else:
+                delete_error = None
+                try:
+                    provider.destroy(pod_id)
+                except BaseException as exc:
+                    delete_error = redact(str(exc))
+                try:
+                    absence_error = None
+                    for _unused in range(20):
+                        try:
+                            (absence_status, unused_graphql, absence_pods,
+                             absence_volumes, absence_inventory,
+                             absence_proof) = (
+                                authoritative_account_inventory())
+                            lease_ref = lease_store.confirm_exact_absence(
+                                lease_ref, absence_pods,
+                                authoritative_inventory=absence_proof)
+                            if lease_ref.state != ABSENCE_CONFIRMED:
+                                absence_resources = response_loss_resources(
+                                    absence_pods, absence_volumes)
+                                balance_observed = absence_status[
+                                    "observed_at_utc"]
+                                inventory_observed = absence_inventory[
+                                    "observed_at_utc"]
+                                balance_valid = (
+                                    datetime.strptime(
+                                        balance_observed,
+                                        "%Y-%m-%dT%H:%M:%SZ").replace(
+                                            tzinfo=timezone.utc)
+                                    + timedelta(minutes=5)).strftime(
+                                        "%Y-%m-%dT%H:%M:%SZ")
+                                inventory_valid = (
+                                    datetime.strptime(
+                                        inventory_observed,
+                                        "%Y-%m-%dT%H:%M:%SZ").replace(
+                                            tzinfo=timezone.utc)
+                                    + timedelta(minutes=5)).strftime(
+                                        "%Y-%m-%dT%H:%M:%SZ")
+                                classified = _ledger_transition(
+                                    ledger, "record_provider_snapshot",
+                                    provider="runpod",
+                                    provider_account_id=current_account_id,
+                                    balance_available_usd=absence_status[
+                                        "clientBalance"],
+                                    balance_observed_at=balance_observed,
+                                    balance_valid_until=balance_valid,
+                                    balance_source=(
+                                        "RunPod myself.clientBalance"),
+                                    inventory_observed_at=inventory_observed,
+                                    inventory_valid_until=inventory_valid,
+                                    inventory_complete=True,
+                                    provider_resources=absence_resources,
+                                    inventory_source=absence_inventory["schema"])
+                                if not classified.applied:
+                                    raise RuntimeError(
+                                        "post-DELETE campaign inventory "
+                                        "was not recorded")
+                            absence_error = None
+                        except BaseException as exc:
+                            absence_error = exc
+                        if lease_ref.state == ABSENCE_CONFIRMED:
+                            break
+                        time.sleep(3)
+                    if (lease_ref.state != ABSENCE_CONFIRMED
+                            and absence_error is not None):
+                        raise absence_error
+                    if lease_ref.state == ABSENCE_CONFIRMED:
+                        try:
+                            billing_lease = lease_store.read(lease_ref)
+                            absence_rows = [
+                                row for row in billing_lease.get("history") or []
+                                if row.get("to") == "ABSENCE_CONFIRMED"]
+                            if not absence_rows:
+                                raise RuntimeError(
+                                    "billing wait requires exact absence evidence")
+                            absence_epoch = datetime.strptime(
+                                absence_rows[-1]["at"],
+                                "%Y-%m-%dT%H:%M:%SZ").replace(
+                                    tzinfo=timezone.utc).timestamp()
+                            billing_wait = max(
+                                0.0, 300.0 - (time.time() - absence_epoch))
+                            if billing_wait > args.runpod_billing_wait:
+                                raise RuntimeError(
+                                    "configured RunPod billing wait cannot "
+                                    "reach the 300-second stabilization window")
+                            if billing_wait:
+                                time.sleep(billing_wait)
+                            billing = provider.reconcile_billing(
+                                lease_store.read(lease_ref))
+                            lease_ref = lease_store.stage_billing_reconciliation(
+                                lease_ref, billing)
+                            finalize_campaign_after_absence(
+                                provider, lease_store.read(lease_ref),
+                                lease_store.root)
+                            lease_ref = lease_store.record_billing_reconciled(
+                                lease_ref, billing)
+                        except BaseException as exc:
+                            run_error = record_operational_error(exc)
+                        if lease_store.read(lease_ref).get("state") != "TERMINAL":
+                            run_error = record_operational_error(RuntimeError(
+                                "billing/campaign is unreconciled; "
+                                "liability retained"))
+                    else:
+                        remedy = ""
+                        if not secret_cleanup.get("confirmed"):
+                            remedy = (
+                                "; remote token erasure is unconfirmed: revoke "
+                                "the RunPod-scoped Hugging Face token immediately")
+                        detail = (
+                            "; DELETE response error: " + delete_error
+                            if delete_error else "")
+                        run_error = record_operational_error(RuntimeError(
+                            "exact RunPod id remains listed; liability retained"
+                            + detail + remedy))
+                except BaseException as exc:
+                    run_error = record_operational_error(exc)
+            heartbeat_stop.set()
+    if args.role == "root" and args.publish_root_to:
+        current_lease = lease_store.read(lease_ref)
+        if (archive_verified is None
+                or "qualify_root" not in stages_done
+                or current_lease.get("state") != "TERMINAL"):
+            run_error = record_operational_error(RuntimeError(
+                "local publication requires qualified archive, exact pod "
+                "absence, and terminal billing reconciliation"))
+        else:
+            frozen_suite = Path(frozen_bundle["suite_root"])
+            publisher = frozen_suite / "bin/fidelity_dataset.py"
+            final_archive = outdir / "result-published.tar.gz"
+            clean_environment = dict(os.environ)
+            for secret_name in (
+                    "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN",
+                    "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN_PATH",
+                    "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE",
+                    "TRANSFORMERS_OFFLINE", "HUGGINGFACE_CO_STAGING",
+                    "HUGGINGFACE_CO_URL_TEMPLATE", "HF_INFERENCE_ENDPOINT",
+                    "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE",
+                    "HF_ASSETS_CACHE", "HUGGINGFACE_ASSETS_CACHE",
+                    "HF_XET_CACHE", "TRANSFORMERS_CACHE",
+                    "HF_DATASETS_CACHE", "XDG_CACHE_HOME"):
+                clean_environment.pop(secret_name, None)
+            publication_hf_home = tempfile.TemporaryDirectory(
+                prefix="fidelity-publish-hf-")
+            clean_environment["HF_ENDPOINT"] = "https://huggingface.co"
+            clean_environment["HF_HOME"] = publication_hf_home.name
+            clean_environment["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+            clean_environment["HF_TOKEN_PATH"] = str(
+                Path(publication_hf_home.name) / ".no-token")
+            try:
+                _verify_frozen_suite(
+                    frozen_bundle, plan_data["bundle"])
+                publication = subprocess.run(
+                    [
+                        sys.executable, str(publisher), "publish",
+                        str(extracted / "dataset"),
+                        "--repo", args.publish_root_to,
+                        "--qualification",
+                        str(extracted / "receipts/root-qualification.json"),
+                        "--job", str(extracted / "job.json"),
+                        "--result-archive", str(local_archive),
+                        "--expected-archive-sha256",
+                        archive_verified["archive_sha256"],
+                        "--expected-archive-bytes",
+                        str(archive_verified["archive_bytes"]),
+                        "--expected-head", "absent",
+                        "--token-file", args.hf_token_file,
+                        "--receipt",
+                        str(extracted / "receipts/publish-root.json"),
+                        "--revision-message",
+                        "fidelity root %s" % job["job_id"],
+                    ],
+                    cwd=str(frozen_suite), env=clean_environment,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True, check=False)
+                if publication.returncode != 0:
+                    raise RuntimeError(
+                        "local atomic root publication failed: %s"
+                        % redact(publication.stderr[-1000:]))
+                _verify_frozen_suite(
+                    frozen_bundle, plan_data["bundle"])
+                rebuild = subprocess.run(
+                    [
+                        sys.executable,
+                        str(frozen_suite / "bin/result_archive.py"),
+                        "--fs-root", str(extracted), "--verb", "capture",
+                        "--status", "completed",
+                        "--stages", ",".join(stages_done + ["publish_root"]),
+                        "--out", str(final_archive),
+                    ],
+                    cwd=str(frozen_suite), env=clean_environment,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True, check=False)
+                if rebuild.returncode != 0:
+                    raise RuntimeError(
+                        "local published archive rebuild failed: %s"
+                        % redact(rebuild.stderr[-1000:]))
+                rebuilt = json.loads(rebuild.stdout.strip())
+                archive_verified = verify_archive(
+                    final_archive,
+                    expected_sha256=rebuilt["sha256"],
+                    expected_bytes=rebuilt["bytes"])
+                archive_verified["published_archive_path"] = str(final_archive)
+            except BaseException as exc:
+                run_error = record_operational_error(exc)
+            publication_hf_home.cleanup()
+    receipt_lease = lease_store.read(lease_ref)
+    receipt_campaign = ledger.snapshot()
+    receipt_attempt = (
+        (receipt_campaign.get("attempts") or {}).get(campaign_key) or {})
+    verified_manifest = (
+        archive_verified.get("manifest")
+        if isinstance(archive_verified, dict) else None)
+    scientific_status = (
+        str(verified_manifest.get("status"))
+        if isinstance(verified_manifest, dict) else "unverified")
+    operational_success = (
+        not operational_errors
+        and receipt_lease.get("state") == "TERMINAL"
+        and receipt_attempt.get("released") is True)
+    operational_status = "completed" if operational_success else "failed"
+    combined_status = scientific_status
+    if (not operational_success
+            and scientific_status in (
+                "completed", "qualified-unpublished")):
+        combined_status = "completed-operational-failure"
+    elif not operational_success:
+        combined_status = "operational-failure"
+    terminal_receipt = {
+        "schema": "fidelity-suite/runpod-terminal-receipt.v1",
+        "job_id_full": job["job_id_full"],
+        "execution_contract_sha256":
+            job["execution_attempt"]["execution_contract_sha256"],
+        "attempt_id": attempt,
+        "provider": "runpod",
+        "provider_account_id": current_account_id,
+        "provider_resource_id": pod_id,
+        "provider_trust": {
+            "image_reference_mutable":
+                job["environment"]["image_reference_mutable"],
+            "ssh_host_key_policy":
+                job["environment"]["ssh_host_key_policy"],
+            "ssh_endpoint_binding":
+                job["environment"]["ssh_endpoint_binding"],
+        },
+        "lease": {
+            "record": lease_ref.path.name,
+            "state": receipt_lease.get("state"),
+            "generation": receipt_lease.get("generation"),
+            "sha256": hashlib.sha256(
+                _canonical_bytes(receipt_lease)).hexdigest(),
+            "billing": receipt_lease.get("billing_reconciliation"),
+        },
+        "campaign": {
+            "record": Path(ledger_path).name,
+            "generation": receipt_campaign.get("generation"),
+            "sha256": hashlib.sha256(
+                _canonical_bytes(receipt_campaign)).hexdigest(),
+            "released": receipt_attempt.get("released") is True,
+        },
+        "post_create_convergence": post_create_convergence_evidence,
+        "result_archive_sha256": (
+            archive_verified.get("archive_sha256")
+            if isinstance(archive_verified, dict) else None),
+        "scientific_status": scientific_status,
+        "operational_status": operational_status,
+        "combined_status": combined_status,
+        "operational_success": operational_success,
+        "scientific_error": (
+            redact(str(primary_error)) if primary_error is not None else None),
+        "operational_errors": [
+            redact(str(error)) for error in operational_errors],
+        "error": redact(str(run_error)) if run_error is not None else None,
+        "receipt_sha256": None,
+    }
+    terminal_receipt["receipt_sha256"] = hashlib.sha256(
+        _canonical_bytes(terminal_receipt)).hexdigest()
+    terminal_path = outdir / "terminal-receipt.json"
+    terminal_tmp = outdir / ".terminal-receipt.tmp"
+    with terminal_tmp.open("xb") as stream:
+        stream.write(
+            json.dumps(
+                terminal_receipt, indent=2, sort_keys=True,
+                ensure_ascii=False, allow_nan=False).encode("utf-8") + b"\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.link(str(terminal_tmp), str(terminal_path))
+    terminal_tmp.unlink()
+    receipt_directory_fd = os.open(str(outdir), os.O_RDONLY)
+    try:
+        os.fsync(receipt_directory_fd)
+    finally:
+        os.close(receipt_directory_fd)
+    if operational_errors:
+        operational_detail = "; ".join(
+            redact(str(error)) for error in operational_errors)
+        primary_detail = (
+            "; primary scientific/execution error: %s"
+            % redact(str(primary_error)) if primary_error is not None else "")
+        raise RuntimeError(
+            "unreconciled operational liability/failure: "
+            + operational_detail + primary_detail)
+    if run_error is not None:
+        raise run_error
+    if not operational_success:
+        raise RuntimeError(
+            "success requires terminal lease billing and a durably released "
+            "campaign attempt")
+    if archive_verified is None:
+        raise RuntimeError("success requires a verified off-pod result archive")
+    return {"estimated_usd": float(quote.calculated_maximum_usd()),
+            "result_archive": archive_verified,
+            "secret_cleanup": secret_cleanup}
+
 # ==========================================================================
 # Execution
 # ==========================================================================
 
 
-def execute(args: argparse.Namespace, con: Console, jl: JL,
-            plan_data: Dict[str, Any], td: Teardown) -> Dict[str, Any]:
-    outdir = Path(args.out or ("./fidelity-runs/%s" % plan_data["job_id"])).resolve()
-    outdir.mkdir(parents=True, exist_ok=True)
-    td.outdir = outdir
-
-    # Per-run trust-on-first-use for the SSH transports: the first connection
-    # records the host key under the run dir, every later connection in this
-    # run refuses a changed one, and the fingerprint lands in the cost receipt.
-    if hasattr(jl, "set_known_hosts"):
-        jl.set_known_hosts(outdir / "ssh_known_hosts")
-
-    chosen = plan_data["chosen"]
-    region = chosen["region"]
-    started = time.time()
-
-    # The lease a previous controller of this job wrote, BEFORE this run's
-    # lease overwrites it: its job_id_full is the identity an adoption below
-    # must match (P1-12).
-    prior_lease: Optional[Dict[str, Any]] = None
-    prior_path = LEASE_DIR / ("%s.json" % plan_data["job_id"])
-    if prior_path.is_file():
-        try:
-            prior_lease = read_json(str(prior_path))
-        except (OSError, ValueError):
-            prior_lease = None
-
-    # L4: write the lease BEFORE `jl create`, so the window between create
-    # returning and the id being known is still covered -- the sweep matches on
-    # the name, which is decided here.
-    td.lease_path = write_lease(plan_data["job_id"], name=plan_data["instance_name"],
-                                deadline=plan_data["deadline_epoch"],
-                                machine_id=None, fs_id=None,
-                                provider=getattr(args, "provider", "jarvislabs"),
-                                job_id_full=plan_data.get("job_id_full"))
-    con.step("lease written  %s" % td.lease_path)
-
-    # Adopt an existing instance for this exact job rather than creating a
-    # duplicate (a controller that died and was restarted must not double-spend).
-    # Match on the JOB PREFIX, not the whole name.  The name is
-    # `fidcloud-<job>-x<base36 deadline>` and the deadline is computed from
-    # "now", so an exact-name compare never matched on a restart: the very
-    # mechanism meant to stop a double-spend created a SECOND instance and a
-    # SECOND filesystem while the first was still billing.  The job id is the
-    # identity; the suffix is only the L3 expiry stamp.
-    job_prefix = "fidcloud-%s-" % plan_data["job_id"]
-    for inst in jl.list_instances():
-        if (inst.name or "").startswith(job_prefix) and _is_running(inst):
-            # The name carries only the 8-char DISPLAY prefix.  The identity
-            # adoption must match is the 256-bit job_id_full in the lease the
-            # previous controller wrote (P1-12): a prefix collision, a legacy
-            # lease, or a lease from a different producer state must not let
-            # this run relabel that machine's outputs as its own.
-            prior_full = (prior_lease or {}).get("job_id_full")
-            if prior_full != plan_data.get("job_id_full"):
-                raise Refusal(
-                    "an instance named %s is running but its lease does not "
-                    "carry this job's full identity" % inst.name,
-                    ["lease job_id_full: %s" % (prior_full or "<absent>"),
-                     "this run's:        %s" % plan_data.get("job_id_full"),
-                     "Adopting it would relabel that run's outputs with this "
-                     "run's resolved revision and code state (P1-12).",
-                     "If that instance is yours and finished, tear it down "
-                     "(bin/measure-cloud reaper --list / jl destroy) and "
-                     "re-run; nothing was created, $0.00 spent this run."])
-            con.step("adopting existing instance %s for this job (name %s, "
-                     "full identity matches its lease)"
-                     % (inst.machine_id, inst.name))
-            td.adopt(inst.machine_id, fs_id=inst.fs_id)
-            # The lease and the plan must now speak about the instance that
-            # EXISTS, or teardown's L3 sweep looks for a name nobody wears.
-            plan_data["instance_name"] = inst.name
-            break
-
-    if td.machine_id is None:
-        fs = jl.fs_create(storage=plan_data["storage_gb"], region=region,
-                          name=plan_data["instance_name"])
-        td.fs_id = fs.get("fs_id") or fs.get("id")
-        con.step("filesystem created  fs %s (%d GB, %s)"
-                 % (td.fs_id, plan_data["storage_gb"], region))
-        created = None
-        try:
-            created = _create_with_retry(jl, con,
-                gpu_type=chosen["gpu_type"], num_gpus=chosen["gpus"],
-                spot=args.spot, region=region, fs_id=td.fs_id,
-                # 100 GB is right ONLY where the big disk is a separate
-                # filesystem attached to a small box. Where storage dies with
-                # the instance, the whole plan has to fit on it -- and getting
-                # this wrong is not a create error, it is a `No space left on
-                # device` three stages and 45 minutes into a paid run.
-                storage=(100 if getattr(jl, "separable_storage", True)
-                         else int(plan_data["storage_gb"])),
-                min_vram_gb=int(plan_data.get("required_vram_gb") or 0),
-                name=plan_data["instance_name"], template="pytorch")
-        finally:
-            # The id must be adopted even when `create` raised or answered in a
-            # shape we did not expect.  An unadopted id is not a failed create:
-            # the box may well be up and billing, and teardown skips every
-            # machine step when machine_id is None.  So: take whatever key the
-            # response used, and if there is none, ASK THE ACCOUNT -- the name
-            # was decided before the call precisely so this lookup is possible.
-            mid = _machine_id_of(created)
-            if mid is None:
-                mid = _find_by_name(jl, plan_data["instance_name"])
-                if mid is not None:
-                    con.warn("`jl create` did not return a usable machine id; "
-                             "recovered %s by name from `jl list`" % mid)
-            if mid is not None:
-                # NOT int(): RunPod pod ids are opaque strings, and the
-                # cast raised AFTER the pod was created -- the controller died
-                # holding a running, billing instance it had not adopted, which
-                # is the one state teardown cannot cover.
-                td.adopt(mid)
-        if td.machine_id is None:
-            raise RuntimeError(
-                "`jl create` returned no machine id and no instance named %s "
-                "appeared in `jl list`. If a box was created anyway it is NOT "
-                "tracked by this controller -- check `jl list` yourself."
-                % plan_data["instance_name"])
-        con.step("instance created  machine %s" % td.machine_id)
-
-    heartbeat_stop = threading.Event()
-    _start_heartbeat(jl, td, heartbeat_stop, con)
-    try:
-        _bootstrap_and_run(args, con, jl, td, plan_data, outdir)
-    finally:
-        heartbeat_stop.set()
-
-    elapsed = time.time() - started
-    return _reconcile_cost(jl, td, plan_data, elapsed, outdir, con)
 
 
 def _start_heartbeat(jl: JL, td: Teardown, stop: threading.Event,
@@ -2775,6 +6515,37 @@ def _job_document(args, plan_data) -> Dict[str, Any]:
     }
 
 
+def _load_secure_hf_token(path_value: str) -> Optional[str]:
+    """Read an optional owner-only regular token file without following links."""
+    path = Path(path_value).expanduser()
+    try:
+        descriptor = os.open(
+            str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return None
+    try:
+        metadata = os.fstat(descriptor)
+        if (not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600):
+            raise Refusal(
+                "Hugging Face token file must be an owned 0600 regular file",
+                [])
+        raw = os.read(descriptor, 65537)
+        if len(raw) > 65536:
+            raise Refusal("Hugging Face token file is unexpectedly large", [])
+    finally:
+        os.close(descriptor)
+    try:
+        token = raw.decode("utf-8").strip()
+    except UnicodeDecodeError as exc:
+        raise Refusal("Hugging Face token file is not UTF-8", []) from exc
+    if not token or any(character.isspace() for character in token):
+        raise Refusal("Hugging Face token file contains no exact token", [])
+    register_secret(token)
+    return token
+
+
 def _transport_hf_token(jl, td, outdir: Path, token: str) -> None:
     """Move the token to the instance without one loose instant at either end.
 
@@ -2792,12 +6563,19 @@ def _transport_hf_token(jl, td, outdir: Path, token: str) -> None:
     remote_dir = "%s/.secrets" % td.fs_root
     remote_tmp = "%s/.hf_token.up.%d" % (remote_dir, os.getpid())
     try:
-        jl.exec(td.machine_id,
-                "mkdir -p %s && chmod 700 %s" % (remote_dir, remote_dir))
+        jl.exec(
+            td.machine_id,
+            "set -eu; test ! -e {0}; test ! -L {0}; "
+            "mkdir -m 700 -- {0}; test ! -e {1}; test ! -L {1}"
+            .format(shlex.quote(remote_dir), shlex.quote(remote_tmp)))
         jl.upload(td.machine_id, str(local), remote_tmp)
-        jl.exec(td.machine_id,
-                "chmod 600 %s && mv -f %s %s/hf_token"
-                % (remote_tmp, remote_tmp, remote_dir))
+        jl.exec(
+            td.machine_id,
+            "set -eu; test ! -L {tmp}; test -f {tmp}; "
+            "chmod 600 -- {tmp}; test ! -e {final}; test ! -L {final}; "
+            "mv -- {tmp} {final}"
+            .format(tmp=shlex.quote(remote_tmp),
+                    final=shlex.quote("%s/hf_token" % remote_dir)))
     finally:
         shred_secret_file(str(local))
 
@@ -2905,7 +6683,10 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
 
 
 
-def _preflight_bench(args, con, jl, td, plan_data) -> None:
+def _preflight_bench(
+        args, con, jl, td, plan_data, *, fail_closed: bool = False,
+        python_executable: Optional[str] = None,
+        remote_payload: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Measure the machine we just rented, before spending the run on it.
 
     Setup takes minutes; the fetch is the first expensive thing. In between is
@@ -2923,14 +6704,21 @@ def _preflight_bench(args, con, jl, td, plan_data) -> None:
     Reports always; ABORTS only when a threshold was asked for.
     """
     if getattr(args, "no_preflight_bench", False):
-        return
+        if fail_closed:
+            raise Refusal("safe RunPod requires the host benchmark", [])
+        return None
     from fidelity.bench import bench_existing, gate
 
     try:
-        doc = bench_existing(jl, td.machine_id, con=con)
+        doc = bench_existing(
+            jl, td.machine_id, con=con,
+            python_executable=python_executable,
+            remote_payload=remote_payload)
     except Exception as exc:                              # noqa: BLE001
-        # A failed benchmark must not fail the run: it is an advisory unless a
-        # threshold was set, and the run itself is the thing being protected.
+        if fail_closed:
+            raise Refusal(
+                "safe RunPod host benchmark failed closed: %s"
+                % redact(str(exc))[:200], []) from exc
         con.warn("preflight benchmark skipped: %s" % redact(str(exc))[:200])
         return
     if doc.get("error") == "no cuda":
@@ -2944,6 +6732,28 @@ def _preflight_bench(args, con, jl, td, plan_data) -> None:
             "(torch.cuda.is_available() is False while the instance bills)",
             ["This is a per-host fault, not a plan fault -- teardown runs "
              "next; re-run to draw a different host."])
+    if fail_closed:
+        if doc.get("error") is not None:
+            raise Refusal(
+                "safe RunPod host benchmark reported an error: %s"
+                % redact(str(doc.get("error")))[:200], [])
+        malformed = []
+        for name in (
+                "h2d_GBps", "h2d_cold_GBps",
+                "expert_gemm_TFLOPs", "stream_matrix_ms"):
+            value = doc.get(name)
+            if (isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value)) or value <= 0):
+                malformed.append(name)
+        for name in ("gpu", "torch", "cuda"):
+            value = doc.get(name)
+            if not isinstance(value, str) or not value.strip():
+                malformed.append(name)
+        if malformed:
+            raise Refusal(
+                "safe RunPod host benchmark omitted valid measurements: %s"
+                % ", ".join(malformed), [])
     plan_data["preflight_bench"] = doc
     link = (doc.get("pcie_load") or {}).get("text", "?")
     con.ok("machine measured",
@@ -2959,6 +6769,7 @@ def _preflight_bench(args, con, jl, td, plan_data) -> None:
             ["Setup is paid for; the fetch and the measure stage are not.",
              "Teardown runs next, so nothing is left billing.",
              "Retry to draw a different host, or lower the floor."])
+    return doc
 
 
 def _run_stage(args, con, jl, td, plan_data, stage: str) -> None:
@@ -3388,14 +7199,203 @@ def _reconcile_cost(jl, td, plan_data, elapsed, outdir, con) -> Dict[str, Any]:
 # ==========================================================================
 
 
+def _runpod_reaper_command(args, con: Console, provider) -> int:
+    from fidelity.cloudlease import (
+        LeaseStore, install_systemd_user_timer, reap_once,
+        systemd_reaper_health,
+    )
+    store = LeaseStore(Path(args.lease_dir))
+    state_dir = Path(args.reaper_state_dir)
+    provider_account_id = str(provider.status().get("id") or "").strip()
+    if not provider_account_id:
+        con.err("RunPod status lacks exact myself.id")
+        return EXIT_LEAK
+    if args.install and args.dry_run:
+        preview = reap_once(store, {"runpod": provider}, dry_run=True)
+        con.kv("install", "dry-run; no health/unit/systemctl mutation")
+        for failure in preview.failures:
+            con.err(json.dumps(failure, sort_keys=True))
+        return EXIT_OK if preview.ok else EXIT_LEAK
+    if args.install:
+        from fidelity.runpodapi import DEFAULT_KEY_FILE
+        selected_key_path = (
+            args.runpod_key_file or os.environ.get("RUNPOD_KEY_FILE")
+            or DEFAULT_KEY_FILE)
+        key_path = str(Path(selected_key_path).expanduser().resolve())
+        install_systemd_user_timer(
+            [sys.executable,
+             str(Path(__file__).with_name("reap_cloud_leases.py").resolve()),
+             "--provider", "runpod", "--sweep",
+             "--lease-dir", str(store.root),
+             "--reaper-state-dir", str(state_dir),
+             "--runpod-key-file", key_path],
+            lease_dir=store.root, provider="runpod",
+            provider_account_id=provider_account_id,
+            state_dir=state_dir)
+        health = systemd_reaper_health(
+            state_dir=state_dir, lease_dir=store.root, provider="runpod",
+            provider_account_id=provider_account_id)
+        if not health["ok"]:
+            con.err("installed RunPod reaper timer is not healthy")
+            return EXIT_LEAK
+        return EXIT_OK
+    if args.list:
+        for ref, document in store.list(include_terminal=True):
+            con.kv(ref.path.name, document["state"])
+
+
+
+
+        health = systemd_reaper_health(
+            state_dir=state_dir, lease_dir=store.root, provider="runpod",
+            provider_account_id=provider_account_id)
+        con.kv("health", "ok" if health["ok"] else "not healthy")
+        return EXIT_OK if health["ok"] else EXIT_LEAK
+    result = reap_once(
+        store, {"runpod": provider}, dry_run=bool(args.dry_run))
+    for failure in result.failures:
+        con.err(json.dumps(failure, sort_keys=True))
+    return EXIT_OK if result.ok else EXIT_LEAK
+def _runpod_drill_contract(args):
+    """Build the synthetic, fully bound job used only by the proof producer."""
+    args.runpod_drill_manifest_refresh = lambda: {
+        "bundle_contract_sha256": hashlib.sha256(_canonical_bytes({
+            "bundle": _bundle_manifest(),
+            "registry": _bundle_registry_identity(),
+        })).hexdigest(),
+        "control_manifest_sha256": _control_manifest()["manifest_sha256"],
+    }
+    bundle = _bundle_manifest()
+    registry = _bundle_registry_identity()
+    bundle_digest = hashlib.sha256(_canonical_bytes({
+        "bundle": bundle, "registry": registry})).hexdigest()
+    control = _control_manifest()
+    shard_rows = [{"path": "controller-loss-drill.bin", "bytes": 1}]
+    shard_digest = hashlib.sha256(_canonical_bytes(shard_rows)).hexdigest()
+    job = finalize_job({
+        "schema": "fidelity-suite/job.v2", "role": "quant",
+        "recipe": "runpod-controller-loss-drill",
+        "lane": "fault-drill", "cold_runs": 2,
+        "target": {
+            "repo_id": "fidelity-suite/runpod-controller-loss-drill",
+            "revision": control["manifest_sha256"][:40],
+            "config_sha256": hashlib.sha256(b"{}").hexdigest(),
+            "index_sha256": hashlib.sha256(b"drill-index").hexdigest(),
+            "model_bytes": 1, "shards": shard_rows,
+            "shard_manifest_sha256": shard_digest,
+            "download_bytes_total": 1,
+            "download_manifest": shard_rows,
+            "download_manifest_sha256": shard_digest,
+        },
+        "bundle": bundle, "bundle_registry": registry,
+        "bundle_contract_sha256": bundle_digest,
+        "control_plane": control,
+        "panel": {"kind": "controller-loss-drill", "contexts": 1},
+        "reference": {"kind": "controller-loss-drill"},
+        "profile": {
+            "profile_id": "runpod-drill-secure-l4-on-demand",
+            "lane": "fault-drill"},
+        "timing": {"kind": "provider-deadline", "seconds": 300},
+        "capture": {},
+        "scope": {"kind": "controller-loss-drill"},
+        "environment": {
+            "provider": "runpod", "gpu_type": "L4",
+            "provider_gpu_id": "NVIDIA L4", "offer": "on-demand",
+            "secure_cloud": True,
+        },
+        "runtime": {
+            "min_vcpu": 4, "min_ram_gb": 16,
+            "device": "cpu", "reduce_order": "fp32",
+        },
+        "produced_by": produced_by_block(
+            SUITE_ROOT, "bin/measure_cloud.py",
+            dependencies={"mode": "runpod-controller-loss-drill"}),
+        "execution_attempt": {
+            "kind": "runpod-ssh", "attempt_id": None,
+            "cost_quote": None, "engine_root": None,
+            "execution_contract_sha256": None,
+            "lease_path": None, "pre_create_safety": None,
+            "prepared_create": None,
+            "remote_root": None,
+            "workload_deadline_utc": None,
+            "provider_terminate_after": None,
+            "planned_at": _exact_utc_now(),
+        },
+    })
+    args.runpod_drill_job_document = job
+    args.runpod_drill_job_json = None
+    args.runpod_drill_bundle_manifest_sha256 = bundle_digest
+    args.runpod_drill_control_manifest_sha256 = control["manifest_sha256"]
+def _main_runpod(args, con: Console, provider) -> int:
+    if args.subcommand == "adopt":
+        con.err("safe RunPod mode refuses adoption/recovery")
+        return EXIT_REFUSED
+    try:
+        plan_data = plan_runpod(args, con, provider)
+        public_plan = {key: value for key, value in plan_data.items()
+                       if not key.startswith("_")}
+        if plan_data.get("no_spend"):
+            con.say(json.dumps(public_plan, sort_keys=True))
+            return EXIT_OK
+        if args.dry_run:
+            con.say(json.dumps(public_plan, sort_keys=True))
+            return EXIT_OK
+        if not args.yes:
+            from fidelity.campaign import CostQuote
+            prompt_quote = CostQuote.from_dict(plan_data["cost_quote"])
+            answer = input(
+                "Create one secure on-demand RunPod (calculated maximum "
+                "$%s; hard cap $%s; campaign ceiling $%s with reserve $%s)? "
+                "[y/N] " % (
+                    prompt_quote.calculated_maximum_usd(),
+                    prompt_quote.hard_cap_usd, args.campaign_ceiling,
+                    args.campaign_reserve))
+            if answer.strip().lower() not in ("y", "yes"):
+                return EXIT_REFUSED
+        previous = {}
+
+        def _interrupt(signum, _frame):
+            raise KeyboardInterrupt("signal %s" % signum)
+
+        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            previous[signum] = signal.signal(signum, _interrupt)
+        try:
+            result = execute_runpod(args, con, provider, plan_data)
+        finally:
+            for signum, handler in previous.items():
+                signal.signal(signum, handler)
+        con.ok("RunPod result archive verified",
+               json.dumps(result, sort_keys=True))
+        return EXIT_OK
+    except Refusal as exc:
+        con.err("REFUSE: %s" % exc.reason)
+        for line in exc.advice:
+            con.err("        %s" % line)
+        return EXIT_REFUSED
+    except BaseException as exc:
+        con.err("RunPod execution failed: %s" % redact(str(exc)))
+        return EXIT_LEAK
+
+
+def _nonnegative_decimal_arg(value: str) -> Decimal:
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        raise argparse.ArgumentTypeError("must be a finite non-negative decimal")
+    if not parsed.is_finite() or parsed < 0:
+        raise argparse.ArgumentTypeError("must be a finite non-negative decimal")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="measure-cloud",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("subcommand", nargs="?", default=None,
-                   choices=(None, "reaper", "adopt"),
-                   help="reaper: manage the teardown backstop; adopt: resume a job")
+                   choices=("reaper", "adopt", "drill"),
+                   help="reaper: lifecycle backstop; drill: RunPod proof; "
+                        "adopt: always refused")
     p.add_argument("--min-h2d-gbps", type=float,
                    help="ABORT after setup if the rented machine's "
                         "host-to-device bandwidth is below this. The streaming "
@@ -3407,14 +7407,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ABORT after setup if the measured expert-shape bf16 "
                         "GEMM is below this")
     p.add_argument("--no-preflight-bench", action="store_true",
-                   help="skip the post-setup machine measurement entirely")
-    p.add_argument("--provider", default="jarvislabs",
-                   choices=("jarvislabs", "runpod", "vast", "lambda"),
-                   help="which cloud to rent from. The measurement is the same "
-                        "on any of them -- fp64 KLD is not vendor-specific -- "
-                        "but BITWISE determinism is a per-device property, so a "
-                        "row measured on one provider's silicon reproducing on "
-                        "another's is a RESULT, not an assumption.")
+                   help="legacy flag; the safe RunPod path refuses it")
+    p.add_argument(
+        "--provider", default=None,
+        choices=("jarvislabs", "runpod", "vast", "lambda"),
+        help="required explicitly; paid measurement is RunPod-only. "
+             "jarvislabs remains available only for historical lease cleanup")
 
     t = p.add_argument_group("target")
     t.add_argument("--role", default="quant", choices=("quant", "root"),
@@ -3433,11 +7431,14 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--registry", default="auto",
                    help="auto | hf | local[:PATH] -- where the already-measured "
                         "front gate reads from")
-    t.add_argument("--skip-registry-check", action="store_true")
+    t.add_argument("--skip-registry-check", action="store_true",
+                   help="legacy flag; safe RunPod requires the registry front gate")
     t.add_argument("--force", action="store_true",
-                   help="measure even though published rows exist")
+                   help="legacy provider override; safe RunPod refuses duplicate "
+                        "paid measurements")
     t.add_argument("--accept-measured-revision", action="store_true",
-                   help="on revision drift, target the registry's measured commit")
+                   help="legacy drift override; safe RunPod requires the exact "
+                        "authored revision")
 
     rt = p.add_argument_group("root capture (--role root)")
     rt.add_argument("--panel-dir",
@@ -3449,42 +7450,36 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument("--dataset-id",
                     help="identity of the fidelity dataset to write, e.g. "
                          "minimaxm3-fidelity-root-v1")
+    rt.add_argument(
+        "--dataset-repository",
+        help="canonical owner/name dataset repository identity; publication optional")
     rt.add_argument("--dataset-name", help="human-readable name for that dataset")
     rt.add_argument("--publish-root-to", metavar="HF_DATASET_REPO",
-                    help="ROOT-1: after `verify` passes on the instance, "
-                         "upload the sealed root dataset to this Hub dataset "
-                         "repo FROM the instance (the bytes and the token are "
-                         "both already there), fetch the published copy back "
-                         "to re-verify it, and record the uploaded revision "
-                         "in receipts/publish-root.json. A sealed root that "
-                         "exists only on a rented box is one teardown away "
-                         "from not existing.")
+                    help="After remote qualification and verified off-pod "
+                         "archive retrieval, prove exact pod absence and publish "
+                         "the extracted dataset atomically from this controller. "
+                         "The owner-only token file never reaches the rented pod; "
+                         "the published revision is anonymously reverified and "
+                         "recorded in receipts/publish-root.json.")
+    rt.add_argument(
+        "--hf-token-file",
+        default=os.path.expanduser("~/.cache/huggingface/token"),
+        help="owner-only 0600 token file; RunPod mode never reads HF_TOKEN")
     rt.add_argument("--form", default="hidden", choices=("hidden", "logit"),
                     help="hidden (default) stores hidden states and applies the "
                          "head at compare time; logit stores full-vocabulary "
                          "logits, which for a 200k vocab is ~32x larger and is "
                          "why published roots are hidden-form")
     rt.add_argument("--schedule", default="layer-outer",
-                    choices=("layer-outer", "window-outer"))
-    rt.add_argument("--designated-reference", action="store_true",
-                    help="capture a QUANTIZED checkpoint as its family's "
-                         "designated reference (registry reference_kind "
-                         "quantized_proxy, REFC-006). For families that publish "
-                         "no unquantized weights at all -- every deepseek_v4 "
-                         "repo ships a quantization_config. The dataset this "
-                         "produces is an origin by DESIGNATION, not a measured "
-                         "floor: rows against it are advisory, systematically "
-                         "smaller than against true unquantized weights, and "
-                         "carry a different_reference_kind disclosure. Refused "
-                         "on a checkpoint that is NOT quantized: a family with "
-                         "a true root must use it.")
-    rt.add_argument("--race", action="store_true",
-                    help="RACE MODE (docs/RACE-MODE.md): fetch the checkpoint WHILE "
-                         "capturing it, in the order the layer-outer schedule needs "
-                         "it, instead of waiting for the whole tree. Merges the "
-                         "fetch_target and capture stages. It changes when bytes "
-                         "arrive, never which -- the capture_content_digest is the "
-                         "one a fetch-then-capture run produces.")
+                    choices=("layer-outer", "window-outer", "window-major"))
+    rt.add_argument(
+        "--designated-reference", action="store_true",
+        help="legacy root mode; the first safe RunPod path refuses quantified "
+             "proxy roots and admits only its exact authored BF16 root pin")
+    rt.add_argument(
+        "--race", action="store_true",
+        help="legacy preview/race mode; the first safe paid path refuses it "
+             "because it has no equivalent recovery and qualification proof")
     rt.add_argument("--race-workers", type=int, default=8,
                     help="parallel downloads for --race (default 8)")
     rt.add_argument("--preview-of", metavar="FINAL_DATASET_ID",
@@ -3502,22 +7497,16 @@ def build_parser() -> argparse.ArgumentParser:
                          "is genuinely expected to answer otherwise. The probe runs "
                          "either way: it is one extra window through a schedule that "
                          "is already loading every layer.")
-    rt.add_argument("--capture-device", default="cuda",
-                    help="the torch device the capture's forward runs on "
-                         "(default cuda). 'cpu' is a real option -- CPU math is "
-                         "bitwise-portable in a way no GPU's is -- but it is "
-                         "not what a rented GPU is for, and it was the silent "
-                         "default until 2026-08-31.")
-    rt.add_argument("--allow-unexpected-tensors", action="store_true",
-                    help="proceed when the checkpoint carries tensors this "
-                         "architecture has no home for. hf_capture refuses them by "
-                         "default because that is what a quantization path failing "
-                         "to engage looks like -- and it is ALSO what a "
-                         "speculative-decoding block looks like on a model whose MTP "
-                         "layer stock transformers does not build. Pass this only "
-                         "after checking the unhoused names ARE that block; it "
-                         "forces a BLOCKING disclosure into the sealed dataset "
-                         "either way.")
+    rt.add_argument(
+        "--capture-device", default="cuda",
+        help="root forward device; safe RunPod requires exactly cuda")
+    rt.add_argument("--unexpected-tensor-allowlist",
+                    help="checked-in authored raw JSON array for this exact target pin")
+    rt.add_argument("--panel-tokenizer-root",
+                    help="local pinned tokenizer receipt files; otherwise prefetch exactly")
+    rt.add_argument("--replay-device", default="numpy")
+    rt.add_argument("--replay-dtype", default="float32")
+    rt.add_argument("--replay-vocab-chunk", type=int, default=8192)
 
     pl = p.add_argument_group("panel (a parameter, never a constant)")
     pl.add_argument("--panel", help="HF dataset id of the panel/teacher")
@@ -3526,24 +7515,36 @@ def build_parser() -> argparse.ArgumentParser:
                     help="JSON file with include globs, contexts, positions")
 
     ln = p.add_argument_group("lane")
-    ln.add_argument("--lane", default="streaming", choices=("streaming", "sealed-ep8"))
-    ln.add_argument("--reduce-order", default="fp32", choices=("fp32", "native"))
-    ln.add_argument("--cold-runs", type=int, default=None)
+    ln.add_argument("--lane", default="streaming", choices=("streaming", "sealed-ep8"),
+                    help="safe RunPod requires streaming")
+    ln.add_argument("--reduce-order", default="fp32", choices=("fp32", "native"),
+                    help="safe RunPod requires fp32")
+    ln.add_argument("--cold-runs", type=int, default=None,
+                    help="safe RunPod requires exactly 2")
 
     i = p.add_argument_group("instance")
-    i.add_argument("--spot", dest="spot", action="store_true", default=True)
-    i.add_argument("--on-demand", dest="spot", action="store_false")
+    i.add_argument(
+        "--spot", dest="spot", action="store_true", default=True,
+        help="request interruptible capacity; the safe RunPod path refuses "
+             "this before spend")
+    i.add_argument(
+        "--on-demand", dest="spot", action="store_false",
+        help="request non-interruptible capacity; required by safe RunPod")
     i.add_argument("--gpu", help="override the selector (still fit-checked)")
-    i.add_argument("--region")
+    i.add_argument(
+        "--region",
+        help="provider region; safe RunPod requires the literal value secure")
     i.add_argument("--storage", type=int, help="filesystem GB (default: computed)")
     i.add_argument("--fs-id", type=int)
-    i.add_argument("--keep-fs", action="store_true",
-                   help="do NOT destroy the filesystem (it keeps billing)")
+    i.add_argument(
+        "--keep-fs", action="store_true",
+        help="retain a provider filesystem where supported; safe RunPod "
+             "refuses this before spend")
     i.add_argument("--keep-student-logits", action="store_true")
 
     s = p.add_argument_group(
         "safety (default-on except --max-cost, which has no default)")
-    s.add_argument("--max-runtime", default="6h")
+    s.add_argument("--max-runtime")
     s.add_argument("--heartbeat-timeout", type=int, default=900)
     s.add_argument("--max-preemptions", type=int, default=3)
     # NOT default-on, unlike its neighbours in this group, and the --help
@@ -3551,17 +7552,22 @@ def build_parser() -> argparse.ArgumentParser:
     # a cap the runner picked for you turns a legitimate expensive run into a
     # refusal the user cannot attribute. But the help text has to say so, or a
     # reader budgeting a rental believes a cap is in force when none is.
-    s.add_argument("--max-cost", type=float,
+    s.add_argument("--max-cost", type=_nonnegative_decimal_arg,
                    help="refuse if the estimated cost BAND HIGH exceeds this "
                         "many dollars. NO DEFAULT -- without it there is no "
                         "cost cap, only --max-runtime's ceiling")
-    s.add_argument("--on-preempt", default="resume",
-                   choices=("resume", "recreate", "fail"))
-    s.add_argument("--i-accept-leak-risk", action="store_true")
-    s.add_argument("--measurer", default="malaiwah",
-                   help="handle credited as the MEASURER on the sealed receipt "
-                        "(the artifact's producer is read from the repo id and "
-                        "is a separate field)")
+    s.add_argument(
+        "--on-preempt", default="resume",
+        choices=("resume", "recreate", "fail"),
+        help="preemption policy; safe RunPod requires fail and refuses "
+             "resume/recreate")
+    s.add_argument(
+        "--i-accept-leak-risk", action="store_true",
+        help="legacy provider override; safe RunPod refuses it before spend")
+    s.add_argument("--measurer",
+                   help="explicit non-placeholder handle credited as the "
+                        "MEASURER on the sealed receipt (the artifact's producer "
+                        "is read from the repo id and is a separate field)")
     s.add_argument("--scope-json",
                    help="JSON file carrying the artifact's quantization SCOPE "
                         "(policy/head_policy/kv_cache_dtype/assignments), for a "
@@ -3571,24 +7577,52 @@ def build_parser() -> argparse.ArgumentParser:
                         "file's content is copied verbatim into job.json and into "
                         "the artifact record -- so it must be READ off the release, "
                         "never assumed.")
-    s.add_argument("--allow-unpublished-root", action="store_true",
-                   help="ROOT-1 override: let teardown destroy a box that "
-                        "holds a sealed+VERIFIED root dataset that was never "
-                        "published. Without this flag such a box is HELD "
-                        "(like --hold-on-failure: lease kept, reaper still "
-                        "bounds it) because destroying the only copy of a "
-                        "verified root is how $6.59 of evidence vanished.")
-    s.add_argument("--hold-on-failure", action="store_true",
-                        help="on a FAILED stage, keep the instance alive (receipts "
-                             "pulled, secrets shredded, lease kept so the reaper "
-                             "still expires it) instead of destroying it. For "
-                             "proving an unexercised path, where re-buying a "
-                             "finished fetch costs more than the hold.")
+    s.add_argument(
+        "--allow-unpublished-root", action="store_true",
+        help="legacy provider override for destroying an unpublished root; "
+             "safe RunPod refuses it. Safe RunPod first retrieves and verifies "
+             "the qualified archive off-pod, then deletes the pod; publication "
+             "is an optional controller-local step after absence and billing.")
+    s.add_argument(
+        "--hold-on-failure", action="store_true",
+        help="retain a failed instance where supported; safe RunPod refuses "
+             "this before spend because every paid pod has bounded teardown")
     s.add_argument("--yes", action="store_true", help="skip the cost confirmation")
     s.add_argument("--dry-run", action="store_true",
                    help="validate everything, create nothing, spend $0.00")
+    rp = p.add_argument_group("safe RunPod paid admission")
+    rp.add_argument("--runpod-key-file")
+    rp.add_argument("--runpod-safety-proof")
+    rp.add_argument("--campaign-ledger")
+    rp.add_argument("--campaign-name", default="fidcloud-")
+    rp.add_argument("--campaign-ceiling")
+    rp.add_argument("--campaign-reserve")
+    rp.add_argument("--campaign-reaper-margin")
+    rp.add_argument("--campaign-width", type=int, default=1)
+    rp.add_argument("--width-two-root-archive")
+    rp.add_argument("--lease-dir",
+                    default=str(Path.home() / ".fidelity-cloud" / "leases-v2"))
+    rp.add_argument("--runpod-billing-wait", type=int, default=1800,
+                    help="maximum local seconds to await the mandatory RunPod "
+                         "post-absence billing stabilization (default: 1800)")
+    rp.add_argument("--reaper-state-dir",
+                    default=str(Path.home() / ".fidelity-cloud"))
+    rp.add_argument("--retrieval-delete-reserve", type=int, default=21600)
+    rp.add_argument("--timer-api-lag", type=int, default=600)
+    rp.add_argument("--runpod-container-running-tariff", default="0.10")
+    rp.add_argument("--runpod-container-stopped-tariff", default="0.00")
+    rp.add_argument("--runpod-pod-running-tariff", default="0.10")
+    rp.add_argument("--runpod-pod-stopped-tariff", default="0.20")
+    rp.add_argument("--runpod-network-tariff", default="0.07")
+    rp.add_argument("--tariff-effective-at", default="2026-08-31T00:00:00Z")
+    rp.add_argument("--tariff-valid-until", default="2026-09-07T00:00:00Z")
 
     o = p.add_argument_group("output")
+    rp.add_argument("--runpod-drill-workload-seconds", type=int, default=300)
+    rp.add_argument("--runpod-drill-terminate-seconds", type=int, default=420)
+    rp.add_argument("--runpod-drill-poll-seconds", type=int, default=15)
+    rp.add_argument(
+        "--runpod-drill-billing-wait-seconds", type=int, default=3600)
     o.add_argument("--out", help="default ./fidelity-runs/<jobid>")
     o.add_argument("--install", action="store_true", help="reaper --install")
     o.add_argument("--sweep", action="store_true", help="reaper --sweep")
@@ -3601,14 +7635,38 @@ def main(argv: Optional[List[str]] = None) -> int:
     con = Console()
 
     if args.subcommand == "reaper":
+        if args.provider is None:
+            con.err("reaper requires explicit --provider runpod; "
+                    "historical JarvisLabs lease cleanup requires explicit "
+                    "--provider jarvislabs")
+            return EXIT_REFUSED
+        if args.provider == "runpod":
+            from fidelity.runpodapi import RunPod
+            provider = RunPod(
+                dry=bool(args.dry_run), key_file=args.runpod_key_file)
+            return _runpod_reaper_command(args, con, provider)
+        if args.provider != "jarvislabs":
+            con.err("reaper supports RunPod and historical JarvisLabs cleanup")
+            return EXIT_REFUSED
         if args.install:
             return reaper_install(con)
         if args.sweep:
-            # --dry-run: report what WOULD be destroyed, destroy nothing.
-            # Selftests use this so that destruction is never a side effect
-            # of "run the selftests" (usability review, 2026-08-28).
             return reaper_sweep(con, dry=args.dry_run)
         return reaper_list(con)
+    if args.subcommand == "drill":
+        if args.provider != "runpod":
+            con.err("drill subcommand is RunPod-only")
+            return EXIT_REFUSED
+        from fidelity.runpodapi import RunPod
+        from fidelity.runpoddrill import run_drill
+        try:
+            _runpod_drill_contract(args)
+            provider = RunPod(
+                dry=bool(args.dry_run), key_file=args.runpod_key_file)
+            return run_drill(args, con, provider)
+        except (Refusal, ValueError, OSError) as exc:
+            con.err("RunPod drill refused: %s" % redact(str(exc)))
+            return EXIT_REFUSED
 
     if getattr(args, "role", "quant") == "root":
         if not args.model or not (args.panel or args.panel_dir):
@@ -3677,15 +7735,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                         "is panel.json + arrays/; build one with "
                         "engines/tools/build_token_panel.py)" % pd)
                 return EXIT_REFUSED
-            try:
-                pd.relative_to(SUITE_ROOT)
-            except ValueError:
-                con.err("--panel-dir must live inside the suite checkout (%s): "
-                        "the bundle uploader addresses files by their path "
-                        "relative to the suite root, so a panel outside it has "
-                        "no remote path. Commit it under engines/panels/ and pass "
-                        "that path." % SUITE_ROOT)
-                return EXIT_REFUSED
+            if args.provider != "runpod":
+                try:
+                    pd.relative_to(SUITE_ROOT)
+                except ValueError:
+                    con.err(
+                        "--panel-dir must live inside the suite checkout (%s): "
+                        "the legacy uploader addresses suite-relative files"
+                        % SUITE_ROOT)
+                    return EXIT_REFUSED
     elif not args.model or not args.panel:
         con.err("--model and --panel are required")
         return EXIT_REFUSED
@@ -3710,117 +7768,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                 con.say("        %s" % line)
             return EXIT_REFUSED
 
-    register_secret(os.environ.get("JL_API_KEY"))
-    jl = _make_provider(getattr(args, "provider", "jarvislabs"), dry=args.dry_run)
-    td = Teardown(jl, con, Path(args.out or ".").resolve())
-    td.keep_fs = args.keep_fs
-    td.hold_on_failure = bool(getattr(args, "hold_on_failure", False))
-    td.root_publish_expected = (getattr(args, "role", "quant") == "root")
-    td.allow_unpublished_root = bool(getattr(args, "allow_unpublished_root",
-                                             False))
+    if args.provider == "runpod":
+        from fidelity.runpodapi import RunPod
+        provider = RunPod(
+            dry=bool(args.dry_run), key_file=args.runpod_key_file)
+        return _main_runpod(args, con, provider)
 
-    def _signal(signum, _frame):
-        con.say("")
-        con.step("signal %d -- entering guaranteed teardown (do NOT press ^C again)"
-                 % signum)
-        td.run("signal %d" % signum)
-        sys.exit(EXIT_INTERRUPTED if signum == signal.SIGINT else 1)
+    con.err(
+        "paid measurement execution requires explicit --provider runpod; "
+        "provider %s is refused before any provider mutation"
+        % (args.provider if args.provider is not None else "<missing>"))
+    return EXIT_REFUSED
 
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        try:
-            signal.signal(sig, _signal)
-        except (ValueError, OSError):
-            pass
-    atexit.register(lambda: td.run("atexit"))
-
-    con.say("fidelity-cloud %s   job %s" % (VERSION, job_id_for(args)))
-    con.rule()
-    try:
-        plan_data = plan(args, con, jl)
-    except Refusal as exc:
-        con.say("")
-        con.say("REFUSE: %s" % exc.reason)
-        for line in exc.advice:
-            con.say("        %s" % line)
-        return EXIT_REFUSED
-    except (EngineUnpinned, JLNotInstalled) as exc:
-        con.say("")
-        con.say("REFUSE: %s" % exc)
-        return EXIT_REFUSED
-    except (HFError, JLError) as exc:
-        con.err(str(exc))
-        return 1
-
-    if plan_data.get("status") == "already-measured":
-        con.say("")
-        con.rule()
-        con.say("ALREADY MEASURED -- the registry rows above answer this "
-                "request; nothing was rented, $0.00 spent. Pass --force to "
-                "measure anyway (e.g. to reproduce).")
-        return EXIT_OK
-
-    if args.dry_run:
-        con.say("")
-        con.rule()
-        outdir = Path(args.out or ("./fidelity-runs/%s" % plan_data["job_id"])).resolve()
-        outdir.mkdir(parents=True, exist_ok=True)
-        write_json(str(outdir / "plan.json"), plan_data)
-        blockers = plan_data.get("would_refuse") or []
-        con.say("DRY RUN -- nothing created, $0.00 spent.")
-        con.say("plan written to %s" % (outdir / "plan.json"))
-        if blockers:
-            con.say("")
-            con.say("%d check(s) would REFUSE a real run:" % len(blockers))
-            for b in blockers:
-                con.say("  - %s" % b)
-            return EXIT_REFUSED
-        not_checked = plan_data.get("gates_not_checked") or []
-        if plan_data.get("estimate_only") or not_checked:
-            con.say("")
-            con.say("INCOMPLETE -- this dry run CANNOT AUTHORIZE a run.")
-            con.say("%d mandatory gate(s) were NOT CHECKED: %s"
-                    % (len(not_checked), ", ".join(not_checked) or "?"))
-            con.say("The numbers above are estimates from fallbacks, not "
-                    "verdicts about your artifact. A real run REFUSES until "
-                    "every mandatory gate verifies.")
-            return EXIT_OK
-        con.say("all checks passed; a real run would proceed to the confirmation prompt.")
-        return EXIT_OK
-
-    if not args.yes:
-        con.say("")
-        answer = input("Create %d x %s (%s, %s) and spend up to ~$%.2f?  [y/N] "
-                       % (plan_data["chosen"]["gpus"], plan_data["chosen"]["gpu_type"],
-                          plan_data["chosen"]["region"],
-                          "spot" if args.spot else "on-demand",
-                          plan_data["cost_estimate"]["band_high_usd"])).strip().lower()
-        if answer not in ("y", "yes"):
-            con.say("aborted before creating anything. $0.00 spent.")
-            return EXIT_REFUSED
-
-    con.rule()
-    try:
-        cost = execute(args, con, jl, plan_data, td)
-        td.completed = True
-    except (JLError, HFError, Refusal, RuntimeError) as exc:
-        # A stranger should get the sentence that says what broke and whether
-        # anything is still billing, not a stack trace ending in our internals.
-        # td.run() in the finally has already destroyed whatever existed.
-        td.run("failed: %s" % type(exc).__name__)
-        con.say("")
-        con.err(redact(str(exc)))
-        con.say("        the run stopped here; teardown above says what, if "
-                "anything, is still billing")
-        return EXIT_LEAK if td.leaked else 1
-    finally:
-        td.run("normal exit")
-
-    con.say("")
-    con.say("COST")
-    for key in ("estimated_usd", "computed_usd", "billed_usd", "balance_delta_usd"):
-        if cost.get(key) is not None:
-            con.kv(key.replace("_usd", ""), "$%.2f" % cost[key], indent=2)
-    return EXIT_LEAK if td.leaked else EXIT_OK
 
 
 if __name__ == "__main__":

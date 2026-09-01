@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import shutil
 import subprocess
 import sys
@@ -118,6 +119,44 @@ def shred_secret_file(path) -> None:
         os.unlink(p)
     except OSError:
         pass
+
+# --------------------------------------------------------------------------
+# Private path chains: no other UID may replace a checked directory
+# --------------------------------------------------------------------------
+
+def private_directory_chain_error(path, owner_uid=None) -> Optional[str]:
+    """Return why `path` is not a private, replacement-safe directory chain."""
+    uid = os.geteuid() if owner_uid is None else owner_uid
+    current = os.path.abspath(os.fspath(path))
+    try:
+        current_info = os.lstat(current)
+    except OSError as exc:
+        return "private directory cannot be inspected (%s)" % exc.__class__.__name__
+    if (stat.S_ISLNK(current_info.st_mode)
+            or not stat.S_ISDIR(current_info.st_mode)
+            or current_info.st_uid != uid):
+        return "private directory must be owned, non-symlink, and a directory"
+    if stat.S_IMODE(current_info.st_mode) & 0o022:
+        return "private directory must not be group/world-writable"
+    while True:
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        try:
+            parent_info = os.lstat(parent)
+        except OSError as exc:
+            return "directory ancestor cannot be inspected (%s)" % (
+                exc.__class__.__name__)
+        if stat.S_ISLNK(parent_info.st_mode) \
+                or not stat.S_ISDIR(parent_info.st_mode):
+            return "directory chain contains a symlink or non-directory"
+        parent_mode = stat.S_IMODE(parent_info.st_mode)
+        if (parent_mode & 0o022
+                and not (parent_mode & stat.S_ISVTX
+                         and current_info.st_uid == uid)):
+            return "directory ancestor can be replaced by another uid"
+        current = parent
+        current_info = parent_info
 
 
 # --------------------------------------------------------------------------

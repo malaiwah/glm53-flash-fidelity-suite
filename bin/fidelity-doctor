@@ -3,26 +3,24 @@
 
     bin/fidelity-doctor
 
-Read-only, offline, $0.00, and it never prints a secret: credentials are
-reported as present/absent with their source, never their value. Each check
-names its remedy, so a first-time contributor can go from a fresh clone to a
-clean `bin/measure-cloud --dry-run` without reading four documents.
+Read-only and offline. It never prints a secret: credentials are reported as
+present/absent with their path, never their value. This is a local prerequisite
+check, not paid authorization. The exact `measure-cloud --dry-run` revalidates
+the provider account, current inventory/balance, reaper health, drill proof,
+campaign ledger and scientific target.
 
-This is a THIN wrapper: every check delegates to the same code the runners
-use (`fidelity.hfmeta.hf_token`, each provider's `available()`,
-`measure_cloud.reaper_installed`, `fidelity.engines.load_engines`), so doctor
-and runner cannot disagree. The heavier verifications stay where they are and
-are pointed at, not duplicated: `bin/measure-local --selftest` (fit + decode
-parity), `bin/measure-local --probe-engines` (engine flags), `bash
-bin/selftest_all.sh` (everything), and `docker run <image> doctor` for the
-container image's own view.
+The heavier verifications stay where they are:
+`bin/measure-local --selftest`, `bin/measure-local --probe-engines`,
+`bash bin/selftest_all.sh`, and the exact commands in
+`docs/THIRD-PARTY-QUICKSTART.md`.
 
-Exit 0: a $0.00 dry-run can run from here. Exit 1: it cannot, and the output
-says exactly why.
+Exit 0 means the stock local tooling is usable. Warnings name missing paid or
+local-execution prerequisites. A paid run is authorized only by all executable
+pre-POST gates in `measure-cloud`.
 """
 
 import os
-import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -97,7 +95,7 @@ def main():
              "clone the full suite repo; the runners can still use the "
              "public HF dataset when the network is up")
 
-    # -- HF auth (needed for gated/private repos and faster transfer) ------
+    # -- HF auth (controller-local publication and gated local work only) ---
     from fidelity.hfmeta import hf_token
     tok = hf_token()   # registers redaction; NEVER printed
     if tok:
@@ -105,72 +103,71 @@ def main():
                if (os.environ.get("HF_TOKEN")
                    or os.environ.get("HUGGING_FACE_HUB_TOKEN"))
                else "cached login (~/.cache/huggingface/token)")
-        ok("hugging face auth", "token found via %s (value not shown)" % src)
+        ok("hugging face auth", "optional token found via %s "
+                                "(value not shown)" % src)
     else:
-        warn("hugging face auth", "no token in env or cache",
-             "public repos work without one; for gated repos: "
-             "`hf auth login` or export HF_TOKEN=$(cat ~/.hf_token)")
+        ok("hugging face auth", "absent; admitted paid artifacts must be "
+                                "anonymous on official HF")
 
-    # -- provider credentials (any ONE unlocks the cloud recipe) -----------
-    providers = []
-    for name, mod, cls, remedy in (
-        ("jarvislabs", "fidelity.jlapi", "JL",
-         "uv tool install jarvislabs && jl setup --token <token> --yes "
-         "(or export JL_API_KEY=...)"),
-        ("runpod", "fidelity.runpodapi", "RunPod",
-         "export RUNPOD_KEY_FILE=~/.runpod_key  (0600, key on one line)"),
-        ("vast", "fidelity.vastapi", "Vast",
-         "export VAST_KEY_FILE=~/.vast_key  (0600, key on one line)"),
-        ("lambda", "fidelity.lambdaapi", "LambdaCloud",
-         "export LAMBDA_KEY_FILE=~/.lambda_key  (0600, key on one line)"),
-    ):
-        try:
-            import importlib
-            avail = getattr(importlib.import_module(mod), cls)().available()
-        except Exception:                                     # noqa: BLE001
-            avail = False
-        providers.append((name, avail, remedy))
-    have = [n for n, a, _ in providers if a]
-    if have:
-        ok("cloud provider credential", "available: %s" % ", ".join(have))
+    # -- sole admitted paid provider credential ----------------------------
+    try:
+        from fidelity.runpodapi import DEFAULT_KEY_FILE, RunPod
+        key_path = str(Path(
+            os.environ.get("RUNPOD_KEY_FILE") or DEFAULT_KEY_FILE
+        ).expanduser().resolve())
+        runpod_available = RunPod(key_file=key_path).available()
+    except Exception:                                         # noqa: BLE001
+        key_path = str(Path.home() / ".config" / "runpod" / "api_key")
+        runpod_available = False
+    if runpod_available:
+        ok("runpod credential", "owner mode-0600 key file present at %s"
+                                % key_path)
     else:
-        warn("cloud provider credential", "none of jarvislabs/runpod/vast/"
-             "lambda has a usable credential",
-             "any ONE unlocks bin/measure-cloud -- see docs/CLOUD-RECIPES.md "
-             "§1; e.g. " + providers[0][2])
+        warn("runpod credential", "no usable owner mode-0600 key file at %s"
+             % key_path,
+             "write the RunPod key to that absolute path; never put key bytes "
+             "in argv or an environment value")
 
-    # -- SSH key (RunPod/Vast inject it; Lambda attaches by account name) --
+    # -- SSH key -----------------------------------------------------------
     pub = Path.home() / ".ssh" / "id_ed25519.pub"
     if pub.is_file():
-        ok("ssh public key", str(pub) + "  (RunPod/Vast inject it at create; "
-           "Lambda needs the key registered in its console)")
+        ok("ssh public key", str(pub))
     else:
         warn("ssh public key", "~/.ssh/id_ed25519.pub not found",
-             "ssh-keygen -t ed25519   (needed for RunPod/Vast/Lambda; "
-             "JarvisLabs uses the jl CLI instead)")
+             "ssh-keygen -t ed25519; the paid route also requires the pod "
+             "fingerprint from the authenticated RunPod web terminal")
 
-    # -- lease reaper (required before any cloud run over 2h) --------------
-    try:
-        import measure_cloud
-        installed = measure_cloud.reaper_installed()
-    except Exception:                                         # noqa: BLE001
-        installed = None
-    if installed:
-        ok("lease reaper", "installed (the teardown backstop when this "
-                           "machine dies mid-run)")
-    elif installed is None:
-        warn("lease reaper", "could not consult measure_cloud",
-             "run: bin/measure-cloud reaper --install")
+    # -- account-bound systemd reaper and paid drill state -----------------
+    state = Path.home() / ".fidelity-cloud"
+    control = state / "reaper-control.json"
+    health = state / "reaper-health.json"
+    if control.is_file() and health.is_file():
+        ok("runpod reaper state", "control and health artifacts present; "
+                                  "measure-cloud revalidates timer, account, "
+                                  "paths, digests and freshness")
     else:
-        warn("lease reaper", "not installed",
-             "bin/measure-cloud reaper --install  -- the runner refuses any "
-             "run over 2h without it")
+        warn("runpod reaper state", "canonical control/health artifacts absent",
+             "install with the exact RunPod command in "
+             "docs/THIRD-PARTY-QUICKSTART.md §3")
+
+    proof = state / "drill" / "proof.json"
+    if proof.is_file():
+        ok("controller-loss proof", "artifact present; measure-cloud validates "
+                                    "its account, checkout, age and billing")
+    else:
+        warn("controller-loss proof", "no canonical paid drill proof",
+             "run the spend-free drill dry-run, then the explicitly authorized "
+             "paid drill in docs/THIRD-PARTY-QUICKSTART.md §4")
 
     # -- FIDELITY_PYTHON (local execute / preview scoring only) ------------
     fpy = os.environ.get("FIDELITY_PYTHON")
     if fpy:
-        torch_ok = os.system(
-            '"%s" -c "import torch" >/dev/null 2>&1' % fpy) == 0
+        try:
+            torch_ok = subprocess.run(
+                [fpy, "-c", "import torch"], stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=30).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            torch_ok = False
         if torch_ok:
             ok("local torch env", "FIDELITY_PYTHON=%s imports torch" % fpy)
         else:
@@ -185,19 +182,17 @@ def main():
              "safetensors numpy huggingface_hub; export "
              "FIDELITY_PYTHON=~/.venvs/fidelity/bin/python3")
 
-    print()
     if hard_failures:
         print("NOT READY: %d hard failure(s): %s"
               % (len(hard_failures), ", ".join(hard_failures)))
         return 1
     if warnings:
-        print("READY for a $0.00 dry-run; %d warning(s) above list what a "
-              "PAID or LOCAL-EXECUTE run would still need." % len(warnings))
+        print("LOCAL CHECKS COMPLETE; %d warning(s) above name missing paid "
+              "or local-execution prerequisites." % len(warnings))
     else:
-        print("READY: dry-run, cloud run and local tooling checks all green.")
-    print("next: bin/measure-cloud --model <hf-repo> "
-          "--panel brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits "
-          "--lane streaming --spot --dry-run")
+        print("LOCAL PREREQUISITES PRESENT. This is not paid GO; run the exact "
+              "supported --dry-run next.")
+    print("next: docs/THIRD-PARTY-QUICKSTART.md §5")
     return 0
 
 

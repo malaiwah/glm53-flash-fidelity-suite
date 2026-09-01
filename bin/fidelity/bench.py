@@ -34,7 +34,9 @@ oversubscribed 15x) shows up here in about four minutes.
 from __future__ import annotations
 
 import json
+import math
 import os
+import shlex
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -242,16 +244,32 @@ def run_bench(provider, *, gpu: Optional[str] = None, ask_id: Optional[Any] = No
                     % (mid, exc))
 
 
-def bench_existing(provider, machine_id, *, con=None) -> Dict[str, Any]:
-    """Benchmark a box that is ALREADY rented, without touching its lifecycle.
+def bench_existing(
+        provider, machine_id, *, con=None,
+        python_executable: Optional[str] = None,
+        remote_payload: Optional[str] = None) -> Dict[str, Any]:
+    """Benchmark an existing box without touching its lifecycle.
 
-    This is the preflight form: the instance exists, setup has installed torch,
-    and the question is whether the next three hours are worth starting here.
-    It creates nothing and destroys nothing.
+    The safe paid controller supplies both paths from its sealed remote bundle.
+    Legacy callers may omit them and retain the historical upload/system-python
+    behavior.
     """
-    provider.upload(machine_id, str(PAYLOAD), "/tmp/cardbench.py")
-    out = provider.exec_stdout(machine_id, "python3 /tmp/cardbench.py 2>&1 | tail -30",
-                               timeout=900)
+    if python_executable is None:
+        python = "python3"
+    else:
+        python = str(python_executable)
+        if (not os.path.isabs(python) or os.path.normpath(python) != python):
+            raise ValueError("benchmark python executable must be absolute")
+    if remote_payload is None:
+        payload = "/tmp/cardbench.py"
+        provider.upload(machine_id, str(PAYLOAD), payload)
+    else:
+        payload = str(remote_payload)
+        if (not os.path.isabs(payload) or os.path.normpath(payload) != payload):
+            raise ValueError("remote benchmark payload must be absolute")
+    command = "%s %s 2>&1 | tail -30" % (
+        shlex.quote(python), shlex.quote(payload))
+    out = provider.exec_stdout(machine_id, command, timeout=900)
     try:
         return json.loads(out[out.index("{"):out.rindex("}") + 1])
     except Exception:                                     # noqa: BLE001
@@ -281,14 +299,23 @@ def gate(doc: Dict[str, Any], *, min_h2d_gbps: Optional[float] = None,
     """
     bad = []
     h2d = doc.get("h2d_GBps")
-    if min_h2d_gbps and h2d is not None and h2d < min_h2d_gbps:
-        link = (doc.get("pcie_load") or {}).get("text", "unknown")
-        bad.append("host->device is %.1f GB/s, below the required %.1f "
-                   "(PCIe link under load: %s)" % (h2d, min_h2d_gbps, link))
+    if min_h2d_gbps:
+        if (isinstance(h2d, bool) or not isinstance(h2d, (int, float))
+                or not math.isfinite(float(h2d)) or h2d <= 0):
+            bad.append("host->device bandwidth was not measured")
+        elif h2d < min_h2d_gbps:
+            link = (doc.get("pcie_load") or {}).get("text", "unknown")
+            bad.append("host->device is %.1f GB/s, below the required %.1f "
+                       "(PCIe link under load: %s)" % (
+                           h2d, min_h2d_gbps, link))
     gemm = doc.get("expert_gemm_TFLOPs")
-    if min_gemm_tflops and gemm is not None and gemm < min_gemm_tflops:
-        bad.append("expert GEMM is %.1f TFLOP/s, below the required %.1f"
-                   % (gemm, min_gemm_tflops))
+    if min_gemm_tflops:
+        if (isinstance(gemm, bool) or not isinstance(gemm, (int, float))
+                or not math.isfinite(float(gemm)) or gemm <= 0):
+            bad.append("expert GEMM throughput was not measured")
+        elif gemm < min_gemm_tflops:
+            bad.append("expert GEMM is %.1f TFLOP/s, below the required %.1f"
+                       % (gemm, min_gemm_tflops))
     return "; ".join(bad) if bad else None
 
 

@@ -8,6 +8,61 @@
     "Verify a lane after editing:  bin/measure-local --probe-engines"
   ],
   "version": 1,
+  "root_timing_profiles": [
+    {
+      "target_repo": "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+      "target_revision": "ef68013aa6e16453cf52b5b77647f72fbe258c3c",
+      "gpu": "L4",
+      "form": "hidden",
+      "schedule": "two-fresh-process-qualification",
+      "conservative_upper_hours": 1.0,
+      "bound_kind": "named_conservative_upper",
+      "resource_admission": {
+        "required": true,
+        "mode": "controller_explicit_safe_resources",
+        "reason": "The timing evidence does not establish portable vCPU/RAM minima; the cloud controller must bind explicit safe resources for this exact target."
+      },
+      "model_identity": {
+        "model_bytes": 10102776813,
+        "config_sha256": "5a19697e555fff140d1b089b852c3ef227114b196f8d76796560feeeb34dc44a",
+        "index_sha256": "86e6cc1d8548c7bdbbc117e93b85b8ae249f446de9b48d2195e51f358674ba56"
+      },
+      "evidence": {
+        "source": "docs/CLOUD-COMPARISON.md",
+        "measured_a100_old_four_stage_minutes": 11.0,
+        "measured_l4_seconds_per_window": 0.253,
+        "derivation": "1 hour conservatively covers two fresh capture+verify process invocations, comparison, refetch, setup and result retrieval; it is an upper bound, not minutes/window."
+      }
+    },
+    {
+      "target_repo": "zai-org/GLM-5.3-Flash-BF16",
+      "target_revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+      "gpu": "H200",
+      "form": "hidden",
+      "schedule": "two-fresh-process-qualification",
+      "conservative_upper_hours": 6.0,
+      "bound_kind": "named_conservative_upper",
+      "model_identity": {
+        "model_bytes": 642646653816,
+        "config_sha256": "33e63ec7fe607658be712bd6dd3c16c6549960d8e7f0483d34b939881b55f943",
+        "index_sha256": "e6007bd58fb7e07f9fe69544257ee2713f252ef5855bbf685b48c991d524ef0f"
+      },
+      "resource_admission": {
+        "required": true,
+        "mode": "controller_explicit_safe_resources",
+        "reason": "The timing evidence does not establish portable vCPU/RAM minima; the cloud controller must bind explicit safe resources for this exact target."
+      },
+      "evidence": {
+        "source": "docs/CAPTURE-SCALING-PLAN.md",
+        "streamed_capture_minutes_per_window_range": [
+          0.4,
+          1.6
+        ],
+        "window_count": 25,
+        "derivation": "6 hours conservatively covers 25 windows in each of two fresh processes plus fetch, comparison, setup and result-retrieval reserve; it is an upper bound, not a generic minutes/window value."
+      }
+    }
+  ],
   "lanes": {
     "sealed-ep8": {
       "name": "student_capture + kld_report (sealed EP8 lane)",
@@ -153,14 +208,12 @@
         "--stream-mode": "window-major"
       },
       "profile_map": {
-        "6.0": "k6",
-        "8.0": "k8",
         "native": "native-bf16",
         "4.05": "turbo-4.05bpw",
         "3.05": "turbo-3.05bpw",
         "4.0": "tr3-4bpw"
       },
-      "profile_map_note": "4.0-bpw now maps to tr3-4bpw: a SEALED TR3-published EXL3/MCG release (brandonmusic's layout and its byte-identical mirrors) read by stream_score --source tr3. 4.05/3.05 map to the stock-exllamav3 (exl3hf) profiles turbo-4.05bpw/turbo-3.05bpw. Dione 4-bpw snapshots are a DIFFERENT surface at the same nominal rate and remain sealed-lane only. stream_score --profile choices: k6,k8,k6k8,native-bf16,turbo-4.05bpw,turbo-3.05bpw,tr3-4bpw,mlx,gguf,nvfp4. k6k8 is reachable only by explicit --profile, never by bpw inference (6.68 is not a bpw key). || M3: profile_map_by_surface now resolves the profile from (surface, bits) before the bpw-only map is consulted. A 4.0-bpw Dione release and a 4.0-bpw TR3 release are the same number and different everything else; keying on bits alone would have labelled one as the other, and the old `or 'k6'` fallback would have labelled an unmapped rate as a K6 payload-store run. || M4: exl3hf gains 2.0 -> vcruz-k2-2bpw (vcruz305/GLM-5.3-Flash-EXL3-K2). Same stock-exllamav3 HF STORAGE layout as turboderp's releases -- which is what picks the reader -- but the MCG codebook, a routed-experts-ONLY scope and a native BF16 head, so it gets its own profile and its own student label rather than a turbo-* one. || M5: gguf is the first surface whose map is RATE-INDEPENDENT, and the '*' key says so. EXL3HF_PROFILES/TR3_PROFILES/DIONE_PROFILES are {profile: (declared bpw, student label)} tables because each of those releases pins one rate and the engine cross-checks it against the release's own declaration. A GGUF has no such declaration and no single rate: stream_score carries GGUF_STUDENT_LABEL / GGUF_CAPTURE_ROLE as FORMAT-wide constants, kld_report maps profile 'gguf' -> student label 'gguf-llamacpp' for the same reason, and the plan's bits field is None. The rate lives in the artifact record (bits_per_weight_nominal, from the build name) and in the receipt's gguf_type_census (from the build's own headers), which is where a mixed-type 'UD' build can be honest about being mixed. Keying the profile on bits would have meant twelve identical entries claiming twelve different receipt families.",
+      "profile_map_note": "Paid public TR3 dispatch is evidence-scoped: 6.0 resolves to tr3-6bpw only for the pinned K6 release whose materialization and historical verdict bridge are recomputed; K8 is explicitly refused because its pinned tree has no analogous checkpoint-identity verdict. Internal k6/k8/k6k8 payload-store profiles remain CLI choices but are not public paid-planning mappings. Surface-scoped maps are authoritative so equal nominal rates on different formats never alias.",
       "receipt_class": "submittable",
       "scorer": {
         "entrypoint": "engines/tools/kld_report.py",
@@ -171,26 +224,106 @@
           "out": "--out",
           "pipeline_root": "--pipeline-root",
           "chunk_positions": "--chunk-positions",
-          "device": "--device"
+          "device": "--device",
+          "expected_teacher_receipt": "--expected-teacher-receipt-sha256",
+          "expected_token_panel_receipt": "--expected-token-panel-receipt-sha256",
+          "expected_teacher_backend": "--expected-teacher-backend-identity-sha256"
         },
         "required_flags": [
           "--profile",
           "--teacher",
           "--runs",
           "--out",
-          "--device"
+          "--device",
+          "--chunk-positions",
+          "--pipeline-root",
+          "--expected-teacher-receipt-sha256",
+          "--expected-token-panel-receipt-sha256",
+          "--expected-teacher-backend-identity-sha256"
         ],
         "device_policy": "cpu-or-cuda; mps refused (fp64 accumulation cannot run on MPS -- torch TypeError)"
       },
       "timing": {
-        "minutes_per_window": 2.82,
-        "provenance": "MEASURED on the K6 streaming panel run (stream-k6/runs/stream-run1, 1x H200 spot, --decode-cache none): capture-receipt elapsed_seconds 11,018.9 for 25 windows = 7.35 min/window; cold run 2 was 10,488.7 s = 6.99 min/window. Two cold runs of a 231 GB payload store therefore cost 5.97 GPU-hours (~$11.89 at $1.99/GPU-h), not the ~$7.50 the earlier estimate implied. The BF16-floor lane (--source native, 609 GB read per window) measured ~8.3 min/window on the same box class. || exl3hf surface (stock exllamav3, mul1) NOW MEASURED, 2026-08-29, turboderp/GLM-5.3-Flash-exl3 4.05bpw on 1x H200 spot: cold run 1 elapsed_seconds 4685.15 for 25 windows = 3.12 min/window, decoding 907,200 K4 expert matrices (42 layers x 288 experts x 3 projections x 25 windows). That is 2.4x FASTER than the K6 payload store's 7.35 min/window: the routed payloads are K4 rather than K6 and are read from the artifact's own HF shards rather than a content-addressed store. The planner still prices with 7.35 (the conservative direction) until a second exl3hf artifact confirms the figure. Materialize was estimated at 0.35 h and MEASURED at 2m06s. || tr3 surface (TR3-published exl3-mcg, K4, routed-experts-only): shares the exl3hf fill loop and payload shape, so the exl3hf measurement (3.12 min/window) is the closest evidence; the planner still prices with 7.35 (conservative). || SUPERSEDED 2026-08-30 (M2): the planner now prices with 2.82 min/window. Two independent artifacts on the artifact's-own-HF-shards path now agree and the K6 figure was never about this path: exl3hf (turboderp 4.05bpw, mul1) measured 3.12, and tr3 (brandonmusic's 4bpw via the Mia-AiLab mirror, mcg) measured 2.814 and 2.813 min/window on its two cold runs -- 4221.7 s and 4219.5 s for 25 windows each, 907,200 K4 expert matrices per run, peak 47.1 GB allocated on one H200. 7.35 was the K6 PAYLOAD-STORE figure: K6 payloads out of a content-addressed store, not K4 payloads out of the release's own shards. Keeping it made every plan for this family 2.6x too expensive, which is the wrong kind of conservative once two artifacts have measured the same path. || M3 (2026-08-30), dione surface (0xSero 3.0bpw, K3, TP4-sliced, 1x H200 spot): cold run 1 elapsed_seconds 4738.67 and run 2 4815.33 for 25 windows = 3.159 and 3.210 min/window, peak 47.07 GB allocated. That is SLOWER than tr3's 2.81 on the same lane and the same panel, and the reason is the storage layout rather than the rate: one Dione matrix is FOUR independently quantized TP-rank slices that are decoded separately and concatenated, so a K3 run does 4x the decode calls of a K4 tr3 run for the same 907,200 matrices. A single lane-wide constant cannot express that, so minutes_per_window_by_surface now carries the measured figure per surface and the lane-wide value stays as the fallback for a surface with no measurement yet. || M5 (2026-08-31), gguf surface: NOW MEASURED, and it is 7.6x the lane fallback. unsloth/GLM-5.3-Flash-GGUF UD-Q4_K_XL @ 2975ab41 on 1x A100-SXM4-80GB (RunPod secure): 49 layer-fills across window 1 and the start of window 2, cumulative_decode_seconds 1656.2 over 42,336 expert matrices = 39.12 ms/matrix, so 36,288 matrices/window = 23.7 min/window of DECODE alone -- 9.86 h per cold run and 19.7 h for the two runs a submittable receipt needs. Peak 45.7 GB of the predicted 47.07 GB, so the fit was right; the time was not. || WHY, because the number is useless without it: it is neither I/O nor the GPU. Window 2 (mean 37.2 s/fill) was NOT faster than window 1 (33.2 s/fill) although the box had 1,007 GB of RAM and 919 GB of warm page cache holding the 185 GB of routed payload, so it is not a cold-read effect; nvidia-smi read 2-4% with 45.7 GB resident, and the process took 1,055-1,380% CPU on a 128-core host that was 74% idle. It is the DEQUANT, running as deliberately plain, MPS-safe torch (uint8-level unpack, fp32 accumulation, no int64) -- the same choice that makes it bitwise-provable against gguf-py 0.19.0 makes it ~7.5x slower per matrix than the exl3 path's 5.2 ms. Raw timings: engines/tools/gguf-evidence/udq4kxl-decode-timings-a100.jsonl. || M6 (2026-08-31), gguf surface, SUPERSEDING the 23.7 above: the dequant now runs on the ACCELERATOR (stream_score --gguf-decode-device auto, gguf_surface.dequant_bytes(device=)) and the same box measures 1.613 and 1.509 ms/matrix on real UD-Q4_K_XL routed layers 3 and 4 (Q4_K gate/up, Q5_K down, full 288-expert fills) against 35.66 and 32.11 ms/matrix for the same fills with the dequant on cpu -- 22x, and 0.98 / 0.91 min/window of decode against 21.6 / 19.4. The kernels are UNCHANGED (same lines, same op order; integer unpack plus elementwise fp32 mul and sub, no reduction, no matmul, no fusion), and the acceptance test was run on the artifact rather than argued: both paths filled the same layer and the resulting BF16 SLABS -- the bytes the expert forward reads -- were torch.equal over 7,247,757,312 elements per layer. Harness engines/tools/gguf_decode_bench.py; evidence engines/tools/gguf-evidence/udq4kxl-decode-device-a100.jsonl. || WHY THE PLANNING NUMBER IS 3.19 AND NOT 0.98: 0.98 is the DECODE, and decode-only was an honest total only while it was 7.6x everything else on the lane. It is not any more, so the per-window REMAINDER (the forward, the logit save) now dominates and has never been measured for this surface. Rather than invent it, the planner prices gguf at 3.19 -- the SLOWEST measured per-window TOTAL on this lane (dione's) -- which is conservative in the right direction: gguf's measured decode is now below the decode implied by every other surface here, so its total cannot reasonably exceed the lane's slowest. This is a placeholder with a floor under it, not a measurement of gguf; the first gguf capture that FINISHES must replace it with its own elapsed_seconds/25. || ALSO REFUTED, because the last entry guessed it: 'the 114 idle cores say most of the headroom is here' is wrong. Sweeping --decode-threads on the cpu path over the same layer and bytes gives 35.4 (8 threads), 35.7 (16, the default), 41.0 (32) and 54.4 ms/matrix (64). More threads is SLOWER. The cores were idle because the work does not scale onto them.",
+        "minutes_per_window": null,
         "measured": true,
-        "minutes_per_window_by_surface": {
-          "exl3hf": 3.12,
-          "tr3-published": 2.82,
-          "dione": 3.19,
-          "gguf": 3.19
+        "provenance": "No generic lane timing is scientifically valid. Paid planning must use timing.profiles through fidelity.engines.resolve_profile_timing; an absent profile refuses.",
+        "profiles": {
+          "tr3-6bpw": {
+            "minutes_per_window": 7.35,
+            "bound_kind": "conservative_max_of_two_measured_cold_runs",
+            "surface": "tr3-published",
+            "target_repo": "malaiwah/GLM-5.3-Flash-TR3-6bpw",
+            "resource_admission_required": true,
+            "target_revision": "9ab94105a71708a19c6d960d24b4aa6d459f5623",
+            "runtime_profile": {
+              "gpu": "H200",
+              "gpu_count": 1,
+              "window_count": 25,
+              "decode_cache": "none",
+              "decode_threads": 28,
+              "reader_threads": 28,
+              "min_vcpu_count": 28,
+              "min_memory_gb": 300,
+              "controller_processes_per_pod": 1
+            },
+            "evidence": {
+              "observed_market_type": "spot",
+              "source": "stream-k6/runs/stream-run{1,2}/capture-receipt.json",
+              "elapsed_seconds": [
+                11018.9,
+                10488.7
+              ],
+              "derivation": "max(11018.9, 10488.7) / 25 / 60 = 7.35 min/window (rounded upward at 0.01); the pinned public verdict binds this K6 surface to checkpoint identity a8668be3592493035e98a52994e0e3c43548a9757eadb79f7ae939f2f32de1c1."
+            }
+          },
+          "tr3-4bpw": {
+            "minutes_per_window": 2.82,
+            "bound_kind": "measured_panel_average",
+            "surface": "tr3-published",
+            "target_repo": "Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw",
+            "target_revision": "024db9f7e9871e8efdf21538ba55af7442be3cd5",
+            "runtime_profile": {
+              "gpu": "H200",
+              "gpu_count": 1,
+              "window_count": 25,
+              "controller_processes_per_pod": 1
+            },
+            "evidence": {
+              "observed_market_type": "spot",
+              "source": "stream-tr3-4bpw capture receipt",
+              "derivation": "measured full 25-window streaming capture; 2.82 min/window"
+            }
+          },
+          "native-bf16": {
+            "minutes_per_window": 11.3,
+            "bound_kind": "conservative_max_observed_window",
+            "surface": "native-bf16",
+            "target_repo": "zai-org/GLM-5.3-Flash-BF16",
+            "target_revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+            "runtime_profile": {
+              "gpu": "H200",
+              "gpu_count": 1,
+              "window_count": 25,
+              "decode_cache": "ram",
+              "decode_threads": 28,
+              "filesystem": "CephFS approximately 1.05 GB/s",
+              "reader_threads": 28,
+              "min_vcpu_count": 28,
+              "min_memory_gb": 300,
+              "controller_processes_per_pod": 1
+            },
+            "resource_admission_required": true,
+            "evidence": {
+              "observed_market_type": "spot",
+              "source": "BF16-floor H200 capture receipt and engines/BF16-FLOOR.md",
+              "cold_first_window_seconds": 678,
+              "steady_window_seconds_range": [
+                483,
+                549
+              ],
+              "derivation": "678 measured seconds for the cold first window / 60 = 11.3 min/window; used as a conservative observed bound instead of transferring the approximately 8.3-minute panel average to every window"
+            }
+          }
         }
       },
       "notes": [
@@ -205,7 +338,7 @@
         "NEW 2026-08-29: --capture-role teacher turns a native run into a SAME-LANE teacher",
         "(engines/SAME-LANE-TEACHER.md); --store-positions per-window:<m> produces a PREVIEW",
         "capture no sealed consumer accepts.",
-        "NEW 2026-08-29 (M2): 'tr3-published' IS now readable (--source tr3). It is the only third-party surface here whose publisher seals it: tr3_surface.verify_seal recomputes all 12 claims of exl3-mcg-storage-abi.json + materialization-receipt.json from the published bytes BEFORE decoding, so its rows carry a seal verification instead of an unsealed_source caveat."
+        "TR3-published is readable only after tr3_surface.verify_seal recomputes both receipt self-seals, metadata and name/count/scope bindings, and binds the shard map. Public K6 additionally requires exact pinned receipt/verdict bytes plus the sealed checkpoint identity bridge before decoding."
       ],
       "surfaces": [
         "packed",
@@ -222,7 +355,8 @@
           "4.0": "dione-q4"
         },
         "tr3-published": {
-          "4.0": "tr3-4bpw"
+          "4.0": "tr3-4bpw",
+          "6.0": "tr3-6bpw"
         },
         "exl3hf": {
           "4.05": "turbo-4.05bpw",
@@ -235,6 +369,16 @@
         },
         "gguf": {
           "*": "gguf"
+        }
+      },
+      "profile_refusals_by_surface": {
+        "tr3-published": {
+          "8.0": {
+            "code": "missing_sealed_surface_measurement_bridge",
+            "repo": "malaiwah/GLM-5.3-Flash-TR3-8bpw",
+            "revision": "7199f6f1a211084c240614806f046f11a52dad64",
+            "detail": "Pinned K8 publishes a self-sealed materialization receipt, ABI, shard map and stream-k8-kld summary, but no pinned verdict or other recomputable receipt binds the measured student checkpoint identity and asserts it scored the sealed K8 surface. K6 evidence is not transferable."
+          }
         }
       }
     },

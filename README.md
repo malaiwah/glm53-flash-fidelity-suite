@@ -86,19 +86,10 @@ instead of restating it.
 | lane | reachable via | receipt class | rates with a profile |
 |---|---|---|---|
 | `sealed-ep8` | `bin/measure-cloud --lane sealed-ep8` | (not declared) | no bpw→profile map (profile named by the campaign driver) |
-| `streaming` | `bin/measure --lane streaming`, `bin/measure-cloud --lane streaming` | submittable | dione: 3.0, 4.0 bpw; exl3hf: 2.0, 2.05, 3.05, 4.05 bpw; gguf: any rate; native-bf16: unquantized; tr3-published: 4.0 bpw |
+| `streaming` | `bin/measure --lane streaming`, `bin/measure-cloud --lane streaming` | submittable | dione: 3.0, 4.0 bpw; exl3hf: 2.0, 2.05, 3.05, 4.05 bpw; gguf: any rate; native-bf16: unquantized; tr3-published: 4.0, 6.0 bpw |
 | `local-mps` | `bin/measure --lane local-mps`, `bin/measure-local --lane local-mps` | preview | 6.0→k6, 8.0→k8, native→native-bf16 |
 | `local-cuda-budget` | `bin/measure --lane local-cuda-budget`, `bin/measure-local --lane local-cuda-budget` | preview | 6.0→k6, 8.0→k8, native→native-bf16 |
 | `bf16-floor` | no runner — campaign lane, driven directly (`engines/tools/`) | (not declared) | fixed: native-bf16 |
-
-#### Measured minutes per window, per surface
-
-| lane | surface | min/window |
-|---|---|---:|
-| `streaming` | `dione` | 3.19 |
-| `streaming` | `exl3hf` | 3.12 |
-| `streaming` | `gguf` | 3.19 |
-| `streaming` | `tr3-published` | 2.82 |
 
 Reading the matrix: `bin/measure` never rents, so it plans only the
 local lanes and redirects `--lane streaming` to `bin/measure-cloud`;
@@ -114,24 +105,30 @@ rankable against routed-experts-only rows
 ([`docs/GGUF-MEASUREMENT.md`](docs/GGUF-MEASUREMENT.md)).
 <!-- END GENERATED: support-matrix -->
 
-The consequence to plan around: the local lanes read strictly less than the
-cloud one. **The local recipes cannot today execute a measurement of a
-third-party quant**: `bin/measure` will report existing rows, plan, and refuse
-— pointing you at `bin/measure-cloud`, which can.
+The generated matrix is an **engine-capability** matrix, not paid admission.
+The remediated paid controller is narrower: exact Fruit and GLM-5.3-Flash
+BF16 root pins plus one exact public K6 TR3 quant pin, all on RunPod's SSH route.
+Generic third-party surfaces—including GGUF—remain available to local tooling where
+listed, but `measure-cloud` refuses them before provider access until their
+scientific and lifecycle evidence is authored.
 
-**3. A profile for that surface at that bit rate.** `engines.json` maps
-`(surface, bpw) -> profile`; the profile names the receipt family, the student
-label and the rate the engine cross-checks against the release's own
-declaration. A rate with no entry is refused at plan time, for $0.00, and the
-refusal lists the four files a new profile has to touch.
+**3. An exact admitted profile and artifact pin.** `engines.json` maps
+`(surface, bpw) -> profile`, but paid admission additionally binds repository,
+40-hex revision, metadata digests, runtime evidence and any release-specific
+verdict bridge. K8 is deliberately refused: its release seal does not prove
+that the measured checkpoint was the sealed K8 surface, and K6 evidence cannot
+be transferred.
 
-The fastest way to find out where a specific repo stands is to ask:
+Start with the registry and local planner:
 
 ```bash
-bin/measure <hf-repo>                       # already measured? readable? which lane?
-bin/measure-cloud --model <hf-repo> --panel brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
-    --lane streaming --spot --dry-run       # full preflight + a costed plan, $0.00
+bin/measure <hf-repo>     # already measured, locally readable, or exact refusal
 ```
+
+For the complete supported RunPod dry-run, use
+[`docs/THIRD-PARTY-QUICKSTART.md`](docs/THIRD-PARTY-QUICKSTART.md). It requires
+the autonomous reaper, controller-loss proof and campaign ledger even in
+planning mode; incomplete safety state never becomes an authorizing plan.
 
 Both are honest about repos that are announcements rather than releases (a
 2-file placeholder) and about releases that are genuinely broken (one branch of
@@ -159,84 +156,72 @@ the floor to zero is [`engines/SAME-LANE-TEACHER.md`](engines/SAME-LANE-TEACHER.
 > decide whether two fidelity numbers may be compared at all. Reading it first will stop you
 > making the comparison mistakes this project exists to prevent.
 
-## Measure a quant yourself — two copy-paste recipes
+## Measurement routes
 
-Every number in this repo was produced by a recipe you can run on someone
-else's weights and submit to the [fidelity registry](registry/). Both recipes
-produce the **same sealed receipt schema**, so a number measured on a rented
-H200 and a number measured on a laptop are the same kind of object — but they
-are not equally submittable: the local lanes emit `receipt_class: preview`
-(the lane differs from the teacher's and its floor is unmeasured, so the
-receipt is structurally unsubmittable), and today only the streaming lane's
-chain produces a row the registry accepts. See the
-[support matrix](#before-you-rent-what-is-measurable-today).
+Both routes produce provenance-bearing artifacts and refuse when required
+identity or capacity is missing. Local-lane receipts remain previews unless a
+same-lane reference contract says otherwise. The paid route is intentionally
+not a generic “any supported decoder” switch.
 
-Both refuse *before* spending anything when the run will not fit, and both say
-what they need — dollars, disk, memory, hours — with each figure's provenance.
-Both now run the same registry front gate as `bin/measure` before planning.
+### Cloud — current safe RunPod route
 
-### Recipe 1 — cloud: rent, measure, tear down
+Prerequisites are part of admission, not optional setup:
+
+1. a committed, fully clean checkout that remains byte-for-byte unchanged;
+2. an owner-only RunPod API-key file and ED25519 SSH key;
+3. the installed user reaper, healthy for this exact RunPod account;
+4. a successful paid controller-loss/provider-deadline drill from this checkout;
+5. one campaign ledger with an explicit ceiling, reserve and reaper margin.
+
+The drill spends real money and is run only deliberately. The full procedure
+and the exact K6/Fruit commands are in
+[`docs/THIRD-PARTY-QUICKSTART.md`](docs/THIRD-PARTY-QUICKSTART.md). Once those
+artifacts exist, the supported K6 dry-run is:
 
 ```bash
-export JL_API_KEY=...      # never logged, never written to a receipt
-
-bin/measure-cloud reaper --install     # required for any run over 2h
-
 bin/measure-cloud \
-    --model <hf-repo> \
+    --provider runpod --on-demand --region secure --on-preempt fail \
+    --model malaiwah/GLM-5.3-Flash-TR3-6bpw \
+    --revision 9ab94105a71708a19c6d960d24b4aa6d459f5623 \
     --panel brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
-    --lane  streaming --spot --max-runtime 12h
+    --lane streaming --schedule window-major --cold-runs 2 --gpu H200 \
+    --runpod-key-file "$RUNPOD_KEY_FILE" \
+    --reaper-state-dir "$HOME/.fidelity-cloud" \
+    --lease-dir "$HOME/.fidelity-cloud/leases-v2" \
+    --runpod-safety-proof "$HOME/.fidelity-cloud/drill/proof.json" \
+    --campaign-ledger "$HOME/.fidelity-cloud/campaign.json" \
+    --campaign-ceiling "$CAMPAIGN_CEILING_USD" \
+    --campaign-reserve "$CAMPAIGN_RESERVE_USD" \
+    --campaign-reaper-margin "$CAMPAIGN_REAPER_MARGIN_USD" \
+    --campaign-width 1 \
+    --max-cost "$ATTEMPT_CAP_USD" --max-runtime 12h \
+    --out "$HOME/fidelity-runs/k6-dry" --dry-run
 ```
 
-`--max-runtime` must exceed the estimated work, which `--dry-run` prints, and
-the runner refuses rather than paying for a run its own watchdog would kill.
-How much work that is depends on the **surface**, not just the panel:
-`engines.json` carries a measured minutes-per-window per surface (2.82 for
-`tr3-published`, 3.12 for `exl3hf`, 3.19 for `dione`), so a 25-window /
-2-cold-run streaming measurement of a third-party release is ~2.4-2.7 GPU-hours
-of scoring plus bootstrap, fetch and materialize — call it 3.5-4 h end to end.
-The 8.35 h figure quoted in older notes was the K6 **payload-store** path
-(7.35 min/window) and is superseded for this one; take the number `--dry-run`
-prints for your target rather than any constant in prose.
+`--dry-run` performs no provider mutation. Today this exact K6 command returns
+`no_spend` because the registry already contains the measurement; safe RunPod
+refuses `--force`. The separately identified Fruit root command in the
+quickstart can reach paid admission. Any admitted real run repeats all fresh
+provider/account/source checks under the campaign lock, writes `POST_INTENT`
+durably, performs exactly one create POST, authenticates the pod's ED25519 key
+through the logged-in RunPod web terminal, retrieves and verifies the bounded
+archive, deletes the pod, proves exact absence, and reconciles billing.
+Ambiguous create responses are never retried as science work.
 
-Resolves the repo to an immutable commit, sizes and prices the instance, asks
-for confirmation, creates it, fetches weights and panel, measures, seals the
-receipt, pulls it back, **destroys the instance**, and prints what it actually
-cost — estimated, computed, billed, and as an account-balance delta, because
-any one of those alone can lie.
+### Container image — local/developer surface, not paid admission
 
-Start with `--dry-run`: it does every check, creates nothing, and spends
-nothing. Teardown is guaranteed on success, failure, exception and Ctrl-C, and
-three further layers sit under that trap for the case where the controller
-itself dies — see `bin/measure_cloud.py`, class `Teardown`.
-
-```
-bin/measure-cloud reaper --install    # the backstop; the runner asks for it
-bin/measure-cloud reaper --sweep      # clean up from any machine, after a laptop dies
-```
-
-### Recipe 1, as a container — no SSH, no bundle upload
-
-The same stage sequence ships as a multi-arch image (`linux/amd64` and
-`linux/arm64`), public, no login required:
+The multi-arch image remains useful on hardware you already control:
 
 ```bash
 docker run --gpus all --rm -v /data/run:/workspace \
     ghcr.io/malaiwah/quant-fidelity-measure:main doctor
 ```
 
-The entrypoint mirrors this CLI (`measure`, `capture`, `stage`, `doctor`,
-`version`; `--dry-run` everywhere), so a provider that runs a custom image —
-RunPod, Vast — runs the measurement directly, with no machine to create, no
-state to poll, no disk to size and no filesystem root to guess. It reuses
-`bin/stage_measure.sh` verbatim rather than reimplementing a stage, so the two
-transports cannot drift apart.
-
-Results come back through a **sink you choose**, because a pod's filesystem is
-not yours to read: `stdout` always (framed and greppable), `file:PATH` onto a
-mount, `https://URL` as a `tar.gz` by PUT, and `--publish-root-to` for a sealed
-multi-GB dataset. The full contract, the RunPod worked example, and what each
-sink refuses to carry: [`docs/CONTAINER.md`](docs/CONTAINER.md).
+The current paid RunPod controller deliberately refuses provider-native
+container execution. It uses one authenticated SSH transport so lifecycle,
+host-key, archive-retrieval and deletion evidence have one audited boundary.
+The image entrypoint and result sinks remain tested implementation surfaces;
+they are not a shortcut around paid admission.
 
 ### Recipe 2 — local: your own hardware
 
@@ -319,13 +304,15 @@ bin/measure-local --selftest      # fit estimator vs known cases + decode parity
 
 ### Recipe 3 — submit it
 
-Both runners seal one file at the end of a run:
-`<out>/receipts/measurement-receipt.json`. **That file IS your submission
-receipt** (schema `quant-fidelity-registry/submission-receipt.v1`) — the one
-and only thing you submit; older docs called the same object `submission.json`.
+`measure-local` seals `<out>/receipts/measurement-receipt.json`. The safe cloud
+controller retrieves and verifies it at
+`<out>/result/receipts/measurement-receipt.json`. **That file IS your
+submission receipt** (schema
+`quant-fidelity-registry/submission-receipt.v1`) — the one and only thing you
+submit; older docs called the same object `submission.json`.
 
 ```bash
-bin/registry-submit <out>/receipts/measurement-receipt.json
+bin/registry-submit <receipt.json>
 ```
 
 Prints the row your receipt would generate, its comparability key, and the rows
@@ -336,68 +323,36 @@ acceptance criteria, and how you are credited:
 [`registry/CONTRIBUTING.md`](registry/CONTRIBUTING.md). Step-by-step for a
 first-time contributor: [`docs/THIRD-PARTY-QUICKSTART.md`](docs/THIRD-PARTY-QUICKSTART.md).
 
-### Which cloud? Dollars per hour is the wrong metric
+### Which cloud?
 
-A card at three times the rate that finishes in a third of the time is a wash.
-What decides the bill is **dollars per window** — `minutes/window x $/hour` —
-and `bin/fidelity-bench` measures both halves on one rental, in under a minute,
-for a few cents, then destroys the box. The full survey, its receipts and the
-qualitative axes a price cannot express are in
-**[`docs/CLOUD-COMPARISON.md`](docs/CLOUD-COMPARISON.md)**. Snapshot
-2026-08-31; **no affiliation with any provider**; the whole thing cost about
-four dollars to produce and you can re-run it.
+The committed provider benchmark receipts answer a historical performance
+question: the streaming inner loop is host-bandwidth-bound, and provider/SKU
+labels do not guarantee equivalent hosts. The dated table and receipts are in
+**[`docs/CLOUD-COMPARISON.md`](docs/CLOUD-COMPARISON.md)**. They are not current
+prices and the historical benchmark controller is not an admitted paid route.
 
-32 rentals across four providers, 2026-08-31, median of each card:
+Current paid execution is deliberately narrower: one exact secure on-demand
+RunPod pod over authenticated SSH. Other providers, spot, native containers,
+recovery, persistent volumes and hold-on-failure refuse before mutation.
+The controller probes the created host before the large fetch, but only after
+the campaign, reaper, drill, source, account and scientific gates pass.
 
-| cheapest per window, measured | $/h | min/window | **$/window** |
-|---|---|---|---|
-| Lambda `gpu_1x_gh200` — NVLink-C2C, 404 GB/s h2d | 2.29 | 0.06 | **0.0023** |
-| Vast RTX PRO 6000 Blackwell Max-Q, 96 GB | 0.74 | 0.45 | 0.0056 |
-| Vast A100 80GB PCIe | 0.58–0.67 | 0.54–0.65 | 0.0062 |
-| Vast H100 SXM | 1.78–2.01 | 0.27–0.40 | 0.0105 |
-| RunPod A100-SXM4-80GB (secure) | 1.59 | 0.56–1.25 | 0.0185 |
-| Lambda H100 PCIe | 3.29 | 0.34–0.45 | 0.0214 |
-| RunPod H100 80GB HBM3 (secure) | 3.29 | 0.31–0.69 | 0.0366 |
-| JarvisLabs H200 (on-demand; halve for spot) | 3.99 | 0.79 | 0.0525 |
-
-Four things that survey found, none of which is in any catalogue:
-
-* **The lane is host-bandwidth-bound**, so a B200 with 7.7x an A100's bf16
-  throughput finishes the inner step only 2.7x faster. Buying FLOPs does not
-  buy speed here; buying host-to-device bandwidth does — which is why the one
-  card that reaches host memory over NVLink-C2C instead of PCIe wins by 2.5x,
-  and why `nvidia-smi` reporting `Gen4 x1` on it is a red herring.
-* **The same SKU at the same price is not the same machine.** Four RunPod
-  *secure* H100 rentals at a flat $3.29/h spread **2.2x**. JarvisLabs
-  reproduced to 0.5%. That spread is the price of the cheap tier and it is
-  measurable — pass `--min-h2d-gbps` and walk away early.
-* **One Vast offer advertised a B200 and delivered an H100** at 1.66 ms per
-  matrix, and one Vast host billed for fifteen minutes without ever accepting a
-  connection. Measure what you got; an offer id is not a durable name for a
-  machine.
-* **A rate you cannot rent at is not a rate.** Lambda's $4.29 H100 SXM5 — the
-  card that made Lambda look expensive — was unavailable in 20 of 20 capacity
-  polls, refused one launch outright, and came up twice with
-  `torch.cuda.is_available() == False`.
-
-> **Requirements.** The cloud recipe needs the `jl` CLI
-> (`uv tool install jarvislabs`). The local recipe needs only
-> `pip install torch safetensors numpy huggingface_hub` — the EXL3/TR3 decode
-> is pure PyTorch, so none of the CUDA-13/flash-attn/exllamav3 bootstrap the
-> cloud lane uses is required on your own machine. On a Homebrew or distro
-> Python that install is blocked by PEP 668 ("externally-managed-environment");
-> use a venv (`python3 -m venv ~/.venvs/fidelity` and point `FIDELITY_PYTHON`
-> at its `python3`) or add `--break-system-packages` knowingly.
+> **Requirements.** The paid route needs stock Python, an owner mode-0600
+> RunPod key file, ED25519 SSH key, healthy account-bound user-systemd reaper,
+> current paid drill proof and explicit campaign limits. See
+> [`docs/THIRD-PARTY-QUICKSTART.md`](docs/THIRD-PARTY-QUICKSTART.md).
+> Local execution uses a venv via `FIDELITY_PYTHON`; do not modify the system
+> Python.
 
 ## Capture once, compare many — the three-step path
 
 The recipes above **fuse** capture and comparison: every measurement re-runs the
-reference. `bin/fidelity-dataset` separates them into three steps, so a
-reference capture is produced once, sealed, published, and thereafter
-*downloaded* rather than re-run.
+reference. `bin/fidelity-dataset` separates them into three steps. A root can be
+qualified and retained locally; publishing it later makes that sealed capture a
+portable reference other measurements can download instead of re-running.
 
 ```
-step 1  capture   reference weights + panel  ->  fidelity dataset A   (publish: REQUIRED for a root)
+step 1  capture   reference weights + panel  ->  qualified dataset A (publish: OPTIONAL; required for public reuse)
 step 2  capture   quantized weights + panel  ->  fidelity dataset B   (publish: OPTIONAL)
 step 3  compare   A, B  ->  KLD + determinism + a registry receipt
                   A, A  ->  reproduction confirmation, exactly 0.0
@@ -405,10 +360,10 @@ step 3  compare   A, B  ->  KLD + determinism + a registry receipt
 
 Step 3 needs **neither** set of weights and no GPU — it is fp64 arithmetic over
 two sealed trees. Step 2 is publishable standalone, so a quant author can
-contribute a capture with no access to our infrastructure. And a published
-capture is the only thing that survives losing the machine you measured on —
-which is not hypothetical: the filesystem holding our sealed receipt trees was
-destroyed, and it is why this split exists.
+contribute a capture with no access to our infrastructure. A verified off-pod
+archive survives losing the machine; publication additionally lets other
+measurers reuse it. This distinction exists because the filesystem holding
+earlier sealed receipt trees was destroyed.
 
 ```bash
 bin/fidelity-dataset describe ds-bf16                                  # the identity card

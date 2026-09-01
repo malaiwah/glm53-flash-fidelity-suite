@@ -1,41 +1,54 @@
 #!/usr/bin/env python3
-"""The reaper: leases authorize, names only discover, destroys are confirmed.
-
-WHY THIS EXISTS
----------------
-P1-03 (peer review 2026-08-31): the sweep destroyed on a NAME-parsed deadline
-alone (a name is guessable and its base36 suffix parses to nonsense), swallowed
-destroy errors and still exited 0, never confirmed the instance actually
-reached a terminal state, and its --dry-run omitted the phantom-lease
-retirements the real run performs.  The two failure modes are opposite and
-both severe: billing that continues behind a false-success cleanup, and
-destroying a machine this tool did not create.
-
-Driven entirely against a mocked provider -- no network, no account, $0.00.
-
-  P1  stale lease: destroyed, CONFIRMED against provider state, lease
-      retired, exit 0.
-  P2  destroy raises: lease kept, exit EXIT_LEAK (90), not 0.
-  P3  destroy "succeeds" but the instance stays listed as running:
-      unconfirmed -> lease kept, exit EXIT_LEAK.
-  P4  name-only candidate (expired-looking fidcloud-* name, no lease):
-      NEVER destroyed; reported for the operator instead.
-  P5  implausible deadline (name parsing to a nonsense epoch, and a lease
-      with deadline 0): neither authorizes anything.
-  P6  dry-run enumerates exactly the real run's mutations -- the destroy AND
-      the phantom-lease retirement -- and performs none of them.
-  P7  destroy confirmation rides out an eventually-consistent listing
-      (still listed once, gone on the retry) without failing the sweep.
-"""
-import importlib.util
+"""Focused zero-cost lifecycle tests.  No provider mutation or network access."""
+import base64
+import calendar
 import json
+from dataclasses import replace
+from decimal import Decimal
+import io
+import hashlib
+import multiprocessing
+import os
+import signal
+import subprocess
 import sys
+import shutil
 import tempfile
 import time
+import urllib.error
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bin"))
+
+import fidelity.cloudlease as cloudlease_module  # noqa: E402
+import fidelity.runpodapi as runpod_module  # noqa: E402
+from fidelity.campaign import CampaignLedger, attempt_key  # noqa: E402
+from fidelity.cloudlease import (  # noqa: E402
+    ABSENCE_CONFIRMED,
+    ACTIVE,
+    AMBIGUOUS,
+    CREATING,
+    MAX_PROVIDER_DEADLINE_OBSERVATION_LAG_SECONDS,
+    PROVIDER_DEADLINE_DRILL_MODE,
+    PREPARED,
+    TERMINAL,
+    campaign_coordinates,
+    GenerationConflict,
+    LeaseConflict,
+    LeaseError,
+    LeaseStore,
+    ReaperResult,
+    install_systemd_user_timer,
+    systemd_reaper_health,
+    write_reaper_health,
+    reap_once,
+    runpod_authoritative_listing,
+)
+from fidelity.runpodapi import (  # noqa: E402
+    DEFAULT_KEY_FILE, MIN_CREATE_SETUP_SECONDS, RunPod,
+    RunPodCreateResponseError, RunPodError, _load_key, _strict_json_loads,
+)
 
 FAILED = []
 
@@ -48,215 +61,2171 @@ def check(label, ok, detail=""):
             print("        %s" % line)
 
 
-def load_mc():
-    spec = importlib.util.spec_from_file_location(
-        "measure_cloud", str(ROOT / "bin" / "measure_cloud.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+def raises(exc_type, fn):
+    try:
+        fn()
+    except exc_type:
+        return True
+    return False
+
+def write_resealed(path, document):
+    unsealed = dict(document)
+    unsealed.pop("record_sha256", None)
+    raw = json.dumps(
+        unsealed, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True, allow_nan=False).encode("utf-8")
+    unsealed["record_sha256"] = hashlib.sha256(raw).hexdigest()
+    path.write_text(
+        json.dumps(
+            unsealed, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=True, allow_nan=False) + "\n",
+        encoding="utf-8")
+    path.chmod(0o600)
+
+def server_time_fixture(epoch=1000.0):
+    return {
+        "schema": "fidelity-suite/runpod-server-time.v1",
+        "endpoint_origin": "https://api.runpod.io",
+        "date_header": "Thu, 01 Jan 1970 00:16:40 GMT",
+        "server_epoch": epoch,
+        "local_received_epoch": epoch,
+        "local_minus_server_seconds": 0.0,
+        "checked_at_epoch": epoch,
+        "evidence_age_seconds": 0.0,
+        "max_clock_delta_seconds": 30.0,
+        "max_evidence_age_seconds": 30.0,
+    }
+
+def prepared_create_fixture(
+        *, name, gpu, count, volume_gb, container_disk_gb,
+        min_vcpu, min_ram_gb, image, terminate_after):
+    identity = {
+        "cloud_type": "SECURE", "is_spot": False, "offer": "on-demand",
+        "gpu_type_id": gpu, "gpu_count": count, "volume_gb": volume_gb,
+        "container_disk_gb": container_disk_gb, "min_vcpu": min_vcpu,
+        "min_ram_gb": min_ram_gb, "name": name, "image_name": image,
+        "terminate_after": terminate_after, "ports": "22/tcp",
+        "volume_mount_path": "/workspace", "network_volume_id": None,
+        "public_key_sha256": "0" * 64,
+    }
+    body = json.dumps({
+        "query": "mutation { podFindAndDeployOnDemand }"
+    }).encode("utf-8")
+    return {
+        "schema": "fidelity-suite/runpod-prepared-create.v1",
+        "request_identity": identity,
+        "graphql_body_sha256": hashlib.sha256(body).hexdigest(),
+        "graphql_body_bytes": len(body),
+        "graphql_body_base64": base64.b64encode(body).decode("ascii"),
+    }
 
 
-MC = load_mc()
-from fidelity.jlapi import JLError  # noqa: E402
+def begin(store, digit, provider="runpod", pre=()):
+    prepared = store.begin_create(
+        job_hash=digit * 64,
+        provider=provider,
+        request={"gpu": "A100", "count": 1},
+        pre_create_resources=pre,
+        create_deadline_epoch=store.clock() + 60,
+        workload_deadline_epoch=store.clock() + 3600,
+    )
+    return store.record_post_intent(prepared)
 
 
-class Inst:
-    def __init__(self, machine_id, name="", status="running"):
-        self.machine_id, self.name, self.status = machine_id, name, status
-        self.fs_id = None
+def concurrent_begin(root, start, queue):
+    store = LeaseStore(Path(root))
+    start.wait()
+    try:
+        ref = begin(store, "a")
+        queue.put(("created", ref.path.name))
+    except Exception as exc:  # result is asserted by the parent
+        queue.put((type(exc).__name__, str(exc)))
 
 
-class FakeJL:
-    """A provider that behaves exactly as each case instructs."""
+def lease_core_cases():
+    print("== lease-v2 collision, generation, and response-lost reconciliation ==")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        store = LeaseStore(root / "collision")
+        first = begin(store, "a")
+        check("full hash and independent 96-bit attempt name the lease file",
+              first.path.name.startswith("a" * 64 + ".")
+              and len(first.attempt_id) == 24)
 
-    def __init__(self, instances=(), *, destroy_raises=False,
-                 destroy_is_noop=False, lag_listings=0):
+        prepared_store = LeaseStore(root / "prepared")
+        prepared = prepared_store.begin_create(
+            job_hash="7" * 64, provider="runpod",
+            request={"gpu": "A100"}, pre_create_resources=[],
+            create_deadline_epoch=prepared_store.clock() + 60,
+            workload_deadline_epoch=prepared_store.clock() + 3600)
+        check("begin_create proves no POST by returning PREPARED",
+              prepared.state == PREPARED)
+        cancelled = prepared_store.cancel_prepared(
+            prepared, {"reason": "controller failed before POST intent"})
+        check("PREPARED can close without absence or billing claims",
+              cancelled.state == TERMINAL
+              and prepared_store.read(cancelled)["provider_resource_ids"] == [])
+
+        post_store = LeaseStore(root / "post-intent")
+        post = post_store.begin_create(
+            job_hash="6" * 64, provider="runpod",
+            request={"gpu": "A100"}, pre_create_resources=[],
+            create_deadline_epoch=post_store.clock() + 60,
+            workload_deadline_epoch=post_store.clock() + 3600)
+        post = post_store.record_post_intent(post)
+        check("POST_INTENT is irrevocable and never pre-create-cancellable",
+              post.state == CREATING
+              and raises(LeaseError, lambda: post_store.cancel_prepared(
+                  post, {"reason": "must remain ambiguous"})))
+
+        safe_real = root / "safe-real"
+        safe_real.mkdir(mode=0o700)
+        symlink_root = root / "symlink-root"
+        os.symlink(str(safe_real), str(symlink_root))
+        check("lease state root symlink is refused",
+              raises(LeaseError, lambda: begin(
+                  LeaseStore(symlink_root), "5")))
+
+        lock_root = root / "lock-symlink"
+        lock_root.mkdir(mode=0o700)
+        lock_victim = root / "lock-victim"
+        lock_victim.write_text("unchanged\n", encoding="utf-8")
+        lock_victim.chmod(0o600)
+        os.symlink(
+            str(lock_victim), str(lock_root / ("%s.lock" % ("4" * 64))))
+        check("lease lock symlink is refused without touching target",
+              raises(LeaseError, lambda: begin(
+                  LeaseStore(lock_root), "4"))
+              and lock_victim.read_text(encoding="utf-8") == "unchanged\n")
+
+        lease_link_store = LeaseStore(root / "lease-symlink")
+        lease_link = begin(lease_link_store, "3")
+        lease_victim = root / "lease-victim"
+        lease_victim.write_text("{}\n", encoding="utf-8")
+        lease_victim.chmod(0o600)
+        lease_link.path.unlink()
+        os.symlink(str(lease_victim), str(lease_link.path))
+        check("symlinked lease record is refused",
+              raises(LeaseError, lambda: lease_link_store.read(lease_link)))
+
+        duplicate_store = LeaseStore(root / "duplicate-json")
+        duplicate = begin(duplicate_store, "2")
+        duplicate.path.write_text(
+            '{"schema":"x","schema":"y"}\n', encoding="utf-8")
+        duplicate.path.chmod(0o600)
+        check("duplicate lease JSON keys fail closed",
+              raises(LeaseError, lambda: duplicate_store.read(duplicate)))
+        unexpected_store = LeaseStore(root / "unexpected-key")
+        unexpected = begin(unexpected_store, "b")
+        unexpected_doc = unexpected_store.read(unexpected)
+        unexpected_doc["ignored_evidence"] = {"claim": True}
+        write_resealed(unexpected.path, unexpected_doc)
+        check("self-sealed unexpected lease keys freeze the reaper",
+              raises(LeaseError, lambda: reap_once(
+                  unexpected_store, {"runpod": EmptyProvider()})))
+        history_store = LeaseStore(root / "history-conflict")
+        history_ref = begin(history_store, "c")
+        history_doc = history_store.read(history_ref)
+        history_doc["history"][-1]["generation"] = 0
+        write_resealed(history_ref.path, history_doc)
+        check("self-sealed conflicting generation history is refused",
+              raises(LeaseError, lambda: history_store.read(history_ref)))
+        check("an unresolved job cannot be overwritten by a second attempt",
+              raises(LeaseConflict, lambda: begin(store, "a")))
+        first_name = store.read(first)["create"]["exact_name"]
+        active = store.record_create_success(
+            first, {"id": "pod-one", "name": first_name})
+        check("provider response binds exactly one new id",
+              active.state == ACTIVE
+              and store.read(active)["provider_resource_ids"] == ["pod-one"])
+        check("stale generation cannot update a newer lease",
+              raises(GenerationConflict,
+                     lambda: store.record_create_success(
+                         first, {"id": "pod-two", "name": first_name})))
+
+        mismatch_store = LeaseStore(root / "mismatched-response")
+        mismatch = begin(mismatch_store, "f")
+        mismatch = mismatch_store.record_create_success(
+            mismatch, {"id": "paid-pod", "name": "unexpected-name"})
+        mismatch_doc = mismatch_store.read(mismatch)
+        check("paid id is durable before post-create identity rejection",
+              mismatch.state == ACTIVE
+              and mismatch_doc["provider_resource_ids"] == ["paid-pod"]
+              and (mismatch_doc["history"][-1]["evidence"]["response"]
+                   ["name_matches_exact"]) is False)
+        submitted_store = LeaseStore(root / "serialized-submit")
+        submitted = begin(submitted_store, "e")
+        submitted_name = submitted_store.read(
+            submitted)["create"]["exact_name"]
+        structured_error = None
+        try:
+            submitted_store.submit_create_and_record(
+                submitted,
+                lambda: (_ for _ in ()).throw(
+                    RunPodCreateResponseError(
+                        "fixture wrong-name response", "ack-pod", {
+                            "id": "ack-pod",
+                            "name": "provider-rewrote-name",
+                            "cost_per_hr": "0.44",
+                        })))
+        except RunPodCreateResponseError as exc:
+            structured_error = exc
+        structured_ref = getattr(
+            structured_error, "durable_lease_ref", None)
+        check("structured create exception binds ID inside submission lock",
+              structured_ref is not None
+              and submitted_store.read(structured_ref)[
+                  "provider_resource_ids"] == ["ack-pod"]
+              and submitted_store.read(structured_ref)["state"] == ACTIVE)
+
+        stale_submit_store = LeaseStore(root / "stale-submit")
+        stale_submit = begin(stale_submit_store, "7")
+        stale_submit_store.reconcile_response_lost(stale_submit, [])
+        post_calls = []
+        check("stale submit intent refuses before provider POST",
+              raises(GenerationConflict, lambda:
+                  stale_submit_store.submit_create_and_record(
+                      stale_submit,
+                      lambda: post_calls.append(True) or {
+                          "id": "must-not-create",
+                          "name": submitted_name,
+                      }))
+              and post_calls == [])
+
+
+        # Two separate processes race the same full job hash.  The flock and
+        # unresolved-attempt check must admit exactly one.
+        race_root = root / "race"
+        event = multiprocessing.Event()
+        queue = multiprocessing.Queue()
+        workers = [
+            multiprocessing.Process(
+                target=concurrent_begin, args=(str(race_root), event, queue))
+            for _unused in range(2)
+        ]
+        for worker in workers:
+            worker.start()
+        event.set()
+        outcomes = [queue.get(timeout=10) for _unused in workers]
+        for worker in workers:
+            worker.join(timeout=10)
+        kinds = sorted(item[0] for item in outcomes)
+        check("per-job flock admits one concurrent creator and refuses one",
+              kinds == ["LeaseConflict", "created"], outcomes)
+
+        clock = lambda: 1000.0
+        zero_store = LeaseStore(root / "zero", clock=clock)
+        zero = begin(zero_store, "b")
+        zero_pending = zero_store.reconcile_response_lost(
+            zero, [],
+            response_error=("transport failed Authorization: Bearer "
+                            "abcdefghijklmnopqrstuvwxyz"))
+        check("lost response plus zero matches stays unresolved with redacted error",
+              zero_pending.state == CREATING and zero_pending.path.exists()
+              and "***REDACTED***" in
+              zero_store.read(zero_pending)["history"][-1]["evidence"]
+              ["response_error_redacted"])
+        zero_closed = zero_store.reconcile_response_lost(
+            zero_pending, [], create_window_closed=True)
+        zero_again = zero_store.reconcile_response_lost(
+            zero_closed, [], create_window_closed=True)
+        check("zero matches after closed create window remains unresolved forever",
+              zero_again.state == CREATING
+              and zero_again.path.exists()
+              and zero_store.read(zero_again)["history"][-1]["event"]
+              == "LOST_CREATE_RESPONSE_RECONCILED_ZERO_WINDOW_CLOSED_UNRESOLVED")
+
+        one_store = LeaseStore(root / "one", clock=clock)
+        one = begin(one_store, "c")
+        one_name = one_store.read(one)["create"]["exact_name"]
+        one_done = one_store.reconcile_response_lost(
+            one, [{"id": "new-one", "name": one_name, "status": "RUNNING"}])
+        check("lost response plus one exact new name binds that provider id",
+              one_done.state == ACTIVE
+              and one_store.read(one_done)["provider_resource_ids"] == ["new-one"])
+
+        many_store = LeaseStore(root / "many", clock=clock)
+        many = begin(many_store, "d")
+        many_name = many_store.read(many)["create"]["exact_name"]
+        many_done = many_store.reconcile_response_lost(
+            many, [{"id": "new-a", "name": many_name},
+                   {"id": "new-b", "name": many_name}])
+        check("lost response plus multiple exact new names freezes ambiguous",
+              many_done.state == AMBIGUOUS
+              and many_done.path.exists()
+              and many_store.read(many_done)["provider_resource_ids"]
+              == ["new-a", "new-b"])
+
+        wrong_store = LeaseStore(root / "wrong-family", clock=clock)
+        wrong = begin(wrong_store, "8")
+        wrong_name = wrong_store.read(wrong)["create"]["exact_name"]
+        wrong_done = wrong_store.reconcile_response_lost(
+            wrong, [{"id": "wrong-new", "name": "provider-rewrote-name"}],
+            response_provider_id="response-id")
+        wrong_evidence = wrong_store.read(wrong_done)["history"][-1]["evidence"]
+        check("response loss never targets an unattributable wrong-name pod",
+              wrong_done.state == AMBIGUOUS
+              and wrong_store.read(wrong_done)["provider_resource_ids"]
+              == ["response-id"]
+              and wrong_evidence["wrong_name_new_pod_ids"] == ["wrong-new"]
+              and wrong_evidence["unattributable_wrong_name_pod_ids"]
+              == ["wrong-new"]
+              and wrong_name == wrong_store.read(wrong_done)["create"]["exact_name"])
+        acknowledged_store = LeaseStore(
+            root / "acknowledged-wrong-name", clock=clock)
+        acknowledged = begin(acknowledged_store, "5")
+        acknowledged_done = acknowledged_store.reconcile_response_lost(
+            acknowledged, [{
+                "id": "acknowledged-id",
+                "name": "provider-rewrote-name",
+                "status": "RUNNING",
+            }], response_provider_id="acknowledged-id")
+        acknowledged_doc = acknowledged_store.read(acknowledged_done)
+        acknowledged_evidence = (
+            acknowledged_doc["terminal_proof"]["ambiguous_create"])
+        acknowledged_destroying = acknowledged_store.request_destroy(
+            acknowledged_done, {"reason": "selftest cleanup"})
+        acknowledged_absent = acknowledged_store.confirm_exact_absence(
+            acknowledged_destroying, [])
+        check("acknowledged wrong-name response id remains deletable",
+              acknowledged_done.state == AMBIGUOUS
+              and acknowledged_doc["provider_resource_ids"]
+                  == ["acknowledged-id"]
+              and acknowledged_evidence[
+                  "unattributable_wrong_name_pod_ids"] == []
+              and acknowledged_absent.state == ABSENCE_CONFIRMED)
+        wrong_only_store = LeaseStore(root / "wrong-only-family", clock=clock)
+        wrong_only = begin(wrong_only_store, "6")
+        wrong_only_done = wrong_only_store.reconcile_response_lost(
+            wrong_only,
+            [{"id": "not-ours", "name": "unrelated-concurrent-pod"}])
+        wrong_only_doc = wrong_only_store.read(wrong_only_done)
+        check("wrong-name-only delta freezes without a cleanup target",
+              wrong_only_done.state == AMBIGUOUS
+              and wrong_only_doc["provider_resource_ids"] == []
+              and wrong_only_doc["terminal_proof"]["ambiguous_create"]
+              ["unattributable_wrong_name_pod_ids"] == ["not-ours"])
+
+        volume_store = LeaseStore(root / "volume-family", clock=clock)
+        volume = begin(volume_store, "9")
+        volume_done = volume_store.reconcile_response_lost(
+            volume, [], network_volumes=[
+                {"id": "surprise-volume", "name": "unexpected"}])
+        check("surprise network-volume delta remains ambiguous blocker",
+              volume_done.state == AMBIGUOUS
+              and raises(
+                  LeaseError,
+                  lambda: volume_store.confirm_exact_absence(volume_done, []))
+              and volume_store.read(volume_done)["terminal_proof"]
+              ["ambiguous_create"]["new_network_volume_ids"]
+              == ["surprise-volume"])
+        post_store = LeaseStore(root / "post-create-family", clock=clock)
+        post_ref = begin(post_store, "7")
+        post_name = post_store.read(post_ref)["create"]["exact_name"]
+        post_ref = post_store.record_create_success(
+            post_ref, {"id": "intended-pod", "name": post_name})
+        post_ref = post_store.bind_post_create_inventory(
+            post_ref,
+            [{"id": "intended-pod", "name": post_name},
+             {"id": "extra-pod", "name": "provider-extra"}],
+            network_volumes=[{"id": "extra-volume", "name": "surprise"}])
+        post_doc = post_store.read(post_ref)
+        check("post-create anomalies target only the attributable pod",
+              post_ref.state == AMBIGUOUS
+              and post_doc["provider_resource_ids"] == ["intended-pod"]
+              and post_doc["terminal_proof"]["ambiguous_create"]
+              ["unattributable_wrong_name_pod_ids"] == ["extra-pod"]
+              and post_doc["terminal_proof"]["ambiguous_create"]
+              ["new_network_volume_ids"] == ["extra-volume"])
+
+
+def store_or(document, *keys):
+    value = document
+    for key in keys:
+        value = (value or {}).get(key)
+    return value
+
+
+class OutageProvider:
+    def list_instances(self):
+        raise RunPodError("provider unavailable")
+
+
+class EmptyProvider:
+    def list_instances(self):
+        return []
+
+    def reconcile_billing(self, lease):
+        return {"reconciled": True, "provider": lease["create"]["provider"],
+                "evidence": "authoritative empty-create billing query"}
+
+class StatefulProvider:
+    def __init__(
+            self, instances, account_id="acct-test", *,
+            rest_instances=None, network_volumes=None,
+            inventory_complete=True):
         self.instances = list(instances)
-        self.destroy_raises = destroy_raises
-        self.destroy_is_noop = destroy_is_noop
-        self.lag_listings = lag_listings   # listings that still show a
-        self.destroyed = []                # destroyed instance (P7)
-        self._lagging = {}
+        self.rest_instances = list(
+            instances if rest_instances is None else rest_instances)
+        self.network_volumes = list(network_volumes or [])
+        self.destroyed = []
+        self.account_id = account_id
+        self.billing_reads = 0
+        self.inventory_complete = inventory_complete
+
+    def status(self):
+        return {"id": self.account_id, "clientBalance": "100.00"}
 
     def list_instances(self):
-        out = list(self.instances)
-        for mid, left in list(self._lagging.items()):
-            if left > 0:
-                out.append(Inst(mid, status="running"))
-                self._lagging[mid] = left - 1
-        return out
+        return list(self.instances)
 
-    def destroy(self, mid):
-        if self.destroy_raises:
-            raise JLError("api said no")
-        self.destroyed.append(mid)
-        if self.destroy_is_noop:
-            return {}
-        self.instances = [i for i in self.instances
-                          if str(i.machine_id) != str(mid)]
-        if self.lag_listings:
-            self._lagging[mid] = self.lag_listings
+    def chargeable_inventory(self):
+        complete = self.inventory_complete
+        return {
+            "schema": "fidelity-suite/runpod-chargeable-inventory.v1",
+            "provider": "runpod",
+            "observed_at_utc": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "complete": complete,
+            "unknown_families": [] if complete else ["pods"],
+            "families": {
+                "pods": {
+                    "complete": complete,
+                    "source": "test REST pods",
+                    "resources": list(self.rest_instances) if complete else [],
+                },
+                "network_volumes": {
+                    "complete": True,
+                    "source": "test REST network volumes",
+                    "resources": list(self.network_volumes),
+                },
+            },
+        }
+
+    def destroy(self, provider_id):
+        self.destroyed.append(str(provider_id))
+        self.instances = [
+            item for item in self.instances
+            if str(item["id"]) != str(provider_id)
+        ]
+        self.rest_instances = [
+            item for item in self.rest_instances
+            if str(item["id"]) != str(provider_id)
+        ]
+
+    def reconcile_billing(self, lease):
+        self.billing_reads += 1
+        return {
+            "reconciled": True,
+            "provider": lease["create"]["provider"],
+            "provider_resource_ids": lease["provider_resource_ids"],
+            "total_amount": "3.00",
+            "evidence": {
+                "schema": "fidelity-suite/runpod-billing-retrieval.v1",
+                "retrieval_id": "%024x" % self.billing_reads,
+                "retrieved_at_utc": "1970-01-01T01:00:00Z",
+            },
+        }
+
+class PartialThenIncreasesProvider(StatefulProvider):
+    def reconcile_billing(self, lease):
+        self.billing_reads += 1
+        return {
+            "reconciled": True,
+            "provider": lease["create"]["provider"],
+            "provider_resource_ids": lease["provider_resource_ids"],
+            "total_amount": str(self.billing_reads),
+            "evidence": {
+                "schema": "fidelity-suite/runpod-billing-retrieval.v1",
+                "retrieval_id": "%024x" % self.billing_reads,
+                "retrieved_at_utc": "1970-01-01T01:00:00Z",
+            },
+        }
+
+
+def copy_reaper_source_tree(destination):
+    destination = Path(destination)
+    destination.mkdir(mode=0o700)
+    fidelity = destination / "fidelity"
+    fidelity.mkdir(mode=0o700)
+    shutil.copy2(ROOT / "bin" / "reap_cloud_leases.py",
+                 destination / "reap_cloud_leases.py")
+    for name in (
+            "__init__.py", "cloudlease.py", "campaign.py", "common.py",
+            "runpodapi.py", "jlapi.py", "sshbase.py"):
+        shutil.copy2(ROOT / "bin" / "fidelity" / name, fidelity / name)
+    for path in [destination / "reap_cloud_leases.py"] + list(
+            fidelity.iterdir()):
+        path.chmod(0o644)
+    return destination / "reap_cloud_leases.py"
+
+
+def reaper_cases():
+    print("\n== exact absence, EXITED-is-live, and provider isolation ==")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+
+        prepared_reaper_store = LeaseStore(root / "prepared-reaper")
+        prepared_reaper = prepared_reaper_store.begin_create(
+            job_hash="5" * 64, provider="runpod",
+            request={"gpu": "A100"}, pre_create_resources=[],
+            create_deadline_epoch=prepared_reaper_store.clock() + 60,
+            workload_deadline_epoch=prepared_reaper_store.clock() + 3600,
+            controller_pid=2 ** 30)
+        prepared_result = reap_once(
+            prepared_reaper_store, {}, now=1001.0)
+        check("reaper cancels PREPARED without consulting provider inventory",
+              prepared_reaper_store.read(prepared_reaper)["state"] == TERMINAL
+              and prepared_result.ok)
+        live_store = LeaseStore(
+            root / "prepared-live", clock=lambda: 1000.0)
+        live_prepared = live_store.begin_create(
+            job_hash="6" * 64, provider="runpod",
+            request={"gpu": "A100"}, pre_create_resources=[],
+            create_deadline_epoch=1060, workload_deadline_epoch=4600,
+            controller_pid=os.getpid())
+        live_result = reap_once(live_store, {}, now=1001.0)
+        check("live same-UID PREPARED controller is never cancelled",
+              live_store.read(live_prepared)["state"] == PREPARED
+              and live_result.ok
+              and any(action["action"]
+                      == "prepared-controller-active-deferred"
+                      for action in live_result.actions))
+        expired_live_result = reap_once(live_store, {}, now=2000.0)
+        check("expired PREPARED deadline cannot race a live controller",
+              live_store.read(live_prepared)["state"] == PREPARED
+              and expired_live_result.ok
+              and any(action["action"]
+                      == "prepared-controller-active-deferred"
+                      for action in expired_live_result.actions))
+        unknown_store = LeaseStore(
+            root / "prepared-owner-unknown", clock=lambda: 1000.0)
+        unknown_prepared = unknown_store.begin_create(
+            job_hash="3" * 64, provider="runpod",
+            request={"gpu": "A100"}, pre_create_resources=[],
+            create_deadline_epoch=1001, workload_deadline_epoch=4600,
+            controller_pid=None)
+        unknown_result = reap_once(unknown_store, {}, now=2000.0)
+        check("unknown PREPARED owner state defers indefinitely without spend",
+              unknown_store.read(unknown_prepared)["state"] == PREPARED
+              and unknown_result.ok
+              and any(action["action"]
+                      == "prepared-controller-active-deferred"
+                      for action in unknown_result.actions))
+        orphan_ledger_path = root / "orphan-campaign.json"
+        CampaignLedger.create(
+            str(orphan_ledger_path), "100", "10", "2",
+            max_concurrent_attempts=2, provider="runpod",
+            provider_account_id="acct-test")
+        orphan_store = LeaseStore(
+            root / "orphan-prepared", clock=lambda: 1000.0)
+        orphan_job = "4" * 64
+        orphan_attempt = "d" * 24
+        orphan_name = "fidcloud-%s-a%s" % (
+            orphan_job, orphan_attempt)
+        orphan_request = {
+            "attempt_key": orphan_attempt,
+            "campaign_attempt_key": attempt_key(
+                orphan_job, orphan_attempt),
+            "campaign_ledger": orphan_ledger_path.name,
+            "provider": "runpod",
+            "provider_account_id": "acct-test",
+            "gpu_type": "A100", "normalized_gpu": "A100",
+            "num_gpus": 1, "secure_cloud": True,
+            "storage_gb": 100, "remote_root": "/workspace/f",
+            "engine_root": "/workspace/e", "container_disk_gb": 20,
+            "image": "image", "min_vcpu_count": 4,
+            "min_memory_gb": 16, "workload_contract": {},
+            "offer": "on-demand", "network_volume": None,
+            "terminate_after": "2030-01-02T03:04:05Z", "quote": {},
+            "pre_create_safety": server_time_fixture(),
+            "execution_contract_sha256": "d" * 64,
+            "grounding_bundle": {
+                "schema": "fidelity-suite/grounding-bundle.v1",
+                "archive_sha256": "e" * 64,
+                "archive_bytes": 1,
+                "manifest_sha256": "f" * 64,
+            },
+            "prepared_create": prepared_create_fixture(
+                name=orphan_name, gpu="A100", count=1,
+                volume_gb=100, container_disk_gb=20,
+                min_vcpu=4, min_ram_gb=16, image="image",
+                terminate_after="2030-01-02T03:04:05Z"),
+        }
+        orphan_ref = orphan_store.begin_create(
+            job_hash=orphan_job, provider="runpod",
+            request=orphan_request, pre_create_resources=[],
+            attempt_id=orphan_attempt, controller_pid=2 ** 30,
+            create_deadline_epoch=1060,
+            workload_deadline_epoch=4600)
+        orphan_result = reap_once(orphan_store, {}, now=1001.0)
+        orphan_document = orphan_store.read(orphan_ref)
+        check("crash after PREPARED but before campaign reserve closes safely",
+              orphan_result.ok
+              and orphan_document["state"] == TERMINAL
+              and orphan_document["create"]["controller_pid"] == 2 ** 30
+              and CampaignLedger(
+                  str(orphan_ledger_path), "runpod",
+                  "acct-test").snapshot()["attempts"] == {})
+        partial_store = LeaseStore(root / "partial-billing", clock=lambda: 1000.0)
+        partial_ref = begin(partial_store, "0")
+        partial_name = partial_store.read(partial_ref)["create"]["exact_name"]
+        partial_ref = partial_store.record_create_success(
+            partial_ref, {"id": "partial-pod", "name": partial_name})
+        partial_ref = partial_store.confirm_exact_absence(partial_ref, [])
+        partial_result = reap_once(
+            partial_store,
+            {"runpod": PartialThenIncreasesProvider([], "acct-test")},
+            now=1301.0)
+        check("partial billing that increases across retrievals stays reserved",
+              partial_store.read(partial_ref)["state"] == ABSENCE_CONFIRMED
+              and partial_store.read(partial_ref)["billing_reconciliation"] is None
+              and any("changed between stabilization retrievals"
+                      in failure["error"]
+                      for failure in partial_result.failures))
+        store = LeaseStore(root / "exited", clock=lambda: 1000.0)
+        ref = begin(store, "e")
+        exact_name = store.read(ref)["create"]["exact_name"]
+        ref = store.record_create_success(
+            ref, {"id": "pod-exited", "name": exact_name})
+        still_live = store.confirm_exact_absence(
+            ref, [{"id": "pod-exited", "name": "anything", "status": "EXITED"}])
+        check("EXITED remains live while its exact id is still listed",
+              still_live.state == ACTIVE
+              and still_live.path.exists()
+              and store.read(still_live)["history"][-1]["event"]
+              == "EXACT_IDS_STILL_LISTED")
+
+        exited_provider = StatefulProvider([
+            {"id": "pod-exited", "name": exact_name, "status": "EXITED"}])
+        exited_result = reap_once(
+            store, {"runpod": exited_provider}, now=1001.0)
+        check("listed EXITED is deleted immediately; settlement awaits billing stabilization",
+              exited_provider.destroyed == ["pod-exited"]
+              and store.read(still_live)["state"] == ABSENCE_CONFIRMED
+              and any(action["action"] == "billing-stabilization-waiting"
+                      for action in exited_result.actions)
+              and exited_result.ok, exited_result.to_dict())
+        disagreement_store = LeaseStore(
+            root / "graphql-rest-disagreement", clock=lambda: 1000.0)
+        disagreement_ref = begin(disagreement_store, "7")
+        disagreement_name = disagreement_store.read(
+            disagreement_ref)["create"]["exact_name"]
+        disagreement_ref = disagreement_store.record_create_success(
+            disagreement_ref,
+            {"id": "rest-only-pod", "name": disagreement_name})
+        disagreement_provider = StatefulProvider(
+            [], rest_instances=[{
+                "id": "rest-only-pod", "name": disagreement_name,
+                "status": "RUNNING"}])
+        active_disagreement = reap_once(
+            disagreement_store, {"runpod": disagreement_provider}, now=1001.0)
+        check("REST-live GraphQL omission cannot confirm ACTIVE absence",
+              disagreement_store.read(disagreement_ref)["state"] == ACTIVE
+              and disagreement_provider.destroyed == []
+              and active_disagreement.ok)
+        disagreement_ref = disagreement_store.request_destroy(
+            disagreement_ref, {
+                "reason": "deterministic disagreement cleanup",
+                "provider_ids": ["rest-only-pod"],
+            })
+        destroying_disagreement = reap_once(
+            disagreement_store, {"runpod": disagreement_provider}, now=1001.0)
+        check("DESTROYING uses REST-only exact id and later confirms both views",
+              disagreement_provider.destroyed == ["rest-only-pod"]
+              and disagreement_store.read(disagreement_ref)["state"]
+              == ABSENCE_CONFIRMED
+              and destroying_disagreement.ok)
+        conflict_provider = StatefulProvider(
+            [{"id": "conflict-pod", "name": "graphql-name",
+              "status": "RUNNING"}],
+            rest_instances=[{
+                "id": "conflict-pod", "name": "rest-name",
+                "status": "RUNNING"}])
+        check("direct cleanup refuses GraphQL/REST identity disagreement",
+              raises(
+                  LeaseError,
+                  lambda: runpod_authoritative_listing(
+                      conflict_provider, conflict_provider.list_instances(),
+                      "acct-test",
+                      inventory=conflict_provider.chargeable_inventory())))
+
+        acknowledged_store = LeaseStore(
+            root / "acknowledged-rest-duplicate", clock=lambda: 1000.0)
+        acknowledged_ref = begin(acknowledged_store, "a")
+        acknowledged_name = acknowledged_store.read(
+            acknowledged_ref)["create"]["exact_name"]
+        acknowledged_ref = acknowledged_store.record_create_success(
+            acknowledged_ref,
+            {"id": "acknowledged-pod", "name": acknowledged_name})
+        acknowledged_provider = StatefulProvider(
+            [{"id": "acknowledged-pod", "name": acknowledged_name,
+              "status": "RUNNING"}],
+            rest_instances=[
+                {"id": "acknowledged-pod", "name": acknowledged_name,
+                 "status": "RUNNING"},
+                {"id": "rest-only-duplicate", "name": acknowledged_name,
+                 "status": "RUNNING"},
+            ])
+        acknowledged_union, unused_proof = runpod_authoritative_listing(
+            acknowledged_provider, acknowledged_provider.list_instances(),
+            "acct-test",
+            inventory=acknowledged_provider.chargeable_inventory())
+        acknowledged_ref = acknowledged_store.bind_post_create_inventory(
+            acknowledged_ref, acknowledged_union)
+        check("acknowledged create tracks REST-only exact-name duplicate",
+              acknowledged_ref.state == AMBIGUOUS
+              and acknowledged_store.read(acknowledged_ref)[
+                  "provider_resource_ids"]
+              == ["acknowledged-pod", "rest-only-duplicate"])
+
+        response_lost_store = LeaseStore(
+            root / "response-lost-rest-only", clock=lambda: 1000.0)
+        response_lost_ref = begin(response_lost_store, "b")
+        response_lost_name = response_lost_store.read(
+            response_lost_ref)["create"]["exact_name"]
+        response_lost_provider = StatefulProvider(
+            [], rest_instances=[{
+                "id": "rest-only-response-lost",
+                "name": response_lost_name, "status": "RUNNING"}])
+        response_lost_result = reap_once(
+            response_lost_store, {"runpod": response_lost_provider},
+            now=1001.0)
+        check("response-lost create tracks REST-only exact-name candidate",
+              response_lost_store.read(response_lost_ref)["state"] == ACTIVE
+              and response_lost_store.read(response_lost_ref)[
+                  "provider_resource_ids"] == ["rest-only-response-lost"]
+              and response_lost_result.ok)
+
+        wrong_rest_store = LeaseStore(
+            root / "response-lost-rest-wrong-name", clock=lambda: 1000.0)
+        wrong_rest_ref = begin(wrong_rest_store, "c")
+        wrong_rest_provider = StatefulProvider(
+            [], rest_instances=[{
+                "id": "rest-only-wrong-name",
+                "name": "unrelated-name", "status": "RUNNING"}])
+        wrong_rest_result = reap_once(
+            wrong_rest_store, {"runpod": wrong_rest_provider}, now=1001.0)
+        wrong_rest_document = wrong_rest_store.read(wrong_rest_ref)
+        check("REST-only wrong-name delta remains unbound and blocking",
+              wrong_rest_document["state"] == AMBIGUOUS
+              and wrong_rest_document["provider_resource_ids"] == []
+              and wrong_rest_document["terminal_proof"]["ambiguous_create"]
+                  ["unattributable_wrong_name_pod_ids"]
+                  == ["rest-only-wrong-name"]
+              and not wrong_rest_result.ok)
+        volume_rest_store = LeaseStore(
+            root / "response-lost-rest-volume", clock=lambda: 1000.0)
+        volume_rest_ref = begin(volume_rest_store, "d")
+        volume_rest_provider = StatefulProvider(
+            [], rest_instances=[], network_volumes=[{
+                "id": "rest-only-volume", "name": "persistent-volume"}])
+        volume_rest_result = reap_once(
+            volume_rest_store, {"runpod": volume_rest_provider}, now=1001.0)
+        volume_rest_document = volume_rest_store.read(volume_rest_ref)
+        check("response-loss classification includes exact REST volume family",
+              volume_rest_document["state"] == AMBIGUOUS
+              and volume_rest_document["provider_resource_ids"] == []
+              and volume_rest_document["terminal_proof"]["ambiguous_create"]
+                  ["new_network_volume_ids"] == ["rest-only-volume"]
+              and not volume_rest_result.ok)
+
+        legacy_store = LeaseStore(
+            root / "legacy-absence-disagreement", clock=lambda: 1000.0)
+        legacy_ref = begin(legacy_store, "8")
+        legacy_name = legacy_store.read(legacy_ref)["create"]["exact_name"]
+        legacy_ref = legacy_store.record_create_success(
+            legacy_ref, {"id": "legacy-rest-pod", "name": legacy_name})
+        legacy_ref = legacy_store.confirm_exact_absence(legacy_ref, [])
+        legacy_provider = StatefulProvider(
+            [], rest_instances=[{
+                "id": "legacy-rest-pod", "name": legacy_name,
+                "status": "RUNNING"}])
+        legacy_result = reap_once(
+            legacy_store, {"runpod": legacy_provider}, now=1301.0)
+        legacy_document = legacy_store.read(legacy_ref)
+        check("legacy false absence reopens, deletes, and terminally reconciles",
+              legacy_provider.destroyed == ["legacy-rest-pod"]
+              and legacy_document["state"] == TERMINAL
+              and any(event["event"] == "ABSENCE_PROOF_REVOKED"
+                      for event in legacy_document["history"])
+              and legacy_result.ok and not legacy_result.unresolved,
+              legacy_result.to_dict())
+        account_store = LeaseStore(
+            root / "account-binding", clock=lambda: 1000.0)
+        account_ref = account_store.begin_create(
+            job_hash="9" * 64, provider="runpod",
+            request={
+                "attempt_key": "a" * 24,
+                "campaign_attempt_key": "attempt-account",
+                "campaign_ledger": "campaign.json",
+                "provider": "runpod",
+                "provider_account_id": "acct-test",
+                "gpu_type": "A100", "normalized_gpu": "A100",
+                "num_gpus": 1, "secure_cloud": True,
+                "storage_gb": 100, "remote_root": "/workspace/f",
+                "engine_root": "/workspace/e", "container_disk_gb": 20,
+                "image": "image", "min_vcpu_count": 4,
+                "min_memory_gb": 16, "workload_contract": {},
+                "offer": "on-demand", "network_volume": None,
+                "terminate_after": "2030-01-02T03:04:05Z", "quote": {},
+                "pre_create_safety": server_time_fixture(),
+                "execution_contract_sha256": "d" * 64,
+                "grounding_bundle": {
+                    "schema": "fidelity-suite/grounding-bundle.v1",
+                    "archive_sha256": "e" * 64,
+                    "archive_bytes": 1,
+                    "manifest_sha256": "f" * 64,
+                },
+                "prepared_create": prepared_create_fixture(
+                    name="fidcloud-%s-a%s" % ("9" * 64, "a" * 24),
+                    gpu="A100", count=1, volume_gb=100,
+                    container_disk_gb=20, min_vcpu=4, min_ram_gb=16,
+                    image="image",
+                    terminate_after="2030-01-02T03:04:05Z"),
+            },
+            pre_create_resources=[],
+            attempt_id="a" * 24,
+            create_deadline_epoch=1060, workload_deadline_epoch=4600)
+        account_ref = account_store.record_post_intent(account_ref)
+        coordinates = campaign_coordinates(
+            account_store.read(account_ref), account_store.root)
+        check("campaign locator resolves a safe leaf beside the lease root",
+              coordinates == (
+                  account_store.root.parent / "campaign.json",
+                  "attempt-account"))
+        account_ref = account_store.record_create_success(
+            account_ref, {"id": "pod-account", "name":
+                          account_store.read(account_ref)["create"]["exact_name"]})
+        wrong_account = StatefulProvider(
+            [{"id": "pod-account", "name": "anything"}],
+            account_id="other-account")
+        account_result = reap_once(
+            account_store, {"runpod": wrong_account}, now=1001.0)
+        check("provider account mismatch freezes deletion and remains unresolved",
+              wrong_account.destroyed == []
+              and account_store.read(account_ref)["state"] == ACTIVE
+              and not account_result.ok
+              and account_ref.path.name in account_result.unresolved)
+        retained_provider = StatefulProvider(
+            [{"id": "pod-account", "name": "anything", "status": "RUNNING"}],
+            account_id="acct-test")
+        retained_result = reap_once(
+            account_store, {"runpod": retained_provider}, now=5000.0)
+        retained_document = account_store.read(account_ref)
+        check("running pod survives workload deadline through retrieval reserve",
+              retained_provider.destroyed == []
+              and retained_document["state"] == ACTIVE
+              and retained_document["create"]["reap_deadline_utc"]
+              == retained_document["create"]["request"]["terminate_after"]
+              and retained_document["create"]["reap_deadline_epoch"]
+              > retained_document["create"]["workload_deadline_epoch"]
+              and retained_result.ok)
+
+        ambiguous_store = LeaseStore(
+            root / "ambiguous-cleanup", clock=lambda: 1000.0)
+        ambiguous = begin(ambiguous_store, "2")
+        ambiguous_name = ambiguous_store.read(ambiguous)["create"]["exact_name"]
+        ambiguous = ambiguous_store.reconcile_response_lost(
+            ambiguous,
+            [{"id": "candidate-b", "name": ambiguous_name, "status": "RUNNING"},
+             {"id": "candidate-a", "name": ambiguous_name, "status": "EXITED"}])
+        ambiguous_provider = StatefulProvider([
+            {"id": "candidate-a", "name": ambiguous_name, "status": "EXITED"},
+            {"id": "candidate-b", "name": ambiguous_name, "status": "RUNNING"}])
+        ambiguous_result = reap_once(
+            ambiguous_store, {"runpod": ambiguous_provider}, now=1001.0)
+        ambiguous_doc = ambiguous_store.read(ambiguous)
+        check("ambiguous create deletes every attributable candidate; settlement waits",
+              ambiguous_provider.destroyed == ["candidate-a", "candidate-b"]
+              and ambiguous_doc["state"] == ABSENCE_CONFIRMED
+              and ambiguous_doc["terminal_proof"]["ambiguous_create"]
+              ["new_exact_name_ids"] == ["candidate-a", "candidate-b"]
+              and any(action["action"] == "billing-stabilization-waiting"
+                      for action in ambiguous_result.actions)
+              and ambiguous_result.ok, ambiguous_result.to_dict())
+        check("empty provider ids are rejected as incomplete inventory",
+              raises(LeaseError, lambda: begin(
+                  LeaseStore(root / "empty-id", clock=lambda: 1000.0),
+                  "3", pre=[{"id": "", "name": "invalid"}])))
+
+        late_store = LeaseStore(
+            root / "late-create", clock=lambda: 1000.0)
+        late = begin(late_store, "4")
+        late = late_store.reconcile_response_lost(
+            late, [], create_window_closed=True)
+        late = late_store.reconcile_response_lost(
+            late, [], create_window_closed=True)
+        late_name = late_store.read(late)["create"]["exact_name"]
+        late_provider = StatefulProvider([
+            {"id": "late-pod", "name": late_name, "status": "RUNNING"}])
+        late_result = reap_once(
+            late_store, {"runpod": late_provider}, now=5000.0)
+        check("late appearance after repeated zero listings binds then destroys",
+              late_provider.destroyed == ["late-pod"]
+              and late_store.read(late)["state"] == TERMINAL
+              and not late_result.unresolved,
+              late_result.to_dict())
+
+        mixed = LeaseStore(root / "mixed", clock=lambda: 1000.0)
+        outage = begin(mixed, "f", provider="outage")
+        healthy = begin(mixed, "1", provider="healthy")
+        result = reap_once(
+            mixed, {"outage": OutageProvider(), "healthy": EmptyProvider()},
+            now=2000.0)
+        check("one provider outage is reported and preserves its lease",
+              not result.ok and mixed.read(outage)["state"] == CREATING
+              and outage.path.name in result.unresolved, result.to_dict())
+        check("provider outage does not block another provider's continued scan",
+              mixed.read(healthy)["state"] == CREATING
+              and healthy.path.name in result.unresolved,
+              result.to_dict())
+        secure_parent = Path(tempfile.mkdtemp(
+            prefix="fidelity-reaper-test-", dir=str(Path.home())))
+        secure_parent.chmod(0o700)
+        health_dir = secure_parent / "health"
+        lease_health_dir = health_dir / "leases-v2"
+        source_parent = secure_parent / "sources"
+        source_parent.mkdir(mode=0o700)
+        unit_dir = root / "units"
+        systemctl = root / "fake-systemctl"
+        systemctl_log = root / "fake-systemctl.log"
+        systemctl.write_text(
+            "#!/bin/sh\n"
+            "printf '%%s\\n' \"$*\" >> '%s'\n"
+            "if [ \"$2\" = is-enabled ]; then echo enabled; fi\n"
+            "if [ \"$2\" = is-active ]; then echo active; fi\n"
+            "if [ \"$2\" = show ]; then "
+            "printf 'Result=success\\nExecMainStatus=0\\n'; fi\n"
+            "exit 0\n" % systemctl_log, encoding="utf-8")
+        systemctl.chmod(0o700)
+        linger_yes = root / "fake-loginctl-yes"
+        linger_yes.write_text(
+            "#!/bin/sh\nprintf 'yes\\n'\n", encoding="utf-8")
+        linger_yes.chmod(0o700)
+        linger_no = root / "fake-loginctl-no"
+        linger_no.write_text(
+            "#!/bin/sh\nprintf 'no\\n'\n", encoding="utf-8")
+        linger_no.chmod(0o700)
+        source_entry = copy_reaper_source_tree(source_parent / "trusted")
+        source_command = [
+            sys.executable, str(source_entry),
+            "--provider", "runpod", "--sweep",
+            "--lease-dir", str(lease_health_dir),
+            "--reaper-state-dir", str(health_dir),
+            "--runpod-key-file", str(root / "key"),
+        ]
+        install_systemd_user_timer(
+            source_command, lease_dir=lease_health_dir,
+            provider="runpod", provider_account_id="acct-test",
+            state_dir=health_dir, unit_dir=unit_dir,
+            systemctl=str(systemctl), loginctl=str(linger_yes))
+        healthy_result = ReaperResult(
+            ok=True, actions=tuple(), failures=tuple(), unresolved=tuple())
+        health_now = time.time()
+        check("mutable process cannot call health writer directly",
+              raises(LeaseError, lambda: write_reaper_health(
+                  health_dir, healthy_result, lease_dir=lease_health_dir,
+                  provider="runpod", provider_account_id="acct-test",
+                  now=health_now))
+              and not (health_dir / "reaper-health.json").exists())
+        real_runtime_verifier = (
+            cloudlease_module.verify_reaper_control_account)
+        cloudlease_module.verify_reaper_control_account = (
+            lambda state_dir, **kwargs:
+            cloudlease_module._verified_control(
+                state_dir, lease_dir=kwargs["lease_dir"],
+                provider=kwargs["provider"],
+                provider_account_id=kwargs["provider_account_id"]))
+        try:
+            stamp_path = write_reaper_health(
+                health_dir, healthy_result, lease_dir=lease_health_dir,
+                provider="runpod", provider_account_id="acct-test",
+                now=health_now)
+        finally:
+            cloudlease_module.verify_reaper_control_account = (
+                real_runtime_verifier)
+        stamp_before_checkout_entry = stamp_path.read_bytes()
+        direct_checkout = subprocess.run(
+            source_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, timeout=30)
+        check("mutable checkout entry cannot author installed reaper health",
+              direct_checkout.returncode == 90
+              and "installed snapshot entrypoint" in direct_checkout.stderr
+              and stamp_path.read_bytes() == stamp_before_checkout_entry)
+        health_args = {
+            "state_dir": health_dir, "lease_dir": lease_health_dir,
+            "provider": "runpod", "provider_account_id": "acct-test",
+            "systemctl": str(systemctl), "now": health_now + 1,
+            "max_age_seconds": 60,
+        }
+        health = systemd_reaper_health(
+            loginctl=str(linger_yes), **health_args)
+        failed_systemctl = root / "failed-systemctl"
+        failed_systemctl.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$2\" = is-enabled ]; then echo enabled; fi\n"
+            "if [ \"$2\" = is-active ]; then echo active; fi\n"
+            "if [ \"$2\" = show ]; then "
+            "printf 'Result=exit-code\\nExecMainStatus=2\\n'; fi\n"
+            "exit 0\n", encoding="utf-8")
+        failed_systemctl.chmod(0o700)
+        failed_health_args = dict(
+            health_args, systemctl=str(failed_systemctl))
+        latest_service_failed = systemd_reaper_health(
+            loginctl=str(linger_yes), **failed_health_args)
+        stamp_raw = stamp_path.read_text(encoding="utf-8")
+        service = unit_dir / "fidelity-cloud-reaper.service"
+        service_text = service.read_text(encoding="utf-8")
+        control_manifest = json.loads(
+            (health_dir / "reaper-control.json").read_text(encoding="utf-8"))
+        source_names = {
+            Path(path).name for path in control_manifest["source_paths"]}
+        runtime_names = {
+            Path(path).name for path in control_manifest["runtime_paths"]}
+        runtime_entry = Path(control_manifest["command_argv"][3])
+        installed_entry_bytes = runtime_entry.read_bytes()
+        public_source_names = {
+            row["path"] for row in
+            health["stamp"]["control"]["source_files"]}
+        public_runtime_names = {
+            row["path"] for row in
+            health["stamp"]["control"]["runtime_files"]}
+        expected_public_names = {
+            "bin/reap_cloud_leases.py",
+            "bin/fidelity/__init__.py",
+            "bin/fidelity/cloudlease.py",
+            "bin/fidelity/campaign.py",
+            "bin/fidelity/common.py",
+            "bin/fidelity/jlapi.py",
+            "bin/fidelity/runpodapi.py",
+            "bin/fidelity/sshbase.py",
+        }
+        check("reaper health binds private snapshot, unit, account, and sources",
+              health["ok"] is True and health["control_ok"] is True
+              and health["service_last_result"]["ok"] is True
+              and health["stamp"]["control"].get("state_dir") is None
+              and str(root) not in stamp_raw
+              and {"__init__.py", "cloudlease.py", "campaign.py", "common.py",
+                   "jlapi.py", "runpodapi.py", "sshbase.py",
+                   "reap_cloud_leases.py"} == source_names == runtime_names
+              and expected_public_names
+                  == public_source_names == public_runtime_names)
+        check("service executes isolated trusted Python and snapshot bytes only",
+              control_manifest["command_argv"][:4] == [
+                  control_manifest["interpreter"]["path"], "-I", "-S",
+                  str(runtime_entry)]
+              and str(runtime_entry) in service_text
+              and str(source_entry) not in service_text
+              and '"-I"' in service_text and '"-S"' in service_text
+              and "PYTHONNOUSERSITE=1" in service_text
+              and control_manifest["runtime_root"]
+              == str(runtime_entry.parent))
+        check("installer starts immutable oneshot before health is trusted",
+              "--user start fidelity-cloud-reaper.service"
+              in systemctl_log.read_text(encoding="utf-8"))
+        check("latest failed service invalidates an older healthy stamp",
+              latest_service_failed["ok"] is False
+              and latest_service_failed["stamp_ok"] is True
+              and latest_service_failed["service_last_result"]["result"]
+                  == "exit-code"
+              and latest_service_failed["service_last_result"]
+                  ["exec_main_status"] == "2")
+        no_linger = systemd_reaper_health(
+            loginctl=str(linger_no), **health_args)
+        unavailable_linger = systemd_reaper_health(
+            loginctl=str(root / "missing-loginctl"), **health_args)
+        check("Linger=no or unavailable loginctl fails health closed",
+              no_linger["ok"] is False
+              and unavailable_linger["ok"] is False)
+        check("timer install refuses without proven login linger",
+              raises(LeaseError, lambda: install_systemd_user_timer(
+                  ["/bin/true"], lease_dir=lease_health_dir,
+                  provider="runpod", provider_account_id="acct-test",
+                  state_dir=root / "install-refusal",
+                  unit_dir=root / "refusal-units",
+                  systemctl=str(systemctl), loginctl=str(linger_no))))
+        bad_mode_entry = copy_reaper_source_tree(source_parent / "bad-mode")
+        bad_mode_entry.chmod(0o664)
+        check("reaper install refuses a group-writable source file",
+              raises(LeaseError, lambda: install_systemd_user_timer(
+                  [sys.executable, str(bad_mode_entry)],
+                  lease_dir=lease_health_dir, provider="runpod",
+                  provider_account_id="acct-test",
+                  state_dir=root / "bad-mode-state",
+                  unit_dir=root / "bad-mode-units",
+                  systemctl=str(systemctl), loginctl=str(linger_yes))))
+        writable_parent = source_parent / "writable-parent"
+        writable_parent.mkdir(mode=0o700)
+        writable_entry = copy_reaper_source_tree(writable_parent / "source")
+        writable_parent.chmod(0o770)
+        check("reaper install refuses a writable source ancestor",
+              raises(LeaseError, lambda: install_systemd_user_timer(
+                  [sys.executable, str(writable_entry)],
+                  lease_dir=lease_health_dir, provider="runpod",
+                  provider_account_id="acct-test",
+                  state_dir=root / "writable-parent-state",
+                  unit_dir=root / "writable-parent-units",
+                  systemctl=str(systemctl), loginctl=str(linger_yes))))
+        symlink_parent = source_parent / "source-link"
+        symlink_parent.symlink_to(source_entry.parent, target_is_directory=True)
+        check("reaper install refuses a symlink source ancestor",
+              raises(LeaseError, lambda: install_systemd_user_timer(
+                  [sys.executable,
+                   str(symlink_parent / "reap_cloud_leases.py")],
+                  lease_dir=lease_health_dir, provider="runpod",
+                  provider_account_id="acct-test",
+                  state_dir=root / "symlink-state",
+                  unit_dir=root / "symlink-units",
+                  systemctl=str(systemctl), loginctl=str(linger_yes))))
+        stamp_before_drift = stamp_path.read_bytes()
+        check("health writer rejects credentials for another account",
+              raises(LeaseError, lambda: write_reaper_health(
+                  health_dir, healthy_result, lease_dir=lease_health_dir,
+                  provider="runpod", provider_account_id="other-account",
+                  now=health_now + 2))
+              and stamp_path.read_bytes() == stamp_before_drift)
+        service = unit_dir / "fidelity-cloud-reaper.service"
+        service_text = service.read_text(encoding="utf-8")
+        service.write_text(service_text + "# stale\n", encoding="utf-8")
+        check("stale installed service unit fails health closed",
+              systemd_reaper_health(
+                  loginctl=str(linger_yes), **health_args)["ok"] is False)
+        service.write_text(service_text, encoding="utf-8")
+        timer_unit = unit_dir / "fidelity-cloud-reaper.timer"
+        timer_text = timer_unit.read_text(encoding="utf-8")
+        timer_unit.write_text(timer_text + "# stale\n", encoding="utf-8")
+        check("stale installed timer unit fails health closed",
+              systemd_reaper_health(
+                  loginctl=str(linger_yes), **health_args)["ok"] is False)
+        timer_unit.write_text(timer_text, encoding="utf-8")
+        source_text = source_entry.read_text(encoding="utf-8")
+        source_entry.write_text(source_text + "# source drift\n",
+                                encoding="utf-8")
+        check("source drift fails health but cannot alter installed bytes",
+              systemd_reaper_health(
+                  loginctl=str(linger_yes), **health_args)["ok"] is False
+              and runtime_entry.read_bytes() == installed_entry_bytes
+              and str(source_entry) not in service_text)
+        source_entry.write_text(source_text, encoding="utf-8")
+        wrong_state_args = dict(health_args, state_dir=root / "wrong-state")
+        check("wrong reaper state directory fails health closed",
+              systemd_reaper_health(
+                  loginctl=str(linger_yes), **wrong_state_args)["ok"] is False)
+        tampered = json.loads(stamp_path.read_text(encoding="utf-8"))
+        tampered["completed_at_epoch"] = 1001.0
+        stamp_path.write_text(json.dumps(tampered), encoding="utf-8")
+        check("tampered health stamp fails closed",
+              systemd_reaper_health(
+                  loginctl=str(linger_yes), **health_args)["ok"] is False)
+        writable_parent.chmod(0o700)
+        shutil.rmtree(secure_parent)
+
+        termination = 2000000000
+        observation = (
+            termination + MAX_PROVIDER_DEADLINE_OBSERVATION_LAG_SECONDS)
+        drill_request = {
+            "drill_mode": PROVIDER_DEADLINE_DRILL_MODE,
+            "provider_account_id": "acct-test",
+            "campaign_ledger": None, "campaign_attempt_key": None,
+            "secure_cloud": True, "offer": "on-demand", "spot": False,
+            "gpu_type_id": "NVIDIA L4", "gpu_count": 1,
+            "image_name": "runpod/pytorch", "volume_gb": 100,
+            "container_disk_gb": 100, "min_vcpu": 4, "min_ram_gb": 16,
+            "network_volume_id": None,
+            "terminate_after": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(termination)),
+            "provider_deadline_observation_until": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(observation)),
+            "pre_create_safety": server_time_fixture(),
+            "prepared_create": prepared_create_fixture(
+                name="fidcloud-%s-a%s" % ("9" * 64, "b" * 24),
+                gpu="NVIDIA L4", count=1, volume_gb=100,
+                container_disk_gb=100, min_vcpu=4, min_ram_gb=16,
+                image="runpod/pytorch",
+                terminate_after=time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(termination))),
+            "producer_checkout": {
+                "schema": "fidelity-suite/producer-checkout.v1",
+                "revision": "1" * 40,
+                "initial": {
+                    "untracked_files": "all",
+                    "status_porcelain_sha256": hashlib.sha256(b"").hexdigest(),
+                    "status_bytes": 0,
+                    "clean": True,
+                },
+                "pre_post": {
+                    "untracked_files": "all",
+                    "status_porcelain_sha256": hashlib.sha256(b"").hexdigest(),
+                    "status_bytes": 0,
+                    "clean": True,
+                },
+            },
+        }
+        drill_store = LeaseStore(
+            root / "provider-deadline", clock=lambda: 1999999000.0)
+        drill = drill_store.begin_create(
+            job_hash="9" * 64, provider="runpod", request=drill_request,
+            pre_create_resources=[],
+            attempt_id="b" * 24,
+            create_deadline_epoch=1999999060,
+            workload_deadline_epoch=termination - 10)
+        drill = drill_store.record_post_intent(drill)
+        drill_name = drill_store.read(drill)["create"]["exact_name"]
+        drill = drill_store.record_create_success(
+            drill, {"id": "pod-drill", "name": drill_name})
+        drill_provider = StatefulProvider([
+            {"id": "pod-drill", "name": drill_name, "status": "EXITED"}])
+        deferred = reap_once(
+            drill_store, {"runpod": drill_provider},
+            now=observation - 1)
+        check("provider deadline drill observes listed pod through bounded lag",
+              drill_provider.destroyed == []
+              and drill_store.read(drill)["state"] == ACTIVE
+              and any(action["action"]
+                      == "provider-deadline-observation-deferred"
+                      for action in deferred.actions))
+        expired = reap_once(
+            drill_store, {"runpod": drill_provider}, now=observation)
+        check("provider deadline drill destroys a pod remaining at exact bound",
+              drill_provider.destroyed == ["pod-drill"]
+              and not expired.unresolved)
+
+        bad_request = dict(drill_request)
+        bad_request["provider_deadline_observation_until"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(
+                termination
+                + MAX_PROVIDER_DEADLINE_OBSERVATION_LAG_SECONDS + 1))
+        bad_store = LeaseStore(
+            root / "bad-provider-deadline", clock=lambda: 1999999000.0)
+        check("overlong provider deadline observation lag fails closed",
+              raises(LeaseError, lambda: bad_store.begin_create(
+                  job_hash="8" * 64, provider="runpod",
+                  request=bad_request, pre_create_resources=[],
+                  create_deadline_epoch=1999999060,
+                  workload_deadline_epoch=termination - 10)))
+
+
+class RecordingRunPod(RunPod):
+    def __init__(self, dry=False):
+        super().__init__(dry=dry, key_file="/not/read")
+        self._key = "fixture-runpod-key"
+        self.queries = []
+
+    def _validated_ssh_public_key(self):
+        return "ssh-ed25519 AAAA arbitrary comment"
+
+    def prepare_safe_create(self, **kw):
+        prepared = super().prepare_safe_create(**kw)
+        owner = self
+
+        class FixtureResponse:
+            status = 200
+
+            class Headers:
+                @staticmethod
+                def get_content_type():
+                    return "application/json"
+
+                @staticmethod
+                def get(name):
+                    return None
+
+            headers = Headers()
+
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *unused):
+                return False
+
+            @staticmethod
+            def geturl():
+                return "https://api.runpod.io/graphql"
+
+            @staticmethod
+            def getcode():
+                return 200
+
+            def read(self, unused_limit=None):
+                return self.body
+
+        class FixtureOpener:
+            @staticmethod
+            def open(request, timeout=180):
+                query = json.loads(request.data.decode("utf-8"))["query"]
+                data = owner._gql(query, timeout=timeout)
+                return FixtureResponse(json.dumps({"data": data}).encode("utf-8"))
+
+        return replace(prepared, http_opener=FixtureOpener())
+
+    def _gql(self, query, *, timeout=60):
+        self.queries.append(query)
+        return {"podFindAndDeployOnDemand": {
+            "id": "pod-created", "name": "exact-name", "costPerHr": "1.25"}}
+
+
+class ListingRunPod(RecordingRunPod):
+    def _pods(self):
+        return [{
+            "id": "pod-exited", "name": "exact-name", "desiredStatus": "EXITED",
+            "costPerHr": "1.25", "runtime": {"uptimeInSeconds": 4, "ports": []},
+            "gpuCount": 1, "volumeInGb": 100, "containerDiskInGb": 20,
+            "networkVolumeId": None, "imageName": "image",
+            "terminateAfter": "2030-01-02T03:04:05Z",
+            "machine": {
+                "id": "host-1", "gpuTypeId": "A100",
+                "gpuDisplayName": "NVIDIA A100", "secureCloud": True,
+                "currentPricePerGpu": "1.25", "podHostId": "host-1",
+            },
+        }]
+class TransitionListingRunPod(RecordingRunPod):
+    def _gql(self, query, *, timeout=60):
+        return {"myself": {"pods": [{
+            "id": "pod-created", "name": "created-name",
+            "desiredStatus": "CREATED", "costPerHr": None,
+            "runtime": None, "gpuCount": 1, "volumeInGb": 100.0,
+            "containerDiskInGb": 20, "networkVolumeId": None,
+            "imageName": "image", "machine": None,
+        }, {
+            "id": "pod-exited-null-machine", "name": "exited-name",
+            "desiredStatus": "EXITED", "costPerHr": 0,
+            "runtime": {"uptimeInSeconds": 4.0, "ports": []},
+            "gpuCount": 1.0, "volumeInGb": "20.0",
+            "containerDiskInGb": 20.0, "networkVolumeId": None,
+            "imageName": "image", "machine": None,
+        }]}}
+
+
+
+
+class BillingRunPod(RecordingRunPod):
+    def __init__(self, response):
+        super().__init__()
+        self.response = response
+        self.billing_query = None
+
+    def _get_v2(self, path, query, *, timeout=60):
+        self.billing_query = (path, dict(query))
+        return self.response
+
+class InventoryRunPod(RecordingRunPod):
+    def __init__(self, volume_outage=False):
+        super().__init__()
+        self.volume_outage = volume_outage
+
+    def _get_v1(self, path, query=None, *, timeout=60):
+        if path == "/pods":
+            return [{
+                "id": "pod-with-volume", "name": "old-pod",
+                "desiredStatus": "EXITED", "costPerHr": "0.50",
+                "adjustedCostPerHr": "0.45",
+                "networkVolume": {
+                    "id": "volume-1", "name": "persistent", "size": 100},
+            }]
+        if self.volume_outage:
+            raise RunPodError("volume inventory unavailable")
+        return [{"id": "volume-1", "name": "persistent",
+                 "size": 100, "dataCenterId": "US-KS-2"}]
+
+class MissingPodsRunPod(RecordingRunPod):
+    def _gql(self, query, *, timeout=60):
         return {}
 
+class BidOnlyRunPod(RecordingRunPod):
+    def _gql(self, query, *, timeout=60):
+        if "lowestPrice" not in query:
+            return {"gpuTypes": [{
+                "id": "A100", "displayName": "A100", "memoryInGb": 80,
+                "communityCloud": False, "secureCloud": True,
+            }]}
+        return {"gpuTypes": [{"lowestPrice": {
+            "minimumBidPrice": "0.25",
+            "uninterruptablePrice": None,
+            "stockStatus": "High",
+        }}]}
 
-class Con:
+
+class MultiBillingRunPod(RecordingRunPod):
     def __init__(self):
-        self.lines = []
+        super().__init__()
+        self.asked = []
 
-    def _log(self, kind, *a):
-        self.lines.append("%s %s" % (kind, " ".join(str(x) for x in a)))
+    def _get_v2(self, path, query, *, timeout=60):
+        self.asked.append(query["podId"])
+        total = {"pod-a": "1.10", "pod-b": "2.20"}[query["podId"]]
+        amounts = {
+            "totalAmount": total, "gpuAmount": total,
+            "cpuAmount": "0.00", "diskAmount": "0.00",
+        }
+        start_epoch = calendar.timegm(time.strptime(
+            query["startTime"], "%Y-%m-%dT%H:%M:%SZ"))
+        end_epoch = calendar.timegm(time.strptime(
+            query["endTime"], "%Y-%m-%dT%H:%M:%SZ"))
+        resolved_start_epoch = start_epoch - start_epoch % 3600
+        resolved_end_epoch = ((end_epoch + 3599) // 3600) * 3600
+        resolved_query = dict(
+            query,
+            startTime=time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(resolved_start_epoch)),
+            endTime=time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(resolved_end_epoch)))
+        zero_amounts = {
+            "totalAmount": "0", "gpuAmount": "0",
+            "cpuAmount": "0", "diskAmount": "0",
+        }
+        records = []
+        for bucket_start in range(
+                resolved_start_epoch, resolved_end_epoch, 3600):
+            records.append(dict(
+                amounts if bucket_start == resolved_start_epoch
+                else zero_amounts,
+                podId=query["podId"],
+                startTime=time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(bucket_start)),
+                endTime=time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ",
+                    time.gmtime(bucket_start + 3600))))
+        return {
+            "records": records,
+            "metadata": {
+                "query": resolved_query, "recordCount": len(records),
+                "uniquePodCount": 1, "totals": amounts},
+        }
 
-    def say(self, *a):
-        self._log("say", *a)
 
-    def warn(self, *a):
-        self._log("warn", *a)
+class MissingSSHRunPod(RunPod):
+    def __init__(self, ssh_key):
+        super().__init__(dry=False, key_file="/not/read", ssh_key=ssh_key)
+        self.provider_calls = 0
 
-    def err(self, *a):
-        self._log("err", *a)
+    def _gql(self, query, *, timeout=60):
+        self.provider_calls += 1
+        return {}
 
-    def ok(self, *a):
-        self._log("ok", *a)
+def runpod_cases():
+    print("\n== RunPod key, deadline, mount, list, and billing contracts ==")
+    check("RunPod JSON rejects duplicate financial fields",
+          raises(RunPodError, lambda: _strict_json_loads(
+              '{"data":{"costPerHr":"1","costPerHr":"2"}}')))
+    check("RunPod JSON rejects NaN and Infinity tokens",
+          raises(RunPodError, lambda: _strict_json_loads(
+              '{"clientBalance":NaN}'))
+          and raises(RunPodError, lambda: _strict_json_loads(
+              '{"currentSpendPerHr":Infinity}')))
+    malformed_status = RecordingRunPod()
+    malformed_status._gql = lambda query, timeout=60: {
+        "myself": {"id": "acct", "clientBalance": "NaN",
+                   "currentSpendPerHr": "0"}}
+    check("RunPod status rejects non-finite account money",
+          raises(RunPodError, malformed_status.status))
+    timestamped_status = RecordingRunPod()
+    timestamped_status._gql = lambda query, timeout=60: {
+        "myself": {"id": "acct", "clientBalance": "10.5",
+                   "currentSpendPerHr": "0"}}
+    status_document = timestamped_status.status()
+    status_observed = status_document.get("observed_at_utc")
+    check("RunPod status binds a canonical controller receipt time",
+          set(status_document) == {
+              "id", "clientBalance", "currentSpendPerHr", "observed_at_utc"}
+          and isinstance(status_observed, str)
+          and time.strftime(
+              "%Y-%m-%dT%H:%M:%SZ",
+              time.strptime(status_observed, "%Y-%m-%dT%H:%M:%SZ"))
+          == status_observed)
+    injection_provider = RecordingRunPod()
+    injection_calls = len(injection_provider.queries)
+    check("injection-shaped pod id is refused before mutation construction",
+          raises(RunPodError, lambda: injection_provider.destroy(
+              'pod"})} mutation { podTerminate(input:{podId:"victim'))
+          and len(injection_provider.queries) == injection_calls)
+    check("injection-shaped GPU id is refused before create construction",
+          raises(RunPodError, lambda: RecordingRunPod(dry=True).create(
+              gpu_type='A100"})} mutation { podTerminate',
+              name="exact-name", region="secure", storage_gb=100,
+              container_disk_gb=20,
+              terminate_after="2030-01-02T03:04:05Z")))
+    hostile_catalog = RecordingRunPod()
+    catalog_calls = []
+    hostile_catalog._gql = lambda query, timeout=60: (
+        catalog_calls.append(query) or {"gpuTypes": [{
+            "id": 'A100"}) { mutation', "displayName": "bad",
+            "memoryInGb": 80, "communityCloud": False,
+            "secureCloud": True}]})
+    check("injection-shaped catalog GPU id gets no price query",
+          raises(RunPodError, hostile_catalog.gpus)
+          and len(catalog_calls) == 1)
 
-    def text(self):
-        return "\n".join(self.lines)
+    class HostileHeaders:
+        @staticmethod
+        def get_content_type():
+            return "application/json"
+
+        @staticmethod
+        def get(name):
+            if name == "Date":
+                return "Mon, 01 Jan 2024 00:00:00 GMT"
+            return None
+
+    class HostileRedirectResponse:
+        status = 200
+        headers = HostileHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *unused):
+            return False
+
+        @staticmethod
+        def geturl():
+            return "https://attacker.invalid/stolen"
+
+        @staticmethod
+        def getcode():
+            return 200
+
+        @staticmethod
+        def read(unused_limit=None):
+            return b'{"data":{"myself":{"id":"acct"}}}'
+
+    original_urlopen = runpod_module.safe_urlopen
+    redirected = RunPod(key_file="/not/read")
+    redirected._key = "runpod-hostile-redirect-secret"
+    redirect_error = ""
+    try:
+        runpod_module.safe_urlopen = (
+            lambda request, timeout=60: HostileRedirectResponse())
+        redirected.status()
+    except RunPodError as exc:
+        redirect_error = str(exc)
+    finally:
+        runpod_module.safe_urlopen = original_urlopen
+    check("cross-origin RunPod redirect fails closed without key disclosure",
+          "crossed its HTTPS origin" in redirect_error
+          and redirected._key not in redirect_error)
+    skewed = RunPod(key_file="/not/read")
+    now_epoch = time.time()
+    skewed._server_time = {
+        "schema": "fidelity-suite/runpod-server-time.v1",
+        "endpoint_origin": "https://api.runpod.io",
+        "date_header": "Mon, 01 Jan 2024 00:00:00 GMT",
+        "server_epoch": now_epoch - 31,
+        "local_received_epoch": now_epoch,
+        "local_minus_server_seconds": 31,
+    }
+    check("RunPod pre-create server-time evidence refuses clock skew",
+          raises(RunPodError, skewed.server_time_evidence))
+    skewed._server_time["local_minus_server_seconds"] = 0
+    skewed._server_time["local_received_epoch"] = now_epoch - 31
+    check("RunPod pre-create server-time evidence refuses stale Date",
+          raises(RunPodError, skewed.server_time_evidence))
+    check("RunPod sole default key path is stable and absolute",
+          os.path.isabs(DEFAULT_KEY_FILE)
+          and DEFAULT_KEY_FILE.endswith("/.config/runpod/api_key"))
+    with tempfile.TemporaryDirectory() as td:
+        key = Path(td) / "runpod.key"
+        key.write_text("secret-value\n", encoding="utf-8")
+        key.chmod(0o600)
+        check("absolute owner-only 0600 key file loads", _load_key(str(key)) == "secret-value")
+        key.chmod(0o644)
+        check("non-0600 key file is refused",
+              raises(RunPodError, lambda: _load_key(str(key))))
+        key.chmod(0o600)
+        key_link = Path(td) / "runpod-link"
+        os.symlink(str(key), str(key_link))
+        check("symlinked API key file is refused",
+              raises(RunPodError, lambda: _load_key(str(key_link))))
+        check("relative key path is refused",
+              raises(RunPodError, lambda: _load_key("runpod.key")))
+
+    redirect_prepared_provider = RecordingRunPod()
+    redirect_prepared = redirect_prepared_provider.prepare_safe_create(
+        gpu_type="A100", name="exact-name", region="secure",
+        storage_gb=100, container_disk_gb=20,
+        terminate_after="2030-01-02T03:04:05Z")
+    redirect_calls = []
+
+    class RedirectRefusalOpener:
+        @staticmethod
+        def open(request, timeout=180):
+            redirect_calls.append(bytes(request.data))
+            raise urllib.error.HTTPError(
+                request.full_url, 307, "redirect refused", {},
+                io.BytesIO(b"redirect"))
+
+    redirect_prepared = replace(
+        redirect_prepared, http_opener=RedirectRefusalOpener())
+    check("prepared create refuses redirects without resending mutation body",
+          raises(
+              RunPodError,
+              lambda: redirect_prepared_provider.submit_prepared_create(
+                  redirect_prepared))
+          and redirect_calls == [redirect_prepared.graphql_body]
+          and redirect_prepared.to_dict()["graphql_body_sha256"]
+          == hashlib.sha256(redirect_prepared.graphql_body).hexdigest())
+    provider = RecordingRunPod()
+    made = provider.create(
+        gpu_type="A100", name="exact-name", region="secure",
+        storage_gb=100, container_disk_gb=20,
+        terminate_after="2030-01-02T03:04:05Z")
+    check("SSH GraphQL create binds deadline, disks, and canonical comment-free key",
+          'terminateAfter:"2030-01-02T03:04:05Z"' in provider.queries[-1]
+          and "volumeInGb:100, containerDiskInGb:20" in provider.queries[-1]
+          and 'value:"ssh-ed25519 AAAA"'
+          in provider.queries[-1]
+          and "arbitrary comment" not in provider.queries[-1]
+          and made["storage_gb"] == 100
+          and made["container_disk_gb"] == 20)
+    dry_request = RecordingRunPod(dry=True).create(
+        gpu_type="A100", name="exact-name", region="secure",
+        storage_gb=100, container_disk_gb=20,
+        terminate_after="2030-01-02T03:04:05Z")
+    check("dry create validates and returns the exact live request identity",
+          dry_request["dry_run"] is True
+          and dry_request["request"] == made["request"])
+    safe_create = {
+        "gpu_type": "A100", "name": "exact-name", "region": "secure",
+        "storage_gb": 100, "container_disk_gb": 20,
+        "terminate_after": "2030-01-02T03:04:05Z",
+    }
+    def create_response_provider(name, cost):
+        candidate = RecordingRunPod()
+        candidate._gql = lambda query, timeout=60: {
+            "podFindAndDeployOnDemand": {
+                "id": "pod-created", "name": name, "costPerHr": cost}}
+        return candidate
+
+    null_cost = create_response_provider("exact-name", None).create(**safe_create)
+    zero_cost = create_response_provider("exact-name", 0).create(**safe_create)
+    malformed_cost = create_response_provider(
+        "exact-name", "Infinity").create(**safe_create)
+    null_name = create_response_provider(None, None).create(**safe_create)
+    wrong_name_create = create_response_provider("other-name", "1.25")
+    structured_create_errors = []
+    try:
+        wrong_name_create.create(**safe_create)
+    except RunPodCreateResponseError as exc:
+        structured_create_errors.append(exc)
+    check("exact create id acknowledges lagging response economics and name",
+          null_cost["pod_id"] == "pod-created"
+          and null_cost["cost_per_hr"] is None
+          and zero_cost["cost_per_hr"] == 0
+          and malformed_cost["cost_per_hr"] == "Infinity"
+          and null_name["name"] is None
+          and null_name["cost_per_hr"] is None)
+    with tempfile.TemporaryDirectory() as lease_td:
+        response_store = LeaseStore(Path(lease_td))
+        response_ref = begin(response_store, "d")
+        response_ref = response_store.record_create_success(
+            response_ref, null_name)
+        response_evidence = response_store.read(
+            response_ref)["history"][-1]["evidence"]["response"]
+    check("lease preserves nullable create response without inferring name",
+          response_evidence["name"] is None
+          and response_evidence["cost_per_hr"] is None
+          and response_evidence["name_matches_exact"] is False)
+    check("exact nonempty response-name mismatch alone retains cleanup id",
+          len(structured_create_errors) == 1
+          and structured_create_errors[0].provider_id == "pod-created"
+          and structured_create_errors[0].response["id"] == "pod-created")
+    complete_row = json.loads(json.dumps(ListingRunPod()._pods()[0]))
+    complete_row["id"] = "pod-created"
+    complete_row["desiredStatus"] = "RUNNING"
+    convergence_provider = ListingRunPod()
+    convergence_provider._pods = lambda: [complete_row]
+    converged = convergence_provider.validate_safe_resource_binding(
+        "pod-created", expected_name="exact-name", gpu_type_id="A100",
+        secure_cloud=True, gpu_count=1, volume_gb=100,
+        container_disk_gb=20, image_name="image",
+        terminate_after="2030-01-02T03:04:05Z")
+    check("null response cost/name can qualify only after complete live listing",
+          converged["passed"] is True
+          and converged["observed"]["name"] == "exact-name"
+          and converged["observed"]["cost_per_hr"] == "1.25")
+    attester = RecordingRunPod()
+    expected_vram = 24 * 1024 * 1024 * 1024
+    remote_now = int(time.time())
+    attester.exec_stdout = lambda machine_id, command, timeout=600: json.dumps({
+        "remote_time_epoch": remote_now,
+        "remote_time_utc": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(remote_now)),
+        "logical_cpus": 8,
+        "memtotal_bytes": 64 * 1024 * 1024 * 1024,
+        "effective_memory_bytes": 60 * 1024 * 1024 * 1024,
+        "nvidia_smi_exit_code": 0,
+        "nvidia_smi_error": "",
+        "gpus": [{
+            "index": 0, "name": "NVIDIA L4",
+            "vram_bytes": expected_vram,
+            "driver_version": "575.57",
+        }],
+        "cuda": {
+            "usable": True, "count": 1, "name": "NVIDIA L4",
+            "vram_bytes": expected_vram, "error": None,
+        },
+        "filesystems": {
+            "container": {
+                "path": "/", "mount_point": "/", "fs_type": "overlay",
+                "source": "overlay", "device": 1,
+                "total_bytes": 25_000_000_000,
+                "available_bytes": 20_000_000_000,
+            },
+            "workspace": {
+                "path": "/workspace", "mount_point": "/workspace",
+                "fs_type": "ext4", "source": "/dev/volume", "device": 2,
+                "total_bytes": 110_000_000_000,
+                "available_bytes": 100_000_000_000,
+            },
+        },
+    })
+    attestation = attester.attest_live_resource(
+        "pod-created", expected_gpu_model="NVIDIA L4",
+        expected_vram_bytes=expected_vram, min_vcpu=8, min_ram_gb=60,
+        volume_gb=100, container_disk_gb=20,
+        workspace_available_bytes_minimum=90_000_000_000,
+        container_available_bytes_minimum=15_000_000_000)
+    attestation_body = dict(attestation)
+    attestation_digest = attestation_body.pop("attestation_sha256")
+    check("SSH live resource attestation binds hardware CUDA and filesystems",
+          attestation["ok"] is True
+          and all(attestation["checks"].values())
+          and attestation_digest == hashlib.sha256(json.dumps(
+              attestation_body, sort_keys=True, separators=(",", ":"),
+              ensure_ascii=True, allow_nan=False).encode("utf-8")).hexdigest())
+    stale_attester = RecordingRunPod()
+    stale_observed = json.loads(attester.exec_stdout(
+        "pod-created", "unused"))
+    stale_observed["remote_time_epoch"] -= 3600
+    stale_observed["remote_time_utc"] = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ",
+        time.gmtime(stale_observed["remote_time_epoch"]))
+    stale_attester.exec_stdout = (
+        lambda machine_id, command, timeout=600:
+        json.dumps(stale_observed))
+    stale_attestation = stale_attester.attest_live_resource(
+        "pod-created", expected_gpu_model="NVIDIA L4",
+        expected_vram_bytes=expected_vram, min_vcpu=8, min_ram_gb=60,
+        volume_gb=100, container_disk_gb=20,
+        workspace_available_bytes_minimum=90_000_000_000,
+        container_available_bytes_minimum=15_000_000_000)
+    check("SSH live resource attestation refuses a stale pod clock",
+          stale_attestation["ok"] is False
+          and stale_attestation["checks"]["remote_clock"] is False
+          and "remote_clock" in stale_attestation["failures"])
+    low_free_checks = []
+    for role, available in (
+            ("workspace", 89_999_999_999),
+            ("container", 14_999_999_999)):
+        low_observed = json.loads(attester.exec_stdout(
+            "pod-created", "unused"))
+        low_observed["filesystems"][role]["available_bytes"] = available
+        low_attester = RecordingRunPod()
+        low_attester.exec_stdout = (
+            lambda machine_id, command, timeout=600, row=low_observed:
+            json.dumps(row))
+        low_attestation = low_attester.attest_live_resource(
+            "pod-created", expected_gpu_model="NVIDIA L4",
+            expected_vram_bytes=expected_vram, min_vcpu=8, min_ram_gb=60,
+            volume_gb=100, container_disk_gb=20,
+            workspace_available_bytes_minimum=90_000_000_000,
+            container_available_bytes_minimum=15_000_000_000)
+        check_name = "%s_available_bytes" % role
+        low_free_checks.append(
+            low_attestation["ok"] is False
+            and low_attestation["checks"][check_name] is False
+            and check_name in low_attestation["failures"])
+    check("SSH live attestation refuses low workspace and container free bytes",
+          all(low_free_checks))
+    check("dry create refuses community and spot capacity",
+          raises(RunPodError, lambda: RecordingRunPod(dry=True).create(
+              **dict(safe_create, region="community")))
+          and raises(RunPodError, lambda: RecordingRunPod(dry=True).create(
+              **dict(safe_create, spot=True)))
+          and raises(RunPodError, lambda: RecordingRunPod(dry=True).create(
+              **dict(safe_create, offer="spot"))))
+    soon = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ",
+        time.gmtime(time.time() + MIN_CREATE_SETUP_SECONDS - 30))
+    check("dry create refuses past or insufficient terminateAfter margin",
+          raises(RunPodError, lambda: RecordingRunPod(dry=True).create(
+              **dict(safe_create, terminate_after="2000-01-01T00:00:00Z")))
+          and raises(RunPodError, lambda: RecordingRunPod(dry=True).create(
+              **dict(safe_create, terminate_after=soon))))
+    call_count = len(provider.queries)
+    control_key = RecordingRunPod(dry=True)
+    control_key._validated_ssh_public_key = (
+        lambda: "ssh-ed25519 AAAA\ninjected")
+    check("dry create rejects multi-line injected public key",
+          raises(RunPodError, lambda: control_key.create(**safe_create)))
+    check("network volume is refused before any provider call",
+          raises(RunPodError, lambda: provider.create(
+              gpu_type="A100", terminate_after="2030-01-02T03:04:05Z",
+              network_volume_id="volume-1"))
+          and len(provider.queries) == call_count)
+    check("native docker launch is refused before any provider call",
+          raises(RunPodError, lambda: provider.create(
+              gpu_type="A100", terminate_after="2030-01-02T03:04:05Z",
+              docker_cmd=["python", "run.py"]))
+          and len(provider.queries) == call_count)
+    check("non-canonical deadline is refused",
+          raises(RunPodError, lambda: provider.create(
+              gpu_type="A100", terminate_after="2030-01-02T03:04:05+00:00")))
+    check("missing explicit container disk size is refused",
+          raises(RunPodError, lambda: RunPod(dry=True).create(
+              gpu_type="A100", storage_gb=100)))
+    check("bid-only capacity is not quoted as safe on-demand capacity",
+          BidOnlyRunPod().gpus() == [])
+    check("garbage region is refused rather than silently mapped to secure",
+          raises(RunPodError, lambda: RecordingRunPod(dry=True).create(
+              gpu_type="A100", name="exact-name", region="moon",
+              storage_gb=100, container_disk_gb=20,
+              terminate_after="2030-01-02T03:04:05Z")))
+    with tempfile.TemporaryDirectory() as key_td:
+        missing_key = MissingSSHRunPod(str(Path(key_td) / "missing"))
+        check("missing SSH key pair refuses before a provider POST",
+              raises(RunPodError, lambda: missing_key.create(
+                  gpu_type="A100", name="exact-name", region="secure",
+                  storage_gb=100, container_disk_gb=20,
+                  terminate_after="2030-01-02T03:04:05Z"))
+              and missing_key.provider_calls == 0)
+    check("pod identity query requests authoritative GPU/cloud/disk/mount fields",
+          all(field in RunPod._POD_FIELDS for field in (
+              "containerDiskInGb", "volumeInGb", "networkVolumeId",
+              "gpuTypeId", "gpuDisplayName", "secureCloud",
+              "currentPricePerGpu", "podHostId")))
+
+    listed = ListingRunPod().list_lifecycle_resources()
+    check("lifecycle listing exposes exact id and EXITED status without hiding it",
+          listed[0]["id"] == "pod-exited"
+          and listed[0]["status"] == "EXITED"
+          and listed[0]["listed"] is True)
+    transition_provider = TransitionListingRunPod()
+    transition_instances = transition_provider.list_instances()
+    transition_rows = transition_provider.list_lifecycle_resources()
+    check("CREATED/EXITED rows retain exact cleanup identity with null economics",
+          [str(item.machine_id) for item in transition_instances]
+          == ["pod-created", "pod-exited-null-machine"]
+          and [item["status"] for item in transition_rows]
+          == ["CREATED", "EXITED"]
+          and transition_rows[0]["cost_per_hr"] is None
+          and transition_rows[1]["cost_per_hr"] == "0")
+    check("GraphQL Float disk fields normalize only when exactly integral",
+          transition_rows[0]["volume_gb"] == 100
+          and transition_rows[1]["volume_gb"] == 20
+          and transition_rows[1]["container_disk_gb"] == 20)
+    check("nullable listing identity still refuses scientific post-create binding",
+          raises(RunPodError, lambda:
+                 transition_provider.validate_safe_resource_binding(
+                     "pod-created", expected_name="created-name",
+                     gpu_type_id="A100", secure_cloud=True, gpu_count=1,
+                     volume_gb=100, container_disk_gb=20,
+                     image_name="image",
+                     terminate_after="2030-01-02T03:04:05Z")))
+    check("missing myself.pods is unknown, never a complete empty listing",
+          raises(RunPodError, lambda: MissingPodsRunPod().list_instances()))
+    listing_provider = ListingRunPod()
+    check("resource detail accepts exact id and never controls by name",
+          listing_provider.get("pod-exited") is not None
+          and listing_provider.get("exact-name") is None)
+    check("pause and recovery are refused even in dry mode",
+          raises(RunPodError, lambda: RunPod(dry=True).pause("pod-exited"))
+          and raises(RunPodError,
+                     lambda: RunPod(dry=True).resume("pod-exited")))
+    binding = listing_provider.validate_safe_resource_binding(
+        "pod-exited", expected_name="exact-name", gpu_type_id="A100",
+        secure_cloud=True, gpu_count=1, volume_gb=100,
+        container_disk_gb=20, image_name="image",
+        terminate_after="2030-01-02T03:04:05Z")
+    check("post-create binding verifies GPU/cloud/disks/image/name/no mount/deadline",
+          binding["passed"] is True
+          and binding["terminate_after_observable"] is True
+          and listing_provider.get("pod-exited").gpu_type == "A100")
+    check("post-create binding refuses wrong GPU identity",
+          raises(RunPodError, lambda:
+                 listing_provider.validate_safe_resource_binding(
+                     "pod-exited", expected_name="exact-name",
+                     gpu_type_id="H100", secure_cloud=True, gpu_count=1,
+                     volume_gb=100, container_disk_gb=20,
+                     image_name="image",
+                     terminate_after="2030-01-02T03:04:05Z")))
+
+    inventory = InventoryRunPod().chargeable_inventory()
+    check("chargeable inventory includes attached volume and persistent volume",
+          inventory["complete"] is True
+          and inventory["families"]["pods"]["resources"][0]
+          ["network_volume_id"] == "volume-1"
+          and inventory["families"]["network_volumes"]["resources"][0]["id"]
+          == "volume-1")
+    incomplete = InventoryRunPod(volume_outage=True).chargeable_inventory()
+    check("unavailable volume enumeration is explicit unknown, never empty",
+          incomplete["complete"] is False
+          and incomplete["unknown_families"] == ["network_volumes"]
+          and incomplete["families"]["network_volumes"]["complete"] is False)
+    bad_volume = InventoryRunPod()
+    bad_volume._get_v1 = lambda path, query=None, timeout=60: [
+        {"id": "volume-1", "size": "NaN", "costPerHr": "0.01"}]
+    duplicate_volume = InventoryRunPod()
+    duplicate_volume._get_v1 = lambda path, query=None, timeout=60: [
+        {"id": "volume-1", "size": 100},
+        {"id": "volume-1", "size": 100}]
+    bad_volume_rate = InventoryRunPod()
+    bad_volume_rate._get_v1 = lambda path, query=None, timeout=60: [
+        {"id": "volume-1", "size": 100, "costPerHr": "Infinity"}]
+    check("volume inventory rejects malformed size, rate, and duplicate ids",
+          raises(RunPodError, bad_volume.list_network_volumes)
+          and raises(RunPodError, duplicate_volume.list_network_volumes)
+          and raises(RunPodError, bad_volume_rate.list_network_volumes))
+
+    query = {"podId": "pod-1", "startTime": "2030-01-02T03:04:05Z",
+             "endTime": "2030-01-02T04:04:05Z", "bucketSize": "hour"}
+    amounts = {"totalAmount": "1.23", "gpuAmount": "1.00",
+               "cpuAmount": "0.03", "diskAmount": "0.20"}
+    resolved_query = dict(
+        query, startTime="2030-01-02T03:00:00Z",
+        endTime="2030-01-02T05:00:00Z")
+    record = dict(
+        amounts, podId="pod-1",
+        startTime="2030-01-02T03:00:00Z",
+        endTime="2030-01-02T04:00:00Z")
+    zero_record = dict(
+        {key: "0" for key in amounts}, podId="pod-1",
+        startTime="2030-01-02T04:00:00Z",
+        endTime="2030-01-02T05:00:00Z")
+    response = {
+        "records": [record, zero_record],
+        "metadata": {
+            "query": resolved_query, "recordCount": 2,
+            "uniquePodCount": 1, "totals": amounts},
+    }
+    billing = BillingRunPod(response)
+    evidence = billing.billing_history(
+        "pod-1", start_time=query["startTime"], end_time=query["endTime"])
+    check("official billing records bind snapped query and exact bucket range",
+          evidence["pod_id"] == "pod-1"
+          and evidence["records"][0]["totalAmount"] == "1.23"
+          and evidence["validated_bucket_ranges"] == [{
+              "startTime": "2030-01-02T03:00:00Z",
+              "endTime": "2030-01-02T04:00:00Z"}, {
+              "startTime": "2030-01-02T04:00:00Z",
+              "endTime": "2030-01-02T05:00:00Z"}]
+          and billing.billing_query == ("/billing/pods", query))
+    missing = BillingRunPod({
+        "records": [], "metadata": {
+            "query": resolved_query, "recordCount": 0,
+            "uniquePodCount": 0, "totals": {
+                key: "0" for key in amounts}}})
+    check("missing or lagging billing row is unresolved, never zero",
+          raises(RunPodError, lambda: missing.billing_history(
+              "pod-1", start_time=query["startTime"], end_time=query["endTime"])))
+    coverage_query = dict(query, endTime="2030-01-02T05:04:05Z")
+    coverage = json.loads(json.dumps(response))
+    coverage["records"].append(dict(
+        zero_record, startTime="2030-01-02T05:00:00Z",
+        endTime="2030-01-02T06:00:00Z"))
+    coverage["metadata"]["query"] = dict(
+        resolved_query, endTime="2030-01-02T06:00:00Z")
+    coverage["metadata"]["recordCount"] = 3
+
+    def omitted_bucket(index):
+        candidate = json.loads(json.dumps(coverage))
+        candidate["records"].pop(index)
+        candidate["metadata"]["recordCount"] = len(candidate["records"])
+        candidate["metadata"]["totals"] = {
+            key: format(sum(
+                (Decimal(str(row[key])) for row in candidate["records"]),
+                Decimal("0")), "f")
+            for key in amounts}
+        return candidate
+
+    check("billing refuses omitted first, interior, and last hour buckets",
+          all(raises(
+              RunPodError,
+              lambda index=index: BillingRunPod(
+                  omitted_bucket(index)).billing_history(
+                      "pod-1", start_time=coverage_query["startTime"],
+                      end_time=coverage_query["endTime"]))
+              for index in range(3)))
 
 
-def lease(dirpath, job_id, machine_id, deadline):
-    path = Path(dirpath) / ("%s.json" % job_id)
-    path.write_text(json.dumps({
-        "job_id": job_id, "name": "fidcloud-%s-x%s" % (job_id, "0"),
-        "machine_id": machine_id, "fs_id": None,
-        "deadline_epoch": deadline, "created_at": "t", "pid": 1}))
-    return path
+    multi = MultiBillingRunPod()
+    mismatched = json.loads(json.dumps(response))
+    mismatched["metadata"]["totals"]["totalAmount"] = "9.99"
+    overlapping = json.loads(json.dumps(response))
+    overlapping["records"].append(dict(
+        record, startTime="2030-01-02T03:00:00Z",
+        endTime="2030-01-02T04:00:00Z"))
+    overlapping["metadata"]["recordCount"] = 3
+    overlapping["metadata"]["totals"] = {
+        key: str(Decimal(value) * 2) for key, value in amounts.items()}
+    check("billing totals, record counts, overlap, and old data shape refuse",
+          raises(RunPodError, lambda: BillingRunPod(mismatched).billing_history(
+              "pod-1", start_time=query["startTime"],
+              end_time=query["endTime"]))
+          and raises(RunPodError, lambda:
+                     BillingRunPod(overlapping).billing_history(
+                         "pod-1", start_time=query["startTime"],
+                         end_time=query["endTime"]))
+          and raises(RunPodError, lambda:
+                     BillingRunPod({"data": [record], "metadata":
+                                    response["metadata"]}).billing_history(
+                         "pod-1", start_time=query["startTime"],
+                         end_time=query["endTime"])))
+    reconciled_end_epoch = int(time.time()) - 600
+    reconciled_start_epoch = reconciled_end_epoch - 3600
+    reconciled = multi.reconcile_billing({
+        "provider_resource_ids": ["pod-b", "pod-a"],
+        "create": {"pre_create_observed_at": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(reconciled_start_epoch))},
+        "history": [{"to": ABSENCE_CONFIRMED, "at": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(reconciled_end_epoch))}],
+    })
+    check("billing binds two independent identical reads for every exact id",
+          multi.asked == ["pod-a", "pod-b", "pod-a", "pod-b"]
+          and reconciled["provider_resource_ids"] == ["pod-a", "pod-b"]
+          and reconciled["total_amount"] == "3.30"
+          and len(reconciled["billing_histories"]) == 2
+          and reconciled["evidence"]["schema"]
+          == "fidelity-suite/runpod-billing-stabilization.v1"
+          and reconciled["evidence"]["first_retrieval"]["retrieval_id"]
+          != reconciled["evidence"]["second_retrieval"]["retrieval_id"])
 
 
-def sweep(jl, **kw):
-    con = Con()
-    rc = MC.reaper_sweep(con, jl=jl, sleep=lambda *_: None,
-                         confirm_attempts=3, **kw)
-    return rc, con
+def spawn_reaped_stage():
+    helper = subprocess.Popen(
+        [sys.executable, "-c",
+         "import subprocess,sys; "
+         "p=subprocess.Popen(['setsid','sleep','60']); "
+         "print(p.pid,flush=True); raise SystemExit(p.wait())"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return helper, int(helper.stdout.readline().strip())
+
+
+def watchdog_case():
+    print("\n== watchdog unrelated-process safety ==")
+    script = ROOT / "bin" / "watchdog.sh"
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td)
+        unrelated = subprocess.Popen(
+            ["setsid", "sleep", "60"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            (fs / "receipts").mkdir()
+            victim = fs / "atomic-victim"
+            victim.write_text("unchanged\n", encoding="utf-8")
+            receipt = fs / "receipts" / "watchdog-stage-pgid.json"
+            os.symlink(str(victim), str(receipt))
+            record = fs / "runtime" / "stage.pgid"
+            armed = subprocess.run(
+                ["bash", str(script), "--record-stage-pgid",
+                 str(fs), str(unrelated.pid), str(record)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                timeout=10)
+            lines = record.read_text(encoding="utf-8").splitlines()
+            changed = []
+            for line in lines:
+                if line.startswith("start_ticks="):
+                    changed.append("start_ticks=%d" % (int(line.split("=", 1)[1]) + 1))
+                else:
+                    changed.append(line)
+            record.write_text("\n".join(changed) + "\n", encoding="utf-8")
+            refused = subprocess.run(
+                ["bash", str(script), str(int(time.time()) - 1), "60",
+                 str(fs), str(record)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                timeout=10)
+            abandoned = json.loads((fs / "ABANDONED.json").read_text(encoding="utf-8"))
+            check("stale/reused PGID proof refuses signalling and leaves process alive",
+                  armed.returncode == 0 and refused.returncode == 91
+                  and unrelated.poll() is None
+                  and victim.read_text(encoding="utf-8") == "unchanged\n"
+                  and not receipt.is_symlink()
+                  and abandoned["stage_process_group_stopped"] is False,
+                  "arm=%s refuse=%s stderr=%s"
+                  % (armed.returncode, refused.returncode, refused.stderr))
+        finally:
+            if unrelated.poll() is None:
+                os.killpg(unrelated.pid, signal.SIGTERM)
+            unrelated.wait(timeout=10)
+
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td)
+        helper, stage_pid = spawn_reaped_stage()
+        try:
+            record = fs / "runtime" / "stage.pgid"
+            armed = subprocess.run(
+                ["bash", str(script), "--record-stage-pgid",
+                 str(fs), str(stage_pid), str(record)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                timeout=10)
+            heartbeat = fs / "heartbeat"
+            heartbeat.touch()
+            future = int(time.time()) + 3600
+            os.utime(str(heartbeat), (future, future))
+            stopped = subprocess.run(
+                ["bash", str(script), str(int(time.time()) + 600), "60",
+                 str(fs), str(record)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                timeout=15)
+            abandoned = json.loads(
+                (fs / "ABANDONED.json").read_text(encoding="utf-8"))
+            check("future heartbeat metadata abandons and stops exact group",
+                  armed.returncode == 0 and stopped.returncode == 0
+                  and "future" in abandoned["reason"]
+                  and abandoned["stage_process_group_stopped"] is True
+                  and not (fs / "logs" / "watchdog-seal.log").exists(),
+                  stopped.stderr)
+        finally:
+            try:
+                os.killpg(stage_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            helper.wait(timeout=10)
+
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td)
+        child_file = fs / "child.pid"
+        leader = subprocess.Popen(
+            ["setsid", "sh", "-c",
+             "sleep 60 & echo $! > %s; sleep 1" % str(child_file)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            record = fs / "runtime" / "stage.pgid"
+            armed = subprocess.run(
+                ["bash", str(script), "--record-stage-pgid",
+                 str(fs), str(leader.pid), str(record)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                timeout=10)
+            leader.wait(timeout=5)
+            stopped = subprocess.run(
+                ["bash", str(script), str(int(time.time()) - 1), "60",
+                 str(fs), str(record)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                timeout=15)
+            abandoned = json.loads(
+                (fs / "ABANDONED.json").read_text(encoding="utf-8"))
+            check("leader exit does not hide surviving children in recorded PGID",
+                  armed.returncode == 0 and stopped.returncode == 0
+                  and abandoned["stage_process_group_stopped"] is True,
+                  stopped.stderr)
+        finally:
+            try:
+                os.killpg(leader.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            if leader.poll() is None:
+                leader.wait(timeout=10)
 
 
 def main():
-    now = time.time()
-
-    with tempfile.TemporaryDirectory() as td:
-        MC.LEASE_DIR = Path(td)
-
-        # P1: stale lease -> destroy, confirm, retire, exit 0.
-        path = lease(td, "job1", 111, now - 60)
-        jl = FakeJL([Inst(111, "fidcloud-job1-x0")])
-        rc, con = sweep(jl)
-        check("P1 stale lease is destroyed, confirmed, and retired (rc 0)",
-              rc == MC.EXIT_OK and jl.destroyed == [111]
-              and not path.exists() and "confirmed gone" in con.text(),
-              con.text())
-
-        # P2: destroy raises -> lease kept, EXIT_LEAK.
-        path = lease(td, "job2", 222, now - 60)
-        jl = FakeJL([Inst(222)], destroy_raises=True)
-        rc, con = sweep(jl)
-        check("P2 a failed destroy keeps the lease and exits EXIT_LEAK",
-              rc == MC.EXIT_LEAK and path.exists()
-              and "non-zero" in con.text(), "rc=%s\n%s" % (rc, con.text()))
-        path.unlink()
-
-        # P3: destroy call succeeds, instance stays listed running.
-        path = lease(td, "job3", 333, now - 60)
-        jl = FakeJL([Inst(333)], destroy_is_noop=True)
-        rc, con = sweep(jl)
-        check("P3 an unconfirmed destroy keeps the lease and exits EXIT_LEAK",
-              rc == MC.EXIT_LEAK and path.exists()
-              and "NOT confirmed" in con.text(),
-              "rc=%s\n%s" % (rc, con.text()))
-        path.unlink()
-
-        # P4: name-only candidate must never be destroyed.
-        expired_name = MC.deadline_name("cafe0123", now - 3600)
-        jl = FakeJL([Inst(444, expired_name)])
-        rc, con = sweep(jl)
-        check("P4 an expired-looking NAME with no lease is reported, "
-              "never destroyed (rc 0)",
-              rc == MC.EXIT_OK and jl.destroyed == []
-              and "no lease of this tool authorizes" in con.text(),
-              "rc=%s destroyed=%s\n%s" % (rc, jl.destroyed, con.text()))
-
-        # P5a: implausible name deadline (epoch 1) is ignored outright.
-        jl = FakeJL([Inst(555, "fidcloud-beef0000-x1")])
-        rc, con = sweep(jl)
-        check("P5a an implausible name deadline authorizes nothing",
-              rc == MC.EXIT_OK and jl.destroyed == []
-              and "implausible" in con.text(),
-              "rc=%s\n%s" % (rc, con.text()))
-
-        # P5b: a lease with deadline 0 must not read as "expired forever".
-        path = lease(td, "job5", 666, 0)
-        jl = FakeJL([Inst(666)])
-        rc, con = sweep(jl)
-        check("P5b a lease with a nonsense deadline is skipped with a warning",
-              jl.destroyed == [] and path.exists()
-              and "implausible" in con.text(),
-              "destroyed=%s\n%s" % (jl.destroyed, con.text()))
-        path.unlink()
-
-        # P6: dry-run enumerates the destroy AND the phantom retirement,
-        # mutates nothing.
-        stale = lease(td, "job6", 777, now - 60)
-        phantom = lease(td, "job7", 888, now + 3600)   # machine not listed
-        jl = FakeJL([Inst(777)])
-        rc, con = sweep(jl, dry=True)
-        check("P6 dry-run lists the destroy and the lease retirement and "
-              "touches nothing",
-              rc == MC.EXIT_OK and jl.destroyed == []
-              and stale.exists() and phantom.exists()
-              and "WOULD destroy 777" in con.text()
-              and "WOULD retire lease job7.json" in con.text(),
-              "rc=%s\n%s" % (rc, con.text()))
-        # ... and the real run performs exactly those two mutations.
-        rc, con = sweep(jl)
-        check("P6b the real run performs exactly what dry-run announced",
-              rc == MC.EXIT_OK and jl.destroyed == [777]
-              and not stale.exists() and not phantom.exists(),
-              "rc=%s destroyed=%s\n%s" % (rc, jl.destroyed, con.text()))
-
-        # P8: a lease from ANOTHER provider is invisible to the jl backend:
-        # never destroyed (jl would aim at a same-numbered JarvisLabs box),
-        # never retired as a phantom (it is alive on a cloud jl cannot list).
-        p8 = Path(td) / "job9.json"
-        p8.write_text(json.dumps({
-            "job_id": "job9", "name": "fidcloud-job9-x0",
-            "provider": "runpod", "machine_id": "k2j9xq1abc", "fs_id": None,
-            "deadline_epoch": now - 60, "created_at": "t", "pid": 1}))
-        jl = FakeJL([])
-        rc, con = sweep(jl)
-        check("P8 an expired lease from another provider is left alone "
-              "(no destroy, no retirement)",
-              rc == MC.EXIT_OK and jl.destroyed == [] and p8.exists()
-              and "leaving it alone" in con.text(),
-              "rc=%s\n%s" % (rc, con.text()))
-        # ... and a legacy provider-less lease with a NON-NUMERIC id (the
-        # live RunPod controller writes these) is equally untouchable.
-        p8.write_text(json.dumps({
-            "job_id": "job9", "name": "fidcloud-job9-x0",
-            "machine_id": "k2j9xq1abc", "fs_id": None,
-            "deadline_epoch": now - 60, "created_at": "t", "pid": 1}))
-        jl = FakeJL([])
-        rc, con = sweep(jl)
-        check("P8b a provider-less lease with a non-numeric id is left alone",
-              rc == MC.EXIT_OK and jl.destroyed == [] and p8.exists(),
-              "rc=%s\n%s" % (rc, con.text()))
-        p8.unlink()
-
-        # P7: eventually-consistent listing -- still shown once, gone after.
-        path = lease(td, "job8", 999, now - 60)
-        jl = FakeJL([Inst(999)], lag_listings=1)
-        rc, con = sweep(jl)
-        check("P7 confirmation rides out one stale listing (rc 0)",
-              rc == MC.EXIT_OK and not path.exists()
-              and "confirmed gone" in con.text(),
-              "rc=%s\n%s" % (rc, con.text()))
-
+    lease_core_cases()
+    reaper_cases()
+    runpod_cases()
+    watchdog_case()
     print()
     if FAILED:
         print("selftest_reaper: %d FAILED" % len(FAILED))

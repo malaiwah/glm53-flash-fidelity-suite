@@ -14,7 +14,6 @@ far: the planner refuses before creating anything.  This is the backstop.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -23,9 +22,12 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from fidelity.common import Console, run                # noqa: E402
+from fidelity.common import Console                     # noqa: E402
 from fidelity.engines import (                          # noqa: E402
     EngineUnpinned, build_invocation, fidelity_python, load_engines,
+)
+from fidelity.jobcontract import (                      # noqa: E402
+    JobContractError, parse_job_bytes, validate_execution_job,
 )
 
 
@@ -73,6 +75,142 @@ def engine_python(fs: str) -> str:
             return candidate
     return fidelity_python()
 
+def canonical_paid_paths(job: dict) -> dict:
+    """Derive every execution argv path from the sealed attempt or local roots."""
+    attempt = job["execution_attempt"]
+    fs = os.environ.get("FIDELITY_FS_ROOT")
+    engine = os.environ.get("FIDELITY_ENGINE_ROOT")
+    for label, value in (("FIDELITY_FS_ROOT", fs),
+                         ("FIDELITY_ENGINE_ROOT", engine)):
+        if (not isinstance(value, str) or not value
+                or not Path(value).is_absolute()
+                or os.path.normpath(value) != value):
+            raise JobContractError("%s must be an exact absolute path" % label)
+    if attempt["kind"] == "runpod-ssh":
+        if fs != attempt["remote_root"]:
+            raise JobContractError(
+                "FIDELITY_FS_ROOT must equal canonical paid path %s"
+                % attempt["remote_root"])
+        if engine != attempt["engine_root"]:
+            raise JobContractError(
+                "FIDELITY_ENGINE_ROOT must equal canonical paid path %s"
+                % attempt["engine_root"])
+    elif attempt["kind"] != "local-container":
+        raise JobContractError("execution_attempt.kind is unsupported")
+    path_kind = "paid" if attempt["kind"] == "runpod-ssh" else "local"
+    expected = {
+        "FIDELITY_SUITE_ROOT": fs,
+        "BF16": "%s/models/bf16" % fs,
+        "TR3_BF16": "%s/models/target-bf16-materialized" % fs,
+        "QP_PIPELINE_ROOT": "%s/pipeline" % engine,
+        "FIDELITY_ENGINE_PYTHON": "%s/venv/bin/python" % engine,
+    }
+    for name, exact in expected.items():
+        if os.environ.get(name) != exact:
+            raise JobContractError(
+                "%s must equal canonical %s path %s"
+                % (name, path_kind, exact))
+    return dict(expected, FIDELITY_FS_ROOT=fs,
+                FIDELITY_ENGINE_ROOT=engine)
+
+
+def _load_job(path: str) -> dict:
+    """Load the exact finalized execution contract without permissive JSON."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise JobContractError("cannot read job.json: %s" % exc) from exc
+    job = parse_job_bytes(raw)
+    validate_execution_job(job)
+    return job
+
+
+def _invocation_values(job: dict, lane: str, engine) -> dict:
+    """Resolve only values explicitly bound by the verified job."""
+    if job["role"] != "quant":
+        raise JobContractError("invoke_engine only executes quant jobs")
+    if lane != job["lane"]:
+        raise JobContractError(
+            "--lane %r differs from job lane %r" % (lane, job["lane"]))
+
+    profile = job["profile"]
+    profile_fields = {"profile_id", "lane", "source", "surface", "bits"}
+    if set(profile) != profile_fields:
+        raise JobContractError(
+            "quant profile fields differ from the canonical execution profile")
+    if profile["lane"] != lane:
+        raise JobContractError("profile lane differs from job lane")
+    if profile["profile_id"] != "tr3-6bpw":
+        raise JobContractError(
+            "initial paid invoker permits only tr3-6bpw")
+
+    target = job["target"]
+    surface = target.get("surface")
+    bits = target.get("bits")
+    if not isinstance(surface, str) or not surface:
+        raise JobContractError("job target lacks an exact surface")
+    if isinstance(bits, bool) or not isinstance(bits, (int, float)):
+        raise JobContractError("job target lacks exact numeric bits")
+    if profile["surface"] != surface or profile["bits"] != bits:
+        raise JobContractError("profile surface/bits differ from target identity")
+    expected_profile = {
+        "tr3-6bpw": ("tr3", "tr3-published", 6.0, "none"),
+    }[profile["profile_id"]]
+    if (profile["source"], profile["surface"], float(profile["bits"])) != (
+            expected_profile[0], expected_profile[1], expected_profile[2]):
+        raise JobContractError(
+            "profile source/surface/bits differ from its authored identity")
+
+    runtime = job.get("runtime")
+    timing_runtime = job["timing"].get("runtime_profile")
+    if not isinstance(runtime, dict) or not isinstance(timing_runtime, dict):
+        raise JobContractError(
+            "job lacks runtime and timing.runtime_profile contracts")
+    for key in ("decode_cache", "decode_threads", "reader_threads"):
+        if key not in runtime or key not in timing_runtime:
+            raise JobContractError("job lacks exact runtime %s" % key)
+        if runtime[key] != timing_runtime[key]:
+            raise JobContractError(
+                "runtime %s differs from timing evidence" % key)
+    if runtime["decode_cache"] != expected_profile[3]:
+        raise JobContractError("runtime decode_cache differs from profile evidence")
+    if runtime.get("device") != "cuda":
+        raise JobContractError("initial paid invoker requires runtime device cuda")
+    for key in ("decode_threads", "reader_threads"):
+        value = runtime[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise JobContractError("runtime %s must be a positive integer" % key)
+    # stream_score's one producer pool performs decode for compressed sources.
+    if runtime["decode_threads"] != runtime["reader_threads"]:
+        raise JobContractError(
+            "engine has one producer pool but decode_threads and reader_threads differ")
+    reduce_order = job.get("reduce_order")
+    if (not isinstance(reduce_order, str) or not reduce_order
+            or runtime.get("reduce_order") != reduce_order):
+        raise JobContractError(
+            "job reduce_order is absent or differs from runtime contract")
+    panel = job["panel"]
+    roles = panel.get("roles")
+    if roles != "final":
+        raise JobContractError(
+            "initial paid invoker requires explicit panel roles 'final'")
+
+    required_flags = {"decode_cache", "decode_threads", "device"}
+    absent = sorted(required_flags - set(engine.flag_map or {}))
+    if absent:
+        raise JobContractError(
+            "lane cannot express authored runtime fields: %s" % ", ".join(absent))
+    return {
+        "surface": surface,
+        "source": profile["source"],
+        "profile_id": profile["profile_id"],
+        "roles": roles,
+        "reduce_order": reduce_order,
+        "decode_cache": runtime["decode_cache"],
+        "decode_threads": runtime["decode_threads"],
+        "device": runtime["device"],
+    }
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
@@ -85,180 +223,52 @@ def main() -> int:
     args = ap.parse_args()
 
     con = Console()
-    job = json.loads(Path(args.job).read_text(encoding="utf-8"))
-    engines = load_engines(HERE / "engines.json")
-    engine = engines.get(args.lane)
-    if engine is None:
-        con.err("no engine configured for lane %r" % args.lane)
+    try:
+        job = _load_job(args.job)
+        if args.cold_run not in (1, 2):
+            raise JobContractError("--cold-run must be 1 or 2 for this job")
+        engines = load_engines(HERE / "engines.json")
+        engine = engines.get(args.lane)
+        paths = canonical_paid_paths(job)
+        if engine is None:
+            raise JobContractError(
+                "no engine configured for lane %r" % args.lane)
+        values = _invocation_values(job, args.lane, engine)
+    except (JobContractError, EngineUnpinned) as exc:
+        con.err(str(exc))
         return 3
 
-    fs = os.environ.get("FIDELITY_FS_ROOT", "/home/jl_fs/fidelity")
-    target = job.get("target", {}) or {}
-    surface = target.get("surface", "packed")
-    # The streaming-family engines spell the input mode --source (vocabulary:
-    # checkpoint | payload-store | dione | native | exl3hf), not --surface.
-    # measure_local's own execute path sets source="checkpoint" for a
-    # materialized target tree; mirror that here so the backstop composes the
-    # same argv.  Lanes whose flag_map has no "source" key (sealed-ep8) ignore
-    # it.  A surface with no mapping yields "" -- build_invocation then DROPS
-    # the flag and the engine falls back to its own default, which is how an
-    # unmapped surface used to reach the GPU and die on argparse an hour into
-    # a rental.  Refuse here instead: a surface this file cannot spell is a
-    # missing mapping, not a default.
-    source_by_surface = {
-        "packed": "checkpoint",
-        "native-bf16": "native",
-        "exl3hf": "exl3hf",
-        "tr3-published": "tr3",
-        "dione": "dione",
-        "gguf": "gguf",
-    }
-    if "source" in (engine.flag_map or {}) and surface not in source_by_surface:
-        con.err(
-            "no --source spelling for surface %r on lane %r: add it to "
-            "invoke_engine.source_by_surface (the engine would otherwise run "
-            "with its default source and fail after the fetch)" % (surface, args.lane)
-        )
-        return 3
-    source = source_by_surface.get(surface, "")
-
-    # exl3hf: the measured non-routed function is the ARTIFACT's own, so
-    # --bf16 must point at the tree `stage_measure.sh materialize` wrote from
-    # this same snapshot -- never at the official BF16 metadata skeleton.
+    fs = paths["FIDELITY_FS_ROOT"]
+    target = job["target"]
+    surface = values["surface"]
     extra = {
-        "source": source,
-        "bf16": os.environ.get("BF16") or ("%s/models/bf16" % fs),
-        # The THIRD root that defaults to a JarvisLabs path, and the one nobody
-        # exported. FIDELITY_FS_ROOT and FIDELITY_ENGINE_ROOT are set explicitly by
-        # the controller for exactly this reason; QP_PIPELINE_ROOT was left on a
-        # hard-coded /home/jl_fs/... default, so on any other provider the
-        # engine was handed a pipeline path that does not exist -- and found
-        # out at the START of the measure stage, i.e. after the bootstrap, the
-        # 200 GB fetch and the panel were all paid for. Derive it from the k6
-        # root the controller DID set; the env var still wins.
-        "pipeline_root": os.environ.get("QP_PIPELINE_ROOT") or (
-            "%s/pipeline" % engine_root()),
+        "source": values["source"],
+        "decode_cache": values["decode_cache"],
+        "decode_threads": values["decode_threads"],
+        "device": values["device"],
+        "bf16": paths["BF16"],
+        "pipeline_root": paths["QP_PIPELINE_ROOT"],
     }
-    if surface == "exl3hf":
-        materialized = os.environ.get(
-            "EXL3HF_BF16", "%s/models/target-bf16-materialized" % fs)
+    if surface == "tr3-published":
         extra.update({
-            "bf16": materialized,
-            "exl3hf_root": "%s/models/target" % fs,
-            "exl3hf_repo": target.get("repo_id", ""),
-            "exl3hf_revision": target.get("revision", ""),
-        })
-        missing = [k for k in ("exl3hf_repo", "exl3hf_revision") if not extra[k]]
-        if missing:
-            con.err("job.json target is missing %s -- an exl3hf capture cannot "
-                    "seal its provenance without them" % ", ".join(missing))
-            return 3
-    elif surface == "tr3-published":
-        # A TR3 release quantizes the routed experts ONLY and ships all 1,618
-        # non-routed tensors as the OFFICIAL source tensors, in-repo, under
-        # their official names.  The engine therefore REFUSES --bf16 outright:
-        # a second tree would make it ambiguous which non-routed weights were
-        # measured.  Blanking the value is what drops the flag
-        # (build_invocation skips None/"" -- see fidelity/engines.py).
-        # --bf16 is the tree `stage_measure.sh materialize` wrote from THIS
-        # snapshot -- the same contract exl3hf has. For a TR3 release the
-        # materializer decodes nothing (routed-experts-only scope); it exists
-        # here because transformers keys its checkpoint load off the shard
-        # FILES, and the artifact's non-routed tensors share shards with
-        # 148,608 routed payload objects.
-        materialized = os.environ.get(
-            "TR3_BF16", "%s/models/target-bf16-materialized" % fs)
-        extra.update({
-            "bf16": materialized,
+            "bf16": paths["TR3_BF16"],
             "tr3_root": "%s/models/target" % fs,
-            "tr3_repo": target.get("repo_id", ""),
-            "tr3_revision": target.get("revision", ""),
-            # the fetch stage verifies the release's published SHA256SUMS
-            # byte-wise; `crosscheck` proves that list equals the seal's own
-            # shard_sha256 map, which is the binding the receipt claims
-            "tr3_verify_shards": os.environ.get("TR3_VERIFY_SHARDS", "crosscheck"),
+            "tr3_repo": target["repo_id"],
+            "tr3_revision": target["revision"],
+            "tr3_verify_shards": "crosscheck",
         })
-        missing = [k for k in ("tr3_repo", "tr3_revision") if not extra[k]]
-        if missing:
-            con.err("job.json target is missing %s -- a tr3 capture cannot "
-                    "seal its provenance without them" % ", ".join(missing))
-            return 3
-    elif surface == "dione":
-        # A Dione release quantizes the routed experts of layers 3-44 ONLY and
-        # retains everything else -- head included -- at source precision, in
-        # its own retained/ shards.  Those shards hold no routed payloads, but
-        # they DO hold the 864 MTP-layer expert tensors, and the streaming view
-        # filters every `.mlp.experts.N.` name out of the index; transformers
-        # keys its load off the shard FILES, so the measured non-routed set
-        # still needs shards of its own.  --bf16 is the tree
-        # `stage_measure.sh materialize` wrote from THIS snapshot.
-        materialized = os.environ.get(
-            "DIONE_BF16", "%s/models/target-bf16-materialized" % fs)
-        extra.update({
-            "bf16": materialized,
-            "dione_root": "%s/models/target" % fs,
-            "dione_repo": target.get("repo_id", ""),
-            "dione_revision": target.get("revision", ""),
-            # the fetch stage hashes every shard against the release manifest
-            # and writes dione-shards-verified.json; `full` requires that
-            # marker, which is the binding the receipt claims
-            "dione_verify_shards": os.environ.get("DIONE_VERIFY_SHARDS", "full"),
-        })
-        missing = [k for k in ("dione_repo", "dione_revision") if not extra[k]]
-        if missing:
-            con.err("job.json target is missing %s -- a dione capture cannot "
-                    "seal its provenance without them" % ", ".join(missing))
-            return 3
-    elif surface == "gguf":
-        # A GGUF is the opposite case from tr3/dione and needs no materialize
-        # stage at all: stream_score calls gguf_surface.materialize_nonrouted_view
-        # itself, because that view IS the artifact's non-routed function decoded
-        # (a GGUF quantizes token_embd, lm_head and the whole attention path too).
-        # So --bf16 keeps pointing at the OFFICIAL skeleton, whose entire job here
-        # is config/tokenizer plus the vision tower the container does not carry --
-        # and the engine's identity gate hashes that config/index against the
-        # sealed inventory the setup stage writes beside it.
-        #
-        # The artifact identity is NOT the repo revision: an unsloth GGUF repo
-        # publishes a dozen builds at one commit. It is this build's file list,
-        # each whole-file sha256'd by the fetch stage, which is why every part is
-        # named on the argv rather than a directory.
-        files = [row.get("name") if isinstance(row, dict) else row
-                 for row in (target.get("artifact_files") or [])]
-        files = [f for f in files if f]
-        if not files:
-            con.err("job.json target carries no artifact_files -- a GGUF repo is "
-                    "a shelf of builds and a capture must name the parts of ONE. "
-                    "Re-plan with --path <build>.")
-            return 3
-        extra.update({
-            # beside the stage markers, not on the container's ephemeral layer:
-            # the gguf setup stage writes ~4.2 GB of official vision shard here
-            # (see stage_measure.sh, same reasoning, same gguf-only scope)
-            "bf16": os.environ.get("BF16", "%s/models/bf16" % fs),
-            "gguf_files": ["%s/models/target/%s" % (fs, name) for name in files],
-            "gguf_repo": target.get("repo_id", ""),
-            "gguf_revision": target.get("revision", ""),
-            "inventory": os.environ.get(
-                "BF16_INVENTORY", "%s/models/bf16-inventory.json" % fs),
-        })
-        missing = [k for k in ("gguf_repo", "gguf_revision") if not extra[k]]
-        if missing:
-            con.err("job.json target is missing %s -- a gguf capture cannot "
-                    "seal its provenance without them" % ", ".join(missing))
-            return 3
     try:
         argv = build_invocation(
             engine,
-            suite_root=Path(os.environ.get("FIDELITY_SUITE_ROOT", fs)),
+            suite_root=Path(paths["FIDELITY_SUITE_ROOT"]),
             checkpoint="%s/models/target" % fs,
             panel_dir="%s/panel" % fs,
             out_dir=args.out,
             surface=surface,
-            profile=job.get("profile", "k6"),
+            profile=values["profile_id"],
             cold_run=args.cold_run,
-            reduce_order=job.get("reduce_order", "fp32"),
-            roles=job.get("panel", {}).get("roles", "final"),
+            reduce_order=values["reduce_order"],
+            roles=values["roles"],
             extra=extra,
         )
         # Same rule as measure_local's execute path: a lane's fixed_flags are
@@ -266,11 +276,17 @@ def main() -> int:
         for flag, value in (engine.fixed_flags or {}).items():
             if flag not in argv:
                 argv.extend([flag, str(value)])
-        # A lane with its own launcher (sealed-ep8: torchrun) already names the
-        # program; everything else is a bare script path that needs one.
+        missing_flags = [
+            flag for flag in (engine.required_flags or ()) if flag not in argv]
+        if missing_flags:
+            raise JobContractError(
+                "composed invocation lacks required flags: %s"
+                % ", ".join(missing_flags))
+        # A lane with its own launcher already names the program; everything
+        # else is a bare script path that needs one.
         if not engine.launcher:
-            argv = [engine_python(fs)] + argv
-    except EngineUnpinned as exc:
+            argv = [paths["FIDELITY_ENGINE_PYTHON"]] + argv
+    except (EngineUnpinned, JobContractError) as exc:
         con.err(str(exc))
         return 3
 

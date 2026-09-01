@@ -1,29 +1,16 @@
 #!/usr/bin/env python3
-"""SSH host authentication: per-run trust-on-first-use, never disabled.
+"""Authenticated ephemeral SSH host keys; first-hop TOFU is forbidden.
 
-WHY THIS EXISTS
----------------
-Peer review 2026-08-31 (security chapter, High): the SSH transport used
-`StrictHostKeyChecking=no` + `UserKnownHostsFile=/dev/null`, which removes
-server authentication entirely from the channel that carries the HF token
-and every measurement artifact.  The fix is per-run TOFU: `accept-new`
-records the first-seen key into a per-run known_hosts file, every later
-connection in the run refuses a changed key, and the fingerprint is
-recorded so the receipt can carry it.
-
-  K1  the option set says accept-new, never `no`, and points at a real
-      per-run file, never /dev/null.
-  K2  the same transport instance keeps ONE known_hosts file across calls
-      (that persistence is what turns TOFU into a per-run pin).
-  K3  set_known_hosts pins the file under the run dir, creating parents.
-  K4  the real ssh argv (exec and scp paths) carries those options.
-  K5  host_key_fingerprints reads SHA256 fingerprints out of the recorded
-      file (skipped when ssh-keygen is unavailable).
-  K6  an empty run (no connection yet) reports no fingerprints and does not
-      crash.
-
-No network, no provider: subprocess.run is stubbed for K4.
+The measurement channel carries model evidence and control artifacts.  A
+network keyscan is therefore untrusted until an operator compares its ED25519
+fingerprint through the authenticated RunPod web terminal.  The transport
+must refuse every SSH/SCP call before that comparison, write one owner-only
+per-attempt known_hosts file, and then use that strict ED25519 pin without
+ambient host-key files or update behavior. Command and SCP diagnostics carry
+fixed byte ceilings; uploads are pre-counted without following links; exact-size
+downloads are streamed through local pipes. The tests use no network/provider.
 """
+import hashlib
 import os
 import shutil
 import subprocess
@@ -61,83 +48,325 @@ def opts_dict(opts):
             if opts[i] == "-o" and "=" in opts[i + 1]}
 
 
+def command_opts(argv):
+    found = {}
+    for index, item in enumerate(argv[:-1]):
+        if item != "-o" or "=" not in argv[index + 1]:
+            continue
+        name, value = argv[index + 1].split("=", 1)
+        found.setdefault(name, []).append(value)
+    return found
+
 def main():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-
         t = T()
-        opts = opts_dict(t._ssh_opts())
-        check("K1 StrictHostKeyChecking=accept-new (never 'no')",
-              opts.get("StrictHostKeyChecking") == "accept-new", opts)
-        check("K1b UserKnownHostsFile is a real file path, not /dev/null",
-              opts.get("UserKnownHostsFile") not in (None, "/dev/null")
-              and os.path.isabs(opts["UserKnownHostsFile"]), opts)
-
-        opts2 = opts_dict(t._ssh_opts())
-        check("K2 one known_hosts file per transport instance, stable "
-              "across calls",
-              opts2["UserKnownHostsFile"] == opts["UserKnownHostsFile"])
         try:
-            os.unlink(opts["UserKnownHostsFile"])
-        except OSError:
-            pass
+            t._ssh_opts()
+        except sshbase.JLError:
+            unauthenticated_refused = True
+        else:
+            unauthenticated_refused = False
+        check("K1 SSH refuses before an out-of-band authenticated key exists",
+              unauthenticated_refused)
 
-        t2 = T()
         run_kh = td / "run" / "ssh_known_hosts"
-        t2.set_known_hosts(run_kh)
-        opts3 = opts_dict(t2._ssh_opts())
-        check("K3 set_known_hosts pins the file under the run dir",
-              opts3["UserKnownHostsFile"] == str(run_kh)
-              and (td / "run").is_dir(), opts3)
-
-        # K4: the argv actually handed to ssh/scp.
-        recorded = []
-
-        def fake_run(argv, **kw):
-            recorded.append(list(argv))
-
-            class P:
-                returncode = 0
-                stdout = ""
-                stderr = ""
-            return P()
-
-        orig = sshbase.subprocess.run
-        sshbase.subprocess.run = fake_run
+        t.set_known_hosts(run_kh)
         try:
-            t2.exec(9, "true")
-            t2._scp(9, "/tmp/a", "root@198.51.100.7:/tmp/b",
-                    recursive=False, timeout=5)
+            t._ssh_opts()
+        except sshbase.JLError:
+            path_only_refused = True
+        else:
+            path_only_refused = False
+        check("K2 selecting a path does not establish trust",
+              path_only_refused and not run_kh.exists())
+
+        key_body = "A" * 68
+        known_hosts_entry = (
+            "198.51.100.7 ssh-ed25519 %s\n" % key_body)
+        expected_fingerprint = "SHA256:" + "B" * 43
+        t.scan_host_key = lambda _machine_id: {
+            "host": "198.51.100.7",
+            "port": 22,
+            "algorithm": "ssh-ed25519",
+            "fingerprint": expected_fingerprint,
+            "known_hosts_entry": known_hosts_entry,
+        }
+        evidence = t.verify_host_key(9, expected_fingerprint)
+        opts = opts_dict(t._ssh_opts())
+        check("K3 authenticated scan writes one exact owner-mode-0600 key",
+              run_kh.read_text() == known_hosts_entry
+              and (run_kh.stat().st_mode & 0o777) == 0o600
+              and evidence["known_hosts_sha256"]
+                  == hashlib.sha256(
+                      known_hosts_entry.encode("utf-8")).hexdigest()
+              and opts.get("StrictHostKeyChecking") == "yes"
+              and opts.get("UserKnownHostsFile") == str(run_kh),
+              (evidence, opts))
+
+        mismatch_path = td / "mismatch" / "ssh_known_hosts"
+        mismatch = T()
+        mismatch.set_known_hosts(mismatch_path)
+        mismatch.scan_host_key = t.scan_host_key
+        try:
+            mismatch.verify_host_key(9, "SHA256:" + "C" * 43)
+        except sshbase.JLError:
+            mismatch_refused = True
+        else:
+            mismatch_refused = False
+        check("K4 network key differing from web-terminal identity is refused",
+              mismatch_refused and not mismatch_path.exists())
+
+        try:
+            t.verify_host_key(9, expected_fingerprint)
+        except sshbase.JLError:
+            replacement_refused = True
+        else:
+            replacement_refused = False
+        check("K5 an authenticated key file is immutable within the attempt",
+              replacement_refused and run_kh.read_text() == known_hosts_entry)
+
+        noninteractive = {
+            "BatchMode": "yes",
+            "IdentitiesOnly": "yes",
+            "IdentityAgent": "none",
+            "PasswordAuthentication": "no",
+            "KbdInteractiveAuthentication": "no",
+            "ForwardAgent": "no",
+            "ClearAllForwardings": "yes",
+            "RequestTTY": "no",
+            "ServerAliveCountMax": "3",
+        }
+        isolated_trust = {
+            "StrictHostKeyChecking": "yes",
+            "UserKnownHostsFile": str(run_kh),
+            "GlobalKnownHostsFile": "/dev/null",
+            "HostKeyAlgorithms": "ssh-ed25519",
+            "UpdateHostKeys": "no",
+        }
+        recorded = []
+        recorded_limits = []
+
+        def fake_bounded_process(argv, **kw):
+            recorded.append(list(argv))
+            recorded_limits.append(dict(kw))
+            return {"returncode": 0, "stdout": "", "stderr": ""}
+
+        original_bounded_process = sshbase._bounded_process
+        sshbase._bounded_process = fake_bounded_process
+        try:
+            t.exec(9, "true")
+            t._scp(9, "/tmp/a", "root@198.51.100.7:/tmp/b",
+                   recursive=False, timeout=5)
         finally:
-            sshbase.subprocess.run = orig
-        joined = ["\x00".join(argv) for argv in recorded]
-        check("K4 exec and scp argv carry accept-new + the per-run file",
+            sshbase._bounded_process = original_bounded_process
+        parsed_commands = [command_opts(argv) for argv in recorded]
+        check("K6 exec and scp carry exact isolated trust and key-only auth",
               len(recorded) == 2 and all(
-                  "StrictHostKeyChecking=accept-new" in j
-                  and ("UserKnownHostsFile=%s" % run_kh) in j
-                  and "StrictHostKeyChecking=no" not in j
-                  and "UserKnownHostsFile=/dev/null" not in j
-                  for j in joined),
-              recorded)
+                  all(options.get(name) == [value]
+                      for name, value in isolated_trust.items())
+                  and all(options.get(name) == [value]
+                          for name, value in noninteractive.items())
+                  for options in parsed_commands)
+              and recorded_limits[0]["stdout_max_bytes"]
+                  == sshbase._EXEC_STREAM_MAX_BYTES
+              and recorded_limits[0]["stderr_max_bytes"]
+                  == sshbase._EXEC_STREAM_MAX_BYTES
+              and recorded_limits[1]["stdout_max_bytes"]
+                  == sshbase._SCP_STREAM_MAX_BYTES
+              and recorded_limits[1]["stderr_max_bytes"]
+                  == sshbase._SCP_STREAM_MAX_BYTES,
+              (recorded, recorded_limits))
+        bounded_stdout = False
+        bounded_stderr = False
+        try:
+            sshbase._bounded_process(
+                [sys.executable, "-c",
+                 "import os; os.write(1, b'x' * 5)"],
+                timeout=1, stdout_max_bytes=4, stderr_max_bytes=4,
+                label="stdout-overflow")
+        except sshbase.JLError:
+            bounded_stdout = True
+        try:
+            sshbase._bounded_process(
+                [sys.executable, "-c",
+                 "import os; os.write(2, b'x' * 5)"],
+                timeout=1, stdout_max_bytes=4, stderr_max_bytes=4,
+                label="stderr-overflow")
+        except sshbase.JLError:
+            bounded_stderr = True
+        check("K6b command capture refuses stdout and stderr above fixed bytes",
+              bounded_stdout and bounded_stderr)
 
-        # K6 before K5: nothing recorded yet.
-        t3 = T()
-        check("K6 no connection yet -> no fingerprints, no crash",
-              t3.host_key_fingerprints() == [])
+        upload_source = td / "upload.bin"
+        upload_source.write_bytes(b"abcde")
+        upload_calls = []
+        replacement_source = td / "replacement.bin"
+        replacement_source.write_bytes(b"x" * 10)
+        original_scp = t._scp
 
-        # K5: a real key in the file yields a SHA256 fingerprint.
+        def snapshot_scp(machine_id, src, dst, *, recursive, timeout):
+            upload_source.unlink()
+            upload_source.symlink_to(replacement_source)
+            snapshot_bytes = Path(src).read_bytes()
+            upload_calls.append(
+                (src, dst, recursive, timeout, snapshot_bytes,
+                 Path(src) != upload_source))
+            return {"ok": True}
+
+        t._scp = snapshot_scp
+        try:
+            try:
+                t.upload(9, str(upload_source), "/workspace/upload.bin",
+                         max_bytes=4)
+            except sshbase.JLError:
+                upload_oversize_refused = True
+            else:
+                upload_oversize_refused = False
+            upload_result = t.upload(
+                9, str(upload_source), "/workspace/upload.bin", max_bytes=5)
+            upload_link = td / "upload-link"
+            upload_link.symlink_to(upload_source)
+            try:
+                t.upload(9, str(upload_link), "/workspace/upload-link",
+                         max_bytes=5)
+            except sshbase.JLError:
+                upload_link_refused = True
+            else:
+                upload_link_refused = False
+        finally:
+            t._scp = original_scp
+        check("K6c upload uses stable counted snapshot bytes for SCP",
+              upload_oversize_refused and len(upload_calls) == 1
+              and upload_result == {"ok": True, "bytes": 5}
+              and upload_calls[0][2] is False
+              and upload_calls[0][4] == b"abcde"
+              and upload_calls[0][5] is True,
+              (upload_calls, upload_result))
+        check("K6d uploads never follow a symbolic link",
+              upload_link_refused and len(upload_calls) == 1)
+        race_source = td / "race-upload.bin"
+        race_source.write_bytes(b"first")
+        race_replacement = td / "race-replacement.bin"
+        race_replacement.write_bytes(b"other")
+        real_open = sshbase.os.open
+        swapped = [False]
+
+        def swap_before_root_open(path, *args, **kwargs):
+            if (not swapped[0]
+                    and os.fspath(path) == str(race_source)):
+                swapped[0] = True
+                race_replacement.replace(race_source)
+            return real_open(path, *args, **kwargs)
+
+        root_replacement_refused = False
+        sshbase.os.open = swap_before_root_open
+        try:
+            with tempfile.TemporaryDirectory() as snapshot_dir:
+                try:
+                    sshbase._snapshot_upload(
+                        str(race_source), snapshot_dir, 5)
+                except sshbase.JLError:
+                    root_replacement_refused = True
+        finally:
+            sshbase.os.open = real_open
+        check("K6e upload refuses root replacement between lstat and open",
+              swapped[0] and root_replacement_refused)
+        bounded_argv = []
+        real_popen = sshbase.subprocess.Popen
+
+        def bounded(script, destination, expected, maximum, timeout=1,
+                    remote="/tmp/a file; echo untrusted"):
+            def fake_popen(argv, **kw):
+                bounded_argv.append(list(argv))
+                return real_popen([sys.executable, "-c", script], **kw)
+
+            sshbase.subprocess.Popen = fake_popen
+            try:
+                return t.download_bounded(
+                    9, remote, destination, expected_bytes=expected,
+                    max_bytes=maximum, timeout=timeout)
+            finally:
+                sshbase.subprocess.Popen = real_popen
+
+        exact_path = td / "exact.bin"
+        fsync_calls = []
+        real_fsync = sshbase.os.fsync
+
+        def recording_fsync(fd):
+            fsync_calls.append(fd)
+            return real_fsync(fd)
+
+        sshbase.os.fsync = recording_fsync
+        try:
+            exact_result = bounded(
+                "import os; os.write(1, b'abcd')",
+                exact_path, 4, 8)
+        finally:
+            sshbase.os.fsync = real_fsync
+        expected_remote_command = (
+            "cat -- " + sshbase.shlex.quote(
+                "/tmp/a file; echo untrusted"))
+        check("K7 bounded download streams exact bytes to a synced mode-0600 file",
+              exact_result == {"ok": True, "bytes": 4}
+              and exact_path.read_bytes() == b"abcd"
+              and (exact_path.stat().st_mode & 0o777) == 0o600
+              and len(fsync_calls) == 1,
+              (exact_result, fsync_calls))
+        bounded_options = command_opts(bounded_argv[-1])
+        check("K8 bounded download quotes its path and uses isolated SSH trust",
+              bounded_argv[-1][-1] == expected_remote_command
+              and all(bounded_options.get(name) == [value]
+                      for name, value in isolated_trust.items()),
+              bounded_argv[-1])
+
+        failure_cases = [
+            ("K9 short bounded stream is refused and removed",
+             "import os; os.write(1, b'abc')",
+             td / "short.bin", 4, 8, 1),
+            ("K10 oversized bounded stream is refused and removed",
+             "import os; os.write(1, b'abcde')",
+             td / "oversize.bin", 4, 8, 1),
+            ("K11 timed-out partial bounded stream is killed and removed",
+             "import os,time; os.write(1, b'ab'); time.sleep(2)",
+             td / "timeout.bin", 4, 8, 0.05),
+            ("K12 nonzero bounded SSH exit is refused and removed",
+             "import os,sys; os.write(1, b'abcd'); sys.exit(7)",
+             td / "nonzero.bin", 4, 8, 1),
+        ]
+        for label, script, destination, expected, maximum, limit in failure_cases:
+            try:
+                bounded(script, destination, expected, maximum, limit)
+            except sshbase.JLError:
+                refused = True
+            else:
+                refused = False
+            check(label, refused and not destination.exists())
+
+        dry = T()
+        dry.dry = True
+        dry_path = td / "dry.bin"
+        dry_result = dry.download_bounded(
+            9, "/remote", dry_path, expected_bytes=4, max_bytes=8)
+        check("K13 dry bounded download performs no local or network mutation",
+              dry_result == {"dry_run": True}
+              and not dry_path.exists())
+
+        empty = T()
+        check("K14 no authenticated connection means no fingerprint record",
+              empty.host_key_fingerprints() == [])
+
         if shutil.which("ssh-keygen"):
             keyfile = td / "hostkey"
             subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "",
                             "-f", str(keyfile)], check=True)
             pub = keyfile.with_suffix(".pub").read_text().strip()
-            run_kh.parent.mkdir(parents=True, exist_ok=True)
-            run_kh.write_text("[198.51.100.7]:22 %s\n" % pub)
-            prints = t2.host_key_fingerprints()
-            check("K5 recorded host key yields a SHA256 fingerprint",
+            run_kh.write_text("198.51.100.7 %s\n" % pub)
+            prints = t.host_key_fingerprints()
+            check("K15 authenticated host key yields a SHA256 fingerprint",
                   prints and any("SHA256:" in line for line in prints), prints)
         else:
-            print("  SKIP  K5 (ssh-keygen not on PATH)")
+            print("  SKIP  K15 (ssh-keygen not on PATH)")
 
     print()
     if FAILED:

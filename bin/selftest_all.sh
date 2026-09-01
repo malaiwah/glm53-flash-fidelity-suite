@@ -114,10 +114,10 @@ t "no cross-origin bearer forwarding (T19: R1-R8)" \
 t "secret file creation + transport + cleanup (T20: S1-S9)" \
                                            0 python3 bin/selftest_secret_files.py
 # T21. SSH host authentication. StrictHostKeyChecking=no + /dev/null removed
-# server authentication from the channel carrying the token and the receipts;
-# now: per-run trust-on-first-use, a known_hosts file under the run dir, and
-# the accepted fingerprint recorded for the cost receipt.
-t "ssh per-run TOFU host keys (T21: K1-K6)" \
+# server authentication from the channel carrying evidence. The first SSH byte
+# now waits for an ED25519 fingerprint copied from the authenticated RunPod web
+# terminal, then uses a per-run known_hosts file with strict checking.
+t "ssh out-of-band authenticated host keys (T21: K1-K6)" \
                                            0 python3 bin/selftest_sshbase.py
 # T22. The reaper (P1-03). Destruction requires a provider id from a lease
 # THIS tool wrote; names only discover; every destroy is confirmed terminal
@@ -126,11 +126,10 @@ t "ssh per-run TOFU host keys (T21: K1-K6)" \
 t "reaper: lease-authorized, confirmed, faithful dry-run (T22: P1-P8)" \
                                            0 python3 bin/selftest_reaper.py
 # T23. Mandatory gates are tri-state (P1-11): verified / failed / not_checked.
-# An import failure or network blip used to warn-and-continue, and the dry
-# run then ended in "all checks passed" about a seal nobody recomputed. Now a
-# real run refuses on not_checked; a dry run visibly downgrades to
-# ESTIMATE ONLY. G5 forces offline via a closed local port -- no network.
-t "seal gates fail closed, offline dry-run is estimate-only (T23: G1-G5)" \
+# An import failure cannot warn-and-continue. Unit rungs retain estimate-only
+# behavior for generic dry planning; the safe paid RunPod CLI refuses a
+# non-official metadata endpoint without emitting an authorizing plan.
+t "seal and paid metadata gates fail closed (T23: G1-G5)" \
                                            0 python3 bin/selftest_seal_gate.py
 # T24. Job identity and duplicate writers (P1-12/P1-14). Identity is hashed
 # AFTER revision resolution, at 256 bits, including the suite HEAD; adoption
@@ -138,12 +137,15 @@ t "seal gates fail closed, offline dry-run is estimate-only (T23: G1-G5)" \
 # tri-state and unknown never authorizes a launch. Stub provider, $0.00.
 t "job identity resolved-first + tri-state liveness (T24: J1-J7)" \
                                            0 python3 bin/selftest_job_identity.py
-# T25. ROOT-1: a sealed root gets PUBLISHED (publish_root stage after verify,
-# receipt pins the uploaded revision) and teardown refuses to destroy a
-# verified-but-unpublished root without an explicit override -- a sealed,
-# twice-validated root was destroyed at teardown for $6.59. Also the
-# container-native RunPod launch (our image + dockerArgs; token via env only).
-t "root publish + teardown guard + container-native launch (T25: RP1-RP9)" \
+t "safe RunPod guards: artifact paths + dry mutation boundary" \
+                                           0 python3 bin/selftest_runpod_safe.py
+t "RunPod controller-loss drill contracts" \
+                                           0 python3 bin/selftest_runpod_drill.py
+# T25. Root qualification needs two fresh captures and exact self-comparison.
+# Remote publication and container-native RunPod execution both refuse; optional
+# publication is controller-local only after verified retrieval, confirmed pod
+# absence and billing reconciliation.
+t "root qualification, local publication, SSH-only RunPod (T25)" \
                                            0 python3 bin/selftest_root_publish.py
 # T26. Result sinks. ROOT-1 gave a multi-GB root capture a way home and gave
 # `measure` -- whose 4-40 KB receipt IS the submission object -- none at all.
@@ -330,23 +332,13 @@ else
   s "tr3 surface offline" "no torch in $VPY or $PY"
 fi
 
-echo "== cloud planner (NETWORK, ACCOUNT; --dry-run creates nothing) =="
-# This target is 'tr3-published'. The SEALED-EP8 lane still has no reader for
-# it: that engine resolves a packed_root out of the materialization receipt and
-# requires the payload store to be present, which a third-party repo never
-# publishes. (The check that was supposed to catch this -- hfmeta.sniff_surface's
-# packed_root trap -- is guarded by `if info.surface == "packed"`, and this repo
-# carries exl3-mcg-storage-abi.json, so it classifies as tr3-published and
-# routes around the trap. Asserting rc=0 there asserted that a rental which
-# cannot possibly succeed would be approved.)
-#
-# The STREAMING lane gained a reader in M2 (stream_score --source tr3 via
-# tr3_surface), so its case flipped from "refuses" to "plans, having recomputed
-# the release's published seal for free". The refusal it now produces is the
-# max-runtime one below, which is a different property.
-# --skip-registry-check everywhere below: these cases test the PLANNER's own
-# refusals; the registry front gate (tested separately) would otherwise answer
-# "already measured" first, because this target has published rows.
+echo "== paid cloud safety planner (NETWORK; no account access) =="
+# The first remediated paid path is deliberately narrow: RunPod SSH, exact
+# authored pins, and no provider request until scientific evidence, source
+# cleanliness, campaign admission, balance, inventory and the autonomous reaper
+# are all sealed. These cases run with an empty HOME and absent key path. A
+# regression that reaches provider authentication instead of the named refusal
+# is therefore a failure, not a skipped account check.
 cloud_isolated() {
   local py="$PY"
   case "$py" in
@@ -354,67 +346,49 @@ cloud_isolated() {
     *) py="$(command -v "$py")" || return 1 ;;
   esac
   mkdir -p "$TMP/no-reaper-home"
-  HOME="$TMP/no-reaper-home" PATH="/usr/bin:/bin" \
-    "$py" bin/measure_cloud.py "$@"
+  HOME="$TMP/no-reaper-home" RUNPOD_KEY_FILE="$TMP/absent-runpod-key" \
+    PATH="/usr/bin:/bin" "$py" bin/measure_cloud.py "$@"
 }
 cloud_refusal_check() {
   local log="$1" needle="$2"; shift 2
   cloud_isolated "$@" >"$log" 2>&1
   local rc=$?
-  if [ "$rc" -ne 0 ] && grep -Fq -- "$needle" "$log"; then
+  if [ "$rc" -eq 3 ] && grep -Fq -- "$needle" "$log"; then
     return 0
   fi
   tail -20 "$log"
   return 1
 }
-t "sealed-ep8 refuses specifically because tr3-published has no reader" 0 \
-  cloud_refusal_check "$TMP/c1.log" "has no --profile" \
-    --model "$MODEL" --panel "$PANEL" --lane sealed-ep8 --spot \
-    --max-runtime 30h --i-accept-leak-risk --skip-registry-check \
-    --dry-run --out "$TMP/c1"
-t "streaming PLANS a tr3-published target (reader landed in M2)" 0 \
-  cloud_isolated --model "$MODEL" --panel "$PANEL" \
-    --lane streaming --gpu H200 --spot --max-runtime 12h --i-accept-leak-risk \
-    --skip-registry-check --dry-run --out "$TMP/c2"
-grep -q '"seal_verification"' "$TMP/c2/plan.json" \
-  && grep -q '"checks_passed": 12' "$TMP/c2/plan.json" \
-  && t "the tr3 plan carries a 12/12 seal recompute" 0 true \
-  || t "the tr3 plan carries a 12/12 seal recompute" 0 false
-t "a 12h run without a reaper specifically refuses its teardown risk" 0 \
-  cloud_refusal_check "$TMP/c3.log" "no teardown backstop for a 12h run" \
-    --model "$MODEL" --panel "$PANEL" --lane streaming --gpu H200 --spot \
-    --max-runtime 12h --skip-registry-check --dry-run --out "$TMP/c3"
-t "a 2h streaming plan specifically refuses its 3h+ workload" 0 \
-  cloud_refusal_check "$TMP/c4.log" \
-    "--max-runtime 2h is shorter than the estimated work" \
-    --model "$MODEL" --panel "$PANEL" --lane streaming --gpu H200 --spot \
-    --max-runtime 2h --i-accept-leak-risk --skip-registry-check \
-    --dry-run --out "$TMP/c4"
-# A dry-run refusal must carry its REMEDY, not just its complaint. Five of the
-# six would-refuse sites used to print `refusal.reason` alone, so the advice --
-# which flag to raise, which files a new engine profile needs -- reached nobody,
-# in the one mode the docs tell a newcomer to start with.
-#
-# $MODEL is tr3-published, which the sealed-ep8 lane has no profile for, so the
-# profile would-refuse fires deterministically here. The teardown refusal has
-# its own empty-HOME test above; this invocation accepts that risk explicitly,
-# so a host reaper cannot add or remove the condition being inspected.
-# The exit code is not asserted -- a dry run may go on to hit a HARD refusal
-# (no instance capacity today) and exit 1 rather than 3. What is asserted is
-# that the advice reached stdout, and that it names a table that exists.
-cloud_isolated --model "$MODEL" --panel "$PANEL" \
-  --lane sealed-ep8 --spot --max-runtime 30h --i-accept-leak-risk \
-  --skip-registry-check --dry-run --out "$TMP/c3b" >"$TMP/c3b.log" 2>&1 || true
-if grep -q 'WOULD REFUSE (real run): .*has no --profile' "$TMP/c3b.log" \
-   && grep -q 'FOUR files must agree' "$TMP/c3b.log" \
-   && grep -q 'TR3_PROFILES' "$TMP/c3b.log" \
-   && ! grep -q 'TR3_PUBLISHED_PROFILES' "$TMP/c3b.log"; then
-  t "a dry-run WOULD-REFUSE prints its remedy, naming tables that exist" 0 true
-else
-  t "a dry-run WOULD-REFUSE prints its remedy, naming tables that exist" 0 false
-  sed 's/^/         /' "$TMP/c3b.log" | grep -i "would refuse" | head -4
-fi
-# and the named tables must actually be there
+t "missing provider refuses before provider mutation" 0 \
+  cloud_refusal_check "$TMP/c0.log" \
+    "requires explicit --provider runpod; provider <missing> is refused" \
+    --model "$MODEL" --panel "$PANEL" --lane streaming \
+    --max-runtime 12h --dry-run --out "$TMP/c0"
+t "non-RunPod paid providers refuse before provider mutation" 0 \
+  cloud_refusal_check "$TMP/c1.log" \
+    "requires explicit --provider runpod; provider jarvislabs is refused" \
+    --provider jarvislabs --model "$MODEL" --panel "$PANEL" \
+    --lane streaming --max-runtime 12h --dry-run --out "$TMP/c1"
+
+K8_MODEL="malaiwah/GLM-5.3-Flash-TR3-8bpw"
+K8_REV="7199f6f1a211084c240614806f046f11a52dad64"
+k8_refusal_check() {
+  cloud_isolated --provider runpod \
+    --model "$K8_MODEL" --revision "$K8_REV" --panel "$PANEL" \
+    --lane streaming --gpu H200 --max-runtime 12h \
+    --skip-registry-check --dry-run --out "$TMP/c2" \
+    >"$TMP/c2.log" 2>&1
+  local rc=$?
+  [ "$rc" -eq 3 ] \
+    && grep -Fq "missing_sealed_surface_measurement_bridge" "$TMP/c2.log" \
+    && grep -Fq "K6 evidence is not transferable" "$TMP/c2.log" \
+    && ! grep -Fq "RunPod API key" "$TMP/c2.log" \
+    && [ ! -e "$TMP/c2/plan.json" ]
+}
+t "pinned K8 refuses its missing checkpoint verdict bridge pre-provider" 0 \
+  k8_refusal_check
+
+# Advice can name a profile table only if that table is real.
 "$PY" - <<'PYEOF' && t "every PROFILE_TABLE_NAMES entry exists in stream_score.py" 0 true \
   || t "every PROFILE_TABLE_NAMES entry exists in stream_score.py" 0 false
 import ast, sys
@@ -426,11 +400,6 @@ names = {t.id for n in ast.parse(src).body if isinstance(n, ast.Assign)
 missing = sorted(set(MC.PROFILE_TABLE_NAMES.values()) - names)
 sys.exit(1 if missing else 0)
 PYEOF
-t "cloud front gate: already-measured artifact answers for \$0.00" 0 \
-  "$PY" bin/measure_cloud.py --model "$MODEL" --panel "$PANEL" \
-    --lane sealed-ep8 --spot --max-runtime 30h --i-accept-leak-risk \
-    --dry-run --out "$TMP/c5"
-
 echo "== local planner (NETWORK) =="
 # Capacity checks are facts about the host running this battery. A valid planner
 # therefore exits 0 on a large volume and 3 with ONLY a disk-capacity refusal on
@@ -526,26 +495,11 @@ t "bin/measure: already-measured report, exit 0" 0 \
 t "registry live selftest (T8: snapshot, keys, tripwire)" 0 \
   bin/registry-view --selftest-live
 
-echo "== teardown backstop (ACCOUNT, read-only) =="
-# `reaper --list` is lease-file-driven and safe anywhere. The sweep runs
-# with --dry-run here: it reports what WOULD be destroyed and destroys
-# nothing -- destruction must never be a side effect of "run the selftests"
-# (JOURNAL lesson 22; usability review 2026-08-28). A real sweep is
-# `bin/measure-cloud reaper --sweep`, run deliberately. Machines without
-# the jl CLI (any Mac that has never rented) SKIP the sweep instead of
-# failing. SELFTEST_SKIP_ACCOUNT=1 still skips the whole section.
-if [ -n "${SELFTEST_SKIP_ACCOUNT:-}" ]; then
-  s "reaper --list" "SELFTEST_SKIP_ACCOUNT set (concurrent rental on this account)"
-  s "reaper --sweep (dry-run)" "SELFTEST_SKIP_ACCOUNT set"
-else
-  t "reaper --list"  0 "$PY" bin/measure_cloud.py reaper --list
-  if command -v jl >/dev/null 2>&1; then
-    t "reaper --sweep (dry-run: reports, destroys nothing)" 0 \
-      "$PY" bin/measure_cloud.py reaper --sweep --dry-run
-  else
-    s "reaper --sweep (dry-run)" "the jl CLI is not on PATH (this machine has never rented) -- uv tool install jarvislabs, or ignore: cloud teardown is irrelevant locally"
-  fi
-fi
+echo "== teardown backstop dispatch (OFFLINE) =="
+t "reaper requires an explicit provider" 3 \
+  "$PY" bin/measure_cloud.py reaper --list
+t "unsupported provider reaper refuses before account access" 3 \
+  "$PY" bin/measure_cloud.py reaper --provider vast --list
 
 echo "== registry =="
 t "offline selftest"        0 "$VPY" registry/tools/registry_validate.py --root registry --offline-selftest

@@ -27,12 +27,13 @@
 # only what encoding needs: ShapleyMCG, sqg-mcg, the closure gate, and the
 # calibration trees.
 #
-# exllamav3 is built ONLY IF the pipeline cannot import without it.  Neither
-# stream_score.py nor kld_report.py imports the package; the CUDA toolkit +
-# extension build is ~20 minutes of rental that a decode-only run should not
-# pay for on faith.  The probe decides, not an assumption.
+# exllamav3 is built ONLY IF the pipeline imports it.  Neither stream_score.py
+# nor kld_report.py needs the package; the CUDA toolkit + extension build is
+# ~20 minutes of rental that a decode-only run should not pay for on faith.
+# When an import does load it, its checkout and import path are verified rather
+# than trusting whichever editable package the template happens to expose.
 #
-# Idempotent: every step is guarded, so a spot preemption re-runs it for free.
+# Deterministic: source trees are reconstructed from their pins on every run.
 # NEVER `set -x` here: HF_TOKEN may be exported by the caller.
 set -euo pipefail
 
@@ -46,14 +47,26 @@ EXL3="$ROOT/exllamav3"
 RCPT="$FS/receipts"
 PATCHES="$ROOT/patches-v2"
 
-# Pins, verbatim from engines/stage_campaign.sh (the tree that produced the sealed rows).
+# Source commits are accepted only when both their Git tree and deterministic
+# git-archive SHA-256 match.  Every Python wheel, including transitive
+# dependencies, is an exact URL with an exact SHA-256 in WHEEL_LOCK.
 PIPE_REPO=https://github.com/brandonmmusic-max/glm-5.3-flash-exl3-4bpw
 PIPE_PIN=ce1bf9706b6aa18435e2baccab63bdd72299257c
+PIPE_TREE=9aede904994714b0aad824646f80046bb7b6c874
+PIPE_ARCHIVE_SHA256=cfb7bf9f2c11e71683ce3a7fe1e1d8a3cdd089ebdd1b2eec42bf604c18a05fbd
 EXL3_REPO=https://github.com/turboderp-org/exllamav3
 EXL3_PIN=c5d9c657966ffeeaa9353f0cc899f18629da4a13
-TORCH_SPEC="torch==2.11.0"
-TORCH_INDEX=https://download.pytorch.org/whl/cu130
+EXL3_TREE=8b00c03978d850d2b53224acbd92018e107707d1
+EXL3_ARCHIVE_SHA256=3c13cdd74d5fc3c75f426c7b6ae8d8543207483831522280d1d641b974cf452c
+# No torch2.11-tagged flash-attn 2.8.3 wheel exists.  This authored
+# torch2.10-tagged artifact is the proven compatibility choice; on a measuring
+# GPU validate_flash_attn verifies it with an actual kernel call.
+FLASH_ATTN_VERSION="2.8.3+cu13torch2.10cxx11abitrue"
 FLASH_ATTN_WHL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu13torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
+FLASH_ATTN_SHA256=910d8db9def162de5b7c15474b933e7e2371e93733b980e9d3c07cd3bf2f568e
+CUDA_KEYRING_SHA256=d93190d50b98ad4699ff40f4f7af50f16a76dac3bb8da1eaaf366d47898ff8df
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+WHEEL_LOCK="$SCRIPT_DIR/requirements-cu130-py312.lock"
 
 mkdir -p "$ROOT" "$RCPT"
 log() { echo "[$(date -u +%FT%TZ)] bootstrap_measure: $*"; }
@@ -81,113 +94,288 @@ PYBIN="$(command -v python3.12 || true)"
 }
 "$PYBIN" -V | tee "$RCPT/python-version.txt"
 
-# ---- 2. venv + the pinned wheel set --------------------------------------
+# ---- 2. venv + the exact hashed wheel closure ---------------------------
 if [ ! -x "$PY" ]; then
   log "creating venv at $VENV"
   "$PYBIN" -m venv "$VENV"
 fi
 "$PY" -c 'import sys; assert sys.version_info[:2] == (3, 12)' || {
   echo "existing venv at $VENV is not py3.12 - delete it and re-run setup" >&2; exit 1; }
-if ! "$PY" -c "import torch, transformers, safetensors, huggingface_hub, hf_transfer" 2>/dev/null; then
-  log "installing the pinned wheel set (torch 2.11.0+cu130, transformers 5.16.1)"
-  "$VENV/bin/pip" -q install --upgrade pip
-  "$VENV/bin/pip" -q install setuptools wheel ninja packaging
-  "$VENV/bin/pip" -q install $TORCH_SPEC --index-url "$TORCH_INDEX"
-  "$VENV/bin/pip" -q install "transformers==5.16.1" safetensors numpy \
-      huggingface_hub hf_transfer accelerate rich tokenizers pillow \
-      "pydantic==2.5.3" "formatron==0.5.0" kbnf
-fi
-# hf_transfer is REQUIRED, not optional: every fetch stage exports
-# HF_HUB_ENABLE_HF_TRANSFER=1, and huggingface_hub errors out when that flag is
-# set without the package.  The guard above skips the whole wheel block when the
-# template already ships torch/transformers/huggingface_hub -- which is the
-# normal case on the pytorch template -- so hf_transfer alone can be missing on
-# an otherwise complete box.  That cost a real measurement a slow fetch before
-# it was caught (JOURNAL, lesson 33).  Ensure it separately and idempotently.
-if ! "$PY" -c "import hf_transfer" 2>/dev/null; then
-  log "hf_transfer absent (template supplied the rest) - installing it alone"
-  "$VENV/bin/pip" -q install hf_transfer
-fi
-"$PY" -c "import hf_transfer" 2>/dev/null || {
-  echo "hf_transfer still not importable; fetch stages set HF_HUB_ENABLE_HF_TRANSFER=1 and would fail" >&2
-  exit 1; }
 
-"$PY" - <<'PY' | tee "$RCPT/wheel-versions.txt"
-import torch, transformers, safetensors, numpy, hf_transfer
-print("torch", torch.__version__, "cuda", torch.version.cuda,
-      "| transformers", transformers.__version__,
-      "| safetensors", safetensors.__version__, "| numpy", numpy.__version__,
-      "| hf_transfer", getattr(hf_transfer, "__version__", "present"))
+validate_direct_wheels() {
+  "$PY" - <<'PY'
+# DIRECT_WHEEL_VALIDATOR_BEGIN
+import importlib.metadata as metadata
+import sys
+
+expected = {
+    "pip": "25.0.1",
+    "setuptools": "75.8.0",
+    "wheel": "0.45.1",
+    "ninja": "1.11.1.3",
+    "packaging": "24.2",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.16.1",
+    "safetensors": "0.8.0",
+    "numpy": "2.5.2",
+    "huggingface-hub": "1.28.0",
+    "hf-transfer": "0.1.9",
+    "accelerate": "1.14.0",
+    "rich": "13.9.4",
+    "tokenizers": "0.23.1",
+    "Pillow": "11.1.0",
+    "pydantic": "2.5.3",
+    "formatron": "0.5.0",
+    "kbnf": "0.4.2",
+}
+actual = {}
+problems = []
+for distribution, wanted in expected.items():
+    try:
+        actual[distribution] = metadata.version(distribution)
+    except metadata.PackageNotFoundError:
+        problems.append(f"{distribution}: missing (expected {wanted})")
+        continue
+    if actual[distribution] != wanted:
+        problems.append(
+            f"{distribution}: {actual[distribution]} installed, expected {wanted}"
+        )
+
+try:
+    import torch
+except Exception as exc:
+    problems.append(f"torch: distribution is present but import failed: {exc}")
+else:
+    if torch.version.cuda != "13.0":
+        problems.append(
+            f"torch CUDA: {torch.version.cuda!r} reported, expected '13.0'"
+        )
+
+if problems:
+    print("direct-wheel validation failed:", file=sys.stderr)
+    for problem in problems:
+        print(f"  {problem}", file=sys.stderr)
+    raise SystemExit(1)
+
+for distribution in expected:
+    print(f"{distribution}=={actual[distribution]}")
+print("torch.version.cuda==13.0")
+# DIRECT_WHEEL_VALIDATOR_END
 PY
+}
+
+_direct_wheels_reinstalled=0
+if ! validate_direct_wheels >"$RCPT/wheel-validation-before.txt" 2>&1; then
+  cat "$RCPT/wheel-validation-before.txt" >&2
+  _direct_wheels_reinstalled=1
+fi
+[ -f "$WHEEL_LOCK" ] && [ ! -L "$WHEEL_LOCK" ] || {
+  echo "exact wheel lock is absent or unsafe: $WHEEL_LOCK" >&2
+  exit 1
+}
+sha256sum "$WHEEL_LOCK" | tee "$RCPT/wheel-lock-sha256.txt"
+log "enforcing the exact hashed Python 3.12/cu130 wheel closure"
+"$PY" -m pip -q install --no-deps --require-hashes --only-binary=:all: \
+  -r "$WHEEL_LOCK"
+validate_direct_wheels | tee "$RCPT/wheel-versions.txt"
+"$PY" -m pip check | tee "$RCPT/pip-check.txt"
 
 # ---- 3. the pipeline at its pin, with the measurement patch series --------
-if [ ! -d "$PIPE/.git" ]; then
-  log "cloning the quant pipeline @ $PIPE_PIN"
-  git clone -q "$PIPE_REPO" "$PIPE"
-fi
-git -C "$PIPE" fetch -q origin "$PIPE_PIN" 2>/dev/null || true
-if ! grep -q "_STORED_BITS" "$PIPE/src/quant_pipeline/checkpoint/packed_payload.py"; then
-  git -C "$PIPE" checkout -q "$PIPE_PIN"
-  # SH-03. `A && B` is an AND-OR list, which bash EXEMPTS from set -e, so this asserted
-  # nothing: a dirty pipeline tree was silently accepted and the series applied on top of
-  # it, producing a different reader with no error. Reproduced end to end -- a dirty file
-  # plus a patch touching a different region of it gives `patch` exit 0, no .rej, and a
-  # decoder that hashes differently from the clean pin+series build. 0006 patches the
-  # reader the measurement decodes with, and reader_abi_sha256 is only RECORDED, never
-  # compared against an expected value, so that divergence is invisible downstream.
-  git -C "$PIPE" diff --quiet && git -C "$PIPE" diff --cached --quiet || {
-    echo "$PIPE working tree is dirty - refusing to patch onto it" >&2
-    git -C "$PIPE" status --porcelain | head -20 >&2
-    exit 1; }
-  test -d "$PATCHES" || { echo "patches-v2 missing at $PATCHES - the bundle did not upload it" >&2; exit 1; }
-  log "applying patches 0001-0006"
-  _want=$(grep -cE '^000[1-6]-.*\.patch$' "$PATCHES/SERIES" || echo 0)
-  _have=$(ls -1 "$PATCHES"/000[1-6]-*.patch 2>/dev/null | wc -l | tr -d ' ')
-  [ "$_want" -gt 0 ] && [ "$_have" = "$_want" ] || {
-    echo "patch series incomplete: SERIES names $_want of 0001-0006, $PATCHES holds $_have" >&2
-    ls -1 "$PATCHES" >&2
-    exit 1; }
-  # SH-23. The glob was applied with no cardinality check, so a bundle that dropped a
-  # patch produced a differently-patched tree, exit 0, and a receipt quietly listing one
-  # fewer line. BUNDLE.txt's own policy is "missing files are skipped (the controller
-  # logs which)", and measure_cloud implements that as a WARNING -- so the upstream half
-  # is fail-open by design and this is the consumer that has to notice.
-  # Asserted against SERIES rather than a magic 6: SERIES is uploaded, is already hashed
-  # into the receipt, and this also catches an unexpected EXTRA file matching the glob.
-  ( cd "$PIPE" && for p in "$PATCHES"/000[1-6]-*.patch; do patch -p1 -s < "$p"; done )
-  ( cd "$PATCHES" && sha256sum 000[1-6]-*.patch SERIES ) | tee "$RCPT/patches-v2-applied.txt"
-else
-  [ "$(git -C "$PIPE" rev-parse HEAD)" = "$PIPE_PIN" ] \
-    || { echo "$PIPE HEAD is not $PIPE_PIN" >&2; exit 1; }
-fi
-# 0008 widens normalization ALLOWED_BITS to include 6/8; the streaming reader
-# import path pulls that constant in.  Touches no reader/closure-hashed file.
-V31="$PIPE/src/quant_pipeline/normalization/absolute_v31.py"
-if [ -f "$V31" ] && grep -qF "ALLOWED_BITS = frozenset((3, 4, 5))" "$V31"; then
-  test -f "$PATCHES/0008-v31-allowed-bits-k6-k8.patch" \
-    || { echo "patches-v2/0008 missing on fs" >&2; exit 1; }
-  log "applying patch 0008"
-  ( cd "$PIPE" && patch -p1 -s < "$PATCHES/0008-v31-allowed-bits-k6-k8.patch" )
-  ( cd "$PATCHES" && sha256sum 0008-*.patch ) | tee -a "$RCPT/patches-v2-applied.txt"
-fi
+reconstruct_checkout() {
+  local repo="$1" pin="$2" expected_tree="$3" expected_archive_sha256="$4"
+  local destination="$5" label="$6"
+  local destination_real="" top="" top_real="" reuse=0
+  case "$destination" in
+    "$PIPE"|"$EXL3") ;;
+    *)
+      echo "refusing to reconstruct non-dedicated path: $destination" >&2
+      exit 1
+      ;;
+  esac
+  if [ ! -L "$destination" ] && [ -d "$destination" ]; then
+    destination_real="$(realpath "$destination" 2>/dev/null || true)"
+    top="$(git -C "$destination" rev-parse --show-toplevel 2>/dev/null || true)"
+    [ -z "$top" ] || top_real="$(realpath "$top" 2>/dev/null || true)"
+    if [ -n "$destination_real" ] && [ "$top_real" = "$destination_real" ]; then
+      reuse=1
+    fi
+  fi
+  if [ "$reuse" -eq 0 ]; then
+    # destination is one of the two dedicated children checked above.  Removing
+    # a symlink removes only the link; a nested/outer worktree is never cleaned.
+    rm -rf -- "$destination"
+    log "cloning $label @ $pin"
+    git clone -q "$repo" "$destination"
+  fi
+  if git -C "$destination" remote get-url origin >/dev/null 2>&1; then
+    git -C "$destination" remote set-url origin "$repo"
+  else
+    git -C "$destination" remote add origin "$repo"
+  fi
+  if ! git -C "$destination" cat-file -e "$pin^{commit}" 2>/dev/null; then
+    git -C "$destination" fetch -q origin "$pin"
+  fi
+  git -C "$destination" checkout -q --detach -f "$pin"
+  git -C "$destination" reset -q --hard "$pin"
+  git -C "$destination" clean -q -ffdx
+  [ "$(git -C "$destination" rev-parse HEAD)" = "$pin" ] || {
+    echo "$label checkout did not resolve to $pin" >&2
+    exit 1
+  }
+  [ "$(git -C "$destination" rev-parse 'HEAD^{tree}')" = "$expected_tree" ] || {
+    echo "$label tree does not match the authored pin" >&2
+    exit 1
+  }
+  local archive_sha256
+  archive_sha256="$(
+    git -C "$destination" archive --format=tar HEAD | sha256sum | cut -d' ' -f1
+  )"
+  [ "$archive_sha256" = "$expected_archive_sha256" ] || {
+    echo "$label deterministic archive SHA-256 mismatch" >&2
+    exit 1
+  }
+}
 
-# ---- 4. exllamav3 ONLY if the pipeline import demands it ------------------
+# Always start from the exact clean commit.  A marker in a previously patched
+# file, the right HEAD with local edits, and ignored build residue are all
+# discarded before the authored series is applied.
+reconstruct_checkout \
+  "$PIPE_REPO" "$PIPE_PIN" "$PIPE_TREE" "$PIPE_ARCHIVE_SHA256" \
+  "$PIPE" "quant pipeline"
+test -f "$PATCHES/SERIES" || {
+  echo "patches-v2/SERIES missing at $PATCHES - the bundle did not upload it" >&2
+  exit 1
+}
+mapfile -t _series < <(
+  grep -E '^(000[1-6]|0008)-.*\.patch$' "$PATCHES/SERIES"
+)
+shopt -s nullglob
+_files=( "$PATCHES"/000[1-6]-*.patch "$PATCHES"/0008-*.patch )
+shopt -u nullglob
+[ "${#_series[@]}" -eq 7 ] && [ "${#_files[@]}" -eq "${#_series[@]}" ] || {
+  echo "measurement patch series incomplete: SERIES names ${#_series[@]}, filesystem holds ${#_files[@]} (expected 7)" >&2
+  exit 1
+}
+for _index in "${!_series[@]}"; do
+  [ "$(basename "${_files[$_index]}")" = "${_series[$_index]}" ] || {
+    echo "measurement patch mismatch at entry $_index: SERIES=${_series[$_index]} file=$(basename "${_files[$_index]}")" >&2
+    exit 1
+  }
+done
+log "applying cardinality-checked measurement patches 0001-0006 + 0008"
+for _patch in "${_series[@]}"; do
+  ( cd "$PIPE" && patch -p1 -s --fuzz=0 < "$PATCHES/$_patch" )
+done
+( cd "$PATCHES" && sha256sum "${_series[@]}" SERIES ) \
+  | tee "$RCPT/patches-v2-applied.txt"
+
+# ---- 4. exllamav3 ONLY if a successful pipeline import loads it -----------
 probe() {
-  "$PY" -c "
-import sys; sys.path.insert(0, '$PIPE/src')
+  QP_PIPELINE_ROOT="$PIPE" "$PY" - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.environ["QP_PIPELINE_ROOT"], "src"))
 import quant_pipeline.evaluation.glm53_packed_k4_reader
 import quant_pipeline.evaluation.glm53_logits
 import quant_pipeline.core.artifacts
 import quant_pipeline.campaign.glm53_direct_k4
-print('pipeline import OK')
-" 2>&1
+
+loaded = any(
+    name == "exllamav3" or name.startswith("exllamav3.")
+    for name in sys.modules
+)
+print("pipeline import OK")
+print("exllamav3-loaded:", "yes" if loaded else "no")
+PY
 }
-if ! probe >"$RCPT/pipeline-import.txt" 2>&1; then
-  log "pipeline import failed without exllamav3; building it (see receipt)"
+
+validate_flash_attn() {
+  FLASH_ATTN_EXPECTED="$FLASH_ATTN_VERSION" \
+  FLASH_ATTN_INSTALL_ONLY="${FIDELITY_BOOTSTRAP_INSTALL_ONLY:-}" \
+    "$PY" - <<'PY'
+import importlib.metadata as metadata
+import os
+
+wanted = os.environ["FLASH_ATTN_EXPECTED"]
+actual = metadata.version("flash-attn")
+if actual.lower() != wanted:
+    raise SystemExit(f"flash-attn {actual} installed, expected {wanted}")
+import flash_attn
+import torch
+
+print(f"flash-attn=={actual}")
+if os.environ["FLASH_ATTN_INSTALL_ONLY"]:
+    print("flash-attn CUDA runtime smoke=deferred (install-only)")
+else:
+    if not torch.cuda.is_available():
+        raise SystemExit("flash-attn runtime validation requires the measuring CUDA device")
+    from flash_attn import flash_attn_func
+
+    q = torch.randn((1, 4, 1, 16), device="cuda", dtype=torch.float16)
+    output = flash_attn_func(q, q, q, dropout_p=0.0, causal=False)
+    torch.cuda.synchronize()
+    if output.shape != q.shape or not torch.isfinite(output).all().item():
+        raise SystemExit("flash-attn CUDA runtime smoke returned invalid output")
+    print("flash-attn CUDA runtime smoke=passed")
+PY
+}
+
+validate_exl3_import() {
+  EXL3_EXPECTED="$EXL3" "$PY" - <<'PY'
+import importlib.metadata as metadata
+import json
+import os
+from pathlib import Path
+import sys
+from urllib.parse import unquote, urlparse
+
+expected = Path(os.environ["EXL3_EXPECTED"]).resolve()
+dist = metadata.distribution("exllamav3")
+direct = json.loads(dist.read_text("direct_url.json") or "{}")
+parsed = urlparse(direct.get("url", ""))
+source = Path(unquote(parsed.path)).resolve() if parsed.scheme == "file" else None
+if source != expected or direct.get("dir_info", {}).get("editable") is not True:
+    location = str(source) if source is not None else "<non-file source>"
+    raise SystemExit(
+        f"exllamav3 is not the editable checkout at {expected}; source={location}"
+    )
+
+import exllamav3
+
+module_files = []
+for name, module in tuple(sys.modules.items()):
+    if name != "exllamav3" and not name.startswith("exllamav3."):
+        continue
+    filename = getattr(module, "__file__", None)
+    if filename:
+        resolved = Path(filename).resolve()
+        module_files.append(resolved)
+        try:
+            resolved.relative_to(expected)
+        except ValueError:
+            raise SystemExit(
+                f"{name} imported from {resolved}, outside exact checkout {expected}"
+            )
+if not module_files:
+    raise SystemExit("exllamav3 imported without a verifiable module path")
+print(f"exllamav3 source={expected}")
+PY
+}
+
+_needs_exl3=1
+if probe >"$RCPT/pipeline-import.txt" 2>&1 \
+    && grep -q '^exllamav3-loaded: no$' "$RCPT/pipeline-import.txt"; then
+  _needs_exl3=0
+fi
+if [ "$_needs_exl3" -eq 1 ]; then
+  log "pipeline requires exllamav3; reconstructing its exact source checkout"
   cat "$RCPT/pipeline-import.txt" || true
   if ! { command -v nvcc >/dev/null && nvcc --list-gpu-arch 2>/dev/null | grep -q compute_100; }; then
     ( cd /tmp \
       && wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
+      && printf '%s  %s\n' "$CUDA_KEYRING_SHA256" \
+          cuda-keyring_1.1-1_all.deb | sha256sum -c - \
       && $ASROOT dpkg -i cuda-keyring_1.1-1_all.deb >/dev/null 2>&1 \
       && $ASROOT apt-get update -qq >/dev/null 2>&1 \
       && $ASROOT apt-get install -y -qq cuda-toolkit-13-0 >/dev/null 2>&1 ) \
@@ -195,26 +383,48 @@ if ! probe >"$RCPT/pipeline-import.txt" 2>&1; then
     $ASROOT ln -sfn /usr/local/cuda-13.0 /usr/local/cuda 2>/dev/null || true
     export PATH="/usr/local/cuda-13.0/bin:$PATH"
   fi
-  "$PY" -c "import flash_attn" 2>/dev/null || "$VENV/bin/pip" -q install "$FLASH_ATTN_WHL"
-  if [ ! -d "$EXL3/.git" ]; then git clone -q "$EXL3_REPO" "$EXL3"; fi
-  git -C "$EXL3" checkout -q "$EXL3_PIN"
-  if ! TORCH_CUDA_ARCH_LIST="9.0;10.0" "$PY" -c "import exllamav3" 2>/dev/null; then
-    ( cd "$EXL3" && TORCH_CUDA_ARCH_LIST="9.0;10.0" \
-        "$VENV/bin/pip" -q install --no-build-isolation --no-deps -e . )
+  if ! FIDELITY_BOOTSTRAP_INSTALL_ONLY=1 \
+      validate_flash_attn >"$RCPT/flash-attn-version.txt" 2>&1; then
+    "$PY" -m pip -q install --force-reinstall --no-deps \
+      "$FLASH_ATTN_WHL#sha256=$FLASH_ATTN_SHA256"
   fi
+  validate_flash_attn | tee "$RCPT/flash-attn-version.txt"
+
+  reconstruct_checkout \
+    "$EXL3_REPO" "$EXL3_PIN" "$EXL3_TREE" "$EXL3_ARCHIVE_SHA256" \
+    "$EXL3" "exllamav3"
+  if [ "$_direct_wheels_reinstalled" -eq 1 ] \
+      || ! validate_exl3_import >"$RCPT/exllamav3-build.txt" 2>&1; then
+    # A newly installed torch invalidates any previously compiled editable
+    # extension even when its direct_url and Python package path are unchanged.
+    ( cd "$EXL3" && TORCH_CUDA_ARCH_LIST="9.0;10.0" \
+        "$PY" -m pip -q install --force-reinstall --no-build-isolation --no-deps -e . )
+  fi
+  [ "$(git -C "$EXL3" rev-parse HEAD)" = "$EXL3_PIN" ] \
+    && git -C "$EXL3" diff --quiet \
+    && git -C "$EXL3" diff --cached --quiet || {
+      echo "exllamav3 tracked source changed during its build" >&2
+      exit 1
+    }
+  validate_exl3_import | tee "$RCPT/exllamav3-build.txt"
   probe | tee "$RCPT/pipeline-import.txt"
 else
   cat "$RCPT/pipeline-import.txt"
-  log "exllamav3 NOT built: the measurement path imports the pipeline without it"
-  echo "not-built: pipeline imports cleanly without exllamav3" > "$RCPT/exllamav3-build.txt"
+  log "exllamav3 NOT built: the measurement path does not import it"
+  echo "not-built: pipeline imports without loading exllamav3" > "$RCPT/exllamav3-build.txt"
 fi
+"$PY" -m pip check | tee "$RCPT/pip-check.txt"
+"$PY" -m pip list --format=freeze \
+  | LC_ALL=C sort \
+  | tee "$RCPT/resolver-selected-wheel-versions.txt"
 
 # ---- INSTALL/CHECK SPLIT (container build) --------------------------------
 # Steps 1-4 INSTALL; steps 5-6 CHECK.  `container/Dockerfile` runs this script
-# at image build time with FIDELITY_BOOTSTRAP_INSTALL_ONLY=1 so the four
-# minutes of apt/pip/git every rental used to pay are baked into a layer -- and
-# then runs the SAME script unset at container start, where every install step
-# is guarded and no-ops, and the checks run.
+# at image build time with FIDELITY_BOOTSTRAP_INSTALL_ONLY=1 so apt/pip/git work
+# is baked into a layer, then runs the SAME script unset at container start.
+# Direct wheels no-op only after exact distribution/CUDA validation; source
+# checkouts are deliberately reconstructed so dirty or ignored residue cannot
+# cross setup runs.
 #
 # The split is not tidiness.  The gguf battery's rung 1b re-decodes the
 # committed real bytes on THIS BOX'S CUDA device and demands torch.equal
@@ -224,7 +434,7 @@ fi
 # three adapter batteries: they are pre-flight, and pre-flight belongs to the
 # flight.
 #
-# Unset (every existing caller) the behaviour below is byte-for-byte unchanged.
+# Unset (every existing caller) continues into the runtime-only checks below.
 if [ -n "${FIDELITY_BOOTSTRAP_INSTALL_ONLY:-}" ]; then
   log "install-only: steps 5-6 (adapter import + offline selftests) deferred to run time"
   log "bootstrap complete (install-only)"

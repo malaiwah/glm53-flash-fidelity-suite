@@ -220,10 +220,11 @@ Qwen3.8 measurement (2,047 positions, vocab 248,320, hidden 5,120 = 1.0):
 | M2 GLM-5.3-Flash | 154,880 | 4,096 | 0.499 | ~86 s | ~876 s |
 | M3 GLM-5.3 / GLM-5.2 | 154,880* | 6,144 | 0.748 | ~130 s | ~1,313 s |
 
-\* GLM-5.3-Flash's vocabulary is 154,880 (`hidden_replay.py::EXPECTED_VOCAB`,
-and the `--vocab-chunk 9680` divisor everything in this repo uses). The 78L/6144
-GLM-5.3/GLM-5.2 row ASSUMES the same vocabulary and has not been checked against
-those configs — do that before quoting the M3 line, per M1 learning 16.
+\* GLM-5.3-Flash's vocabulary is 154,880
+(`hidden_replay.py::EXPECTED_VOCAB`). The safe root replay profile fixes
+`--vocab-chunk 8192`; its final block contains 7,424 columns. The 78L/6144
+GLM-5.3/GLM-5.2 row ASSUMES the same vocabulary and has not been checked
+against those configs — do that before quoting the M3 line, per M1 learning 16.
 
 **The consequence for the ladder is that the comparison term stops mattering.**
 At four candidates on a 512-window Flash panel the comparison budget goes from

@@ -47,6 +47,7 @@ from fidelity.engines import build_invocation, load_engines      # noqa: E402
 from fidelity.hfmeta import (                                    # noqa: E402
     RepoMeta, gguf_build_key, gguf_builds, gguf_nominal_rate, sniff_surface,
 )
+from fidelity.jobcontract import JobContractError                 # noqa: E402
 
 REPO = "unsloth/GLM-5.3-Flash-GGUF"
 REV = "2975ab414d30340466d8c51533c6e91f0cca64c1"
@@ -184,105 +185,90 @@ def rung_repeated_flag() -> None:
 
 # ---------------------------------------------------------------- rung 4
 def rung_argv(tmp: Path) -> None:
-    job = {
-        "lane": "streaming", "cold_runs": 2, "profile": "gguf",
-        "reduce_order": "fp32", "panel": {"roles": "final"},
-        "target": {"repo_id": REPO, "revision": REV, "surface": "gguf",
-                   "path": BUILD,
-                   "artifact_files": [{"name": n, "bytes": 1} for n in PARTS]},
-    }
-    (tmp / "job.json").write_text(json.dumps(job), encoding="utf-8")
-    env = dict(os.environ, FIDELITY_FS_ROOT="/fsroot",
-               FIDELITY_ENGINE_ROOT="/fsroot-engine",
-               FIDELITY_SUITE_ROOT=str(ROOT),
-               FIDELITY_ENGINE_PYTHON=sys.executable)
-    env.pop("QP_PIPELINE_ROOT", None)
-    proc = subprocess.run(
-        [sys.executable, str(ROOT / "bin" / "invoke_engine.py"),
-         "--job", str(tmp / "job.json"), "--lane", "streaming",
-         "--cold-run", "1", "--out", "/out", "--print-only"],
-        capture_output=True, text=True, env=env)
-    argv = proc.stdout.strip()
-    check(proc.returncode == 0, "4a invoke_engine composes a gguf capture",
-          proc.stdout + proc.stderr)
-    check("--source gguf" in argv, "4b it spells --source gguf",
-          argv[:200])
-    check(all(("/fsroot/models/target/" + n) in argv for n in PARTS),
-          "4c every part of the build is on the argv, by local path "
-          "(a container's tensor table is per-part; a missing part is a "
-          "missing layer, not a short read)")
-    check("--profile gguf" in argv, "4d the profile reaches the engine")
-    check("--inventory /fsroot/models/bf16-inventory.json" in argv,
-          "4e the sealed BF16 inventory is passed: --source gguf REFUSES "
-          "without one, an hour into a rental")
-    check("--bf16 /fsroot/models/bf16" in argv,
-          "4f --bf16 is the OFFICIAL skeleton beside the stage markers -- not a "
-          "materialized tree (stream_score materializes the gguf view itself), "
-          "and not the container's ephemeral layer (a restarted pod would skip "
-          "a `setup` whose 4.2 GB vision shard had evaporated)",
-          argv)
-    check("--gguf-revision %s" % REV in argv and "--gguf-repo %s" % REPO in argv,
-          "4g the artifact's identity is pinned on the argv")
-    # 4i is not gguf-specific and cost a live run to find. THREE roots default
-    # to JarvisLabs paths; the controller exports two of them and QP_PIPELINE_ROOT
-    # was left hard-coded, so on any other provider the engine was handed a
-    # pipeline that does not exist -- and said so at the START of the measure
-    # stage, i.e. after the bootstrap, a 200 GB fetch and the panel were all
-    # paid for. It must follow the k6 root the controller DOES set.
-    check("--pipeline-root /fsroot-engine/pipeline" in argv,
-          "4i --pipeline-root follows FIDELITY_ENGINE_ROOT rather than defaulting "
-          "to a JarvisLabs path on a provider that is not JarvisLabs",
-          argv)
+    """The generic GGUF composer stays available, but paid dispatch is closed."""
+    import invoke_engine as invoker
+    from fidelity.jobcontract import JobContractError
 
-    # and the refusal when the plan forgot to name a build
-    job["target"]["artifact_files"] = []
-    (tmp / "job-noshelf.json").write_text(json.dumps(job), encoding="utf-8")
-    proc = subprocess.run(
-        [sys.executable, str(ROOT / "bin" / "invoke_engine.py"),
-         "--job", str(tmp / "job-noshelf.json"), "--lane", "streaming",
-         "--cold-run", "1", "--out", "/out", "--print-only"],
-        capture_output=True, text=True, env=env)
-    check(proc.returncode == 3 and "shelf" in (proc.stdout + proc.stderr),
-          "4h a job with no artifact_files is REFUSED here, not run with a "
-          "default source that dies after the fetch",
-          proc.stdout + proc.stderr)
+    lane = load_engines()["streaming"]
+    job = {
+        "role": "quant",
+        "lane": "streaming",
+        "profile": {
+            "profile_id": "gguf", "lane": "streaming",
+            "source": "gguf", "surface": "gguf", "bits": 4.0,
+        },
+        "target": {"surface": "gguf", "bits": 4.0},
+    }
+    refused = ""
+    try:
+        invoker._invocation_values(job, "streaming", lane)
+    except JobContractError as exc:
+        refused = str(exc)
+    check("initial paid invoker permits only" in refused
+          and "tr3-6bpw" in refused and "native-bf16" not in refused,
+          "4 paid invocation refuses GGUF before composing any filesystem path",
+          refused)
+    check(not list(tmp.iterdir()),
+          "4b the refusal creates no run artifact")
 
 
 # ---------------------------------------------------------------- rung 5
 def rung_structural() -> None:
     import ast
-    import re
+    import invoke_engine as invoker
 
-    # 5a. BOTH runners must hand the sniffer the path hint. measure_local used
-    # to pass --path to the registry front gate and NOT to sniff_surface, so
-    # `bin/measure <a GGUF repo>` -- the documented starting point -- refused
-    # with "this artifact cannot be read by any available surface adapter",
-    # which was false, and priced the 2.55 TB shelf instead of the 200 GB
-    # build. A shared helper cannot enforce this; a structural check can.
+    # BOTH generic planners must hand the sniffer the authored path hint. Local
+    # planning still supports GGUF; the paid path refuses it separately above.
     for runner in ("measure_cloud.py", "measure_local.py"):
         src = (ROOT / "bin" / runner).read_text(encoding="utf-8")
         calls = [n for n in ast.walk(ast.parse(src))
                  if isinstance(n, ast.Call)
                  and getattr(n.func, "id", None) == "sniff_surface"]
         check(calls and all(len(c.args) + len(c.keywords) >= 2 for c in calls),
-              "5a %s passes the --path hint to sniff_surface (a repo that "
-              "publishes many artifacts at one revision is unreadable without "
-              "it, and mispriced by 12x if it is dropped)" % runner,
+              "5a %s passes the --path hint to sniff_surface" % runner,
               "%d call(s), arg counts %s"
               % (len(calls), [len(c.args) + len(c.keywords) for c in calls]))
 
-    src = (ROOT / "bin" / "invoke_engine.py").read_text(encoding="utf-8")
-    body = src.split("source_by_surface = {", 1)[1].split("}", 1)[0]
-    spelled = set(re.findall(r'"([a-z0-9-]+)":\s*"[a-z0-9-]+"', body))
-    for lane_name, lane in load_engines().items():
-        if "source" not in (lane.flag_map or {}):
-            continue
-        missing = sorted(set(lane.surfaces) - spelled)
-        check(not missing,
-              "5b every surface lane %r declares has a --source spelling "
-              "(a surface with none reaches the GPU and dies on argparse)"
-              % lane_name,
-              "unspelled: %s" % ", ".join(missing))
+    lane = load_engines()["streaming"]
+    common = {
+        "role": "quant", "lane": "streaming", "reduce_order": "fp32",
+        "panel": {"roles": "final"},
+    }
+    profile_id, source, surface, bits, cache = (
+        "tr3-6bpw", "tr3", "tr3-published", 6.0, "none")
+    job = dict(common)
+    job.update({
+        "profile": {
+            "profile_id": profile_id, "lane": "streaming",
+            "source": source, "surface": surface, "bits": bits,
+        },
+        "target": {"surface": surface, "bits": bits},
+        "runtime": {
+            "device": "cuda", "decode_cache": cache,
+            "decode_threads": 4, "reader_threads": 4,
+            "reduce_order": "fp32",
+        },
+        "timing": {"runtime_profile": {
+            "decode_cache": cache,
+            "decode_threads": 4, "reader_threads": 4,
+        }},
+    })
+    values = invoker._invocation_values(job, "streaming", lane)
+    check(values["source"] == source
+          and values["profile_id"] == profile_id,
+          "5b paid K6 profile has one authored source spelling",
+          repr(values))
+    native = json.loads(json.dumps(job))
+    native["profile"].update({
+        "profile_id": "native-bf16", "source": "native",
+        "surface": "native-bf16", "bits": 16.0})
+    native["target"] = {"surface": "native-bf16", "bits": 16.0}
+    try:
+        invoker._invocation_values(native, "streaming", lane)
+        native_refused = False
+    except JobContractError:
+        native_refused = True
+    check(native_refused, "5c paid invoker refuses M2 native quant")
 
 
 # ---------------------------------------------------------------- rung 6
@@ -302,53 +288,49 @@ def modern_bash():
 
 
 def rung_fetch_scope(tmp: Path) -> None:
-    """Drive the REAL fetch_target stage with a stub `hf`.
+    """The cloud stage refuses GGUF before a downloader can run."""
+    from selftest_job_identity import fixture
 
-    The property under test is a money property: a whole-repo `hf download` of
-    unsloth/GLM-5.3-Flash-GGUF is 2.55 TB for the 200 GB one build needs, and
-    the failure mode is a full disk three stages into a paid run.
-    """
     bash = modern_bash()
     if bash is None:
-        print("  SKIP  6 fetch scoping needs bash 4.4+ (mapfile -d); none found")
+        print("  SKIP  6 stage preflight needs bash 4.4+; none found")
         return
-    fs, k6 = tmp / "fs", tmp / "k6"
-    (fs / ".secrets").mkdir(parents=True)
-    (fs / "receipts" / "done").mkdir(parents=True)
-    (fs / "logs").mkdir(parents=True)
-    (k6 / "venv" / "bin").mkdir(parents=True)
+    fs, engine = tmp, tmp / "engine"
+    (engine / "venv" / "bin").mkdir(parents=True)
     argv_log = tmp / "hf-argv.txt"
-    (k6 / "venv" / "bin" / "hf").write_text(
-        '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > %s\nexit 0\n' % argv_log,
-        encoding="utf-8")
-    (k6 / "venv" / "bin" / "hf").chmod(0o755)
-    # gguf_surface's two post-fetch passes need a python; a stub keeps this
-    # rung about ARGV rather than about numpy being installed.
-    (k6 / "venv" / "bin" / "python").write_text(
+    (engine / "venv" / "bin" / "hf").write_text(
+        '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > %s\nexit 0\n'
+        % argv_log, encoding="utf-8")
+    (engine / "venv" / "bin" / "hf").chmod(0o755)
+    (engine / "venv" / "bin" / "python").write_text(
         '#!/usr/bin/env bash\necho "{}"\nexit 0\n', encoding="utf-8")
-    (k6 / "venv" / "bin" / "python").chmod(0o755)
-    (fs / "job.json").write_text(json.dumps({
-        "target": {"repo_id": REPO, "revision": REV, "surface": "gguf",
-                   "path": BUILD,
-                   "artifact_files": [{"name": n, "bytes": 1} for n in PARTS]},
-    }), encoding="utf-8")
-    stage = tmp / "bin"
-    shutil.copytree(ROOT / "bin", stage, dirs_exist_ok=True)
+    (engine / "venv" / "bin" / "python").chmod(0o755)
+    shutil.copytree(ROOT / "bin", fs / "bin", dirs_exist_ok=True)
+
+    job = fixture()
+    job["execution_attempt"] = {
+        "number": 1, "kind": "local-container", "attempt_id": "1" * 24}
+    job["profile"] = {
+        "profile_id": "gguf", "lane": "streaming",
+        "source": "gguf", "surface": "gguf", "bits": 4.0,
+    }
+    job["target"].update({
+        "surface": "gguf", "codec": "gguf-k-quant", "bits": 4.0,
+        "path": BUILD,
+        "artifact_files": [{"name": n, "bytes": 1} for n in PARTS],
+    })
+    (fs / "job.json").write_text(json.dumps(job), encoding="utf-8")
     proc = subprocess.run(
-        [bash, str(stage / "stage_measure.sh"), "fetch_target"],
+        [bash, str(fs / "bin" / "stage_measure.sh"), "fetch_target"],
         capture_output=True, text=True,
-        env=dict(os.environ, FIDELITY_FS_ROOT=str(fs), FIDELITY_ENGINE_ROOT=str(k6)))
-    got = argv_log.read_text(encoding="utf-8").splitlines() if argv_log.exists() else []
-    check(got, "6a the fetch stage ran and called hf",
-          (proc.stdout + proc.stderr)[-1200:])
-    check(got.count("--include") == len(PARTS),
-          "6b the download is scoped to the chosen build's parts, by name "
-          "(not the 2.55 TB shelf, and not a %s/* glob that would sweep in a "
-          "sidecar the publisher adds tomorrow)" % BUILD,
-          " ".join(got))
-    check(all(part in got for part in PARTS),
-          "6c every part is one literal argument",
-          " ".join(got))
+        env=dict(os.environ, FIDELITY_ENGINE_ROOT=str(engine)))
+    output = proc.stdout + proc.stderr
+    check(proc.returncode != 0
+          and "quant reference/profile contract is incomplete" in output,
+          "6a cloud stage preflight refuses a GGUF execution contract",
+          output[-1200:])
+    check(not argv_log.exists(),
+          "6b the refusal occurs before hf can download any shelf byte")
 
 
 # ---------------------------------------------------------------- rung 7

@@ -1,5 +1,10 @@
 # Race mode — capturing a root while the checkpoint is still downloading
 
+> **Historical experiment; not an admitted paid path.** The safe RunPod
+> controller refuses `--race`, previews, recovery, and remote publication before
+> provider access. Keep this document as evidence for the experiment; use
+> [`THIRD-PARTY-QUICKSTART.md`](THIRD-PARTY-QUICKSTART.md) for current paid work.
+
 > `bin/measure-cloud --role root --race`
 >
 > Two things happen: the fetch stops being a barrier and becomes a priority queue

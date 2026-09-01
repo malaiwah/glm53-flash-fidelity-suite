@@ -4,7 +4,7 @@
     step 1  capture   reference weights + panel  -> fidelity dataset A   [publish: REQUIRED for a root]
     step 2  capture   quantized weights + panel  -> fidelity dataset B   [publish: OPTIONAL]
     step 3  compare   A, B                       -> KLD + determinism + a registry receipt
-                      A, A                       -> reproduction confirmation, exactly 0.0
+    root proof  capture A1, capture A2            -> reproduction confirmation, exactly 0.0
 
 Capture and comparison used to be fused, so every measurement re-paid for
 capture, teachers were non-portable, and a lost capture killed reproducibility.
@@ -20,14 +20,19 @@ Full specification: docs/FIDELITY-DATASET-SPEC.md
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
 import os
+import re
 import subprocess
 import sys
+import tempfile
+import stat
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fidelity import common  # noqa: E402
+from fidelity import common, jobcontract, panel, resultsink  # noqa: E402
 from fidelity import dsformat as F  # noqa: E402
 from fidelity import dsadapt, dsmanifest, dsvalidate  # noqa: E402
 
@@ -653,47 +658,846 @@ def cmd_adapt(args):
     return USAGE
 
 
+
+# ---------------------------------------------------------------------------
+# root qualification
+# ---------------------------------------------------------------------------
+
+
+class RootQualificationError(ValueError):
+    pass
+
+
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_HEX40 = re.compile(r"^[0-9a-f]{40}$")
+_QUALIFICATION_SCHEMA = "fidelity.root-qualification-receipt.v1"
+_QUALIFICATION_KEYS = {
+    "schema", "receipt_sha256", "qualified_at", "canonical_job_sha256",
+    "job_file_sha256", "dataset_repository", "destination_repository",
+    "job_contract", "captures", "comparison", "comparator", "verification",
+    "reproduction_confirmation",
+}
+_QUALIFICATION_JOB_CONTRACT_KEYS = (
+    jobcontract.ROOT_QUALIFICATION_CONTRACT_KEYS)
+
+def _read_json_file(path, label):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return common.parse_json(handle.read())
+    except (OSError, ValueError, TypeError) as exc:
+        raise RootQualificationError("%s is not readable strict JSON: %s" % (label, exc))
+
+
+def _positive_zero(value):
+    return isinstance(value, float) and value == 0.0 \
+        and math.copysign(1.0, value) == 1.0
+
+
+def _verified_report(path, dataset_root, label):
+    doc = _read_json_file(path, "%s verification receipt" % label)
+    if not common.verify_seal(doc):
+        raise RootQualificationError("%s verification receipt seal does not recompute" % label)
+    if doc.get("schema") != F.VALIDATION_SCHEMA or doc.get("structural_status") != "sealed" \
+            or doc.get("error_count") != 0 or doc.get("errors") != []:
+        raise RootQualificationError("%s verification receipt is not a successful full verify"
+                                     % label)
+    subject = doc.get("subject")
+    if not isinstance(subject, str) or os.path.realpath(subject) != os.path.realpath(dataset_root):
+        raise RootQualificationError(
+            "%s verification receipt names %r, not dataset root %s"
+            % (label, subject, dataset_root))
+    return {
+        "receipt_sha256": doc["receipt_sha256"],
+        "file_sha256": common.sha256_file(path),
+    }
+
+
+def _capture_identity(root, expected_label, label):
+    report = dsvalidate.validate_dataset(root, verify_tensors=True)
+    if report.errors:
+        raise RootQualificationError(
+            "%s dataset does not independently verify (%s)"
+            % (label, report.errors[0]["message"]))
+    manifest_path = os.path.join(root, F.MANIFEST_NAME)
+    manifest = F.load_manifest(root)
+    dataset = manifest.get("dataset") or {}
+    determinism = manifest.get("determinism") or {}
+    capture = manifest.get("capture") or {}
+    runtime = manifest.get("runtime") or {}
+    if dataset.get("role") != "root":
+        raise RootQualificationError("%s dataset role is %r, not root"
+                                     % (label, dataset.get("role")))
+    if determinism.get("run_count") != 1:
+        raise RootQualificationError(
+            "%s dataset determinism.run_count is %r; each public manifest must remain "
+            "one independent capture" % (label, determinism.get("run_count")))
+    capture_rel = capture.get("manifest_file")
+    runtime_rel = runtime.get("file")
+    if not capture_rel or not runtime_rel:
+        raise RootQualificationError("%s dataset omits its capture/runtime manifest" % label)
+    capture_path = F.resolve_inside(root, capture_rel, owner="root qualification/capture")
+    runtime_path = F.resolve_inside(root, runtime_rel, owner="root qualification/runtime")
+    capture_doc = _read_json_file(capture_path, "%s capture manifest" % label)
+    runtime_doc = _read_json_file(runtime_path, "%s runtime manifest" % label)
+    run_name = capture_doc.get("run_name")
+    cold_run = (runtime_doc.get("runtime_environment") or {}).get("cold_run")
+    if run_name != expected_label or cold_run != expected_label:
+        raise RootQualificationError(
+            "%s process label mismatch: expected %r, capture run_name=%r, runtime cold_run=%r"
+            % (label, expected_label, run_name, cold_run))
+    stack_fingerprint = runtime_doc.get("stack_fingerprint") or {}
+    capture_tool = runtime_doc.get("capture_tool") or {}
+    runtime_container = runtime_doc.get("container")
+    if not isinstance(runtime_container, dict):
+        raise RootQualificationError(
+            "%s runtime manifest container identity is not an object" % label)
+    manifest_panel = manifest.get("panel")
+    binding_evidence = capture_tool.get("resolved_panel_binding")
+    resolved_binding = (
+        binding_evidence.get("binding")
+        if isinstance(binding_evidence, dict) else None)
+    receipt_binding = (
+        resolved_binding.get("receipt")
+        if isinstance(resolved_binding, dict) else None)
+    receipt_rel = (
+        manifest_panel.get("panel_receipt_file")
+        if isinstance(manifest_panel, dict) else None)
+    if receipt_rel != "panel/panel-receipt.json":
+        raise RootQualificationError(
+            "%s manifest does not name the canonical bound panel receipt" % label)
+    if (manifest_panel.get("panel_receipt_sha256")
+            != (receipt_binding or {}).get("declared_receipt_sha256")):
+        raise RootQualificationError(
+            "%s manifest panel receipt identity differs from resolved binding"
+            % label)
+    expected_receipt_bytes = (
+        receipt_binding.get("bytes")
+        if isinstance(receipt_binding, dict) else None)
+    if (isinstance(expected_receipt_bytes, bool)
+            or not isinstance(expected_receipt_bytes, int)
+            or not 0 < expected_receipt_bytes <= 16 * 1024 * 1024):
+        raise RootQualificationError(
+            "%s resolved panel receipt byte count is invalid" % label)
+    try:
+        receipt_path = F.resolve_inside(root, receipt_rel)
+        with open(receipt_path, "rb") as handle:
+            raw_receipt = handle.read(expected_receipt_bytes + 1)
+        panel.verify_bound_panel_receipt_bytes(
+            receipt_binding, raw_receipt, "%s panel receipt" % label)
+    except (OSError, F.FormatError, panel.PanelError) as exc:
+        raise RootQualificationError(
+            "%s bound panel receipt is invalid: %s" % (label, exc)) from exc
+    return {
+        "process_label": expected_label,
+        "dataset_id": dataset.get("id"),
+        "dataset_name": dataset.get("name"),
+        "dataset_author": (dataset.get("author") or {}).get("name"),
+        "dataset_repository": dataset.get("repository"),
+        "dataset_sha256": manifest.get(F.SEAL_FIELD),
+        "dataset_manifest_file_sha256": common.sha256_file(manifest_path),
+        "capture_manifest": capture_rel,
+        "capture_manifest_sha256": common.sha256_file(capture_path),
+        "capture_content_digest": capture.get("capture_content_digest"),
+        "capture_form": capture.get("form"),
+        "capture_dtype": capture.get("dtype"),
+        "runtime_manifest": runtime_rel,
+        "runtime_manifest_sha256": common.sha256_file(runtime_path),
+        "runtime_lane": runtime.get("lane"),
+        "runtime_device": stack_fingerprint.get("device"),
+        "runtime_engine": stack_fingerprint.get("engine"),
+        "runtime_container": runtime_container,
+        "capture_tool_file": capture_tool.get("file"),
+        "capture_schedule": capture_tool.get("schedule"),
+        "panel": {
+            "panel_id": (manifest.get("panel") or {}).get("panel_id"),
+            "suite_token_hash_sha256":
+                (manifest.get("panel") or {}).get("suite_token_hash_sha256"),
+            "panel_receipt_sha256":
+                (manifest.get("panel") or {}).get("panel_receipt_sha256"),
+            "tokenizer": (manifest.get("panel") or {}).get("tokenizer"),
+            "resolved_binding_evidence": capture_tool.get("resolved_panel_binding"),
+        },
+        "unexpected_tensor_allowlist":
+            capture_tool.get("unexpected_tensor_allowlist"),
+        "stack_fingerprint_sha256": runtime.get("stack_fingerprint_sha256"),
+        "lane_identity_sha256": runtime.get("lane_identity_sha256"),
+        "weights_repository": (manifest.get("weights") or {}).get("repository"),
+        "weights_revision": (manifest.get("weights") or {}).get("revision"),
+        "determinism_run_count": 1,
+    }
+
+
+
+def _check_capture_job_contract(job, identity, label):
+    capture = job.get("capture") or {}
+    panel_job = job.get("panel") or {}
+    binding = panel_job.get("resolved_binding")
+    if not isinstance(binding, dict):
+        raise RootQualificationError("job panel.resolved_binding is absent")
+    panel_binding = binding.get("panel") or {}
+    receipt_binding = binding.get("receipt") or {}
+    tokenizer_binding = binding.get("tokenizer") or {}
+    if tokenizer_binding.get("files_verified") is not True:
+        raise RootQualificationError("job panel tokenizer files are not verified")
+    def hex64(value):
+        return (isinstance(value, str) and len(value) == 64
+                and all(char in "0123456789abcdef" for char in value))
+
+    if (not panel_binding.get("id")
+            or not hex64(panel_binding.get("suite_token_hash_sha256"))
+            or not hex64(receipt_binding.get("declared_receipt_sha256"))
+            or not hex64(panel_job.get("binding_file_sha256"))):
+        raise RootQualificationError(
+            "job panel binding lacks a sealed panel/receipt identity")
+    if (not tokenizer_binding.get("repository")
+            or not tokenizer_binding.get("revision")
+            or not isinstance(tokenizer_binding.get("vocab_size"), int)
+            or tokenizer_binding.get("vocab_size") <= 0
+            or not isinstance(tokenizer_binding.get("files"), list)
+            or not tokenizer_binding.get("files")
+            or not hex64(tokenizer_binding.get("identity_sha256"))):
+        raise RootQualificationError(
+            "job panel binding lacks a complete tokenizer identity")
+
+    expected_dtype = {"bfloat16": "BF16", "bf16": "BF16"}.get(
+        str(capture.get("dtype")).lower())
+    represented = (
+        ("dataset_id", identity["dataset_id"], capture.get("dataset_id")),
+        ("dataset_name", identity["dataset_name"], capture.get("dataset_name")),
+        ("dataset_author", identity["dataset_author"], capture.get("author")),
+        ("dataset_repository", identity["dataset_repository"],
+         capture.get("dataset_repository")),
+        ("lane", identity["runtime_lane"], job.get("lane")),
+        ("form", identity["capture_form"], capture.get("form")),
+        ("schedule", identity["capture_schedule"], capture.get("schedule")),
+        ("device", identity["runtime_device"], capture.get("device")),
+        ("dtype", identity["capture_dtype"], expected_dtype),
+    )
+    for field, observed, expected in represented:
+        if expected is None or expected == "" or observed != expected:
+            raise RootQualificationError(
+                "%s capture %s=%r does not match job value %r"
+                % (label, field, observed, expected))
+    if capture.get("panel_id") != panel_binding.get("id"):
+        raise RootQualificationError(
+            "job capture.panel_id does not match panel.resolved_binding")
+    if capture.get("engine") != "hf-transformers" \
+            or identity["runtime_engine"] != "transformers-eager" \
+            or identity["capture_tool_file"] != "engines/tools/hf_capture.py":
+        raise RootQualificationError(
+            "%s capture engine evidence does not match job engine %r"
+            % (label, capture.get("engine")))
+
+    panel_identity = identity["panel"]
+    evidence = panel_identity.get("resolved_binding_evidence") or {}
+    if evidence.get("binding_file_sha256") != panel_job.get("binding_file_sha256") \
+            or evidence.get("binding") != binding:
+        raise RootQualificationError(
+            "%s capture lacks the exact job panel binding evidence" % label)
+    if panel_identity.get("panel_id") != panel_binding.get("id") \
+            or panel_identity.get("suite_token_hash_sha256") \
+            != panel_binding.get("suite_token_hash_sha256") \
+            or panel_identity.get("panel_receipt_sha256") \
+            != receipt_binding.get("declared_receipt_sha256"):
+        raise RootQualificationError(
+            "%s dataset panel identity does not match the resolved job panel" % label)
+    manifest_tokenizer = panel_identity.get("tokenizer") or {}
+    for field in ("repository", "revision", "vocab_size", "files",
+                  "identity_sha256"):
+        if manifest_tokenizer.get(field) != tokenizer_binding.get(field):
+            raise RootQualificationError(
+                "%s dataset tokenizer %s does not match the resolved job tokenizer"
+                % (label, field))
+
+    expected_allowlist = capture.get("unexpected_tensor_allowlist")
+    observed_allowlist = identity.get("unexpected_tensor_allowlist")
+    if expected_allowlist is None:
+        if observed_allowlist is not None:
+            raise RootQualificationError(
+                "%s capture records unexpected tensors absent from job.json" % label)
+        return
+    if not isinstance(expected_allowlist, dict) \
+            or not isinstance(observed_allowlist, dict):
+        raise RootQualificationError(
+            "%s capture lacks exact unexpected-tensor allowlist evidence" % label)
+    if (not expected_allowlist.get("path")
+            or not hex64(expected_allowlist.get("artifact_sha256"))
+            or not hex64(
+                expected_allowlist.get("canonical_sorted_names_sha256"))):
+        raise RootQualificationError(
+            "job unexpected-tensor allowlist identity is incomplete")
+    expected_keys = observed_allowlist.get("expected_keys")
+    if (not isinstance(expected_keys, list)
+            or not expected_keys
+            or any(not isinstance(name, str) or not name for name in expected_keys)
+            or len(expected_keys) != len(set(expected_keys))):
+        raise RootQualificationError(
+            "%s unexpected-tensor evidence has invalid expected names" % label)
+    names_sha256 = common.sha256_hex(json.dumps(
+        sorted(expected_keys), separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False))
+    if names_sha256 != expected_allowlist.get("canonical_sorted_names_sha256"):
+        raise RootQualificationError(
+            "%s unexpected-tensor names do not match the job name identity" % label)
+    if observed_allowlist.get("artifact_sha256") \
+            != expected_allowlist.get("artifact_sha256") \
+            or observed_allowlist.get("canonical_sorted_names_sha256") \
+            != expected_allowlist.get("canonical_sorted_names_sha256") \
+            or observed_allowlist.get("exact_match") is not True \
+            or not observed_allowlist.get("expected_keys") \
+            or observed_allowlist.get("observed_keys") \
+            != observed_allowlist.get("expected_keys") \
+            or observed_allowlist.get("duplicate_observed_keys") != [] \
+            or observed_allowlist.get("missing_keys") != [] \
+            or observed_allowlist.get("extra_keys") != []:
+        raise RootQualificationError(
+            "%s unexpected-tensor evidence is not an exact job-bound match" % label)
+
+def _load_qualification(
+        path, *, job_path=None, dataset=None, repository=None):
+    doc = _read_json_file(path, "root qualification receipt")
+    if not isinstance(doc, dict):
+        raise RootQualificationError("root qualification receipt must be an object")
+    if set(doc) != _QUALIFICATION_KEYS:
+        raise RootQualificationError(
+            "root qualification receipt keys differ from the v1 contract (missing=%s, "
+            "unexpected=%s)"
+            % (sorted(_QUALIFICATION_KEYS - set(doc)), sorted(set(doc) - _QUALIFICATION_KEYS)))
+    if doc.get("schema") != _QUALIFICATION_SCHEMA or not common.verify_seal(doc):
+        raise RootQualificationError("root qualification receipt schema/seal is invalid")
+    if not job_path:
+        raise RootQualificationError(
+            "root qualification validation requires the exact job.json")
+    job = _read_json_file(job_path, "job.json")
+    contract = doc.get("job_contract") or {}
+    captures = doc.get("captures") or {}
+    if not isinstance(contract, dict) or not isinstance(captures, dict):
+        raise RootQualificationError(
+            "root qualification job/capture identities must be objects")
+    try:
+        expected_job_sha = jobcontract.verify_job(job)
+        expected_contract = jobcontract.root_qualification_contract(job)
+    except jobcontract.JobContractError as exc:
+        raise RootQualificationError(
+            "root qualification job.json is invalid: %s" % exc)
+    expected_job_file_sha = common.sha256_file(job_path)
+    if (doc.get("canonical_job_sha256") != expected_job_sha
+            or doc.get("job_file_sha256") != expected_job_file_sha
+            or contract != expected_contract):
+        raise RootQualificationError(
+            "root qualification is not bound to the exact job.json")
+    canonical = captures.get("canonical") or {}
+    repeat = captures.get("repeat") or {}
+    if not isinstance(canonical, dict) or not isinstance(repeat, dict):
+        raise RootQualificationError(
+            "root qualification capture identities must be objects")
+    if (_HEX64.fullmatch(str(doc.get("canonical_job_sha256", ""))) is None
+            or _HEX64.fullmatch(str(doc.get("job_file_sha256", ""))) is None):
+        raise RootQualificationError(
+            "root qualification job identities are invalid")
+    for label, identity in (
+            ("canonical", canonical), ("repeat", repeat)):
+        _check_capture_job_contract(job, identity, label)
+    if (not contract.get("dataset_id")
+            or not doc.get("dataset_repository")
+            or canonical.get("dataset_repository")
+            != doc.get("dataset_repository")
+            or repeat.get("dataset_repository")
+            != doc.get("dataset_repository")
+            or contract.get("dataset_repository") != doc.get("dataset_repository")
+            or contract.get("publish_root_to")
+            != doc.get("destination_repository")
+            or canonical.get("dataset_id") != contract.get("dataset_id")
+            or repeat.get("dataset_id") != contract.get("dataset_id")
+            or _HEX64.fullmatch(
+                str(canonical.get("capture_content_digest", ""))) is None
+            or canonical.get("capture_content_digest")
+            != repeat.get("capture_content_digest")
+            or not canonical.get("process_label")
+            or not repeat.get("process_label")
+            or canonical.get("process_label") == repeat.get("process_label")):
+        raise RootQualificationError(
+            "root qualification has inconsistent job/capture identities")
+    execution_kind = contract.get("execution_kind")
+    image_reference = contract.get("container_image_reference")
+    image_digest = contract.get("container_image_digest")
+    if execution_kind == "runpod-ssh":
+        if (not isinstance(image_reference, str)
+                or re.fullmatch(
+                    r".+@sha256:[0-9a-f]{64}", image_reference) is None
+                or image_digest != image_reference.rsplit("@", 1)[1]):
+            raise RootQualificationError(
+                "root qualification container job contract is invalid")
+        for label, identity in (("canonical", canonical), ("repeat", repeat)):
+            runtime_container = identity.get("runtime_container")
+            if (not isinstance(runtime_container, dict)
+                    or runtime_container.get("image_digest") != image_digest
+                    or runtime_container.get("image_reference")
+                    != image_reference):
+                raise RootQualificationError(
+                    "%s qualification capture container differs from job contract"
+                    % label)
+    if doc.get("destination_repository") is not None \
+            and doc.get("destination_repository") != doc.get("dataset_repository"):
+        raise RootQualificationError(
+            "root qualification publication destination differs from dataset identity")
+    first = (doc.get("captures") or {}).get("canonical") or {}
+    if dataset is not None:
+        observed = _capture_identity(
+            dataset, first.get("process_label"), "publish")
+        if observed != first:
+            raise RootQualificationError(
+                "qualification canonical capture identity differs from the "
+                "dataset selected for publication")
+    if repository is not None:
+        if doc.get("destination_repository") != repository \
+                or doc.get("dataset_repository") != repository:
+            raise RootQualificationError(
+                "qualification dataset/destination repositories do not match publish "
+                "repository %r" % repository)
+    confirmation = doc.get("reproduction_confirmation") or {}
+    if not (confirmation.get("two_fresh_processes") is True
+            and confirmation.get("distinct_dataset_roots") is True
+            and confirmation.get("both_independently_verified") is True
+            and confirmation.get("exact_zero_comparison") is True
+            and confirmation.get("canonical_dataset_only") is True):
+        raise RootQualificationError("qualification lacks the required reproduction semantics")
+    return doc
+
+
+def cmd_qualify_root(args):
+    if os.path.realpath(args.first) == os.path.realpath(args.repeat):
+        return refuse("same_root", "root qualification needs two distinct dataset paths")
+    if args.first_label == args.repeat_label:
+        return refuse("same_process_label", "the two cold capture process labels must differ")
+    try:
+        job = _read_json_file(args.job, "job.json")
+        try:
+            canonical_job_sha256 = jobcontract.verify_job(job)
+        except jobcontract.JobContractError as exc:
+            raise RootQualificationError("job.json self-identity is invalid: %s" % exc)
+        capture_job = job.get("capture") or {}
+        if capture_job.get("preview_of") is not None \
+                or capture_job.get("race") is not False:
+            raise RootQualificationError(
+                "preview/race roots are unsupported by the first safe paid path")
+        dataset_repository = capture_job.get("dataset_repository")
+        destination = capture_job.get("publish_root_to")
+        weights_repo = (job.get("target") or {}).get("repo_id")
+        weights_revision = (job.get("target") or {}).get("revision")
+        if not dataset_repository:
+            raise RootQualificationError("job.json has no capture.dataset_repository")
+        if not weights_repo or dataset_repository == weights_repo:
+            raise RootQualificationError(
+                "target weights repository and intended dataset repository must be distinct")
+        if destination is not None and destination != dataset_repository:
+            raise RootQualificationError(
+                "capture.publish_root_to must equal capture.dataset_repository when set")
+
+        first = _capture_identity(args.first, args.first_label, "canonical")
+        repeat = _capture_identity(args.repeat, args.repeat_label, "repeat")
+        execution_kind = (job.get("execution_attempt") or {}).get("kind")
+        environment = job.get("environment") or {}
+        image_reference = environment.get("image")
+        if execution_kind == "runpod-ssh":
+            if (not isinstance(image_reference, str)
+                    or re.fullmatch(
+                        r".+@sha256:[0-9a-f]{64}", image_reference) is None):
+                raise RootQualificationError(
+                    "RunPod job environment image is not an immutable "
+                    "container reference")
+            image_digest = image_reference.rsplit("@", 1)[1]
+        else:
+            image_reference = environment.get("container_image")
+            image_digest = environment.get("container_digest")
+        replay_device = capture_job.get("replay_device")
+        replay_dtype = capture_job.get("replay_dtype")
+        vocab_chunk = capture_job.get("vocab_chunk")
+        if replay_device is None or replay_dtype not in ("float32", "float64") \
+                or not isinstance(vocab_chunk, int) or isinstance(vocab_chunk, bool) \
+                or vocab_chunk <= 0:
+            raise RootQualificationError(
+                "job capture must explicitly bind replay_device, replay_dtype, "
+                "and a positive integer vocab_chunk")
+        for label, identity in (("canonical", first), ("repeat", repeat)):
+            if identity["weights_repository"] != weights_repo \
+                    or identity["weights_revision"] != weights_revision:
+                raise RootQualificationError(
+                    "%s capture weights identity does not match job target %s@%s"
+                    % (label, weights_repo, weights_revision))
+            _check_capture_job_contract(job, identity, label)
+            runtime_container = identity["runtime_container"]
+            if (execution_kind == "runpod-ssh"
+                    and (runtime_container.get("image_digest") != image_digest
+                         or runtime_container.get("image_reference")
+                         != image_reference)):
+                raise RootQualificationError(
+                    "%s capture runtime container differs from job image"
+                    % label)
+        if first["dataset_id"] != repeat["dataset_id"] \
+                or first["dataset_id"] != capture_job.get("dataset_id"):
+            raise RootQualificationError(
+                "both captures must carry job capture.dataset_id exactly")
+        if first["capture_content_digest"] != repeat["capture_content_digest"]:
+            raise RootQualificationError("the two independently captured content digests differ")
+        if first["stack_fingerprint_sha256"] \
+                != repeat["stack_fingerprint_sha256"] \
+                or first["lane_identity_sha256"] != repeat["lane_identity_sha256"]:
+            raise RootQualificationError(
+                "the two cold captures do not share one runtime stack/lane identity")
+
+        first_verify = _verified_report(args.first_verify, args.first, "canonical")
+        repeat_verify = _verified_report(args.repeat_verify, args.repeat, "repeat")
+        comparison = _read_json_file(args.comparison, "comparison receipt")
+        comparison_report = dsvalidate.validate_receipt(comparison, args.comparison)
+        if comparison_report.errors:
+            raise RootQualificationError(
+                "comparison receipt does not validate (%s)"
+                % comparison_report.errors[0]["message"])
+        if comparison.get("comparison_kind") != "reproduction_confirmation":
+            raise RootQualificationError("comparison is not a reproduction confirmation")
+        metric = comparison.get("metric") or {}
+        if metric.get("name") != "mean_tokenwise_kld" \
+                or not _positive_zero(metric.get("value")) \
+                or not _positive_zero((comparison.get("kl") or {}).get("max")) \
+                or comparison.get("top1_agreement") != 1.0:
+            raise RootQualificationError(
+                "comparison must have positive mean_kld=0.0, max_kld=0.0, "
+                "and top-1 agreement=1.0")
+        if (comparison.get("reference") or {}).get("dataset_sha256") \
+                != first["dataset_sha256"] \
+                or (comparison.get("candidate") or {}).get("dataset_sha256") \
+                != repeat["dataset_sha256"]:
+            raise RootQualificationError(
+                "comparison sides do not bind canonical then repeat dataset")
+        if (comparison.get("reference") or {}).get("label") != args.first_label \
+                or (comparison.get("candidate") or {}).get("label") != args.repeat_label:
+            raise RootQualificationError("comparison process labels do not match the captures")
+        self_compare = comparison.get("self_compare") or {}
+        comparator = comparison.get("comparator") or {}
+        expected_replay_backend = (
+            "numpy:cpu:float32" if replay_device == "numpy"
+            else "torch:%s:%s" % (replay_device, replay_dtype))
+        expected_device = "cpu" if replay_device == "numpy" else replay_device
+        if comparator.get("replay_backend") != expected_replay_backend \
+                or comparator.get("device") != expected_device \
+                or comparator.get("vocab_chunk") != vocab_chunk \
+                or not comparator.get("estimator_backend"):
+            raise RootQualificationError(
+                "comparison backend does not match the explicit job replay profile")
+        if not (self_compare.get("capture_content_digest_equal") is True
+                and self_compare.get("weights_identity_equal") is True
+                and self_compare.get("asserted_exact_zero") is True
+                and self_compare.get("force_compute_agreed") is True):
+            raise RootQualificationError(
+                "comparison lacks forced exact reproduction-confirmation semantics")
+
+        receipt = common.seal({
+            "schema": _QUALIFICATION_SCHEMA,
+            "qualified_at": common.utcnow(),
+            "canonical_job_sha256": canonical_job_sha256,
+            "job_file_sha256": common.sha256_file(args.job),
+            "dataset_repository": dataset_repository,
+            "destination_repository": destination,
+            "job_contract": jobcontract.root_qualification_contract(job),
+            "captures": {"canonical": first, "repeat": repeat},
+            "comparison": {
+                "path": os.path.basename(args.comparison),
+                "file_sha256": common.sha256_file(args.comparison),
+                "receipt_sha256": comparison.get("receipt_sha256"),
+                "comparison_kind": "reproduction_confirmation",
+                "mean_kld": 0.0,
+                "max_kld": 0.0,
+                "top1_agreement": 1.0,
+            },
+            "comparator": {
+                "requested_replay_device": replay_device,
+                "requested_replay_dtype": replay_dtype,
+                "requested_vocab_chunk": vocab_chunk,
+                "device": comparator.get("device"),
+                "replay_backend": comparator.get("replay_backend"),
+                "estimator_backend": comparator.get("estimator_backend"),
+                "accumulation_dtype": comparator.get("accumulation_dtype"),
+                "vocab_chunk": comparator.get("vocab_chunk"),
+                "force_compute_agreed": True,
+            },
+            "verification": {
+                "canonical": first_verify,
+                "repeat": repeat_verify,
+            },
+            "reproduction_confirmation": {
+                "two_fresh_processes": True,
+                "distinct_dataset_roots": True,
+                "both_independently_verified": True,
+                "exact_zero_comparison": True,
+                "canonical_dataset_only": True,
+            },
+        })
+        common.write_json(args.out, receipt)
+        _load_qualification(args.out, job_path=args.job)
+    except (RootQualificationError, F.FormatError) as exc:
+        return refuse("root_qualification_refused", str(exc))
+    emit("ROOT QUALIFIED %s" % args.first)
+    emit("  repeat              %s" % args.repeat)
+    emit("  comparison          exact +0.0 mean/max, top-1 1.0")
+    emit("  receipt             %s" % args.out)
+    return OK
+
+
 # ---------------------------------------------------------------------------
 # publish
 # ---------------------------------------------------------------------------
+def _verify_publish_source_archive(
+        archive_path, expected_sha256, expected_bytes,
+        dataset_path, qualification_path, job_path):
+    if not isinstance(expected_sha256, str) or not _HEX64.fullmatch(
+            expected_sha256):
+        raise RootQualificationError(
+            "expected result archive SHA-256 must be exact lowercase 64-hex")
+    if (isinstance(expected_bytes, bool) or not isinstance(expected_bytes, int)
+            or expected_bytes <= 0):
+        raise RootQualificationError(
+            "expected result archive byte count must be a positive integer")
+    try:
+        verified = resultsink.verify_archive(
+            archive_path, expected_sha256=expected_sha256,
+            expected_bytes=expected_bytes)
+        archive_manifest = verified.get("manifest") or {}
+        records = archive_manifest.get("files")
+        if (archive_manifest.get("role") != "root"
+                or archive_manifest.get("verb") != "capture"
+                or not isinstance(records, list)):
+            raise RootQualificationError(
+                "result archive is not a completed root-capture proof")
+        by_name = {
+            record.get("path"): record
+            for record in records if isinstance(record, dict)
+        }
+
+        def exact_file(member_name, local_path, label):
+            record = by_name.get(member_name)
+            if (not isinstance(record, dict)
+                    or os.path.getsize(local_path) != record.get("bytes")
+                    or common.sha256_file(local_path) != record.get("sha256")):
+                raise RootQualificationError(
+                    "%s bytes differ from the verified result archive" % label)
+
+        exact_file("job.json", job_path, "job.json")
+        exact_file(
+            "receipts/root-qualification.json", qualification_path,
+            "root qualification receipt")
+        local_names = set(F.iter_dataset_files(dataset_path, exclude=()))
+        archive_names = {
+            name[len("dataset/"):]
+            for name in by_name
+            if isinstance(name, str) and name.startswith("dataset/")
+        }
+        if local_names != archive_names:
+            raise RootQualificationError(
+                "canonical dataset file set differs from verified result archive")
+        exact_file(
+            "dataset/" + F.MANIFEST_NAME,
+            os.path.join(dataset_path, F.MANIFEST_NAME),
+            "canonical dataset manifest")
+        exact_file(
+            "dataset/" + F.CHECKSUMS_NAME,
+            os.path.join(dataset_path, F.CHECKSUMS_NAME),
+            "canonical dataset checksums")
+        if not any(
+                isinstance(name, str) and name.startswith("dataset-repeat/")
+                for name in by_name):
+            raise RootQualificationError(
+                "verified result archive lacks the independent repeat dataset")
+    except RootQualificationError:
+        raise
+    except (resultsink.ArchiveError, F.FormatError, OSError) as exc:
+        raise RootQualificationError(
+            "verified result archive is invalid: %s" % exc) from exc
+    canonical_records = {
+        name[len("dataset/"):]: {
+            "bytes": record["bytes"],
+            "sha256": record["sha256"],
+        }
+        for name, record in by_name.items()
+        if isinstance(name, str) and name.startswith("dataset/")
+    }
+    qualification_record = by_name["receipts/root-qualification.json"]
+    verified = dict(verified)
+    verified["canonical_dataset_records"] = canonical_records
+    verified["canonical_dataset_bytes"] = sum(
+        record["bytes"] for record in canonical_records.values())
+    verified["qualification_record"] = {
+        "bytes": qualification_record["bytes"],
+        "sha256": qualification_record["sha256"],
+    }
+    return verified
+
+
+
+
+def _private_publish_inputs(dataset_path, qualification_path, job_path):
+    """Bind publication to one private extraction; same euid is the trust boundary."""
+    if (os.path.islink(dataset_path)
+            or os.path.islink(qualification_path)
+            or os.path.islink(job_path)):
+        raise RootQualificationError(
+            "publication inputs must not be symlinks")
+    dataset_real = os.path.realpath(dataset_path)
+    extraction_root = os.path.dirname(dataset_real)
+    expected_dataset = os.path.join(extraction_root, "dataset")
+    expected_qualification = os.path.join(
+        extraction_root, "receipts", "root-qualification.json")
+    expected_job = os.path.join(extraction_root, "job.json")
+    if (dataset_real != expected_dataset
+            or os.path.realpath(qualification_path) != expected_qualification
+            or os.path.realpath(job_path) != expected_job):
+        raise RootQualificationError(
+            "publication inputs must use one canonical verified extraction: "
+            "root/dataset, root/receipts/root-qualification.json, root/job.json")
+    root_info = os.lstat(extraction_root)
+    if (stat.S_ISLNK(root_info.st_mode)
+            or not stat.S_ISDIR(root_info.st_mode)
+            or root_info.st_uid != os.geteuid()
+            or stat.S_IMODE(root_info.st_mode) != 0o700):
+        raise RootQualificationError(
+            "verified extraction root must be an owned, non-symlink mode-0700 "
+            "directory")
+    chain_error = common.private_directory_chain_error(
+        extraction_root, owner_uid=os.geteuid())
+    if chain_error:
+        raise RootQualificationError(chain_error)
+    for source, label in (
+            (dataset_real, "canonical dataset"),
+            (expected_qualification, "root qualification receipt"),
+            (expected_job, "job.json")):
+        if os.path.islink(source) or not os.path.exists(source):
+            raise RootQualificationError(
+                "%s must be a non-symlink member of the private extraction"
+                % label)
+    return dataset_real, expected_qualification, expected_job
 
 
 def cmd_publish(args):
+    qualification_path = getattr(args, "qualification", None)
+    if not qualification_path:
+        return refuse(
+            "qualification_required",
+            "publishing a root requires --qualification; an independently "
+            "verified second capture and exact-zero comparison are mandatory")
+    if args.private:
+        return refuse(
+            "public_publication_required",
+            "canonical root publication must be anonymously readable; "
+            "--private is refused")
+    try:
+        dataset_path, qualification_path, job_path = _private_publish_inputs(
+            args.dataset, qualification_path, args.job)
+    except (OSError, RootQualificationError) as exc:
+        return refuse("publication_source_invalid", str(exc))
+    return _cmd_publish_private_extraction(
+        args, dataset_path, qualification_path, job_path)
+
+
+def _cmd_publish_private_extraction(
+        args, dataset_path, qualification_path, job_path):
     from fidelity import dshub
 
-    token = dshub.read_token(args.token_file)
     try:
-        result = dshub.publish_dataset(args.dataset, args.repo, token=token,
-                                       private=args.private,
-                                       message=args.revision_message)
-    except dshub.HubError as exc:
+        qualification = _load_qualification(
+            qualification_path, job_path=job_path,
+            dataset=dataset_path, repository=args.repo)
+    except (RootQualificationError, F.FormatError) as exc:
+        return refuse("qualification_invalid", str(exc))
+
+    local_manifest = F.load_manifest(dataset_path)
+    local_dataset_sha256 = local_manifest.get(F.SEAL_FIELD)
+    try:
+        token = dshub.read_token(args.token_file)
+    except (dshub.HubError, OSError) as exc:
         return refuse("publish_refused", str(exc))
-    emit("published %s -> %s (dataset_sha256 %s)"
-         % (args.dataset, result["repository"], result["dataset_sha256"]))
-    emit("re-verifying the published copy...")
-    cache = os.path.join(REPO, "fidelity-runs", "datasets", "verify-after-publish")
-    dshub.fetch_dataset("hf://%s" % args.repo, cache, token=token)
-    report = dsvalidate.validate_dataset(cache, verify_tensors=True)
-    if report.errors:
-        _print_report(report, verbose=False)
-        return refuse("publish_verify_failed", "the fetched copy does not verify")
-    emit("the fetched copy verifies")
+    expected_head = getattr(args, "expected_head", None)
+    try:
+        source_archive = _verify_publish_source_archive(
+            args.result_archive, args.expected_archive_sha256,
+            args.expected_archive_bytes, dataset_path,
+            qualification_path, job_path)
+    except RootQualificationError as exc:
+        return refuse("source_archive_invalid", str(exc))
+    try:
+        result = dshub.publish_dataset(
+            dataset_path, args.repo, qualification_path,
+            expected_head=expected_head, token=token, private=args.private,
+            message=args.revision_message)
+        if (result.get("repository") != args.repo
+                or result.get("dataset_sha256") != local_dataset_sha256
+                or result.get("private") is not False):
+            raise dshub.HubError(
+                "publisher result does not bind the public requested repository "
+                "and local dataset")
+        revision = result.get("revision")
+        if not isinstance(revision, str) or not _HEX40.fullmatch(revision):
+            raise dshub.HubError(
+                "one-commit publication did not return an immutable 40-hex revision")
+        evidence_rel = result.get("qualification_path_in_repo")
+        if evidence_rel != "receipts/root-qualification.json":
+            raise dshub.HubError(
+                "publisher result does not bind the canonical qualification path")
+    except (dshub.HubError, F.FormatError, ImportError, OSError) as exc:
+        return refuse("publish_refused", str(exc))
+
+    emit("published %s -> %s@%s (dataset_sha256 %s)"
+         % (args.dataset, result["repository"], revision, local_dataset_sha256))
+    emit("stream-verifying exact public bytes at the immutable revision...")
+    try:
+        published_dataset = dshub.verify_remote_dataset_exact(
+            args.repo, revision,
+            source_archive["canonical_dataset_records"],
+            expected_dataset_sha256=local_dataset_sha256,
+            max_total_bytes=source_archive["canonical_dataset_bytes"])
+        qualification_record = source_archive["qualification_record"]
+        evidence_bytes = dshub.fetch_exact_bytes(
+            dshub.resolve_url(args.repo, revision, evidence_rel),
+            qualification_record["bytes"],
+            qualification_record["sha256"],
+            token=None,
+            max_bytes=resultsink.MAX_RETAINED_MEMBER_BYTES)
+        published_qualification_file_sha256 = hashlib.sha256(
+            evidence_bytes).hexdigest()
+        with open(qualification_path, "rb") as handle:
+            local_qualification_bytes = handle.read(
+                qualification_record["bytes"] + 1)
+        if evidence_bytes != local_qualification_bytes:
+            return refuse(
+                "publish_qualification_mismatch",
+                "published qualification bytes differ from the verified "
+                "source archive")
+    except (dshub.HubError, OSError) as exc:
+        return refuse("publish_verify_failed", str(exc))
+
+    emit("the immutable published dataset and qualification verify")
     if getattr(args, "receipt", None):
-        # ROOT-1: the run's receipts must be able to say WHICH revision of
-        # the public repo holds this dataset -- written only after the
-        # fetched-back copy verified, so the receipt never precedes the proof.
-        from fidelity import common as _common
-        doc = _common.seal({
-            "schema": "fidelity.publish-root-receipt.v1",
+        doc = common.seal({
+            "schema": "fidelity.publish-root-receipt.v2",
             "repository": result["repository"],
-            "revision": result.get("revision"),
-            "dataset_sha256": result["dataset_sha256"],
-            "published_at": _common.utcnow(),
+            "revision": revision,
+            "revision_immutable": True,
+            "private": False,
+            "dataset_sha256": local_dataset_sha256,
+            "published_dataset_sha256": published_dataset["dataset_sha256"],
+            "qualification_receipt_sha256": qualification.get("receipt_sha256"),
+            "qualification_file_sha256": common.sha256_file(qualification_path),
+            "published_qualification_file_sha256":
+                published_qualification_file_sha256,
+            "published_at": common.utcnow(),
             "verified_after_publish": True,
+            "verified_anonymously": True,
+            "verified_revision": revision,
+            "result_archive_sha256": source_archive["archive_sha256"],
+            "result_archive_bytes": source_archive["archive_bytes"],
         })
-        _common.write_json(args.receipt, doc)
-        emit("publish receipt written to %s (revision %s)"
-             % (args.receipt, result.get("revision")))
+        common.write_json(args.receipt, doc)
+        emit("publish receipt written to %s (immutable revision %s)"
+             % (args.receipt, revision))
     return OK
 
 
@@ -702,14 +1506,20 @@ def cmd_publish(args):
 # ---------------------------------------------------------------------------
 
 
+def _expected_head(text):
+    if text == "absent":
+        return None
+    if _HEX40.fullmatch(text):
+        return text
+    raise argparse.ArgumentTypeError(
+        "expected HEAD must be 'absent' or an exact lowercase 40-hex revision")
+
+
 def _positive_int(text):
-    """CLI-05. A non-positive --chunk-positions made the position loop empty, and the
-    uninitialized np.empty buffer under it was published as the headline metric. The
-    estimator refuses it too; this refuses it at parse time, where the message can name
-    the flag instead of a gate."""
+    """Require a positive integer for chunk sizing."""
     value = int(text)
-    if value < 1:
-        raise argparse.ArgumentTypeError("must be >= 1; got %d" % value)
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
     return value
 
 
@@ -791,7 +1601,7 @@ def build_parser():
                         "more accurate AND more reproducible across backends, and is a "
                         "different measurement from either.")
     p.add_argument("--vocab-chunk", type=_positive_int,
-                   help="must divide vocab_size exactly (9680 for GLM-5.3-Flash)")
+                   help="positive output-column block size; final block may be partial")
     p.add_argument("--chunk-positions", type=_positive_int, default=128)
     p.add_argument("--head", help="head payload; only with --disclose-head-substitution")
     p.add_argument("--self-compare", action="store_true",
@@ -865,14 +1675,51 @@ def build_parser():
     common_dataset_flags(p)
     p.set_defaults(func=cmd_describe)
 
+    p = sub.add_parser(
+        "qualify-root",
+        help="bind two independently verified root captures and their exact-zero comparison")
+    p.add_argument("--job", required=True)
+    p.add_argument("--first", required=True)
+    p.add_argument("--repeat", required=True)
+    p.add_argument("--comparison", required=True)
+    p.add_argument("--first-verify", required=True)
+    p.add_argument("--repeat-verify", required=True)
+    p.add_argument("--first-label", required=True)
+    p.add_argument("--repeat-label", required=True)
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_qualify_root)
+
     p = sub.add_parser("publish", help="upload a verified dataset to the Hub")
     p.add_argument("dataset")
     p.add_argument("--repo", required=True)
     p.add_argument("--private", action="store_true")
+    p.add_argument(
+        "--expected-head", required=True, type=_expected_head,
+        metavar="absent|40_HEX",
+        help="optimistic publication authorization: destination must be absent "
+             "or exactly this immutable HEAD")
     p.add_argument("--revision-message", default="publish fidelity dataset")
-    p.add_argument("--receipt", help="write a sealed publish receipt (repo, "
-                                     "uploaded revision, dataset_sha256) here "
-                                     "AFTER the fetched-back copy verifies")
+    p.add_argument("--qualification", required=True,
+                   help="self-sealed root qualification receipt; published and refetched "
+                        "at the returned immutable revision")
+    p.add_argument(
+        "--job", required=True,
+        help="exact job.json whose canonical identity, file digest, target, "
+             "profile and panel contract the qualification must match")
+    p.add_argument(
+        "--result-archive", required=True,
+        help="original retrieved result.tar.gz containing the exact job, both "
+             "verified captures, comparison, and qualification")
+    p.add_argument(
+        "--expected-archive-sha256", required=True,
+        help="exact on-box archive SHA-256 reported before transfer")
+    p.add_argument(
+        "--expected-archive-bytes", required=True, type=_positive_int,
+        help="exact on-box archive byte count reported before transfer")
+    p.add_argument(
+        "--receipt",
+        help="write a sealed publish receipt here only after every immutable "
+             "public member stream-verifies against the source archive")
     common_dataset_flags(p)
     p.set_defaults(func=cmd_publish)
     return parser

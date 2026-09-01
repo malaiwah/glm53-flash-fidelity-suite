@@ -1,5 +1,13 @@
 # Handoff — the measurement session
 
+> **RETIRED OPERATIONAL HANDOFF.** Do not execute its provider-launch,
+> publication, or teardown instructions. It records the 2026-08-31
+> provider-container campaign, which lacked the current lease/reaper,
+> controller-loss, bounded-retrieval, absence, and billing guarantees. The only
+> admitted paid boundary is
+> [`THIRD-PARTY-QUICKSTART.md`](THIRD-PARTY-QUICKSTART.md): fresh RunPod secure
+> on-demand over authenticated SSH.
+
 You run the captures and publish the root **datasets**. A second session
 (the "registry session") turns what you publish into registry **rows**. The
 split is deliberate: measuring and admitting evidence are different jobs, and

@@ -268,6 +268,7 @@ PROFILE_STORAGE_LABEL = {
     "turbo-2.05bpw": "turbo-2.05bpw-hf-sharded",
     "vcruz-k2-2bpw": "vcruz-k2-2bpw-hf-sharded",
     "tr3-4bpw": "tr3-4bpw-hf-sharded",
+    "tr3-6bpw": "tr3-6bpw-hf-sharded",
     # genuinely TP4-sliced: dione_surface pins glm53-selective-exl3-tp4-v1
     "dione-q4": "dione-q4-tp4",
     "dione-3.0bpw": "dione-3.0bpw-tp4",
@@ -293,6 +294,7 @@ PROFILE_SURFACE_FAMILY = {
     "dione-q4": "dione",
     "dione-3.0bpw": "dione",
     "tr3-4bpw": "tr3",
+    "tr3-6bpw": "tr3",
 }
 
 
@@ -319,6 +321,89 @@ def _profile_storage_label(profile):
             f"claim into two published receipts. Add an entry to PROFILE_STORAGE_LABEL "
             f"saying how this artifact is actually stored."
         )
+
+
+def _validate_public_profile_checkpoint_identity(
+    student: Dict[str, Any], profile: Optional[str]
+) -> Optional[str]:
+    """Refuse a public TR3 capture whose runtime identity escaped its evidence.
+
+    The capture receipt is self-sealed by its loader, but a valid seal over two
+    disagreeing fields is still a mismatch.  Scoring must not turn that
+    mismatch into a report carrying the historical public identity.
+    """
+    if profile != "tr3-6bpw":
+        return None
+
+    import tr3_surface as tr3s
+
+    policy = tr3s.PUBLIC_PROFILE_POLICIES["tr3-6bpw"]
+    expected = policy["checkpoint_identity_sha256"]
+    evidence = student.get("profile_evidence")
+    if not isinstance(evidence, dict):
+        raise _fail(
+            "--profile tr3-6bpw requires exact public profile evidence in "
+            "the capture receipt")
+    exact_fields = {
+        "schema": tr3s.TR3_PROFILE_EVIDENCE_SCHEMA,
+        "profile": "tr3-6bpw",
+        "student_label": policy["student_label"],
+        "repo": policy["repo"],
+        "revision": policy["revision"],
+        "declared_bits": policy["bits"],
+        "raw_sha256": policy["raw_sha256"],
+        "verdict_path": policy["verdict_path"],
+        "verdict_schema":
+            "malaiwah.glm53-streaming-measurement-verdict.v1",
+        "scored_the_sealed_surface": True,
+        "scored_the_sealed_k6_surface": True,
+        "checkpoint_identity_sha256": expected,
+        "student_checkpoint_identity_sha256": expected,
+        "sealed_checkpoint_identity_sha256": expected,
+        "shard_verification_succeeded": True,
+    }
+    mismatched = [
+        name for name, wanted in exact_fields.items()
+        if evidence.get(name) != wanted
+    ]
+    if student.get("checkpoint_identity_sha256") != expected:
+        mismatched.append("capture.checkpoint_identity_sha256")
+    if (student.get("tr3_repo") != policy["repo"]
+            or student.get("tr3_revision") != policy["revision"]):
+        mismatched.append("capture.tr3_repo_revision")
+    seal = student.get("seal_verification")
+    checks = seal.get("checks") if isinstance(seal, dict) else None
+    if (not isinstance(seal, dict)
+            or seal.get("verified") is not True
+            or not isinstance(checks, list)
+            or not checks
+            or not all(
+                isinstance(check, dict) and check.get("passed") is True
+                for check in checks)):
+        mismatched.append("capture.artifact_seal")
+    shards = student.get("shard_verification")
+    if not isinstance(shards, dict):
+        mismatched.append("capture.shard_verification")
+    else:
+        mode = shards.get("mode")
+        count = shards.get("shards")
+        agreed = shards.get("agreed")
+        if (mode not in ("crosscheck", "full")
+                or not isinstance(count, int)
+                or count <= 0
+                or agreed != count
+                or evidence.get("shard_verification_mode") != mode
+                or evidence.get("shard_count") != count
+                or evidence.get("shards_agreed") != agreed
+                or evidence.get("shard_verification")
+                != shards.get("verification")):
+            mismatched.append("capture.shard_verification")
+    if mismatched:
+        raise _fail(
+            "--profile tr3-6bpw refuses capture/scoring checkpoint identity "
+            "mismatch: %s" % ", ".join(sorted(set(mismatched)))
+        )
+    return str(expected)
 
 
 def _torch_threads():
@@ -367,6 +452,7 @@ def _measure_run(
     device: str,
     expected_capture_role: str = "packed_student",
     teacher_root: Optional[Path] = None,
+    expected_profile: Optional[str] = None,
 ) -> Path:
     """Compute or resume one sealed per-run KLD report; returns its path."""
 
@@ -378,6 +464,15 @@ def _measure_run(
         write_json,
     )
     from quant_pipeline.evaluation.glm53_logits import load_capture_receipt, summarize
+    student = None
+    if expected_profile == "tr3-6bpw":
+        _refuse_preview_capture(run_dir)
+        student = load_capture_receipt(
+            run_dir / "capture-receipt.json",
+            expected_role=expected_capture_role,
+        )
+        _validate_public_profile_checkpoint_identity(student, expected_profile)
+
 
     report_path = run_dir / "kld-report.json"
     if report_path.is_file():
@@ -387,6 +482,15 @@ def _measure_run(
                 f"resumed {report_path} is labeled {resumed.get('student_label')!r}, "
                 f"not the profile's expected {student_label!r} - wrong --runs/--profile pair"
             )
+        if (student is not None
+                and resumed.get("student_checkpoint_identity_sha256")
+                != student.get("checkpoint_identity_sha256")):
+            raise _fail(
+                f"resumed {report_path} carries a student checkpoint identity "
+                "different from the exact public-profile capture evidence; "
+                "delete the stale kld-report.json to re-score"
+            )
+
         # The resume branch validated ONLY the label, then returned. Every teacher, panel
         # and window cross-check lives below it and was skipped, so re-scoring an existing
         # run dir against a DIFFERENT teacher silently did nothing and the summary then
@@ -422,9 +526,11 @@ def _measure_run(
             )
         return report_path
     _refuse_preview_capture(run_dir)
-    student = load_capture_receipt(
-        run_dir / "capture-receipt.json", expected_role=expected_capture_role
-    )
+    if student is None:
+        student = load_capture_receipt(
+            run_dir / "capture-receipt.json", expected_role=expected_capture_role
+        )
+    _validate_public_profile_checkpoint_identity(student, expected_profile)
     declared_label = student.get("student_label")
     if declared_label is not None and declared_label != student_label:
         raise _fail(
@@ -632,6 +738,10 @@ def _comparison_table(
         ("turbo-3.05bpw", "3.05 (full-scope, head 6)", "116.6 GiB"),
         ("turbo-2.05bpw", "2.05 (full-scope, head 5)", "79.4 GiB"),
         ("vcruz-k2-2bpw", "2.0 (routed experts only, native head)", "91.0 GiB"),
+        ("tr3-4bpw", "4.0 (sealed TR3, routed experts only, native head)",
+         "163.6 GiB"),
+        ("tr3-6bpw", "6.0 (pinned sealed TR3, routed experts only, native head)",
+         "236.1 GiB"),
         # community MLX affine snapshots: bit mix and size are properties of the
         # artifact, so both are READ from the receipt instead of hardcoded here
         ("mlx", None, None),
@@ -639,7 +749,7 @@ def _comparison_table(
         receipt_path = receipts_dir / f"{profile}-packed-kld.json"
         if receipt_path.is_file():
             # NUM-14. $RCPT is a long-lived shared receipts directory and this table
-            # deliberately scans eight profiles measured in different lanes and different
+            # deliberately scans profiles measured in different lanes and different
             # sessions, so the siblings arrive by hand/scp/hf-download. A truncated
             # download raised JSONDecodeError, and a receipt with no measured_mean_kld
             # raised `TypeError: unsupported format string passed to NoneType.__format__`
@@ -672,6 +782,8 @@ def _comparison_table(
                 "turbo-3.05bpw": "turboderp 3.05bpw (stock EXL3 mul1, quantized head, unsealed source)",
                 "turbo-2.05bpw": "turboderp 2.05bpw (stock EXL3 mul1, quantized head at 5 bits, unsealed source)",
                 "vcruz-k2-2bpw": "vcruz305 K2 2bpw (EXL3 mcg, routed experts only, native head, unsealed source)",
+                "tr3-4bpw": "public TR3 4bpw (sealed EXL3 MCG, native head)",
+                "tr3-6bpw": "malaiwah pinned K6 (sealed EXL3 MCG, native head)",
                 "mlx": "%s (MLX affine, unsealed source, quantized BEYOND the routed experts)"
                        % (receipt.get("mlx_repo") or "community MLX"),
             }[profile]
@@ -720,9 +832,12 @@ def main() -> int:
     parser.add_argument("--profile", required=True,
                         choices=("k6", "k6-stream", "k8", "k6k8", "dione-q4", "dione-3.0bpw",
                                  "turbo-4.05bpw", "turbo-3.05bpw", "turbo-2.05bpw",
-                                 "vcruz-k2-2bpw", "tr3-4bpw",
+                                 "vcruz-k2-2bpw", "tr3-4bpw", "tr3-6bpw",
                                  "native-bf16", "mlx", "gguf", "nvfp4"))
     parser.add_argument("--teacher", type=Path, required=True)
+    parser.add_argument("--expected-teacher-receipt-sha256")
+    parser.add_argument("--expected-token-panel-receipt-sha256")
+    parser.add_argument("--expected-teacher-backend-identity-sha256")
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
     parser.add_argument("--fp8-baseline", type=float, default=0.020615)
     parser.add_argument("--k4-baseline", type=float, default=0.024555)
@@ -753,7 +868,10 @@ def main() -> int:
     from quant_pipeline.core.artifacts import sha256_file
     from quant_pipeline.evaluation.glm53_logits import load_capture_receipt
 
-    bits = {"k6": 6, "k6-stream": 6, "k8": 8, "nvfp4": 4, "tr3-4bpw": 4}.get(args.profile)
+    bits = {
+        "k6": 6, "k6-stream": 6, "k8": 8, "nvfp4": 4,
+        "tr3-4bpw": 4, "tr3-6bpw": 6,
+    }.get(args.profile)
     student_label = {
         "k6": "uniform-k6",
         # single-device STREAMING capture of the same sealed K6 surface: the
@@ -788,6 +906,7 @@ def main() -> int:
         # third-party surface here -- a publisher seal this lane recomputes.
         # Label must match stream_score.TR3_PROFILES.
         "tr3-4bpw": "tr3-exl3-mcg-4bpw",
+        "tr3-6bpw": "tr3-exl3-mcg-6bpw",
         # the BF16 FLOOR of the streaming lane: the identical capture with the
         # routed experts read straight from the official checkpoint and no codec
         # in the path (stream_score.py --source native).  Subtracting this mean
@@ -859,6 +978,20 @@ def main() -> int:
 
     teacher_path = _find_teacher_receipt(args.teacher.resolve())
     teacher = load_capture_receipt(teacher_path, expected_role="bf16_teacher")
+    expected_teacher = {
+        "receipt_sha256": args.expected_teacher_receipt_sha256,
+        "token_panel_receipt_sha256":
+            args.expected_token_panel_receipt_sha256,
+        "backend_identity_sha256":
+            args.expected_teacher_backend_identity_sha256,
+    }
+    supplied = [value is not None for value in expected_teacher.values()]
+    if any(supplied) and not all(supplied):
+        raise _fail("job-bound teacher identity flags must be supplied together")
+    for field, expected in expected_teacher.items():
+        if expected is not None and teacher.get(field) != expected:
+            raise _fail(
+                f"teacher {field} differs from the job-bound scoring reference")
     teacher_source, teacher_label = _teacher_source_of(teacher)
     print(
         json.dumps(
@@ -883,6 +1016,7 @@ def main() -> int:
                 chunk_positions=args.chunk_positions,
                 device=args.device,
                 teacher_root=teacher_path.parent,
+                expected_profile=args.profile,
             )
         )
     reports = [
@@ -1193,7 +1327,10 @@ def main() -> int:
             student_receipt = sealed_json(
                 runs[0] / "capture-receipt.json", CAPTURE_SCHEMA, "receipt_sha256"
             )
-            for field in ("tr3_repo", "tr3_revision", "seal_verification"):
+            required_fields = ["tr3_repo", "tr3_revision", "seal_verification"]
+            if args.profile == "tr3-6bpw":
+                required_fields.append("profile_evidence")
+            for field in required_fields:
                 if student_receipt.get(field) is None:
                     raise _fail(
                         f"--profile {args.profile}: the capture receipt carries no {field}; "
@@ -1237,6 +1374,7 @@ def main() -> int:
                     "shard_verification": (
                         student_receipt.get("shard_verification") or {}
                     ).get("verification"),
+                    "profile_evidence": student_receipt.get("profile_evidence"),
                     "seal_disclosure": student_receipt.get("seal_disclosure"),
                 }
             )

@@ -22,8 +22,10 @@ Exit 0 = all pass.
 """
 
 from __future__ import annotations
+import argparse
 
 import json
+import hashlib
 import os
 import shutil
 import struct
@@ -34,6 +36,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np  # noqa: E402
 
+import fidelity_dataset as CLI  # noqa: E402
+from fidelity import common, jobcontract  # noqa: E402
 from fidelity import dsformat as F  # noqa: E402
 from fidelity import dsadapt, dscompare, dsmanifest, dsvalidate  # noqa: E402
 
@@ -130,9 +134,47 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                   mask_salt=0, model_revision="a" * 40, checkpoint_identity="b" * 64,
                   quantized=False, structural_status="sealed",
                   head_applied_in_capture=None, final_norm_applied_at_replay=False,
-                  tokenizer=None, emit_k3_compat=False):
+                  tokenizer=None, emit_k3_compat=False, run_name=None,
+                  cold_run=None, dataset_repository=None,
+                  weights_repository="selftest/weights",
+                  qualification_contract=False,
+                  panel_receipt_sha256=None,
+                  resolved_panel_binding=None,
+                  panel_binding_file_sha256="2" * 64):
     """Build a complete, sealed, conformant dataset.  Every knob is a test axis."""
+    panel_receipt_raw = None
+    panel_receipt_file_sha256 = None
+    if qualification_contract:
+        receipt_doc = common.seal({
+            "schema": "fidelity.selftest-panel-receipt.v1",
+            "panel_id": "panel--selftest.tiny",
+        })
+        panel_receipt_raw = (
+            common.canonical_json(receipt_doc) + "\n").encode("utf-8")
+        generated_receipt_sha256 = receipt_doc["receipt_sha256"]
+        if (panel_receipt_sha256 is not None
+                and panel_receipt_sha256 != generated_receipt_sha256):
+            raise ValueError("qualification fixture receipt identity mismatch")
+        panel_receipt_sha256 = generated_receipt_sha256
+        panel_receipt_file_sha256 = hashlib.sha256(
+            panel_receipt_raw).hexdigest()
+        tokenizer = tokenizer or {
+            "id": "selftest-tokenizer",
+            "repository": weights_repository,
+            "revision": model_revision,
+            "vocab_size": vocab,
+            "files": [{
+                "path": "tokenizer.json",
+                "bytes": 17,
+                "sha256": "4" * 64,
+            }],
+            "identity_sha256": "3" * 64,
+            "add_special_tokens": False,
+            "chat_template_applied": False,
+        }
     writer = dsmanifest.DatasetWriter(root)
+    if panel_receipt_raw is not None:
+        writer.add_file("panel/panel-receipt.json", panel_receipt_raw)
     rng = np.random.RandomState(seed)
 
     # -- head ---------------------------------------------------------------
@@ -194,14 +236,15 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
         scoring_window={"score_from": score_from, "windowed": score_from > 0,
                         "min_left_context_tokens": 1, "dropped_positions_total": 0,
                         "policy": "selftest"},
-        panel_receipt_sha256=None)
+        panel_receipt_sha256=panel_receipt_sha256)
 
     coverage = dsmanifest.coverage_block(
         capture_records, declared_records if declared_records is not None else records,
         shard_of=shard_of, subset_detail=subset_detail)
 
+    process_label = run_name or ("selftest-%s" % role)
     capture_doc = dsmanifest.capture_manifest(
-        run_name="selftest-%s" % role, form=form,
+        run_name=process_label, form=form,
         semantic_point=("after_final_rmsnorm_before_lm_head" if form == "hidden"
                         else "lm_head_output_before_sampling"),
         tensor_key=tensor_key, dtype=("BF16" if form == "hidden" else "F32"),
@@ -222,17 +265,79 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                     "applied_in_capture": True,
                     "applied_at_replay": final_norm_applied_at_replay})
 
-    fingerprint = {"schema": "malaiwah.stack-fingerprint.v1", "engine": stack}
+    if qualification_contract and resolved_panel_binding is None:
+        resolved_panel_binding = {
+            "panel": {
+                "id": panel_doc["panel_id"],
+                "suite_token_hash_sha256":
+                    panel_doc["suite_token_hash_sha256"],
+            },
+            "receipt": {
+                "file": "panel.receipt.json",
+                "declared_receipt_sha256": panel_receipt_sha256,
+                "receipt_file_sha256": panel_receipt_file_sha256,
+                "bytes": len(panel_receipt_raw),
+                "receipt_seal_mode": "self-blank",
+            },
+            "tokenizer": {
+                "repository": panel_doc["tokenizer"]["repository"],
+                "revision": panel_doc["tokenizer"]["revision"],
+                "vocab_size": panel_doc["tokenizer"]["vocab_size"],
+                "files": panel_doc["tokenizer"]["files"],
+                "files_verified": True,
+                "identity_sha256": panel_doc["tokenizer"]["identity_sha256"],
+                "id": panel_doc["tokenizer"]["id"],
+            },
+        }
+    runtime_engine = "transformers-eager" if qualification_contract else stack
+    fingerprint = {
+        "schema": "malaiwah.stack-fingerprint.v1",
+        "engine": runtime_engine,
+    }
+    if qualification_contract:
+        fingerprint["device"] = "cuda"
+    capture_tool = {
+        "file": ("engines/tools/hf_capture.py" if qualification_contract
+                 else "bin/fidelity_dataset.py"),
+        "sha256": F.sha256_hex("tool"),
+        "wraps": ["engines/tools/hidden_replay.py"],
+        "mechanism": "selftest fixture",
+    }
+    if qualification_contract:
+        capture_tool.update({
+            "schedule": "layer-outer",
+            "resolved_panel_binding": {
+                "binding_file": "selftest.binding.json",
+                "binding_file_sha256": panel_binding_file_sha256,
+                "binding": resolved_panel_binding,
+            },
+        })
+        allow_names = ["model.unused"]
+        allow_names_sha = common.sha256_hex(json.dumps(
+            allow_names, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False))
+        capture_tool["unexpected_tensor_allowlist"] = {
+            "artifact_sha256": "5" * 64,
+            "canonical_sorted_names_sha256": allow_names_sha,
+            "expected_keys": allow_names,
+            "expected_count": 1,
+            "observed_keys": allow_names,
+            "observed_count": 1,
+            "duplicate_observed_keys": [],
+            "missing_keys": [],
+            "extra_keys": [],
+            "exact_match": True,
+        }
     runtime_doc = dsmanifest.capture_runtime(
         lane=lane, stack_fingerprint=fingerprint,
         stack_fingerprint_sha256=F.sha256_hex(stack),
         lane_identity_sha256=F.sha256_hex(lane_identity),
-        weights={"repository": "selftest/weights", "revision": model_revision,
+        weights={"repository": weights_repository, "revision": model_revision,
                  "model_revision": model_revision,
                  "checkpoint_identity_sha256": checkpoint_identity},
+        runtime_environment={"cold_run": cold_run or process_label},
         source_files={"engines/tools/stream_score.py": F.sha256_hex("selftest")},
-        capture_tool={"file": "bin/fidelity_dataset.py", "sha256": F.sha256_hex("tool"),
-                      "wraps": ["engines/tools/hidden_replay.py"], "mechanism": "selftest fixture"})
+        capture_tool=capture_tool)
 
     scope = (dsmanifest.native_scope() if not quantized else dsmanifest.scope_block(
         [{"tensor_class": name, "treatment": "quantized", "format": "exl3-mcg",
@@ -251,9 +356,9 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                  "author": {"name": "selftest", "role": "capture-author",
                             "handle": None, "url": None,
                             "is_registry_maintainer": False},
-                 "license": "mit", "repository": None, "revision": None,
+                 "license": "mit", "repository": dataset_repository, "revision": None,
                  "base_capture": None},
-        weights={"repository": "selftest/weights", "revision": model_revision,
+        weights={"repository": weights_repository, "revision": model_revision,
                  "model_revision": model_revision, "quantized": quantized,
                  "checkpoint_identity_sha256": checkpoint_identity,
                  "config_sha256": None, "index_sha256": None, "artifact_ref": None,
@@ -264,7 +369,11 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                "panel_file_sha256": "0" * 64,
                "suite_token_hash_sha256": panel_doc["suite_token_hash_sha256"],
                "panel_token_sha256_legacy": panel_doc["panel_token_sha256_legacy"],
-               "panel_receipt_sha256": None, "repository": None, "revision": None,
+               "panel_receipt_sha256": panel_receipt_sha256,
+               "panel_receipt_file": (
+                   "panel/panel-receipt.json"
+                   if qualification_contract else None),
+               "repository": None, "revision": None,
                "contexts": len(panel_records), "context_length": rows + 1,
                "scored_positions_total": rows * len(panel_records),
                "scoring_window": panel_doc["scoring_window"],
@@ -299,15 +408,24 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                  "stack_fingerprint_sha256": runtime_doc["stack_fingerprint_sha256"],
                  "backend_identity_sha256": None, "runtime_reader_sha256": None,
                  "source": "native"},
-        determinism={"run_count": 2, "cold_start_per_run": True,
+        determinism={"run_count": 1 if role == "root" else 2,
+                     "cold_start_per_run": True,
                      "evidence_kind": ("hidden_state_tensor_sha256" if form == "hidden"
                                        else "logits_tensor_sha256"),
                      "evidence_hashes": [capture_doc["capture_content_digest"]],
-                     "distinct_evidence_hash_count": 1, "identical_across_runs": True,
-                     "repeats": [], "repeat_noise": None, "note": "selftest fixture"},
+                     "distinct_evidence_hash_count": 1,
+                     "identical_across_runs": None if role == "root" else True,
+                     "repeats": [], "repeat_noise": None,
+                     "note": ("one independent cold capture" if role == "root"
+                              else "selftest fixture")},
         coverage=coverage,
-        disclosures=[{"code": "no_known_deviations", "severity": "info",
-                      "affects_comparability": False, "detail": "selftest fixture"}])
+        disclosures=([{"code": "no_known_deviations", "severity": "info",
+                       "affects_comparability": False, "detail": "selftest fixture"}]
+                     + ([{"code": "reduced_run_count", "severity": "caveat",
+                          "affects_comparability": False,
+                          "detail": "one independent root capture; exact reproduction "
+                                    "is established by the outer comparison"}]
+                        if role == "root" else [])))
 
     if emit_k3_compat:
         from fidelity import k3compat                                # noqa: WPS433
@@ -1217,6 +1335,327 @@ def section_hostile_fetch(tmp):
           payload_ok, "a *token* pattern here would strip required payload")
 
 
+def section_root_qualification(tmp):
+    print("\n== Q: two-process root qualification ==")
+    first = os.path.join(tmp, "q-first")
+    repeat = os.path.join(tmp, "q-repeat")
+    destination = "selftest/root-dataset"
+    weights = "selftest/weights"
+    build_dataset(first, seed=91, run_name="root-cold-1", cold_run="root-cold-1",
+                  dataset_repository=destination, weights_repository=weights,
+                  qualification_contract=True)
+    build_dataset(repeat, seed=91, run_name="root-cold-2", cold_run="root-cold-2",
+                  dataset_repository=destination, weights_repository=weights,
+                  qualification_contract=True)
+    same_root_rc = CLI.cmd_compare(argparse.Namespace(
+        reference=first, candidate=first, allow_partial=False))
+    check("Q0  --self-compare refuses one dataset path supplied twice",
+          same_root_rc == CLI.REFUSED)
+    first_verify = os.path.join(tmp, "q-first-verify.json")
+    repeat_verify = os.path.join(tmp, "q-repeat-verify.json")
+    common.write_json(first_verify, dsvalidate.validate_dataset(
+        first, verify_tensors=True).to_dict())
+    common.write_json(repeat_verify, dsvalidate.validate_dataset(
+        repeat, verify_tensors=True).to_dict())
+    comparison_dir = os.path.join(tmp, "q-comparison")
+    comparison = dscompare.compare(first, repeat, comparison_dir, {
+        "self_compare": True, "force_compute": True,
+        "device": "cpu", "replay_device": "numpy", "replay_dtype": "float32",
+        "vocab_chunk": 8192, "reference_label": "root-cold-1",
+        "candidate_label": "root-cold-2", "verify_tensors": True,
+    })
+    comparison_path = os.path.join(comparison_dir, "comparison-receipt.json")
+    first_manifest = F.load_manifest(first)
+    first_runtime = F.read_json(os.path.join(
+        first, first_manifest["runtime"]["file"]))
+    binding = first_runtime["capture_tool"]["resolved_panel_binding"]["binding"]
+    job_path = os.path.join(tmp, "q-job.json")
+    q_bundle = jobcontract.finalize_bundle_manifest(
+        [{"path": "bin/fidelity_dataset.py", "bytes": 1, "sha256": "6" * 64}],
+        "qualification-selftest")
+    q_control = jobcontract.finalize_bundle_manifest(
+        [{"path": "bin/fidelity/jobcontract.py", "bytes": 1,
+          "sha256": "7" * 64}], "qualification-control-selftest")
+    q_control["schema"] = "fidelity-suite/control-plane-manifest.v1"
+    q_registry = {"path": "bin/BUNDLE.txt", "bytes": 1, "sha256": "8" * 64}
+    q_contract_sha = common.sha256_hex(json.dumps(
+        {"bundle": q_bundle, "registry": q_registry},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False))
+    q_shards = [{"path": "model.safetensors", "bytes": 17}]
+    q_download_manifest = [
+        {"path": "config.json", "bytes": 1},
+        q_shards[0],
+        {"path": "model.safetensors.index.json", "bytes": 1},
+    ]
+    q_download_sha = common.sha256_hex(json.dumps(
+        q_download_manifest, sort_keys=True, separators=(",", ":")))
+    q_names_sha = common.sha256_hex(
+        json.dumps(["model.unused"], separators=(",", ":")))
+    job = jobcontract.finalize_job({
+        "schema": "fidelity-suite/job.v2",
+        "execution_attempt": {
+            "number": 1, "kind": "local-container", "attempt_id": "9" * 24},
+        "bundle": q_bundle,
+        "control_plane": q_control,
+        "bundle_registry": q_registry,
+        "bundle_contract_sha256": q_contract_sha,
+        "role": "root",
+        "lane": "sealed-ep8",
+        "cold_runs": 2,
+        "recipe": "local-container",
+        "runtime": {}, "environment": {}, "measurer": {},
+        "produced_by": {
+            "dependencies": {
+                "profile": "root-hf-transformers-bf16",
+                "lane": "sealed-ep8",
+                "provider": "local-container",
+            },
+        },
+        "resource_requirements": {
+            "workspace_available_bytes_minimum": 1,
+            "container_available_bytes_minimum": 1,
+            "min_vcpu_count": 1, "min_memory_gb": 1,
+            "expected_vram_bytes": 1,
+        },
+        "profile": {
+            "profile_id": "root-hf-transformers-bf16",
+            "lane": "root", "source": "native",
+            "surface": "native-bf16", "form": "hidden",
+            "engine": "hf-transformers",
+            "compute_dtype": "bfloat16",
+            "device": "cuda",
+            "schedule": "two-fresh-process-qualification",
+        },
+        "timing": {"kind": "qualification-selftest"},
+        "scope": {"kind": "qualification-selftest"},
+        "target": {
+            "repo_id": weights, "revision": "a" * 40,
+            "path": None, "surface": "native-bf16",
+            "codec": "bf16", "bits": 16,
+            "config_sha256": "a" * 64, "index_sha256": "b" * 64,
+            "shard_manifest_sha256": common.sha256_hex(json.dumps(
+                q_shards, sort_keys=True, separators=(",", ":"))),
+            "model_bytes": 17, "shards": q_shards,
+            "download_manifest": q_download_manifest,
+            "download_bytes_total": 19,
+            "download_manifest_sha256": q_download_sha,
+        },
+        "panel": {
+            "binding_file_sha256": "2" * 64,
+            "binding_path": "panel-binding.json",
+            "resolved_binding": binding,
+        },
+        "capture": {
+            "dataset_id": "fidelity--selftest.root.hidden",
+            "panel_id": binding["panel"]["id"],
+            "dataset_name": "selftest root hidden",
+            "author": "selftest",
+            "dataset_repository": destination,
+            "publish_root_to": destination,
+            "form": "hidden",
+            "schedule": "layer-outer",
+            "device": "cuda",
+            "dtype": "bfloat16",
+            "engine": "hf-transformers",
+            "preview_of": None,
+            "race": False,
+            "replay_device": "numpy",
+            "replay_dtype": "float32",
+            "vocab_chunk": 8192,
+            "replay": {
+                "device": "numpy", "dtype": "float32",
+                "vocab_chunk": 8192,
+            },
+            "root_protocol": {
+                "schedule": "two-fresh-process-qualification",
+                "fresh_processes": 2,
+                "run_count_per_process": 1,
+                "exact_self_comparison": True,
+                "qualification_required": True,
+                "canonical_publication_required": True,
+                "publication_mode": "canonical-public",
+            },
+            "unexpected_tensor_allowlist": {
+                "path": "allowlist.json",
+                "artifact_sha256": "5" * 64,
+                "canonical_sorted_names_sha256": q_names_sha,
+            },
+        },
+    })
+    common.write_json(job_path, job)
+
+    def qualify(**overrides):
+        values = {
+            "job": job_path, "first": first, "repeat": repeat,
+            "comparison": comparison_path, "first_verify": first_verify,
+            "repeat_verify": repeat_verify, "first_label": "root-cold-1",
+            "repeat_label": "root-cold-2",
+            "out": os.path.join(tmp, "q-qualification.json"),
+        }
+        values.update(overrides)
+        return CLI.cmd_qualify_root(argparse.Namespace(**values))
+
+    rc = qualify()
+    receipt = F.read_json(os.path.join(tmp, "q-qualification.json"))
+    check("Q1  two separately sealed run_count=1 datasets + forced exact-zero "
+          "comparison produce a self-sealed outer receipt",
+          rc == CLI.OK and common.verify_seal(receipt)
+          and receipt["captures"]["canonical"]["determinism_run_count"] == 1
+          and receipt["captures"]["repeat"]["determinism_run_count"] == 1
+          and receipt["comparison"]["mean_kld"] == 0.0
+          and receipt["comparison"]["max_kld"] == 0.0
+          and receipt["comparison"]["top1_agreement"] == 1.0
+          and not np.signbit(receipt["comparison"]["mean_kld"])
+          and not np.signbit(receipt["comparison"]["max_kld"])
+          and receipt["dataset_repository"] == destination
+          and receipt["destination_repository"] == destination
+          and receipt["job_contract"]["dataset_id"]
+          == "fidelity--selftest.root.hidden"
+          and receipt["comparator"]["replay_backend"] == "numpy:cpu:float32"
+          and receipt["comparator"]["force_compute_agreed"] is True,
+          json.dumps(receipt)[:300])
+    forged = json.loads(json.dumps(receipt))
+    alternate_job = json.loads(json.dumps(job))
+    alternate_job["target"]["revision"] = "0" * 40
+    alternate_job = jobcontract.finalize_job(alternate_job)
+    forged["canonical_job_sha256"] = alternate_job["job_id_full"]
+    forged["job_contract"] = jobcontract.root_qualification_contract(
+        alternate_job)
+    for identity in forged["captures"].values():
+        identity["weights_revision"] = "0" * 40
+    forged = common.seal(forged)
+    forged_path = os.path.join(tmp, "q-forged-job.json")
+    common.write_json(forged_path, forged)
+    try:
+        CLI._load_qualification(
+            forged_path, job_path=job_path,
+            dataset=first, repository=destination)
+    except CLI.RootQualificationError:
+        forged_refused = True
+    else:
+        forged_refused = False
+    check("Q1b a coherently resealed alternate job cannot publish the "
+          "unchanged capture", forged_refused)
+    check("Q2  one path supplied twice refuses",
+          qualify(repeat=first) == CLI.REFUSED)
+    check("Q3  a missing second independent verification receipt refuses",
+          qualify(repeat_verify=os.path.join(tmp, "absent-repeat-verify.json"))
+          == CLI.REFUSED)
+
+    nonzero = dict(comparison)
+
+    unpublished_capture = dict(job["capture"], publish_root_to=None)
+    unpublished_capture["root_protocol"] = dict(
+        unpublished_capture["root_protocol"],
+        canonical_publication_required=False,
+        publication_mode="qualified-unpublished")
+    unpublished_job = jobcontract.finalize_job(dict(
+        job, capture=unpublished_capture))
+
+    null_tokenizer = os.path.join(tmp, "q-null-tokenizer-revision")
+    shutil.copytree(repeat, null_tokenizer)
+    null_manifest = F.load_manifest(null_tokenizer)
+    null_panel_path = os.path.join(
+        null_tokenizer, null_manifest["panel"]["panel_file"])
+    null_panel = F.read_json(null_panel_path)
+    null_panel["tokenizer"]["revision"] = None
+    F.write_json(null_panel_path, null_panel)
+    null_manifest["panel"]["tokenizer"]["revision"] = None
+    null_manifest["panel"]["panel_file_sha256"] = F.sha256_file(null_panel_path)
+    F.write_json(os.path.join(null_tokenizer, F.MANIFEST_NAME), null_manifest)
+    reseal(null_tokenizer)
+    null_verify = os.path.join(tmp, "q-null-tokenizer-verify.json")
+    common.write_json(null_verify, dsvalidate.validate_dataset(
+        null_tokenizer, verify_tensors=True).to_dict())
+    check("Q3f a captured null tokenizer revision cannot satisfy a bound panel",
+          qualify(repeat=null_tokenizer, repeat_verify=null_verify)
+          == CLI.REFUSED)
+    unpublished_path = os.path.join(tmp, "q-job-unpublished.json")
+    common.write_json(unpublished_path, unpublished_job)
+    unpublished_out = os.path.join(tmp, "q-unpublished-qualification.json")
+    unpublished_rc = qualify(job=unpublished_path, out=unpublished_out)
+    unpublished_receipt = F.read_json(unpublished_out)
+    check("Q3b a root may qualify without authorizing publication",
+          unpublished_rc == CLI.OK
+          and unpublished_receipt["dataset_repository"] == destination
+          and unpublished_receipt["destination_repository"] is None)
+
+    wrong_panel = json.loads(json.dumps(job))
+    wrong_panel["panel"]["resolved_binding"]["panel"]["id"] = "panel--wrong"
+    common.write_json(job_path, jobcontract.finalize_job(wrong_panel))
+    check("Q3c a job-bound wrong panel identity refuses",
+          qualify() == CLI.REFUSED)
+
+    wrong_dataset = json.loads(json.dumps(job))
+    wrong_dataset["capture"]["dataset_id"] = "fidelity--other.root.hidden"
+    common.write_json(job_path, jobcontract.finalize_job(wrong_dataset))
+    check("Q3d a dataset id different from the canonical job refuses",
+          qualify() == CLI.REFUSED)
+
+    tampered_job = json.loads(json.dumps(job))
+    tampered_job["target"]["revision"] = "b" * 40
+    common.write_json(job_path, tampered_job)
+    check("Q3e a self-identity-tampered job refuses qualification",
+          qualify() == CLI.REFUSED)
+    common.write_json(job_path, job)
+    nonzero["metric"] = dict(nonzero["metric"], value=0.0001)
+    nonzero = F.seal_receipt(nonzero)
+    nonzero_path = os.path.join(tmp, "q-nonzero.json")
+    F.write_json(nonzero_path, nonzero)
+    check("Q4  a nonzero reproduction comparison refuses qualification",
+          qualify(comparison=nonzero_path) == CLI.REFUSED)
+
+    mismatch = os.path.join(tmp, "q-one-bit-different")
+    build_dataset(mismatch, seed=92, run_name="root-cold-2", cold_run="root-cold-2",
+                  dataset_repository=destination, weights_repository=weights,
+                  qualification_contract=True)
+    expect_refusal(
+        "Q4b --self-compare refuses distinct captures with changed content",
+        lambda: dscompare.compare(first, mismatch,
+                                  os.path.join(tmp, "q-mismatch-comparison"), {
+                                      "self_compare": True,
+                                      "force_compute": True,
+                                      "device": "cpu",
+                                      "replay_device": "numpy",
+                                      "replay_dtype": "float32",
+                                      "vocab_chunk": 8192,
+                                      "reference_label": "root-cold-1",
+                                      "candidate_label": "root-cold-2",
+                                      "verify_tensors": True,
+                                  }),
+        code="not_a_self_compare")
+    mismatch_verify = os.path.join(tmp, "q-mismatch-verify.json")
+    common.write_json(mismatch_verify, dsvalidate.validate_dataset(
+        mismatch, verify_tensors=True).to_dict())
+    one_bit = os.path.join(tmp, "q-one-bit")
+    shutil.copytree(repeat, one_bit)
+    victim = os.path.join(one_bit, "capture", "hidden_0000.safetensors")
+    with open(victim, "r+b") as handle:
+        handle.seek(-1, os.SEEK_END)
+        value = handle.read(1)
+        handle.seek(-1, os.SEEK_END)
+        handle.write(bytes([value[0] ^ 0x01]))
+    one_bit_verify = os.path.join(tmp, "q-one-bit-verify.json")
+    common.write_json(one_bit_verify, dsvalidate.validate_dataset(
+        one_bit, verify_tensors=True).to_dict())
+    check("Q5b one flipped payload bit cannot qualify for publication",
+          qualify(repeat=one_bit, repeat_verify=one_bit_verify) == CLI.REFUSED)
+
+    check("Q5  changed capture content cannot borrow the exact-zero receipt",
+          qualify(repeat=mismatch, repeat_verify=mismatch_verify) == CLI.REFUSED)
+
+    swapped = os.path.join(tmp, "q-swapped-repositories")
+    build_dataset(swapped, seed=91, run_name="root-cold-2", cold_run="root-cold-2",
+                  dataset_repository=weights, weights_repository=destination,
+                  qualification_contract=True)
+    swapped_verify = os.path.join(tmp, "q-swapped-verify.json")
+    common.write_json(swapped_verify, dsvalidate.validate_dataset(
+        swapped, verify_tensors=True).to_dict())
+    check("Q6  swapped target/destination repository identities refuse",
+          qualify(repeat=swapped, repeat_verify=swapped_verify) == CLI.REFUSED)
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="fidelity-dataset-selftest-")
     try:
@@ -1227,6 +1666,7 @@ def main():
         section_interop(tmp)
         section_real(tmp)
         section_hostile_fetch(tmp)
+        section_root_qualification(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("\nselftest_fidelity_dataset: %d passed, %d failed" % (len(PASS), len(FAIL)))

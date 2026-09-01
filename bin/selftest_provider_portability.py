@@ -151,9 +151,8 @@ for m in ("create", "destroy", "exec", "exec_stdout", "upload", "download",
           "run_logs", "fs_create", "fs_delete", "available", "require",
           "pause", "resume"):
     check("runpod implements %s()" % m, callable(getattr(rpb, m, None)))
-check("every mutating call is a no-op under dry",
-      rpb.create(gpu_type="x").get("dry_run") is True
-      and rpb.destroy("x").get("dry_run") is True)
+check("destroy is a no-op under dry",
+      rpb.destroy("x").get("dry_run") is True)
 
 print("\n== storage that dies with the instance must be sized at create ==")
 for name, sep in (("jarvislabs", True), ("runpod", False), ("vast", False),
@@ -162,12 +161,17 @@ for name, sep in (("jarvislabs", True), ("runpod", False), ("vast", False),
     check("%-10s separable_storage=%s" % (name, sep),
           getattr(prov, "separable_storage", True) is sep)
 # 100 GB is right ONLY where the big disk is a separate filesystem. Getting
-# this wrong is not a create error: it is "No space left on device" three
-# stages and 45 minutes into a paid run, which is exactly what happened.
+# this wrong is not a create error: it is "No space left on device" after paid
+# setup. Exercise the actual dry RunPod request rather than source text.
+rpb._validated_ssh_public_key = lambda: "ssh-ed25519 AAAA"
+storage_request = rpb.create(
+    gpu_type="NVIDIA L4", storage_gb=237, container_disk_gb=41,
+    region="secure", spot=False, offer="on-demand",
+    name="fidcloud-" + "a" * 64 + "-a" + "b" * 24,
+    terminate_after="2099-01-01T00:00:00Z")
 check("a non-separable provider is sized from the plan, not 100 GB",
-      'else int(plan_data["storage_gb"])' in
-      open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "measure_cloud.py")).read())
+      storage_request["request"]["volume_gb"] == 237
+      and storage_request["request"]["container_disk_gb"] == 41)
 
 print("\n== no path may assume JarvisLabs except the two exported roots ==")
 # Every hardcoded /home/jl_fs literal in the on-instance tools is a run that

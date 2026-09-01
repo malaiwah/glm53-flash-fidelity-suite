@@ -14,7 +14,7 @@ move a number.
     N5   the T1 constant: 51,175 float64 zeros -> 409,528 bytes, 3ffddc61...be17
     N6   same weights identity, different capture content -> run_to_run_floor
     N7   vocab-chunk invariance
-    N8   a --vocab-chunk that does not divide vocab_size is refused with the hint
+    N8   a remainder vocabulary chunk is exact; non-positive chunks refuse
     N9   a NaN in one capture -> hard refusal, never a clamp
     N10  a permuted head applied at replay -> large KLD (the estimator has teeth)
     N11  a reproduction-confirmation receipt fed to the submission builder -> refused
@@ -209,14 +209,19 @@ def main():
               and cross["comparability"]["bias"]["kind"] == "cross_stack_capture_replay",
               json.dumps(cross["comparability"]["bias"])[:120])
 
-        # -- N7 vocab-chunk invariance --------------------------------------
+        # -- N7 vocab-chunk invariance, including a final partial chunk ------
         out4 = os.path.join(tmp, "chunk4")
+        out7 = os.path.join(tmp, "chunk7")
         out16 = os.path.join(tmp, "chunk16")
         r4 = dscompare.compare(a, c, out4, {"vocab_chunk": 4})
+        r7 = dscompare.compare(a, c, out7, {"vocab_chunk": 7})
         r16 = dscompare.compare(a, c, out16, {"vocab_chunk": 16})
-        delta = abs(r4["metric"]["value"] - r16["metric"]["value"])
-        check("N7  vocab-chunk invariance: two chunk sizes agree to < 1e-12",
-              delta < 1e-12, "delta = %.3e" % delta)
+        deltas = [
+            abs(r4["metric"]["value"] - r16["metric"]["value"]),
+            abs(r7["metric"]["value"] - r16["metric"]["value"]),
+        ]
+        check("N7  dividing and remainder vocab chunks agree to < 1e-12",
+              max(deltas) < 1e-12, "deltas = %r" % deltas)
 
         # -- N7b a non-positive --chunk-positions (CLI-05) -------------------
         # Pre-fix this did NOT refuse: range(0, n, -5) is empty, the per-position loop
@@ -245,17 +250,22 @@ def main():
               abs(rp["metric"]["value"] - rdef["metric"]["value"]) < 1e-12,
               "%.12f vs %.12f" % (rp["metric"]["value"], rdef["metric"]["value"]))
 
-        # -- N8 bad vocab chunk ---------------------------------------------
-        try:
-            dscompare.compare(a, c, os.path.join(tmp, "bad"), {"vocab_chunk": 7})
-            check("N8  a --vocab-chunk that does not divide vocab_size is refused", False,
-                  "no refusal")
-        except dscompare.Refusal as exc:
-            check("N8  a --vocab-chunk that does not divide vocab_size is refused, with a hint",
-                  exc.code == "bad_vocab_chunk" and "working values" in exc.message,
-                  exc.message[:90])
-        check("N8b the divisor hint for GLM-5.3-Flash names 9680, not kimi-k3's 10240",
-              154880 % 10240 != 0 and 9680 in F.divisors_hint(154880, limit=12))
+        # -- N8 invalid vocab chunks ----------------------------------------
+        for bad_chunk in (-1, 0, True):
+            try:
+                dscompare.compare(
+                    a, c, os.path.join(tmp, "bad-vocab-%r" % bad_chunk),
+                    {"vocab_chunk": bad_chunk})
+                check("N8  vocab chunk %r is refused" % bad_chunk, False,
+                      "no refusal")
+            except dscompare.Refusal as exc:
+                check("N8  vocab chunk %r is refused as non-positive/non-integer"
+                      % bad_chunk,
+                      exc.code == "bad_vocab_chunk"
+                      and "positive integer" in exc.message,
+                      exc.message[:90])
+        check("N8b fixed chunk 8192 may end with a partial GLM vocabulary block",
+              154880 % 8192 != 0)
 
         # -- N9 NaN -> hard refusal -----------------------------------------
         bad_p = p.copy()

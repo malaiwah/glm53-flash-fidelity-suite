@@ -86,13 +86,63 @@ TR3_IDENTITY_SCHEMA = "malaiwah.glm53-tr3-student-identity.v1"
 TR3_READER_IDENTITY_SCHEMA = "malaiwah.glm53-tr3-offline-reader-identity.v1"
 TR3_SEAL_SCHEMA = "malaiwah.glm53-tr3-seal-verification.v1"
 TR3_SCOPE_SCHEMA = "malaiwah.glm53-tr3-published-scope.v1"
-TR3_STUDENT_LABEL = "tr3-exl3-mcg-4bpw"
+TR3_PROFILE_EVIDENCE_SCHEMA = "malaiwah.glm53-tr3-public-profile-evidence.v1"
 
 ABI_FILE = "exl3-mcg-storage-abi.json"
 MATERIALIZATION_FILE = "materialization-receipt.json"
+QUANTIZATION_FILE = "quantization_config.json"
 ABI_SCHEMA = "quant-pipeline.glm53-exl3-mcg-storage-abi.v1"
 EXPECTED_SCOPE = "glm53_routed_experts_only"
 EXPECTED_NONROUTED_POLICY = "official_source_native"
+# Published v1 artifact identity.  This is not recomputed from the current
+# verification transcript: adding checks or disclosures must not rename the
+# checkpoint that the historical verdict already identified.
+TR3_6BPW_V1_CHECKPOINT_IDENTITY_SHA256 = (
+    "a8668be3592493035e98a52994e0e3c43548a9757eadb79f7ae939f2f32de1c1"
+)
+
+
+# Public profiles are admitted only when the immutable tree contains both the
+# materialization identity and a historical measurement verdict that says it
+# scored that exact sealed surface.  The raw-byte pins make this stricter than
+# trusting a model card or a mutable semantic subset of either receipt.
+PUBLIC_PROFILE_POLICIES: Dict[str, Dict[str, Any]] = {
+    "tr3-6bpw": {
+        "repo": "malaiwah/GLM-5.3-Flash-TR3-6bpw",
+        "revision": "9ab94105a71708a19c6d960d24b4aa6d459f5623",
+        "bits": 6.0,
+        "student_label": "tr3-exl3-mcg-6bpw",
+        "verdict_path": "receipts/stream-k6-verdict.json",
+        "checkpoint_identity_sha256":
+            TR3_6BPW_V1_CHECKPOINT_IDENTITY_SHA256,
+        "raw_sha256": {
+            ABI_FILE: "b7f0d223e950e0791c4e8bf22437cc41154f376364558d10cf569482302407e9",
+            MATERIALIZATION_FILE:
+                "acc81b99ac2b182c22b766c25c7f1bf94c45d03280649caf54ed664fe245705e",
+            QUANTIZATION_FILE:
+                "67fb3dc68c4c9d75be53087b18fb8c25313e2ec38c897dcf9cdc5ccfde2f405f",
+            "config.json":
+                "c0209bb43856bd63a5e59ded0fbcbfde0e5d2c427a93714e66655c54d22363f3",
+            "model.safetensors.index.json":
+                "e0908f31635f58eb8977451f43de7cb01361182314c887afd7d39351bdfc7f42",
+            "receipts/stream-k6-verdict.json":
+                "e205c14f5700417b32f4cb4a2d6724f3bf416ffc9d4cca3f129c18b0a0e7b005",
+        },
+    },
+}
+
+K8_REFUSAL = {
+    "profile": "tr3-8bpw",
+    "repo": "malaiwah/GLM-5.3-Flash-TR3-8bpw",
+    "revision": "7199f6f1a211084c240614806f046f11a52dad64",
+    "code": "missing_sealed_surface_measurement_bridge",
+    "detail": (
+        "the pinned K8 tree has a self-sealed materialization receipt, ABI, shard map "
+        "and receipts/stream-k8-kld.json, but no pinned verdict or other receipt binds "
+        "a student checkpoint identity to that measurement and asserts that it scored "
+        "the sealed K8 surface. A sibling K6 bridge is not transferable."
+    ),
+}
 
 MAIN_ROUTED_LAYERS = tuple(range(3, 45))
 MTP_LAYER = 45
@@ -110,12 +160,13 @@ _ROUTED = re.compile(r"\.mlp\.experts\.(\d+)\.")
 # "sealed" with nothing recomputed is a word, not evidence.
 SEAL_DISCLOSURE = (
     "sealed-source scoring: the release publishes exl3-mcg-storage-abi.json and "
-    "materialization-receipt.json, and this adapter RECOMPUTED every claim in them "
-    "from the published bytes before decoding (receipt self-seal, config/index "
-    "digests, output_tensor_names_sha256 over all 150,226 names, plan_sha256 "
-    "agreement, the packed/native/output count algebra, nonrouted_native_exact, and "
-    "the non-routed name set against the official release). The ABI's own "
-    "serving_reader_qualified=false concerns TP SERVING, which this offline "
+    "materialization-receipt.json, and this adapter recomputes both self-seals; "
+    "config/index/quantization-config digests; bit, codec, completeness, storage, "
+    "plan, name-set and count agreement; nonrouted_native_exact; the official "
+    "non-routed name bijection; and the published shard map before decoding. "
+    "Admitted public profiles additionally pin exact receipt bytes and a historical "
+    "verdict that binds the measurement to this sealed checkpoint identity. The "
+    "ABI's serving_reader_qualified=false concerns TP serving, which this offline "
     "single-device decode does not do."
 )
 
@@ -156,6 +207,142 @@ def _read_json(path: Path, label: str) -> Dict[str, Any]:
         raise _fail(f"{label} is not valid JSON ({path}): {exc}") from None
 
 
+def preflight_public_profile(profile: Optional[str], *, repo: Optional[str],
+                             revision: str) -> Optional[Dict[str, Any]]:
+    """Resolve a public profile before any model or shard work.
+
+    ``tr3-4bpw`` remains the general sealed TR3 reader.  New paid/public
+    profiles must appear in ``PUBLIC_PROFILE_POLICIES``; K8 has a deliberately
+    specific refusal because its pinned measurement summary does not identify
+    the sealed checkpoint it scored.
+    """
+    if profile is None or profile == "tr3-4bpw":
+        return None
+    if profile == K8_REFUSAL["profile"]:
+        raise _fail(
+            "REFUSED before spend [%s]: %s pinned at %s -- %s"
+            % (K8_REFUSAL["code"], K8_REFUSAL["repo"],
+               K8_REFUSAL["revision"], K8_REFUSAL["detail"])
+        )
+    policy = PUBLIC_PROFILE_POLICIES.get(profile)
+    if policy is None:
+        raise _fail("no public evidence policy exists for profile %r" % profile)
+    if repo != policy["repo"]:
+        raise _fail(
+            "%s is admitted only for repo %s; got %r"
+            % (profile, policy["repo"], repo)
+        )
+    if revision != policy["revision"]:
+        raise _fail(
+            "%s is admitted only at pinned revision %s; got %r"
+            % (profile, policy["revision"], revision)
+        )
+    return policy
+
+
+def validate_public_profile_bits(profile: Optional[str], declared_bits: Any) -> None:
+    policy = PUBLIC_PROFILE_POLICIES.get(profile or "")
+    if policy is None:
+        return
+    try:
+        matches = abs(float(declared_bits) - float(policy["bits"])) <= 1e-6
+    except (TypeError, ValueError):
+        matches = False
+    if not matches:
+        raise _fail(
+            "%s requires bits=%s, but the pinned config declares %r"
+            % (profile, policy["bits"], declared_bits)
+        )
+
+
+def verify_public_profile_evidence(root: Path, profile: Optional[str], *,
+                                   repo: Optional[str], revision: str,
+                                   shard_verification: Mapping[str, Any]
+                                   ) -> Optional[Dict[str, Any]]:
+    """Bind an admitted public profile to exact pinned release/verdict bytes."""
+    policy = preflight_public_profile(profile, repo=repo, revision=revision)
+    if policy is None:
+        return None
+    if shard_verification.get("mode") == "skip":
+        raise _fail(
+            "%s refuses --tr3-verify-shards skip: its public identity requires "
+            "the pinned materialization shard map" % profile
+        )
+    shard_mode = shard_verification.get("mode")
+    shard_count = shard_verification.get("shards")
+    shard_agreed = shard_verification.get("agreed")
+    shard_verification_succeeded = (
+        shard_mode in ("crosscheck", "full")
+        and isinstance(shard_count, int)
+        and shard_count > 0
+        and shard_agreed == shard_count
+        and isinstance(shard_verification.get("verification"), str)
+        and bool(shard_verification.get("verification"))
+    )
+
+    raw = {}
+    for relative, expected in sorted(policy["raw_sha256"].items()):
+        path = Path(root) / relative
+        if not path.is_file():
+            raise _fail("%s pinned evidence is absent: %s" % (profile, path))
+        actual = _sha256_file(path)
+        if actual != expected:
+            raise _fail(
+                "%s pinned evidence bytes changed for %s: %s, expected %s"
+                % (profile, relative, actual, expected)
+            )
+        raw[relative] = actual
+
+    verdict_path = str(policy["verdict_path"])
+    verdict = _read_json(Path(root) / verdict_path, verdict_path)
+    identity = policy["checkpoint_identity_sha256"]
+    if verdict.get("schema") != "malaiwah.glm53-streaming-measurement-verdict.v1":
+        raise _fail(
+            "%s historical verdict schema is %r"
+            % (profile, verdict.get("schema"))
+        )
+    if verdict.get("scored_the_sealed_k6_surface") is not True:
+        raise _fail(
+            "%s historical verdict does not assert "
+            "scored_the_sealed_k6_surface=true" % profile
+        )
+    if verdict.get("student_checkpoint_identity_sha256") != identity:
+        raise _fail(
+            "%s historical verdict student identity is %r, expected %s"
+            % (profile, verdict.get("student_checkpoint_identity_sha256"), identity)
+        )
+    if verdict.get("sealed_checkpoint_identity_sha256") != identity:
+        raise _fail(
+            "%s historical verdict sealed identity is %r, expected %s"
+            % (profile, verdict.get("sealed_checkpoint_identity_sha256"), identity)
+        )
+    return {
+        "schema": TR3_PROFILE_EVIDENCE_SCHEMA,
+        "profile": profile,
+        "student_label": policy["student_label"],
+        "repo": repo,
+        "revision": revision,
+        "declared_bits": policy["bits"],
+        "raw_sha256": raw,
+        "verdict_path": verdict_path,
+        "verdict_schema": verdict.get("schema"),
+        "verdict_raw_sha256": raw[verdict_path],
+        "scored_the_sealed_surface": True,
+        "scored_the_sealed_k6_surface":
+            verdict.get("scored_the_sealed_k6_surface"),
+        "checkpoint_identity_sha256": identity,
+        "student_checkpoint_identity_sha256":
+            verdict.get("student_checkpoint_identity_sha256"),
+        "sealed_checkpoint_identity_sha256":
+            verdict.get("sealed_checkpoint_identity_sha256"),
+        "shard_verification": shard_verification.get("verification"),
+        "shard_verification_mode": shard_mode,
+        "shard_count": shard_count,
+        "shards_agreed": shard_agreed,
+        "shard_verification_succeeded": shard_verification_succeeded,
+    }
+
+
 def official_nonrouted_names() -> Tuple[str, ...]:
     doc = _read_json(OFFICIAL_NONROUTED_NAMES, "official non-routed name evidence")
     names = doc.get("names")
@@ -178,6 +365,9 @@ def verify_seal(root: Path, weight_map: Mapping[str, str], *,
     root = Path(root)
     abi = _read_json(root / ABI_FILE, ABI_FILE)
     mat = _read_json(root / MATERIALIZATION_FILE, MATERIALIZATION_FILE)
+    config = _read_json(config_path, "config.json")
+    quant = config.get("quantization_config") or {}
+    quantization_path = root / QUANTIZATION_FILE
     checks: List[Dict[str, Any]] = []
 
     def check(name: str, ok: bool, detail: str) -> None:
@@ -188,19 +378,63 @@ def verify_seal(root: Path, weight_map: Mapping[str, str], *,
     check("abi_schema", abi.get("schema") == ABI_SCHEMA,
           "schema=%r (want %r)" % (abi.get("schema"), ABI_SCHEMA))
 
-    # 1. the materialization receipt's own self-seal
-    body = {k: v for k, v in mat.items() if k != "receipt_sha256"}
-    recomputed = _sha256_bytes(_canonical_json(body))
-    check("materialization_receipt_self_seal", recomputed == mat.get("receipt_sha256"),
-          "recomputed %s vs declared %s" % (recomputed[:16], str(mat.get("receipt_sha256"))[:16]))
+    materialization_schema = str(mat.get("schema", ""))
+    check("materialization_schema",
+          re.fullmatch(
+              r"quant-pipeline\.glm53-k[0-9]+-materialization-receipt\.v1",
+              materialization_schema) is not None,
+          "schema=%r" % materialization_schema)
+    # The two declarations are independently self-sealed.  Checking only the
+    # materialization receipt used to leave the ABI's declared receipt hash
+    # decorative.
+    abi_body = {k: v for k, v in abi.items() if k != "receipt_sha256"}
+    abi_recomputed = _sha256_bytes(_canonical_json(abi_body))
+    check("abi_receipt_self_seal", abi_recomputed == abi.get("receipt_sha256"),
+          "recomputed %s vs declared %s"
+          % (abi_recomputed[:16], str(abi.get("receipt_sha256"))[:16]))
 
-    # 2. the receipt binds THESE config/index bytes
+    mat_body = {k: v for k, v in mat.items() if k != "receipt_sha256"}
+    recomputed = _sha256_bytes(_canonical_json(mat_body))
+    check("materialization_receipt_self_seal", recomputed == mat.get("receipt_sha256"),
+          "recomputed %s vs declared %s"
+          % (recomputed[:16], str(mat.get("receipt_sha256"))[:16]))
+
+    # The receipt binds all three metadata files consumed by the reader.
     config_digest = _sha256_file(config_path)
     index_digest = _sha256_file(index_path)
+    quantization_digest = (
+        _sha256_file(quantization_path) if quantization_path.is_file() else None
+    )
     check("config_sha256", config_digest == mat.get("config_sha256"),
-          "local %s vs receipt %s" % (config_digest[:16], str(mat.get("config_sha256"))[:16]))
+          "local %s vs receipt %s"
+          % (config_digest[:16], str(mat.get("config_sha256"))[:16]))
     check("index_sha256", index_digest == mat.get("index_sha256"),
-          "local %s vs receipt %s" % (index_digest[:16], str(mat.get("index_sha256"))[:16]))
+          "local %s vs receipt %s"
+          % (index_digest[:16], str(mat.get("index_sha256"))[:16]))
+    check("quantization_config_sha256",
+          quantization_digest == mat.get("quantization_config_sha256"),
+          "local %s vs receipt %s"
+          % (str(quantization_digest)[:16],
+             str(mat.get("quantization_config_sha256"))[:16]))
+
+    bits = quant.get("bits")
+    check("bits_agreement", bits == abi.get("bits") == mat.get("bits"),
+          "config %r vs ABI %r vs receipt %r"
+          % (bits, abi.get("bits"), mat.get("bits")))
+    check("codec_family_agreement",
+          abi.get("codec_family") == mat.get("codec_family") == "exl3-mcg"
+          and quant.get("quant_method") == "exl3"
+          and quant.get("codebook") == "mcg",
+          "ABI %r, receipt %r, config method/codebook %r/%r"
+          % (abi.get("codec_family"), mat.get("codec_family"),
+             quant.get("quant_method"), quant.get("codebook")))
+    check("materialization_complete",
+          mat.get("complete") is True and mat.get("main_and_mtp_complete") is True,
+          "complete=%r, main_and_mtp_complete=%r"
+          % (mat.get("complete"), mat.get("main_and_mtp_complete")))
+    check("storage_checkpoint_verified",
+          abi.get("storage_checkpoint_verified") is True,
+          "ABI declares %r" % abi.get("storage_checkpoint_verified"))
 
     # 3. the ABI's digest over the whole emitted name set
     names_digest = _sha256_bytes(_canonical_json(sorted(weight_map)))
@@ -209,6 +443,12 @@ def verify_seal(root: Path, weight_map: Mapping[str, str], *,
           "recomputed %s over %d names vs ABI %s"
           % (names_digest[:16], len(weight_map),
              str(abi.get("output_tensor_names_sha256"))[:16]))
+    check("output_tensor_names_agreement",
+          abi.get("output_tensor_names_sha256")
+          == mat.get("output_tensor_names_sha256"),
+          "ABI %s vs receipt %s"
+          % (str(abi.get("output_tensor_names_sha256"))[:16],
+             str(mat.get("output_tensor_names_sha256"))[:16]))
 
     # 4. the ABI and the receipt describe the same materialization plan
     check("plan_sha256_agreement", abi.get("plan_sha256") == mat.get("plan_sha256"),
@@ -220,6 +460,9 @@ def verify_seal(root: Path, weight_map: Mapping[str, str], *,
     packed = int(mat.get("packed_tensor_count", -1))
     native = int(mat.get("native_tensor_count", -1))
     output = int(mat.get("output_tensor_count", -1))
+    check("output_tensor_count_agreement",
+          abi.get("output_tensor_count") == output,
+          "ABI %r vs receipt %d" % (abi.get("output_tensor_count"), output))
     check("payload_objects_per_choice", packed == 4 * routed_choices,
           "packed_tensor_count %d vs 4 x routed_choice_count %d" % (packed, routed_choices))
     check("tensor_count_algebra",
@@ -266,6 +509,7 @@ def verify_seal(root: Path, weight_map: Mapping[str, str], *,
             "plan_sha256": abi.get("plan_sha256"),
             "output_tensor_names_sha256": abi.get("output_tensor_names_sha256"),
             "receipt_sha256": abi.get("receipt_sha256"),
+            "raw_sha256": _sha256_file(root / ABI_FILE),
             "storage_checkpoint_verified": abi.get("storage_checkpoint_verified"),
             # disclosed verbatim; it is a SERVING qualification, not a storage one
             "serving_reader_qualified": abi.get("serving_reader_qualified"),
@@ -286,6 +530,9 @@ def verify_seal(root: Path, weight_map: Mapping[str, str], *,
             "output_logical_bytes": mat.get("output_logical_bytes"),
             "nonrouted_native_exact": mat.get("nonrouted_native_exact"),
             "complete": mat.get("complete"),
+            "bits": mat.get("bits"),
+            "codec_family": mat.get("codec_family"),
+            "raw_sha256": _sha256_file(root / MATERIALIZATION_FILE),
             "main_and_mtp_complete": mat.get("main_and_mtp_complete"),
             "shard_count": len(mat.get("shard_sha256") or {}),
         },
@@ -369,6 +616,8 @@ class Tr3Surface:
     index_sha256: str
     seal: Dict[str, Any] = field(compare=False, default_factory=dict)
     shard_verification: Dict[str, Any] = field(compare=False, default_factory=dict)
+    profile_evidence: Optional[Dict[str, Any]] = field(
+        compare=False, default=None)
     routed_module_count: int = 0
     nonrouted_tensor_count: int = 0
     routed_layers_present: Tuple[int, ...] = ()
@@ -382,6 +631,84 @@ class Tr3Surface:
         return _sha256_bytes(_canonical_json(published_scope(self)))
 
     def checkpoint_identity_sha256(self) -> str:
+        """Return the published identity after admission, else the local identity.
+
+        The public K6 identity predates later, strictly additive verification
+        transcript fields.  Hashing those fields would silently rename the
+        already-published checkpoint.  They remain sealed provenance, but are
+        gates for returning the historical identity rather than its preimage.
+        """
+        evidence = self.profile_evidence
+        if evidence is not None:
+            profile = evidence.get("profile")
+            policy = PUBLIC_PROFILE_POLICIES.get(str(profile))
+            if policy is None:
+                raise _fail(
+                    "public profile evidence names no admitted identity policy")
+            identity = policy["checkpoint_identity_sha256"]
+            exact_fields = {
+                "schema": TR3_PROFILE_EVIDENCE_SCHEMA,
+                "profile": profile,
+                "student_label": policy["student_label"],
+                "repo": policy["repo"],
+                "revision": policy["revision"],
+                "declared_bits": policy["bits"],
+                "raw_sha256": policy["raw_sha256"],
+                "verdict_path": policy["verdict_path"],
+                "verdict_schema":
+                    "malaiwah.glm53-streaming-measurement-verdict.v1",
+                "scored_the_sealed_surface": True,
+                "scored_the_sealed_k6_surface": True,
+                "checkpoint_identity_sha256": identity,
+                "student_checkpoint_identity_sha256": identity,
+                "sealed_checkpoint_identity_sha256": identity,
+                "shard_verification_succeeded": True,
+            }
+            mismatched = [
+                name for name, expected in exact_fields.items()
+                if evidence.get(name) != expected
+            ]
+            if self.repo != policy["repo"] or self.revision != policy["revision"]:
+                mismatched.append("surface_repo_revision")
+            try:
+                bits_match = abs(
+                    float(self.declared_bits) - float(policy["bits"])) <= 1e-6
+            except (TypeError, ValueError):
+                bits_match = False
+            if not bits_match:
+                mismatched.append("surface_declared_bits")
+            checks = self.seal.get("checks")
+            if (self.seal.get("verified") is not True
+                    or not isinstance(checks, list)
+                    or not checks
+                    or not all(
+                        isinstance(check, dict) and check.get("passed") is True
+                        for check in checks)):
+                mismatched.append("artifact_seal")
+            shard_mode = self.shard_verification.get("mode")
+            shard_count = self.shard_verification.get("shards")
+            shards_agreed = self.shard_verification.get("agreed")
+            if (shard_mode not in ("crosscheck", "full")
+                    or not isinstance(shard_count, int)
+                    or shard_count <= 0
+                    or shards_agreed != shard_count
+                    or evidence.get("shard_verification_mode") != shard_mode
+                    or evidence.get("shard_count") != shard_count
+                    or evidence.get("shards_agreed") != shards_agreed
+                    or evidence.get("shard_verification")
+                    != self.shard_verification.get("verification")):
+                mismatched.append("shard_verification")
+            if mismatched:
+                raise _fail(
+                    "%s public checkpoint identity is unavailable: profile "
+                    "admission evidence mismatches %s"
+                    % (profile, ", ".join(sorted(set(mismatched))))
+                )
+            return str(identity)
+
+        # Private/non-public TR3 surfaces have no historical identity to
+        # preserve.  Their deterministic local identity continues to bind the
+        # full local provenance block exactly as before.
         return _sha256_bytes(_canonical_json({
             "schema": TR3_IDENTITY_SCHEMA,
             "tr3_repo": self.repo,
@@ -401,6 +728,7 @@ class Tr3Surface:
             "scope_census_sha256": self.scope_census_sha256(),
             "seal_verification": self.seal.get("checks"),
             "shard_verification": self.shard_verification.get("verification"),
+            "profile_evidence": self.profile_evidence,
             "seal_disclosure": SEAL_DISCLOSURE,
         }))
 
@@ -437,11 +765,13 @@ def _dtype_census(root: Path, weight_map: Mapping[str, str]) -> Dict[str, int]:
 
 
 def load_tr3_surface(root, *, repo: Optional[str], revision: str,
-                     verify_shards: str = "crosscheck") -> Tr3Surface:
+                     verify_shards: str = "crosscheck",
+                     profile: Optional[str] = None) -> Tr3Surface:
     """Open a TR3-published snapshot, fail-closed on the seal and the scope."""
     root = Path(root).resolve()
     if not _REVISION.match(revision or ""):
         raise _fail("--tr3-revision must be the immutable 40-hex commit")
+    preflight_public_profile(profile, repo=repo, revision=revision)
     config_path = root / "config.json"
     index_path = root / "model.safetensors.index.json"
     config = _read_json(config_path, "config.json")
@@ -470,6 +800,7 @@ def load_tr3_surface(root, *, repo: Optional[str], revision: str,
             "TR3 keeps lm_head native (head_bits 16); this release declares "
             "head_bits=%r, which changes the measured function and must be read "
             "by a surface that says so" % (head_bits,))
+    validate_public_profile_bits(profile, quant.get("bits"))
 
     # the decode-side surface, verbatim
     exl3 = xs3.load_surface(root)
@@ -482,6 +813,9 @@ def load_tr3_surface(root, *, repo: Optional[str], revision: str,
         if verify_shards == "skip"
         else verify_shard_digests(root, mode=verify_shards)
     )
+    profile_evidence = verify_public_profile_evidence(
+        root, profile, repo=repo, revision=revision,
+        shard_verification=shard_verification)
 
     routed_layers = sorted({int(m.group(1)) for m in
                             (re.search(r"\.layers\.(\d+)\.mlp\.experts\.", n)
@@ -516,6 +850,7 @@ def load_tr3_surface(root, *, repo: Optional[str], revision: str,
         index_sha256=seal["materialization"]["index_sha256"],
         seal=seal,
         shard_verification=shard_verification,
+        profile_evidence=profile_evidence,
         routed_module_count=routed_modules,
         nonrouted_tensor_count=nonrouted,
         routed_layers_present=tuple(routed_layers),
@@ -556,9 +891,9 @@ def routed_census(surface: Tr3Surface) -> Dict[str, Any]:
 def published_scope(surface: Tr3Surface) -> Dict[str, Any]:
     """The per-tensor-class recipe, READ from the artifact's own declarations.
 
-    Every entry cites where it came from.  ``unknown`` is not used: this release
-    states its scope (`glm53_routed_experts_only`), its non-routed policy
-    (`official_source_native`), its head bits (16) and its bit rate (4), and the
+    Every entry cites where it came from.  ``unknown`` is not used: each release
+    states its scope (`glm53_routed_experts_only`), non-routed policy
+    (`official_source_native`), native head bits and routed bit rate, and the
     stored dtypes are readable from the shard headers.
     """
     cite = ("read from the release's OWN config.json quantization_config "
@@ -682,8 +1017,9 @@ def tr3_reader_identity(runner_path, surface: Tr3Surface) -> Dict[str, Any]:
         "decode_contract": (
             "exl3hf_surface.decode_module -> decode_payload_hf: the campaign's own "
             "anybits trellis unpack and fp32 Hadamard path with the FROZEN MCG LUT "
-            "(quant_pipeline.evaluation.glm53_packed_k4_reader.mcg_lut), i.e. the "
-            "identical codec the K6/K8 streaming rows were measured through"),
+            "(quant_pipeline.evaluation.glm53_packed_k4_reader.mcg_lut). Public "
+            "profile admission separately proves which pinned measurement used "
+            "this sealed surface; codec compatibility alone is not that bridge."),
         "nonrouted_source": "artifact_own_official_native_tensors_no_materialization",
         "adapter_sha256": _sha256_file(Path(__file__).resolve()),
         "decode_module_sha256": _sha256_file(HERE / "exl3hf_surface.py"),
@@ -716,6 +1052,7 @@ def surface_summary(surface: Tr3Surface) -> Dict[str, Any]:
         "scope_census_sha256": surface.scope_census_sha256(),
         "seal_verification": surface.seal,
         "shard_verification": surface.shard_verification,
+        "profile_evidence": surface.profile_evidence,
         "seal_disclosure": SEAL_DISCLOSURE,
     }
 

@@ -4,9 +4,9 @@
 # lists re-included one by one.
 #
 # This is not micro-optimisation, and the exceptions are not decoration.
-# `engines/tools/` is 208 MB in this checkout and 187 MB of it is `dione-evidence`,
-# of which the bundle lists exactly two files -- because a setup-time selftest
-# opens them, fail-closed. An over-eager exclusion here does not fail the
+# `engines/tools/` is 208 MB in this checkout and 187 MB is evidence data.
+# The bundle lists only exact allowlisted metadata files because setup-time
+# selftests open them fail-closed. An over-eager exclusion here does not fail the
 # build; it produces an image that dies in the `setup` stage on a rented box,
 # which is the same shape as the bug that had a MiniMax root capture die on
 # GGUF test data that was never bundled. `bin/selftest_container.py` rung C5
@@ -24,9 +24,12 @@ engines/*
 engines/tools/dione-evidence/*
 !engines/tools/dione-evidence/bf16-config.json
 !engines/tools/dione-evidence/bf16-index.json
+!engines/tools/dione-evidence/m2-layer45-unexpected-keys.json
 engines/tools/newarch-stagea-evidence
 engines/tools/glm53-stagea-evidence
-engines/tools/layer-outer-evidence
+!engines/tools/layer-outer-evidence
+engines/tools/layer-outer-evidence/*
+!engines/tools/layer-outer-evidence/fruit-layer13-unexpected-keys.json
 engines/tools/hidden-replay-evidence
 **/__pycache__
 **/*.pyc

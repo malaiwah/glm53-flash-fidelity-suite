@@ -267,21 +267,19 @@ def run(args: argparse.Namespace, con: Console) -> int:
                 lines += surface.problems
                 if elsewhere:
                     lines = [
-                        "The CLOUD recipe reads this surface. Run it instead:",
-                        "  bin/measure-cloud --model %s --revision %s \\"
-                        % (target["repo"], resolved or "<40-hex>"),
-                        # carry the build through: a copy-pasted line that
-                        # dropped it would hit the shelf refusal one step later
-                        "      %s--panel <hf-dataset> --lane streaming "
-                        "--dry-run" % (("--path %s " % surface.path)
-                                       if surface.path else ""),
-                        "(--dry-run creates nothing and spends $0.00.)",
+                        "The streaming engine declares this surface, but the "
+                        "paid controller admits only exact authored targets.",
+                        "There is no generic cloud handoff for this repository; "
+                        "see docs/THIRD-PARTY-QUICKSTART.md for the current "
+                        "RunPod pins and prerequisites.",
                     ] + lines
-                    reason = ("%s publishes surface '%s'. The local lanes read "
-                              "only %s; the STREAMING (cloud) lane reads it, "
-                              "and bin/measure never rents."
-                              % (target["repo"], surface.surface,
-                                 " and ".join(sorted(readable_here))))
+                    reason = (
+                        "%s publishes surface '%s'. The local lanes read only "
+                        "%s; a streaming engine can decode the surface, but "
+                        "bin/measure never rents and paid admission is a "
+                        "separate exact-target contract."
+                        % (target["repo"], surface.surface,
+                           " and ".join(sorted(readable_here))))
                 else:
                     reason = ("%s publishes surface '%s'; no lane can read it "
                               "(engines.json). This tool can (a) report "
@@ -297,8 +295,8 @@ def run(args: argparse.Namespace, con: Console) -> int:
                 con.warn("surface '%s' has no reader on a LOCAL lane -- "
                          "planning only, an --execute would refuse%s"
                          % (surface.surface,
-                            " (the cloud lane reads it: bin/measure-cloud)"
-                            if elsewhere else ""))
+                            " (streaming engine capability does not imply "
+                            "paid admission)" if elsewhere else ""))
         except HFError as exc:
             con.warn("[7/9] cannot sniff the surface: %s" % exc)
     else:
@@ -309,11 +307,10 @@ def run(args: argparse.Namespace, con: Console) -> int:
     lane = args.lane
     if lane == "streaming":
         raise Refusal(
-            "lane 'streaming' is the CLOUD lane; bin/measure never rents "
-            "hardware.",
-            ["run: bin/measure-cloud --model %s --panel %s --lane streaming "
-             "--dry-run   (it has its own registry gate, cost preview and "
-             "teardown machinery)" % (target["repo"], DEFAULT_PANEL.repo_id)])
+            "lane 'streaming' is cloud-engine capability; bin/measure never "
+            "rents hardware and cannot authorize a generic paid handoff.",
+            ["current paid execution is exact-target-only:",
+             "  docs/THIRD-PARTY-QUICKSTART.md §5"])
     if lane == "auto":
         import platform
         lane = ("local-mps" if platform.machine() == "arm64" and

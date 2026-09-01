@@ -815,7 +815,7 @@ GATED_RECEIPT_KEYS = frozenset({
     "tr3_repo", "tr3_revision", "codec_family", "exllamav3_pin",
     "scope_census_sha256", "nonrouted_policy_declared",
     "seal_verification", "shard_verification",
-    "artifact_materialization_receipt_sha256",
+    "artifact_materialization_receipt_sha256", "profile_evidence",
     # --source dione (f57f9ae). REVIEWED: all eight sit inside
     # `if args.source == "dione":` (stream_score.py:3867-3892), so a default run
     # emits none of them. A Dione release publishes no seal, so what the capture

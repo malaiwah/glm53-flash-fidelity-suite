@@ -34,6 +34,41 @@ from .common import run, which
 
 ENGINES_FILE = Path(__file__).resolve().parent.parent / "engines.json"
 
+class EngineConfigError(ValueError):
+    """The authored engine/timing registry is not strict finite JSON."""
+
+
+def _load_engine_config(path: Optional[Path] = None) -> Dict[str, Any]:
+    """Parse the one scientific engine registry without last-key-wins JSON."""
+    selected = path or ENGINES_FILE
+
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise EngineConfigError(
+                    "engine config contains duplicate key %r" % key)
+            value[key] = item
+        return value
+
+    def reject_constant(value):
+        raise EngineConfigError(
+            "engine config contains non-finite JSON constant %s" % value)
+
+    try:
+        raw = selected.read_bytes()
+        document = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=unique_object,
+            parse_constant=reject_constant)
+    except EngineConfigError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EngineConfigError(
+            "engine config is not strict UTF-8 JSON: %s" % exc) from exc
+    if not isinstance(document, dict):
+        raise EngineConfigError("engine config root must be an object")
+    return document
+
 
 @dataclass
 class Engine:
@@ -55,6 +90,8 @@ class Engine:
     fixed_flags: Dict[str, str] = field(default_factory=dict)
     profile_map: Dict[str, str] = field(default_factory=dict)
     profile_map_by_surface: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    profile_refusals_by_surface: Dict[str, Dict[str, Dict[str, Any]]] = field(
+        default_factory=dict)
     receipt_class: str = ""
     pinned_note: str = ""
 
@@ -62,52 +99,108 @@ class Engine:
         p = (suite_root / self.entrypoint).resolve()
         return p if p.is_file() else None
 
-    def probe(self, suite_root: Path) -> Dict[str, Any]:
-        """Scrape --help and report which required flags actually exist.
+    def probe(self, suite_root: Path, *, paid: bool = False,
+              python: str = "python3",
+              env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Probe authored argv flags; paid mode accepts live ``--help`` only."""
+        def normalized(flags):
+            return sorted({
+                flag[:-1] if flag.endswith("=") else flag
+                for flag in flags if isinstance(flag, str) and flag.startswith("--")
+            })
 
-        The whole value of this function is that it answers "will my
-        invocation work?" without a GPU, a download, or a rental.
-        """
-        path = self.resolve(suite_root)
-        result: Dict[str, Any] = {
-            "lane": self.lane,
-            "entrypoint": self.entrypoint,
-            "present": path is not None,
-            "pinned": self.pinned,
-            "missing_flags": [],
-            "found_flags": [],
-            "help_ok": False,
-            "problems": [],
-        }
-        if path is None:
-            result["problems"].append(
-                "engine file not present at %s" % self.entrypoint)
+        def one(entrypoint: str, expected: List[str]) -> Dict[str, Any]:
+            path = (suite_root / entrypoint).resolve()
+            result = {
+                "entrypoint": entrypoint,
+                "present": path.is_file(),
+                "help_ok": False,
+                "expected_flags": normalized(expected),
+                "found_flags": [],
+                "missing_flags": [],
+                "problems": [],
+            }
+            if not result["present"]:
+                result["missing_flags"] = list(result["expected_flags"])
+                result["problems"].append(
+                    "engine file not present at %s" % entrypoint)
+                return result
+            proc = run(
+                [python, str(path), "--help"], check=False, timeout=120,
+                env=env)
+            text = (proc.stdout or "") + (proc.stderr or "")
+            live_ok = proc.returncode == 0 and "--" in text
+            if live_ok:
+                result["help_ok"] = True
+            elif paid:
+                result["missing_flags"] = list(result["expected_flags"])
+                result["problems"].append(
+                    "live --help failed with exit %d; paid admission never "
+                    "falls back to source regex" % proc.returncode)
+                return result
+            else:
+                text = path.read_text(encoding="utf-8", errors="replace")
+                result["problems"].append(
+                    "--help did not run; non-paid probe read argparse source")
+            declared = set(re.findall(
+                r"(?<![\w-])(--[a-z0-9][a-z0-9-]+)", text))
+            result["found_flags"] = sorted(
+                set(result["expected_flags"]) & declared)
+            result["missing_flags"] = sorted(
+                set(result["expected_flags"]) - declared)
+            if result["missing_flags"]:
+                result["problems"].append(
+                    "authored invocation flags absent: "
+                    + ", ".join(result["missing_flags"]))
             return result
-        proc = run(["python3", str(path), "--help"], check=False, timeout=120)
-        text = (proc.stdout or "") + (proc.stderr or "")
-        # A missing heavy import (torch, quant_pipeline) makes --help fail on a
-        # laptop.  That is not the engine's fault and not a reason to refuse;
-        # fall back to reading the argparse calls out of the source.
-        if proc.returncode == 0 and "--" in text:
-            result["help_ok"] = True
-        else:
-            text = path.read_text(encoding="utf-8", errors="replace")
-            result["problems"].append(
-                "--help did not run (likely a missing heavy import); read the "
-                "argparse declarations from source instead")
-        declared = set(re.findall(r'"(--[a-z0-9][a-z0-9-]*)"', text))
-        declared |= set(re.findall(r"(?<![\w-])(--[a-z0-9][a-z0-9-]+)", text))
-        for flag in self.required_flags:
-            (result["found_flags"] if flag in declared
-             else result["missing_flags"]).append(flag)
-        if result["missing_flags"]:
-            result["problems"].append(
-                "required flags absent: " + ", ".join(result["missing_flags"]))
+
+        engine_expected = (
+            list((self.flag_map or {}).values())
+            + list((self.fixed_flags or {}).keys())
+            if paid else list(self.required_flags))
+        engine_probe = one(self.entrypoint, engine_expected)
+        scorer_probe = None
+        if paid:
+            scorer = self.scorer or {}
+            scorer_entrypoint = scorer.get("entrypoint")
+            scorer_flags = (scorer.get("flag_map") or {}).values()
+            if not isinstance(scorer_entrypoint, str) or not scorer_entrypoint:
+                scorer_probe = {
+                    "entrypoint": None, "present": False, "help_ok": False,
+                    "expected_flags": normalized(scorer_flags),
+                    "found_flags": [], "missing_flags": normalized(scorer_flags),
+                    "problems": ["paid lane pins no scorer entrypoint"],
+                }
+            else:
+                scorer_probe = one(scorer_entrypoint, list(scorer_flags))
+        result = {
+            "schema": "fidelity-suite/engine-probe.v2",
+            "lane": self.lane,
+            "pinned": self.pinned,
+            "mode": "paid-live-help" if paid else "diagnostic",
+            "engine": engine_probe,
+            "scorer": scorer_probe,
+            "help_ok": (
+                engine_probe["help_ok"]
+                and not engine_probe["missing_flags"]
+                and (not paid or (
+                    scorer_probe is not None
+                    and scorer_probe["help_ok"]
+                    and not scorer_probe["missing_flags"]))),
+            # Compatibility fields used by the local diagnostic caller.
+            "entrypoint": self.entrypoint,
+            "present": engine_probe["present"],
+            "found_flags": list(engine_probe["found_flags"]),
+            "missing_flags": list(engine_probe["missing_flags"]),
+            "problems": (
+                list(engine_probe["problems"])
+                + (list(scorer_probe["problems"]) if scorer_probe else [])),
+        }
         return result
 
 
 def load_engines(path: Optional[Path] = None) -> Dict[str, Engine]:
-    raw = json.loads((path or ENGINES_FILE).read_text(encoding="utf-8"))
+    raw = _load_engine_config(path)
     out: Dict[str, Engine] = {}
     for lane, spec in raw["lanes"].items():
         out[lane] = Engine(
@@ -130,10 +223,187 @@ def load_engines(path: Optional[Path] = None) -> Dict[str, Engine]:
             profile_map=dict(spec.get("profile_map") or {}),
             profile_map_by_surface={k: dict(v) for k, v in
                                     (spec.get("profile_map_by_surface") or {}).items()},
+            profile_refusals_by_surface={
+                surface: {rate: dict(reason) for rate, reason in rows.items()}
+                for surface, rows in
+                (spec.get("profile_refusals_by_surface") or {}).items()
+            },
             receipt_class=spec.get("receipt_class", ""),
             pinned_note=spec.get("pinned_note", ""),
         )
     return out
+
+
+def _rate_keys(bits: Optional[float]) -> List[str]:
+    if bits is None:
+        return []
+    keys = []
+    for candidate in (bits, round(float(bits), 4)):
+        for text in ("%g" % float(candidate), str(candidate)):
+            if text not in keys:
+                keys.append(text)
+    return keys
+
+
+class EngineProfileRefused(RuntimeError):
+    """A known surface/rate that has evidence for a refusal, not an omission."""
+
+
+class EngineTimingUnavailable(RuntimeError):
+    """A paid profile has no truthful target-specific timing basis."""
+
+
+class RootTimingUnavailable(RuntimeError):
+    """No exact root target/GPU/form/schedule timing evidence exists."""
+
+
+def profile_refusal(engine: Engine, *, surface: str,
+                    bits: Optional[float]) -> Optional[Dict[str, Any]]:
+    rows = engine.profile_refusals_by_surface.get(surface) or {}
+    for key in _rate_keys(bits):
+        if key in rows:
+            return dict(rows[key])
+    return None
+
+
+def require_supported_profile(engine: Engine, *, surface: str,
+                              bits: Optional[float]) -> None:
+    refusal = profile_refusal(engine, surface=surface, bits=bits)
+    if refusal is None:
+        return
+    raise EngineProfileRefused(
+        "REFUSED before spend [%s]: %s"
+        % (refusal.get("code", "unsupported_profile"),
+           refusal.get("detail", "profile is unsupported"))
+    )
+
+
+def resolve_profile_timing(engine: Engine, *, profile: str, surface: str,
+                           bits: Optional[float] = None,
+                           target_repo: Optional[str] = None,
+                           target_revision: Optional[str] = None,
+                           gpu: Optional[str] = None) -> Dict[str, Any]:
+    """Return serializable, profile-specific timing or refuse.
+
+    A lane-wide fallback is intentionally not accepted here: different TR3
+    rates and native BF16 move different byte counts, so substituting a generic
+    minutes/window figure is not a scientific estimate.
+    """
+    require_supported_profile(engine, surface=surface, bits=bits)
+    row = ((engine.timing.get("profiles") or {}).get(profile))
+    if not isinstance(row, dict):
+        raise EngineTimingUnavailable(
+            "REFUSED before spend [timing_evidence_absent]: lane %s profile %s "
+            "on surface %s has no exact timing profile"
+            % (engine.lane, profile, surface)
+        )
+    minutes = row.get("minutes_per_window")
+    if not isinstance(minutes, (int, float)) or isinstance(minutes, bool) or minutes <= 0:
+        raise EngineTimingUnavailable(
+            "REFUSED before spend [timing_value_invalid]: profile %s has no "
+            "positive minutes_per_window" % profile
+        )
+    if not isinstance(row.get("runtime_profile"), dict) or not row["runtime_profile"]:
+        raise EngineTimingUnavailable(
+            "REFUSED before spend [timing_runtime_profile_absent]: profile %s "
+            "does not name the measured runtime profile" % profile
+        )
+    runtime_profile = row["runtime_profile"]
+    if row.get("resource_admission_required") is True:
+        missing_resources = [
+            field for field in ("gpu_count", "decode_threads",
+                                "min_vcpu_count", "min_memory_gb")
+            if not isinstance(runtime_profile.get(field), int)
+            or isinstance(runtime_profile.get(field), bool)
+            or runtime_profile[field] <= 0
+        ]
+        if runtime_profile.get("decode_cache") == "ram":
+            reader_threads = runtime_profile.get("reader_threads")
+            if (
+                not isinstance(reader_threads, int)
+                or isinstance(reader_threads, bool)
+                or reader_threads <= 0
+            ):
+                missing_resources.append("reader_threads")
+        if missing_resources:
+            raise EngineTimingUnavailable(
+                "REFUSED before spend [timing_resources_absent]: profile %s "
+                "has no safe admission value for %s"
+                % (profile, ", ".join(sorted(missing_resources)))
+            )
+    if not isinstance(row.get("evidence"), dict) or not row["evidence"]:
+        raise EngineTimingUnavailable(
+            "REFUSED before spend [timing_provenance_absent]: profile %s has "
+            "no timing evidence" % profile
+        )
+    expected_repo = row.get("target_repo")
+    expected_revision = row.get("target_revision")
+    expected_gpu = (row.get("runtime_profile") or {}).get("gpu")
+    if expected_repo is not None and target_repo != expected_repo:
+        raise EngineTimingUnavailable(
+            "REFUSED before spend [timing_target_mismatch]: profile %s timing "
+            "is for %s, got %r" % (profile, expected_repo, target_repo)
+        )
+    if expected_revision is not None and target_revision != expected_revision:
+        raise EngineTimingUnavailable(
+            "REFUSED before spend [timing_revision_mismatch]: profile %s timing "
+            "is for revision %s, got %r"
+            % (profile, expected_revision, target_revision)
+        )
+    if expected_gpu is not None and gpu != expected_gpu:
+        raise EngineTimingUnavailable(
+            "REFUSED before spend [timing_gpu_mismatch]: profile %s timing is "
+            "for %s, got %r" % (profile, expected_gpu, gpu)
+        )
+    # JSON round-trip both copies the record and proves it is safe to bind into
+    # the integration owner's canonical job content.
+    return json.loads(json.dumps(row, sort_keys=True, allow_nan=False))
+
+
+def resolve_root_timing(*, target_repo: str, target_revision: str, gpu: str,
+                        form: str, schedule: str,
+                        path: Optional[Path] = None) -> Dict[str, Any]:
+    """Exact root timing lookup; every dimension is admission-critical."""
+    raw = _load_engine_config(path)
+    for row in raw.get("root_timing_profiles") or []:
+        if (
+            row.get("target_repo") == target_repo
+            and row.get("target_revision") == target_revision
+            and row.get("gpu") == gpu
+            and row.get("form") == form
+            and row.get("schedule") == schedule
+        ):
+            hours = row.get("conservative_upper_hours")
+            if not isinstance(hours, (int, float)) or isinstance(hours, bool) or hours <= 0:
+                break
+            admission = row.get("resource_admission")
+            if (
+                not isinstance(admission, dict)
+                or admission.get("required") is not True
+                or admission.get("mode") != "controller_explicit_safe_resources"
+            ):
+                break
+            if not isinstance(row.get("evidence"), dict) or not row["evidence"]:
+                break
+            identity = row.get("model_identity")
+            if not isinstance(identity, dict):
+                break
+            if (
+                not isinstance(identity.get("model_bytes"), int)
+                or isinstance(identity.get("model_bytes"), bool)
+                or identity["model_bytes"] <= 0
+                or re.fullmatch(r"[0-9a-f]{64}",
+                                str(identity.get("config_sha256", ""))) is None
+                or re.fullmatch(r"[0-9a-f]{64}",
+                                str(identity.get("index_sha256", ""))) is None
+            ):
+                break
+            return json.loads(json.dumps(row, sort_keys=True, allow_nan=False))
+    raise RootTimingUnavailable(
+        "REFUSED before spend [root_timing_evidence_absent]: no exact timing "
+        "for target %s@%s on %s, form=%s, schedule=%s"
+        % (target_repo, target_revision, gpu, form, schedule)
+    )
 
 
 class EngineUnpinned(RuntimeError):

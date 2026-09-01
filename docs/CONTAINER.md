@@ -351,38 +351,19 @@ second time you use the mount.
 
 ---
 
-## Running it on a provider
+## Historical provider-container evidence
 
-| provider | custom image | how |
-|---|---|---|
-| RunPod | yes | `imageName` on `podFindAndDeployOnDemand` — `fidelity.runpodapi.RunPod.create` already takes `image=` |
-| Vast.ai | yes | image chosen at rent time |
-| Lambda | instances are **VMs**, not containers | `docker build` and `docker run` directly on the box; no registry involved |
-| JarvisLabs | no | stays on the SSH path |
+Direct provider-native container launch is **not an admitted measurement path**.
+The current paid controller accepts only a fresh RunPod secure on-demand pod
+over its authenticated SSH lifecycle, with a durable lease, installed reaper,
+controller-loss proof, bounded result retrieval, exact absence, and billing
+reconciliation. It deliberately exposes no `--image` path and refuses direct
+`RunPod.create(...)`, Vast, Lambda, and JarvisLabs execution before mutation.
 
-A RunPod or Vast pod must **pull** the image, so it has to exist in a registry
-they can reach. A Lambda instance does not: it is a real VM with Docker, so the
-image can be built and run on the box itself, which is also the cheapest way to
-get the two arms of the acceptance test onto one GPU.
-
-**A worked RunPod launch.** `fidelity.runpodapi.RunPod.create` takes `image`,
-`docker_args` and `env`; there is no `measure-cloud --image` flag yet, so this
-is Python today:
-
-```python
-from fidelity import runpodapi
-rp = runpodapi.RunPod(key_file="~/.runpod_key")
-rp.create(
-    gpu_type="NVIDIA L4", name="fid-fruit", storage=60, region="secure",
-    image="ghcr.io/malaiwah/quant-fidelity-measure@sha256:<digest>",
-    docker_args=("capture --model malaiwah/GLM-5.2-SIQ-Fruit-bf16 "
-                 "--revision ef68013a... "
-                 "--panel-dir /opt/fidelity/suite/engines/panels/panel--fruit.malaiwah.heldout-v1 "
-                 "--dataset-id fidelity--malaiwah.fruit-bf16.root.container-v1 "
-                 "--lane streaming --host runpod --image-pin sha256:<digest>"),
-    env={"FIDELITY_RESULT_SINK": "https://ntfy.sh/<your-topic>"},
-)
-```
+The container experiments below remain implementation evidence for the image;
+they are not a runnable rental recipe. Use
+[`THIRD-PARTY-QUICKSTART.md`](THIRD-PARTY-QUICKSTART.md) for the only current
+paid boundary.
 
 Three things that cost real money to learn:
 

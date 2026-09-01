@@ -914,10 +914,13 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
 
     vocab = reference.manifest["capture"]["vocab_size"]
     vocab_chunk = options.get("vocab_chunk")
-    if vocab_chunk is not None and vocab % vocab_chunk != 0:
-        raise Refusal("compute", "bad_vocab_chunk",
-                      "--vocab-chunk %d does not divide vocab_size %d; working values: %s"
-                      % (vocab_chunk, vocab, F.divisors_hint(vocab)))
+    if (vocab_chunk is not None
+            and (isinstance(vocab_chunk, bool)
+                 or not isinstance(vocab_chunk, int)
+                 or vocab_chunk < 1)):
+        raise Refusal(
+            "compute", "bad_vocab_chunk",
+            "--vocab-chunk must be a positive integer; got %r" % vocab_chunk)
     # CLI-05. `or 128` also swallowed 0, and nothing bounded the value. A negative
     # --chunk-positions made range() empty, the loop below never ran, and `values` --
     # allocated with np.empty -- was published as the headline metric, the per_context

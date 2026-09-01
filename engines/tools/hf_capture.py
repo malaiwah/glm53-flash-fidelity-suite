@@ -63,6 +63,7 @@ sys.path.insert(0, os.path.join(REPO, "bin"))
 
 from fidelity import dsformat as F  # noqa: E402
 from fidelity import dsmanifest, dsvalidate  # noqa: E402
+from fidelity import panel as panel_contract  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -174,6 +175,11 @@ class Panel(object):
         self.panel_id = panel_id
         self.source = source
         self.receipt_sha256 = receipt_sha256
+        # Before a resolved binding is applied both names hold the raw shipped
+        # file digest for backward-compatible unbound captures.  Binding keeps
+        # the byte identity here while replacing ``receipt_sha256`` with the
+        # receipt's verified semantic/self-sealed identity.
+        self.receipt_file_sha256 = receipt_sha256
         self.windows = list(windows)
         self.synthetic = synthetic
         self.tokenizer = tokenizer or {}
@@ -243,6 +249,69 @@ def load_panel(panel_dir: str, role: str, limit: Optional[int],
         tokenizer={"id": tokenizer_id, "repository": tokenizer_id, "revision": None,
                    "vocab_size": vocab_size, "add_special_tokens": False,
                    "chat_template_applied": False})
+
+def _is_canonical_sha256(value: Any) -> bool:
+    return (isinstance(value, str) and len(value) == 64
+            and all(char in "0123456789abcdef" for char in value))
+
+
+def bind_resolved_panel_tokenizer(panel: Panel, args: argparse.Namespace) -> None:
+    """Apply the exact tokenizer and receipt identities from a verified binding.
+
+    ``load_panel`` can only infer a repository-like tokenizer id from the
+    legacy panel tree.  Once ``run_capture`` has verified the exact resolved
+    panel contract against local panel and tokenizer bytes, that inferred
+    identity is strictly weaker and must not leak into the dataset manifest.
+
+    A receipt has two deliberately distinct hashes: its declared semantic
+    identity (including the legacy field-absent and modern self-blank sealing
+    conventions) and the hash of its shipped bytes.  The latter must still
+    match what ``load_panel`` read before the former replaces the manifest
+    identity.
+    """
+    evidence = getattr(args, "panel_binding_evidence", None)
+    if evidence is None:
+        return
+    if not isinstance(evidence, dict):
+        raise fail("panel binding REFUSED: verified binding evidence is not an object")
+    binding = evidence.get("binding")
+    if not isinstance(binding, dict):
+        raise fail("panel binding REFUSED: verified binding is not an object")
+    tokenizer = binding.get("tokenizer")
+    if not isinstance(tokenizer, dict):
+        raise fail("panel binding REFUSED: verified binding has no tokenizer identity")
+    receipt = binding.get("receipt")
+    if not isinstance(receipt, dict):
+        raise fail("panel binding REFUSED: verified binding has no receipt identity")
+    receipt_seal_mode = receipt.get("receipt_seal_mode")
+    if receipt_seal_mode not in ("self-blank", "legacy-field-absent"):
+        raise fail("panel binding REFUSED: unsupported receipt_seal_mode %r"
+                   % receipt_seal_mode)
+
+    declared_receipt_sha256 = receipt.get("declared_receipt_sha256")
+    if not _is_canonical_sha256(declared_receipt_sha256):
+        raise fail("panel binding REFUSED: declared_receipt_sha256 is not canonical "
+                   "lowercase SHA-256")
+    receipt_file_sha256 = receipt.get("receipt_file_sha256")
+    if not _is_canonical_sha256(receipt_file_sha256):
+        raise fail("panel binding REFUSED: receipt_file_sha256 is not canonical "
+                   "lowercase SHA-256")
+    observed_receipt_file_sha256 = panel.receipt_file_sha256
+    if not _is_canonical_sha256(observed_receipt_file_sha256):
+        raise fail("panel binding REFUSED: load_panel did not hash panel.receipt.json")
+    if receipt_file_sha256 != observed_receipt_file_sha256:
+        raise fail("panel binding REFUSED: receipt_file_sha256 mismatch: binding %s, "
+                   "observed %s" % (receipt_file_sha256,
+                                    observed_receipt_file_sha256))
+
+    # JSON round-trip is a detached, plain-data copy and preserves the exact
+    # schema-compatible identity resolved by fidelity.panel.  Mutate only after
+    # every receipt check so a refusal cannot leave a half-bound panel.
+    resolved_tokenizer = json.loads(json.dumps(
+        tokenizer, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False))
+    panel.tokenizer = resolved_tokenizer
+    panel.receipt_sha256 = declared_receipt_sha256
 
 
 def _find_mask(arrays: str, row: Dict[str, Any], length: int) -> str:
@@ -555,6 +624,91 @@ def _key_list(value: Any) -> List[str]:
     except TypeError:  # pragma: no cover - a report shape we do not know
         return [str(value)]
 
+def load_unexpected_tensor_allowlist(
+        path: str, artifact_sha256: Optional[str] = None,
+        canonical_names_sha256: Optional[str] = None) -> Dict[str, Any]:
+    """Load one exact, byte-bound set of intentionally unused checkpoint keys."""
+    try:
+        raw = open(path, "rb").read()
+    except OSError as exc:
+        raise fail("cannot read --unexpected-tensors-allowlist %s: %s" % (path, exc))
+    try:
+        names = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise fail("unexpected-tensor allowlist is not UTF-8 JSON: %s" % exc)
+    if not isinstance(names, list) or not names:
+        raise fail("unexpected-tensor allowlist must be a non-empty JSON array")
+    if any(not isinstance(name, str) or not name for name in names):
+        raise fail("every unexpected-tensor allowlist entry must be a non-empty string")
+    if len(names) != len(set(names)):
+        duplicates = sorted(name for name in set(names) if names.count(name) > 1)
+        raise fail("unexpected-tensor allowlist contains duplicate name(s): %s"
+                   % ", ".join(duplicates[:6]))
+    expected = sorted(names)
+    canonical = json.dumps(expected, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    raw_digest = hashlib.sha256(raw).hexdigest()
+    names_digest = hashlib.sha256(canonical).hexdigest()
+    for label, supplied, actual in (
+            ("--unexpected-tensors-allowlist-sha256", artifact_sha256, raw_digest),
+            ("--unexpected-tensors-name-sha256", canonical_names_sha256, names_digest)):
+        if supplied is not None and supplied != actual:
+            raise fail("%s mismatch: supplied %s, observed %s" % (label, supplied, actual))
+    return {
+        "schema": "malaiwah.unexpected-tensor-allowlist-binding.v1",
+        "artifact_file": os.path.basename(path),
+        "artifact_bytes": len(raw),
+        "artifact_sha256": raw_digest,
+        "canonical_sorted_names_sha256": names_digest,
+        "expected_count": len(expected),
+        "expected_keys": expected,
+    }
+
+
+def _unexpected_tensor_evidence(
+        report: Dict[str, Any], allowlist: Optional[Dict[str, Any]],
+        require_exact: bool) -> Optional[Dict[str, Any]]:
+    observed = sorted(report.get("unexpected_keys") or [])
+    if not observed and allowlist is None:
+        return None
+    if allowlist is None:
+        raise fail(
+            "REFUSED: %d checkpoint tensor(s) were not used by this architecture. "
+            "Broad acceptance is obsolete: pass a pinned --unexpected-tensors-allowlist "
+            "and both of its SHA-256 identities only after proving this exact set is an "
+            "intentionally unused public block. First keys: %s"
+            % (len(observed), ", ".join(observed[:6])))
+    expected = list(allowlist["expected_keys"])
+    observed_set = set()
+    duplicate_set = set()
+    for name in observed:
+        if name in observed_set:
+            duplicate_set.add(name)
+        observed_set.add(name)
+    duplicates = sorted(duplicate_set)
+    missing = sorted(set(expected) - observed_set)
+    extra = sorted(observed_set - set(expected))
+    exact_match = observed == expected
+    evidence = dict(allowlist)
+    evidence.update({
+        "observed_count": len(observed),
+        "observed_keys": observed,
+        "duplicate_observed_keys": duplicates,
+        "missing_keys": missing,
+        "extra_keys": extra,
+        "exact_match": exact_match,
+    })
+    if duplicates or extra or (require_exact and not exact_match):
+        raise fail(
+            "REFUSED: unexpected checkpoint tensor list differs from the exact bound "
+            "allowlist; duplicates=%d [%s], missing=%d [%s], extra=%d [%s]. "
+            "Expected digest %s."
+            % (len(duplicates), ", ".join(duplicates[:6]),
+               len(missing), ", ".join(missing[:6]), len(extra), ", ".join(extra[:6]),
+               allowlist["canonical_sorted_names_sha256"]))
+    return evidence
+
+
+
 
 def missing_weight_keys(info: Dict[str, Any]) -> List[str]:
     """Parameters `transformers` had to INVENT because the checkpoint lacked them.
@@ -605,46 +759,16 @@ def load_report(info: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def refuse_on_load_report(report: Dict[str, Any], allow_missing: bool,
-                          allow_unexpected: bool = False) -> List[str]:
-    """CAPTURE-03. Returns the reinitialised keys when the caller forced through.
+def refuse_on_load_report(
+        report: Dict[str, Any], allow_missing: bool,
+        unexpected_allowlist: Optional[Dict[str, Any]] = None,
+        require_exact_unexpected: bool = True) -> List[str]:
+    """CAPTURE-03. Refuse every unproven deviation from published weights.
 
-    Five independent ways a `transformers` load can hand back a model whose
-    forward pass is not the artifact's, in increasing order of subtlety:
-
-      1. `missing_keys`   -- the classic. Observed on Fruit: routed experts
-         shipped as exl3-trellis atoms, reported missing, randomly initialised,
-         mean ~0 std 0.0199, model runs.
-      2. `mismatched_keys` -- present but the wrong shape. "Reinit due to size
-         mismatch". Same harm, different heading, and this guard used to ignore
-         it entirely.
-      3. `error_msgs`     -- a state-dict copy that threw.
-      4. `conversion_errors` -- a `WeightConverter` that threw. The parameters
-         it was building are skipped, and `LoadStateDictInfo.to_dict()` -- the
-         dict this tool is handed -- deliberately omits the field. For a model
-         routed through the `qwen2_moe` fusion pattern this is 96.7% of the
-         checkpoint hiding behind a field we were not shown.
-      5. `unexpected_keys` -- the SILENT one, and the reason this list grew a
-         fifth entry.  Every parameter the model builds was filled, so nothing
-         above fires; the checkpoint simply carried tensors the loaded model
-         had no home for.  That is sometimes benign (GLM-5.3-BF16 ships an MTP
-         layer `GlmMoeDsaForCausalLM` does not build, 791 tensors of it) and
-         sometimes it is the whole defect.  On `Qwen/Qwen3.8-27B-FP8` (M1,
-         learning 6/7) the line read `unexpected: 64`: the producer's
-         `modules_to_not_convert` listed `...mlp.gate`, `should_convert_module`
-         matches it with a start-anchored `re.match`, so `...mlp.gate_proj`
-         matched too and 65 of 65 gate_proj modules skipped FP8 conversion.
-         Their 64 block-scale tensors then had nowhere to go and fell out as
-         "unexpected", the fp8 payload was read into a bf16 Linear with the
-         scale never applied, and the model produced confidently wrong values
-         in that projection.  Nothing raised.  That one log line was the only
-         signal.  It is now a refusal.
-
-    1, 2 and 5 are overridable -- by `--allow-missing-weights` and
-    `--allow-unexpected-tensors` respectively -- and each override forces a
-    BLOCKING disclosure. 3 and 4 are not: an exception during loading means we
-    cannot say what the parameter now holds, so there is no disclosure that
-    would make a number measured on it readable.
+    Unexpected checkpoint tensors proceed only when their complete set equals
+    a byte-bound and semantic-digest-bound exact allowlist. The non-exact mode
+    is solely a streamed per-layer early check; the aggregate report is always
+    checked exactly after all layers load.
     """
     if not report["observed"]:
         raise fail(
@@ -689,24 +813,10 @@ def refuse_on_load_report(report: Dict[str, Any], allow_missing: bool,
                " (+%d more)" % (len(reinitialised) - 6) if len(reinitialised) > 6 else "",
                (" %d of them were present at the WRONG SHAPE ('Reinit due to size "
                 "mismatch')." % mismatched) if mismatched else ""))
-    unexpected = list(report.get("unexpected_keys") or [])
-    if unexpected and not allow_unexpected:
-        raise fail(
-            "REFUSED: %d checkpoint tensor(s) were loaded from the artifact but this "
-            "architecture has no home for them, so they took no part in the forward pass: "
-            "%s%s. What that USUALLY means: a quantization path silently did not engage. "
-            "The producer's exclusion list, the quantizer's module matcher or this "
-            "`transformers` build disagreed about which modules carry quant state, the "
-            "affected modules were left in their unquantized form, and their scale/zero "
-            "tensors then had nowhere to go and landed here. A capture taken in that state "
-            "is a confident number for a projection nobody quantized. (It is also how a "
-            "legitimately unused block looks -- an MTP or draft layer the architecture does "
-            "not build -- which is why there is an override.) Cross-check the converted/"
-            "excluded module split against the checkpoint's real tensor names before "
-            "trusting anything captured here. Pass --allow-unexpected-tensors only if you "
-            "have done that; it forces a BLOCKING disclosure."
-            % (len(unexpected), ", ".join(unexpected[:6]),
-               " (+%d more)" % (len(unexpected) - 6) if len(unexpected) > 6 else ""))
+    evidence = _unexpected_tensor_evidence(
+        report, unexpected_allowlist, require_exact_unexpected)
+    if evidence is not None:
+        report["unexpected_tensor_allowlist"] = evidence
     return reinitialised
 
 
@@ -756,6 +866,8 @@ def _source_files(args: argparse.Namespace) -> Dict[str, str]:
     if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER:
         files["engines/tools/layer_outer.py"] = F.sha256_file(
             os.path.abspath(layer_outer.__file__))
+    files["bin/fidelity/panel.py"] = F.sha256_file(
+        os.path.abspath(panel_contract.__file__))
     return files
 
 
@@ -1029,6 +1141,34 @@ def run_capture(args: argparse.Namespace) -> int:
 
     # RACE MODE.  Start the background fetch before anything else touches the
     # tree: from here on the checkpoint is arriving, not present.
+    if args.panel_binding:
+        try:
+            binding_raw = open(args.panel_binding, "rb").read()
+            expected_binding = json.loads(binding_raw.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise fail("cannot read strict --panel-binding JSON: %s" % exc)
+        binding_file_sha = hashlib.sha256(binding_raw).hexdigest()
+        if binding_file_sha != args.panel_binding_sha256:
+            raise fail("--panel-binding-sha256 mismatch: supplied %s, observed %s"
+                       % (args.panel_binding_sha256, binding_file_sha))
+        try:
+            resolved_binding = panel_contract.resolve_panel(
+                args.panel, role=args.panel_role,
+                tokenizer_root=args.panel_tokenizer_root or model_dir).to_dict()
+        except panel_contract.PanelError as exc:
+            raise fail("panel binding REFUSED: %s" % exc)
+        if not resolved_binding["tokenizer"]["files_verified"]:
+            raise fail("panel binding REFUSED: tokenizer files were not verified")
+        if resolved_binding != expected_binding:
+            raise fail("panel binding REFUSED: local panel/tokenizer bytes do not equal "
+                       "the complete --panel-binding contract")
+        args.panel_binding_evidence = {
+            "binding_file": os.path.basename(args.panel_binding),
+            "binding_file_sha256": binding_file_sha,
+            "binding": resolved_binding,
+        }
+    else:
+        args.panel_binding_evidence = None
     fetcher = _start_race_fetch(args, model_dir)
 
     # The checkpoint identity is a sha256 over EVERY shard, so in race mode it
@@ -1077,8 +1217,10 @@ def run_capture(args: argparse.Namespace) -> int:
             # guard runs per layer -- otherwise the streamed weights (97.5% of
             # GLM-5.3 by bytes) would be the only unexamined part of the model.
             report = load_report(info)
-            reinit = refuse_on_load_report(report, args.allow_missing_weights,
-                                           args.allow_unexpected_tensors)
+            reinit = refuse_on_load_report(
+                report, args.allow_missing_weights,
+                args.unexpected_tensor_allowlist_binding,
+                require_exact_unexpected=False)
             if reinit:
                 log(stage="layer_missing_weights", index=index, count=len(reinit),
                     keys=reinit[:8])
@@ -1120,8 +1262,9 @@ def run_capture(args: argparse.Namespace) -> int:
         conversion_errors=len(report["conversion_errors"]),
         error_msgs=len(report["error_msgs"]),
         unexpected_sample=report["unexpected_keys"][:6])
-    missing = refuse_on_load_report(report, args.allow_missing_weights,
-                                    args.allow_unexpected_tensors)
+    missing = refuse_on_load_report(
+        report, args.allow_missing_weights,
+        args.unexpected_tensor_allowlist_binding)
     if missing:
         log(stage="missing_weights", count=len(missing), keys=missing[:12])
 
@@ -1148,6 +1291,7 @@ def run_capture(args: argparse.Namespace) -> int:
     # only after the whole capture has been paid for.
     tokenizer_id = args.tokenizer_id or args.weights_repository or args.model
     panel = load_panel(args.panel, args.panel_role, args.windows, tokenizer_id, vocab_size)
+    bind_resolved_panel_tokenizer(panel, args)
     log(stage="panel", windows=len(panel.windows), panel_json=panel.source,
         receipt_sha256=panel.receipt_sha256)
 
@@ -1722,9 +1866,13 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                       "sha256": F.sha256_file(os.path.abspath(__file__)),
                       "version": TOOL_VERSION, "wraps": [],
                       "schedule": args.schedule,
-                      # Recorded, never inferred: a reader must be able to see
-                      # that the parallel plan was emptied at load time without
-                      # re-deriving it from the flags.
+                      # Full expected and observed sets, plus both identities
+                      # of the allowlist artifact, are inside this sealed
+                      # runtime receipt. A count or a boolean is not evidence.
+                      "unexpected_tensor_allowlist":
+                          (load_report or {}).get("unexpected_tensor_allowlist"),
+                      "resolved_panel_binding":
+                          getattr(args, "panel_binding_evidence", None),
                       "parallel_plan_dropped": bool(getattr(args, "drop_parallel_plan", False)),
                       "layer_residency": (args.layer_residency
                                           if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER
@@ -1765,34 +1913,20 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                       "a measurement of the published artifact. First keys: %s."
                       % (len(missing_weights), ", ".join(list(missing_weights)[:6]))})
 
-    # `unexpected_keys` are checkpoint tensors this build of transformers does
-    # not place anywhere.  Reaching here at all means --allow-unexpected-tensors
-    # was passed, because `refuse_on_load_report` now REFUSES otherwise: the
-    # benign reading (GLM-5.3-BF16's MTP layer, `model.layers.78.*`, 791
-    # tensors that `GlmMoeDsaForCausalLM` does not build) and the fatal one
-    # (Qwen3.8-27B-FP8's 64 orphaned `gate_proj` block scales, M1 learning 6/7)
-    # look IDENTICAL from here, and only one of them is safe to publish.  The
-    # factual record stays a caveat; the override itself is blocking, exactly
-    # as --allow-missing-weights is.
+    # An exact match against a pinned allowlist is factual provenance, not an
+    # override. Missing, extra, renamed, duplicated, or differently bound keys
+    # were already refused before any capture arithmetic ran.
     unexpected = list((load_report or {}).get("unexpected_keys") or [])
+    unexpected_evidence = (load_report or {}).get("unexpected_tensor_allowlist")
     if unexpected:
         disclosures.append({
-            "code": "checkpoint_tensors_not_loaded", "severity": "caveat",
+            "code": "checkpoint_tensors_intentionally_unused", "severity": "caveat",
             "affects_comparability": False,
-            "detail": "%d checkpoint tensor(s) were present but not used by this "
-                      "architecture (transformers `unexpected_keys`); they took no part in "
-                      "the forward pass. First keys: %s."
-                      % (len(unexpected), ", ".join(sorted(unexpected)[:6]))})
-        disclosures.append({
-            "code": "unexpected_tensors_overridden", "severity": "blocking",
-            "affects_comparability": True,
-            "detail": "--allow-unexpected-tensors was passed to capture over %d checkpoint "
-                      "tensor(s) this architecture has no home for. The usual cause is a "
-                      "quantization path that silently did not engage, leaving its scale "
-                      "tensors orphaned and the affected modules unquantized; the benign "
-                      "cause is an unused MTP/draft block. This capture does not say which. "
-                      "First keys: %s."
-                      % (len(unexpected), ", ".join(sorted(unexpected)[:6]))})
+            "detail": "%d checkpoint tensor(s) were present but intentionally unused by "
+                      "this architecture. Their complete set exactly matched pinned "
+                      "allowlist %s (canonical sorted-name SHA-256 %s)."
+                      % (len(unexpected), unexpected_evidence["artifact_sha256"],
+                         unexpected_evidence["canonical_sorted_names_sha256"])})
 
     # DET-D4: `verify` warns when run_count < 5 and asks for this disclosure, but
     # nothing in the tooling emitted it, so every capture this engine writes
@@ -1918,20 +2052,24 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
     if getattr(args, "preview_of", None):
         _apply_preview_identity(args, manifest)
 
-    # The panel's own build receipt, byte-verbatim (spec section 2,
-    # `panel/panel-receipt.json`).  Recording `panel_receipt_sha256` while
-    # shipping no preimage leaves a reader holding a digest of something they
-    # cannot obtain: for a ROOT dataset -- the yardstick everything else is
-    # measured against -- that is the one piece of provenance most worth having.
+    # Ship the panel's build receipt byte-verbatim (spec section 2,
+    # `panel/panel-receipt.json`). `panel_receipt_sha256` is the receipt's
+    # declared semantic identity when a resolved binding is present; the raw
+    # file digest remains independently verified before these bytes are sealed.
     # It must be written BEFORE `finish()`, or `checksums.txt` will not cover it
     # and `verify` refuses the tree with `unlisted_file`.
     if panel.receipt_sha256:
         receipt_src = os.path.join(panel.root, "panel.receipt.json")
         raw_receipt = open(receipt_src, "rb").read()
+        receipt_file_sha256 = hashlib.sha256(raw_receipt).hexdigest()
+        if receipt_file_sha256 != panel.receipt_file_sha256:
+            raise fail("panel receipt changed after load: expected %s, observed %s"
+                       % (panel.receipt_file_sha256, receipt_file_sha256))
         writer.add_file("panel/panel-receipt.json", raw_receipt)
         manifest["panel"]["panel_receipt_file"] = "panel/panel-receipt.json"
         log(stage="panel_receipt", file="panel/panel-receipt.json",
-            sha256=panel.receipt_sha256, bytes=len(raw_receipt))
+            declared_receipt_sha256=panel.receipt_sha256,
+            receipt_file_sha256=receipt_file_sha256, bytes=len(raw_receipt))
 
     # README.md is REQUIRED by the spec, is covered by checksums.txt, and so has
     # to exist BEFORE the seal.  A capture that does not write one produces a
@@ -1985,6 +2123,13 @@ def build_parser() -> argparse.ArgumentParser:
              "0 disables). On a TTY the meter updates in place instead and this is "
              "ignored. Env override: FIDELITY_PROGRESS_SECONDS.")
     parser.add_argument("--out", required=True, help="dataset root to WRITE (it is created)")
+    parser.add_argument("--panel-binding", default=None, metavar="JSON",
+                        help="complete ResolvedPanel.to_dict() contract for this local tree")
+    parser.add_argument("--panel-binding-sha256", default=None,
+                        help="SHA-256 of the exact --panel-binding JSON file bytes")
+    parser.add_argument("--panel-tokenizer-root", default=None,
+                        help="directory holding the tokenizer files bound by the panel "
+                             "(defaults to the resolved model directory)")
     parser.add_argument("--role", choices=["root", "quant", "derived"], required=True)
     parser.add_argument("--lane", required=True)
     parser.add_argument("--device", default="cpu")
@@ -2057,10 +2202,14 @@ def build_parser() -> argparse.ArgumentParser:
                              "parameters the checkpoint did not provide. Forces a BLOCKING "
                              "disclosure. Almost never the right flag.")
     parser.add_argument("--allow-unexpected-tensors", action="store_true",
-                        help="capture even though the checkpoint carried tensors this "
-                             "architecture has no home for. Usually means a quantization "
-                             "path silently did not engage; sometimes means a legitimately "
-                             "unused MTP/draft block. Forces a BLOCKING disclosure.")
+                        help="OBSOLETE compatibility spelling. Always REFUSED: broad "
+                             "unexpected-tensor acceptance cannot support a measurement.")
+    parser.add_argument("--unexpected-tensors-allowlist", default=None, metavar="JSON",
+                        help="exact JSON array of intentionally unused checkpoint keys")
+    parser.add_argument("--unexpected-tensors-allowlist-sha256", default=None,
+                        help="SHA-256 of the exact allowlist file bytes")
+    parser.add_argument("--unexpected-tensors-name-sha256", default=None,
+                        help="SHA-256 of compact canonical JSON over the sorted names")
     parser.add_argument("--force", action="store_true")
 
     race = parser.add_argument_group(
@@ -2125,8 +2274,35 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.allow_unexpected_tensors:
+        print("hf_capture: REFUSED: --allow-unexpected-tensors is obsolete and can never "
+              "authorize a capture. Use --unexpected-tensors-allowlist with both exact "
+              "SHA-256 bindings.", file=sys.stderr)
+        return 3
+    allowlist_args = (args.unexpected_tensors_allowlist,
+                      args.unexpected_tensors_allowlist_sha256,
+                      args.unexpected_tensors_name_sha256)
+    if any(value is not None for value in allowlist_args) and not all(
+            value is not None for value in allowlist_args):
+        print("hf_capture: REFUSED: --unexpected-tensors-allowlist, "
+              "--unexpected-tensors-allowlist-sha256, and "
+              "--unexpected-tensors-name-sha256 are an all-or-none contract.",
+              file=sys.stderr)
+        return 3
+    try:
+        args.unexpected_tensor_allowlist_binding = (
+            load_unexpected_tensor_allowlist(*allowlist_args)
+            if allowlist_args[0] is not None else None)
+    except SystemExit as exc:
+        return int(exc.code or 1)
     if args.device_map and args.device_map.strip().startswith("{"):
         args.device_map = json.loads(args.device_map)
+    panel_binding_args = (args.panel_binding, args.panel_binding_sha256)
+    if any(value is not None for value in panel_binding_args) and not all(
+            value is not None for value in panel_binding_args):
+        print("hf_capture: REFUSED: --panel-binding and --panel-binding-sha256 are "
+              "an all-or-none contract.", file=sys.stderr)
+        return 3
     if args.cold_run is None:
         args.cold_run = "%s-%d" % (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()), os.getpid())
     if os.path.exists(args.out):

@@ -33,18 +33,23 @@ Stock python3.9, no installs, no network, no GPU.
 from __future__ import annotations
 
 import argparse
+import ast
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import urllib.parse
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 SUITE = HERE.parent
 
 import container_entry as CE                              # noqa: E402
+import selftest_panel as PANEL_TEST                         # noqa: E402
 from fidelity import dsmanifest, stages                   # noqa: E402
 
 FAILED = []
@@ -73,19 +78,22 @@ def rung_sequence():
     for surface in ("tr3-published", "dione"):
         check("C1c %s materializes too" % surface,
               "materialize" in stages.stage_sequence("quant", surface=surface))
-    check("C1d root: nothing materialized, nothing scored",
-          stages.stage_sequence("root")
-          == ["setup", "fetch_target", "capture", "verify"])
-    check("C1e root+race: the fetch becomes part of the capture",
-          stages.stage_sequence("root", race=True)
-          == ["setup", "race_bootstrap", "race_capture", "verify"])
+    root_stages = [
+        "setup", "fetch_target", "capture", "verify",
+        "capture_repeat", "verify_repeat", "compare_root", "qualify_root"]
+    check("C1d root is two fresh processes plus exact qualification",
+          stages.stage_sequence("root") == root_stages)
+    try:
+        stages.stage_sequence("root", race=True)
+        check("C1e root+race refuses before composing stages", False)
+    except ValueError:
+        check("C1e root+race refuses before composing stages", True)
     check("C1f a root capture never materializes, whatever the surface",
-          stages.stage_sequence("root", surface="exl3hf")
-          == ["setup", "fetch_target", "capture", "verify"])
+          stages.stage_sequence("root", surface="exl3hf") == root_stages)
     check("C1g every emitted stage is one stage_measure.sh answers to",
           stages.unknown_stages(
               stages.stage_sequence("quant", surface="exl3hf")
-              + stages.stage_sequence("root", race=True)) == [])
+              + stages.stage_sequence("root")) == [])
 
     print("[C2] the SSH controller and the container share that one owner")
     import measure_cloud                                   # noqa: E402
@@ -98,124 +106,463 @@ def rung_sequence():
 
 
 # --------------------------------------------------------------------------
-# C3  one job document contract, two writers
+# C3  finalized local quant/root job contracts
 # --------------------------------------------------------------------------
 
-# Keys the cloud controller emits that the container deliberately does not.
-# Each needs a reason, because "the container forgot one" and "the container
-# does not need one" look identical in a diff.
-CONTAINER_OMITS = {
-    # jqget maps a JSON null to ABSENT, and stage_measure.sh's own default for
-    # this key is the pinned revision -- so omitting it and emitting null are
-    # the same thing to every reader.  --official-bf16-revision adds it back.
-    "official_bf16_revision": "stage_measure.sh supplies the same pinned default",
-}
 
-
-def _plan_data():
-    panel_dir = SUITE / "engines" / "panels" / "panel--minimaxm3.malaiwah.corpus5x5"
-    return panel_dir, {
-        "job_id": "job-test",
-        "profile": "k6",
-        "panel": {"repo_id": "someone/panel", "revision": "b" * 40,
-                  "include": ["*"], "reference_ref": "ref--x",
-                  "teacher_receipt_sha256": "c" * 64,
-                  "teacher_backend_identity_sha256": "d" * 64},
-        "target": {"repo_id": "someone/quant", "revision": "a" * 40,
-                   "surface": "exl3hf", "bits": 4.0},
-        "chosen": {"gpu_type": "A100", "gpus": 1},
-        "requirement": {"ep_size": 1},
-        "disclosures": [],
+def _root_fixture(work: Path):
+    panel_dir = work / "panel-source"
+    tokenizer_root = work / "tokenizer"
+    panel_dir.mkdir()
+    PANEL_TEST.modern_fixture(panel_dir, tokenizer_root)
+    written = CE.PANEL.write_panel_archive(
+        panel_dir, work / "panel.tar", tokenizer_root=tokenizer_root)
+    binding_raw = (
+        json.dumps(written["binding"], indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    binding_file = work / "panel.binding.json"
+    binding_file.write_bytes(binding_raw)
+    allow_raw = b'["model.layers.13.mtp.weight"]\n'
+    allow_file = work / "unexpected.json"
+    allow_file.write_bytes(allow_raw)
+    canonical_names = json.dumps(
+        ["model.layers.13.mtp.weight"], separators=(",", ":")
+    ).encode("utf-8")
+    return {
+        "panel_dir": panel_dir,
+        "tokenizer_root": tokenizer_root,
+        "binding_file": binding_file,
+        "binding_sha256": hashlib.sha256(binding_raw).hexdigest(),
+        "allow_file": allow_file,
+        "allow_sha256": hashlib.sha256(allow_raw).hexdigest(),
+        "names_sha256": hashlib.sha256(canonical_names).hexdigest(),
     }
+def _target_descriptor(work: Path, name: str, *, repo_id: str, revision: str,
+                       surface: str, codec: str, bits: float,
+                       model_bytes: int = 1234,
+                       config_sha256: str = "5" * 64,
+                       index_sha256: str = "6" * 64):
+    shards = [{
+        "path": "model-00001-of-00001.safetensors",
+        "bytes": model_bytes,
+    }]
+    shard_raw = json.dumps(
+        shards, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False).encode("utf-8")
+    download_manifest = [
+        {"path": "config.json", "bytes": 1},
+        shards[0],
+        {"path": "model.safetensors.index.json", "bytes": 1},
+    ]
+    download_raw = json.dumps(
+        download_manifest, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False).encode("utf-8")
+    doc = {
+        "repo_id": repo_id,
+        "revision": revision,
+        "requested_revision": revision,
+        "surface": surface,
+        "codec": codec,
+        "bits": bits,
+        "path": None,
+        "config_sha256": config_sha256,
+        "index_sha256": index_sha256,
+        "model_bytes": model_bytes,
+        "shards": shards,
+        "shard_manifest_sha256": hashlib.sha256(shard_raw).hexdigest(),
+        "download_manifest": download_manifest,
+        "download_bytes_total": model_bytes + 2,
+        "download_manifest_sha256": hashlib.sha256(download_raw).hexdigest(),
+    }
+    path = work / ("%s-target.json" % name)
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path, doc
 
-
-def _args(**kw):
-    base = dict(role="quant", lane="streaming", measurer="malaiwah",
-                reduce_order="fp32", cold_runs=1, keep_student_logits=False,
-                scope_json=None, provider="runpod", race=False, race_workers=8,
-                preview_of=None, sanity_expect="Paris", form="hidden",
-                schedule="layer-outer", dataset_id=None, dataset_name=None,
-                panel_dir=None)
-    base.update(kw)
-    return argparse.Namespace(**base)
+def _refuses_job(doc, fs):
+    try:
+        CE.validate_job_document(CE.finalize_job(doc), fs)
+    except (CE.Refusal, TypeError, ValueError):
+        return True
+    return False
 
 
 def rung_job_document():
-    print("[C3] the container writes the same contract the controller does")
-    import measure_cloud                                   # noqa: E402
-    panel_dir, plan = _plan_data()
-    cloud_quant = measure_cloud._job_document(_args(), plan)
-    cloud_root = measure_cloud._job_document(
-        _args(role="root", panel_dir=str(panel_dir),
-              dataset_id="fidelity--t.malaiwah.root.bf16", dataset_name=None),
-        plan)
-
+    print("[C3] local jobs use the one canonical finalized identity contract")
+    quiet = lambda *_a, **_k: None                         # noqa: E731
     with tempfile.TemporaryDirectory() as td:
-        fs = Path(td) / "fidelity"
-        fs.mkdir(parents=True)
-        quiet = lambda *_a, **_k: None                     # noqa: E731
-        cargs = argparse.Namespace(
-            verb="measure", model="someone/quant", revision="a" * 40,
-            surface="exl3hf", bits=4.0, path=None, profile="k6",
-            panel="someone/panel", panel_revision="b" * 40,
-            panel_include=["*"], panel_descriptor=None, lane="streaming",
-            measurer="malaiwah", job_id="job-test", reduce_order="fp32",
-            cold_runs=1, gpu="A100", gpu_count=1, host="runpod",
-            official_bf16_revision=None, keep_student_logits=False,
-            scope_json=None, image_pin=None)
-        cont_quant = CE.job_document(cargs, SUITE, fs, quiet)
+        work = Path(td)
+        fixture = _root_fixture(work)
+        quant_fs = work / "quant"
+        quant_fs.mkdir()
+        quant_panel = {
+            "repo_id": "someone/panel",
+            "revision": "b" * 40,
+            "include": ["*"],
+            "roles": "final",
+            "panel_ref": "someone/panel@" + "b" * 40,
+            "panel_token_sha256": "1" * 64,
+            "panel_receipt_sha256": "2" * 64,
+            "contexts": 25,
+            "scored_positions": 512,
+            "reference_ref": "someone/root@" + "c" * 40,
+            "teacher_receipt_sha256": "3" * 64,
+            "teacher_backend_identity_sha256": "4" * 64,
+        }
+        quant_panel_path = work / "quant-panel.json"
+        quant_panel_path.write_text(
+            json.dumps(quant_panel), encoding="utf-8")
+        scope_path = work / "scope.json"
+        scope_path.write_text(
+            json.dumps({"layers": "all", "metric": "kl"}),
+            encoding="utf-8")
+        quant_target_path, quant_target = _target_descriptor(
+            work, "quant",
+            repo_id="malaiwah/GLM-5.3-Flash-TR3-6bpw",
+            revision="9ab94105a71708a19c6d960d24b4aa6d459f5623",
+            surface="tr3-published", codec="tr3", bits=6.0)
+        quant_target["official_bf16_identity"] = {
+            "config_sha256": "c" * 64,
+            "config_bytes": 1,
+            "index_sha256": "d" * 64,
+            "index_bytes": 1,
+        }
+        quant_target_path.write_text(
+            json.dumps(quant_target), encoding="utf-8")
+        quant_args = argparse.Namespace(
+            verb="measure", model=quant_target["repo_id"],
+            revision=quant_target["revision"],
+            target_descriptor=str(quant_target_path), profile="tr3-6bpw",
+            panel_descriptor=str(quant_panel_path), lane="streaming",
+            measurer="malaiwah", reduce_order="fp32", cold_runs=2,
+            gpu="H200", gpu_count=1, host="local",
+            scope_json=str(scope_path), image_pin=None,
+            keep_student_logits=False,
+            official_bf16_revision=
+                "a6c167b62691b2bac901344b65cb651a70f53e43",
+            workspace_available_bytes_minimum=1234,
+            container_available_bytes_minimum=1,
+            expected_vram_bytes=141 * 1024 ** 3)
+        quant = CE.job_document(quant_args, SUITE, quant_fs, quiet)
 
-        rargs = argparse.Namespace(
-            verb="capture", model="someone/root", revision="a" * 40,
-            lane="streaming", measurer="malaiwah", job_id="job-test",
-            reduce_order="fp32", cold_runs=1, gpu="A100", gpu_count=1,
-            host="runpod", official_bf16_revision=None,
-            keep_student_logits=False, scope_json=None, image_pin=None,
-            panel_dir=str(panel_dir),
+        root_fs = work / "root"
+        root_fs.mkdir()
+        root_target_path, root_target = _target_descriptor(
+            work, "root",
+            repo_id="malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+            revision="ef68013aa6e16453cf52b5b77647f72fbe258c3c",
+            surface="native-bf16", codec="bf16", bits=16.0,
+            model_bytes=10102776813,
+            config_sha256="5a19697e555fff140d1b089b852c3ef227114b196f8d76796560feeeb34dc44a",
+            index_sha256="86e6cc1d8548c7bdbbc117e93b85b8ae249f446de9b48d2195e51f358674ba56")
+        root_args = argparse.Namespace(
+            verb="capture", model=root_target["repo_id"],
+            revision=root_target["revision"],
+            target_descriptor=str(root_target_path),
+            lane="streaming", measurer="malaiwah", reduce_order="fp32",
+            cold_runs=2, gpu="L4", gpu_count=1, host="local",
+            scope_json=None, image_pin=None, keep_student_logits=False,
+            official_bf16_revision=None,
+            workspace_available_bytes_minimum=20 * 1024 ** 3,
+            container_available_bytes_minimum=1024 ** 3,
+            expected_vram_bytes=24 * 1024 ** 3,
+            panel_dir=str(fixture["panel_dir"]),
+            panel_binding=str(fixture["binding_file"]),
+            panel_binding_sha256=fixture["binding_sha256"],
+            panel_tokenizer_root=str(fixture["tokenizer_root"]),
             dataset_id="fidelity--t.malaiwah.root.bf16", dataset_name=None,
-            form="hidden", schedule="layer-outer", race=False, race_workers=8,
+            form="hidden", schedule="layer-outer", race=False,
             preview_of=None, sanity_expect="Paris",
-            allow_unexpected_tensors=True, capture_device="cuda")
-        cont_root = CE.job_document(rargs, SUITE, fs, quiet)
+            replay_device="numpy", replay_dtype="float32", vocab_chunk=8192,
+            dataset_repository="someone/root-dataset",
+            publish_root_to=None,
+            unexpected_tensors_allowlist=str(fixture["allow_file"]),
+            unexpected_tensors_allowlist_sha256=fixture["allow_sha256"],
+            unexpected_tensors_name_sha256=fixture["names_sha256"])
+        root = CE.job_document(root_args, SUITE, root_fs, quiet)
 
-    for label, cloud, cont in (("quant", cloud_quant, cont_quant),
-                               ("root", cloud_root, cont_root)):
-        missing = (set(cloud) - set(cont)) - set(CONTAINER_OMITS)
-        check("C3a %s: no key of the controller's contract is dropped" % label,
-              not missing, "missing: %s" % sorted(missing))
-        extra = set(cont) - set(cloud)
-        check("C3b %s: the container invents no key" % label,
-              not extra, "extra: %s" % sorted(extra))
-
-    check("C3c the capture block carries the same fields",
-          set(cont_root["capture"]) == set(cloud_root["capture"]),
-          "%s" % sorted(set(cont_root["capture"]) ^ set(cloud_root["capture"])))
-    check("C3d panel_dir is relative to the run root, as the stage checks it",
-          not os.path.isabs(cont_root["capture"]["panel_dir"]))
-    check("C3e the panel_id is read from the panel, not invented",
-          cont_root["capture"]["panel_id"]
-          == cloud_root["capture"]["panel_id"] != None)  # noqa: E711
-    check("C3f role follows the verb",
-          cont_quant["role"] == "quant" and cont_root["role"] == "root")
-    check("C3g produced_by names the container entrypoint and a real revision",
-          cont_quant["produced_by"]["entrypoint"] == "bin/container_entry.py"
-          and len(cont_quant["produced_by"]["revision"] or "") == 40)
-    check("C3h the two container fields that were always null are filled",
-          cont_quant["environment"]["container_content_sha256"] is not None
-          or cont_quant["environment"]["container_digest"] is not None
-          or True)  # outside an image both are legitimately null; C7 covers it
-
-    print("[C3i] a measure with no --profile is REFUSED, not guessed")
-    with tempfile.TemporaryDirectory() as td:
-        fs = Path(td)
-        bad = argparse.Namespace(**{**vars(cargs), "profile": None})
+        check("C3a quant is finalized by fidelity.jobcontract",
+              CE.verify_job(quant) == quant["job_id_full"]
+              and quant["job_id"] == quant["job_id_full"][:16])
+        check("C3a2 quant pre-binds every result-archive identity block",
+              quant["target"] == quant_target
+              and quant["target"]["path"] is None
+              and quant["panel"]["panel_ref"] == quant_panel["panel_ref"]
+              and quant["reference"]["reference_ref"]
+              == quant_panel["reference_ref"]
+              and quant["scope"] == {"layers": "all", "metric": "kl"}
+              and quant["panel"]["roles"] == "final"
+              and quant["runtime"]["decode_threads"] == 28
+              and quant["runtime"]["reader_threads"] == 28
+              and quant["scoring"] == {
+                  "schema": "fidelity-suite/kld-scoring.v1",
+                  "device": "cuda",
+                  "chunk_positions": 512,
+                  "compute_dtype": "float64",
+                  "direction": "reference_to_candidate",
+                  "vocabulary": "full",
+                  "reduction": "mean_of_run_means_tokenwise_kld",
+              })
+        check("C3b root is finalized and accepted by the exact stage contract",
+              CE.validate_job_document(root, root_fs) == root["job_id_full"]
+              and root["target"] == root_target
+              and (root["capture"]["engine"], root["capture"]["dtype"],
+                   root["capture"]["device"])
+              == ("hf-transformers", "bfloat16", "cuda"))
+        second_quant_fs = work / "quant-second"
+        second_quant_fs.mkdir()
+        second_quant = CE.job_document(
+            quant_args, SUITE, second_quant_fs, quiet)
+        check("C3a3 equal science has a distinct raw local attempt identity",
+              second_quant["job_id_full"] == quant["job_id_full"]
+              and second_quant["execution_attempt"]["attempt_id"]
+              != quant["execution_attempt"]["attempt_id"]
+              and second_quant != quant)
+        existing_job_raw = (
+            json.dumps(root, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        (root_fs / "job.json").write_bytes(existing_job_raw)
+        other_attempt = json.loads(json.dumps(root))
+        other_attempt["execution_attempt"]["attempt_id"] = "f" * 24
+        other_attempt = CE.finalize_job(other_attempt)
+        supplied_job = work / "other-attempt.json"
+        supplied_job.write_text(
+            json.dumps(other_attempt, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
+        before_resume_refusal = {
+            path.relative_to(root_fs).as_posix(): path.read_bytes()
+            for path in root_fs.rglob("*") if path.is_file()
+        }
         try:
-            CE.job_document(bad, SUITE, fs, lambda *_a, **_k: None)
-            check("C3i refusal", False, "it built a document anyway")
-        except CE.Refusal as exc:
-            check("C3i refusal names the remedy",
-                  "--profile" in str(exc) and any("engines.json" in a
-                                                  for a in exc.advice))
+            CE._prevalidate_stage_job(
+                argparse.Namespace(job=str(supplied_job), name="setup"),
+                root_fs, SUITE)
+        except CE.Refusal:
+            mismatch_refused = True
+        else:
+            mismatch_refused = False
+        after_resume_refusal = {
+            path.relative_to(root_fs).as_posix(): path.read_bytes()
+            for path in root_fs.rglob("*") if path.is_file()
+        }
+        check("C3a4 mismatched resume job refuses before mutating run root",
+              mismatch_refused
+              and after_resume_refusal == before_resume_refusal)
+        image_mismatch = json.loads(json.dumps(root))
+        mismatch_rows = image_mismatch["bundle"]["files"]
+        mismatch_rows[0]["sha256"] = (
+            "f" * 64 if mismatch_rows[0]["sha256"] != "f" * 64 else "e" * 64)
+        image_mismatch["bundle"] = CE.finalize_bundle_manifest(
+            mismatch_rows, image_mismatch["bundle"]["source"])
+        binding_raw = json.dumps(
+            {"bundle": image_mismatch["bundle"],
+             "registry": image_mismatch["bundle_registry"]},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False).encode("utf-8")
+        image_mismatch["bundle_contract_sha256"] = hashlib.sha256(
+            binding_raw).hexdigest()
+        image_mismatch = CE.finalize_job(image_mismatch)
+        (root_fs / "job.json").write_text(
+            json.dumps(image_mismatch, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
+        before_image_refusal = {
+            path.relative_to(root_fs).as_posix(): path.read_bytes()
+            for path in root_fs.rglob("*") if path.is_file()
+        }
+        try:
+            CE._prevalidate_stage_job(
+                argparse.Namespace(job=None, name="setup"), root_fs, SUITE)
+        except CE.Refusal:
+            image_refused = True
+        else:
+            image_refused = False
+        after_image_refusal = {
+            path.relative_to(root_fs).as_posix(): path.read_bytes()
+            for path in root_fs.rglob("*") if path.is_file()
+        }
+        check("C3a5 image/job bundle mismatch leaves resume root byte-exact",
+              image_refused and after_image_refusal == before_image_refusal)
+        duplicate_job_raw = (
+            b'{"execution_attempt":null,' + existing_job_raw[1:])
+        (root_fs / "job.json").write_bytes(duplicate_job_raw)
+        before_duplicate_refusal = {
+            path.relative_to(root_fs).as_posix(): path.read_bytes()
+            for path in root_fs.rglob("*") if path.is_file()
+        }
+        try:
+            CE._prevalidate_stage_job(
+                argparse.Namespace(job=None, name="setup"), root_fs, SUITE)
+        except CE.Refusal:
+            duplicate_refused = True
+        else:
+            duplicate_refused = False
+        after_duplicate_refusal = {
+            path.relative_to(root_fs).as_posix(): path.read_bytes()
+            for path in root_fs.rglob("*") if path.is_file()
+        }
+        check("C3a6 duplicate job keys refuse before run-root mutation",
+              duplicate_refused
+              and after_duplicate_refusal == before_duplicate_refusal)
+        check("C3b2 qualification accepts an intended repository without publish",
+              root["capture"]["publish_root_to"] is None
+              and root["capture"]["root_protocol"]["publication_mode"]
+              == "qualified-unpublished"
+              and "publish_root" not in stages.stage_sequence(
+                  "root", publish_root=False))
+        attempted_publish = json.loads(json.dumps(root))
+        attempted_publish["capture"]["publish_root_to"] = (
+            attempted_publish["capture"]["dataset_repository"])
+        attempted_publish["capture"]["root_protocol"][
+            "canonical_publication_required"] = True
+        attempted_publish["capture"]["root_protocol"][
+            "publication_mode"] = "canonical-public"
+        check("C3b3 local root publication always refuses",
+              _refuses_job(attempted_publish, root_fs))
+        check("C3c root binds the exact panel file/tree identity",
+              set(root["panel"]) == {
+                  "resolved_binding", "binding_path", "binding_file_sha256"}
+              and not os.path.isabs(root["panel"]["binding_path"])
+              and not os.path.isabs(root["capture"]["panel_dir"]))
+        check("C3d root binds the optional exact unexpected-tensor set",
+              root["capture"]["unexpected_tensor_allowlist"] == {
+                  "path": "inputs/unexpected-tensors.json",
+                  "artifact_sha256": fixture["allow_sha256"],
+                  "canonical_sorted_names_sha256": fixture["names_sha256"]})
+        check("C3e broad unexpected-tensor acceptance is absent",
+              "allow_unexpected_tensors" not in root["capture"])
+        check("C3f root fixes the two-process qualification profile",
+              root["cold_runs"] == 2
+              and root["capture"]["replay_device"] == "numpy"
+              and root["capture"]["replay_dtype"] == "float32"
+              and root["capture"]["vocab_chunk"] == 8192
+              and root["capture"]["root_protocol"]["fresh_processes"] == 2
+              and root["capture"]["root_protocol"]["run_count_per_process"] == 1)
+        check("C3f2 version, attempt object, verified tokenizer and bundle bind",
+              root["schema"] == "fidelity-suite/job.v2"
+              and isinstance(root["execution_attempt"], dict)
+              and root["panel"]["resolved_binding"]["tokenizer"][
+                  "files_verified"] is True
+              and root["bundle"]["manifest_sha256"]
+              and root["bundle_registry"]["path"] == "bin/BUNDLE.txt"
+              and root["control_plane"]["schema"]
+              == "fidelity-suite/control-plane-manifest.v1"
+              and isinstance(root["profile"], dict)
+              and isinstance(root["timing"], dict)
+              and root["produced_by"]["dependencies"]["profile"]
+              == root["profile"]["profile_id"]
+              and root["produced_by"]["dependencies"]["lane"] == root["lane"]
+              and root["produced_by"]["dependencies"]["provider"]
+              == "local-container")
+        unsafe_chunk = json.loads(json.dumps(root))
+        unsafe_chunk["capture"]["vocab_chunk"] = 4096
+        unsafe_chunk["capture"]["replay"]["vocab_chunk"] = 4096
+        check("C3g non-safe replay chunk refuses",
+              _refuses_job(unsafe_chunk, root_fs))
+        unsafe_replay = json.loads(json.dumps(root))
+        unsafe_replay["capture"]["replay_dtype"] = "float64"
+        unsafe_replay["capture"]["replay"]["dtype"] = "float64"
+        check("C3g2 non-safe replay dtype refuses",
+              _refuses_job(unsafe_replay, root_fs))
+        broad = json.loads(json.dumps(root))
+        broad["capture"]["allow_unexpected_tensors"] = False
+        check("C3h even a false legacy broad flag refuses",
+              _refuses_job(broad, root_fs))
+        partial_allow = json.loads(json.dumps(root))
+        partial_allow["capture"]["unexpected_tensor_allowlist"].pop(
+            "canonical_sorted_names_sha256")
+        check("C3i partial exact allowlist identity refuses",
+              _refuses_job(partial_allow, root_fs))
+        partial_panel = json.loads(json.dumps(root))
+        partial_panel["panel"].pop("binding_file_sha256")
+        check("C3j partial panel identity refuses",
+              _refuses_job(partial_panel, root_fs))
+        escaped_panel = json.loads(json.dumps(root))
+        escaped_panel["capture"]["panel_dir"] = "../panel"
+        check("C3j2 panel traversal path refuses",
+              _refuses_job(escaped_panel, root_fs))
+        absolute_binding = json.loads(json.dumps(root))
+        absolute_binding["panel"]["binding_path"] = "/tmp/panel.binding.json"
+        check("C3j3 absolute panel binding path refuses",
+              _refuses_job(absolute_binding, root_fs))
+        raced = json.loads(json.dumps(root))
+        raced["capture"]["race"] = True
+        check("C3k race root refuses before stages", _refuses_job(raced, root_fs))
+        unverified_tokenizer = json.loads(json.dumps(root))
+        unverified_tokenizer["panel"]["resolved_binding"]["tokenizer"][
+            "files_verified"] = False
+        check("C3l unverified tokenizer binding refuses",
+              _refuses_job(unverified_tokenizer, root_fs))
+        bad_revision = json.loads(json.dumps(root))
+        bad_revision["target"]["revision"] = "A" * 40
+        check("C3m target revision must be exact lowercase 40-hex",
+              _refuses_job(bad_revision, root_fs))
+        incomplete_target = json.loads(json.dumps(root))
+        incomplete_target["target"].pop("model_bytes")
+        check("C3m2 incomplete target census refuses",
+              _refuses_job(incomplete_target, root_fs))
+        cpu_root = json.loads(json.dumps(root))
+        cpu_root["capture"]["device"] = "cpu"
+        check("C3m3 CPU root refuses before stages",
+              _refuses_job(cpu_root, root_fs))
+        bad_schema = json.loads(json.dumps(root))
+        bad_schema["schema"] = "fidelity-suite/job.v1"
+        check("C3n wrong job schema refuses", _refuses_job(bad_schema, root_fs))
+        scalar_attempt = json.loads(json.dumps(root))
+        scalar_attempt["execution_attempt"] = 1
+        check("C3o scalar execution_attempt refuses",
+              _refuses_job(scalar_attempt, root_fs))
+        broken_bundle = json.loads(json.dumps(root))
+        broken_bundle["bundle"]["manifest_sha256"] = "0" * 64
+        check("C3p bundle manifest digest must verify",
+              _refuses_job(broken_bundle, root_fs))
+        changed_bundle = json.loads(json.dumps(root))
+        changed_files = changed_bundle["bundle"]["files"]
+        changed_files[0]["sha256"] = "f" * 64
+        changed_bundle["bundle"] = CE.finalize_bundle_manifest(
+            changed_files, changed_bundle["bundle"]["source"])
+        changed_bundle["bundle_contract_sha256"] = hashlib.sha256(json.dumps(
+            {"bundle": changed_bundle["bundle"],
+             "registry": changed_bundle["bundle_registry"]},
+            sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False).encode("utf-8")).hexdigest()
+        changed_bundle = CE.finalize_job(changed_bundle)
+        check("C3q exact bundle bytes participate in job identity",
+              changed_bundle["job_id_full"] != root["job_id_full"])
+        import measure_cloud                               # noqa: E402
+        cloud_bundle = measure_cloud._bundle_manifest()
+        container_bundle = CE.exact_bundle_manifest(SUITE, {})
+        cloud_shaped = json.loads(json.dumps(root))
+        cloud_shaped["recipe"] = "cloud"
+        cloud_shaped["bundle"] = cloud_bundle
+        cloud_shaped["bundle_contract_sha256"] = hashlib.sha256(json.dumps(
+            {"bundle": cloud_shaped["bundle"],
+             "registry": cloud_shaped["bundle_registry"]},
+            sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False).encode("utf-8")).hexdigest()
+        cloud_shaped = CE.finalize_job(cloud_shaped)
+        check("C3q2 cloud/container bundle builders share one exact-file verifier",
+              CE.verify_bundle_manifest(cloud_bundle)
+              == cloud_bundle["manifest_sha256"]
+              and CE.verify_bundle_manifest(container_bundle)
+              == container_bundle["manifest_sha256"]
+              and all(set(row) == {"path", "bytes", "sha256"}
+                      for row in cloud_bundle["files"] + container_bundle["files"]))
+        check("C3q3 cloud-shaped and container-built jobs use one job verifier",
+              CE.verify_job(cloud_shaped) == cloud_shaped["job_id_full"]
+              and CE.verify_job(root) == root["job_id_full"])
+
+        bad_quant = argparse.Namespace(**{
+            **vars(quant_args), "profile": None})
+        try:
+            CE.job_document(bad_quant, SUITE, quant_fs, quiet)
+            check("C3r a quant profile is explicit, never guessed", False)
+        except CE.Refusal:
+            check("C3r a quant profile is explicit, never guessed", True)
+        missing_quant_scope = argparse.Namespace(**{
+            **vars(quant_args), "scope_json": None})
+        try:
+            CE.job_document(missing_quant_scope, SUITE, quant_fs, quiet)
+            check("C3s quant scope must resolve before stages", False)
+        except CE.Refusal:
+            check("C3s quant scope must resolve before stages", True)
 
 
 # --------------------------------------------------------------------------
@@ -260,6 +607,19 @@ def rung_token():
         check("C4g2 ... and the deprecated spelling is not emitted, even when "
               "it was in the caller's environment",
               "FIDELITY_K6_ROOT" not in env)
+        check("C4g3 no-token invocation shreds a stale persisted token",
+              not CE.write_token(fs, None, lambda *_a, **_k: None)
+              and not dest.exists())
+        (fs / ".secrets").rmdir()
+        outside = fs / "outside-secret"
+        outside.mkdir()
+        sentinel = outside / "hf_token"
+        sentinel.write_text("do-not-touch", encoding="utf-8")
+        (fs / ".secrets").symlink_to(outside, target_is_directory=True)
+        CE.clear_stale_token(fs, lambda *_a, **_k: None)
+        check("C4g4 stale secret-directory symlink is unlinked, not followed",
+              not (fs / ".secrets").exists()
+              and sentinel.read_text(encoding="utf-8") == "do-not-touch")
     # The DEFAULTS are the thing worth testing, not the values a caller passed:
     # a root that names a model or a campaign is how `/home/jl_fs/glm53-k6`
     # ended up baked into a path on rented hardware, and a root that resolves
@@ -330,9 +690,13 @@ def rung_bundle():
         logged = []
         copied = CE.sync_suite(SUITE, fs, logged.append)
         check("C5c a cold run root receives every present entry", copied > 20)
-        check("C5d the entrypoint and its stage rule land too",
-              (fs / "bin" / "container_entry.py").is_file()
-              and (fs / "bin" / "fidelity" / "stages.py").is_file())
+        check("C5d the entrypoint and every direct contract module land too",
+              all((fs / rel).is_file() for rel in (
+                  "bin/container_entry.py", "bin/fidelity/jobcontract.py",
+                  "bin/fidelity/panel.py", "bin/fidelity/resultsink.py",
+                  "bin/fidelity/stages.py")))
+        check("C5d2 strict image prune keeps the entrypoint and stage owner",
+              {"bin/container_entry.py", "bin/fidelity/stages.py"}.issubset(listed))
         check("C5e an absent bundle entry is LOGGED, never silent",
               all(("skipped" in line) for line in logged) or not logged)
         again = CE.sync_suite(SUITE, fs, logged.append)
@@ -391,6 +755,19 @@ def rung_bundle():
         check("C5i ... and the 21 MB bundle.tar.gz and the venv",
               dockerignored("bundle.tar.gz") and dockerignored(".venv/bin/python")
               and dockerignored("bin/__pycache__/measure_cloud.cpython-312.pyc"))
+    with tempfile.TemporaryDirectory() as td, \
+            tempfile.TemporaryDirectory() as outside_td:
+        fs = Path(td)
+        outside = Path(outside_td)
+        (fs / "bin").symlink_to(outside, target_is_directory=True)
+        try:
+            CE.sync_suite(SUITE, fs, lambda *_a, **_k: None)
+        except CE.Refusal:
+            refused = True
+        else:
+            refused = False
+        check("C5f2 suite sync refuses a planted destination parent symlink",
+              refused and not any(outside.iterdir()))
 
     print("[C6] container_prune keeps exactly that set")
     with tempfile.TemporaryDirectory() as td:
@@ -562,12 +939,40 @@ def rung_dockerfile():
           "--require-all" in body)
 
     boot = (SUITE / "bin" / "bootstrap_measure.sh").read_text(encoding="utf-8")
+    lock_text = (
+        SUITE / "bin" / "requirements-cu130-py312.lock"
+    ).read_text(encoding="utf-8")
+    lock_lines = lock_text.splitlines()
+    locked = {}
+    malformed_lock_lines = []
+    consumed = set()
+    for index, line in enumerate(lock_lines):
+        if not line or line.startswith("#"):
+            consumed.add(index)
+            continue
+        if " @ " in line and line.endswith(" \\") and index + 1 < len(lock_lines):
+            name, url = line[:-2].split(" @ ", 1)
+            hash_line = lock_lines[index + 1]
+            match = re.fullmatch(r"    --hash=sha256:([0-9a-f]{64})", hash_line)
+            if (re.fullmatch(r"[A-Za-z0-9_.-]+", name)
+                    and url.startswith("https://") and match
+                    and name.lower().replace("_", "-") not in locked):
+                locked[name.lower().replace("_", "-")] = (
+                    url, match.group(1))
+                consumed.update((index, index + 1))
+                continue
+        if index not in consumed:
+            malformed_lock_lines.append((index + 1, line))
+    malformed_lock_lines.extend(
+        (index + 1, line) for index, line in enumerate(lock_lines)
+        if index not in consumed
+        and not any(row[0] == index + 1 for row in malformed_lock_lines))
     guard = boot.find("FIDELITY_BOOTSTRAP_INSTALL_ONLY")
     first_check = boot.find("selftest_tr3_offline.py")
     check("C9f install-only stops BEFORE the pre-flight batteries",
           0 < guard < first_check)
-    check("C9g install-only leaves the install steps intact",
-          boot.find("pinned wheel set") < guard)
+    check("C9g install-only leaves the exact hashed wheel closure intact",
+          0 < boot.find("exact hashed wheel closure") < guard)
     proc = subprocess.run(["bash", "-n", str(SUITE / "bin" / "bootstrap_measure.sh")],
                           capture_output=True, text=True)
     check("C9h the edited bootstrap still parses", proc.returncode == 0,
@@ -576,50 +981,355 @@ def rung_dockerfile():
                           capture_output=True, text=True)
     check("C9i build.sh parses", proc.returncode == 0, proc.stderr[-300:])
 
+    # Exercise the exact validator with importable fake distributions.  This is
+    # deliberately not a text-only "there is a == somewhere" assertion: the
+    # regression was a wrong template wheel satisfying an import-only guard.
+    begin = boot.index("# DIRECT_WHEEL_VALIDATOR_BEGIN")
+    end = boot.index("# DIRECT_WHEEL_VALIDATOR_END")
+    validator = boot[begin:end].split("\n", 1)[1]
+    validator_tree = ast.parse(validator)
+    expected = None
+    for node in validator_tree.body:
+        if (isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "expected"
+                        for target in node.targets)):
+            expected = ast.literal_eval(node.value)
+            break
+    guarded = {
+        "pip", "setuptools", "wheel", "ninja", "packaging",
+        "torch", "transformers", "safetensors", "numpy",
+        "huggingface-hub", "hf-transfer", "accelerate", "rich",
+        "tokenizers", "Pillow", "pydantic", "formatron", "kbnf",
+    }
+    check("C9l the exact validator names every direct distribution",
+          expected is not None and set(expected) == guarded)
+    check("C9l2 every guarded direct distribution is in the same exact lock",
+          expected is not None
+          and all(
+              name.lower().replace("_", "-") in locked
+              and version in urllib.parse.unquote(
+                  locked[name.lower().replace("_", "-")][0])
+              for name, version in expected.items()),
+          locked)
+    check("C9l3 the wheel closure is closed, HTTPS-only, and fully hashed",
+          len(locked) == 72 and not malformed_lock_lines
+          and all(len(digest) == 64 for _url, digest in locked.values()),
+          (len(locked), malformed_lock_lines))
+    check("C9l4 bootstrap permits no resolver-selected or unhashed wheel",
+          "--no-deps --require-hashes --only-binary=:all:" in boot
+          and '-r "$WHEEL_LOCK"' in boot
+          and '"$FLASH_ATTN_WHL#sha256=$FLASH_ATTN_SHA256"' in boot
+          and 'cuda-keyring_1.1-1_all.deb | sha256sum -c -' in boot
+          and boot.count("validate_direct_wheels | tee") == 1
+          and '"$PY" -m pip check' in boot)
+    with tempfile.TemporaryDirectory() as td:
+        fake = Path(td)
+        (fake / "sitecustomize.py").write_text(
+            "import importlib.metadata as metadata, json, os\n"
+            "_versions = json.loads(os.environ['FAKE_VERSIONS'])\n"
+            "metadata.version = lambda name: _versions[name]\n",
+            encoding="utf-8")
+        (fake / "torch.py").write_text(
+            "import os\n"
+            "class _Version:\n"
+            "    cuda = os.environ['FAKE_CUDA']\n"
+            "version = _Version()\n",
+            encoding="utf-8")
+        validator_env = dict(
+            os.environ,
+            PYTHONPATH=str(fake),
+            FAKE_VERSIONS=json.dumps(expected or {}),
+            FAKE_CUDA="13.0")
+        exact = subprocess.run(
+            [sys.executable, "-c", validator],
+            capture_output=True, text=True, env=validator_env)
+        check("C9m the named exact direct set and CUDA 13.0 are accepted",
+              exact.returncode == 0, exact.stderr[-300:])
+
+        wrong_versions = dict(expected or {})
+        wrong_versions["transformers"] = "0.0.0"
+        validator_env["FAKE_VERSIONS"] = json.dumps(wrong_versions)
+        wrong = subprocess.run(
+            [sys.executable, "-c", validator],
+            capture_output=True, text=True, env=validator_env)
+        check("C9n an importable wrong direct distribution is refused by name",
+              wrong.returncode != 0
+              and "transformers" in wrong.stderr
+              and "5.16.1" in wrong.stderr,
+              wrong.stderr[-300:])
+
+        validator_env["FAKE_VERSIONS"] = json.dumps(expected or {})
+        validator_env["FAKE_CUDA"] = "12.8"
+        wrong_cuda = subprocess.run(
+            [sys.executable, "-c", validator],
+            capture_output=True, text=True, env=validator_env)
+        check("C9o a torch wheel built for the wrong CUDA is refused",
+              wrong_cuda.returncode != 0
+              and "CUDA" in wrong_cuda.stderr
+              and "13.0" in wrong_cuda.stderr,
+              wrong_cuda.stderr[-300:])
+
+    pipeline = boot[boot.index("# ---- 3."):
+                    boot.index("# ---- 4.")]
+    checkout = pipeline.find('checkout -q --detach -f "$pin"')
+    reset = pipeline.find('reset -q --hard "$pin"')
+    clean = pipeline.find("clean -q -ffdx")
+    apply = pipeline.find("patch -p1 -s --fuzz=0")
+    check("C9p every pipeline run resets the exact pin and removes ignored residue "
+          "before applying patches",
+          0 < checkout < reset < clean < apply)
+    check("C9p2 reconstruction never cleans a symlink or nested/outer worktree",
+          '[ ! -L "$destination" ]' in pipeline
+          and "rev-parse --show-toplevel" in pipeline
+          and 'top_real="$(realpath "$top"' in pipeline
+          and '[ "$top_real" = "$destination_real" ]' in pipeline
+          and '"$PIPE"|"$EXL3"' in pipeline)
+    check("C9q a marker can never bypass pipeline reconstruction",
+          "_STORED_BITS" not in pipeline
+          and ('"$PIPE_REPO" "$PIPE_PIN" "$PIPE_TREE" '
+               '"$PIPE_ARCHIVE_SHA256"') in pipeline)
+    check("C9r the complete measurement patch selection is cardinality-checked",
+          '${#_series[@]}" -eq 7' in pipeline
+          and '${#_files[@]}" -eq "${#_series[@]}' in pipeline)
+
+    exl3 = boot[boot.index("# ---- 4."):
+                boot.index("# ---- INSTALL/CHECK SPLIT")]
+    check("C9s an imported exllamav3 must be the exact reconstructed checkout",
+          ('"$EXL3_REPO" "$EXL3_PIN" "$EXL3_TREE" '
+           '"$EXL3_ARCHIVE_SHA256"') in exl3
+          and 'source != expected' in exl3
+          and 'resolved.relative_to(expected)' in exl3
+          and "git -C \"$EXL3\" diff --quiet" in exl3)
+    check("C9t reinstalling direct wheels forces the editable extension rebuild",
+          '_direct_wheels_reinstalled" -eq 1' in exl3
+          and "--force-reinstall --no-build-isolation --no-deps -e ." in exl3)
+    check("C9u the torch2.10-tagged flash wheel proves torch2.11 compatibility "
+          "with a runtime CUDA kernel outside install-only builds",
+          "flash_attn_func(q, q, q" in exl3
+          and "torch.cuda.synchronize()" in exl3
+          and "FLASH_ATTN_INSTALL_ONLY" in exl3)
+
 
 # --------------------------------------------------------------------------
 # C10  the CLI itself
 # --------------------------------------------------------------------------
 
 def rung_cli():
-    print("[C10] the entrypoint mirrors the CLI and refuses rather than guesses")
-    panel_dir = SUITE / "engines" / "panels" / "panel--minimaxm3.malaiwah.corpus5x5"
+    print("[C10] exact root argv/refusals and stubbed stage behavior")
     with tempfile.TemporaryDirectory() as td:
-        fs = Path(td) / "run"
-        argv = ["capture", "--fs-root", str(fs), "--model", "someone/root",
-                "--revision", "a" * 40, "--panel-dir", str(panel_dir),
-                "--dataset-id", "fidelity--t.malaiwah.root.bf16", "--dry-run"]
-        out = subprocess.run([sys.executable, str(HERE / "container_entry.py")] + argv,
-                             capture_output=True, text=True)
-        check("C10a --dry-run exits 0", out.returncode == 0, out.stderr[-400:])
+        work = Path(td)
+        fixture = _root_fixture(work)
+        root_target_path, root_target = _target_descriptor(
+            work, "root",
+            repo_id="malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+            revision="ef68013aa6e16453cf52b5b77647f72fbe258c3c",
+            surface="native-bf16", codec="bf16", bits=16.0,
+            model_bytes=10102776813,
+            config_sha256="5a19697e555fff140d1b089b852c3ef227114b196f8d76796560feeeb34dc44a",
+            index_sha256="86e6cc1d8548c7bdbbc117e93b85b8ae249f446de9b48d2195e51f358674ba56")
+        fs = work / "dry"
+        root_argv = [
+            "capture", "--fs-root", str(fs),
+            "--engine-root", str(work / "engine"),
+            "--model", root_target["repo_id"],
+            "--revision", root_target["revision"],
+            "--target-descriptor", str(root_target_path),
+            "--panel-dir", str(fixture["panel_dir"]),
+            "--gpu", "L4",
+            "--panel-binding", str(fixture["binding_file"]),
+            "--panel-binding-sha256", fixture["binding_sha256"],
+            "--panel-tokenizer-root", str(fixture["tokenizer_root"]),
+            "--dataset-id", "fidelity--t.malaiwah.root.bf16",
+            "--dataset-repository", "someone/root-dataset",
+            "--replay-device", "numpy",
+            "--replay-dtype", "float32", "--vocab-chunk", "8192",
+            "--unexpected-tensors-allowlist", str(fixture["allow_file"]),
+            "--unexpected-tensors-allowlist-sha256", fixture["allow_sha256"],
+            "--unexpected-tensors-name-sha256", fixture["names_sha256"],
+            "--workspace-available-bytes-minimum", str(20 * 1024 ** 3),
+            "--container-available-bytes-minimum", str(1024 ** 3),
+            "--expected-vram-bytes", str(24 * 1024 ** 3),
+        ]
+        out = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py")]
+            + root_argv + ["--dry-run"],
+            capture_output=True, text=True)
+        check("C10a exact root --dry-run exits 0",
+              out.returncode == 0, out.stderr[-400:])
         check("C10b --dry-run creates no job.json",
               not (fs / "job.json").is_file())
-        check("C10c it prints the stage list it would run",
-              "setup fetch_target capture verify" in out.stdout)
+        expected = (
+            "setup fetch_target capture verify capture_repeat verify_repeat "
+            "compare_root qualify_root")
+        check("C10c exact root prints the complete two-process sequence",
+              expected in out.stdout)
         doc = json.loads(out.stdout[out.stdout.index("{"):
                                     out.stdout.rindex("}") + 1])
-        check("C10d the printed document is the contract", doc["role"] == "root")
-
-        bad = subprocess.run(
-            [sys.executable, str(HERE / "container_entry.py"), "capture",
-             "--fs-root", str(fs), "--model", "someone/root",
-             "--panel-dir", str(panel_dir), "--dry-run"],
+        check("C10d printed job is finalized and exact",
+              CE.verify_job(doc) == doc["job_id_full"]
+              and doc["cold_runs"] == 2
+              and doc["capture"]["dataset_repository"] == "someone/root-dataset"
+              and doc["capture"]["publish_root_to"] is None
+              and doc["capture"]["device"] == "cuda")
+        publish_argv = list(root_argv)
+        publish_argv[publish_argv.index(str(fs))] = str(work / "publish-refused")
+        publish_argv += [
+            "--publish-root-to", "someone/root-dataset", "--dry-run"]
+        publish_out = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py")] + publish_argv,
             capture_output=True, text=True)
-        check("C10e a capture with no --dataset-id is refused (exit 3)",
-              bad.returncode == 3 and "--dataset-id" in bad.stderr)
+        check("C10d2 local publication explicitly refuses before stages",
+              publish_out.returncode == CE.EXIT_REFUSED
+              and "unsupported" in publish_out.stderr
+              and "stages:" not in publish_out.stdout)
+
+        no_tokenizer = list(root_argv)
+        no_tokenizer[no_tokenizer.index(str(fs))] = str(work / "no-tokenizer")
+        token_index = no_tokenizer.index("--panel-tokenizer-root")
+        del no_tokenizer[token_index:token_index + 2]
+        unverified = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py")]
+            + no_tokenizer + ["--dry-run"],
+            capture_output=True, text=True)
+        check("C10e2 absent tokenizer root refuses unverified binding",
+              unverified.returncode == 3
+              and "tokenizer" in unverified.stderr.lower())
+        partial_argv = list(root_argv)
+        partial_argv[partial_argv.index(str(fs))] = str(work / "partial")
+        digest_index = partial_argv.index(
+            "--unexpected-tensors-name-sha256")
+        del partial_argv[digest_index:digest_index + 2]
+        partial = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py")]
+            + partial_argv + ["--dry-run"],
+            capture_output=True, text=True)
+        check("C10e partial allowlist identity refuses before stages",
+              partial.returncode == 3 and "all-or-none" in partial.stderr)
+        raced_argv = list(root_argv)
+        raced_argv[raced_argv.index(str(fs))] = str(work / "raced")
+        raced = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py")]
+            + raced_argv + ["--race", "--dry-run"],
+            capture_output=True, text=True)
+        check("C10f race refuses and names the non-orchestrating boundary",
+              raced.returncode == 3
+              and "does not create or manage RunPod" in raced.stderr)
+        broad_argv = list(root_argv)
+        broad_argv[broad_argv.index(str(fs))] = str(work / "broad")
+        broad = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py")]
+            + broad_argv + ["--allow-unexpected-tensors"],
+            capture_output=True, text=True)
+        check("C10g obsolete broad allow flag is not a CLI surface",
+              broad.returncode != 0
+              and "unrecognized arguments" in broad.stderr)
+        help_out = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py"), "--help"],
+            capture_output=True, text=True)
+        check("C10h help refuses any paid native-container implication",
+              "LOCAL DRIVER ONLY" in help_out.stdout
+              and "RunPod resources" in help_out.stdout
+              and "not an approved paid route" in help_out.stdout)
+        entry_body = (HERE / "container_entry.py").read_text(encoding="utf-8")
+        check("C10h2 local driver has no provider API client",
+              "import runpod" not in entry_body.lower()
+              and "from runpod" not in entry_body.lower())
 
         stage = subprocess.run(
             [sys.executable, str(HERE / "container_entry.py"), "stage", "measure",
-             "--fs-root", str(Path(td) / "empty")],
+             "--fs-root", str(work / "empty")],
             capture_output=True, text=True)
-        check("C10f a stage with no job document is refused, naming the fix",
+        check("C10i a stage with no job document refuses locally",
               stage.returncode == 3 and "job" in stage.stderr.lower())
-
-        unknown = subprocess.run(
-            [sys.executable, str(HERE / "container_entry.py"), "stage", "nosuch"],
+        outside_root = work / "outside-root"
+        outside_root.mkdir()
+        linked_root = work / "linked-root"
+        linked_root.symlink_to(outside_root, target_is_directory=True)
+        symlink_argv = list(root_argv)
+        symlink_argv[symlink_argv.index(str(fs))] = str(linked_root)
+        linked = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py")]
+            + symlink_argv + ["--dry-run"],
             capture_output=True, text=True)
-        check("C10g an unknown stage is refused by argparse, not by a rented box",
-              unknown.returncode != 0)
+        check("C10i2 a symlink run root refuses before writing outside it",
+              linked.returncode == CE.EXIT_REFUSED
+              and not any(outside_root.iterdir()))
+        stale_root = work / "stale-root"
+        (stale_root / "receipts" / "done").mkdir(parents=True)
+        stale_marker = stale_root / "receipts" / "done" / "setup.done"
+        stale_marker.write_text("old-attempt", encoding="utf-8")
+        stale_argv = list(root_argv)
+        stale_argv[stale_argv.index(str(fs))] = str(stale_root)
+        stale = subprocess.run(
+            [sys.executable, str(HERE / "container_entry.py")]
+            + stale_argv + ["--dry-run"],
+            capture_output=True, text=True)
+        check("C10i3 new jobs refuse stale attempt markers before sync/stage",
+              stale.returncode == CE.EXIT_REFUSED
+              and stale_marker.read_text(encoding="utf-8") == "old-attempt"
+              and not (stale_root / "bin").exists())
+
+        original_run = CE.run_stage
+        original_summary = CE.RS.build_summary
+        original_deliver = CE.RS.deliver
+        original_doctor = CE.cmd_doctor
+        original_accelerator = CE.require_accelerator
+        seen_stages, seen_status = [], []
+        try:
+            def stub_run(name, _fs, _env, _con):
+                seen_stages.append(name)
+                return 0
+
+            def stub_summary(_fs, _verb, status, stage_names, _pin,
+                             failed_stage=None):
+                seen_status.append((status, failed_stage))
+                return {"status": status, "stages": list(stage_names)}
+
+            def stub_deliver(_fs, sinks, _summary, _con):
+                return [{"scheme": sink.scheme, "ok": True} for sink in sinks]
+
+            CE.run_stage = stub_run
+            CE.RS.build_summary = stub_summary
+            CE.require_accelerator = lambda *_a, **_k: None
+            CE.RS.deliver = stub_deliver
+            execute_argv = list(root_argv)
+            execute_argv[execute_argv.index(str(fs))] = str(work / "execute")
+            code = CE.main(execute_argv)
+            check("C10j behavioral stub runs the exact root sequence once",
+                  code == CE.EXIT_OK and " ".join(seen_stages) == expected)
+            check("C10k successful stub builds/delivers an ok result",
+                  seen_status[-1] == ("ok", None))
+
+            CE.run_stage = lambda name, _fs, _env, _con: 9
+            failed_argv = list(root_argv)
+            failed_argv[failed_argv.index(str(fs))] = str(work / "failed")
+            failed_code = CE.main(failed_argv)
+            check("C10l failed stub still builds/delivers a failed result",
+                  failed_code == CE.EXIT_FAILED
+                  and seen_status[-1] == ("failed", "setup"))
+
+            CE.run_stage = stub_run
+            CE.RS.deliver = lambda _fs, sinks, _summary, _con: [
+                {"scheme": sink.scheme,
+                 "ok": sink.scheme == "stdout"} for sink in sinks]
+            sink_argv = list(root_argv)
+            sink_argv[sink_argv.index(str(fs))] = str(work / "sink-failed")
+            sink_argv += ["--result-sink", "file:%s" % (work / "answer.tar.gz")]
+            sink_code = CE.main(sink_argv)
+            check("C10m an explicitly requested failed sink gates success",
+                  sink_code == CE.EXIT_FAILED)
+            CE.cmd_doctor = lambda _con: CE.EXIT_OK
+            doctor_code = CE.main([
+                "doctor", "--fs-root", str(work / "doctor-sink-failed"),
+                "--result-sink", "file:%s" % (work / "doctor.tar.gz")])
+            check("C10m2 requested doctor result-sink failure gates success",
+                  doctor_code == CE.EXIT_FAILED)
+        finally:
+            CE.run_stage = original_run
+            CE.RS.build_summary = original_summary
+            CE.RS.deliver = original_deliver
+            CE.cmd_doctor = original_doctor
+            CE.require_accelerator = original_accelerator
 
 
 # --------------------------------------------------------------------------

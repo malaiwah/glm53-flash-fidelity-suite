@@ -42,6 +42,7 @@ exits 0, so `bin/selftest_all.sh` on the numpy-only floor is unaffected.
 """
 
 from __future__ import annotations
+import hashlib
 
 import json
 import os
@@ -49,6 +50,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(BIN)
@@ -214,9 +216,75 @@ def main():
 
 def _body(work):
     from fidelity import dsformat as F
+    from fidelity import panel as panel_contract
 
     model = tiny_model(os.path.join(work, "reference"))
     panel = tiny_panel(os.path.join(work, "panel"))
+
+    # -- A0 ------------------------------------------------------------------
+    # A legacy panel tree initially carries only the RAW receipt-file digest
+    # and a repository-like tokenizer id.  Qualification compares the emitted
+    # semantic receipt identity and exact tokenizer to the resolved job binding.
+    sys.path.insert(0, os.path.join(REPO, "engines", "tools"))
+    import hf_capture as HFC  # noqa: WPS433
+    resolved_tokenizer = {
+        "repository": "selftest/tokenizer",
+        "revision": "a" * 40,
+        "id": "selftest/tokenizer",
+        "vocab_size": 64,
+        "files": [{"path": "tokenizer.json", "bytes": 17,
+                   "sha256": "b" * 64}],
+        "files_verified": True,
+        "identity_sha256": "c" * 64,
+    }
+    raw_receipt_sha256 = "e" * 64
+
+    def bind_fixture(mode, declared, raw=raw_receipt_sha256):
+        panel_fixture = HFC.Panel(
+            root=panel, panel_id="panel--selftest", source="panel.json",
+            receipt_sha256=raw, windows=[],
+            tokenizer={"repository": "selftest/tokenizer", "revision": None,
+                       "vocab_size": 64})
+        HFC.bind_resolved_panel_tokenizer(
+            panel_fixture,
+            SimpleNamespace(panel_binding_evidence={"binding": {
+                "tokenizer": resolved_tokenizer,
+                "receipt": {
+                    "declared_receipt_sha256": declared,
+                    "receipt_file_sha256": raw_receipt_sha256,
+                    "receipt_seal_mode": mode,
+                },
+            }}))
+        return panel_fixture
+
+    modern_panel = bind_fixture("self-blank", "d" * 64)
+    legacy_panel = bind_fixture("legacy-field-absent", "f" * 64)
+    check("A0a both admitted receipt conventions emit their declared identity",
+          modern_panel.receipt_sha256 == "d" * 64
+          and legacy_panel.receipt_sha256 == "f" * 64
+          and modern_panel.receipt_sha256 != raw_receipt_sha256
+          and legacy_panel.receipt_sha256 != raw_receipt_sha256)
+    check("A0b binding preserves the independently verified raw receipt digest",
+          modern_panel.receipt_file_sha256 == raw_receipt_sha256
+          and legacy_panel.receipt_file_sha256 == raw_receipt_sha256)
+    check("A0c verified binding replaces the legacy null tokenizer revision",
+          modern_panel.tokenizer == resolved_tokenizer
+          and modern_panel.tokenizer["revision"] == "a" * 40,
+          modern_panel.tokenizer)
+
+    def bind_refused(mode, declared, binding_raw):
+        try:
+            bind_fixture(mode, declared, raw=binding_raw)
+        except SystemExit:
+            return True
+        return False
+
+    check("A0d malformed declared receipt identity refuses",
+          bind_refused("self-blank", "D" * 64, raw_receipt_sha256))
+    check("A0e binding raw receipt mismatch refuses",
+          bind_refused("self-blank", "d" * 64, "0" * 64))
+    check("A0f unknown receipt seal convention refuses",
+          bind_refused("invented", "d" * 64, raw_receipt_sha256))
 
     # -- A1 ------------------------------------------------------------------
     a = os.path.join(work, "ds-a")
@@ -413,23 +481,45 @@ def _body(work):
           and "dataset_sha256" in block,
           "rc=%s block=%r" % (proc.returncode, block))
 
-    # -- A13 -----------------------------------------------------------------
-    # `panel_receipt_sha256` without the receipt itself is a digest of something
-    # the reader cannot obtain. The receipt must be shipped byte-verbatim, named
-    # by the manifest, covered by checksums.txt, and inside the seal.
+    # The raw receipt must ship byte-verbatim, be named by the manifest, be
+    # covered by checksums.txt and sit inside the seal. This generic fixture is
+    # intentionally unbound, so its traceability identity remains the raw
+    # digest; paid qualification separately requires the resolved semantic/raw
+    # pair and verifies both.
     shipped = os.path.join(a, "panel", "panel-receipt.json")
     src_bytes = open(os.path.join(panel, "panel.receipt.json"), "rb").read()
     listed = [line.split("  ", 1)[1] for line in
               open(os.path.join(a, F.CHECKSUMS_NAME), "r", encoding="utf-8").read()
               .splitlines() if line.strip()]
+    runtime_a = F.read_json(os.path.join(a, manifest_a["runtime"]["file"]))
+    binding_evidence = runtime_a["capture_tool"]["resolved_panel_binding"]
+    if isinstance(binding_evidence, dict):
+        receipt_binding = binding_evidence["binding"]["receipt"]
+        try:
+            panel_contract.verify_bound_panel_receipt_bytes(
+                receipt_binding, src_bytes, "A13 panel receipt")
+            receipt_binding_valid = True
+        except panel_contract.PanelError:
+            receipt_binding_valid = False
+        expected_declared = receipt_binding["declared_receipt_sha256"]
+        expected_file_sha = receipt_binding["receipt_file_sha256"]
+    else:
+        receipt_binding_valid = True
+        expected_declared = F.sha256_file(shipped)
+        expected_file_sha = expected_declared
     check("A13 the panel build receipt ships verbatim, sealed and listed",
           os.path.isfile(shipped)
           and open(shipped, "rb").read() == src_bytes
-          and manifest_a["panel"].get("panel_receipt_file") == "panel/panel-receipt.json"
-          and manifest_a["panel"]["panel_receipt_sha256"] == F.sha256_file(shipped)
+          and manifest_a["panel"].get("panel_receipt_file")
+              == "panel/panel-receipt.json"
+          and manifest_a["panel"]["panel_receipt_sha256"]
+              == expected_declared
+          and F.sha256_file(shipped) == expected_file_sha
+          and receipt_binding_valid
           and "panel/panel-receipt.json" in listed,
           "present=%s named=%r listed=%s"
-          % (os.path.isfile(shipped), manifest_a["panel"].get("panel_receipt_file"),
+          % (os.path.isfile(shipped),
+             manifest_a["panel"].get("panel_receipt_file"),
              "panel/panel-receipt.json" in listed))
 
     # -- A17..A21 ------------------------------------------------------------
@@ -541,47 +631,48 @@ def _body(work):
     proc = capture(extra_dir, panel, extra_out, role="root",
                    dataset_id="fidelity--selftest.hf.root", name="extra")
     combined = (proc.stderr or "") + (proc.stdout or "")
-    check("A21 an unexpected checkpoint tensor REFUSES the capture, naming the key "
-          "and the usual cause",
+    check("A21 an unexpected checkpoint tensor REFUSES without an exact allowlist",
           proc.returncode != 0
           and not os.path.isfile(os.path.join(extra_out, F.MANIFEST_NAME))
           and "model.layers.99.mlp.down_proj.weight" in combined
-          and "--allow-unexpected-tensors" in combined
-          and "quantization path silently did not engage" in combined,
+          and "--unexpected-tensors-allowlist" in combined
+          and "Broad acceptance is obsolete" in combined,
           "rc=%s manifest=%s out=%s"
           % (proc.returncode, os.path.isfile(os.path.join(extra_out, F.MANIFEST_NAME)),
              combined[-400:]))
 
-    # A23 -- the escape hatch, and the price of using it.
+    # A23 -- the obsolete broad boolean must never authorize a capture.
     extra_out2 = os.path.join(work, "ds-extra-forced")
     proc = capture(extra_dir, panel, extra_out2, role="root",
                    dataset_id="fidelity--selftest.hf.root", name="extra-forced",
                    extra=["--allow-unexpected-tensors"])
-    stamped, blocking = [], []
-    if os.path.isfile(os.path.join(extra_out2, F.MANIFEST_NAME)):
-        every = json.load(open(os.path.join(extra_out2, F.MANIFEST_NAME)))["disclosures"]
-        stamped = [d for d in every if d["code"] == "checkpoint_tensors_not_loaded"]
-        blocking = [d for d in every if d["code"] == "unexpected_tensors_overridden"]
-    check("A23 --allow-unexpected-tensors captures and stamps a BLOCKING disclosure",
-          proc.returncode in (0, 2) and len(stamped) == 1 and len(blocking) == 1
-          and stamped[0]["severity"] == "caveat"
-          and blocking[0]["severity"] == "blocking"
-          and blocking[0]["affects_comparability"] is True
-          and "model.layers.99.mlp.down_proj.weight" in blocking[0]["detail"],
-          "rc=%s stamped=%r blocking=%r out=%s"
-          % (proc.returncode, stamped, blocking,
-             ((proc.stderr or "") + (proc.stdout or ""))[-300:]))
+    combined = (proc.stderr or "") + (proc.stdout or "")
+    check("A23 --allow-unexpected-tensors is a refused obsolete route",
+          proc.returncode != 0 and "obsolete" in combined
+          and not os.path.isfile(os.path.join(extra_out2, F.MANIFEST_NAME)),
+          "rc=%s out=%s" % (proc.returncode, combined[-300:]))
 
-    # A24 -- the guard reads the flag, not the weather. Same report, both ways,
-    # straight at `refuse_on_load_report`: this is the assertion that fails if
-    # the fifth branch is ever removed while the CLI flag stays.
-    unexpected_report = _report(unexpected_keys={"model.layers.99.mlp.down_proj.weight"})
-    check("A24 refuse_on_load_report: unexpected refuses by default, passes under the flag",
-          _refused(unexpected_report, False) is True
-          and _refused(unexpected_report, True) is True
-          and HC.refuse_on_load_report(unexpected_report, False, True) == [],
-          "default=%r missing_flag_only=%r"
-          % (_refused(unexpected_report, False), _refused(unexpected_report, True)))
+    # A24 -- the only accepted route is equality with a byte- and
+    # semantic-digest-bound exact list.
+    key = "model.layers.99.mlp.down_proj.weight"
+    allowlist_path = os.path.join(work, "unexpected-keys.json")
+    allowlist_raw = (json.dumps([key], indent=2) + "\n").encode()
+    open(allowlist_path, "wb").write(allowlist_raw)
+    raw_sha = hashlib.sha256(allowlist_raw).hexdigest()
+    name_sha = hashlib.sha256(json.dumps(
+        [key], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    binding = HC.load_unexpected_tensor_allowlist(allowlist_path, raw_sha, name_sha)
+    unexpected_report = _report(unexpected_keys={key})
+    passed = HC.refuse_on_load_report(unexpected_report, False, binding) == []
+    evidence = unexpected_report.get("unexpected_tensor_allowlist") or {}
+    check("A24 exact unexpected-key equality passes with full evidence",
+          _refused(_report(unexpected_keys={key}), False) is True and passed
+          and evidence.get("expected_keys") == [key]
+          and evidence.get("observed_keys") == [key]
+          and evidence.get("missing_keys") == []
+          and evidence.get("extra_keys") == []
+          and evidence.get("exact_match") is True,
+          "evidence=%r" % evidence)
 
     # -- A22 -----------------------------------------------------------------
     # R2 in docs/GLM53-ROOT-FEASIBILITY.md: `load_model` materialised the whole

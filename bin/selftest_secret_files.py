@@ -16,8 +16,8 @@ the token when the run ended.
   S2  a pre-existing loose-mode file is replaced, not inherited.
   S3  a planted symlink is removed, never written through.
   S4  shred_secret_file removes the file; a missing file is a no-op.
-  S5  remote transport ORDER: chmod 700 on the directory BEFORE the upload,
-      upload to a unique temporary name, chmod 600, then atomic rename.
+  S5  remote transport ORDER: refuse a pre-existing secret directory, create
+      it as 0700 BEFORE upload, upload uniquely, chmod 600, atomic rename.
   S6  the token value never appears on any remote command line.
   S7  the local copy is shredded even when the upload raises.
   S8  container write_token uses the same exclusive/no-follow creation.
@@ -132,8 +132,10 @@ def main():
             check("S5a exactly exec, upload, exec", kinds == ["exec", "upload", "exec"],
                   jl.ops)
             first = jl.ops[0][1]
-            check("S5b the directory is created AND chmod 700 before the upload",
-                  "mkdir -p /fs/.secrets" in first and "chmod 700 /fs/.secrets" in first,
+            check("S5b the directory is exclusively created 0700 before upload",
+                  "test ! -e /fs/.secrets" in first
+                  and "test ! -L /fs/.secrets" in first
+                  and "mkdir -m 700 -- /fs/.secrets" in first,
                   first)
             up_remote = jl.ops[1][2]
             check("S5c the upload lands on a unique temporary name, not the "
@@ -142,9 +144,9 @@ def main():
                   up_remote != "/fs/.secrets/hf_token", up_remote)
             last = jl.ops[2][1]
             check("S5d chmod 600 the temp, then rename it into place",
-                  ("chmod 600 %s" % up_remote) in last
-                  and ("mv -f %s /fs/.secrets/hf_token" % up_remote) in last
-                  and last.index("chmod 600") < last.index("mv -f"), last)
+                  ("chmod 600 -- %s" % up_remote) in last
+                  and ("mv -- %s /fs/.secrets/hf_token" % up_remote) in last
+                  and last.index("chmod 600") < last.index("mv --"), last)
             check("S5e the local staging copy is gone afterwards",
                   not (outdir / ".secrets-local" / "hf_token").exists())
             check("S5f the local staging directory was 0700",
@@ -187,21 +189,27 @@ def main():
                   and not tokpath.is_symlink() and mode(tokpath) == "0o600"
                   and mode(fs / ".secrets") == "0o700")
 
-            # S9: the entrypoint removes the token in a finally, on FAILURE.
+            # S9: drive the entrypoint's stage lifecycle with its science
+            # validators stubbed at this unit boundary. Other selftests own the
+            # strict job.v2 contract; this case owns the token-finally invariant.
             fs9 = td / "fs9"
+            fs9.mkdir()
+            fs9.joinpath("job.json").write_text("{}\n", encoding="utf-8")
             os.environ["HF_TOKEN"] = TOKEN
             os.environ.pop("FIDELITY_SUITE_ROOT", None)
             try:
-                # `stage fetch_target` with no venv on the box: the stage
-                # script exits 3 almost immediately -- a real failed stage.
-                (fs9 / "receipts").mkdir(parents=True)
-                jobdoc = fs9 / "job.json"
-                rc = None
-                import json as _json
-                fs9.joinpath("job.json").write_text(_json.dumps(
-                    {"role": "quant", "lane": "streaming",
-                     "target": {"repo_id": "x/y", "revision": "r"},
-                     "panel": {}}), encoding="utf-8")
+                CE._prevalidate_stage_job = lambda *_a, **_k: {
+                    "role": "quant",
+                    "capture": {},
+                    "target": {"surface": "native-bf16"},
+                }
+                CE.sync_suite = lambda *_a, **_k: 0
+                CE.validate_job_document = lambda *_a, **_k: None
+                CE.require_accelerator = lambda *_a, **_k: None
+                CE.run_stage = lambda *_a, **_k: 1
+                CE.RS.parse_sinks = lambda *_a, **_k: []
+                CE.RS.build_summary = lambda *_a, **_k: {}
+                CE.RS.deliver = lambda *_a, **_k: []
                 rc = CE.main(["stage", "fetch_target", "--fs-root", str(fs9),
                               "--engine-root", str(td / "noengine")])
                 token_left = (fs9 / ".secrets" / "hf_token").exists()
