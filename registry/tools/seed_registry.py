@@ -47,9 +47,9 @@ HARNESS_REPOSITORY = {
     # this reseed is what changes it). If the closure is ever edited without
     # being committed, this must go back to commit_role=parent with dirty=true
     # rather than pointing at a tree that does not contain the code that ran.
-    "commit": "79bb216b181e8b39f22dff64f094c59de84467b1",
-    "commit_role": "parent",
-    "dirty": True,
+    "commit": "a32deece634a1aa9d1a5b7d02b73a0e3f334b095",
+    "commit_role": "exact",
+    "dirty": False,
 }
 HARNESS_UNRECORDED_DETAIL = (
     "metric.value on this row was produced before this registry recorded harness "

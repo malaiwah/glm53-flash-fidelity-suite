@@ -148,7 +148,7 @@ x_fidelity:
         panels: c01ab44df32e5836e4c408e44716d9e48aeb6cd094105b961edeaf36dd78f8b4
         references: 781bfd507719670d4f7256fa57cd229c49d97d374a7fbede863ad2d4fcb49b1c
         pipelines: a016bbff583036e50215161f1fc9093cc21f91262c67f1a03813201b5a0e45ab
-        measurements: 819d5a49ac8c66b54e29421d6436529b21a819e45b33779668d1e78ca16c163f
+        measurements: b79f3da71ddf7ffc9636e0f1171f825c99f8274a3f6e7dc1de3b1748e172a4ed
   scope_digest: attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@8|moe.router=native:fp32@32|moe.shared_expert=native:bf16@16|mtp=quantized:exl3-mcg@8|norm=native:bf16@16|other=native:bf16@16|head=native|kv=bf16
   head:
     policy: native
