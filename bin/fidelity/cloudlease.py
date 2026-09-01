@@ -3190,6 +3190,15 @@ def _systemd_arg(value: str) -> str:
     return '"%s"' % text.replace(
         "%", "%%").replace("\\", "\\\\").replace('"', '\\"')
 
+
+def _systemd_path(value: str) -> str:
+    text = str(value)
+    if re.fullmatch(r"/[A-Za-z0-9_./-]+", text) is None:
+        raise LeaseError(
+            "systemd working directory must be an absolute path containing "
+            "only letters, digits, '/', '.', '_' or '-'")
+    return text
+
 def _service_text(command: Sequence[str], state: Path) -> str:
     exec_start = " ".join(_systemd_arg(str(item)) for item in command)
     return (
@@ -3198,7 +3207,7 @@ def _service_text(command: Sequence[str], state: Path) -> str:
         "WorkingDirectory=%s\nUMask=0077\n"
         "Environment=PYTHONPATH=\nEnvironment=PYTHONNOUSERSITE=1\n"
         "Environment=PYTHONSAFEPATH=1\nUnsetEnvironment=PYTHONHOME\n"
-        % (exec_start, _systemd_arg(str(state))))
+        % (exec_start, _systemd_path(str(state))))
 
 def _timer_text(interval: int) -> str:
     return (

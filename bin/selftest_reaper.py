@@ -1119,6 +1119,8 @@ def reaper_cases():
               and str(source_entry) not in service_text
               and '"-I"' in service_text and '"-S"' in service_text
               and "PYTHONNOUSERSITE=1" in service_text
+              and "WorkingDirectory=%s\n" % health_dir in service_text
+              and 'WorkingDirectory="' not in service_text
               and control_manifest["runtime_root"]
               == str(runtime_entry.parent))
         check("installer starts immutable oneshot before health is trusted",
