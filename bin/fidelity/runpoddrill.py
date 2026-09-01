@@ -38,7 +38,8 @@ from .cloudlease import (CreateResponsePersistenceError, HEALTH_SCHEMA,
                          campaign_cleanup_binding_evidence,
                          campaign_coordinates, systemd_reaper_health, utc_iso,
                          validate_unresolved_lease_scope)
-from .runpodapi import RunPodCreateResponseError
+from .runpodapi import (
+    RunPodCreateResponseError, _billing_total_matches_record_sum)
 from .jobcontract import (finalize_job, seal_execution_job,
                           validate_execution_job, verify_bundle_manifest,
                           verify_job)
@@ -1719,11 +1720,12 @@ def _billing_arithmetic(plan: DrillPlan, lease: Mapping[str, Any],
     for field in fields:
         sums[field] = sum((_decimal(row.get(field), "billing %s" % field)
                            for row in records), Decimal(0))
-        if sums[field] != _decimal(totals.get(field), "billing total %s" % field):
+        reported = _decimal(totals.get(field), "billing total %s" % field)
+        if not _billing_total_matches_record_sum(reported, sums[field]):
             raise DrillError("billing %s arithmetic does not reconcile" % field)
     total = _decimal(billing.get("total_amount"), "lease total billing")
-    if total != sums["totalAmount"]:
-        raise DrillError("lease total billing differs from exact record sum")
+    if not _billing_total_matches_record_sum(total, sums["totalAmount"]):
+        raise DrillError("lease total billing differs from bounded record sum")
     return _seal({
         "schema": BILLING_SCHEMA,
         "receipt_sha256": "",

@@ -2044,6 +2044,20 @@ def runpod_cases():
               "startTime": "2030-01-02T04:00:00Z",
               "endTime": "2030-01-02T05:00:00Z"}]
           and billing.billing_query == ("/billing/pods", query))
+    rounded = json.loads(json.dumps(response))
+    rounded["metadata"]["totals"]["diskAmount"] = "0.2000000000000000002"
+    rounded_evidence = BillingRunPod(rounded).billing_history(
+        "pod-1", start_time=query["startTime"], end_time=query["endTime"])
+    excess_rounding = json.loads(json.dumps(response))
+    excess_rounding["metadata"]["totals"]["diskAmount"] = (
+        "0.200000000000000002")
+    check("billing accepts only bounded sub-attodollar provider rounding",
+          rounded_evidence["validated_record_sums"]["diskAmount"] == "0.20"
+          and raises(
+              RunPodError,
+              lambda: BillingRunPod(excess_rounding).billing_history(
+                  "pod-1", start_time=query["startTime"],
+                  end_time=query["endTime"])))
     missing = BillingRunPod({
         "records": [], "metadata": {
             "query": resolved_query, "recordCount": 0,
