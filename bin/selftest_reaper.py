@@ -1561,6 +1561,34 @@ def runpod_cases():
     check("injection-shaped catalog GPU id gets no price query",
           raises(RunPodError, hostile_catalog.gpus)
           and len(catalog_calls) == 1)
+    filtered_catalog = RecordingRunPod()
+    filtered_queries = []
+    def filtered_catalog_query(query, timeout=60):
+        filtered_queries.append(query)
+        if "lowestPrice" not in query:
+            return {"gpuTypes": [
+                {"id": "NVIDIA H200", "displayName": "H200",
+                 "memoryInGb": 141, "communityCloud": False,
+                 "secureCloud": True},
+                {"id": "NVIDIA L4", "displayName": "L4",
+                 "memoryInGb": 24, "communityCloud": False,
+                 "secureCloud": True},
+            ]}
+        return {"gpuTypes": [{"lowestPrice": {
+            "minimumBidPrice": "0.49",
+            "uninterruptablePrice": "0.49",
+            "stockStatus": "Low",
+        }}]}
+    filtered_catalog._gql = filtered_catalog_query
+    filtered_offers = filtered_catalog.gpus(
+        gpu_type="NVIDIA L4", secure_only=True)
+    check("exact GPU filter avoids unrelated catalogue price queries",
+          len(filtered_queries) == 2
+          and "NVIDIA L4" in filtered_queries[1]
+          and "NVIDIA H200" not in filtered_queries[1]
+          and len(filtered_offers) == 1
+          and filtered_offers[0].gpu_type == "NVIDIA L4"
+          and filtered_offers[0].region == "secure")
 
     class HostileHeaders:
         @staticmethod

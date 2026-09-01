@@ -79,6 +79,7 @@ class Provider:
         self.bounded_modes = {}
         self.download_replacements = {}
         self.receipt_padding_bytes = 0
+        self.gpu_queries = []
     def require(self):
         if not self.key: raise RD.DrillError("missing key")
         return (0, 0, 0)
@@ -121,7 +122,10 @@ class Provider:
                 "observed_at_utc": RD._utc(self.clock.time()),
                 "families": {"pods": family(rows),
                              "network_volumes": family(volumes)}}
-    def gpus(self):
+    def gpus(self, *, gpu_type=None, secure_only=False):
+        self.gpu_queries.append((gpu_type, secure_only))
+        if gpu_type != RD.GPU_TYPE or secure_only is not True:
+            raise AssertionError("drill did not request its exact secure GPU")
         return [GpuOffer(RD.GPU_TYPE, "secure", 24 * 1024 ** 3, .44,
                          False, 1, "container", {})]
     def list_instances(self):

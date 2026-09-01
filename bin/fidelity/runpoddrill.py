@@ -811,7 +811,8 @@ def plan_drill(args: Any, provider: Any, *, seams: Optional[DrillSeams] = None) 
         raise DrillError(
             "complete RunPod inventory and instance listing disagree")
 
-    offers = [_offer_fields(item) for item in provider.gpus()]
+    offers = [_offer_fields(item) for item in provider.gpus(
+        gpu_type=GPU_TYPE, secure_only=True)]
     candidates = [item for item in offers
                   if item.get("gpu_type") == GPU_TYPE
                   and item.get("region") == "secure"
@@ -2011,7 +2012,8 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
         raise DrillError(
             "bootstrap drill classifies every existing provider resource "
             "as unknown and refuses spend")
-    current_offers = [_offer_fields(item) for item in provider.gpus()]
+    current_offers = [_offer_fields(item) for item in provider.gpus(
+        gpu_type=GPU_TYPE, secure_only=True)]
     current_candidates = [
         item for item in current_offers
         if item.get("gpu_type") == GPU_TYPE

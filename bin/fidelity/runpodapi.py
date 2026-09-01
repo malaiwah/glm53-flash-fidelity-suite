@@ -598,8 +598,14 @@ class RunPod(SSHTransport):
             value, "RunPod clientBalance", nonnegative=True)
 
     # -- catalogue ---------------------------------------------------------
-    def gpus(self) -> List[GpuOffer]:
-        """Return exact-cloud offers only after Decimal price validation."""
+    def gpus(self, *, gpu_type: Optional[str] = None,
+             secure_only: bool = False) -> List[GpuOffer]:
+        """Return validated offers, optionally querying one exact secure GPU."""
+        requested = (
+            None if gpu_type is None
+            else _gpu_id(gpu_type, "requested RunPod GPU inventory id"))
+        if not isinstance(secure_only, bool):
+            raise RunPodError("secure_only must be a boolean")
         offers: List[GpuOffer] = []
         base = self._gql(
             "query { gpuTypes { id displayName memoryInGb communityCloud secureCloud } }")
@@ -615,7 +621,9 @@ class RunPod(SSHTransport):
                 raise RunPodError(
                     "RunPod GPU inventory contains duplicate id %s" % gpu_id)
             seen.add(gpu_id)
-            for secure in (True, False):
+            if requested is not None and gpu_id != requested:
+                continue
+            for secure in ((True,) if secure_only else (True, False)):
                 if secure and gpu.get("secureCloud") is not True:
                     continue
                 if not secure and gpu.get("communityCloud") is not True:
