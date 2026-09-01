@@ -164,11 +164,13 @@ class Provider:
         }
     def prepare_safe_create(self, **kw):
         self.prepare_calls += 1
-        check("one create preparation", self.prepare_calls == 1)
+        check("one outstanding create preparation",
+              self.prepare_calls == self.create_calls + 1)
         return Prepared(kw)
     def submit_prepared_create(self, prepared):
         self.create_calls += 1
-        check("one create invocation", self.create_calls == 1)
+        check("one create per preparation",
+              self.create_calls == self.prepare_calls)
         kw = prepared.kw
         self.termination = RD._utc_epoch(kw["terminate_after"], "terminateAfter")
         self.created_at = self.clock.time()
@@ -712,6 +714,10 @@ def main():
         check("fully reconciled failed drill remains retryable",
               retry.attempt_id == "e" * 24
               and retry.ledger_generation == ledger.snapshot()["generation"])
+        args.dry_run = False; args.yes = True
+        retry_proof = RD.execute_drill(retry, args, provider, seams=seams)
+        check("reconciled retry reaches accepted paid drill",
+              retry_proof.is_file() and provider.create_calls == 2)
     with tempfile.TemporaryDirectory() as td:
         args, provider, seams, ledger = fixture(td)
         empty_sha = hashlib.sha256(b"").hexdigest()

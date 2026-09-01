@@ -39,6 +39,26 @@ _ALLOWED_PHASES = {
 _RESOURCE_FAMILIES = {"pods", "network_volumes"}
 
 
+def _bootstrap_drill_blocked_by_prior_attempts(
+        attempts: Iterable[Dict[str, Any]]) -> bool:
+    """Return whether prior paid work forbids the bootstrap drill."""
+    for item in attempts:
+        if item.get("reservation_kind") == "measurement":
+            return True
+        if (item.get("reservation_kind")
+                != "bootstrap-controller-loss-drill"
+                or item.get("phase") == "CANCELLED_BEFORE_CREATE"):
+            continue
+        if (item.get("phase") == "RECONCILED"
+                and item.get("released") is True
+                and item.get("maximum_remaining_liability_usd") == "0"
+                and isinstance(item.get("billing"), dict)
+                and isinstance(item.get("deletion"), dict)):
+            continue
+        return True
+    return False
+
+
 class CampaignLedgerError(RuntimeError):
     """The durable ledger is missing, malformed, or inconsistent."""
 
@@ -1387,13 +1407,7 @@ class CampaignLedger:
                 self._validate_bootstrap_drill_quote(quote)
                 prior = list(doc["attempts"].values())
                 if (doc["width_authorization"] is not None
-                        or any(item["reservation_kind"] == "measurement"
-                               for item in prior)
-                        or any(
-                            item["reservation_kind"]
-                            == "bootstrap-controller-loss-drill"
-                            and item["phase"] != "CANCELLED_BEFORE_CREATE"
-                            for item in prior)):
+                        or _bootstrap_drill_blocked_by_prior_attempts(prior)):
                     return self._admission_refusal(
                         doc, "BOOTSTRAP_DRILL_NOT_FIRST",
                         "bootstrap drill must precede measurements and prior paid drills",

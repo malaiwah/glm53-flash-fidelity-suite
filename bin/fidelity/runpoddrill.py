@@ -30,7 +30,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 
 from .campaign import (CampaignLedger, CostQuote, MAX_QUOTE_VALIDITY_SECONDS,
-                       RUNPOD_TARIFF_SOURCE)
+                       RUNPOD_TARIFF_SOURCE,
+                       _bootstrap_drill_blocked_by_prior_attempts)
 from .common import redact
 from .cloudlease import (CreateResponsePersistenceError, HEALTH_SCHEMA,
                          TERMINAL, LeaseStore,
@@ -929,19 +930,7 @@ def plan_drill(args: Any, provider: Any, *, seams: Optional[DrillSeams] = None) 
             raise DrillError(
                 "shared campaign ledger is not pre-proof effective width one")
         prior_attempts = list((snapshot.get("attempts") or {}).values())
-        if (any(item.get("reservation_kind") == "measurement"
-                for item in prior_attempts)
-                or any(
-                    item.get("reservation_kind")
-                        == "bootstrap-controller-loss-drill"
-                    and item.get("phase") != "CANCELLED_BEFORE_CREATE"
-                    and not (
-                        item.get("phase") == "RECONCILED"
-                        and item.get("released") is True
-                        and item.get("maximum_remaining_liability_usd") == "0"
-                        and isinstance(item.get("billing"), Mapping)
-                        and isinstance(item.get("deletion"), Mapping))
-                    for item in prior_attempts)):
+        if _bootstrap_drill_blocked_by_prior_attempts(prior_attempts):
             raise DrillError(
                 "bootstrap drill must precede measurements and unsettled paid drills")
         classified = ledger.classify_provider_resources(inventory_rows)
@@ -1948,9 +1937,7 @@ def _cancel_unreserved_prepared_lease(
     ref = store.ref(lease_path, document)
     store.cancel_prepared(ref, {
         "reason": "parent startup failed before campaign reservation",
-        "campaign_attempt_absent": True,
-        "campaign_generation": snapshot["generation"],
-        "lease_record_sha256": document["record_sha256"],
+        "no_provider_post": True,
     })
     return True
 
