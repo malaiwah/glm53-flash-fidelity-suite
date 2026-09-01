@@ -905,6 +905,10 @@ def plan_drill(args: Any, provider: Any, *, seams: Optional[DrillSeams] = None) 
             not ledger_lock.is_file() or ledger_lock.is_symlink()):
         raise DrillError(
             "existing campaign ledger requires its durable regular lock file")
+    admission_epoch = float(seams.clock.time())
+    if admission_epoch < now:
+        raise DrillError("local clock moved backwards during drill planning")
+    admission_at = _utc(admission_epoch)
     validity = _utc(now + 300)
     inventory_observed_text = inventory["observed_at_utc"]
     inventory_validity = _utc(inventory_observed + 300)
@@ -945,7 +949,7 @@ def plan_drill(args: Any, provider: Any, *, seams: Optional[DrillSeams] = None) 
             raise DrillError(
                 "bootstrap inventory classification found ledger-owned resources")
         preview = ledger.preview_reserve_with_provider_snapshot(
-            snapshot["generation"], job_hash, attempt_id, quote, planned_at,
+            snapshot["generation"], job_hash, attempt_id, quote, admission_at,
             provider="runpod", provider_account_id=provider_account_id,
             provider_resources=inventory_rows,
             balance_available_usd=balance,
@@ -973,7 +977,7 @@ def plan_drill(args: Any, provider: Any, *, seams: Optional[DrillSeams] = None) 
             inventory_complete=True,
             inventory_source="RunPod complete pods+network-volumes inventory",
             job_hash=job_hash, attempt=attempt_id, quote=quote,
-            now=planned_at)
+            now=admission_at)
         ledger_generation = 0
     if not preview.admitted:
         raise DrillError("campaign dry admission refused: %s (%s)" %

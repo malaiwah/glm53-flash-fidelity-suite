@@ -649,6 +649,15 @@ def main():
               and provider.create_calls == 0)
     with tempfile.TemporaryDirectory() as td:
         args, provider, seams, ledger = fixture(td)
+        provider.status_latency = 1
+        before = ledger.snapshot()
+        plan = RD.plan_drill(args, provider, seams=seams)
+        check("provider observation after plan start remains admissible",
+              plan.planned_at == "2026-09-01T00:00:00Z"
+              and ledger.snapshot() == before
+              and provider.create_calls == 0)
+    with tempfile.TemporaryDirectory() as td:
+        args, provider, seams, ledger = fixture(td)
         empty_sha = hashlib.sha256(b"").hexdigest()
         seams.checkout_status = lambda mode: {
             "revision": "a" * 40, "untracked_files": mode,
