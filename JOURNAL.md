@@ -3045,3 +3045,13 @@ after all spend-free changes are committed, run exactly one final L4
 controller-loss proof, and only if it qualifies proceed immediately to the
 H200 capture. No H200 was created, no GLM-5.3 capture ran, and nothing was
 published.
+
+### Additive arithmetic correction
+
+The immediately preceding entry calls one femtodollar "fourteen decimal places
+below one cent." The correct relation is `$10^{-15}` USD = `$10^{-13}` cents:
+**thirteen** orders of magnitude below one cent. The bound itself is unchanged.
+The H200 liability sentence also abbreviates the quote: its
+`$39.41123015873015873015873017` includes 12,600 workload seconds, 14,400
+retrieval/delete seconds, 600 timer/API-lag seconds, and the authored storage
+tariffs. It is not compute for only the first two durations.
