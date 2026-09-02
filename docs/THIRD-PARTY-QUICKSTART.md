@@ -219,7 +219,8 @@ export ROOT_DATASET_ID="fidelity--glm53.malaiwah.root.bf16"
 export ROOT_DATASET_REPOSITORY="malaiwah/glm53-fidelity-root-v1"
 export ROOT_DATASET_NAME="GLM-5.3 BF16 root fidelity dataset (hidden form)"
 export ROOT_ATTEMPT_CAP_USD="40"
-export ROOT_MAX_RUNTIME="6h"
+export ROOT_MAX_RUNTIME="3h30m"
+export ROOT_RETRIEVAL_DELETE_RESERVE_SECONDS="14400"
 
 bin/measure-cloud \
     --provider runpod --on-demand --region secure --on-preempt fail \
@@ -248,6 +249,7 @@ bin/measure-cloud \
     --campaign-width 1 \
     --max-cost "$ROOT_ATTEMPT_CAP_USD" \
     --max-runtime "$ROOT_MAX_RUNTIME" \
+    --retrieval-delete-reserve "$ROOT_RETRIEVAL_DELETE_RESERVE_SECONDS" \
     --measurer malaiwah \
     --out "$HOME/fidelity-runs/glm53-root" --dry-run
 ```
@@ -255,7 +257,10 @@ bin/measure-cloud \
 The dry-run validates the exact source-license bytes anonymously before spend.
 For controller-local publication after qualification and teardown, add
 `--publish-root-to "$ROOT_DATASET_REPOSITORY"` and an owner-only
-`--hf-token-file`; the target repository must be absent.
+`--hf-token-file`; the authenticated namespace-owner view must report all
+dataset/model/space collisions absent. Hugging Face currently returns either
+401 or 404 for the matching anonymous exact-id probes, and that anonymous
+status is recorded rather than treated as proof by itself.
 
 ## 6. The paid execution boundary
 

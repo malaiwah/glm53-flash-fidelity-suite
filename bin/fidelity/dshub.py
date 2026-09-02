@@ -358,12 +358,15 @@ def _strict_object(text: str, owner: str) -> Dict[str, Any]:
     return value
 
 
-def _expect_absent(url: str, token: Optional[str], owner: str) -> int:
+def _expect_absent(
+        url: str, token: Optional[str], owner: str, *,
+        accepted_statuses: Sequence[int] = (404,)) -> int:
     try:
         _get(url, token=token)
     except HubError as exc:
-        if getattr(exc, "status", None) == 404:
-            return 404
+        status = getattr(exc, "status", None)
+        if status in accepted_statuses:
+            return int(status)
         raise HubError("%s absence is ambiguous: %s" % (owner, exc))
     raise HubError("%s already exists or collides with the destination" % owner)
 
@@ -404,11 +407,17 @@ def preflight_create(repo: str, token_file: str) -> Dict[str, Any]:
     quoted = urllib.parse.quote(repo, safe="/")
     for kind in ("datasets", "models", "spaces"):
         url = "%s/api/%s/%s" % (HF_ENDPOINT, kind, quoted)
+        # The authenticated namespace owner/admin view is authoritative for
+        # private collisions. Hugging Face currently hides a nonexistent repo
+        # from anonymous exact-id API reads with either 401 or 404.
+        authenticated_status = _expect_absent(
+            url, token, "authenticated %s/%s" % (kind, repo))
+        anonymous_status = _expect_absent(
+            url, None, "anonymous %s/%s" % (kind, repo),
+            accepted_statuses=(401, 404))
         probes[kind] = {
-            "authenticated_status":
-                _expect_absent(url, token, "authenticated %s/%s" % (kind, repo)),
-            "anonymous_status":
-                _expect_absent(url, None, "anonymous %s/%s" % (kind, repo)),
+            "authenticated_status": authenticated_status,
+            "anonymous_status": anonymous_status,
         }
     return common.seal({
         "schema": "fidelity.hf-publish-create-preflight.v1",

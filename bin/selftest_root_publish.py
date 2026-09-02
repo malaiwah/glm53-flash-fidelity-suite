@@ -821,8 +821,9 @@ def main():
             preflight_calls.append((url, token))
             if url.endswith("/api/whoami-v2"):
                 return json.dumps({"name": "malaiwah", "orgs": []})
-            exc = real_dshub.HubError("HTTP 404")
-            exc.status = 404
+            exc = real_dshub.HubError(
+                "HTTP %d" % (401 if token is None else 404))
+            exc.status = 401 if token is None else 404
             raise exc
 
         try:
@@ -840,7 +841,13 @@ def main():
                   and evidence.get("mutation_performed") is False
                   and evidence.get("authenticated_principal") == "malaiwah"
                   and len(destination_calls) == 6
-                  and sum(token is None for _, token in destination_calls) == 3,
+                  and sum(token is None for _, token in destination_calls) == 3
+                  and all(
+                      probe == {
+                          "authenticated_status": 404,
+                          "anonymous_status": 401,
+                      }
+                      for probe in evidence.get("probes", {}).values()),
                   (evidence, destination_calls))
 
             def collision_get(url, token=None, binary=False):

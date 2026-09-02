@@ -81,8 +81,9 @@ SHELL_PLACEHOLDERS = {
     "$ROOT_DATASET_ID": "example-root",
     "$ROOT_DATASET_REPOSITORY": "example-org/example-root",
     "$ROOT_DATASET_NAME": "Example Root",
-    "$ROOT_ATTEMPT_CAP_USD": "20",
-    "$ROOT_MAX_RUNTIME": "12h",
+    "$ROOT_ATTEMPT_CAP_USD": "40",
+    "$ROOT_MAX_RUNTIME": "3h30m",
+    "$ROOT_RETRIEVAL_DELETE_RESERVE_SECONDS": "14400",
     "$HOME": "/tmp/example-home",
 }
 
