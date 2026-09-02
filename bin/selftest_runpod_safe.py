@@ -260,15 +260,21 @@ def main():
         target_revision=MC._FULL_GLM53_ROOT[2],
         gpu="H200", form="hidden",
         schedule="two-fresh-process-qualification")
-    check("full GLM timing is exact-target and identity-bound",
+    check("full GLM timing is exact-target and file-byte-bound",
           full_timing["conservative_upper_hours"] == 3.5
           and full_timing["model_identity"] == {
-              "model_bytes": 1506659919872,
+              "model_bytes": 1506667387408,
               "config_sha256":
                   "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca",
               "index_sha256":
                   "5fd47a926aefce0f2c917f42523e5e0f3c87e23e389e767c3681536a62f5cf5e",
-          })
+          }
+          and full_timing["evidence"]["download_bytes"] == 1506667387408
+          and full_timing["evidence"]["index_tensor_bytes"] == 1506659919872
+          and full_timing["evidence"]["shard_file_overhead_bytes"] == 7467536
+          and full_timing["evidence"]["shard_count"] == 282
+          and full_timing["evidence"]["shard_manifest_sha256"]
+              == "4500ebd01844457a106ed6031a67ff581d77406e8d2872ce43f2abd51a65ba2b")
     check("full GLM authored source-license pin is exact",
           MC._FULL_GLM53_LICENSE == {
               "source_path": "LICENSE",

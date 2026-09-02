@@ -71,7 +71,7 @@
       "conservative_upper_hours": 3.5,
       "bound_kind": "named_conservative_upper",
       "model_identity": {
-        "model_bytes": 1506659919872,
+        "model_bytes": 1506667387408,
         "config_sha256": "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca",
         "index_sha256": "5fd47a926aefce0f2c917f42523e5e0f3c87e23e389e767c3681536a62f5cf5e"
       },
@@ -87,8 +87,12 @@
           37.0
         ],
         "cold_runs": 2,
-        "download_bytes": 1506659919872,
-        "derivation": "3.5 hours conservatively covers the documented one-hour full fetch, two projected 37-minute layer-outer cold captures, setup, strict verification and forced comparison. Archive build, bounded retrieval attempts and final deletion are separately funded by the retrieval/delete reserve."
+        "download_bytes": 1506667387408,
+        "index_tensor_bytes": 1506659919872,
+        "shard_count": 282,
+        "shard_file_overhead_bytes": 7467536,
+        "shard_manifest_sha256": "4500ebd01844457a106ed6031a67ff581d77406e8d2872ce43f2abd51a65ba2b",
+        "derivation": "The pinned index's metadata.total_size is tensor payload bytes, not downloadable file bytes. The 282 pinned safetensors shard sizes sum to 1506667387408 bytes; their 7467536-byte difference is safetensors framing/header overhead. The 3.5-hour bound conservatively covers the documented one-hour full fetch, two projected 37-minute layer-outer cold captures, setup, strict verification and forced comparison. Archive build, bounded retrieval attempts and final deletion are separately funded by the retrieval/delete reserve."
       }
     }
   ],
