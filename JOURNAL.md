@@ -2951,3 +2951,40 @@ legitimately stabilize after the 15-minute lifecycle bound.
 
 This was one paid create and one failed qualification attempt. No GLM-5.3 model
 capture ran, and nothing was published.
+
+## 2026-09-02 — the replacement drill found a live-stream deadline bug before measurement
+
+The authorized replacement proof used checkout
+`f8535b56b1d4ff4afffb560959dc08fb8e4cd828` and created exactly one secure,
+on-demand RunPod L4 (`o8lprocjxzct9c`) at `2026-09-02T11:09:00Z`. The
+controller had not published ready evidence when its 300-second workload
+deadline arrived. Cleanup requested exact-id destruction at
+`2026-09-02T11:13:55Z`; complete provider inventory proved exact absence ten
+seconds later. Billing reconciled at `2026-09-02T12:20:57Z` to exactly
+`$0.04223442170768976` (`$0.04130849568173289` GPU plus
+`$0.0009259260259568691` disk). The two failed prerequisite attempts therefore
+cost exactly `$0.10866404301486909` in total. Every lease is terminal and the
+reaper is healthy.
+
+The child left no stage-specific error before the supervisor's deliberate
+`SIGKILL`, so the durable record does not prove which call occupied the final
+instant. Source inspection and a fail-without-fix regression did expose a
+matching defect: `urllib`'s timeout bounded each socket operation, not the whole
+authenticated event stream. A live stream of valid non-key events could keep
+resetting that per-read bound until the controller's outer deadline killed it.
+Against the old source the regression consumed the 2 MiB response allowance
+instead of obeying its requested global deadline.
+
+Commit `2402f5e` adds an independent monotonic 15-minute whole-stream deadline,
+retains the 60-second per-I/O bound and 2 MiB cumulative response ceiling, and
+retries bounded finite streams without accepting any weaker source or key
+syntax. The default proof envelope is now 20 minutes to ready evidence and 22
+minutes to provider/reaper destruction, leaving the same 120-second terminal
+reserve. The regression passes with the fix; the full local battery reports
+84 passed, 0 failed, 0 skipped, and `registry make check` reports 0 errors with
+the existing 41 warnings.
+
+This replacement still produced no accepted `proof.json`. No H200 was created,
+no GLM-5.3 capture ran, and nothing was published. The remaining H200
+authorization was explicitly conditional on an accepted proof, so another
+proof create requires a new operator decision.
