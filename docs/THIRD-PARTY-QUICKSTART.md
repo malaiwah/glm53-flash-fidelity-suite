@@ -1,10 +1,10 @@
 # Third-party quickstart — from a fresh clone to a submitted measurement
 
 This is the unaided path for the **current paid contract**, not the broader
-engine-capability matrix. Paid execution is temporarily limited to one exact
-public K6 quant pin and one exact Fruit BF16 root pin, over one fresh secure
-on-demand RunPod reached by authenticated SSH. GGUF, K8, other revisions and
-other providers refuse before mutation.
+engine-capability matrix. Paid execution is temporarily limited to exact
+authored K6 quant and BF16 root pins over one fresh secure on-demand RunPod
+reached by authenticated SSH. GGUF, K8, other revisions and other providers
+refuse before mutation.
 
 Everything is $0.00 until the controller-loss drill and the measurement steps
 explicitly marked **PAID**. No command here publishes externally.
@@ -97,10 +97,12 @@ bin/measure-cloud drill \
 
 **PAID:** repeat that command without `--dry-run` and add `--yes`. It performs
 one small L4 create POST, deliberately kills its controller, and accepts a
-proof only after provider `terminateAfter`, the independent reaper, exact
-absence and billing stabilization all agree. During the run, copy the pod's
-ED25519 fingerprint from its authenticated RunPod web terminal when prompted;
-the network keyscan is not trusted on its own.
+proof only after the independent user-systemd reaper issues the exact-id
+destroy at the absolute lease deadline, complete inventory proves absence and
+billing stabilizes. RunPod `terminateAfter` is recorded as an untrusted hint,
+not evidence of cleanup. During the run, copy the pod's ED25519 fingerprint
+from its authenticated RunPod web terminal when prompted; the network keyscan
+is not trusted on its own.
 
 The accepted artifact is:
 
@@ -139,7 +141,7 @@ bin/measure-cloud \
 ```
 
 Replace every `YOUR_*` and `REPLACE` sentinel with the intended identity or
-limit before running either paid command below. The safe controller refuses
+limit before running any paid command below. The safe controller refuses
 literal placeholders and has no default measurer; refusal happens before
 RunPod account access.
 
@@ -199,14 +201,66 @@ independent verifications and the forced exact self-comparison. An unpublished
 qualified archive remains valid evidence. `--publish-root-to`, when used, must
 equal `--dataset-repository` and runs only on the controller after teardown.
 
+
+### Exact full GLM-5.3 root dry-run
+
+The full GLM route is separately bound to its pinned checkpoint identity,
+25-window panel, layer-78 unexpected-tensor allowlist and H200 timing. Because
+the hidden-form dataset redistributes the checkpoint's native output-head
+weights, the controller copies the exact pinned model `LICENSE` bytes into the
+dataset and records `license: other`; it never relabels those weights as MIT.
+
+```bash
+export ROOT_DATASET_ID="fidelity--glm53.malaiwah.root.bf16"
+export ROOT_DATASET_REPOSITORY="malaiwah/glm53-fidelity-root-v1"
+export ROOT_DATASET_NAME="GLM-5.3 BF16 root fidelity dataset (hidden form)"
+export ROOT_ATTEMPT_CAP_USD="40"
+export ROOT_MAX_RUNTIME="6h"
+
+bin/measure-cloud \
+    --provider runpod --on-demand --region secure --on-preempt fail \
+    --role root \
+    --model zai-org/GLM-5.3-BF16 \
+    --revision 304b8051cfb2b260b61ce0cbe330e02a98e73639 \
+    --panel-dir engines/panels/panel--glm53.malaiwah.corpus5x5-v1 \
+    --dataset-id "$ROOT_DATASET_ID" \
+    --dataset-repository "$ROOT_DATASET_REPOSITORY" \
+    --dataset-name "$ROOT_DATASET_NAME" \
+    --unexpected-tensor-allowlist \
+        engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json \
+    --lane streaming --form hidden --schedule layer-outer \
+    --capture-device cuda --cold-runs 2 --gpu H200 \
+    --replay-device numpy --replay-dtype float32 \
+    --replay-vocab-chunk 8192 \
+    --runpod-key-file "$RUNPOD_KEY_FILE" \
+    --hf-download-token-file "$HF_DOWNLOAD_TOKEN_FILE" \
+    --reaper-state-dir "$FIDELITY_STATE" \
+    --lease-dir "$FIDELITY_STATE/leases-v2" \
+    --runpod-safety-proof "$FIDELITY_STATE/drill/proof.json" \
+    --campaign-ledger "$CAMPAIGN_LEDGER" \
+    --campaign-ceiling "$CAMPAIGN_CEILING_USD" \
+    --campaign-reserve "$CAMPAIGN_RESERVE_USD" \
+    --campaign-reaper-margin "$CAMPAIGN_REAPER_MARGIN_USD" \
+    --campaign-width 1 \
+    --max-cost "$ROOT_ATTEMPT_CAP_USD" \
+    --max-runtime "$ROOT_MAX_RUNTIME" \
+    --measurer malaiwah \
+    --out "$HOME/fidelity-runs/glm53-root" --dry-run
+```
+
+The dry-run validates the exact source-license bytes anonymously before spend.
+For controller-local publication after qualification and teardown, add
+`--publish-root-to "$ROOT_DATASET_REPOSITORY"` and an owner-only
+`--hf-token-file`; the target repository must be absent.
+
 ## 6. The paid execution boundary
 
 The published registry already contains K6, so the exact K6 command currently
 returns `no_spend` before provider access. Do not route around that result:
 safe RunPod refuses `--force`.
 
-A newly identified exact Fruit root can reach paid admission after every local,
-account and scientific prerequisite passes. **PAID:** repeat the Fruit command
+An unmeasured exact authored root can reach paid admission after every local,
+account and scientific prerequisite passes. **PAID:** repeat its exact command
 without `--dry-run`. Leave off `--yes` for the interactive confirmation:
 
 ```text

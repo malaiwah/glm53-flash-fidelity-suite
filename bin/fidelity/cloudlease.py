@@ -3032,24 +3032,15 @@ def reap_once(store: LeaseStore, providers: Mapping[str, Any], *,
                         actions.append({"lease": ref.path.name,
                                         "action": "exact-absence-confirmed"})
                     else:
-                        drill_until = _provider_deadline_observation_epoch(
+                        # The provider accepted terminateAfter but has been
+                        # observed ignoring it.  Drill leases therefore use
+                        # the same timestamp as an independently enforced
+                        # local reaper deadline; the later observation bound
+                        # limits proof collection, never delays cleanup.
+                        _provider_deadline_observation_epoch(
                             document["create"]["provider"],
                             document["create"]["request"],
                             document["create"]["workload_deadline_epoch"])
-                        if (document["state"] == ACTIVE
-                                and drill_until is not None
-                                and instant < drill_until):
-                            actions.append({
-                                "lease": ref.path.name,
-                                "action": "provider-deadline-observation-deferred",
-                                "provider_ids": sorted(present),
-                                "observation_until_epoch": drill_until,
-                            })
-                            continue
-                        drill_bound_expired = (
-                            document["state"] == ACTIVE
-                            and drill_until is not None
-                            and instant >= drill_until)
                         immediate_statuses = {
                             "EXITED", "TERMINATED", "STOPPED", "FAILED",
                             "FAILURE", "ERROR", "DEAD",
@@ -3063,14 +3054,11 @@ def reap_once(store: LeaseStore, providers: Mapping[str, Any], *,
                             instant >= document["create"]["reap_deadline_epoch"])
                         destroy_now = (
                             document["state"] == DESTROYING
-                            or drill_bound_expired
                             or terminal_status_requires_destroy
                             or reap_deadline_expired)
                         if not destroy_now:
                             continue
                         reason = (
-                            "provider deadline observation bound expired"
-                            if drill_bound_expired else
                             "listed terminal/stopped/failure status"
                             if terminal_status_requires_destroy else
                             "destroy already pending"

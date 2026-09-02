@@ -914,6 +914,8 @@ def job_document(args, suite: Path, fs_root: Path, con) -> dict:
             "preview_of": None,
             "sanity_expect": args.sanity_expect,
             "publish_root_to": args.publish_root_to,
+            "dataset_license": "mit",
+            "weights_license": None,
             "engine": "hf-transformers",
             "dtype": "bfloat16",
             "device": "cuda",
@@ -1247,10 +1249,10 @@ def validate_job_document(doc: dict, fs_root: Path, expected_bundle=None) -> str
     required_keys = {
         "role", "form", "schedule", "panel_dir", "panel_id",
         "designated_reference", "dataset_id", "dataset_name",
-        "dataset_repository", "author", "race", "preview_of",
-        "sanity_expect", "publish_root_to", "engine", "dtype", "device",
-        "replay_device", "replay_dtype", "vocab_chunk", "replay",
-        "root_protocol"}
+        "dataset_repository", "dataset_license", "weights_license",
+        "author", "race", "preview_of", "sanity_expect", "publish_root_to",
+        "engine", "dtype", "device", "replay_device", "replay_dtype",
+        "vocab_chunk", "replay", "root_protocol"}
     absent = sorted(required_keys - set(capture))
     if absent:
         raise Refusal(
@@ -1328,6 +1330,30 @@ def validate_job_document(doc: dict, fs_root: Path, expected_bundle=None) -> str
         raise Refusal("root job target.repo_id is required")
     if not isinstance(target_revision, str) or not target_revision:
         raise Refusal("root job target.revision is required")
+    dataset_license = capture.get("dataset_license")
+    weights_license = capture.get("weights_license")
+    if dataset_license not in ("mit", "other"):
+        raise Refusal("capture.dataset_license must be mit or other")
+    if dataset_license == "mit":
+        if weights_license is not None:
+            raise Refusal(
+                "capture.weights_license requires capture.dataset_license=other")
+    else:
+        if (not isinstance(weights_license, dict)
+                or set(weights_license) != {
+                    "source_path", "dataset_path", "bytes", "sha256"}
+                or weights_license.get("source_path") != "LICENSE"
+                or weights_license.get("dataset_path") != "LICENSE"
+                or isinstance(weights_license.get("bytes"), bool)
+                or not isinstance(weights_license.get("bytes"), int)
+                or not 0 < weights_license["bytes"] <= 1024 * 1024):
+            raise Refusal(
+                "capture.weights_license is not an exact bounded LICENSE identity")
+        _hex_sha256(
+            weights_license.get("sha256"), "capture.weights_license.sha256")
+    if (doc.get("target") or {}).get("weights_license") != weights_license:
+        raise Refusal(
+            "capture.weights_license differs from target weights-license identity")
 
     binding = panel.get("resolved_binding")
     binding_path = panel.get("binding_path")

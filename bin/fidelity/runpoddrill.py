@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Paid RunPod controller-loss/provider-deadline drill producer.
+"""Paid RunPod controller-loss/autonomous-reaper drill producer.
 
-Planning is read-only.  Execution is an explicitly authorized, single-POST
-campaign attempt supervised by a separate process.  Provider terminateAfter,
-not the controller, is the normal termination mechanism; the ordinary durable
-reaper is kept live and gains authority only at the bounded observation limit.
+Planning is read-only. Execution is an explicitly authorized, single-POST
+campaign attempt supervised by a separate process. The provider's accepted
+``terminateAfter`` value is retained as an untrusted extra hint; the independent
+boot-persistent user-systemd reaper owns the absolute cleanup deadline.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ from .jobcontract import (finalize_job, seal_execution_job,
                           validate_execution_job, verify_bundle_manifest,
                           verify_job)
 from .resultsink import verify_archive
-from .runpodsafety import (DRILL_KIND, PROOF_SCHEMA,
+from .runpodsafety import (DRILL_KIND, LEASE_DRILL_KIND, PROOF_SCHEMA,
                            campaign_ledger_coordinate_sha256, canonical_bytes,
                            validate_safety_proof)
 
@@ -349,8 +349,10 @@ class DrillPlan:
             "network_volume_id": None,
             "storage_gb": self.storage_gb,
             "container_disk_gb": self.container_disk_gb,
-            "terminate_after": self.terminate_after,
-            "provider_deadline_observation_until": self.observation_until,
+            "reap_deadline": self.terminate_after,
+            "provider_terminate_after_hint": self.terminate_after,
+            "provider_timer_trusted": False,
+            "reaper_observation_until": self.observation_until,
             "billing_wait_seconds": self.billing_wait_seconds,
             "live_rate_usd_per_hour": format(self.offer_rate, "f"),
             "maximum_liability_usd": format(self.quote.hard_cap_usd, "f"),
@@ -1063,7 +1065,7 @@ def _prepare_remote_payload(
     _atomic_json(result / "job.json", job)
     _atomic_json(result / "ABANDONED.json", {
         "schema": "fidelity-suite/abandoned.v2",
-        "reason": "intentional controller-loss provider-deadline drill",
+        "reason": "intentional controller-loss autonomous-reaper drill",
         "job_id_full": job["job_id_full"],
     })
     expected_names = {
@@ -1319,7 +1321,7 @@ def _prepare_controller_lease(
             key: pre_post_checkout[key] for key in observation_keys},
     }
     request = {
-        "drill_mode": DRILL_KIND,
+        "drill_mode": LEASE_DRILL_KIND,
         "provider_account_id": paid_account_id,
         "campaign_ledger": plan.campaign_ledger.name,
         "campaign_attempt_key": plan.attempt_key,
@@ -1784,35 +1786,43 @@ def _campaign_release_receipt(
 
 def _require_post_loss_health(
         plan: DrillPlan, health: Mapping[str, Any],
-        lease: Mapping[str, Any], controller_lost_epoch: int) -> Mapping[str, Any]:
+        provider_id: str, controller_lost_epoch: int) -> Mapping[str, Any]:
     stamp = health.get("stamp") if isinstance(health, Mapping) else None
     control = stamp.get("control") if isinstance(stamp, Mapping) else None
     initial_stamp = plan.reaper_health.get("stamp") or {}
     initial_control = initial_stamp.get("control") or {}
+    started = float((stamp or {}).get("invocation_started_at_epoch", 0))
+    completed = float((stamp or {}).get("completed_at_epoch", 0))
     if (health.get("ok") is not True or health.get("stamp_ok") is not True
             or health.get("control_ok") is not True
             or not isinstance(stamp, Mapping)
             or stamp.get("schema") != HEALTH_SCHEMA
             or not isinstance(control, Mapping)
-            or float(stamp.get("invocation_started_at_epoch", 0))
-                <= controller_lost_epoch
-            or float(stamp.get("completed_at_epoch", 0))
-                <= controller_lost_epoch
+            or started <= controller_lost_epoch
+            or completed < started
+            or completed < _utc_epoch(plan.terminate_after, "reap deadline")
+            or completed > _utc_epoch(
+                plan.observation_until, "reaper observation bound")
             or control.get("control_sha256") != initial_control.get("control_sha256")
             or control.get("provider") != "runpod"
             or control.get("provider_account_id_sha256")
                 != _sha256_bytes(plan.provider_account_id.encode("utf-8"))):
         raise DrillError(
-            "installed reaper lacks a new account-bound post-loss invocation")
+            "installed reaper lacks a new account-bound deadline invocation")
     actions = stamp.get("actions")
     if (not isinstance(actions, list)
             or not any(
                 isinstance(action, Mapping)
-                and action.get("lease_record_sha256") == lease.get("record_sha256")
-                and action.get("lease_generation") == lease.get("generation")
+                and action.get("action") == "destroy-requested"
+                and action.get("provider_id") == provider_id
+                and isinstance(action.get("lease_generation"), int)
+                and not isinstance(action.get("lease_generation"), bool)
+                and re.fullmatch(
+                    r"[0-9a-f]{64}",
+                    str(action.get("lease_record_sha256") or ""))
                 for action in actions)):
         raise DrillError(
-            "post-loss systemd sweep does not bind the terminal lease transition")
+            "post-loss systemd sweep does not bind the exact destroy request")
     for row in control.get("control_files") or []:
         path = PurePosixPath(str((row or {}).get("path") or ""))
         if (path.is_absolute() or any(part in ("", ".", "..") for part in path.parts)
@@ -2198,7 +2208,8 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
             mode=0o700, parents=True, exist_ok=True)
         predeadline_presence_observed = False
         first_absence_observation = None
-        provider_deadline_absence_proven = False
+        bounded_absence_proven = False
+        destroy_health = None
         observation_until_epoch = float(
             _utc_epoch(plan.observation_until, "observation bound"))
         exact_provider_id = str(state["provider_id"])
@@ -2220,7 +2231,7 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
                 predeadline_presence_observed = True
             elif not exact_present and first_absence_observation is None:
                 first_absence_observation = observation
-                provider_deadline_absence_proven = (
+                bounded_absence_proven = (
                     predeadline_presence_observed
                     and poll_completed <= observation_until_epoch)
             elif (first_absence_observation is not None
@@ -2238,12 +2249,22 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
                 provider="runpod",
                 provider_account_id=plan.provider_account_id,
                 now=seams.clock.time())
-            if lease["state"] == TERMINAL:
-                if exact_present:
+            stamp = health.get("stamp") if isinstance(health, Mapping) else None
+            if (destroy_health is None and isinstance(stamp, Mapping)
+                    and any(
+                        isinstance(action, Mapping)
+                        and action.get("action") == "destroy-requested"
+                        and action.get("provider_id") == exact_provider_id
+                        for action in stamp.get("actions") or [])):
+                destroy_health = json.loads(
+                    canonical_bytes(health).decode("utf-8"))
+            if lease["state"] == TERMINAL and not exact_present:
+                if destroy_health is None:
                     raise DrillError(
-                        "terminal lease conflicts with live exact provider id")
+                        "terminal cleanup lacks the autonomous destroy health stamp")
                 _require_post_loss_health(
-                    plan, health, lease, controller_lost_epoch)
+                    plan, destroy_health, exact_provider_id,
+                    controller_lost_epoch)
                 break
             now = float(seams.clock.time())
             next_poll = poll_started + float(plan.poll_seconds)
@@ -2256,13 +2277,18 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
             raise DrillError(
                 "autonomous installed reaper did not close absence and billing")
         history = lease.get("history") or []
-        provider_deadline_failed = any(
-            row.get("event") == "DESTROY_REQUESTED" for row in history)
+        autonomous_destroy_proven = [
+            row for row in history
+            if row.get("event") == "DESTROY_REQUESTED"]
         health_source = plan.reaper_state_dir / "reaper-health.json"
         health_stamp, _health_raw = _read_json_regular(
             health_source, "autonomous post-loss reaper health")
         if health_stamp != health.get("stamp"):
             raise DrillError("observed reaper stamp changed before proof capture")
+        destroy_health_stamp = destroy_health["stamp"]
+        destroy_health_path = (
+            stage / "artifacts" / "reaper-destroy-health.json")
+        _atomic_json(destroy_health_path, destroy_health_stamp)
 
         billing_receipt = _billing_arithmetic(
             plan, lease, str(state["provider_id"]))
@@ -2278,14 +2304,14 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
         if (_artifact(stage, campaign_ledger_copy)["sha256"]
                 != campaign_receipt["campaign_ledger_sha256"]):
             raise DrillError("campaign ledger changed during proof capture")
-        if provider_deadline_failed:
+        if len(autonomous_destroy_proven) != 1:
             raise DrillError(
-                "provider missed terminateAfter; bounded reaper cleanup, exact "
-                "billing, and campaign release completed; no proof issued")
-        if not provider_deadline_absence_proven:
+                "controller was lost but the autonomous reaper did not issue "
+                "exactly one durable destroy request; no proof issued")
+        if not bounded_absence_proven:
             raise DrillError(
-                "provider termination was not durably observed inside the "
-                "authored terminateAfter API-lag interval; no proof issued")
+                "exact absence was not durably observed inside the authored "
+                "autonomous-reaper lag interval; no proof issued")
         deadline_observation, _deadline_observation_raw = _read_json_regular(
             deadline_observation_path, "provider deadline observations")
         if (deadline_observation.get("schema")
@@ -2342,6 +2368,8 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
                 state["result_transfer_receipt_sha256"],
             "provider_deadline_observations_sha256":
                 deadline_observation["record_sha256"],
+            "reaper_destroy_health_sha256":
+                destroy_health_stamp["record_sha256"],
         }, "receipt_sha256")
         loss_path = artifacts / "controller-loss.json"
         _atomic_json(loss_path, loss)
@@ -2357,6 +2385,8 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
             "provider_account_id": plan.provider_account_id,
             "drill": {
                 "kind": DRILL_KIND,
+                "termination_mechanism": "autonomous-systemd-user-reaper",
+                "provider_timer_trusted": False,
                 "paid": True,
                 "provider": "runpod",
                 "provider_account_id": plan.provider_account_id,
@@ -2402,6 +2432,8 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
                 "controller_kill_event": _artifact(stage, kill_path),
                 "provider_deadline_observations": _artifact(
                     stage, deadline_observation_path),
+                "reaper_destroy_health": _artifact(
+                    stage, destroy_health_path),
                 "reaper_health": _artifact(stage, health_copy),
                 "ssh_host_key_proof": _artifact(
                     stage,

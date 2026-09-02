@@ -30,6 +30,7 @@ engines/tools/glm53-stagea-evidence
 !engines/tools/layer-outer-evidence
 engines/tools/layer-outer-evidence/*
 !engines/tools/layer-outer-evidence/fruit-layer13-unexpected-keys.json
+!engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json
 engines/tools/hidden-replay-evidence
 **/__pycache__
 **/*.pyc

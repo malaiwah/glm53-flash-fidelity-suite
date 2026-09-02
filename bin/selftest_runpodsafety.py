@@ -94,6 +94,19 @@ def public_refetch_fixture():
     repository = "example/root-proof"
     weights_repository = "example/root-weights"
     weights_revision = "b" * 40
+    license_raw = b"exact source license\n"
+    source_license = {
+        "source_path": "LICENSE",
+        "dataset_path": "LICENSE",
+        "bytes": len(license_raw),
+        "sha256": hashlib.sha256(license_raw).hexdigest(),
+    }
+    runtime_license = {
+        "source_file": "LICENSE",
+        "dataset_path": "LICENSE",
+        "bytes": source_license["bytes"],
+        "sha256": source_license["sha256"],
+    }
     panel_id = "panel--selftest.public-root"
     suite_sha = "1" * 64
     receipt_doc = common.seal({
@@ -146,6 +159,7 @@ def public_refetch_fixture():
         "bundle": bundle, "registry": registry})).hexdigest()
     shards = [{"path": "model.safetensors", "bytes": 17}]
     download_manifest = [
+        {"path": "LICENSE", "bytes": len(license_raw)},
         {"path": "config.json", "bytes": 1},
         shards[0],
         {"path": "model.safetensors.index.json", "bytes": 1},
@@ -164,9 +178,10 @@ def public_refetch_fixture():
             safety.canonical_bytes(shards)).hexdigest(),
         "model_bytes": 17,
         "download_manifest": download_manifest,
-        "download_bytes_total": 19,
+        "download_bytes_total": sum(row["bytes"] for row in download_manifest),
         "download_manifest_sha256": hashlib.sha256(
             safety.canonical_bytes(download_manifest)).hexdigest(),
+        "weights_license": source_license,
     }
     profile = {
         "profile_id": "root-hf-transformers-bf16",
@@ -185,6 +200,8 @@ def public_refetch_fixture():
         "author": "selftest",
         "dataset_repository": repository,
         "publish_root_to": repository,
+        "dataset_license": "other",
+        "weights_license": source_license,
         "form": "hidden",
         "schedule": "layer-outer",
         "device": "cuda",
@@ -264,6 +281,7 @@ def public_refetch_fixture():
             "role": "root",
             "author": {"name": contract["author"]},
             "repository": repository,
+            "license": "other",
         },
         "weights": {
             "repository": weights_repository,
@@ -285,6 +303,10 @@ def public_refetch_fixture():
         "dataset_name": contract["dataset_name"],
         "dataset_author": contract["author"],
         "dataset_repository": repository,
+        "dataset_license": "other",
+        "weights_license": runtime_license,
+        "weights_license_file_sha256": source_license["sha256"],
+        "weights_license_file_bytes": source_license["bytes"],
         "dataset_sha256": manifest["dataset_sha256"],
         "dataset_manifest_file_sha256":
             hashlib.sha256(manifest_raw).hexdigest(),
@@ -346,12 +368,13 @@ def public_refetch_fixture():
         "result_archive_bytes": 1024,
         "verified_anonymously": True, "verified_revision": "a" * 40,
     })
-    return publication, manifest_raw, qualification_raw, panel_receipt_raw
+    return (publication, manifest_raw, qualification_raw,
+            panel_receipt_raw, license_raw)
 
 
 def check_public_refetch():
-    publication, manifest_raw, qualification_raw, panel_receipt_raw = (
-        public_refetch_fixture())
+    (publication, manifest_raw, qualification_raw, panel_receipt_raw,
+     license_raw) = public_refetch_fixture()
     real_urlopen = urllib.request.urlopen
 
     def fake_urlopen(request, timeout):
@@ -361,6 +384,8 @@ def check_public_refetch():
             body = qualification_raw
         elif request.full_url.endswith("panel/panel-receipt.json"):
             body = panel_receipt_raw
+        elif request.full_url.endswith("/LICENSE"):
+            body = license_raw
         else:
             body = manifest_raw
         return FakeResponse(body)
@@ -370,6 +395,15 @@ def check_public_refetch():
         observed = safety.validate_current_public_root(publication)
         check("current public refetch accepted exact identities",
               observed["publicly_accessible"] is True)
+        original_license = license_raw
+        license_raw = b"drifted source license\n"
+        try:
+            safety.validate_current_public_root(publication)
+        except safety.SafetyProofError:
+            pass
+        else:
+            raise AssertionError("drifted public source license was accepted")
+        license_raw = original_license
         original_panel_receipt = panel_receipt_raw
         panel_receipt_raw = b"{}"
         try:

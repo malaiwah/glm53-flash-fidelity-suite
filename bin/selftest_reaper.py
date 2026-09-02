@@ -1277,20 +1277,21 @@ def reaper_cases():
         drill = drill_store.record_create_success(
             drill, {"id": "pod-drill", "name": drill_name})
         drill_provider = StatefulProvider([
-            {"id": "pod-drill", "name": drill_name, "status": "EXITED"}])
-        deferred = reap_once(
+            {"id": "pod-drill", "name": drill_name, "status": "RUNNING"}])
+        before_deadline = reap_once(
             drill_store, {"runpod": drill_provider},
-            now=observation - 1)
-        check("provider deadline drill observes listed pod through bounded lag",
+            now=termination - 1)
+        check("provider deadline drill preserves pod before reap deadline",
               drill_provider.destroyed == []
               and drill_store.read(drill)["state"] == ACTIVE
-              and any(action["action"]
-                      == "provider-deadline-observation-deferred"
-                      for action in deferred.actions))
+              and not before_deadline.actions)
         expired = reap_once(
-            drill_store, {"runpod": drill_provider}, now=observation)
-        check("provider deadline drill destroys a pod remaining at exact bound",
+            drill_store, {"runpod": drill_provider}, now=termination)
+        check("provider deadline drill independently destroys at reap deadline",
               drill_provider.destroyed == ["pod-drill"]
+              and any(action["action"] == "destroy-requested"
+                      and action["provider_id"] == "pod-drill"
+                      for action in expired.actions)
               and not expired.unresolved)
 
         bad_request = dict(drill_request)

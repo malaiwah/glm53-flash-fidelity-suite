@@ -46,8 +46,10 @@ Deletion is complete only when a fresh full inventory proves every exact id
 absent and billing reconciliation binds those same ids.
 
 The independent user-systemd reaper uses the same owner-only API-key file,
-account-bound state directory and v2 lease directory as the controller. The
-provider `terminateAfter` setting is a separate backstop, not a substitute.
+account-bound state directory and v2 lease directory as the controller. It
+enforces the lease's absolute reap deadline itself. RunPod `terminateAfter` is
+still sent at the same timestamp, but is an untrusted provider hint: the real
+control plane has been observed leaving a pod live after that value.
 
 ## Portability does not imply comparability
 
@@ -57,9 +59,10 @@ schedule and code closure remain bound in the receipt and comparability key.
 Moving the same target to another hardware or engine profile does not make its
 number comparable by assertion.
 
-The first admitted RunPod quant is the exact authored K6 target/profile. The
-Fruit root route is separately authored. A K6 seal cannot authorize K8, another
-quant, another revision or a filename-near checkpoint.
+The first admitted RunPod quant is the exact authored K6 target/profile. Root
+captures are separately authored per exact checkpoint, panel, allowlist,
+hardware and license identity. Evidence for one target cannot authorize K8,
+another quant, another root revision or a filename-near checkpoint.
 
 ## Admitting another backend
 
@@ -67,10 +70,10 @@ Adding an adapter is insufficient. A new paid backend needs:
 
 1. full inventory and exact-absence semantics for every chargeable resource;
 2. one-create response-loss and ownership tests;
-3. a provider-enforced lifetime plus an independent account-wide reaper;
+3. an independent account-wide reaper that enforces the absolute lease deadline;
 4. fresh price, balance, campaign-ledger and billing reconciliation;
 5. authenticated host identity and credential-file transport;
-6. controller-loss and provider-deadline drills on the real control plane;
+6. controller-loss and autonomous-reaper drills on the real control plane;
 7. a bitwise/content-digest comparison against an already sealed target under
    the exact same scientific profile.
 

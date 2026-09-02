@@ -426,6 +426,47 @@ def rung_job_document():
                   "path": "inputs/unexpected-tensors.json",
                   "artifact_sha256": fixture["allow_sha256"],
                   "canonical_sorted_names_sha256": fixture["names_sha256"]})
+        check("C3d2 local roots bind their explicit license contract",
+              root["capture"]["dataset_license"] == "mit"
+              and root["capture"]["weights_license"] is None
+              and root["target"].get("weights_license") is None)
+        incomplete_license = json.loads(json.dumps(root))
+        incomplete_license["capture"]["dataset_license"] = "other"
+        check("C3d3 non-MIT root without exact license identity refuses",
+              _refuses_job(incomplete_license, root_fs))
+        exact_license = {
+            "source_path": "LICENSE",
+            "dataset_path": "LICENSE",
+            "bytes": 4263,
+            "sha256":
+                "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c",
+        }
+        licensed_root = json.loads(json.dumps(root))
+        licensed_root["capture"]["dataset_license"] = "other"
+        licensed_root["capture"]["weights_license"] = exact_license
+        licensed_root["target"]["weights_license"] = exact_license
+        licensed_root["target"]["download_manifest"].append({
+            "path": "LICENSE", "bytes": exact_license["bytes"]})
+        licensed_root["target"]["download_manifest"].sort(
+            key=lambda row: row["path"])
+        licensed_root["target"]["download_bytes_total"] = sum(
+            row["bytes"]
+            for row in licensed_root["target"]["download_manifest"])
+        licensed_manifest_raw = json.dumps(
+            licensed_root["target"]["download_manifest"],
+            sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False).encode("utf-8")
+        licensed_root["target"]["download_manifest_sha256"] = hashlib.sha256(
+            licensed_manifest_raw).hexdigest()
+        try:
+            CE.validate_job_document(
+                CE.finalize_job(licensed_root), root_fs)
+        except (CE.Refusal, TypeError, ValueError):
+            licensed_root_accepted = False
+        else:
+            licensed_root_accepted = True
+        check("C3d4 exact non-MIT root license identity is accepted",
+              licensed_root_accepted)
         check("C3e broad unexpected-tensor acceptance is absent",
               "allow_unexpected_tensors" not in root["capture"])
         check("C3f root fixes the two-process qualification profile",

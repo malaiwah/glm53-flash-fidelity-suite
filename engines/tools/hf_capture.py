@@ -53,6 +53,7 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import struct
 import sys
 import time
@@ -661,6 +662,56 @@ def load_unexpected_tensor_allowlist(
         "canonical_sorted_names_sha256": names_digest,
         "expected_count": len(expected),
         "expected_keys": expected,
+    }
+
+
+def load_weights_license(
+        path: str, expected_sha256: str, expected_bytes: int) -> Tuple[bytes, Dict[str, Any]]:
+    """Read one small regular license file through an exact byte identity."""
+    if (not isinstance(expected_sha256, str)
+            or len(expected_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in expected_sha256)):
+        raise fail("--weights-license-sha256 must be lowercase 64-hex")
+    if (isinstance(expected_bytes, bool)
+            or not isinstance(expected_bytes, int)
+            or not 0 < expected_bytes <= 1024 * 1024):
+        raise fail("--weights-license-bytes must be in 1..1048576")
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise fail("--weights-license-file is not a regular file")
+        if info.st_size != expected_bytes:
+            raise fail(
+                "--weights-license-file byte count mismatch: expected %d, observed %d"
+                % (expected_bytes, info.st_size))
+        with os.fdopen(fd, "rb") as handle:
+            fd = None
+            raw = handle.read(expected_bytes + 1)
+    except SystemExit:
+        raise
+    except OSError as exc:
+        raise fail("cannot read --weights-license-file %s: %s" % (path, exc))
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if len(raw) != expected_bytes:
+        raise fail("--weights-license-file changed while it was read")
+    observed = hashlib.sha256(raw).hexdigest()
+    if observed != expected_sha256:
+        raise fail(
+            "--weights-license-file SHA-256 mismatch: expected %s, observed %s"
+            % (expected_sha256, observed))
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise fail("--weights-license-file is not UTF-8 text: %s" % exc)
+    return raw, {
+        "source_file": os.path.basename(path),
+        "dataset_path": "LICENSE",
+        "bytes": len(raw),
+        "sha256": observed,
     }
 
 
@@ -1312,6 +1363,9 @@ def run_capture(args: argparse.Namespace) -> int:
     handle = head.register_forward_pre_hook(pre_hook)
 
     writer = dsmanifest.DatasetWriter(args.out)
+    if args.weights_license_payload is not None:
+        writer.add_file("LICENSE", args.weights_license_payload)
+        log(stage="weights_license", **args.weights_license_binding)
     panel_records: List[Dict[str, Any]] = []
     capture_records: List[Dict[str, Any]] = []
     context_length = None
@@ -1651,7 +1705,7 @@ def render_card(args, manifest, body: str) -> str:
     body = preview_banner(manifest) + body
 
     front = {
-        "license": "mit",
+        "license": args.dataset_license,
         "tags": ["fidelity", "kl-divergence", "fidelity-provenance",
                  "fidelity-dataset", "fidelity-%s" % args.role],
         "x_fidelity": cardmeta.build_dataset_x_fidelity(
@@ -1687,11 +1741,22 @@ def default_card_body(args, manifest, scope) -> str:
     rows = capture["scored_rows_total"]
     hidden_bytes = capture["total_size_bytes"]
     logit_bytes = rows * capture["vocab_size"] * 4
+    license_section = []
+    if args.weights_license_binding is not None:
+        license_section = [
+            "## License",
+            "",
+            "This dataset redistributes the captured model's native output-head "
+            "weights. The source license and required notice are reproduced "
+            "byte-for-byte in [`LICENSE`](LICENSE).",
+            "",
+        ]
     lines = [
         "# %s" % args.dataset_name,
         "",
         "A **%s** fidelity dataset in **hidden form**, produced by "
-        "`engines/tools/hf_capture.py` from `%s`." % (args.role, args.weights_repository or args.model),
+        "`engines/tools/hf_capture.py` from `%s`." % (
+            args.role, args.weights_repository or args.model),
         "",
         "## The cut",
         "",
@@ -1716,6 +1781,7 @@ def default_card_body(args, manifest, scope) -> str:
         "",
         _probe_card_line(manifest),
         "",
+    ] + license_section + [
         "## How to check it",
         "",
         "```",
@@ -1871,6 +1937,7 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                       # runtime receipt. A count or a boolean is not evidence.
                       "unexpected_tensor_allowlist":
                           (load_report or {}).get("unexpected_tensor_allowlist"),
+                      "weights_license": args.weights_license_binding,
                       "resolved_panel_binding":
                           getattr(args, "panel_binding_evidence", None),
                       "parallel_plan_dropped": bool(getattr(args, "drop_parallel_plan", False)),
@@ -1966,7 +2033,7 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                  "structural_status": "sealed", "qualification": None,
                  "author": {"name": args.author, "role": "capture-author", "handle": None,
                             "url": None, "is_registry_maintainer": False},
-                 "license": "mit", "repository": args.repository, "revision": None,
+                 "license": args.dataset_license,
                  "base_capture": _base_capture(args.base_capture)},
         weights={"repository": args.weights_repository or args.model,
                  "revision": args.model_revision, "model_revision": args.model_revision,
@@ -2182,6 +2249,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="a label for THIS process, recorded in every tensor's metadata")
     parser.add_argument("--author", default="malaiwah")
     parser.add_argument("--repository", default=None)
+    parser.add_argument("--dataset-license", choices=["mit", "other"], default="mit")
+    parser.add_argument(
+        "--weights-license-file", default=None,
+        help="source-model license text copied to LICENSE when dataset-license=other")
+    parser.add_argument("--weights-license-sha256", default=None)
+    parser.add_argument("--weights-license-bytes", type=int, default=None)
     parser.add_argument("--base-capture", default=None)
     parser.add_argument("--weights-repository", default=None)
     parser.add_argument("--artifact-ref", default=None,
@@ -2274,6 +2347,31 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    license_args = (
+        args.weights_license_file,
+        args.weights_license_sha256,
+        args.weights_license_bytes)
+    if args.dataset_license == "other":
+        if not all(value is not None for value in license_args):
+            print(
+                "hf_capture: REFUSED: --dataset-license other requires "
+                "--weights-license-file, --weights-license-sha256, and "
+                "--weights-license-bytes.", file=sys.stderr)
+            return 3
+    elif any(value is not None for value in license_args):
+        print(
+            "hf_capture: REFUSED: copied source-license bytes require "
+            "--dataset-license other.", file=sys.stderr)
+        return 3
+    try:
+        if args.dataset_license == "other":
+            (args.weights_license_payload,
+             args.weights_license_binding) = load_weights_license(*license_args)
+        else:
+            args.weights_license_payload = None
+            args.weights_license_binding = None
+    except SystemExit as exc:
+        return int(exc.code or 1)
     if args.allow_unexpected_tensors:
         print("hf_capture: REFUSED: --allow-unexpected-tensors is obsolete and can never "
               "authorize a capture. Use --unexpected-tensors-allowlist with both exact "

@@ -1,0 +1,454 @@
+{
+  "corpus": {
+    "documents_considered": 33,
+    "documents_selected": 25,
+    "path_prefix": "corpus/text/",
+    "repository": "malaiwah/qwen38-27b-fidelity-suite-v5",
+    "revision": "7797fcce3ffed62b99871348887f4626dc9b2b3b"
+  },
+  "created_utc": "2026-09-01T23:11:18Z",
+  "documents": [
+    {
+      "bytes": 19091,
+      "document": "cpython5-v3.13.1-modules-getaddrinfo-c.txt",
+      "document_sha256": "979e6ba81fa7ba2f2e8f502fd457b13cde3a221664592bdf27be683b5f8abaff",
+      "selected": true,
+      "stratum": "code",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 5069,
+      "window_id": "final-0000"
+    },
+    {
+      "bytes": 6437,
+      "document": "cpython5-v3.13.1-modules-getnameinfo-c.txt",
+      "document_sha256": "14f43ea45a5ada9f8c2c84e1b04b27da134df1bcec441c1cb4e59fcf9840a392",
+      "reason": "fewer than 4096 tokens",
+      "selected": false,
+      "stratum": "code",
+      "tokens_total": 1736
+    },
+    {
+      "bytes": 27303,
+      "document": "cpython5-v3.13.1-modules-getpath-c.txt",
+      "document_sha256": "9d4283b140472ae7e0f6692e6f942d8ec756e5fbcbf1f0965eb7d81bb1a38846",
+      "selected": true,
+      "stratum": "code",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 7398,
+      "window_id": "final-0001"
+    },
+    {
+      "bytes": 9861,
+      "document": "cpython5-v3.13.1-modules-grpmodule-c.txt",
+      "document_sha256": "6fb5c8ca5881110d2a568069c23c5db3dcf32453fb49ce5ed598017e1cf36a60",
+      "reason": "fewer than 4096 tokens",
+      "selected": false,
+      "stratum": "code",
+      "tokens_total": 2707
+    },
+    {
+      "bytes": 136095,
+      "document": "cpython5-v3.13.1-modules-itertoolsmodule-c.txt",
+      "document_sha256": "d4bb82016b718196d991597abe27240260548442712ed5638e6c140642ae758d",
+      "selected": true,
+      "stratum": "code",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 36172,
+      "window_id": "final-0002"
+    },
+    {
+      "bytes": 21526,
+      "document": "cpython5-v3.13.1-modules-main-c.txt",
+      "document_sha256": "efb9622fe4d48758ac2ab1a39703e2ebf70ec1dda1aa738176349d6ec50eb78f",
+      "selected": true,
+      "stratum": "code",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 5556,
+      "window_id": "final-0003"
+    },
+    {
+      "bytes": 134027,
+      "document": "cpython5-v3.13.1-modules-mathmodule-c.txt",
+      "document_sha256": "b02ad9005a13405927d3129ff511e3041a241e0ea4bb419f0bdd0c11ecd3d8d4",
+      "selected": true,
+      "stratum": "code",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 40493,
+      "window_id": "final-0004"
+    },
+    {
+      "bytes": 12656,
+      "document": "wiki5-en-1582.txt",
+      "document_sha256": "3bdb91d646f666b0666fd88635c0c5e6406b75a529117be9d9762de00212ddd4",
+      "reason": "fewer than 4096 tokens",
+      "selected": false,
+      "stratum": "encyclopedic",
+      "tokens_total": 3460
+    },
+    {
+      "bytes": 21165,
+      "document": "wiki5-en-1997-united-kingdom-general-election.txt",
+      "document_sha256": "05c83652e555ba013b304dff0c6b4a2629a2935158a055a16fef9468d6c51bf9",
+      "selected": true,
+      "stratum": "encyclopedic",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 4272,
+      "window_id": "final-0005"
+    },
+    {
+      "bytes": 63340,
+      "document": "wiki5-en-2008-united-states-presidential-election.txt",
+      "document_sha256": "040f9b6bc13784f00d828f22cc0943b4aaa8c347e645f30dbe5b4e38095a32fd",
+      "selected": true,
+      "stratum": "encyclopedic",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 12996,
+      "window_id": "final-0006"
+    },
+    {
+      "bytes": 34871,
+      "document": "wiki5-en-2012-united-states-presidential-election.txt",
+      "document_sha256": "87ad2fb4ab87d0e68e27c1523ee87293f24bf795d450ec5986856623781a8008",
+      "selected": true,
+      "stratum": "encyclopedic",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 7241,
+      "window_id": "final-0007"
+    },
+    {
+      "bytes": 92459,
+      "document": "wiki5-en-2016-united-states-presidential-election.txt",
+      "document_sha256": "b389b14763256692dde96973a48a25201d5220f160b82c222563aad4ab70515a",
+      "selected": true,
+      "stratum": "encyclopedic",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 18837,
+      "window_id": "final-0008"
+    },
+    {
+      "bytes": 66913,
+      "document": "wiki5-en-2019-united-kingdom-general-election.txt",
+      "document_sha256": "c0a9c677f09ce403dfde306c75fb62b86351f34e8168de8102673b2e57239951",
+      "selected": true,
+      "stratum": "encyclopedic",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 13438,
+      "window_id": "final-0009"
+    },
+    {
+      "bytes": 404518,
+      "document": "pg100.txt",
+      "document_sha256": "aea60c52db6edd47d57466ed780f4e91b7fe399a3cb9439879866ecdc445000c",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 106444,
+      "window_id": "final-0010"
+    },
+    {
+      "bytes": 399985,
+      "document": "pg10148.txt",
+      "document_sha256": "a0bcd8895139fb6d5f38bd197be514f4c30482a0a3c0958bb6baaab42f7b5d80",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 102928,
+      "window_id": "final-0011"
+    },
+    {
+      "bytes": 151025,
+      "document": "pg11.txt",
+      "document_sha256": "a4c81ef23eb99f8b14be2474be0410b708cc99293ce6d88cf6799335926639b9",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 36899,
+      "window_id": "final-0012"
+    },
+    {
+      "bytes": 414302,
+      "document": "pg1259.txt",
+      "document_sha256": "04c592e75517e70fe6695b38cf5156645a32b390bf3231e81080b1b75ada2fce",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 102094,
+      "window_id": "final-0013"
+    },
+    {
+      "bytes": 136178,
+      "document": "pg14244.txt",
+      "document_sha256": "000ef48120ef50ed7f3eff73fb99d603bac09ba22878cffa89ce763338d2b386",
+      "selected": true,
+      "stratum": "literary",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 34246,
+      "window_id": "final-0014"
+    },
+    {
+      "bytes": 17522,
+      "document": "wiki5-ar-h00d3f925f9f6.txt",
+      "document_sha256": "54575c8471fb42af9c9df65e99b7e6148bf737e0d4d5c95fd4f8455e8efc0a41",
+      "reason": "fewer than 4096 tokens",
+      "selected": false,
+      "stratum": "multilingual",
+      "tokens_total": 4036
+    },
+    {
+      "bytes": 43878,
+      "document": "wiki5-ar-h0781cb1f12b3.txt",
+      "document_sha256": "22f01bd9acc83f328f4e0e13b9364703ad31f7d18f9ceb69539889f492819b4b",
+      "selected": true,
+      "stratum": "multilingual",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 11201,
+      "window_id": "final-0015"
+    },
+    {
+      "bytes": 92600,
+      "document": "wiki5-ar-h25c74308ce25.txt",
+      "document_sha256": "e7f97ae40a323fa828bd48efca238f7ce47aac7d9bdaeedd20f7453e9a1a1c27",
+      "selected": true,
+      "stratum": "multilingual",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 20694,
+      "window_id": "final-0016"
+    },
+    {
+      "bytes": 13958,
+      "document": "wiki5-ar-h44d850ef5617.txt",
+      "document_sha256": "76384413e9caf77dd6ce2482bf0c1982ad2003002f5af902c605a406954822d7",
+      "reason": "fewer than 4096 tokens",
+      "selected": false,
+      "stratum": "multilingual",
+      "tokens_total": 3181
+    },
+    {
+      "bytes": 17507,
+      "document": "wiki5-ar-h4592663cab45.txt",
+      "document_sha256": "11026a12e88a0f4ed247af93d23607d32049d704041c61bb09b543e2daff81db",
+      "reason": "fewer than 4096 tokens",
+      "selected": false,
+      "stratum": "multilingual",
+      "tokens_total": 3955
+    },
+    {
+      "bytes": 18098,
+      "document": "wiki5-ar-h5b31dbe776f6.txt",
+      "document_sha256": "ebac6d56f3ec089d7718ee15f7c287e4bb21b155d484791f0afe1f51c841999c",
+      "selected": true,
+      "stratum": "multilingual",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 4324,
+      "window_id": "final-0017"
+    },
+    {
+      "bytes": 9109,
+      "document": "wiki5-ar-h6105d3789ab8.txt",
+      "document_sha256": "2c1f441335901e4c1976a5bcbb00073e5f5e8e5277fd77a43a49e688b9e6237c",
+      "reason": "fewer than 4096 tokens",
+      "selected": false,
+      "stratum": "multilingual",
+      "tokens_total": 2295
+    },
+    {
+      "bytes": 64041,
+      "document": "wiki5-ar-h667583703021.txt",
+      "document_sha256": "1f6fb0b7f9883e8f8e0a8fe46e8bb687b85b98d21b2d35e9c5415929cba73966",
+      "selected": true,
+      "stratum": "multilingual",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 14354,
+      "window_id": "final-0018"
+    },
+    {
+      "bytes": 10252,
+      "document": "wiki5-ar-h7b88bcee0625.txt",
+      "document_sha256": "e088b06236bb852e3684b03b19c085b1a132a75e91ede9ad5e1c39c17eb15ce5",
+      "reason": "fewer than 4096 tokens",
+      "selected": false,
+      "stratum": "multilingual",
+      "tokens_total": 2418
+    },
+    {
+      "bytes": 140257,
+      "document": "wiki5-ar-h862d802c9e0e.txt",
+      "document_sha256": "8aa21bc1f494c1ea33fea4202ceaf21e64e37fe121c1738e984757aad2df8341",
+      "selected": true,
+      "stratum": "multilingual",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 32453,
+      "window_id": "final-0019"
+    },
+    {
+      "bytes": 308016,
+      "document": "arxiv5-cs-AI-0000.txt",
+      "document_sha256": "ad29c470c08f5cb0601b9c45c61d229e84cbe798203138845ecd1fb3675be482",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 57673,
+      "window_id": "final-0020"
+    },
+    {
+      "bytes": 303134,
+      "document": "arxiv5-cs-AI-0200.txt",
+      "document_sha256": "9d5564bfc96a35baacfaf8cb0b4cb894648e4408488d02af36a59cb4212bd0b3",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 56304,
+      "window_id": "final-0021"
+    },
+    {
+      "bytes": 306851,
+      "document": "arxiv5-cs-AR-0000.txt",
+      "document_sha256": "11e0b37f99b9080c14a4680fcc820451b93cce25d65257c0b36a893dd13dc019",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 59401,
+      "window_id": "final-0022"
+    },
+    {
+      "bytes": 301131,
+      "document": "arxiv5-cs-AR-0200.txt",
+      "document_sha256": "99477b03e197c717aad43c258660867f7324b573fc2cd155f7fbe634973d7e12",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 58477,
+      "window_id": "final-0023"
+    },
+    {
+      "bytes": 260466,
+      "document": "arxiv5-cs-CC-0000.txt",
+      "document_sha256": "62ae90be0f7b9f299c48e2fcb0a30f8c59e4f0a009e0961fdbeb13695896a54e",
+      "selected": true,
+      "stratum": "scientific",
+      "token_slice": [
+        2048,
+        4096
+      ],
+      "tokens_total": 58429,
+      "window_id": "final-0024"
+    }
+  ],
+  "format_version": 1,
+  "panel_id": "panel--glm53.malaiwah.corpus5x5-v1",
+  "panel_name": "GLM-5.3 corpus 5-stratum x 5-window panel",
+  "parameters": {
+    "context_length": 2048,
+    "prediction_positions_per_window": 2047,
+    "scored_positions_total": 51175,
+    "skip_tokens": 2048,
+    "strata": [
+      "code",
+      "encyclopedic",
+      "literary",
+      "multilingual",
+      "scientific"
+    ],
+    "windows_per_stratum": 5,
+    "windows_total": 25
+  },
+  "receipt_sha256": "9c3bc4f59e8825ac78b366ca0e2988a48ecdbcaf26fdaeaedd3251edb6f9a828",
+  "schema": "malaiwah.token-panel-build-receipt.v1",
+  "selection_rule": "strata sorted ascending; within each stratum documents sorted by file name ascending; each document tokenized whole with add_special_tokens=False; a document is eligible only if it yields at least skip_tokens+context_length tokens; its window is tokens[skip_tokens : skip_tokens+context_length]; the first windows_per_stratum eligible documents are taken; windows are numbered from zero in (stratum, document) order. No RNG is used anywhere.",
+  "separation": {
+    "checked": false,
+    "method": "declaration only; this tool runs no lexical or n-gram scan",
+    "note": "separation asserted at source level only; no contamination scan; GLM-5.3 pretraining corpus is undisclosed"
+  },
+  "suite_token_hash_sha256": "f09ee395f635225a077695ed193d61f7d1e70650cebe1b68f82b16f59d399f86",
+  "tokenizer": {
+    "add_special_tokens": false,
+    "chat_template_applied": false,
+    "files_sha256": {
+      "LICENSE": "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c",
+      "chat_template.jinja": "69bb3ab52067898e2466b855407636de559568947f367945842aabcb7fcc1705",
+      "config.json": "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca",
+      "generation_config.json": "ac76b43d8683d3b930126870fc8be73d8679308fe752fa1f381096d8354f6a55",
+      "tokenizer.json": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+      "tokenizer_config.json": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"
+    },
+    "id": "zai-org/GLM-5.3-BF16",
+    "repository": "zai-org/GLM-5.3-BF16",
+    "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+    "vocab_size": 154820
+  },
+  "tool": "engines/tools/build_token_panel.py",
+  "tool_sha256": "30eb4d4d7e465aaa8d9ef2d947a0ac7fd42ec45388f20c8b6db242c88dc2d851"
+}

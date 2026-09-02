@@ -36,6 +36,8 @@ dataset at all.
     A25 the FP8 quantizer's parallel-plan crash is identified by its own frame
     A26 neutralize_parallel_plan empties tp+ep plans, sub-configs included
     A27 load_model refuses that crash by name and points at --drop-parallel-plan
+    A28 a non-MIT root copies exact source-license bytes and binds them
+    A29 source-license identity drift is refused before a dataset is sealed
 
 torch and transformers are optional: without them the file prints SKIP and
 exits 0, so `bin/selftest_all.sh` on the numpy-only floor is unaffected.
@@ -285,6 +287,73 @@ def _body(work):
           bind_refused("self-blank", "d" * 64, "0" * 64))
     check("A0f unknown receipt seal convention refuses",
           bind_refused("invented", "d" * 64, raw_receipt_sha256))
+
+    # -- A28/A29 -------------------------------------------------------------
+    license_source = os.path.join(work, "source-license", "LICENSE")
+    os.makedirs(os.path.dirname(license_source), exist_ok=True)
+    license_payload = b"fixture native-weights license and notice\n"
+    with open(license_source, "wb") as handle:
+        handle.write(license_payload)
+    license_sha256 = hashlib.sha256(license_payload).hexdigest()
+    licensed = os.path.join(work, "ds-licensed")
+    licensed_capture = capture(
+        model, panel, licensed, role="root",
+        dataset_id="fidelity--selftest.hf.licensed-root",
+        name="selftest licensed root",
+        extra=[
+            "--dataset-license", "other",
+            "--weights-license-file", license_source,
+            "--weights-license-sha256", license_sha256,
+            "--weights-license-bytes", str(len(license_payload)),
+        ])
+    licensed_manifest = None
+    licensed_runtime = None
+    licensed_manifest_path = os.path.join(licensed, F.MANIFEST_NAME)
+    if os.path.isfile(licensed_manifest_path):
+        licensed_manifest = F.read_json(licensed_manifest_path)
+        licensed_runtime = F.read_json(os.path.join(
+            licensed, licensed_manifest["runtime"]["file"]))
+    licensed_verify = run([
+        os.path.join(REPO, "bin", "fidelity_dataset.py"),
+        "verify", licensed])
+    observed_license = (
+        ((licensed_runtime or {}).get("capture_tool") or {})
+        .get("weights_license"))
+    check("A28 a non-MIT root copies and binds exact source-license bytes",
+          licensed_capture.returncode == 0
+          and licensed_verify.returncode == 0
+          and open(os.path.join(licensed, "LICENSE"), "rb").read()
+              == license_payload
+          and (licensed_manifest or {}).get("dataset", {}).get("license")
+              == "other"
+          and observed_license == {
+              "source_file": "LICENSE",
+              "dataset_path": "LICENSE",
+              "bytes": len(license_payload),
+              "sha256": license_sha256,
+          },
+          "capture_rc=%s verify_rc=%s binding=%r stderr=%s"
+          % (licensed_capture.returncode, licensed_verify.returncode,
+             observed_license, licensed_capture.stderr[-300:]))
+    drifted = os.path.join(work, "ds-license-drifted")
+    drifted_capture = capture(
+        model, panel, drifted, role="root",
+        dataset_id="fidelity--selftest.hf.licensed-root",
+        name="selftest drifted license",
+        extra=[
+            "--dataset-license", "other",
+            "--weights-license-file", license_source,
+            "--weights-license-sha256", "0" * 64,
+            "--weights-license-bytes", str(len(license_payload)),
+        ])
+    check("A29 source-license identity drift refuses before dataset sealing",
+          drifted_capture.returncode != 0
+          and not os.path.exists(os.path.join(drifted, F.MANIFEST_NAME))
+          and "--weights-license-file SHA-256 mismatch" in (
+              drifted_capture.stderr + drifted_capture.stdout),
+          "rc=%s output=%s"
+          % (drifted_capture.returncode,
+             (drifted_capture.stderr + drifted_capture.stdout)[-300:]))
 
     # -- A1 ------------------------------------------------------------------
     a = os.path.join(work, "ds-a")

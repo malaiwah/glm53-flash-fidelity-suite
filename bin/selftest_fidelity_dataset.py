@@ -1440,6 +1440,7 @@ def section_root_qualification(tmp):
             "download_manifest": q_download_manifest,
             "download_bytes_total": 19,
             "download_manifest_sha256": q_download_sha,
+            "weights_license": None,
         },
         "panel": {
             "binding_file_sha256": "2" * 64,
@@ -1453,6 +1454,8 @@ def section_root_qualification(tmp):
             "author": "selftest",
             "dataset_repository": destination,
             "publish_root_to": destination,
+            "dataset_license": "mit",
+            "weights_license": None,
             "form": "hidden",
             "schedule": "layer-outer",
             "device": "cuda",
@@ -1537,6 +1540,32 @@ def section_root_qualification(tmp):
         forged_refused = False
     check("Q1b a coherently resealed alternate job cannot publish the "
           "unchanged capture", forged_refused)
+    source_license = {
+        "source_path": "LICENSE", "dataset_path": "LICENSE",
+        "bytes": 17, "sha256": "3" * 64,
+    }
+    licensed_job = json.loads(json.dumps(job))
+    licensed_job["capture"]["dataset_license"] = "other"
+    licensed_job["capture"]["weights_license"] = source_license
+    licensed_job["target"]["weights_license"] = source_license
+    licensed_job["target"]["download_manifest"].append({
+        "path": "LICENSE", "bytes": source_license["bytes"]})
+    licensed_job["target"]["download_manifest"].sort(
+        key=lambda row: row["path"])
+    licensed_job["target"]["download_bytes_total"] = sum(
+        row["bytes"] for row in licensed_job["target"]["download_manifest"])
+    licensed_job["target"]["download_manifest_sha256"] = common.sha256_hex(
+        json.dumps(
+            licensed_job["target"]["download_manifest"],
+            sort_keys=True, separators=(",", ":")))
+    licensed_job = jobcontract.finalize_job(licensed_job)
+    licensed_job_path = os.path.join(tmp, "q-licensed-job.json")
+    common.write_json(licensed_job_path, licensed_job)
+    check("Q1c MIT captures cannot satisfy a source-license-bound root job",
+          qualify(
+              job=licensed_job_path,
+              out=os.path.join(tmp, "q-license-mismatch.json"))
+          == CLI.REFUSED)
     check("Q2  one path supplied twice refuses",
           qualify(repeat=first) == CLI.REFUSED)
     check("Q3  a missing second independent verification receipt refuses",

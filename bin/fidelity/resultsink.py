@@ -185,15 +185,16 @@ ROOT_PUBLICATION_SCHEMA = "fidelity.publish-root-receipt.v2"
 
 ROOT_CAPTURE_IDENTITY_FIELDS = frozenset((
     "process_label", "dataset_id", "dataset_name", "dataset_author",
-    "dataset_repository", "dataset_sha256",
+    "dataset_repository", "dataset_license", "dataset_sha256",
     "dataset_manifest_file_sha256", "capture_manifest",
     "capture_manifest_sha256", "capture_content_digest", "capture_form",
     "capture_dtype", "runtime_manifest", "runtime_manifest_sha256",
     "runtime_lane", "runtime_device", "runtime_engine", "runtime_container",
     "capture_tool_file", "capture_schedule", "panel",
-    "unexpected_tensor_allowlist", "stack_fingerprint_sha256",
-    "lane_identity_sha256", "weights_repository", "weights_revision",
-    "determinism_run_count",
+    "unexpected_tensor_allowlist", "weights_license",
+    "weights_license_file_sha256", "weights_license_file_bytes",
+    "stack_fingerprint_sha256", "lane_identity_sha256",
+    "weights_repository", "weights_revision", "determinism_run_count",
 ))
 MAX_IN_MEMORY_ARCHIVE_BYTES = 256 * 1024 * 1024
 
@@ -1056,7 +1057,7 @@ def _validate_dataset_tree(prefix, identity, bodies, digests=None,
                 "runtime_device", "runtime_engine", "runtime_container",
                 "capture_tool_file", "capture_schedule", "panel",
                 "unexpected_tensor_allowlist", "weights_repository",
-                "weights_revision"))):
+                "weights_revision", "dataset_license"))):
         raise ArchiveError(
             "qualification %s capture identity is incomplete" % prefix)
     if not isinstance(contract, dict):
@@ -1112,6 +1113,38 @@ def _validate_dataset_tree(prefix, identity, bodies, digests=None,
                 != expected_binding_evidence):
         raise ArchiveError(
             "%s capture identity differs from the exact root job" % prefix)
+    expected_license = contract.get("weights_license")
+    expected_runtime_license = (
+        None if expected_license is None else {
+            "source_file": "LICENSE",
+            "dataset_path": expected_license.get("dataset_path"),
+            "bytes": expected_license.get("bytes"),
+            "sha256": expected_license.get("sha256"),
+        })
+    if (identity.get("dataset_license") != contract.get("dataset_license")
+            or identity.get("weights_license") != expected_runtime_license):
+        raise ArchiveError(
+            "%s capture license identity differs from the exact root job"
+            % prefix)
+    license_body = bodies.get("%s/LICENSE" % prefix)
+    if expected_license is None:
+        if (identity.get("weights_license_file_sha256") is not None
+                or identity.get("weights_license_file_bytes") is not None
+                or license_body is not None):
+            raise ArchiveError(
+                "%s carries source-license bytes absent from the root job"
+                % prefix)
+    elif (not isinstance(expected_license, dict)
+          or not isinstance(license_body, bytes)
+          or len(license_body) != expected_license.get("bytes")
+          or hashlib.sha256(license_body).hexdigest()
+              != expected_license.get("sha256")
+          or identity.get("weights_license_file_bytes")
+              != expected_license.get("bytes")
+          or identity.get("weights_license_file_sha256")
+              != expected_license.get("sha256")):
+        raise ArchiveError(
+            "%s source-license bytes differ from the exact root job" % prefix)
     expected_keys = (
         observed_allowlist.get("expected_keys")
         if isinstance(observed_allowlist, dict) else None)
@@ -1177,6 +1210,8 @@ def _validate_dataset_tree(prefix, identity, bodies, digests=None,
                 != contract.get("author")
             or manifest_dataset.get("repository")
                 != contract.get("dataset_repository")
+            or manifest_dataset.get("license")
+                != contract.get("dataset_license")
             or manifest_dataset.get("role") != "root"
             or manifest_weights.get("repository") != target.get("repo_id")
             or manifest_weights.get("revision") != target.get("revision")
@@ -1294,7 +1329,9 @@ def _validate_dataset_tree(prefix, identity, bodies, digests=None,
             or capture_tool.get("resolved_panel_binding")
                 != expected_binding_evidence
             or capture_tool.get("unexpected_tensor_allowlist")
-                != observed_allowlist):
+                != observed_allowlist
+            or capture_tool.get("weights_license")
+                != expected_runtime_license):
         raise ArchiveError(
             "%s capture/runtime inputs differ from the exact root job" % prefix)
 
@@ -2402,8 +2439,11 @@ def _verified_archive(source, expected_sha256=None, expected_bytes=None):
                 source_file = archive.extractfile(member)
                 if source_file is None:
                     raise ArchiveError("cannot read archive member %s" % name)
-                retain = (name.endswith(".json")
-                          or name.endswith("/checksums.txt"))
+                retain = (
+                    name.endswith(".json")
+                    or name.endswith("/checksums.txt")
+                    or (name in ("dataset/LICENSE", "dataset-repeat/LICENSE")
+                        and member.size <= 1024 * 1024))
                 if retain:
                     body = source_file.read()
                     actual_bytes = len(body)

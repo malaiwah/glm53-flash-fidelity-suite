@@ -279,6 +279,37 @@ def validate_job(document: dict) -> None:
                            "artifact_sha256",
                            "canonical_sorted_names_sha256"))):
             raise JobContractError("root capture contract is incomplete")
+        dataset_license = capture.get("dataset_license")
+        weights_license = capture.get("weights_license")
+        if dataset_license == "mit":
+            if weights_license is not None:
+                raise JobContractError(
+                    "MIT root capture cannot carry source-license identity")
+        elif dataset_license == "other":
+            if (not isinstance(weights_license, dict)
+                    or set(weights_license) != {
+                        "source_path", "dataset_path", "bytes", "sha256"}
+                    or weights_license.get("source_path") != "LICENSE"
+                    or weights_license.get("dataset_path") != "LICENSE"
+                    or isinstance(weights_license.get("bytes"), bool)
+                    or not isinstance(weights_license.get("bytes"), int)
+                    or not 0 < weights_license["bytes"] <= 1024 * 1024
+                    or _HEX64.fullmatch(str(
+                        weights_license.get("sha256", ""))) is None):
+                raise JobContractError(
+                    "non-MIT root capture license identity differs")
+        else:
+            raise JobContractError(
+                "root capture dataset_license must be mit or other")
+        if target.get("weights_license") != weights_license:
+            raise JobContractError(
+                "root target and capture source-license identities differ")
+        if (document.get("recipe") != "runpod-controller-loss-drill"
+                and weights_license is not None
+                and download_by_path.get(weights_license["source_path"])
+                != weights_license["bytes"]):
+            raise JobContractError(
+                "root source-license identity is absent from download manifest")
         dependencies = document["produced_by"].get("dependencies")
         if (not isinstance(dependencies, dict)
                 or dependencies.get("profile") != profile.get("profile_id")):
@@ -748,7 +779,8 @@ def verify_job(document: dict) -> str:
 
 ROOT_QUALIFICATION_CONTRACT_KEYS = frozenset({
     "dataset_id", "dataset_name", "author", "dataset_repository",
-    "publish_root_to", "weights_repository", "weights_revision", "lane",
+    "publish_root_to", "dataset_license", "weights_license",
+    "weights_repository", "weights_revision", "lane",
     "form", "schedule", "device", "dtype", "engine", "execution_kind",
     "container_image_reference", "container_image_digest", "panel_id",
     "panel_suite_token_hash_sha256", "panel_receipt_sha256",
@@ -766,6 +798,28 @@ def validate_root_qualification_contract(contract: dict) -> None:
             or set(contract) != ROOT_QUALIFICATION_CONTRACT_KEYS:
         raise JobContractError(
             "root qualification job_contract fields differ")
+    dataset_license = contract.get("dataset_license")
+    weights_license = contract.get("weights_license")
+    if dataset_license == "mit":
+        if weights_license is not None:
+            raise JobContractError(
+                "MIT root qualification cannot carry source-license identity")
+    elif dataset_license == "other":
+        if (not isinstance(weights_license, dict)
+                or set(weights_license) != {
+                    "source_path", "dataset_path", "bytes", "sha256"}
+                or weights_license.get("source_path") != "LICENSE"
+                or weights_license.get("dataset_path") != "LICENSE"
+                or isinstance(weights_license.get("bytes"), bool)
+                or not isinstance(weights_license.get("bytes"), int)
+                or not 0 < weights_license["bytes"] <= 1024 * 1024
+                or _HEX64.fullmatch(str(
+                    weights_license.get("sha256", ""))) is None):
+            raise JobContractError(
+                "non-MIT root qualification license identity differs")
+    else:
+        raise JobContractError(
+            "root qualification dataset_license must be mit or other")
     target = contract.get("target")
     profile = contract.get("profile")
     binding = contract.get("panel_resolved_binding")
@@ -920,6 +974,9 @@ def _root_qualification_contract(document: dict) -> dict:
             or not isinstance(panel_identity, dict)):
         raise JobContractError(
             "root qualification panel binding is incomplete")
+    if target.get("weights_license") != capture.get("weights_license"):
+        raise JobContractError(
+            "root target and capture source-license identities differ")
     execution_kind, image_reference, image_digest = (
         _root_execution_identity(document))
     target_identity = {
@@ -932,6 +989,8 @@ def _root_qualification_contract(document: dict) -> dict:
         "author": capture.get("author"),
         "dataset_repository": capture.get("dataset_repository"),
         "publish_root_to": capture.get("publish_root_to"),
+        "dataset_license": capture.get("dataset_license"),
+        "weights_license": capture.get("weights_license"),
         "weights_repository": target.get("repo_id"),
         "weights_revision": target.get("revision"),
         "lane": document.get("lane"),

@@ -54,7 +54,7 @@ def _sealed(schema, **fields):
 
 
 def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
-              publish=False, abandoned=False):
+              publish=False, abandoned=False, weights_license_body=None):
     root = Path(tmp) / "run"
     (root / "receipts" / "done").mkdir(parents=True)
     (root / "reports").mkdir(parents=True)
@@ -244,8 +244,29 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
             json.dumps(
                 allowlist_names, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
+        if weights_license_body is None:
+            source_license = None
+            runtime_license = None
+            dataset_license = "mit"
+        else:
+            if not isinstance(weights_license_body, bytes) or not weights_license_body:
+                raise AssertionError("weights_license_body must be nonempty bytes")
+            source_license = {
+                "source_path": "LICENSE",
+                "dataset_path": "LICENSE",
+                "bytes": len(weights_license_body),
+                "sha256": hashlib.sha256(weights_license_body).hexdigest(),
+            }
+            runtime_license = {
+                "source_file": "LICENSE",
+                "dataset_path": "LICENSE",
+                "bytes": source_license["bytes"],
+                "sha256": source_license["sha256"],
+            }
+            dataset_license = "other"
         job["target"].update({
             "surface": "native-bf16", "codec": "bf16", "bits": 16})
+        job["target"]["weights_license"] = source_license
         job["profile"] = {
             "profile_id": "root-hf-transformers-bf16",
             "lane": "root", "source": "native",
@@ -263,6 +284,8 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
             "dataset_id": "dataset--selftest",
             "dataset_name": "selftest root",
             "author": "selftest",
+            "dataset_license": dataset_license,
+            "weights_license": source_license,
             "form": "hidden", "schedule": "layer-outer",
             "engine": "hf-transformers", "dtype": "bfloat16",
             "device": "cuda",
@@ -461,6 +484,8 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                 "extra_keys": [],
                 "exact_match": True,
             }
+            if weights_license_body is not None:
+                (tree_root / "LICENSE").write_bytes(weights_license_body)
             tensor_body = b"independent-capture"
             (capture_dir / "context-0000.bin").write_bytes(tensor_body)
             content_digest = hashlib.sha256(tensor_body).hexdigest()
@@ -495,6 +520,7 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                     "schedule": "layer-outer",
                     "resolved_panel_binding": binding_evidence,
                     "unexpected_tensor_allowlist": allowlist_evidence,
+                    "weights_license": runtime_license,
                 },
             }
             runtime_body = (json.dumps(
@@ -502,10 +528,13 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                 + "\n").encode("utf-8")
             (runtime_dir / "capture-runtime.json").write_bytes(runtime_body)
             checksum_rows = []
-            for relative in (
-                    "capture/context-0000.bin", "capture/manifest.json",
-                    "runtime/capture-runtime.json",
-                    "panel/panel-receipt.json"):
+            checksum_paths = [
+                "capture/context-0000.bin", "capture/manifest.json",
+                "runtime/capture-runtime.json", "panel/panel-receipt.json",
+            ]
+            if weights_license_body is not None:
+                checksum_paths.append("LICENSE")
+            for relative in sorted(checksum_paths):
                 body = (tree_root / relative).read_bytes()
                 checksum_rows.append(
                     "%s  %s\n" % (hashlib.sha256(body).hexdigest(), relative))
@@ -525,6 +554,7 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                     "role": "root",
                     "author": {"name": job["capture"]["author"]},
                     "repository": job["capture"]["dataset_repository"],
+                    "license": dataset_license,
                 },
                 "weights": {
                     "repository": job["target"]["repo_id"],
@@ -574,6 +604,12 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                 "dataset_name": "selftest root",
                 "dataset_author": "selftest",
                 "dataset_repository": "owner/dataset",
+                "dataset_license": dataset_license,
+                "weights_license": runtime_license,
+                "weights_license_file_sha256": (
+                    source_license["sha256"] if source_license else None),
+                "weights_license_file_bytes": (
+                    source_license["bytes"] if source_license else None),
                 "dataset_sha256": dataset_doc["dataset_sha256"],
                 "dataset_manifest_file_sha256":
                     hashlib.sha256(dataset_body).hexdigest(),
@@ -1206,6 +1242,29 @@ def rung_archive():
             "dataset/capture/context-0000.bin": b"tampered-capture"}, {})
         _refused("R69 re-manifested dataset tamper still fails qualification proof",
                  lambda: RS.verify_archive(tampered_dataset))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        source_license_body = b"exact upstream license\n"
+        root = _run_root(
+            tmp, role="root", weights_license_body=source_license_body)
+        summary = RS.build_summary(
+            root, "capture", "qualified-unpublished",
+            ["qualify_root", "publish_root"], failed_stage="publish_root")
+        licensed_blob = RS.build_archive(root, summary)
+        licensed = RS.verify_archive(licensed_blob)
+        with tarfile.open(
+                fileobj=io.BytesIO(licensed_blob), mode="r:gz") as archive:
+            canonical_license = archive.extractfile("dataset/LICENSE").read()
+            repeat_license = archive.extractfile(
+                "dataset-repeat/LICENSE").read()
+        check("R91 non-MIT root archive binds both exact source-license copies",
+              licensed["manifest"]["role"] == "root"
+              and canonical_license == source_license_body
+              and repeat_license == source_license_body)
+        tampered_license = _rewrite_consistent(
+            licensed_blob, {"dataset/LICENSE": b"wrong upstream license\n"}, {})
+        _refused("R92 source-license byte drift is refused off-pod",
+                 lambda: RS.verify_archive(tampered_license))
 
     with tempfile.TemporaryDirectory() as tmp:
         root = _run_root(tmp, role="root")

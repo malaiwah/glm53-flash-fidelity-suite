@@ -3293,10 +3293,22 @@ def _resolve_authored_quant_scope(args, target, con):
     }
 
 
+_FULL_GLM53_ROOT = (
+    "root", "zai-org/GLM-5.3-BF16",
+    "304b8051cfb2b260b61ce0cbe330e02a98e73639")
+_FULL_GLM53_LICENSE = {
+    "source_path": "LICENSE",
+    "dataset_path": "LICENSE",
+    "bytes": 4263,
+    "sha256": "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c",
+}
+
+
 _SAFE_RUNPOD_TARGETS = frozenset({
     ("root", "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
      "ef68013aa6e16453cf52b5b77647f72fbe258c3c"),
     ("root", "zai-org/GLM-5.3-Flash-BF16", OFFICIAL_BF16_REVISION),
+    _FULL_GLM53_ROOT,
     ("quant", "malaiwah/GLM-5.3-Flash-TR3-6bpw",
      "9ab94105a71708a19c6d960d24b4aa6d459f5623"),
 })
@@ -3304,6 +3316,32 @@ _SAFE_RUNPOD_TARGETS = frozenset({
 
 def _safe_runpod_target_allowed(role: str, repo_id: str, revision: str) -> bool:
     return (role, repo_id, revision) in _SAFE_RUNPOD_TARGETS
+
+
+def _root_dataset_license_contract(target: RepoMeta) -> Dict[str, Any]:
+    """Bind copied native weights to the exact source-license bytes."""
+    if ("root", target.repo_id, target.revision) != _FULL_GLM53_ROOT:
+        return {"dataset_license": "mit", "weights_license": None}
+    try:
+        raw = fetch_file(
+            target.repo_id, _FULL_GLM53_LICENSE["source_path"],
+            revision=target.revision)
+    except HFError as exc:
+        raise Refusal(
+            "full GLM-5.3 source license is unavailable: %s" % exc, [])
+    observed = {
+        "source_path": _FULL_GLM53_LICENSE["source_path"],
+        "dataset_path": _FULL_GLM53_LICENSE["dataset_path"],
+        "bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    sizes = dict(target.files)
+    if (observed != _FULL_GLM53_LICENSE
+            or sizes.get(observed["source_path"]) != observed["bytes"]):
+        raise Refusal(
+            "full GLM-5.3 source-license identity differs from the authored pin",
+            [])
+    return {"dataset_license": "other", "weights_license": observed}
 
 
 def _open_existing_runpod_campaign(args, provider_account_id: str):
@@ -3466,6 +3504,9 @@ def _plan_runpod_anonymous(
 
     surface = sniff_surface(target, getattr(args, "path", None))
     identity = _model_file_identity(target)
+    license_contract = (
+        _root_dataset_license_contract(target)
+        if args.role == "root" else None)
     if surface.problems:
         raise Refusal("target surface metadata is not usable", list(surface.problems))
     if args.role == "root":
@@ -3534,6 +3575,8 @@ def _plan_runpod_anonymous(
         "download_manifest": identity["download_manifest"],
         "download_manifest_sha256": identity["download_manifest_sha256"],
     }
+    if license_contract is not None:
+        target_doc["weights_license"] = license_contract["weights_license"]
     for evidence_key in (
             "seal_verification", "nonrouted_completeness",
             "public_profile_evidence"):
@@ -3690,7 +3733,9 @@ def _plan_runpod_anonymous(
     else:
         if target.repo_id == "malaiwah/GLM-5.2-SIQ-Fruit-bf16":
             min_vcpu_count, min_memory_gb = 4, 32
-        elif target.repo_id == "zai-org/GLM-5.3-Flash-BF16":
+        elif target.repo_id in (
+                "zai-org/GLM-5.3-Flash-BF16",
+                "zai-org/GLM-5.3-BF16"):
             min_vcpu_count, min_memory_gb = 28, 300
         else:
             raise Refusal("root target lacks conservative controller capacity",
@@ -4053,6 +4098,8 @@ def _plan_runpod_anonymous(
             "device": args.capture_device,
             "publish_root_to": args.publish_root_to,
             "unexpected_tensor_allowlist": allowlist_job,
+            "dataset_license": license_contract["dataset_license"],
+            "weights_license": license_contract["weights_license"],
             "replay_device": args.replay_device,
             "replay_dtype": args.replay_dtype,
             "vocab_chunk": args.replay_vocab_chunk,
@@ -7364,7 +7411,7 @@ def _runpod_drill_contract(args):
         "profile": {
             "profile_id": "runpod-drill-secure-l4-on-demand",
             "lane": "fault-drill"},
-        "timing": {"kind": "provider-deadline", "seconds": 300},
+        "timing": {"kind": "autonomous-reaper-deadline", "seconds": 300},
         "capture": {},
         "scope": {"kind": "controller-loss-drill"},
         "environment": {
@@ -7547,8 +7594,8 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=("layer-outer", "window-outer", "window-major"))
     rt.add_argument(
         "--designated-reference", action="store_true",
-        help="legacy root mode; the first safe RunPod path refuses quantified "
-             "proxy roots and admits only its exact authored BF16 root pin")
+        help="legacy root mode; the safe RunPod path refuses quantified "
+             "proxy roots and admits only exact authored BF16 root pins")
     rt.add_argument(
         "--race", action="store_true",
         help="legacy preview/race mode; the first safe paid path refuses it "

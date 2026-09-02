@@ -37,7 +37,7 @@ The paid route requires all of these before one create POST:
 2. exact target metadata, shard census, allowlist and scientific profile;
 3. a committed fully clean checkout, including no untracked files;
 4. an account-bound healthy user-systemd reaper;
-5. a current accepted controller-loss/provider-deadline drill proof from the
+5. a current accepted controller-loss/autonomous-reaper drill proof from the
    same checkout and control-plane closure;
 6. a fresh complete RunPod pods-plus-network-volumes inventory;
 7. a fresh RunPod balance and tariff-validity observation;
@@ -59,9 +59,12 @@ retries an ambiguous response as a new science attempt. Any exact ids found
 during response-loss reconciliation are bound only for cleanup.
 
 The pod must converge as one exact secure on-demand resource with the quoted
-GPU, image, storage, CPU/RAM minima and provider `terminateAfter`. Scientific
-stages then execute only from sealed `job.json`; ambient configuration cannot
-change their paths, profile, threading, cache, panel or target.
+GPU, image, storage and CPU/RAM minima. The create request carries
+`terminateAfter`, but admission treats it only as an untrusted hint; the
+account-bound reaper independently enforces the same absolute lease deadline.
+Scientific stages then execute only from sealed `job.json`; ambient
+configuration cannot change their paths, profile, threading, cache, panel or
+target.
 
 ## Retrieval and deletion
 
@@ -108,12 +111,13 @@ official BF16 metadata and historical checkpoint-verdict bridge. The pinned K8
 release is refused because no equivalent evidence binds its measured student
 checkpoint identity to the sealed K8 surface; K6 evidence is not transferable.
 
-The root route admits only the authored Fruit BF16 pin with its exact checked-in
-unexpected-tensor allowlist. It creates two distinct fresh-process
-`run_count=1` hidden-state captures, independently verifies both, forces an
-exact self-comparison using NumPy/CPU float32 replay with vocabulary chunks,
-and emits root qualification. Remote work ends there. Publication is optional
-and controller-local after teardown proof.
+The root route admits only exact authored BF16 pins with their matching
+checked-in panel, unexpected-tensor allowlist, target identity, timing and
+license contract. Each creates two distinct fresh-process `run_count=1`
+hidden-state captures, independently verifies both, forces an exact
+self-comparison using NumPy/CPU float32 replay with vocabulary chunks, and
+emits root qualification. Remote work ends there. Publication is optional and
+controller-local after teardown proof.
 
 ## Spend-free planning versus the paid drill
 
@@ -123,9 +127,11 @@ evidence.
 
 `measure-cloud drill ... --dry-run` validates the drill plan without mutation.
 The same command with `--yes` is deliberately paid: it creates one small pod,
-kills its controller, and observes provider-deadline plus independent-reaper
-cleanup through exact absence and billing stabilization. Run it only with
-explicit spend authorization.
+kills its controller, and accepts proof only after the independent
+user-systemd reaper issues the exact-id destroy at the absolute lease deadline,
+fresh complete inventory proves absence, and billing stabilizes. The requested
+provider `terminateAfter` value is recorded but explicitly untrusted. Run it
+only with explicit spend authorization.
 
 ## Local image and other providers
 

@@ -967,6 +967,10 @@ capture|capture_repeat)
   DSID="$(jqget capture.dataset_id)"
   DSNAME="$(jqget capture.dataset_name)"
   AUTHOR="$(jqget capture.author)"
+  DATASET_LICENSE="$(jqget capture.dataset_license)"
+  WEIGHTS_LICENSE_REL="$(jqget capture.weights_license.source_path)"
+  WEIGHTS_LICENSE_SHA="$(jqget capture.weights_license.sha256)"
+  WEIGHTS_LICENSE_BYTES="$(jqget capture.weights_license.bytes)"
   EXPECT="$(jqget capture.sanity_expect Paris)"
   DEVICE="$(jqget capture.device)"
   PANEL_BINDING_REL="$(jqget panel.binding_path)"
@@ -996,6 +1000,29 @@ capture|capture_repeat)
   [ -n "$DSID" ] || { echo "job.json has no capture.dataset_id" >&2; exit 2; }
   [ -n "$DSNAME" ] || { echo "job.json has no capture.dataset_name" >&2; exit 2; }
   [ -n "$AUTHOR" ] || { echo "job.json has no capture.author" >&2; exit 2; }
+  case "$DATASET_LICENSE" in
+    mit)
+      if [ -n "$WEIGHTS_LICENSE_REL$WEIGHTS_LICENSE_SHA$WEIGHTS_LICENSE_BYTES" ]; then
+        echo "$STAGE REFUSES: copied weights-license identity requires dataset_license=other." >&2
+        exit 3
+      fi
+      ;;
+    other)
+      if [ "$WEIGHTS_LICENSE_REL" != "LICENSE" ] \
+          || [ -z "$WEIGHTS_LICENSE_SHA" ] || [ -z "$WEIGHTS_LICENSE_BYTES" ]; then
+        echo "$STAGE REFUSES: dataset_license=other requires the exact LICENSE path, SHA-256 and byte count." >&2
+        exit 3
+      fi
+      if [ ! -f "$MODELS/target/LICENSE" ] || [ -L "$MODELS/target/LICENSE" ]; then
+        echo "$STAGE REFUSES: target LICENSE is not a regular non-symlink file." >&2
+        exit 3
+      fi
+      ;;
+    *)
+      echo "$STAGE REFUSES: capture.dataset_license must be mit or other." >&2
+      exit 3
+      ;;
+  esac
   [ -n "$PANEL_ID" ] || { echo "job.json has no capture.panel_id" >&2; exit 2; }
   [ -n "$LANE" ] || { echo "job.json has no lane" >&2; exit 2; }
   [ -n "$FORM" ] || { echo "job.json has no capture.form" >&2; exit 2; }
@@ -1073,7 +1100,13 @@ PYPANEL
   EXTRA=(--sanity-expect "$EXPECT"
          --panel-binding "$PANEL_BINDING"
          --panel-binding-sha256 "$PANEL_BINDING_SHA"
-         --panel-tokenizer-root "$MODELS/target")
+         --panel-tokenizer-root "$MODELS/target"
+         --dataset-license "$DATASET_LICENSE")
+  if [ "$DATASET_LICENSE" = "other" ]; then
+    EXTRA+=(--weights-license-file "$MODELS/target/LICENSE"
+            --weights-license-sha256 "$WEIGHTS_LICENSE_SHA"
+            --weights-license-bytes "$WEIGHTS_LICENSE_BYTES")
+  fi
   if [ -n "$ALLOWLIST_REL$ALLOWLIST_ARTIFACT_SHA$ALLOWLIST_NAMES_SHA" ]; then
     if [ -z "$ALLOWLIST_REL" ] || [ -z "$ALLOWLIST_ARTIFACT_SHA" ] || [ -z "$ALLOWLIST_NAMES_SHA" ]; then
       echo "$STAGE REFUSES: unexpected_tensor_allowlist path and both SHA-256 identities are all-or-none." >&2

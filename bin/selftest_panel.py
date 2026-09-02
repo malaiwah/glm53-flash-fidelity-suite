@@ -198,14 +198,49 @@ def main():
         check("Fruit16 panel swap cannot authorize M2 spend",
               target_refused(
                   fruit_binding, P.M2_TARGET_REPO, P.M2_TARGET_REVISION))
-        check("arbitrary valid sealed panel cannot authorize either paid root",
+        check("arbitrary valid sealed panel cannot authorize any paid root",
               target_refused(binding, fruit_repo, fruit_revision)
               and target_refused(
-                  binding, P.M2_TARGET_REPO, P.M2_TARGET_REVISION))
+                  binding, P.M2_TARGET_REPO, P.M2_TARGET_REVISION)
+              and target_refused(
+                  binding, P.GLM53_TARGET_REPO, P.GLM53_TARGET_REVISION))
         mutated_fruit = json.loads(json.dumps(fruit_binding))
         mutated_fruit["panel"]["id"] = "panel--swapped"
         check("mutated Fruit panel identity refuses before spend",
               target_refused(mutated_fruit, fruit_repo, fruit_revision))
+
+        glm53_root = (
+            BIN.parent / "engines" / "panels" /
+            "panel--glm53.malaiwah.corpus5x5-v1")
+        glm53_binding = P.resolve_panel(glm53_root).to_dict()
+        check("committed full GLM53 panel resolves exact corpus5x5 geometry",
+              glm53_binding["panel"]["contexts"] == 25
+              and glm53_binding["panel"]["context_length"] == 2048
+              and glm53_binding["panel"]["scored_positions_total"] == 51175)
+        check("unprefetched full GLM53 tokenizer cannot authorize spend",
+              glm53_binding["tokenizer"]["files_verified"] is False
+              and target_refused(
+                  glm53_binding, P.GLM53_TARGET_REPO,
+                  P.GLM53_TARGET_REVISION))
+        verified_glm53 = json.loads(json.dumps(glm53_binding))
+        expected_files = {
+            name: (size, digest)
+            for name, size, digest in P.GLM53_TOKENIZER_FILES}
+        for row in verified_glm53["tokenizer"]["files"]:
+            row["bytes"] = expected_files[row["name"]][0]
+        verified_glm53["tokenizer"]["files_verified"] = True
+        check("exact verified full GLM53 panel authorizes only its target pin",
+              P.validate_root_panel_binding(
+                  verified_glm53, P.GLM53_TARGET_REPO,
+                  P.GLM53_TARGET_REVISION) == verified_glm53
+              and target_refused(
+                  verified_glm53, fruit_repo, fruit_revision))
+        mutated_glm53 = json.loads(json.dumps(verified_glm53))
+        mutated_glm53["content"]["manifest"][0]["bytes"] += 1
+        check("mutated full GLM53 panel content refuses before spend",
+              target_refused(
+                  mutated_glm53, P.GLM53_TARGET_REPO,
+                  P.GLM53_TARGET_REVISION))
 
         brandon_root = Path(os.environ.get(
             "QFS_BRANDON_PANEL_ROOT", "/tmp/qfs-brandon-panel/calibration/panel-v1"))

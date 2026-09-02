@@ -71,6 +71,7 @@ engines/tools/student_capture.py
 engines/tools/kld_report.py
 # Exact root-capture unexpected-tensor allowlists; job.json binds one digest.
 engines/tools/layer-outer-evidence/fruit-layer13-unexpected-keys.json
+engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json
 engines/tools/dione-evidence/m2-layer45-unexpected-keys.json
 # The UNSEALED Dione (0xSero) selective-EXL3 surface. It serves BOTH lanes:
 # student_capture --surface dione (sealed EP8) and stream_score --source
@@ -301,6 +302,34 @@ engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0015.mask.npy
 engines/panels/panel--fruit.malaiwah.heldout-v1/arrays/final-0015.tokens.npy
 engines/panels/panel--fruit.malaiwah.heldout-v1/panel.json
 engines/panels/panel--fruit.malaiwah.heldout-v1/panel.receipt.json
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/causal-mask-2048.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0000.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0001.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0002.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0003.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0004.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0005.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0006.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0007.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0008.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0009.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0010.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0011.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0012.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0013.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0014.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0015.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0016.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0017.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0018.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0019.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0020.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0021.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0022.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0023.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/arrays/final-0024.tokens.npy
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/panel.json
+engines/panels/panel--glm53.malaiwah.corpus5x5-v1/panel.receipt.json
 engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/causal-mask-2048.npy
 engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0000.tokens.npy
 engines/panels/panel--minimaxm3.malaiwah.corpus5x5/arrays/final-0001.tokens.npy

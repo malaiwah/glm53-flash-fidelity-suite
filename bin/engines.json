@@ -61,6 +61,35 @@
         "window_count": 25,
         "derivation": "6 hours conservatively covers 25 windows in each of two fresh processes plus fetch, comparison, setup and result-retrieval reserve; it is an upper bound, not a generic minutes/window value."
       }
+    },
+    {
+      "target_repo": "zai-org/GLM-5.3-BF16",
+      "target_revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+      "gpu": "H200",
+      "form": "hidden",
+      "schedule": "two-fresh-process-qualification",
+      "conservative_upper_hours": 3.5,
+      "bound_kind": "named_conservative_upper",
+      "model_identity": {
+        "model_bytes": 1506659919872,
+        "config_sha256": "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca",
+        "index_sha256": "5fd47a926aefce0f2c917f42523e5e0f3c87e23e389e767c3681536a62f5cf5e"
+      },
+      "resource_admission": {
+        "required": true,
+        "mode": "controller_explicit_safe_resources",
+        "reason": "The full checkpoint is streamed one layer at a time; the controller must bind one H200 plus the authored vCPU, RAM, workspace and container-disk minima."
+      },
+      "evidence": {
+        "source": "docs/LAYER-OUTER.md",
+        "projected_minutes_per_cold_run_range": [
+          9.0,
+          37.0
+        ],
+        "cold_runs": 2,
+        "download_bytes": 1506659919872,
+        "derivation": "3.5 hours conservatively covers the documented one-hour full fetch, two projected 37-minute layer-outer cold captures, setup, strict verification and forced comparison. Archive build, bounded retrieval attempts and final deletion are separately funded by the retrieval/delete reserve."
+      }
     }
   ],
   "lanes": {

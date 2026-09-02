@@ -260,9 +260,10 @@ class CostQuote:
 
     @property
     def duration_seconds(self) -> Decimal:
-        # The provider deadline is absolute from create, not a phase duration.
-        # Workload and retrieval/delete must fit inside it; API/timer lag is
-        # the sole conservative exposure beyond that provider backstop.
+        # The lease reap deadline is absolute from create, not a phase duration;
+        # the same timestamp is also sent as an untrusted provider timer hint.
+        # Workload and retrieval/delete fit inside it.  API/reaper settlement
+        # lag is the conservative exposure beyond the enforced deadline.
         return self.provider_termination_deadline_seconds + self.timer_api_lag_seconds
 
     def all_in_hourly_rate(self) -> Decimal:

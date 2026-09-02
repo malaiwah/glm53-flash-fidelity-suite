@@ -548,6 +548,7 @@ def job_root(**over):
                     "dataset_repository": "malaiwah/mm3-root-v1",
                     "author": "malaiwah", "race_workers": 4,
                     "publish_root_to": "malaiwah/mm3-root-v1",
+                    "dataset_license": "mit", "weights_license": None,
                     "preview_of": None, "race": False,
                     "replay_device": "numpy", "replay_dtype": "float32",
                     "vocab_chunk": 8192,

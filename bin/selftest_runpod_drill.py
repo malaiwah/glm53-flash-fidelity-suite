@@ -70,7 +70,7 @@ class Provider:
         self.post_create_wrong_pod = self.post_create_network_volume = False
         self.create_response_wrong_name = False
         self.create_rate = self.graphql_rate = self.rest_rate = "0.44"
-        self.termination_offset = 0
+        self.termination_offset = 901
         self.lifecycle_observations = []
         self.lifecycle_poll_latency = 0
         self.status_latency = 0
@@ -599,6 +599,43 @@ def _deadline_mutation_refused(proof_path, plan, mutate):
             path.write_bytes(body)
 
 
+def _destroy_health_mutation_refused(proof_path, plan, mutate):
+    proof_path = Path(proof_path)
+    proof = json.loads(proof_path.read_text())
+    root = proof_path.parent
+    health_path = root / proof["artifacts"]["reaper_destroy_health"]["path"]
+    loss_path = root / proof["artifacts"]["controller_loss"]["path"]
+    paths = [proof_path, health_path, loss_path]
+    originals = [path.read_bytes() for path in paths]
+    try:
+        health = json.loads(health_path.read_text())
+        mutate(health)
+        health = RD._seal(health, "record_sha256")
+        RD._atomic_json(health_path, health)
+        health_raw = health_path.read_bytes()
+        proof["artifacts"]["reaper_destroy_health"].update({
+            "bytes": len(health_raw),
+            "sha256": hashlib.sha256(health_raw).hexdigest(),
+        })
+        loss = json.loads(loss_path.read_text())
+        loss["reaper_destroy_health_sha256"] = health["record_sha256"]
+        loss = RD._seal(loss, "receipt_sha256")
+        RD._atomic_json(loss_path, loss)
+        loss_raw = loss_path.read_bytes()
+        proof["artifacts"]["controller_loss"].update({
+            "bytes": len(loss_raw),
+            "sha256": hashlib.sha256(loss_raw).hexdigest(),
+        })
+        RD._atomic_json(proof_path, RD._seal(proof, "proof_sha256"))
+        return refuses(lambda: validate_safety_proof(
+            proof_path, plan.bundle_contract_sha256,
+            plan.control_manifest_sha256, plan.provider_account_id,
+            plan.campaign_ledger), SafetyProofError)
+    finally:
+        for target, body in zip(paths, originals):
+            target.write_bytes(body)
+
+
 def _duplicate_receipt_replacement(raw):
     body = b'{"x":1,"x":2}'
     check("duplicate replacement fits observed receipt", len(body) <= len(raw))
@@ -891,10 +928,10 @@ def main():
     with tempfile.TemporaryDirectory() as td:
         args, provider, seams, ledger = fixture(td)
         provider.post_create_visibility_delay = 80
-        provider.termination_offset = 1
+        provider.termination_offset = 901
         plan = RD.plan_drill(args, provider, seams=seams)
         provider.status_latency = 31
-        provider.lifecycle_poll_latency = 31
+        provider.lifecycle_poll_latency = 28
         args.dry_run = False; args.yes = True
         proof_path = RD.execute_drill(plan, args, provider, seams=seams)
         proof = json.loads(proof_path.read_text())
@@ -908,9 +945,13 @@ def main():
         check("one POST", provider.create_calls == 1)
         check("post-create inventory converges across provider lag",
               provider.post_create_inventory_calls >= 3)
-        check("no provider destroy", provider.destroy_calls == 0)
-        check("no DESTROY_REQUESTED", not any(
-            row["event"] == "DESTROY_REQUESTED" for row in history))
+        check("autonomous reaper destroy", provider.destroy_calls == 1)
+        destroy_events = [
+            row for row in history if row["event"] == "DESTROY_REQUESTED"]
+        check("one deadline DESTROY_REQUESTED",
+              len(destroy_events) == 1
+              and destroy_events[0]["evidence"]["reason"]
+                  == "absolute reap deadline expired")
         bound = next(row for row in history if row["event"] == "CREATE_RESPONSE_BOUND")
         response = bound["evidence"]["response"]
         check("client deadline echo rejected as evidence",
@@ -929,6 +970,14 @@ def main():
         check("real-shaped supervisor observation", kill["signal"] == "SIGKILL"
           and loss["controller_exit_observed"] is True
           and loss["kill_event_sha256"] == kill["receipt_sha256"])
+        destroy_health = artifact("reaper_destroy_health")
+        check("loss binds autonomous destroy health",
+              loss["reaper_destroy_health_sha256"]
+                  == destroy_health["record_sha256"]
+              and any(
+                  action.get("action") == "destroy-requested"
+                  and action.get("provider_id") == "pod-1"
+                  for action in destroy_health["actions"]))
         deadline = artifact("provider_deadline_observations")
         first_absence = next(
             row for row in deadline["observations"]
@@ -949,6 +998,19 @@ def main():
                       for row in before_deadline)
               and loss["provider_deadline_observations_sha256"]
                   == deadline["record_sha256"])
+        check("provider timer is explicitly untrusted",
+              proof["drill"]["termination_mechanism"]
+                  == "autonomous-systemd-user-reaper"
+              and proof["drill"]["provider_timer_trusted"] is False
+              and plan.public_dict()["provider_timer_trusted"] is False)
+        def forge_destroy_target(document):
+            action = next(
+                row for row in document["actions"]
+                if row.get("action") == "destroy-requested")
+            action["provider_id"] = "foreign-pod"
+        check("standalone validator rejects forged autonomous destroy target",
+              _destroy_health_mutation_refused(
+                  proof_path, plan, forge_destroy_target))
         check("poll duration beyond explicit maximum refuses", refuses(
             lambda: RD._persist_deadline_observation(
                 Path(td) / "overlong-observation.json", plan, "pod-1",
@@ -1092,7 +1154,8 @@ def main():
         provider.termination_offset = 901
         plan = RD.plan_drill(args, provider, seams=seams)
         args.dry_run = False; args.yes = True
-        check("first absence beyond 15-minute API-lag bound refuses", refuses(
+        seams.autonomous_timer_tick = lambda **_kwargs: None
+        check("missing autonomous deadline sweep refuses", refuses(
             lambda: RD.execute_drill(plan, args, provider, seams=seams),
             RD.DrillError) and not Path(args.out).exists()
             and provider.pod is None)
@@ -1106,15 +1169,23 @@ def main():
                 return []
             return [dict(provider.pod)]
         provider.list_instances = misses_provider_deadline
-        check("provider timer failure issues no proof", refuses(
-            lambda: RD.execute_drill(plan, args, provider, seams=seams),
-            RD.DrillError))
-        check("bounded reaper closes failed provider timer",
-              provider.create_calls == 1 and provider.destroy_calls == 1
-              and not Path(args.out).exists())
+        ignored_timer_proof = RD.execute_drill(
+            plan, args, provider, seams=seams)
+        check("ignored provider timer still yields autonomous proof",
+              ignored_timer_proof.is_file()
+              and provider.create_calls == 1
+              and provider.destroy_calls == 1)
+        accepted = validate_safety_proof(
+            ignored_timer_proof, plan.bundle_contract_sha256,
+            plan.control_manifest_sha256, plan.provider_account_id,
+            plan.campaign_ledger,
+            now=datetime.fromtimestamp(
+                seams.clock.time(), tz=timezone.utc))
         attempt = ledger.snapshot()["attempts"][plan.attempt_key]
-        check("failed timer still reconciles campaign",
-              attempt["released"] is True and attempt["phase"] == "RECONCILED")
+        check("autonomous cleanup reconciles campaign",
+              accepted["proof"]["drill"]["provider_timer_trusted"] is False
+              and attempt["released"] is True
+              and attempt["phase"] == "RECONCILED")
         provider.list_instances = original_listing
     transfer_faults = (
         ("short archive stream", lambda provider:
@@ -1152,7 +1223,7 @@ def main():
     with tempfile.TemporaryDirectory() as td:
         real_supervisor(Path(td))
         parent_signal_cleanup(Path(td))
-    print("PASS: RunPod controller-loss/provider-deadline drill")
+    print("PASS: RunPod controller-loss/autonomous-reaper drill")
     return 0
 
 if __name__ == "__main__": raise SystemExit(main())

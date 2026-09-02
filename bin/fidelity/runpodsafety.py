@@ -7,8 +7,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Mapping, Optional
 
-PROOF_SCHEMA = "fidelity-suite/runpod-safety-proof.v1"
-DRILL_KIND = "paid-controller-loss-provider-deadline"
+PROOF_SCHEMA = "fidelity-suite/runpod-safety-proof.v2"
+DRILL_KIND = "paid-controller-loss-autonomous-reaper"
+LEASE_DRILL_KIND = "paid-controller-loss-provider-deadline"
 DEADLINE_POLL_DURATION_MAX_SECONDS = 120
 DEADLINE_INTERPOLL_GAP_MAX_SECONDS = 120
 DRILL_GPU_TYPE = "NVIDIA L4"
@@ -46,6 +47,13 @@ _ALLOWLISTS = {
         "artifact_sha256": "35b7f1bd8d693d92bed089c0784a30c0b2d7b859a65a80c37a3fc03ab565f61b",
         "canonical_sorted_names_sha256": "acc1e9f10c0f903c735a7fcf5fd267fc879bce65623f0b850f80016da5e903b7",
         "count": 889,
+    },
+    ("zai-org/GLM-5.3-BF16",
+     "304b8051cfb2b260b61ce0cbe330e02a98e73639"): {
+        "path": "engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json",
+        "artifact_sha256": "714d95eef084e00cb8d579ba789fea80d4405160e437f5ef91b1b9c67c98e7df",
+        "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
+        "count": 791,
     },
 }
 
@@ -365,7 +373,10 @@ def validate_safety_proof(path, bundle_manifest_sha256,
     drill = proof.get("drill")
     if (not isinstance(drill, dict) or drill.get("kind") != DRILL_KIND
             or drill.get("paid") is not True or drill.get("provider") != "runpod"
-            or drill.get("provider_account_id") != provider_account_id):
+            or drill.get("provider_account_id") != provider_account_id
+            or drill.get("termination_mechanism")
+                != "autonomous-systemd-user-reaper"
+            or drill.get("provider_timer_trusted") is not False):
         raise SafetyProofError(
             "proof is not an explicit paid drill on the expected RunPod account")
     try:
@@ -416,7 +427,7 @@ def validate_safety_proof(path, bundle_manifest_sha256,
         "pre_create_safety", "prepared_create", "producer_checkout",
     }
     expected_resource = {
-        "drill_mode": DRILL_KIND,
+        "drill_mode": LEASE_DRILL_KIND,
         "provider_account_id": provider_account_id,
         "secure_cloud": True,
         "offer": "on-demand",
@@ -644,10 +655,19 @@ def validate_safety_proof(path, bundle_manifest_sha256,
                     if row.get("event") == "PROVIDER_POST_INTENT_FSYNCED"]
     prepared = [row for row in history
                 if row.get("event") == "LEASE_PREPARED_NO_PROVIDER_POST"]
-    if not create_bound or not absent_events or destroy_requested:
+    if (len(create_bound) != 1 or len(absent_events) != 1
+            or len(destroy_requested) != 1):
         raise SafetyProofError(
-            "provider-deadline drill requires create and exact absence, "
-            "with no controller/reaper destroy request")
+            "autonomous-reaper drill requires one create, one exact destroy "
+            "request, and one exact absence event")
+    destroy_evidence = destroy_requested[0].get("evidence") or {}
+    if (destroy_evidence.get("provider_ids") != [exact_id]
+            or destroy_evidence.get("listed_statuses") != {exact_id: "RUNNING"}
+            or destroy_evidence.get("reason")
+                != "absolute reap deadline expired"):
+        raise SafetyProofError(
+            "reaper destroy request does not bind the live exact pod at its "
+            "absolute deadline")
     if (len(prepared) != 1 or len(post_intents) != 1
             or history.index(prepared[0]) >= history.index(post_intents[0])
             or history.index(post_intents[0]) >= history.index(create_bound[-1])):
@@ -681,6 +701,8 @@ def validate_safety_proof(path, bundle_manifest_sha256,
     create_bound_at = _utc(create_bound[-1].get("at"),
                            "create response bound")
     absent_at = _utc(absent_events[-1].get("at"), "exact absence")
+    destroy_at = _utc(
+        destroy_requested[0].get("at"), "autonomous reaper destroy request")
     if (loss.get("exact_pod_id") != exact_id
             or loss.get("exact_pod_name") != exact_name
             or loss.get("lease_record_sha256") != lease.get("record_sha256")
@@ -690,6 +712,10 @@ def validate_safety_proof(path, bundle_manifest_sha256,
             "controller-loss receipt does not bind the terminal lease")
     loss_at = _utc(loss.get("controller_lost_at"),
                    "controller_lost_at")
+    if not (create_bound_at <= loss_at < termination
+            <= destroy_at <= absent_at <= observation_until):
+        raise SafetyProofError(
+            "controller loss, reaper deadline, destroy and absence are not ordered")
     kill_path, _kill_raw = _artifact(
         path, artifacts.get("controller_kill_event"),
         "controller kill event")
@@ -721,11 +747,6 @@ def validate_safety_proof(path, bundle_manifest_sha256,
     actions = health.get("actions")
     expected_account_hash = hashlib.sha256(
         provider_account_id.encode("utf-8")).hexdigest()
-    target_actions = [
-        action for action in (actions if isinstance(actions, list) else [])
-        if (isinstance(action, dict)
-            and action.get("lease_record_sha256") == lease.get("record_sha256")
-            and action.get("lease_generation") == lease.get("generation"))]
     control_keys = {
         "command_sha256", "source_command_sha256",
         "service_unit", "service_unit_sha256",
@@ -773,11 +794,57 @@ def validate_safety_proof(path, bundle_manifest_sha256,
             or _HEX64.fullmatch(str(claimed_control_sha or "")) is None
             or claimed_control_sha != hashlib.sha256(
                 canonical_bytes(control_unsealed)).hexdigest()
-            or not target_actions
             or health_seal != hashlib.sha256(
                 canonical_bytes(health_unsealed)).hexdigest()):
         raise SafetyProofError(
             "reaper health lacks exact sealed immutable runtime control")
+    destroy_health_path, _destroy_health_raw = _artifact(
+        path, artifacts.get("reaper_destroy_health"),
+        "autonomous reaper destroy health")
+    destroy_health, _unused = _json_regular(
+        destroy_health_path, "autonomous reaper destroy health")
+    destroy_unsealed = dict(destroy_health)
+    destroy_seal = destroy_unsealed.pop("record_sha256", None)
+    destroy_actions = destroy_health.get("actions")
+    exact_destroy_actions = [
+        action for action in (
+            destroy_actions if isinstance(destroy_actions, list) else [])
+        if (isinstance(action, dict)
+            and action.get("action") == "destroy-requested"
+            and action.get("provider_id") == exact_id)]
+    try:
+        destroy_started = datetime.fromtimestamp(
+            float(destroy_health.get("invocation_started_at_epoch")),
+            tz=timezone.utc)
+        destroy_completed = datetime.fromtimestamp(
+            float(destroy_health.get("completed_at_epoch")),
+            tz=timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        raise SafetyProofError(
+            "autonomous destroy health timestamps are invalid")
+    if (destroy_health.get("schema") != HEALTH_SCHEMA
+            or destroy_health.get("ok") is not True
+            or destroy_health.get("failure_count") != 0
+            or destroy_health.get("control") != control
+            or _HEX32.fullmatch(str(
+                destroy_health.get("invocation_id", ""))) is None
+            or _HEX64.fullmatch(str(destroy_seal or "")) is None
+            or destroy_seal != hashlib.sha256(
+                canonical_bytes(destroy_unsealed)).hexdigest()
+            or len(exact_destroy_actions) != 1
+            or _HEX64.fullmatch(str(
+                exact_destroy_actions[0].get(
+                    "lease_record_sha256", ""))) is None
+            or isinstance(
+                exact_destroy_actions[0].get("lease_generation"), bool)
+            or not isinstance(
+                exact_destroy_actions[0].get("lease_generation"), int)
+            or loss.get("reaper_destroy_health_sha256") != destroy_seal
+            or not (loss_at < destroy_started <= destroy_at
+                    <= destroy_completed <= first_provider_absence)):
+        raise SafetyProofError(
+            "autonomous reaper health does not prove the exact post-loss "
+            "deadline destroy")
     source_files = control["source_files"]
     runtime_files = control["runtime_files"]
     allowed_control_paths = {
@@ -839,16 +906,18 @@ def validate_safety_proof(path, bundle_manifest_sha256,
         bill_doc.get("retrieved_at_utc"), "billing retrieved_at_utc")
     api_lag_limit = termination + timedelta(minutes=15)
     if not (create_bound_at <= loss_at <= first_provider_observation
-            < termination <= first_provider_absence <= api_lag_limit
-            and termination <= absent_at <= api_lag_limit
+            < termination <= destroy_at <= first_provider_absence
+            <= api_lag_limit
+            and destroy_at <= absent_at <= api_lag_limit
             and (first_provider_observation - loss_at).total_seconds()
                 <= deadline_observation["interpoll_gap_max_seconds"]
             and first_provider_absence <= last_provider_observation <= issued
             and loss_at < invocation_started
             <= billed_at <= reaped_at <= issued):
         raise SafetyProofError(
-            "provider deadline, exact absence, billing and healthy reaper "
-            "times are not ordered or API absence lag exceeded 15 minutes")
+            "controller loss, autonomous destroy, exact absence, billing and "
+            "healthy reaper times are not ordered or the 15-minute proof bound "
+            "was exceeded")
     billing_path, _billing_raw = _artifact(
         path, artifacts.get("billing_arithmetic"), "billing arithmetic")
     billing_receipt, _unused = _json_regular(
@@ -1406,6 +1475,27 @@ def validate_current_public_root(publication: Mapping[str, Any]) -> Dict[str, An
     except jobcontract.JobContractError as exc:
         raise SafetyProofError(
             "current public root job contract is invalid: %s" % exc)
+    expected_license = contract.get("weights_license")
+    expected_runtime_license = (
+        None if expected_license is None else {
+            "source_file": "LICENSE",
+            "dataset_path": expected_license.get("dataset_path"),
+            "bytes": expected_license.get("bytes"),
+            "sha256": expected_license.get("sha256"),
+        })
+    if expected_license is None:
+        license_raw = None
+        license_matches = contract.get("dataset_license") == "mit"
+    else:
+        license_raw = anonymous("LICENSE")
+        license_matches = (
+            contract.get("dataset_license") == "other"
+            and len(license_raw) == expected_license.get("bytes")
+            and hashlib.sha256(license_raw).hexdigest()
+                == expected_license.get("sha256"))
+    if not license_matches:
+        raise SafetyProofError(
+            "current public root source-license bytes differ from qualification")
     dataset = manifest.get("dataset") if isinstance(manifest, dict) else None
     weights = manifest.get("weights") if isinstance(manifest, dict) else None
     panel = manifest.get("panel") if isinstance(manifest, dict) else None
@@ -1428,6 +1518,7 @@ def validate_current_public_root(publication: Mapping[str, Any]) -> Dict[str, An
                 != contract.get("author")
             or dataset.get("repository")
                 != contract.get("dataset_repository")
+            or dataset.get("license") != contract.get("dataset_license")
             or weights.get("repository") != contract_target.get("repo_id")
             or weights.get("revision") != contract_target.get("revision")
             or panel.get("panel_id") != contract.get("panel_id")
@@ -1488,6 +1579,18 @@ def validate_current_public_root(publication: Mapping[str, Any]) -> Dict[str, An
                 != contract.get("author")
             or canonical_capture.get("dataset_repository")
                 != contract.get("dataset_repository")
+            or canonical_capture.get("dataset_license")
+                != contract.get("dataset_license")
+            or canonical_capture.get("weights_license")
+                != expected_runtime_license
+            or (expected_license is None and (
+                canonical_capture.get("weights_license_file_sha256") is not None
+                or canonical_capture.get("weights_license_file_bytes") is not None))
+            or (expected_license is not None and (
+                canonical_capture.get("weights_license_file_sha256")
+                    != expected_license.get("sha256")
+                or canonical_capture.get("weights_license_file_bytes")
+                    != expected_license.get("bytes")))
             or canonical_capture.get("weights_repository")
                 != contract_target.get("repo_id")
             or canonical_capture.get("weights_revision")

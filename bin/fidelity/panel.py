@@ -61,6 +61,26 @@ M2_PANEL_MANIFEST_SHA256 = (
     "3e96238bb14cd97b5dab2e87315d8006dc88e4a5314b6fd28eae90e35cc0d0af")
 M2_TOKENIZER_IDENTITY_SHA256 = (
     "4de3937ae77b0908990b28ef7b64a6517b5a005bc51205cd071746fd3f60b09d")
+GLM53_TARGET_REPO = "zai-org/GLM-5.3-BF16"
+GLM53_TARGET_REVISION = "304b8051cfb2b260b61ce0cbe330e02a98e73639"
+GLM53_PANEL_MANIFEST_SHA256 = (
+    "4ffa985400a98db57ffcf81b20fee395fe40276e495a1b9ae65e11754897b843")
+GLM53_TOKENIZER_IDENTITY_SHA256 = (
+    "b18e4d378be7e75fd2b323f7c81cc65640f6a08e1842d3bf4e025d88a9d78bf9")
+GLM53_TOKENIZER_FILES = (
+    ("LICENSE", 4263,
+     "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c"),
+    ("chat_template.jinja", 10465,
+     "69bb3ab52067898e2466b855407636de559568947f367945842aabcb7fcc1705"),
+    ("config.json", 3732,
+     "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca"),
+    ("generation_config.json", 194,
+     "ac76b43d8683d3b930126870fc8be73d8679308fe752fa1f381096d8354f6a55"),
+    ("tokenizer.json", 20217442,
+     "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d"),
+    ("tokenizer_config.json", 761,
+     "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"),
+)
 _BRANDON_METADATA = {
     "capture-receipt.json": (
         13831, "af682a8e9f7afd38172565614804f68d570199eed427a5ee25ba151752cab7ab"),
@@ -727,6 +747,84 @@ def write_panel_archive(
             "binding": binding, "binding_sha256": binding_sha}
 
 
+def _validate_glm53_root_panel(resolved: Mapping[str, Any]) -> None:
+    if set(resolved) != {"schema", "panel", "receipt", "tokenizer", "content"}:
+        raise PanelError("full GLM-5.3 resolved panel keys differ")
+    expected_panel = {
+        "id": "panel--glm53.malaiwah.corpus5x5-v1",
+        "name": "GLM-5.3 corpus 5-stratum x 5-window panel",
+        "role": "final",
+        "contexts": 25,
+        "context_length": 2048,
+        "positions_per_context": 2047,
+        "scored_positions_total": 51175,
+        "suite_token_hash_sha256":
+            "f09ee395f635225a077695ed193d61f7d1e70650cebe1b68f82b16f59d399f86",
+        "file": "panel.json",
+        "bytes": 26504,
+        "sha256":
+            "f2df810b44b840568a28e89abd6fe0252bb8ce6204f926acec9ab7b7d3aa649c",
+    }
+    expected_receipt = {
+        "file": "panel.receipt.json",
+        "bytes": 13969,
+        "declared_receipt_sha256":
+            "9c3bc4f59e8825ac78b366ca0e2988a48ecdbcaf26fdaeaedd3251edb6f9a828",
+        "receipt_seal_mode": "self-blank",
+        "receipt_file_sha256":
+            "abaf095a0887b35fe5f0b0fcd34de4f6448bd314955bc870a3ceb93d43c726d0",
+    }
+    if (resolved.get("schema") != RESOLVED_SCHEMA
+            or resolved.get("panel") != expected_panel
+            or resolved.get("receipt") != expected_receipt):
+        raise PanelError(
+            "full GLM-5.3 root is not the exact corpus5x5 panel/receipt")
+
+    expected_tokenizer_files = [
+        {"name": name, "bytes": size, "sha256": digest}
+        for name, size, digest in GLM53_TOKENIZER_FILES
+    ]
+    expected_tokenizer = {
+        "id": GLM53_TARGET_REPO,
+        "repository": GLM53_TARGET_REPO,
+        "revision": GLM53_TARGET_REVISION,
+        "vocab_size": 154820,
+        "maximum_token_id_exclusive": 154820,
+        "identity_sha256": GLM53_TOKENIZER_IDENTITY_SHA256,
+        "files": expected_tokenizer_files,
+        "files_verified": True,
+        "receipt": None,
+    }
+    if resolved.get("tokenizer") != expected_tokenizer:
+        raise PanelError(
+            "full GLM-5.3 root tokenizer pin or verified files differ")
+
+    content = resolved.get("content")
+    if not isinstance(content, dict) or set(content) != {
+            "manifest", "manifest_sha256", "archive"}:
+        raise PanelError("full GLM-5.3 root panel content binding differs")
+    rows = content.get("manifest")
+    if (not isinstance(rows, list) or len(rows) != 28
+            or rows != sorted(rows, key=lambda row: row.get("path", ""))
+            or len({row.get("path") for row in rows}) != len(rows)
+            or any(not isinstance(row, dict)
+                   or set(row) != {"path", "bytes", "sha256"}
+                   for row in rows)
+            or _sha(_canonical(rows)) != GLM53_PANEL_MANIFEST_SHA256
+            or content.get("manifest_sha256")
+                != GLM53_PANEL_MANIFEST_SHA256
+            or content.get("archive") != {
+                "algorithm": ARCHIVE_ALGORITHM,
+                "bytes": 276480,
+                "compression": "none",
+                "format": "ustar",
+                "sha256":
+                    "34450e4b7db23d0dd52f5ef9b1b427547ea640f3dcc4de4a12259c31e4c4d2ea",
+            }):
+        raise PanelError(
+            "full GLM-5.3 root panel content identity differs")
+
+
 def validate_root_panel_binding(
         binding: Mapping[str, Any], target_repo: str,
         revision: str) -> Dict[str, Any]:
@@ -738,6 +836,10 @@ def validate_root_panel_binding(
     if not isinstance(resolved, dict):
         raise PanelError("root panel binding must be an object")
 
+    if (target_repo, revision) == (
+            GLM53_TARGET_REPO, GLM53_TARGET_REVISION):
+        _validate_glm53_root_panel(resolved)
+        return resolved
     if (target_repo, revision) == (
             "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
             "ef68013aa6e16453cf52b5b77647f72fbe258c3c"):

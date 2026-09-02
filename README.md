@@ -170,11 +170,11 @@ Prerequisites are part of admission, not optional setup:
 1. a committed, fully clean checkout that remains byte-for-byte unchanged;
 2. an owner-only RunPod API-key file and ED25519 SSH key;
 3. the installed user reaper, healthy for this exact RunPod account;
-4. a successful paid controller-loss/provider-deadline drill from this checkout;
+4. a successful paid controller-loss/autonomous-reaper drill from this checkout;
 5. one campaign ledger with an explicit ceiling, reserve and reaper margin.
 
 The drill spends real money and is run only deliberately. The full procedure
-and the exact K6/Fruit commands are in
+and the exact K6 and authored-root commands are in
 [`docs/THIRD-PARTY-QUICKSTART.md`](docs/THIRD-PARTY-QUICKSTART.md). Once those
 artifacts exist, the supported K6 dry-run is:
 

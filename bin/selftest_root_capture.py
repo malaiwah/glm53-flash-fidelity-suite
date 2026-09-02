@@ -239,6 +239,17 @@ for _st in CAPTURE_STAGES:
           "capture.device" in body)
     check("...and forwards --device to the engine",
           '--device "$DEVICE"' in body)
+    for field in (
+            "capture.dataset_license",
+            "capture.weights_license.source_path",
+            "capture.weights_license.sha256",
+            "capture.weights_license.bytes"):
+        check("%s reads %s" % (_st, field), field in body)
+    check("...and forwards the exact source-license contract",
+          "--dataset-license" in body
+          and "--weights-license-file" in body
+          and "--weights-license-sha256" in body
+          and "--weights-license-bytes" in body)
 
 controller_source = (
     SUITE / "bin" / "measure_cloud.py").read_text(encoding="utf-8")
@@ -324,6 +335,17 @@ check("every bundle entry exists on disk", not missing)
 # existing import check (P11) could not see it: this is data, not an import.
 bundled = {ln.strip() for ln in bundle.splitlines()
            if ln.strip() and not ln.startswith("#")}
+glm53_panel = (
+    SUITE / "engines" / "panels" /
+    "panel--glm53.malaiwah.corpus5x5-v1")
+glm53_panel_files = {
+    str(path.relative_to(SUITE)) for path in glm53_panel.rglob("*")
+    if path.is_file()}
+check("the complete GLM53 panel travels with the bundle",
+      bool(glm53_panel_files) and glm53_panel_files <= bundled)
+check("the exact GLM53 unexpected-tensor allowlist travels with the bundle",
+      "engines/tools/layer-outer-evidence/"
+      "glm53-layer78-unexpected-keys.json" in bundled)
 bundled_dirs = {str(Path(b).parent) for b in bundled}
 # The rule is "bundle the data, OR the reader must tolerate its absence" --
 # not "bundle everything". dione-evidence is 187 MB of fixtures for a surface

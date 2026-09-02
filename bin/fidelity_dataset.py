@@ -787,12 +787,27 @@ def _capture_identity(root, expected_label, label):
     except (OSError, F.FormatError, panel.PanelError) as exc:
         raise RootQualificationError(
             "%s bound panel receipt is invalid: %s" % (label, exc)) from exc
+    dataset_license = dataset.get("license")
+    license_file_sha256 = None
+    license_file_bytes = None
+    if dataset_license == "other":
+        try:
+            license_path = F.resolve_inside(
+                root, "LICENSE", owner="%s weights license" % label)
+            license_file_sha256 = common.sha256_file(license_path)
+            license_file_bytes = os.path.getsize(license_path)
+        except (OSError, F.FormatError) as exc:
+            raise RootQualificationError(
+                "%s dataset license file is invalid: %s" % (label, exc)) from exc
     return {
         "process_label": expected_label,
         "dataset_id": dataset.get("id"),
         "dataset_name": dataset.get("name"),
         "dataset_author": (dataset.get("author") or {}).get("name"),
         "dataset_repository": dataset.get("repository"),
+        "dataset_license": dataset_license,
+        "weights_license_file_sha256": license_file_sha256,
+        "weights_license_file_bytes": license_file_bytes,
         "dataset_sha256": manifest.get(F.SEAL_FIELD),
         "dataset_manifest_file_sha256": common.sha256_file(manifest_path),
         "capture_manifest": capture_rel,
@@ -819,6 +834,7 @@ def _capture_identity(root, expected_label, label):
         },
         "unexpected_tensor_allowlist":
             capture_tool.get("unexpected_tensor_allowlist"),
+        "weights_license": capture_tool.get("weights_license"),
         "stack_fingerprint_sha256": runtime.get("stack_fingerprint_sha256"),
         "lane_identity_sha256": runtime.get("lane_identity_sha256"),
         "weights_repository": (manifest.get("weights") or {}).get("repository"),
@@ -867,6 +883,8 @@ def _check_capture_job_contract(job, identity, label):
         ("dataset_author", identity["dataset_author"], capture.get("author")),
         ("dataset_repository", identity["dataset_repository"],
          capture.get("dataset_repository")),
+        ("dataset_license", identity["dataset_license"],
+         capture.get("dataset_license")),
         ("lane", identity["runtime_lane"], job.get("lane")),
         ("form", identity["capture_form"], capture.get("form")),
         ("schedule", identity["capture_schedule"], capture.get("schedule")),
@@ -908,6 +926,33 @@ def _check_capture_job_contract(job, identity, label):
             raise RootQualificationError(
                 "%s dataset tokenizer %s does not match the resolved job tokenizer"
                 % (label, field))
+    expected_license = capture.get("weights_license")
+    observed_license = identity.get("weights_license")
+    if expected_license is None:
+        if (observed_license is not None
+                or identity.get("weights_license_file_sha256") is not None
+                or identity.get("weights_license_file_bytes") is not None):
+            raise RootQualificationError(
+                "%s capture carries source-license bytes absent from job.json"
+                % label)
+    else:
+        if (not isinstance(expected_license, dict)
+                or set(expected_license) != {
+                    "source_path", "dataset_path", "bytes", "sha256"}
+                or expected_license.get("source_path") != "LICENSE"
+                or expected_license.get("dataset_path") != "LICENSE"
+                or not isinstance(observed_license, dict)
+                or observed_license.get("source_file") != "LICENSE"
+                or observed_license.get("dataset_path") != "LICENSE"
+                or observed_license.get("bytes") != expected_license.get("bytes")
+                or observed_license.get("sha256") != expected_license.get("sha256")
+                or identity.get("weights_license_file_bytes")
+                    != expected_license.get("bytes")
+                or identity.get("weights_license_file_sha256")
+                    != expected_license.get("sha256")):
+            raise RootQualificationError(
+                "%s source-license bytes do not match the exact job identity"
+                % label)
 
     expected_allowlist = capture.get("unexpected_tensor_allowlist")
     observed_allowlist = identity.get("unexpected_tensor_allowlist")

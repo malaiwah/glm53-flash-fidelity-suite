@@ -126,13 +126,71 @@ def main():
           not MC._safe_runpod_target_allowed(
               "quant", "zai-org/GLM-5.3-Flash-BF16",
               MC.OFFICIAL_BF16_REVISION))
-    check("M2 and Fruit exact roots remain admitted",
+    check("M2, Fruit, and full GLM exact roots remain admitted",
           MC._safe_runpod_target_allowed(
               "root", "zai-org/GLM-5.3-Flash-BF16",
               MC.OFFICIAL_BF16_REVISION)
           and MC._safe_runpod_target_allowed(
               "root", "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
-              "ef68013aa6e16453cf52b5b77647f72fbe258c3c"))
+              "ef68013aa6e16453cf52b5b77647f72fbe258c3c")
+          and MC._safe_runpod_target_allowed(*MC._FULL_GLM53_ROOT))
+    full_timing = MC.resolve_root_timing(
+        target_repo=MC._FULL_GLM53_ROOT[1],
+        target_revision=MC._FULL_GLM53_ROOT[2],
+        gpu="H200", form="hidden",
+        schedule="two-fresh-process-qualification")
+    check("full GLM timing is exact-target and identity-bound",
+          full_timing["conservative_upper_hours"] == 3.5
+          and full_timing["model_identity"] == {
+              "model_bytes": 1506659919872,
+              "config_sha256":
+                  "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca",
+              "index_sha256":
+                  "5fd47a926aefce0f2c917f42523e5e0f3c87e23e389e767c3681536a62f5cf5e",
+          })
+    check("full GLM authored source-license pin is exact",
+          MC._FULL_GLM53_LICENSE == {
+              "source_path": "LICENSE",
+              "dataset_path": "LICENSE",
+              "bytes": 4263,
+              "sha256":
+                  "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c",
+          })
+    fixture_license = b"fixture source weights license\n"
+    fixture_contract = {
+        "source_path": "LICENSE", "dataset_path": "LICENSE",
+        "bytes": len(fixture_license),
+        "sha256": hashlib.sha256(fixture_license).hexdigest(),
+    }
+    full_meta = RepoMeta(
+        repo_id=MC._FULL_GLM53_ROOT[1], repo_type="model",
+        revision=MC._FULL_GLM53_ROOT[2],
+        requested_revision=MC._FULL_GLM53_ROOT[2],
+        last_modified=None, files=[("LICENSE", len(fixture_license))],
+        author="zai-org", private=False)
+    original_fetch_file = MC.fetch_file
+    original_license_contract = MC._FULL_GLM53_LICENSE
+    try:
+        MC.fetch_file = lambda *_args, **_kwargs: fixture_license
+        MC._FULL_GLM53_LICENSE = fixture_contract
+        bound_license = MC._root_dataset_license_contract(full_meta)
+        check("full GLM root copies the exact source license",
+              bound_license == {
+                  "dataset_license": "other",
+                  "weights_license": fixture_contract,
+              })
+        MC.fetch_file = lambda *_args, **_kwargs: fixture_license + b"x"
+        try:
+            MC._root_dataset_license_contract(full_meta)
+        except MC.Refusal:
+            mismatch_refused = True
+        else:
+            mismatch_refused = False
+        check("source-license byte drift refuses before spend",
+              mismatch_refused)
+    finally:
+        MC.fetch_file = original_fetch_file
+        MC._FULL_GLM53_LICENSE = original_license_contract
     parser_defaults = MC.build_parser().parse_args([])
     check("parser no longer invents maintainer attribution",
           parser_defaults.measurer is None)
