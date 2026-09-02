@@ -1230,6 +1230,63 @@ def main():
                   plan.control_manifest_sha256, plan.provider_account_id,
                   copied_ledger), SafetyProofError))
     with tempfile.TemporaryDirectory() as td:
+        # The production clock has a sub-second component; this fixture's did
+        # not, which is the only reason the battery ever accepted a proof. The
+        # paid drill of 2026-09-02T20:24Z destroyed its pod, proved exact
+        # absence and reconciled billing, then lost its proof because
+        # `issued_at` floors to a whole second while the final poll's epoch
+        # kept its fraction. Seal inside the same wall second as the last
+        # observation and the proof must still validate.
+        args, provider, seams, _ledger = fixture(td)
+        # A real sleep returns no earlier than asked and the wall clock
+        # advances by slightly more, so `time.time()` never lands back on a
+        # whole second. The fixture clock advanced by exactly the requested
+        # amount, which snapped every poll onto the authored deadline second
+        # and hid this defect from the battery.
+        fractional_clock = seams.clock
+        fractional_clock.sleep = (
+            lambda seconds, clock=fractional_clock: setattr(
+                clock, "now", clock.now + float(seconds) + 0.137))
+        provider.termination_offset = 901
+        plan = RD.plan_drill(args, provider, seams=seams)
+        args.dry_run = False; args.yes = True
+        proof_path = RD.execute_drill(plan, args, provider, seams=seams)
+        fractional = validate_safety_proof(
+            proof_path, plan.bundle_contract_sha256,
+            plan.control_manifest_sha256, plan.provider_account_id,
+            plan.campaign_ledger,
+            now=datetime.fromtimestamp(seams.clock.time(), tz=timezone.utc))
+        proof_document = json.loads(proof_path.read_text())
+        observations = json.loads(
+            (proof_path.parent / proof_document["artifacts"][
+                "provider_deadline_observations"]["path"]).read_text())
+        last_completed = observations["observations"][-1][
+            "poll_completed_at_epoch"]
+        health_document = json.loads(
+            (proof_path.parent / proof_document["artifacts"][
+                "reaper_health"]["path"]).read_text())
+        reaped_at = float(health_document["completed_at_epoch"])
+        # Production seals the proof in the same wall second in which the
+        # reaper's final healthy invocation completed and the last poll
+        # returned. Both carry a `time.time()` fraction; `issued_at` does not.
+        issued_second = int(max(reaped_at, last_completed))
+        same_second = dict(proof_document)
+        same_second["issued_at"] = RD._utc(issued_second)
+        same_second["expires_at"] = RD._utc(issued_second + 7 * 86400)
+        RD._atomic_json(proof_path, RD._seal(same_second, "proof_sha256"))
+        sealed = validate_safety_proof(
+            proof_path, plan.bundle_contract_sha256,
+            plan.control_manifest_sha256, plan.provider_account_id,
+            plan.campaign_ledger,
+            now=datetime.fromtimestamp(
+                issued_second + 1, tz=timezone.utc))
+        check("proof sealed inside its final fractional second validates",
+              fractional["proof"]["issued_at"].endswith("Z")
+              and last_completed != int(last_completed)
+              and reaped_at != int(reaped_at)
+              and reaped_at > issued_second
+              and sealed["proof"]["issued_at"] == RD._utc(issued_second))
+    with tempfile.TemporaryDirectory() as td:
         args, provider, seams, _ledger = fixture(td)
         provider.termination_offset = 901
         provider.billing_delay_after_absence_seconds = 1000

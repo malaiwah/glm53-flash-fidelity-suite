@@ -131,6 +131,22 @@ def _utc(text, label):
     except ValueError:
         raise SafetyProofError("%s must use YYYY-MM-DDTHH:MM:SSZ" % label)
 
+def _whole_second(value):
+    """Truncate a fractional instant to the second before ordering it.
+
+    Every authored proof timestamp -- `issued_at`, `controller_lost_at`,
+    `retrieved_at_utc`, `terminate_after`, the lease history -- is a
+    whole-second ISO string, while the reaper health stamps and the provider
+    deadline observations are raw `time.time()` floats. Ordering a fractional
+    instant against a floored one refused a correctly ordered lifecycle
+    whenever the proof was sealed inside the same wall second as the final
+    poll: the drill of 2026-09-02T20:24Z tore down and reconciled exactly, and
+    lost its proof to that truncation alone. The guarantee these chains state
+    only ever existed at one-second resolution, so it is checked there; an
+    observation a full second late still refuses.
+    """
+    return value.replace(microsecond=0)
+
 def _verify_blank_seal(document, field, label):
     declared = document.get(field)
     if not isinstance(declared, str) or _HEX64.fullmatch(declared) is None:
@@ -877,8 +893,10 @@ def validate_safety_proof(path, bundle_manifest_sha256,
             or not isinstance(
                 exact_destroy_actions[0].get("lease_generation"), int)
             or loss.get("reaper_destroy_health_sha256") != destroy_seal
-            or not (loss_at < destroy_started <= destroy_at
-                    <= destroy_completed <= first_provider_absence)):
+            or not (loss_at < destroy_started
+                    and _whole_second(destroy_started) <= destroy_at
+                    and destroy_at <= destroy_completed
+                    and destroy_completed <= first_provider_absence)):
         raise SafetyProofError(
             "autonomous reaper health does not prove the exact post-loss "
             "deadline destroy")
@@ -948,8 +966,9 @@ def validate_safety_proof(path, bundle_manifest_sha256,
     if not loss_at <= first_provider_observation < termination:
         raise SafetyProofError(
             "controller loss was not observed before the absolute reap deadline")
-    if not (termination <= destroy_at <= first_provider_absence
-            <= api_lag_limit):
+    if not (termination <= destroy_at
+            and destroy_at <= first_provider_absence
+            and _whole_second(first_provider_absence) <= api_lag_limit):
         raise SafetyProofError(
             "autonomous destroy or first exact absence exceeded the "
             "15-minute provider-lag bound")
@@ -961,11 +980,14 @@ def validate_safety_proof(path, bundle_manifest_sha256,
         raise SafetyProofError(
             "first post-loss provider observation exceeded the authored "
             "inter-poll bound")
-    if not first_provider_absence <= last_provider_observation <= issued:
+    if not (first_provider_absence <= last_provider_observation
+            and _whole_second(last_provider_observation) <= issued):
         raise SafetyProofError(
             "provider observations do not remain ordered through proof issue")
     if not (loss_at < invocation_started
-            <= billed_at <= reaped_at <= issued):
+            and _whole_second(invocation_started) <= billed_at
+            and billed_at <= reaped_at
+            and _whole_second(reaped_at) <= issued):
         raise SafetyProofError(
             "billing reconciliation and final healthy reaper invocation are "
             "not ordered after controller loss")

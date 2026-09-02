@@ -3055,3 +3055,53 @@ The H200 liability sentence also abbreviates the quote: its
 `$39.41123015873015873015873017` includes 12,600 workload seconds, 14,400
 retrieval/delete seconds, 600 timer/API-lag seconds, and the authored storage
 tariffs. It is not compute for only the first two durations.
+
+## 2026-09-02 — the fourth proof tore down perfectly and lost to a floored second
+
+The authorized fourth prerequisite attempt used clean checkout
+`37764a571ebe6ff60b34e04b3297c5ce04c47204` and created exactly one secure,
+on-demand RunPod L4 (`hxcekqeaai3dch`) at `2026-09-02T19:16:31Z`. The
+supervisor removed its controller. The autonomous installed reaper requested
+exact-id destruction at `19:39:13Z`; complete GraphQL and REST inventory proved
+exact absence one second later. Billing was retrieved at `20:24:53Z` and the
+lease reconciled terminal at `20:24:55Z` to exactly
+`$0.058409954188391566` (`$0.05794699117541313` GPU plus
+`$0.00046296301297843456` disk). Four prerequisite attempts have now cost
+exactly `$0.348715473199263206`. Every lease is terminal, the campaign
+reservation is released with zero remaining liability, and the reaper is
+healthy.
+
+The femtodollar billing bound from earlier today did its job: this provider
+aggregate matched its exact bucket sum with no rounding difference at all, and
+the reconciliation that the third attempt could not complete completed here
+without touching a single provider decimal.
+
+The proof was still refused, by one conjunct: `provider observations do not
+remain ordered through proof issue`. Nothing was out of order. `issued_at` is
+written by `time.strftime`, so it is **floored to a whole second**, while the
+deadline observations and the reaper health stamps are raw `time.time()`
+floats. Seal the proof in the same wall second as the final poll — which is
+what happens, because the loop breaks on that poll and the seal follows
+immediately — and `last_observation <= issued` compares `T.877` against
+`T.000` and refuses a lifecycle that was exactly right. The same
+mixed-resolution hazard sat in three sibling chains: `destroy_started <=
+destroy_at`, `invocation_started <= billed_at`, and `reaped_at <= issued`.
+
+`_whole_second` now truncates the fractional side wherever it is ordered
+against an authored whole-second timestamp. The guarantee these chains state
+only ever existed at one-second resolution, so it is checked there; an
+observation or reaper invocation a full second late still refuses.
+
+The reason 84 green rungs never caught this is worth naming. The drill
+fixture's clock advanced by *exactly* the requested sleep, so every poll
+snapped onto the authored deadline second and no timestamp in the battery ever
+carried a fraction. The new case models a real sleep, which returns no earlier
+than asked and leaves the wall clock slightly past it. Against the pre-fix
+validator that case does not merely fail its assertion — `execute_drill` cannot
+finish at all, refusing on the sibling billing/health chain, which is the
+production failure reproduced offline.
+
+This attempt produced no accepted `proof.json`. No H200 was created, no
+GLM-5.3 capture ran, and nothing was published. The remaining H200
+authorization was explicitly conditional on an accepted proof, so the next
+paid create requires a fresh operator decision.
