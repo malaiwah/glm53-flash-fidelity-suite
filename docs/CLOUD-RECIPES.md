@@ -84,6 +84,9 @@ Success or failure then requests deletion of every exact campaign-owned id.
 The pod remains chargeable until full inventory proves exact absence; `EXITED`
 is not absence. Billing reconciliation follows provider absence. The campaign
 reservation releases only when both proof sets bind the exact same ids.
+Every provider bucket and aggregate decimal is preserved unchanged. Component
+aggregates must match their bucket sums within at most one femtodollar
+($10^{-15}$ USD) of provider aggregation roundoff.
 Retrieval exhaustion still deletes the pod; the durable lease, provider
 deadline and independent reaper remain backstops.
 

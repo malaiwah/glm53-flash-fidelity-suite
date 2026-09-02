@@ -2045,14 +2045,17 @@ def runpod_cases():
               "startTime": "2030-01-02T04:00:00Z",
               "endTime": "2030-01-02T05:00:00Z"}]
           and billing.billing_query == ("/billing/pods", query))
+    # RunPod's live two-hour aggregate differed from its exact bucket sum by
+    # 6e-18 USD. Preserve every provider decimal, but do not turn harmless
+    # aggregate rounding into an unreconcilable lease.
     rounded = json.loads(json.dumps(response))
-    rounded["metadata"]["totals"]["diskAmount"] = "0.2000000000000000002"
+    rounded["metadata"]["totals"]["diskAmount"] = "0.200000000000000006"
     rounded_evidence = BillingRunPod(rounded).billing_history(
         "pod-1", start_time=query["startTime"], end_time=query["endTime"])
     excess_rounding = json.loads(json.dumps(response))
     excess_rounding["metadata"]["totals"]["diskAmount"] = (
-        "0.200000000000000002")
-    check("billing accepts only bounded sub-attodollar provider rounding",
+        "0.200000000000002")
+    check("billing accepts at most one femtodollar of provider rounding",
           rounded_evidence["validated_record_sums"]["diskAmount"] == "0.20"
           and raises(
               RunPodError,

@@ -84,12 +84,12 @@ DEFAULT_IMAGE = (
     "runpod/pytorch@sha256:"
     "ab2addc2916ffc72989288bd5048933c69ba6531f1d679c25afbd9eadc5a5fd5")
 MIN_CREATE_SETUP_SECONDS = 300
-_BILLING_ROUNDING_TOLERANCE_USD = Decimal("0.000000000000000001")
+_BILLING_ROUNDING_TOLERANCE_USD = Decimal("0.000000000000001")
 
 
 def _billing_total_matches_record_sum(
         total: Decimal, record_sum: Decimal) -> bool:
-    """Accept only sub-attodollar provider aggregation roundoff."""
+    """Accept at most one femtodollar of provider aggregation roundoff."""
     return abs(total - record_sum) <= _BILLING_ROUNDING_TOLERANCE_USD
 
 
