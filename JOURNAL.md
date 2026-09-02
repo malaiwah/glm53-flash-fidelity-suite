@@ -2988,3 +2988,60 @@ This replacement still produced no accepted `proof.json`. No H200 was created,
 no GLM-5.3 capture ran, and nothing was published. The remaining H200
 authorization was explicitly conditional on an accepted proof, so another
 proof create requires a new operator decision.
+
+## 2026-09-02 — batch every spend-free failure before the final paid proof
+
+The third authorized prerequisite attempt used checkout
+`18d44987ce0fdbc93019435b663f941a2e64ccee` and created exactly one secure,
+on-demand RunPod L4 (`pd1mvzqts58ihj`) at `2026-09-02T13:54:52Z`. The
+supervisor intentionally removed its controller. The autonomous installed
+reaper requested exact-id destruction at `2026-09-02T14:16:49Z`; complete
+GraphQL and REST inventory proved exact absence one second later. The final
+provider bill reconciled at `2026-09-02T15:21:10Z` to exactly
+`$0.18164147599600255` (`$0.17932666093111038` GPU plus
+`$0.002314815064892173` disk as provider aggregates). All leases are terminal,
+the campaign reservation is released with zero remaining liability, and the
+installed reaper is healthy. The three prerequisite attempts cost exactly
+`$0.29030551901087164` in total.
+
+This attempt exposed one more control-plane defect instead of producing an
+accepted `proof.json`. RunPod's GPU aggregate differed from the exact two-bucket
+sum by `$0.000000000000000006`; the parser allowed only
+`$0.000000000000000001`. The raw bucket and aggregate decimals already remained
+unchanged, but that harmless representational difference kept the lease at
+`ABSENCE_CONFIRMED`. The bound is now one femtodollar
+(`$0.000000000000001`): enough for the observed provider aggregation, still
+fourteen decimal places below one cent. The new regression fails against the
+old parser and passes with the fix. Reinstalling the final control snapshot then
+reconciled the same durable lease without weakening identity, absence, or
+billing evidence. The stopped old controller could not seal a proof under its
+bound parser, and its checkout is now stale in any case.
+
+Running the exact H200 dry-run early also caught two independent preflight
+errors before a large rental. The authored model size was the safetensors
+index's tensor-payload total (`1506659919872` bytes), but the storage and receipt
+contract requires the 282 shard **file** bytes (`1506667387408`), a
+`7467536`-byte difference. The corrected evidence binds shard-manifest SHA-256
+`4500ebd01844457a106ed6031a67ff581d77406e8d2872ce43f2abd51a65ba2b`.
+Second, Hugging Face returns authenticated `404` but anonymous `401` for this
+absent dataset/model/space id. Publication preflight now accepts anonymous
+`401` or `404` only after the owner-authenticated exact-id query proves `404`;
+it still refuses every ambiguous authenticated result.
+
+The final spend-free command now passes target identity, the 25-window panel,
+engine probes, source checkout, publication ownership and non-overwrite checks,
+safe H200 capacity, fit, storage, timing, cost, and account/reaper gates. At the
+observed secure on-demand H200 rate of `$4.59/h`, the 3 h 30 min workload plus
+the 14,400-second retrieval/delete reserve yields a maximum liability of
+`$39.41123015873015873015873017`, below the explicit `$40` attempt cap. It
+refuses only because the checkout-bound safety-proof file does not exist.
+
+Both available local Hugging Face credentials carry write capability. The
+measurement still requires a separate owner-readable `0600` read-scope token
+for the remote target fetch; the publication token stays on the controller.
+
+No fourth L4 proof will run in this batch. The next paid sequence is fixed:
+after all spend-free changes are committed, run exactly one final L4
+controller-loss proof, and only if it qualifies proceed immediately to the
+H200 capture. No H200 was created, no GLM-5.3 capture ran, and nothing was
+published.
