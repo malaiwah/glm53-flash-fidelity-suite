@@ -4290,34 +4290,26 @@ def _ledger_transition(ledger, method: str, *args, **kwargs):
 
 
 def _authenticate_runpod_ssh_host(
-        args, con: Console, provider, pod_id: str,
-        outdir: Path) -> Dict[str, Any]:
-    """Require an authenticated-console fingerprint before the first SSH byte."""
+        con: Console, provider, pod_id: str, outdir: Path) -> Dict[str, Any]:
+    """Authenticate the first SSH key against the provider's HTTPS log API."""
     provider.set_known_hosts(outdir / "ssh_known_hosts")
-    expected = getattr(args, "runpod_host_key_sha256", None)
-    if expected is None:
-        if not sys.stdin.isatty():
-            raise RuntimeError(
-                "RunPod SSH host-key verification needs an interactive "
-                "authenticated web-terminal fingerprint")
-        con.say("")
-        con.say("SSH HOST AUTHENTICATION REQUIRED")
-        con.say("Open the authenticated RunPod web terminal for pod %s." % pod_id)
-        con.say(
-            "Run: ssh-keygen -E sha256 -lf "
-            "/etc/ssh/ssh_host_ed25519_key.pub")
-        con.say(
-            "Paste only its SHA256:... fingerprint. Do not copy a fingerprint "
-            "from this network connection.")
-        expected = input("RunPod console ED25519 fingerprint: ").strip()
-    verified = provider.verify_host_key(pod_id, expected)
+    con.say("Authenticating RunPod ED25519 host key from provider logs...")
+    log_evidence = provider.ssh_host_ed25519_fingerprint(pod_id)
+    verified = provider.verify_host_key(
+        pod_id, log_evidence["fingerprint"])
     proof = {
-        "schema": "fidelity-suite/runpod-ssh-host-key-proof.v1",
+        "schema": "fidelity-suite/runpod-ssh-host-key-proof.v2",
         "provider": "runpod",
         "provider_id": str(pod_id),
         "verified_at_utc": _exact_utc_now(),
-        "verification_source":
-            "operator-authenticated-runpod-web-terminal",
+        "verification_source": "runpod-authenticated-v2-container-log",
+        "provider_log_endpoint_origin": log_evidence["endpoint_origin"],
+        "provider_log_source": log_evidence["source"],
+        "provider_log_tail": log_evidence["tail"],
+        "provider_log_observed_at_utc": log_evidence["observed_at_utc"],
+        "provider_log_line_sha256": log_evidence["line_sha256"],
+        "provider_log_line": log_evidence["line"],
+        "provider_log_fingerprint": log_evidence["fingerprint"],
         "algorithm": verified.get("algorithm"),
         "fingerprint": verified.get("fingerprint"),
         "host": verified.get("host"),
@@ -5712,7 +5704,7 @@ def execute_runpod(
             container_disk_gb=container_disk_gb,
             image_name=request["image"], terminate_after=terminate_after)
         host_key_evidence = _authenticate_runpod_ssh_host(
-            args, con, provider, str(pod_id), outdir)
+            con, provider, str(pod_id), outdir)
         live_attestation = provider.attest_live_resource(
             pod_id,
             expected_gpu_model=plan_data["chosen"]["provider_gpu_display"],

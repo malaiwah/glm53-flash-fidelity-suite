@@ -68,7 +68,7 @@ Two facts complicate the policy and are recorded here rather than argued away:
 | 4 | `bin/fidelity/runpodapi.py` (`urllib`) | `requests`/`httpx` | **KEEP-BUT-DOCUMENT** — urllib demonstrably cost one live incident |
 | 5 | `bin/fidelity/vastapi.py` 429 backoff | `urllib3.Retry` | **KEEP-BUT-DOCUMENT** — the hand-rolled retry is incomplete in a way that matters |
 | 6 | `bin/fidelity/lambdaapi.py` Basic auth | `requests(auth=…)` | **KEEP-BUT-DOCUMENT** — textbook reinvention, zero observed cost |
-| 7 | `bin/fidelity/sshbase.py` | `paramiko`/`fabric` | **KEEP** — strict per-attempt `known_hosts` plus operator-authenticated ED25519 fingerprint evidence |
+| 7 | `bin/fidelity/sshbase.py` | `paramiko`/`fabric` | **KEEP** — strict per-attempt `known_hosts` plus authenticated provider-log ED25519 evidence |
 | 8 | `bin/fidelity/common.py` `Console` | `logging`, `rich` | **KEEP** |
 | 9 | `bin/fidelity_stats.py` statistics | `scipy.stats` | **KEEP** — the strongest keep in the repo |
 | 10 | `canonical_json` duplicated per tree | one shared copy | **KEEP** |
@@ -340,12 +340,13 @@ revisit only with a proof that one control socket cannot cross attempt or
 endpoint identity.
 
 The load-bearing host-authentication gap is closed. Before the first SSH byte,
-the operator copies the pod's ED25519 fingerprint from the authenticated
-RunPod web terminal. `ssh-keyscan` is treated as untrusted input and must match
-that out-of-band fingerprint exactly. The resulting owner-only per-attempt
-`known_hosts` file is then used with `StrictHostKeyChecking=yes`; ambient
-agents, password/interactive authentication and forwarding are disabled.
-The initial safe RunPod route transports no Hugging Face credential.
+the controller reads the fresh pod's ED25519 fingerprint from RunPod's
+authenticated v2 container-log API. `ssh-keyscan` is treated as untrusted input
+and must match that independently retrieved fingerprint exactly. The resulting
+owner-only per-attempt `known_hosts` file is then used with
+`StrictHostKeyChecking=yes`; ambient agents, password/interactive
+authentication and forwarding are disabled. The explicit read-scoped target
+token is transferred only as a mode-0600 file and erased after target fetch.
 
 ## 8. `bin/fidelity/common.py` — **KEEP**
 

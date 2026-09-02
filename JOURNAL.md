@@ -2917,3 +2917,37 @@ log line in a Stage B run.** Measure them; do not trust this paragraph.
 
 **Stage B was not taken.** No GLM-5.3 capture was run. That remains a separate,
 budgeted decision.
+
+## 2026-09-02 — the safety drill cleaned up correctly, but its proof did not qualify
+
+The first GLM-5.3 root-capture prerequisite drill used checkout
+`e3d28f28bc7e9911896fe61ca393b88ad2fc0e6f` and created exactly one secure,
+on-demand RunPod L4 (`2vokciv9zqczb2`). The autonomous user-systemd reaper
+requested exact-id destruction at `2026-09-02T01:19:57Z`; complete provider
+inventory proved exact absence one second later. Billing became available at
+`2026-09-02T02:15:42Z` and reconciled to exactly
+`$0.06642962130717933` (`$0.0659666582942009` GPU plus
+`$0.00046296301297843456` disk). No provider resource remained.
+
+The drill still produced no accepted `proof.json`. Its validator reported only
+that lifecycle/billing times were misordered or outside the authored bound, then
+deleted its staging evidence. The destroy and absence observations were within
+the 15-minute provider-lag bound; billing's 55-minute publication delay was
+allowed by the controller. The exact failed conjunct is therefore not
+recoverable. The operator fingerprint prompt consumed material time before
+controller loss and is the leading explanation, not a proved postmortem.
+
+The prompt is gone. Both the drill and measurement controller now read one
+full-line ED25519 fingerprint from the fresh pod's authenticated RunPod v2
+container-log stream before uploading code, with a 5,000-line request tail, a
+2 MiB response ceiling and a 64 KiB event-line ceiling. The API key remains in
+the request header. The controller compares that independently retrieved value
+to the untrusted network keyscan and seals both values in
+`runpod-ssh-host-key-proof.v2`; any mismatch refuses. Host authentication that
+uses the drill workload deadline now requests cleanup instead of producing a
+late controller-loss claim. The proof validator reports each timestamp
+invariant separately, and an offline regression proves that billing may
+legitimately stabilize after the 15-minute lifecycle bound.
+
+This was one paid create and one failed qualification attempt. No GLM-5.3 model
+capture ran, and nothing was published.

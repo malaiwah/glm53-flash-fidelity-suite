@@ -11,9 +11,9 @@ SSH transport that was fine: the controller owned the box and pulled
 `receipts.tar.gz` back over the same connection it opened.  A container has no
 such connection, and the providers differ:
 
-  * RunPod  -- pod-scoped volume, no sshd in our image, and the REST API
-    (`/v1/pods`, `/v1/pods/{id}`, `.../billing`) exposes no logs and no files.
-    The pod's stdout is visible in the web console and NOWHERE ELSE.
+  * RunPod  -- pod-scoped volume, no sshd in our image, and no result-file API.
+    Its authenticated v2 API streams container logs (also used to authenticate
+    SSH host keys), but a multi-GB result still needs an explicit sink.
   * Vast    -- custom image, logs retrievable.
   * Lambda  -- a real VM: `docker run -v` and the results are already local.
   * laptop / k8s / CI -- a bind mount, or `docker logs`.
@@ -145,12 +145,15 @@ ROOT_QUALIFICATION_SCHEMA = "fidelity.root-qualification-receipt.v1"
 RUNPOD_ATTESTATION_SCHEMA = "fidelity-suite/runpod-live-attestation.v2"
 RUNPOD_ATTESTATION_PATH = "receipts/runpod-live-attestation.json"
 RUNPOD_HOST_KEY_PROOF_SCHEMA = (
-    "fidelity-suite/runpod-ssh-host-key-proof.v1")
+    "fidelity-suite/runpod-ssh-host-key-proof.v2")
 RUNPOD_HOST_KEY_PROOF_PATH = "receipts/runpod-ssh-host-key-proof.json"
 RUNPOD_HOST_KEY_PROOF_KEYS = frozenset((
     "schema", "provider", "provider_id", "verified_at_utc",
     "verification_source", "algorithm", "fingerprint", "host", "port",
-    "known_hosts_sha256", "proof_sha256",
+    "known_hosts_sha256", "provider_log_endpoint_origin",
+    "provider_log_source", "provider_log_tail",
+    "provider_log_observed_at_utc", "provider_log_line",
+    "provider_log_line_sha256", "provider_log_fingerprint", "proof_sha256",
 ))
 RUNPOD_ATTESTATION_KEYS = frozenset((
     "schema", "provider", "provider_id", "observed_at_utc", "clock",
@@ -1617,6 +1620,13 @@ def _validate_runpod_host_key_proof(job, proof, attestation):
         (job.get("execution_attempt") or {}).get("kind") == "runpod-ssh")
     if not required:
         return
+    provider_log_line = (
+        proof.get("provider_log_line") if isinstance(proof, dict) else None)
+    provider_log_line_match = (
+        re.fullmatch(
+            r"256\s+(SHA256:[A-Za-z0-9+/]{43})\s+\S+\s+\(ED25519\)",
+            provider_log_line)
+        if isinstance(provider_log_line, str) else None)
     if (not isinstance(proof, dict)
             or set(proof) != RUNPOD_HOST_KEY_PROOF_KEYS
             or proof.get("schema") != RUNPOD_HOST_KEY_PROOF_SCHEMA
@@ -1624,7 +1634,22 @@ def _validate_runpod_host_key_proof(job, proof, attestation):
             or proof.get("provider") != "runpod"
             or proof.get("provider_id") != attestation.get("provider_id")
             or proof.get("verification_source")
-                != "operator-authenticated-runpod-web-terminal"
+                != "runpod-authenticated-v2-container-log"
+            or proof.get("provider_log_endpoint_origin")
+                != "https://api.runpod.io"
+            or proof.get("provider_log_source") != "container"
+            or proof.get("provider_log_tail") != 5000
+            or not _valid_hex(proof.get("provider_log_line_sha256"), 64)
+            or provider_log_line_match is None
+            or hashlib.sha256(
+                provider_log_line.encode("utf-8")).hexdigest()
+                != proof.get("provider_log_line_sha256")
+            or re.fullmatch(
+                r"SHA256:[A-Za-z0-9+/]{43}",
+                str(proof.get("provider_log_fingerprint") or "")) is None
+            or provider_log_line_match.group(1)
+                != proof.get("provider_log_fingerprint")
+            or proof.get("provider_log_fingerprint") != proof.get("fingerprint")
             or proof.get("algorithm") != "ssh-ed25519"
             or re.fullmatch(
                 r"SHA256:[A-Za-z0-9+/]{43}",
@@ -1639,11 +1664,23 @@ def _validate_runpod_host_key_proof(job, proof, attestation):
         raise ArchiveError(
             "RunPod SSH host-key proof is absent, unsealed, or unauthenticated")
     try:
-        parsed = time.strptime(proof.get("verified_at_utc"), "%Y-%m-%dT%H:%M:%SZ")
+        parsed = time.strptime(
+            proof.get("verified_at_utc"), "%Y-%m-%dT%H:%M:%SZ")
+        log_parsed = time.strptime(
+            proof.get("provider_log_observed_at_utc"),
+            "%Y-%m-%dT%H:%M:%SZ")
     except (TypeError, ValueError):
         raise ArchiveError("RunPod SSH host-key proof time is invalid")
-    if time.strftime("%Y-%m-%dT%H:%M:%SZ", parsed) != proof["verified_at_utc"]:
+    if (time.strftime("%Y-%m-%dT%H:%M:%SZ", parsed)
+            != proof["verified_at_utc"]
+            or time.strftime("%Y-%m-%dT%H:%M:%SZ", log_parsed)
+            != proof["provider_log_observed_at_utc"]):
         raise ArchiveError("RunPod SSH host-key proof time is noncanonical")
+    verification_delay = (
+        calendar.timegm(parsed) - calendar.timegm(log_parsed))
+    if not 0 <= verification_delay <= 120:
+        raise ArchiveError(
+            "RunPod SSH host-key proof did not promptly bind provider logs")
 
 
 def _check_local_runpod_attestation(fs_root, job):

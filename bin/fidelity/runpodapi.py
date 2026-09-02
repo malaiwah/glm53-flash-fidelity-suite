@@ -3,11 +3,11 @@
 
 Why duck-typed rather than a refactor
 -------------------------------------
-`measure_cloud.py` touches a provider through exactly eighteen methods, and
+`measure_cloud.py` touches a provider through a bounded duck-typed surface, and
 everything else it does -- the fit check, the cost band, the lease, all four
 teardown layers, every stage in `stage_measure.sh` -- is written against that
-surface rather than against JarvisLabs. So a second provider is a second class
-with the same eighteen methods, not a rewrite. This file is that class.
+surface rather than against JarvisLabs. A second provider is therefore a second
+class with the same operational contract, not a rewrite. This file is that class.
 
 What is genuinely different from JarvisLabs, and matters
 --------------------------------------------------------
@@ -67,6 +67,11 @@ GQL = "https://api.runpod.io/graphql"
 V2 = "https://api.runpod.io/v2"
 REST_V1 = "https://rest.runpod.io/v1"
 MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_LOG_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_LOG_EVENT_LINE_BYTES = 64 * 1024
+RUNPOD_LOG_TAIL_LINES = 5000
+_ED25519_HOST_KEY_LOG_RE = re.compile(
+    r"256\s+(SHA256:[A-Za-z0-9+/]{43})\s+\S+\s+\(ED25519\)")
 # Sole stable default, expanded once to an absolute path; key bytes stay in-file.
 DEFAULT_KEY_FILE = os.path.abspath(
     os.path.expanduser("~/.config/runpod/api_key"))
@@ -561,6 +566,103 @@ class RunPod(SSHTransport):
                 timeout: float = 60) -> Any:
         return self._get_readonly(
             REST_V1, path, query or {}, label="REST v1", timeout=timeout)
+
+    def ssh_host_ed25519_fingerprint(
+            self, pod_id: Any, *, timeout: float = 60) -> Dict[str, Any]:
+        """Read the fresh pod's ED25519 fingerprint from authenticated logs."""
+        wanted = _provider_id(pod_id)
+        try:
+            request_timeout = float(timeout)
+        except (TypeError, ValueError, OverflowError):
+            raise RunPodError("RunPod log timeout must be finite and positive")
+        if not math.isfinite(request_timeout) or request_timeout <= 0:
+            raise RunPodError("RunPod log timeout must be finite and positive")
+        if self._key is None:
+            self._key = _load_key(self._key_file)
+        path = "/pods/%s/logs" % urllib.parse.quote(wanted, safe="")
+        url = V2 + path + "?" + urllib.parse.urlencode({
+            "tail": str(RUNPOD_LOG_TAIL_LINES),
+        })
+        req = urllib.request.Request(
+            url, method="GET",
+            headers={
+                "Accept": "text/event-stream",
+                "User-Agent": "quant-fidelity-suite/0.1",
+                "Authorization": "Bearer " + self._key,
+            })
+        try:
+            with safe_urlopen(req, timeout=request_timeout) as resp:
+                content_type = str(resp.headers.get("Content-Type") or "")
+                if content_type.split(";", 1)[0].strip().lower() \
+                        != "text/event-stream":
+                    raise RunPodError(
+                        "RunPod pod logs returned a non-event-stream response")
+                self._capture_server_time(resp, url)
+                total = 0
+                while True:
+                    raw = resp.readline(MAX_LOG_EVENT_LINE_BYTES + 1)
+                    if not raw:
+                        break
+                    total += len(raw)
+                    if total > MAX_LOG_RESPONSE_BYTES:
+                        raise RunPodError(
+                            "RunPod pod log response exceeded %d bytes"
+                            % MAX_LOG_RESPONSE_BYTES)
+                    if (len(raw) > MAX_LOG_EVENT_LINE_BYTES
+                            or not raw.endswith(b"\n")):
+                        raise RunPodError(
+                            "RunPod pod log event line is oversized or "
+                            "unterminated")
+                    if not raw.startswith(b"data:"):
+                        continue
+                    try:
+                        payload = raw[5:].strip().decode("utf-8")
+                    except UnicodeError as exc:
+                        raise RunPodError(
+                            "RunPod pod log event is not UTF-8: %s" % exc)
+                    event = _strict_json_loads(payload)
+                    if not isinstance(event, dict):
+                        raise RunPodError(
+                            "RunPod pod log event is not an object")
+                    if event.get("source") != "container":
+                        continue
+                    line = event.get("line")
+                    if not isinstance(line, str):
+                        raise RunPodError(
+                            "RunPod container log event lacks a string line")
+                    canonical_line = line.strip()
+                    match = _ED25519_HOST_KEY_LOG_RE.fullmatch(canonical_line)
+                    if match is None:
+                        continue
+                    observed = time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    return {
+                        "schema":
+                            "fidelity-suite/runpod-host-key-log-evidence.v1",
+                        "provider": "runpod",
+                        "provider_id": wanted,
+                        "endpoint_origin": "https://api.runpod.io",
+                        "source": "container",
+                        "tail": RUNPOD_LOG_TAIL_LINES,
+                        "observed_at_utc": observed,
+                        "line": canonical_line,
+                        "line_sha256": hashlib.sha256(
+                            canonical_line.encode("utf-8")).hexdigest(),
+                        "fingerprint": match.group(1),
+                    }
+        except urllib.error.HTTPError as exc:
+            raise RunPodError(
+                "RunPod pod logs GET %s -> HTTP %d: %s"
+                % (path, exc.code,
+                   redact(exc.read(300).decode("utf-8", "replace"))))
+        except RunPodError:
+            raise
+        except Exception as exc:                          # noqa: BLE001
+            raise RunPodError(
+                "RunPod pod log request failed: %s" % redact(str(exc)))
+        raise RunPodError(
+            "RunPod authenticated container logs lack one exact ED25519 "
+            "host-key fingerprint for pod %s" % wanted)
 
     # -- identity ----------------------------------------------------------
     def available(self) -> bool:

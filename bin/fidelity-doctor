@@ -134,8 +134,8 @@ def main():
         ok("ssh public key", str(pub))
     else:
         warn("ssh public key", "~/.ssh/id_ed25519.pub not found",
-             "ssh-keygen -t ed25519; the paid route also requires the pod "
-             "fingerprint from the authenticated RunPod web terminal")
+             "ssh-keygen -t ed25519; the paid route authenticates each pod "
+             "automatically through RunPod's bounded v2 container-log API")
 
     # -- account-bound systemd reaper and paid drill state -----------------
     state = Path.home() / ".fidelity-cloud"

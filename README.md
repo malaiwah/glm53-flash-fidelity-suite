@@ -203,9 +203,10 @@ bin/measure-cloud \
 refuses `--force`. The separately identified Fruit root command in the
 quickstart can reach paid admission. Any admitted real run repeats all fresh
 provider/account/source checks under the campaign lock, writes `POST_INTENT`
-durably, performs exactly one create POST, authenticates the pod's ED25519 key
-through the logged-in RunPod web terminal, retrieves and verifies the bounded
-archive, deletes the pod, proves exact absence, and reconciles billing.
+durably, performs exactly one create POST, reads the fresh pod's ED25519
+fingerprint from RunPod's authenticated v2 container-log API, compares it to
+the untrusted network keyscan, retrieves and verifies the bounded archive,
+deletes the pod, proves exact absence, and reconciles billing.
 Ambiguous create responses are never retried as science work.
 
 ### Container image — local/developer surface, not paid admission

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Authenticated ephemeral SSH host keys; first-hop TOFU is forbidden.
 
-The measurement channel carries model evidence and control artifacts.  A
-network keyscan is therefore untrusted until an operator compares its ED25519
-fingerprint through the authenticated RunPod web terminal.  The transport
+The measurement channel carries model evidence and control artifacts. A network
+keyscan is therefore untrusted until the controller compares its ED25519
+fingerprint to the fresh pod's authenticated provider-log event. The transport
 must refuse every SSH/SCP call before that comparison, write one owner-only
 per-attempt known_hosts file, and then use that strict ED25519 pin without
 ambient host-key files or update behavior. Command and SCP diagnostics carry
@@ -114,7 +114,7 @@ def main():
             mismatch_refused = True
         else:
             mismatch_refused = False
-        check("K4 network key differing from web-terminal identity is refused",
+        check("K4 network key differing from provider-log identity is refused",
               mismatch_refused and not mismatch_path.exists())
 
         try:

@@ -551,14 +551,42 @@ def validate_safety_proof(path, bundle_manifest_sha256,
         "schema", "proof_sha256", "provider", "provider_id",
         "verified_at_utc", "verification_source", "algorithm",
         "fingerprint", "host", "port", "known_hosts_sha256",
+        "provider_log_endpoint_origin", "provider_log_source",
+        "provider_log_tail", "provider_log_observed_at_utc",
+        "provider_log_line", "provider_log_line_sha256",
+        "provider_log_fingerprint",
     }
+    provider_log_line = host_key_proof.get("provider_log_line")
+    provider_log_line_match = (
+        re.fullmatch(
+            r"256\s+(SHA256:[A-Za-z0-9+/]{43})\s+\S+\s+\(ED25519\)",
+            provider_log_line)
+        if isinstance(provider_log_line, str) else None)
     if (set(host_key_proof) != host_key_keys
             or host_key_proof.get("schema")
-                != "fidelity-suite/runpod-ssh-host-key-proof.v1"
+                != "fidelity-suite/runpod-ssh-host-key-proof.v2"
             or host_key_proof.get("provider") != "runpod"
             or host_key_proof.get("provider_id") != exact_id
             or host_key_proof.get("verification_source")
-                != "operator-authenticated-runpod-web-terminal"
+                != "runpod-authenticated-v2-container-log"
+            or host_key_proof.get("provider_log_endpoint_origin")
+                != "https://api.runpod.io"
+            or host_key_proof.get("provider_log_source") != "container"
+            or host_key_proof.get("provider_log_tail") != 5000
+            or _HEX64.fullmatch(str(
+                host_key_proof.get("provider_log_line_sha256") or "")) is None
+            or provider_log_line_match is None
+            or hashlib.sha256(
+                provider_log_line.encode("utf-8")).hexdigest()
+                != host_key_proof.get("provider_log_line_sha256")
+            or re.fullmatch(
+                r"SHA256:[A-Za-z0-9+/]{43}",
+                str(host_key_proof.get(
+                    "provider_log_fingerprint") or "")) is None
+            or provider_log_line_match.group(1)
+                != host_key_proof.get("provider_log_fingerprint")
+            or host_key_proof.get("provider_log_fingerprint")
+                != host_key_proof.get("fingerprint")
             or host_key_proof.get("algorithm") != "ssh-ed25519"
             or re.fullmatch(
                 r"SHA256:[A-Za-z0-9+/]{43}",
@@ -574,7 +602,16 @@ def validate_safety_proof(path, bundle_manifest_sha256,
             "proof lacks authenticated exact-pod ED25519 SSH host identity")
     _verify_blank_seal(
         host_key_proof, "proof_sha256", "SSH host-key proof")
-    _utc(host_key_proof.get("verified_at_utc"), "SSH host-key verified_at_utc")
+    verified_at = _utc(
+        host_key_proof.get("verified_at_utc"), "SSH host-key verified_at_utc")
+    provider_log_observed_at = _utc(
+        host_key_proof.get("provider_log_observed_at_utc"),
+        "SSH host-key provider-log observed_at_utc")
+    if not (provider_log_observed_at <= verified_at
+            <= provider_log_observed_at + timedelta(minutes=2)):
+        raise SafetyProofError(
+            "SSH host-key network verification did not promptly follow the "
+            "authenticated provider-log observation")
     if drill.get("ssh_host_key_proof_sha256") != host_key_proof["proof_sha256"]:
         raise SafetyProofError(
             "drill does not bind the authenticated SSH host-key proof")
@@ -905,19 +942,33 @@ def validate_safety_proof(path, bundle_manifest_sha256,
     billed_at = _utc(
         bill_doc.get("retrieved_at_utc"), "billing retrieved_at_utc")
     api_lag_limit = termination + timedelta(minutes=15)
-    if not (create_bound_at <= loss_at <= first_provider_observation
-            < termination <= destroy_at <= first_provider_absence
-            <= api_lag_limit
-            and destroy_at <= absent_at <= api_lag_limit
-            and (first_provider_observation - loss_at).total_seconds()
-                <= deadline_observation["interpoll_gap_max_seconds"]
-            and first_provider_absence <= last_provider_observation <= issued
-            and loss_at < invocation_started
+    if not create_bound_at <= loss_at:
+        raise SafetyProofError(
+            "controller loss precedes the durable provider-id binding")
+    if not loss_at <= first_provider_observation < termination:
+        raise SafetyProofError(
+            "controller loss was not observed before the absolute reap deadline")
+    if not (termination <= destroy_at <= first_provider_absence
+            <= api_lag_limit):
+        raise SafetyProofError(
+            "autonomous destroy or first exact absence exceeded the "
+            "15-minute provider-lag bound")
+    if not destroy_at <= absent_at <= api_lag_limit:
+        raise SafetyProofError(
+            "durable exact absence exceeded the 15-minute provider-lag bound")
+    if ((first_provider_observation - loss_at).total_seconds()
+            > deadline_observation["interpoll_gap_max_seconds"]):
+        raise SafetyProofError(
+            "first post-loss provider observation exceeded the authored "
+            "inter-poll bound")
+    if not first_provider_absence <= last_provider_observation <= issued:
+        raise SafetyProofError(
+            "provider observations do not remain ordered through proof issue")
+    if not (loss_at < invocation_started
             <= billed_at <= reaped_at <= issued):
         raise SafetyProofError(
-            "controller loss, autonomous destroy, exact absence, billing and "
-            "healthy reaper times are not ordered or the 15-minute proof bound "
-            "was exceeded")
+            "billing reconciliation and final healthy reaper invocation are "
+            "not ordered after controller loss")
     billing_path, _billing_raw = _artifact(
         path, artifacts.get("billing_arithmetic"), "billing arithmetic")
     billing_receipt, _unused = _json_regular(

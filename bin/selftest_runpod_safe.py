@@ -2,6 +2,7 @@
 """Offline negative-path checks for the initial safe RunPod controller."""
 import ast
 import hashlib
+import io
 import json
 import inspect
 import sys
@@ -14,6 +15,7 @@ import measure_cloud as MC  # noqa: E402
 from fidelity.common import Console  # noqa: E402
 from fidelity.hfmeta import RepoMeta  # noqa: E402
 from fidelity.runpodapi import RunPod, RunPodError  # noqa: E402
+import fidelity.runpodapi as runpodapi_module  # noqa: E402
 from fidelity import resultsink  # noqa: E402
 from fidelity import bench as bench_module  # noqa: E402
 from fidelity.runpodsafety import SafetyProofError, _artifact  # noqa: E402
@@ -46,10 +48,31 @@ def main():
             def set_known_hosts(self, path):
                 self.path = Path(path)
 
+            def ssh_host_ed25519_fingerprint(self, provider_id):
+                check("exact provider id reaches authenticated log API",
+                      provider_id == "pod-exact")
+                provider_log_line = (
+                    "256 SHA256:%s fixture (ED25519)" % ("A" * 43))
+                return {
+                    "schema":
+                        "fidelity-suite/runpod-host-key-log-evidence.v1",
+                    "provider": "runpod",
+                    "provider_id": provider_id,
+                    "endpoint_origin": "https://api.runpod.io",
+                    "source": "container",
+                    "tail": 5000,
+                    "observed_at_utc": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "line": provider_log_line,
+                    "line_sha256": hashlib.sha256(
+                        provider_log_line.encode("utf-8")).hexdigest(),
+                    "fingerprint": "SHA256:" + "A" * 43,
+                }
+
             def verify_host_key(self, provider_id, expected):
                 check("exact provider id reaches host verifier",
                       provider_id == "pod-exact")
-                check("operator fingerprint reaches host verifier",
+                check("provider-log fingerprint reaches host verifier",
                       expected == "SHA256:" + "A" * 43)
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 self.path.write_text(
@@ -64,20 +87,77 @@ def main():
                 }
 
         host_provider = HostProvider()
-        host_args = type("HostArgs", (), {
-            "runpod_host_key_sha256": "SHA256:" + "A" * 43,
-        })()
         host_evidence = MC._authenticate_runpod_ssh_host(
-            host_args, Console(), host_provider, "pod-exact", root / "run")
+            Console(), host_provider, "pod-exact", root / "run")
         host_proof = json.loads(
             host_evidence["path"].read_text(encoding="utf-8"))
         resultsink._validate_runpod_host_key_proof(
             {"execution_attempt": {"kind": "runpod-ssh"}},
             host_proof, {"provider_id": "pod-exact"})
-        check("operator-authenticated host proof is sealed and persisted",
+        check("provider-log-authenticated host proof is sealed and persisted",
               host_evidence["proof"]["proof_sha256"]
               == host_proof["proof_sha256"]
+              and host_proof["verification_source"]
+                  == "runpod-authenticated-v2-container-log"
               and host_evidence["path"].is_file())
+    class LogResponse:
+        def __init__(self, lines, content_type="text/event-stream"):
+            self.stream = io.BytesIO(b"".join(lines))
+            self.headers = {
+                "Content-Type": content_type,
+                "Date": "Tue, 01 Sep 2026 00:00:00 GMT",
+            }
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_unused):
+            return False
+
+        def readline(self, size=-1):
+            return self.stream.readline(size)
+
+    log_requests = []
+    log_lines = [(
+        b'data:{"source":"container","line":"256 SHA256:'
+        + b"A" * 43 + b' fixture (ED25519)"}\n')]
+    original_urlopen = runpodapi_module.safe_urlopen
+    try:
+        def log_urlopen(request, *, timeout):
+            log_requests.append((request, timeout))
+            return LogResponse(log_lines)
+
+        runpodapi_module.safe_urlopen = log_urlopen
+        log_provider = RunPod(dry=False, key_file="/not/read")
+        log_provider._key = "fixture-secret"
+        log_evidence = log_provider.ssh_host_ed25519_fingerprint("pod-exact")
+        request, timeout = log_requests[-1]
+        check("authenticated v2 logs yield the exact container ED25519 key",
+              log_evidence["fingerprint"] == "SHA256:" + "A" * 43
+              and log_evidence["source"] == "container"
+              and log_evidence["tail"] == 5000
+              and timeout == 60.0)
+        check("RunPod API key stays in a request header",
+              "fixture-secret" not in request.full_url
+              and request.get_header("Authorization")
+                  == "Bearer fixture-secret"
+              and request.get_header("User-agent")
+                  == "quant-fidelity-suite/0.1")
+        log_lines[:] = [
+            b'data:{"source":"system","line":"256 SHA256:'
+            + b"A" * 43 + b' fixture (ED25519)"}\n']
+        check("non-container fingerprint logs fail closed", refuses(
+            lambda: log_provider.ssh_host_ed25519_fingerprint("pod-exact")))
+        log_lines[:] = [
+            b'data:{"source":"container","line":"not a host key"}\n']
+        check("malformed fingerprint logs fail closed", refuses(
+            lambda: log_provider.ssh_host_ed25519_fingerprint("pod-exact")))
+        log_lines[:] = [b"x" * (64 * 1024 + 1) + b"\n"]
+        check("oversized provider log lines fail before unbounded parsing",
+              refuses(lambda:
+                  log_provider.ssh_host_ed25519_fingerprint("pod-exact")))
+    finally:
+        runpodapi_module.safe_urlopen = original_urlopen
     dry = RunPod(dry=True)
     dry._validated_ssh_public_key = lambda: "ssh-ed25519 AAAA"
     terminate_after = time.strftime(

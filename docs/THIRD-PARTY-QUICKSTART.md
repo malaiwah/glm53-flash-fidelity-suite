@@ -100,9 +100,10 @@ one small L4 create POST, deliberately kills its controller, and accepts a
 proof only after the independent user-systemd reaper issues the exact-id
 destroy at the absolute lease deadline, complete inventory proves absence and
 billing stabilizes. RunPod `terminateAfter` is recorded as an untrusted hint,
-not evidence of cleanup. During the run, copy the pod's ED25519 fingerprint
-from its authenticated RunPod web terminal when prompted; the network keyscan
-is not trusted on its own.
+not evidence of cleanup. Before the first SSH byte, the controller
+automatically reads the exact ED25519 fingerprint from the fresh pod's bounded
+authenticated RunPod v2 container-log stream and compares it to the untrusted
+network keyscan. No operator fingerprint prompt or first-hop TOFU is used.
 
 The accepted artifact is:
 
@@ -269,12 +270,13 @@ campaign ceiling $… with reserve $…)? [y/N]
 ```
 
 Only `y` or `yes` permits the single create POST. The controller never retries
-an ambiguous create as science work. After creation, authenticate the pod's
-ED25519 fingerprint through the logged-in RunPod web terminal. Success means:
-bounded archive retrieval to a fresh local temporary directory, exact
-SHA-256/size/member verification, pod deletion, exact absence, billing
-reconciliation and campaign release. Retrieval failure still deletes the pod;
-the durable lease and reaper remain backstops.
+an ambiguous create as science work. After creation, it authenticates the
+pod's ED25519 fingerprint through the bounded RunPod v2 container-log API and
+compares it to the untrusted network keyscan. Success means bounded archive
+retrieval to a fresh local temporary directory, exact SHA-256/size/member
+verification, pod deletion, exact absence, billing reconciliation and campaign
+release. Retrieval failure still deletes the pod; the durable lease and reaper
+remain backstops.
 
 The verified root outputs are:
 

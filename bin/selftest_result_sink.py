@@ -1693,13 +1693,22 @@ def rung_archive():
     ).hexdigest()
     RS._validate_runpod_attestation(resource_job, attestation)
     check("R77 sealed live RunPod attestation binds exact job resources", True)
+    provider_log_line = (
+        "256 SHA256:%s fixture (ED25519)" % ("A" * 43))
     host_key_proof = {
         "schema": RS.RUNPOD_HOST_KEY_PROOF_SCHEMA,
         "provider": "runpod",
         "provider_id": "pod-123",
         "verified_at_utc": "2026-01-01T00:00:00Z",
-        "verification_source":
-            "operator-authenticated-runpod-web-terminal",
+        "verification_source": "runpod-authenticated-v2-container-log",
+        "provider_log_endpoint_origin": "https://api.runpod.io",
+        "provider_log_source": "container",
+        "provider_log_tail": 5000,
+        "provider_log_observed_at_utc": "2026-01-01T00:00:00Z",
+        "provider_log_line": provider_log_line,
+        "provider_log_line_sha256": hashlib.sha256(
+            provider_log_line.encode("utf-8")).hexdigest(),
+        "provider_log_fingerprint": "SHA256:" + "A" * 43,
         "algorithm": "ssh-ed25519",
         "fingerprint": "SHA256:" + "A" * 43,
         "host": "198.51.100.7",
@@ -1711,16 +1720,32 @@ def rung_archive():
         RS.canonical_json(host_key_proof).encode("utf-8")).hexdigest()
     RS._validate_runpod_host_key_proof(
         resource_job, host_key_proof, attestation)
-    check("R81 sealed SSH proof binds an operator-authenticated exact pod key",
-          True)
+    check("R81 sealed SSH proof binds authenticated provider logs to the "
+          "exact pod key", True)
     bad_host_key = dict(host_key_proof)
     bad_host_key["verification_source"] = "network-keyscan-tofu"
     bad_host_key["proof_sha256"] = ""
     bad_host_key["proof_sha256"] = hashlib.sha256(
         RS.canonical_json(bad_host_key).encode("utf-8")).hexdigest()
-    _refused("R82 self-sealed first-hop TOFU proof is refused",
+    _refused("R82 self-sealed unauthenticated first-hop proof is refused",
              lambda: RS._validate_runpod_host_key_proof(
                  resource_job, bad_host_key, attestation))
+    mismatched_log_key = dict(host_key_proof)
+    mismatched_log_key["provider_log_fingerprint"] = "SHA256:" + "B" * 43
+    mismatched_log_key["proof_sha256"] = ""
+    mismatched_log_key["proof_sha256"] = hashlib.sha256(
+        RS.canonical_json(mismatched_log_key).encode("utf-8")).hexdigest()
+    _refused("R93 self-sealed provider-log/network key mismatch is refused",
+             lambda: RS._validate_runpod_host_key_proof(
+                 resource_job, mismatched_log_key, attestation))
+    bad_log_line_hash = dict(host_key_proof)
+    bad_log_line_hash["provider_log_line_sha256"] = "7" * 64
+    bad_log_line_hash["proof_sha256"] = ""
+    bad_log_line_hash["proof_sha256"] = hashlib.sha256(
+        RS.canonical_json(bad_log_line_hash).encode("utf-8")).hexdigest()
+    _refused("R94 self-sealed provider-log line/hash mismatch is refused",
+             lambda: RS._validate_runpod_host_key_proof(
+                 resource_job, bad_log_line_hash, attestation))
     bad_attestation = dict(attestation)
     bad_attestation["checks"] = dict(attestation["checks"])
     bad_attestation["checks"]["storage"] = False

@@ -373,10 +373,10 @@ class SSHTransport:
                       % (host, port, int(wait)))
 
     # -- host keys ---------------------------------------------------------
-    # Ephemeral hosts do not have a reusable global key.  The first supported
-    # paid path therefore obtains the ED25519 fingerprint through an
-    # authenticated provider-console side channel, compares it to an untrusted
-    # keyscan, and only then writes the per-attempt known_hosts file.
+    # Ephemeral hosts do not have a reusable global key. The RunPod path reads
+    # the ED25519 fingerprint from the provider's authenticated HTTPS log API
+    # before any uploaded code runs, compares it to an untrusted keyscan, and
+    # only then writes the per-attempt known_hosts file.
     _known_hosts: Optional[str] = None
 
     def set_known_hosts(self, path) -> None:
@@ -469,7 +469,8 @@ class SSHTransport:
         scanned = self.scan_host_key(machine_id)
         if scanned["fingerprint"] != expected:
             raise JLError(
-                "RunPod console fingerprint differs from the network keyscan")
+                "authenticated provider-log fingerprint differs from the "
+                "network keyscan")
         if not self._known_hosts:
             raise JLError("per-attempt known_hosts path was not selected")
         path = os.path.abspath(self._known_hosts)

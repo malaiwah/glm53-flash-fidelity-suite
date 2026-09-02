@@ -374,34 +374,31 @@ class DrillPlan:
 
 
 
-def _interactive_host_key_verifier(
-        provider: Any, provider_id: str, stage: Path,
-        verified_at_utc: str) -> Dict[str, Any]:
+def _provider_log_host_key_verifier(
+        provider: Any, provider_id: str, stage: Path) -> Dict[str, Any]:
     known_hosts = stage / "ssh_known_hosts"
     provider.set_known_hosts(known_hosts)
-    if not sys.stdin.isatty():
-        raise DrillError(
-            "first RunPod SSH connection requires an interactive authenticated "
-            "web-terminal host-key check")
-    print(
-        "\nAuthenticate the new pod through the RunPod web terminal (not SSH), "
-        "then run:\n"
-        "  ssh-keygen -E sha256 -lf /etc/ssh/ssh_host_ed25519_key.pub\n"
-        "Paste the exact SHA256 fingerprint below. Provider pod id: %s"
-        % provider_id, file=sys.stderr)
-    expected = input("RunPod ED25519 host fingerprint (SHA256:...): ").strip()
     try:
-        evidence = provider.verify_host_key(provider_id, expected)
+        log_evidence = provider.ssh_host_ed25519_fingerprint(provider_id)
+        evidence = provider.verify_host_key(
+            provider_id, log_evidence["fingerprint"])
     except Exception as exc:
         raise DrillError(
             "RunPod SSH host-key authentication failed: %s" % exc) from exc
     proof = _seal({
-        "schema": "fidelity-suite/runpod-ssh-host-key-proof.v1",
+        "schema": "fidelity-suite/runpod-ssh-host-key-proof.v2",
         "proof_sha256": "",
         "provider": "runpod",
         "provider_id": provider_id,
-        "verified_at_utc": verified_at_utc,
-        "verification_source": "operator-authenticated-runpod-web-terminal",
+        "verified_at_utc": _utc(time.time()),
+        "verification_source": "runpod-authenticated-v2-container-log",
+        "provider_log_endpoint_origin": log_evidence["endpoint_origin"],
+        "provider_log_source": log_evidence["source"],
+        "provider_log_tail": log_evidence["tail"],
+        "provider_log_observed_at_utc": log_evidence["observed_at_utc"],
+        "provider_log_line_sha256": log_evidence["line_sha256"],
+        "provider_log_line": log_evidence["line"],
+        "provider_log_fingerprint": log_evidence["fingerprint"],
         "algorithm": evidence["algorithm"],
         "fingerprint": evidence["fingerprint"],
         "host": evidence["host"],
@@ -437,7 +434,7 @@ class DrillSeams:
             self.checkout_status = _producer_checkout_status
 
         if self.host_key_verifier is None:
-            self.host_key_verifier = _interactive_host_key_verifier
+            self.host_key_verifier = _provider_log_host_key_verifier
 
 class ForkSupervisor:
     """Fork a controller, prepare its lease in the parent, then SIGKILL it."""
@@ -1599,8 +1596,11 @@ def _controller(plan: DrillPlan, provider: Any, stage: Path,
                 "provider backend submitted request differs from durable lease")
         if binding.get("provider_id") not in (None, provider_id):
             raise DrillError("post-create exact resource binding id changed")
-        host_key_proof = host_key_verifier(
-            provider, provider_id, stage, _utc(store.clock()))
+        host_key_proof = host_key_verifier(provider, provider_id, stage)
+        if store.clock() >= plan.workload_deadline_epoch:
+            raise DrillError(
+                "authenticated host-key retrieval exhausted the drill "
+                "workload deadline")
     except BaseException:
         if store.read(ref)["state"] == "ACTIVE":
             store.request_destroy(ref, {

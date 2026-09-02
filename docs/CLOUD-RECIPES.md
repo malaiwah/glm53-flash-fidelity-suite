@@ -21,10 +21,11 @@ the operational boundary.
   never puts its bytes in argv or logs, and confirms erasure immediately after
   `fetch_target`. Panels remain anonymous.
 - An ED25519 public key must exist locally before create.
-- Before the first SSH byte, the operator reads the pod's ED25519 fingerprint
-  in the authenticated RunPod web terminal. The controller compares that
-  out-of-band value to the untrusted network keyscan, then writes a fresh
-  per-attempt `known_hosts` file and uses `StrictHostKeyChecking=yes`.
+- Before the first SSH byte, the controller reads one exact ED25519 fingerprint
+  line from the fresh pod's bounded authenticated RunPod v2 container-log
+  stream. It compares that value to the untrusted network keyscan, then writes a
+  fresh per-attempt `known_hosts` file and uses `StrictHostKeyChecking=yes`.
+  No operator fingerprint prompt or first-hop TOFU is permitted.
 - A separate owner/write token used for optional root publication stays on the
   controller. Local publication is possible only after qualification, verified
   retrieval, provider-confirmed absence and billing reconciliation.

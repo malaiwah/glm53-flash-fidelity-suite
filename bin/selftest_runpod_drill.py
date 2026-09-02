@@ -80,6 +80,7 @@ class Provider:
         self.download_replacements = {}
         self.receipt_padding_bytes = 0
         self.remote_archive_failure = False
+        self.billing_delay_after_absence_seconds = 0
         self.gpu_queries = []
     def require(self):
         if not self.key: raise RD.DrillError("missing key")
@@ -257,7 +258,15 @@ class Provider:
         Path(local).write_bytes(body)
         return {"ok": True, "bytes": len(body)}
     def reconcile_billing(self, lease):
-        pod = lease["provider_resource_ids"][0]; stamp = RD._utc(self.clock.time())
+        pod = lease["provider_resource_ids"][0]
+        absence = next(
+            item["at"] for item in reversed(lease["history"])
+            if item.get("to") == "ABSENCE_CONFIRMED")
+        if (self.clock.time()
+                < RD._utc_epoch(absence, "absence")
+                + self.billing_delay_after_absence_seconds):
+            raise RuntimeError("fixture billing remains pending")
+        stamp = RD._utc(self.clock.time())
         row = {"podId": pod, "time": stamp, "totalAmount": "0.08",
                "gpuAmount": "0.06", "cpuAmount": "0.01", "diskAmount": "0.01"}
         totals = {key: row[key] for key in
@@ -278,9 +287,6 @@ class Provider:
         normalized = json.loads(json.dumps(closure))
         for item in normalized["billing_histories"]:
             item.pop("retrieved_at_utc", None)
-        absence = next(
-            item["at"] for item in reversed(lease["history"])
-            if item.get("to") == "ABSENCE_CONFIRMED")
         closure["evidence"] = {
             "schema": "fidelity-suite/runpod-billing-stabilization.v1",
             "absence_confirmed_at": absence,
@@ -476,15 +482,25 @@ def fixture(root, healthy=True):
         "status_porcelain_sha256": hashlib.sha256(b"").hexdigest(),
         "status_bytes": 0, "clean": True,
     }
-    def host_key_verifier(_provider, provider_id, stage, verified_at_utc):
+    def host_key_verifier(_provider, provider_id, stage):
+        provider_log_line = (
+            "256 SHA256:%s fixture (ED25519)" % ("A" * 43))
+        observed_at = RD._utc(provider.clock.time())
         proof = RD._seal({
-            "schema": "fidelity-suite/runpod-ssh-host-key-proof.v1",
+            "schema": "fidelity-suite/runpod-ssh-host-key-proof.v2",
             "proof_sha256": "",
             "provider": "runpod",
             "provider_id": provider_id,
-            "verified_at_utc": verified_at_utc,
-            "verification_source":
-                "operator-authenticated-runpod-web-terminal",
+            "verified_at_utc": observed_at,
+            "verification_source": "runpod-authenticated-v2-container-log",
+            "provider_log_endpoint_origin": "https://api.runpod.io",
+            "provider_log_source": "container",
+            "provider_log_tail": 5000,
+            "provider_log_observed_at_utc": observed_at,
+            "provider_log_line": provider_log_line,
+            "provider_log_line_sha256": hashlib.sha256(
+                provider_log_line.encode("utf-8")).hexdigest(),
+            "provider_log_fingerprint": "SHA256:" + "A" * 43,
             "algorithm": "ssh-ed25519",
             "fingerprint": "SHA256:" + "A" * 43,
             "host": "fixture.runpod.test",
@@ -661,6 +677,53 @@ def main():
                        {"cost_per_hr": rest_rate}),
             RD.DrillError))
     with tempfile.TemporaryDirectory() as td:
+        provider_log_line = (
+            "256 SHA256:%s fixture (ED25519)" % ("A" * 43))
+        class ProviderLogHost:
+            def set_known_hosts(self, path):
+                self.known_hosts = Path(path)
+
+            def ssh_host_ed25519_fingerprint(self, provider_id):
+                check("drill requests logs for the exact provider id",
+                      provider_id == "pod-log")
+                return {
+                    "endpoint_origin": "https://api.runpod.io",
+                    "source": "container",
+                    "tail": 5000,
+                    "observed_at_utc": RD._utc(time.time()),
+                    "line": provider_log_line,
+                    "line_sha256": hashlib.sha256(
+                        provider_log_line.encode("utf-8")).hexdigest(),
+                    "fingerprint": "SHA256:" + "A" * 43,
+                }
+
+            def verify_host_key(self, provider_id, expected):
+                check("drill compares provider logs to exact network endpoint",
+                      provider_id == "pod-log"
+                      and expected == "SHA256:" + "A" * 43)
+                self.known_hosts.write_text(
+                    "fixture ssh-ed25519 AAAA\n", encoding="utf-8")
+                self.known_hosts.chmod(0o600)
+                return {
+                    "algorithm": "ssh-ed25519",
+                    "fingerprint": expected,
+                    "host": "fixture.runpod.test",
+                    "port": 22,
+                    "known_hosts_sha256": "e" * 64,
+                }
+
+        host_stage = Path(td)
+        host_proof = RD._provider_log_host_key_verifier(
+            ProviderLogHost(), "pod-log", host_stage)
+        check("default drill host authentication is noninteractive provider-log "
+              "verification",
+              host_proof["schema"]
+                  == "fidelity-suite/runpod-ssh-host-key-proof.v2"
+              and host_proof["verification_source"]
+                  == "runpod-authenticated-v2-container-log"
+              and (host_stage / "artifacts"
+                   / "runpod-ssh-host-key-proof.json").is_file())
+    with tempfile.TemporaryDirectory() as td:
         helper_root = Path(td)
         helpers = RD._snapshot_remote_helpers()
         for name, body, digest in helpers:
@@ -708,6 +771,33 @@ def main():
             plan, args, provider, seams=seams), RD.DrillError))
         check("authorization pre-mutation", before_ledger == ledger.snapshot()
               and provider.create_calls == 0)
+    with tempfile.TemporaryDirectory() as td:
+        args, provider, seams, _ledger = fixture(td)
+        ordinary_host_verifier = seams.host_key_verifier
+
+        def delayed_host_verifier(*call_args):
+            proof = ordinary_host_verifier(*call_args)
+            seams.clock.sleep(args.runpod_drill_workload_seconds + 1)
+            return proof
+
+        seams.host_key_verifier = delayed_host_verifier
+        plan = RD.plan_drill(args, provider, seams=seams)
+        args.dry_run = False; args.yes = True
+        try:
+            RD.execute_drill(plan, args, provider, seams=seams)
+        except RD.DrillError as exc:
+            deadline_refused = (
+                str(exc)
+                == "authenticated host-key retrieval exhausted the drill "
+                   "workload deadline")
+        else:
+            deadline_refused = False
+        lease_path = Path(args.lease_dir) / (
+            "%s.%s.json" % (plan.job_hash, plan.attempt_id))
+        failed = LeaseStore(Path(args.lease_dir)).read(lease_path)
+        check("host authentication cannot delay controller loss past deadline",
+              deadline_refused and failed["state"] == "DESTROYING"
+              and not Path(args.out).exists())
     with tempfile.TemporaryDirectory() as td:
         args, provider, seams, ledger = fixture(td)
         provider.status_latency = 1
@@ -1139,6 +1229,26 @@ def main():
                   proof_path, plan.bundle_contract_sha256,
                   plan.control_manifest_sha256, plan.provider_account_id,
                   copied_ledger), SafetyProofError))
+    with tempfile.TemporaryDirectory() as td:
+        args, provider, seams, _ledger = fixture(td)
+        provider.termination_offset = 901
+        provider.billing_delay_after_absence_seconds = 1000
+        plan = RD.plan_drill(args, provider, seams=seams)
+        args.dry_run = False; args.yes = True
+        proof_path = RD.execute_drill(plan, args, provider, seams=seams)
+        accepted = validate_safety_proof(
+            proof_path, plan.bundle_contract_sha256,
+            plan.control_manifest_sha256, plan.provider_account_id,
+            plan.campaign_ledger,
+            now=datetime.fromtimestamp(seams.clock.time(), tz=timezone.utc))
+        billed_at = RD._utc_epoch(
+            accepted["lease"]["billing_reconciliation"][
+                "billing_histories"][0]["retrieved_at_utc"],
+            "billing retrieval")
+        check("billing may stabilize after the lifecycle proof bound",
+              billed_at
+              > RD._utc_epoch(plan.terminate_after, "deadline")
+                  + RD.DRILL_LAG_SECONDS)
     with tempfile.TemporaryDirectory() as td:
         args, provider, seams, _ledger = fixture(td)
         provider.termination_offset = -60
