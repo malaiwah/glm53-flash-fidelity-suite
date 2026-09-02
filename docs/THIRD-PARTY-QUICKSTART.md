@@ -104,6 +104,9 @@ not evidence of cleanup. Before the first SSH byte, the controller
 automatically reads the exact ED25519 fingerprint from the fresh pod's bounded
 authenticated RunPod v2 container-log stream and compares it to the untrusted
 network keyscan. No operator fingerprint prompt or first-hop TOFU is used.
+The authenticated log wait has a 15-minute global deadline inside the drill's
+20-minute ready-evidence deadline. The default provider/reaper destruction
+deadline is 22 minutes, preserving the authored 120-second terminal reserve.
 
 The accepted artifact is:
 

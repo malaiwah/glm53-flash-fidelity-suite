@@ -7735,8 +7735,14 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--tariff-valid-until", default="2026-09-07T00:00:00Z")
 
     o = p.add_argument_group("output")
-    rp.add_argument("--runpod-drill-workload-seconds", type=int, default=300)
-    rp.add_argument("--runpod-drill-terminate-seconds", type=int, default=420)
+    from fidelity.runpoddrill import (
+        DEFAULT_TERMINATE_SECONDS, DEFAULT_WORKLOAD_SECONDS)
+    rp.add_argument(
+        "--runpod-drill-workload-seconds", type=int,
+        default=DEFAULT_WORKLOAD_SECONDS)
+    rp.add_argument(
+        "--runpod-drill-terminate-seconds", type=int,
+        default=DEFAULT_TERMINATE_SECONDS)
     rp.add_argument("--runpod-drill-poll-seconds", type=int, default=15)
     rp.add_argument(
         "--runpod-drill-billing-wait-seconds", type=int, default=3600)

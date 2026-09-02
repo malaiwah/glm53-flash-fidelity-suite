@@ -70,6 +70,9 @@ MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_LOG_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_LOG_EVENT_LINE_BYTES = 64 * 1024
 RUNPOD_LOG_TAIL_LINES = 5000
+RUNPOD_HOST_KEY_LOG_WAIT_SECONDS = 900
+RUNPOD_HOST_KEY_LOG_IO_SECONDS = 60
+RUNPOD_HOST_KEY_LOG_RETRY_SECONDS = 2
 _ED25519_HOST_KEY_LOG_RE = re.compile(
     r"256\s+(SHA256:[A-Za-z0-9+/]{43})\s+\S+\s+\(ED25519\)")
 # Sole stable default, expanded once to an absolute path; key bytes stay in-file.
@@ -568,8 +571,10 @@ class RunPod(SSHTransport):
             REST_V1, path, query or {}, label="REST v1", timeout=timeout)
 
     def ssh_host_ed25519_fingerprint(
-            self, pod_id: Any, *, timeout: float = 60) -> Dict[str, Any]:
-        """Read the fresh pod's ED25519 fingerprint from authenticated logs."""
+            self, pod_id: Any,
+            *, timeout: float = RUNPOD_HOST_KEY_LOG_WAIT_SECONDS
+            ) -> Dict[str, Any]:
+        """Wait boundedly for the fresh pod's authenticated ED25519 log line."""
         wanted = _provider_id(pod_id)
         try:
             request_timeout = float(timeout)
@@ -590,79 +595,106 @@ class RunPod(SSHTransport):
                 "User-Agent": "quant-fidelity-suite/0.1",
                 "Authorization": "Bearer " + self._key,
             })
-        try:
-            with safe_urlopen(req, timeout=request_timeout) as resp:
-                content_type = str(resp.headers.get("Content-Type") or "")
-                if content_type.split(";", 1)[0].strip().lower() \
-                        != "text/event-stream":
+        deadline = time.monotonic() + request_timeout
+        total = 0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                with safe_urlopen(
+                        req, timeout=min(
+                            float(RUNPOD_HOST_KEY_LOG_IO_SECONDS), remaining)
+                        ) as resp:
+                    content_type = str(
+                        resp.headers.get("Content-Type") or "")
+                    if content_type.split(";", 1)[0].strip().lower() \
+                            != "text/event-stream":
+                        raise RunPodError(
+                            "RunPod pod logs returned a non-event-stream "
+                            "response")
+                    self._capture_server_time(resp, url)
+                    while time.monotonic() < deadline:
+                        raw = resp.readline(MAX_LOG_EVENT_LINE_BYTES + 1)
+                        if time.monotonic() >= deadline:
+                            break
+                        if not raw:
+                            break
+                        total += len(raw)
+                        if total > MAX_LOG_RESPONSE_BYTES:
+                            raise RunPodError(
+                                "RunPod pod log response exceeded %d bytes"
+                                % MAX_LOG_RESPONSE_BYTES)
+                        if (len(raw) > MAX_LOG_EVENT_LINE_BYTES
+                                or not raw.endswith(b"\n")):
+                            raise RunPodError(
+                                "RunPod pod log event line is oversized or "
+                                "unterminated")
+                        if not raw.startswith(b"data:"):
+                            continue
+                        try:
+                            payload = raw[5:].strip().decode("utf-8")
+                        except UnicodeError as exc:
+                            raise RunPodError(
+                                "RunPod pod log event is not UTF-8: %s" % exc)
+                        event = _strict_json_loads(payload)
+                        if not isinstance(event, dict):
+                            raise RunPodError(
+                                "RunPod pod log event is not an object")
+                        if event.get("source") != "container":
+                            continue
+                        line = event.get("line")
+                        if not isinstance(line, str):
+                            raise RunPodError(
+                                "RunPod container log event lacks a string "
+                                "line")
+                        canonical_line = line.strip()
+                        match = _ED25519_HOST_KEY_LOG_RE.fullmatch(
+                            canonical_line)
+                        if match is None:
+                            continue
+                        observed = time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        return {
+                            "schema":
+                                "fidelity-suite/"
+                                "runpod-host-key-log-evidence.v1",
+                            "provider": "runpod",
+                            "provider_id": wanted,
+                            "endpoint_origin": "https://api.runpod.io",
+                            "source": "container",
+                            "tail": RUNPOD_LOG_TAIL_LINES,
+                            "observed_at_utc": observed,
+                            "line": canonical_line,
+                            "line_sha256": hashlib.sha256(
+                                canonical_line.encode("utf-8")).hexdigest(),
+                            "fingerprint": match.group(1),
+                        }
+            except urllib.error.HTTPError as exc:
+                raise RunPodError(
+                    "RunPod pod logs GET %s -> HTTP %d: %s"
+                    % (path, exc.code,
+                       redact(exc.read(300).decode("utf-8", "replace"))))
+            except RunPodError:
+                raise
+            except TimeoutError:
+                pass
+            except urllib.error.URLError as exc:
+                if not isinstance(exc.reason, TimeoutError):
                     raise RunPodError(
-                        "RunPod pod logs returned a non-event-stream response")
-                self._capture_server_time(resp, url)
-                total = 0
-                while True:
-                    raw = resp.readline(MAX_LOG_EVENT_LINE_BYTES + 1)
-                    if not raw:
-                        break
-                    total += len(raw)
-                    if total > MAX_LOG_RESPONSE_BYTES:
-                        raise RunPodError(
-                            "RunPod pod log response exceeded %d bytes"
-                            % MAX_LOG_RESPONSE_BYTES)
-                    if (len(raw) > MAX_LOG_EVENT_LINE_BYTES
-                            or not raw.endswith(b"\n")):
-                        raise RunPodError(
-                            "RunPod pod log event line is oversized or "
-                            "unterminated")
-                    if not raw.startswith(b"data:"):
-                        continue
-                    try:
-                        payload = raw[5:].strip().decode("utf-8")
-                    except UnicodeError as exc:
-                        raise RunPodError(
-                            "RunPod pod log event is not UTF-8: %s" % exc)
-                    event = _strict_json_loads(payload)
-                    if not isinstance(event, dict):
-                        raise RunPodError(
-                            "RunPod pod log event is not an object")
-                    if event.get("source") != "container":
-                        continue
-                    line = event.get("line")
-                    if not isinstance(line, str):
-                        raise RunPodError(
-                            "RunPod container log event lacks a string line")
-                    canonical_line = line.strip()
-                    match = _ED25519_HOST_KEY_LOG_RE.fullmatch(canonical_line)
-                    if match is None:
-                        continue
-                    observed = time.strftime(
-                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                    return {
-                        "schema":
-                            "fidelity-suite/runpod-host-key-log-evidence.v1",
-                        "provider": "runpod",
-                        "provider_id": wanted,
-                        "endpoint_origin": "https://api.runpod.io",
-                        "source": "container",
-                        "tail": RUNPOD_LOG_TAIL_LINES,
-                        "observed_at_utc": observed,
-                        "line": canonical_line,
-                        "line_sha256": hashlib.sha256(
-                            canonical_line.encode("utf-8")).hexdigest(),
-                        "fingerprint": match.group(1),
-                    }
-        except urllib.error.HTTPError as exc:
-            raise RunPodError(
-                "RunPod pod logs GET %s -> HTTP %d: %s"
-                % (path, exc.code,
-                   redact(exc.read(300).decode("utf-8", "replace"))))
-        except RunPodError:
-            raise
-        except Exception as exc:                          # noqa: BLE001
-            raise RunPodError(
-                "RunPod pod log request failed: %s" % redact(str(exc)))
+                        "RunPod pod log request failed: %s"
+                        % redact(str(exc)))
+            except Exception as exc:                      # noqa: BLE001
+                raise RunPodError(
+                    "RunPod pod log request failed: %s" % redact(str(exc)))
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(
+                    float(RUNPOD_HOST_KEY_LOG_RETRY_SECONDS), remaining))
         raise RunPodError(
-            "RunPod authenticated container logs lack one exact ED25519 "
-            "host-key fingerprint for pod %s" % wanted)
+            "RunPod authenticated container logs did not expose one exact "
+            "ED25519 host-key fingerprint for pod %s within %g seconds"
+            % (wanted, request_timeout))
 
     # -- identity ----------------------------------------------------------
     def available(self) -> bool:

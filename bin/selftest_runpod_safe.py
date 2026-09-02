@@ -14,7 +14,8 @@ sys.path.insert(0, str(ROOT / "bin"))
 import measure_cloud as MC  # noqa: E402
 from fidelity.common import Console  # noqa: E402
 from fidelity.hfmeta import RepoMeta  # noqa: E402
-from fidelity.runpodapi import RunPod, RunPodError  # noqa: E402
+from fidelity.runpodapi import (                        # noqa: E402
+    RUNPOD_HOST_KEY_LOG_WAIT_SECONDS, RunPod, RunPodError)
 import fidelity.runpodapi as runpodapi_module  # noqa: E402
 from fidelity import resultsink  # noqa: E402
 from fidelity import bench as bench_module  # noqa: E402
@@ -147,17 +148,57 @@ def main():
             b'data:{"source":"system","line":"256 SHA256:'
             + b"A" * 43 + b' fixture (ED25519)"}\n']
         check("non-container fingerprint logs fail closed", refuses(
-            lambda: log_provider.ssh_host_ed25519_fingerprint("pod-exact")))
+            lambda: log_provider.ssh_host_ed25519_fingerprint(
+                "pod-exact", timeout=0.01)))
         log_lines[:] = [
             b'data:{"source":"container","line":"not a host key"}\n']
         check("malformed fingerprint logs fail closed", refuses(
-            lambda: log_provider.ssh_host_ed25519_fingerprint("pod-exact")))
+            lambda: log_provider.ssh_host_ed25519_fingerprint(
+                "pod-exact", timeout=0.01)))
         log_lines[:] = [b"x" * (64 * 1024 + 1) + b"\n"]
         check("oversized provider log lines fail before unbounded parsing",
               refuses(lambda:
                   log_provider.ssh_host_ed25519_fingerprint("pod-exact")))
+        class AdvancingClock:
+            def __init__(self):
+                self.now = -0.02
+
+            def __call__(self):
+                self.now += 0.02
+                return self.now
+
+        class UnendingResponse(LogResponse):
+            def readline(self, size=-1):
+                return (
+                    b'data:{"source":"container","line":"still starting"}\n')
+
+        original_monotonic = runpodapi_module.time.monotonic
+        try:
+            runpodapi_module.time.monotonic = AdvancingClock()
+            def unending_urlopen(request, *, timeout):
+                log_requests.append((request, timeout))
+                return UnendingResponse([])
+
+            runpodapi_module.safe_urlopen = unending_urlopen
+            try:
+                log_provider.ssh_host_ed25519_fingerprint(
+                    "pod-exact", timeout=0.05)
+            except RunPodError as exc:
+                check("live provider log stream obeys its global deadline",
+                      "within 0.05 seconds" in str(exc))
+            else:
+                raise AssertionError(
+                    "live provider log stream exceeded its global deadline")
+        finally:
+            runpodapi_module.time.monotonic = original_monotonic
     finally:
         runpodapi_module.safe_urlopen = original_urlopen
+    drill_defaults = MC.build_parser().parse_args(["drill"])
+    check("drill defaults fund bounded boot plus remote ready evidence",
+          drill_defaults.runpod_drill_workload_seconds
+              == RUNPOD_HOST_KEY_LOG_WAIT_SECONDS + 300
+          and drill_defaults.runpod_drill_terminate_seconds
+              - drill_defaults.runpod_drill_workload_seconds == 120)
     dry = RunPod(dry=True)
     dry._validated_ssh_public_key = lambda: "ssh-ed25519 AAAA"
     terminate_after = time.strftime(
