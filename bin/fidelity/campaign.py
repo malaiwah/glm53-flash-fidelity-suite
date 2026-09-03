@@ -860,9 +860,14 @@ class CampaignLedger:
             lease_state = cancellation["lease_state"]
             if origin not in ("RESERVED", "CREATING"):
                 raise ValueError("invalid campaign cancellation origin")
-            if (lease_state not in ("LEASE_ABSENT", "PREPARED")
-                    or (origin == "CREATING" and lease_state != "PREPARED")):
-                raise ValueError("cancellation evidence does not prove no POST intent")
+            if (lease_state not in (
+                    "LEASE_ABSENT", "PREPARED", "PROVIDER_REJECTED_CREATE")
+                    or (origin == "CREATING"
+                        and lease_state not in (
+                            "PREPARED", "PROVIDER_REJECTED_CREATE"))):
+                raise ValueError(
+                    "cancellation evidence does not prove that no provider "
+                    "resource was ever accepted")
             cancellation_evidence = cancellation["no_create_evidence"]
             if not isinstance(cancellation_evidence, str) or not cancellation_evidence:
                 raise ValueError("pre-create cancellation evidence is empty")
@@ -1460,10 +1465,22 @@ class CampaignLedger:
             self, expected_generation: int, attempt_key: str,
             cancelled_at: str, lease_state: str,
             no_create_evidence: str) -> TransitionResult:
-        """Release only with durable LEASE_ABSENT/PREPARED no-POST proof."""
+        """Release only with durable no-resource proof.
+
+        `LEASE_ABSENT`/`PREPARED` prove the POST was never authorized.
+        `PROVIDER_REJECTED_CREATE` is different and equally definitive: the
+        POST went out and the provider refused it by name, returning an
+        enumerated no-resource code and no id, with a complete listing showing
+        nothing attributable. Without this the reservation stays held and paid
+        admission closes for the whole campaign, as it did on
+        2026-09-03T02:35Z for a `SUPPLY_CONSTRAINT` refusal.
+        """
         _timestamp(cancelled_at, "cancelled_at")
-        if lease_state not in ("LEASE_ABSENT", "PREPARED"):
-            raise ValueError("lease_state must be LEASE_ABSENT or PREPARED")
+        if lease_state not in (
+                "LEASE_ABSENT", "PREPARED", "PROVIDER_REJECTED_CREATE"):
+            raise ValueError(
+                "lease_state must be LEASE_ABSENT, PREPARED or "
+                "PROVIDER_REJECTED_CREATE")
         if not isinstance(no_create_evidence, str) or not no_create_evidence:
             raise ValueError("durable no-create evidence is required")
         with self._locked(exclusive=True):
@@ -1491,7 +1508,9 @@ class CampaignLedger:
             phase = item["phase"]
             phase_permits_cancel = (
                 phase == "RESERVED"
-                or (phase == "CREATING" and lease_state == "PREPARED"))
+                or (phase == "CREATING"
+                    and lease_state in ("PREPARED",
+                                        "PROVIDER_REJECTED_CREATE")))
             if (not phase_permits_cancel or item["provider_ids"]
                     or item["actual_quote"] is not None
                     or item["cleanup_binding_evidence"] is not None

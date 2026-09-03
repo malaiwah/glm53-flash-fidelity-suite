@@ -1367,6 +1367,42 @@ def main():
               and prepared_next.admitted,
               (prepared_cancelled, prepared_retry, prepared_item, prepared_next))
 
+        # C16b: the POST went out and the provider REFUSED it by name. That is
+        # not "no POST", but it is equally definitive -- nothing was accepted,
+        # so the reservation must release. Holding it closed paid admission
+        # for a whole campaign on 2026-09-03T02:35Z after one
+        # SUPPLY_CONSTRAINT refusal.
+        refused = ready_ledger(
+            root / "refused-cancel.json", ceiling="30", width=1)
+        refused_reserved = refused.reserve(
+            1, JOB_A, ATTEMPT_A, quote(cap="4"), NOW)
+        refused_creating = refused.mark_creating(
+            refused_reserved.generation, refused_reserved.attempt_key)
+        refused_released = refused.cancel_before_create(
+            refused_creating.generation, refused_reserved.attempt_key, NOW,
+            "PROVIDER_REJECTED_CREATE", "provider refused: SUPPLY_CONSTRAINT")
+        refused_item = refused.snapshot()["attempts"][
+            refused_reserved.attempt_key]
+        refused_next = refused.reserve(
+            refused_released.generation, JOB_B, ATTEMPT_B, quote(cap="4"), NOW)
+        bad_state = False
+        try:
+            refused.cancel_before_create(
+                refused_next.generation, refused_reserved.attempt_key, NOW,
+                "PROVIDER_SHRUGGED", "not an enumerated lease state")
+        except ValueError:
+            bad_state = True
+        check("C16b named provider create refusal releases its reservation",
+              refused_released.code == "CANCELLED_BEFORE_CREATE"
+              and refused_item["released"]
+              and refused_item["maximum_remaining_liability_usd"] == "0"
+              and refused_item["precreate_cancellation"]["lease_state"]
+                  == "PROVIDER_REJECTED_CREATE"
+              and refused_item["precreate_cancellation"]
+                  ["campaign_phase_before_cancel"] == "CREATING"
+              and refused_next.admitted and bad_state,
+              (refused_released, refused_item, refused_next, bad_state))
+
         # C17: after a controller crash, the systemd reaper can atomically bind
         # every exact lease ID and project complete absence + aggregate billing
         # evidence.  Matching retries neither re-add settled cost nor mutate.

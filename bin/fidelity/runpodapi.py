@@ -147,6 +147,47 @@ class RunPodCreateResponseError(RunPodError):
         self.response = dict(response)
 
 
+# A create the provider REFUSED is not a create whose response was lost. On
+# 2026-09-03T02:35Z RunPod answered a well-formed GraphQL create with
+# `SUPPLY_CONSTRAINT` and no id: no pod was ever accepted, yet the controller
+# could only classify it as "response lost", which strands the lease in
+# CREATING forever and closes the campaign's paid admission gate for good.
+# Only an enumerated code, on a parseable response that carries no id
+# anywhere, earns this classification; every ambiguous failure -- timeout,
+# transport error, unparseable body, any response mentioning an id -- keeps
+# the existing fail-closed path.
+_DEFINITIVE_CREATE_REJECTION_CODES = frozenset(("SUPPLY_CONSTRAINT",))
+
+
+class RunPodCreateRejectedError(RunPodError):
+    """The provider refused the create outright and returned no resource."""
+
+    def __init__(self, message: str, rejection_codes) -> None:
+        super().__init__(message)
+        self.rejection_codes = tuple(sorted(set(rejection_codes)))
+
+
+def _definitive_create_rejection_codes(document: Dict[str, Any]):
+    """Return the enumerated refusal codes, or () when anything is ambiguous."""
+    errors = document.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return ()
+    data = document.get("data")
+    if isinstance(data, dict) and data.get("podFindAndDeployOnDemand") is not None:
+        return ()
+    codes = []
+    for item in errors:
+        if not isinstance(item, dict):
+            return ()
+        extensions = item.get("extensions")
+        if not isinstance(extensions, dict):
+            return ()
+        code = extensions.get("code")
+        if code not in _DEFINITIVE_CREATE_REJECTION_CODES:
+            return ()
+        codes.append(str(code))
+    return tuple(sorted(set(codes)))
+
 class _NoMutationRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -1898,8 +1939,12 @@ class RunPod(SSHTransport):
         if not isinstance(document, dict):
             raise RunPodError("RunPod GraphQL create returned non-object JSON")
         if document.get("errors"):
-            raise RunPodError("RunPod GraphQL create: %s"
-                              % redact(json.dumps(document["errors"])[:300]))
+            message = ("RunPod GraphQL create: %s"
+                       % redact(json.dumps(document["errors"])[:300]))
+            rejection = _definitive_create_rejection_codes(document)
+            if rejection:
+                raise RunPodCreateRejectedError(message, rejection)
+            raise RunPodError(message)
         data = document.get("data")
         if not isinstance(data, dict):
             raise RunPodError("RunPod GraphQL create lacks object data")

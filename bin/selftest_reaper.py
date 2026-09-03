@@ -336,6 +336,54 @@ def lease_core_cases():
               and zero_store.read(zero_again)["history"][-1]["event"]
               == "LOST_CREATE_RESPONSE_RECONCILED_ZERO_WINDOW_CLOSED_UNRESOLVED")
 
+        # A create the provider REFUSED by name is not a lost response. On
+        # 2026-09-03T02:35Z a SUPPLY_CONSTRAINT refusal stranded a lease in
+        # CREATING and closed the campaign's paid admission gate for good.
+        refused_store = LeaseStore(root / "refused", clock=clock)
+        refused = begin(refused_store, "d")
+        refused_done = refused_store.reconcile_response_lost(
+            refused, [], provider_rejection_codes=("SUPPLY_CONSTRAINT",),
+            response_error="RunPod GraphQL create: SUPPLY_CONSTRAINT")
+        refused_doc = refused_store.read(refused_done)
+        # A refusal contradicted by a real pod must retain the liability:
+        # the pod is bound for cleanup and the lease never closes terminally.
+        contested_store = LeaseStore(root / "refused-contested", clock=clock)
+        contested = begin(contested_store, "e")
+        contested_name = contested_store.read(contested)["create"]["exact_name"]
+        contested_done = contested_store.reconcile_response_lost(
+            contested,
+            [{"id": "surprise", "name": contested_name, "status": "RUNNING"}],
+            provider_rejection_codes=("SUPPLY_CONSTRAINT",))
+        check("named provider refusal closes only a lease with nothing attributable",
+              refused_done.state == TERMINAL
+              and refused_doc["history"][-1]["event"]
+                  == "PROVIDER_REJECTED_CREATE_NO_RESOURCE"
+              and refused_doc["history"][-1]["evidence"][
+                  "provider_rejection_codes"] == ["SUPPLY_CONSTRAINT"]
+              and refused_doc["terminal_proof"][
+                  "provider_rejected_create"]["new_pod_ids"] == []
+              and not refused_doc["provider_resource_ids"]
+              and contested_done.state == ACTIVE
+              and contested_store.read(contested_done)[
+                  "provider_resource_ids"] == ["surprise"])
+
+        # Only an enumerated code on a response carrying no id earns the
+        # definitive classification; everything ambiguous stays fail-closed.
+        classify = runpod_module._definitive_create_rejection_codes
+        check("only a named, id-free provider refusal is definitive",
+              classify({"errors": [{"extensions": {
+                  "code": "SUPPLY_CONSTRAINT"}}]}) == ("SUPPLY_CONSTRAINT",)
+              and classify({"errors": [{"extensions": {
+                  "code": "SUPPLY_CONSTRAINT"}}],
+                  "data": {"podFindAndDeployOnDemand": {"id": "pod-1"}}}) == ()
+              and classify({"errors": [{"extensions": {
+                  "code": "INTERNAL_SERVER_ERROR"}}]}) == ()
+              and classify({"errors": [
+                  {"extensions": {"code": "SUPPLY_CONSTRAINT"}},
+                  {"message": "no extensions"}]}) == ()
+              and classify({"errors": []}) == ()
+              and classify({}) == ())
+
         one_store = LeaseStore(root / "one", clock=clock)
         one = begin(one_store, "c")
         one_name = one_store.read(one)["create"]["exact_name"]

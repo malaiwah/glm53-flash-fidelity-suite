@@ -5329,17 +5329,41 @@ def execute_runpod(
                     % redact(str(inventory_exc))) from create_exc
             response_siblings = authorized_response_loss_siblings(
                 complete, complete_volumes)
+            rejection_codes = tuple(
+                getattr(create_exc, "rejection_codes", ()) or ())
             lease_ref = lease_store.reconcile_response_lost(
                 lease_ref, complete, network_volumes=complete_volumes,
                 response_provider_id=None,
                 create_window_closed=False,
                 authorized_sibling_pod_ids=response_siblings,
-                response_error=redact(str(create_exc)))
+                response_error=redact(str(create_exc)),
+                provider_rejection_codes=rejection_codes)
             record_response_loss_inventory(
                 complete, complete_volumes, response_status,
                 response_inventory)
             ids = lease_store.read(lease_ref).get(
                 "provider_resource_ids") or []
+            if lease_ref.state == "TERMINAL" and not ids:
+                # The provider refused the create by name and nothing exists.
+                # Release the reservation so one capacity refusal cannot close
+                # paid admission for the entire campaign.
+                release = _ledger_transition(
+                    ledger, "cancel_before_create", campaign_key,
+                    utcnow(), "PROVIDER_REJECTED_CREATE",
+                    "provider refused create: %s"
+                    % ", ".join(rejection_codes))
+                if release.code not in (
+                        "CANCELLED_BEFORE_CREATE",
+                        "CANCELLATION_ALREADY_RECORDED"):
+                    raise RuntimeError(
+                        "provider refused the create but its reservation "
+                        "could not be released: %s" % release.message)
+                raise Refusal(
+                    "RunPod refused the create outright (%s); nothing was "
+                    "created and $0.00 was spent"
+                    % ", ".join(rejection_codes),
+                    ["the lease is terminal and the campaign reservation is "
+                     "released", "retry when the requested capacity returns"])
             if not ids:
                 raise RuntimeError(
                     "RunPod create response was lost with no exact cleanup "

@@ -58,7 +58,8 @@ TERMINAL = "TERMINAL"
 UNRESOLVED_STATES = frozenset((PREPARED, CREATING, ACTIVE, DESTROYING,
                                AMBIGUOUS, ABSENCE_CONFIRMED))
 _ALLOWED = {
-    CREATING: frozenset((CREATING, ACTIVE, AMBIGUOUS, ABSENCE_CONFIRMED)),
+    CREATING: frozenset(
+        (CREATING, ACTIVE, AMBIGUOUS, ABSENCE_CONFIRMED, TERMINAL)),
     PREPARED: frozenset((PREPARED, CREATING, TERMINAL)),
     ACTIVE: frozenset((ACTIVE, DESTROYING, AMBIGUOUS, ABSENCE_CONFIRMED)),
     DESTROYING: frozenset((DESTROYING, ABSENCE_CONFIRMED)),
@@ -385,6 +386,7 @@ _EVENT_TRANSITIONS = {
         {(CREATING, CREATING)},
     "LOST_CREATE_RESPONSE_RECONCILED_ZERO_WINDOW_CLOSED_UNRESOLVED":
         {(CREATING, CREATING)},
+    "PROVIDER_REJECTED_CREATE_NO_RESOURCE": {(CREATING, TERMINAL)},
     "DESTROY_REQUESTED": {
         (CREATING, DESTROYING), (ACTIVE, DESTROYING),
         (DESTROYING, DESTROYING), (AMBIGUOUS, DESTROYING),
@@ -1028,7 +1030,8 @@ def _validate_event_evidence(event: str, evidence: Any,
                 observed_name == document["create"]["exact_name"]):
             raise InvalidLease("create response name comparison is inconsistent")
         return
-    if event.startswith("LOST_CREATE_RESPONSE_RECONCILED_"):
+    if (event.startswith("LOST_CREATE_RESPONSE_RECONCILED_")
+            or event == "PROVIDER_REJECTED_CREATE_NO_RESOURCE"):
         evidence = _exact_keys(
             evidence,
             ("complete_listing", "listed_resource_count",
@@ -1038,7 +1041,20 @@ def _validate_event_evidence(event: str, evidence: Any,
              "unattributable_wrong_name_pod_ids",
              "new_network_volume_ids", "response_provider_id",
              "create_window_closed"),
-            ("response_error_redacted",), "response-loss evidence")
+            ("response_error_redacted", "provider_rejection_codes"),
+            "response-loss evidence")
+        if event == "PROVIDER_REJECTED_CREATE_NO_RESOURCE":
+            codes = evidence.get("provider_rejection_codes")
+            if (not isinstance(codes, list) or not codes
+                    or any(not isinstance(code, str) or not code
+                           for code in codes)
+                    or codes != sorted(set(codes))
+                    or evidence["new_pod_ids"]
+                    or evidence["new_network_volume_ids"]
+                    or evidence["response_provider_id"] is not None):
+                raise InvalidLease(
+                    "provider create refusal must name its codes and leave "
+                    "nothing attributable")
         if (evidence["complete_listing"] is not True
                 or any(isinstance(evidence[key], bool)
                        or not isinstance(evidence[key], int)
@@ -1336,6 +1352,7 @@ def _validate_lease_schema(document: Dict[str, Any]) -> None:
     if terminal is not None:
         terminal = _exact_keys(
             terminal, (), ("prepared_cancellation", "ambiguous_create",
+                           "provider_rejected_create",
                            "provider_absence", "billing_reconciliation",
                            "closed_at"), "terminal proof")
         if not terminal:
@@ -1377,6 +1394,17 @@ def _validate_lease_schema(document: Dict[str, Any]) -> None:
             if ids or billing is not None:
                 raise InvalidLease(
                     "prepared terminal lease carries provider cleanup evidence")
+        elif "provider_rejected_create" in terminal:
+            # The provider refused the POST: no id was ever accepted, so
+            # there is nothing to delete and nothing to be billed for.
+            if (set(terminal) != {"provider_rejected_create"}
+                    or terminal["provider_rejected_create"]
+                    != history[-1]["evidence"]):
+                raise InvalidLease(
+                    "provider-refusal terminal proof is inconsistent")
+            if ids or billing is not None:
+                raise InvalidLease(
+                    "refused-create terminal lease carries cleanup evidence")
         else:
             if set(terminal) not in (
                     {"provider_absence", "billing_reconciliation", "closed_at"},
@@ -1995,7 +2023,8 @@ class LeaseStore:
             response_provider_id: Optional[Any] = None,
             authorized_sibling_pod_ids: Iterable[Any] = (),
             create_window_closed: bool = False,
-            response_error: Optional[str] = None) -> LeaseRef:
+            response_error: Optional[str] = None,
+            provider_rejection_codes: Iterable[Any] = ()) -> LeaseRef:
         """Bind only provider-attributable IDs from a response-loss window.
 
         A sole exact-name new pod is the only delta eligible to become ACTIVE.
@@ -2051,6 +2080,10 @@ class LeaseStore:
             "response_provider_id": response_id,
             "create_window_closed": bool(create_window_closed),
         }
+        rejection = tuple(
+            str(code) for code in provider_rejection_codes if str(code))
+        if rejection:
+            evidence["provider_rejection_codes"] = sorted(set(rejection))
         if response_error is not None:
             error = redact(str(response_error).strip())[:1000]
             if not error:
@@ -2070,6 +2103,18 @@ class LeaseStore:
                 event="LOST_CREATE_RESPONSE_RECONCILED_AMBIGUOUS",
                 evidence=evidence, provider_resource_ids=candidates,
                 terminal_proof={"ambiguous_create": evidence})
+        if rejection:
+            # The provider REFUSED this create and named an enumerated
+            # no-resource code, on a response that carried no id, and a
+            # complete listing shows nothing attributable. Nothing was ever
+            # accepted, so there is no liability to retain -- and leaving it
+            # in CREATING would close paid admission for the whole campaign
+            # permanently.
+            return self.transition(
+                ref, to_state=TERMINAL,
+                event="PROVIDER_REJECTED_CREATE_NO_RESOURCE",
+                evidence=evidence,
+                terminal_proof={"provider_rejected_create": evidence})
         event = (
             "LOST_CREATE_RESPONSE_RECONCILED_ZERO_WINDOW_CLOSED_UNRESOLVED"
             if create_window_closed else
