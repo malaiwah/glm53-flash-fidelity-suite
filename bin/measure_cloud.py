@@ -6466,14 +6466,22 @@ def execute_runpod(
                 "stages_done": list(stages_done),
             }
             try:
-                exited = _ledger_transition(
-                    ledger, "mark_phase", campaign_key, "EXITED")
-                if (not exited.applied
-                        or exited.code not in (
-                            "PHASE_RECORDED", "PHASE_UNCHANGED")):
-                    raise RuntimeError(
-                        "campaign EXITED transition failed: %s"
-                        % exited.message)
+                # An attempt that never attested (host key never surfaced,
+                # create bound but no post-create binding) is still CREATING
+                # in the ledger; EXITED is only reachable from LIVE/RUNNING.
+                # The cleanup binding below handles that attempt's release.
+                attempt_phase = (
+                    (ledger.snapshot().get("attempts") or {})
+                    .get(campaign_key) or {}).get("phase")
+                if attempt_phase in ("LIVE", "RUNNING", "EXITED"):
+                    exited = _ledger_transition(
+                        ledger, "mark_phase", campaign_key, "EXITED")
+                    if (not exited.applied
+                            or exited.code not in (
+                                "PHASE_RECORDED", "PHASE_UNCHANGED")):
+                        raise RuntimeError(
+                            "campaign EXITED transition failed: %s"
+                            % exited.message)
                 current_lease = lease_store.read(lease_ref)
                 if current_lease["state"] == "ACTIVE":
                     lease_ref = lease_store.transition(
@@ -6489,6 +6497,13 @@ def execute_runpod(
                         "remote token erasure is unconfirmed; revoke the "
                         "RunPod-scoped Hugging Face read token immediately"))
             try:
+                if host_key_evidence is None:
+                    # The pod never authenticated (host key never surfaced
+                    # in provider logs); nothing was uploaded, no stage ran,
+                    # and there is no channel to fetch anything through.
+                    raise RuntimeError(
+                        "no result archive: the pod's SSH host key was never "
+                        "authenticated, so no workload reached it")
                 remote_archive = "/tmp/fidelity-result-%s-%s.tar.gz" % (
                     plan_data["job_id"], attempt)
                 archive_failed_stage = failed_stage
