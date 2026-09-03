@@ -46,6 +46,19 @@ bin/fidelity/jobcontract.py
 bin/fidelity/panel.py
 bin/fidelity/runpodsafety.py
 bin/fidelity/runpoddrill.py
+# The pod runs runpodsafety (extract-bundle, verify/disarm-watchdog) and
+# jobcontract.validate_execution_job; both reach campaign/cloudlease through
+# function-local imports, so the failure was a ModuleNotFoundError AFTER the
+# pod was billed (Fruit smoke, 2026-09-03: `fidelity.campaign`). runpodsafety
+# also imports the drill's helper snapshot, whose module-level imports pull
+# in the provider transport. All stdlib, no credentials; the closure is
+# shipped whole so that selftest_bundle_complete can resolve every
+# intra-package import statically instead of guessing which scopes run.
+bin/fidelity/campaign.py
+bin/fidelity/cloudlease.py
+bin/fidelity/runpodapi.py
+bin/fidelity/jlapi.py
+bin/fidelity/sshbase.py
 bin/fidelity/stages.py
 bin/fidelity/hfmeta.py
 bin/fidelity/receipt.py

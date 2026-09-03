@@ -558,9 +558,14 @@ class SSHTransport:
         res = {"exit_code": result["returncode"],
                "stdout": result["stdout"], "stderr": result["stderr"]}
         if check and result["returncode"] != 0:
+            # A Python traceback names its exception LAST; keeping the head
+            # of stderr threw away the one line that explains the failure
+            # (Fruit smoke, 2026-09-03: "ModuleNotFoundError" was cut off).
+            detail = (result["stderr"] or result["stdout"]).strip()
+            if len(detail) > 800:
+                detail = "..." + detail[-800:]
             raise JLError("remote command exited %s: %s"
-                          % (result["returncode"], redact(
-                              (result["stderr"] or result["stdout"])[:400])))
+                          % (result["returncode"], redact(detail)))
         return res
 
     def exec_stdout(self, machine_id: Any, command: str, *,

@@ -71,6 +71,42 @@ try:
     staged = sum(1 for _ in stage.rglob("*") if _.is_file())
     check("bundle stages cleanly (%d files)" % staged, staged == len(entries) - len(absent))
 
+    print("\n== and every bundled fidelity module's imports are bundled ==")
+    # Function-local relative imports are invisible to "import the module"
+    # checks: `jobcontract.validate_execution_job` did `from .campaign import`
+    # at call time, and the first real pod died on ModuleNotFoundError after
+    # it was billed (Fruit smoke, 2026-09-03). Walk the whole AST, every
+    # scope, and resolve each intra-package import against the staged tree.
+    import ast
+    package = stage / "bin" / "fidelity"
+    gaps = []
+    for module in sorted(package.glob("*.py")):
+        tree = ast.parse(module.read_text(encoding="utf-8"), str(module))
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.ImportFrom):
+                if node.level >= 1:
+                    if node.module:
+                        targets.append(node.module.split(".")[0])
+                    else:
+                        targets.extend(alias.name for alias in node.names)
+                elif node.module and node.module.split(".")[0] == "fidelity":
+                    parts = node.module.split(".")
+                    if len(parts) > 1:
+                        targets.append(parts[1])
+                    else:
+                        targets.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.Import):
+                targets.extend(alias.name.split(".")[1]
+                               for alias in node.names
+                               if alias.name.startswith("fidelity."))
+            for name in targets:
+                if not (package / (name + ".py")).is_file():
+                    gaps.append("%s:%d -> fidelity.%s"
+                                % (module.name, node.lineno, name))
+    check("every intra-package import of a bundled fidelity module resolves "
+          "in the bundle", not gaps, "\n        ".join(gaps[:6]))
+
     print("\n== and the setup-time selftests RUN in it ==")
     names = setup_selftests()
     check("bootstrap names at least one selftest", bool(names))

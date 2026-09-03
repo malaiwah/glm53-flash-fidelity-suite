@@ -251,7 +251,7 @@ def rung_job_document():
             repo_id="malaiwah/GLM-5.2-SIQ-Fruit-bf16",
             revision="ef68013aa6e16453cf52b5b77647f72fbe258c3c",
             surface="native-bf16", codec="bf16", bits=16.0,
-            model_bytes=10102776813,
+            model_bytes=10081800232,
             config_sha256="5a19697e555fff140d1b089b852c3ef227114b196f8d76796560feeeb34dc44a",
             index_sha256="86e6cc1d8548c7bdbbc117e93b85b8ae249f446de9b48d2195e51f358674ba56")
         root_args = argparse.Namespace(
@@ -1165,7 +1165,7 @@ def rung_cli():
             repo_id="malaiwah/GLM-5.2-SIQ-Fruit-bf16",
             revision="ef68013aa6e16453cf52b5b77647f72fbe258c3c",
             surface="native-bf16", codec="bf16", bits=16.0,
-            model_bytes=10102776813,
+            model_bytes=10081800232,
             config_sha256="5a19697e555fff140d1b089b852c3ef227114b196f8d76796560feeeb34dc44a",
             index_sha256="86e6cc1d8548c7bdbbc117e93b85b8ae249f446de9b48d2195e51f358674ba56")
         fs = work / "dry"
