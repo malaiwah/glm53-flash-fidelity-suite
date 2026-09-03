@@ -106,11 +106,11 @@ rankable against routed-experts-only rows
 <!-- END GENERATED: support-matrix -->
 
 The generated matrix is an **engine-capability** matrix, not paid admission.
-The remediated paid controller is narrower: exact Fruit and GLM-5.3-Flash
-BF16 root pins plus one exact public K6 TR3 quant pin, all on RunPod's SSH route.
-Generic third-party surfaces—including GGUF—remain available to local tooling where
-listed, but `measure-cloud` refuses them before provider access until their
-scientific and lifecycle evidence is authored.
+The paid controller admits any public unquantized root at an exact revision
+and, for quants, only the exact public K6 TR3 pin, all on RunPod's SSH route.
+Generic third-party quant surfaces—including GGUF—remain available to local
+tooling where listed, but `measure-cloud` refuses them before provider access
+until their scientific evidence is authored.
 
 **3. An exact admitted profile and artifact pin.** `engines.json` maps
 `(surface, bpw) -> profile`, but paid admission additionally binds repository,
@@ -125,10 +125,9 @@ Start with the registry and local planner:
 bin/measure <hf-repo>     # already measured, locally readable, or exact refusal
 ```
 
-For the complete supported RunPod dry-run, use
-[`docs/THIRD-PARTY-QUICKSTART.md`](docs/THIRD-PARTY-QUICKSTART.md). It requires
-the autonomous reaper, controller-loss proof and campaign ledger even in
-planning mode; incomplete safety state never becomes an authorizing plan.
+For the complete RunPod walkthrough, use
+[`docs/THIRD-PARTY-QUICKSTART.md`](docs/THIRD-PARTY-QUICKSTART.md). Planning
+is `--dry-run`: every check runs, nothing is created, $0.00.
 
 Both are honest about repos that are announcements rather than releases (a
 2-file placeholder) and about releases that are genuinely broken (one branch of
@@ -163,51 +162,33 @@ identity or capacity is missing. Local-lane receipts remain previews unless a
 same-lane reference contract says otherwise. The paid route is intentionally
 not a generic “any supported decoder” switch.
 
-### Cloud — current safe RunPod route
+### Cloud — the RunPod route
 
-Prerequisites are part of admission, not optional setup:
+Every paid run enforces four things and needs nothing else: `--max-cost` caps
+the whole run's liability, `--max-runtime` is an absolute deadline written
+into the lease, the on-pod watchdog and the provider, the pod is destroyed on
+every exit path, and the installed user-systemd reaper destroys it at the
+deadline even if the controller dies. Setup is one command per machine and
+account: `bin/measure-cloud reaper --provider runpod --install`. Strict
+campaign mode (a shared ledger and a sealed controller-loss drill proof) is
+opt-in; [`docs/CLOUD-RECIPES.md`](docs/CLOUD-RECIPES.md) has the guarantees,
+the recipe and the tradeoffs, and `bin/measure-cloud --help` is the ground
+truth for every flag.
 
-1. a committed, fully clean checkout that remains byte-for-byte unchanged;
-2. an owner-only RunPod API-key file and ED25519 SSH key;
-3. the installed user reaper, healthy for this exact RunPod account;
-4. a successful paid controller-loss/autonomous-reaper drill from this checkout;
-5. one campaign ledger with an explicit ceiling, reserve and reaper margin.
-
-The drill spends real money and is run only deliberately. The full procedure
-and the exact K6 and authored-root commands are in
-[`docs/THIRD-PARTY-QUICKSTART.md`](docs/THIRD-PARTY-QUICKSTART.md). Once those
-artifacts exist, the supported K6 dry-run is:
+The minimal root capture, as the `--help` epilog shows it:
 
 ```bash
-bin/measure-cloud \
-    --provider runpod --on-demand --region secure --on-preempt fail \
-    --model malaiwah/GLM-5.3-Flash-TR3-6bpw \
-    --revision 9ab94105a71708a19c6d960d24b4aa6d459f5623 \
-    --panel brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
-    --lane streaming --schedule window-major --cold-runs 2 --gpu H200 \
-    --runpod-key-file "$RUNPOD_KEY_FILE" \
-    --reaper-state-dir "$HOME/.fidelity-cloud" \
-    --lease-dir "$HOME/.fidelity-cloud/leases-v2" \
-    --runpod-safety-proof "$HOME/.fidelity-cloud/drill/proof.json" \
-    --campaign-ledger "$HOME/.fidelity-cloud/campaign.json" \
-    --campaign-ceiling "$CAMPAIGN_CEILING_USD" \
-    --campaign-reserve "$CAMPAIGN_RESERVE_USD" \
-    --campaign-reaper-margin "$CAMPAIGN_REAPER_MARGIN_USD" \
-    --campaign-width 1 \
-    --max-cost "$ATTEMPT_CAP_USD" --max-runtime 12h \
-    --out "$HOME/fidelity-runs/k6-dry" --dry-run
+bin/measure-cloud --provider runpod --role root \
+    --model zai-org/GLM-5.3-BF16 --revision <rev> \
+    --panel-dir engines/panels/<panel> \
+    --dataset-id fidelity--<id> --publish-root-to <owner>/<repo> \
+    --hf-token-file ~/.hf_token --measurer <your-hf-handle> \
+    --max-cost 40 --max-runtime 3h30m --out ~/fidelity-runs/<name> --dry-run
 ```
 
-`--dry-run` performs no provider mutation. Today this exact K6 command returns
-`no_spend` because the registry already contains the measurement; safe RunPod
-refuses `--force`. The separately identified Fruit root command in the
-quickstart can reach paid admission. Any admitted real run repeats all fresh
-provider/account/source checks under the campaign lock, writes `POST_INTENT`
-durably, performs exactly one create POST, reads the fresh pod's ED25519
-fingerprint from RunPod's authenticated v2 container-log API, compares it to
-the untrusted network keyscan, retrieves and verifies the bounded archive,
-deletes the pod, proves exact absence, and reconciles billing.
-Ambiguous create responses are never retried as science work.
+`--dry-run` prints the plan with every derived value and creates nothing;
+re-run without it to spend. Exit codes: 0 ok; 1 the run failed and the pod is
+proven gone; 3 refused before anything was created; 90 a pod may remain.
 
 ### Container image — local/developer surface, not paid admission
 

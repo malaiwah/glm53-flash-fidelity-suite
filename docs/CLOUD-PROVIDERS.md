@@ -7,7 +7,7 @@ pause/hold modes before provider mutation.
 
 This is narrower than the adapters present in `bin/fidelity/providers/`.
 Adapter existence means code can describe or test a control plane; it does not
-authorize spending or establish the lifecycle proof required for measurements.
+authorize spending or prove the four guarantees a paid run relies on.
 The executable procedure is
 [`THIRD-PARTY-QUICKSTART.md`](THIRD-PARTY-QUICKSTART.md); the safety explanation
 is [`CLOUD-RECIPES.md`](CLOUD-RECIPES.md).

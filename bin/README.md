@@ -217,7 +217,7 @@ block says so in its own `note`.
 |---|---|
 | `measure`, `measure-cloud`, `measure-local`, `registry-view`, `registry-submit`, `fidelity-stats`, `kld-preview`, `fixture` | one-line wrappers, so the headline paste has no `python3` in it |
 | `measure_one.py` | the one-command front-end: resolve, gate, lineage, pick, sniff, hand off |
-| `measure_cloud.py` | the paid controller: exact RunPod-only admission, sealed job contract, campaign/lease state, authenticated SSH, bounded retrieval, exact absence and billing closure |
+| `measure_cloud.py` | the paid controller: rents one RunPod pod, measures on it, retrieves the sealed result, destroys the pod. Always enforced: `--max-cost` cap, `--max-runtime` deadline, teardown on every exit path, the installed reaper as backstop. Strict campaign mode (`--campaign-*`, `--runpod-safety-proof`) is opt-in; [`docs/CLOUD-RECIPES.md`](../docs/CLOUD-RECIPES.md) |
 | `measure_local.py` | the local runner: registry gate, device discovery, memory solver, micro-benchmark, window-major cost, `--execute` with preflight |
 | `registry_view.py` | check / rows / lineage against the local clone or the public dataset |
 | `fidelity_stats.py` | floor-aware attributable + paired-window deltas (stdlib statistics) |
@@ -228,7 +228,7 @@ block says so in its own `note`.
 | `fidelity/registry_client.py` | load local/HF registry, tier matcher, renderer, the front gate |
 | `fidelity/lineage.py` | base_model walk → registry model → panel/teacher pick |
 | `fidelity/previewstats.py` | stratified estimator + FPC + position bootstrap (pure stdlib, unit-tested) |
-| `fidelity/runpodapi.py`, `fidelity/runpodsafety.py`, `fidelity/cloudlease.py`, `fidelity/campaign.py` | RunPod control plane, authored scientific/lifecycle gates, v2 leases plus systemd reaper, and locked cumulative spend admission |
+| `fidelity/runpodapi.py`, `fidelity/runpodsafety.py`, `fidelity/cloudlease.py`, `fidelity/campaign.py` | RunPod control plane, target identity and drill-proof gates, v2 leases plus the systemd reaper, and the spend ledger (per-run by default, one locked campaign ledger in strict mode) |
 | `fidelity/engines.py`, `engines.json` | which scorer each lane invokes, how, and `preflight` |
 | `fidelity/receipt.py`, `seal_receipt.py` | build and seal a `submission-receipt.v1` — written as `measurement-receipt.json`, which IS the submission receipt a contributor sends; the preview/teacher denylist |
 | `fidelity-doctor` | offline local prerequisite check; paid authorization remains the exact `measure-cloud --dry-run` pre-POST gate |
@@ -458,9 +458,13 @@ python3 engines/tools/stream_score_selftest.py --only g,h,i,j,k # engine-edit ru
 bin/registry-view --selftest-live          # live dataset, keys, value tripwire
 ```
 
-The current paid reaper is RunPod-only and user-systemd-backed. Selftests use
-stubs or `reaper --sweep --dry-run`, which destroys nothing. Installation
-requires the canonical owner mode-0600 RunPod key, account-bound state and v2
-lease directory; the initial sweep and health stamp must succeed. The paid
-controller revalidates timer activity, login persistence, control-file digests,
-account id, lease path and health freshness before every create POST.
+The paid reaper is RunPod-only and user-systemd-backed. Selftests use stubs or
+`reaper --sweep --dry-run`, which destroys nothing. `measure-cloud reaper
+--provider runpod --install` needs the owner-only RunPod key and a user
+manager with linger; it seals a snapshot of the reaper sources and the timer
+runs that snapshot. A checkout that has moved on since is advisory drift, not
+an unhealthy reaper: the paid controller warns and proceeds, and re-running
+`--install` picks up the newer checkout. Before every create POST the
+controller checks that the timer is active, the user manager persists, the
+snapshot is intact, the account id and lease path match and the health stamp
+is fresh.

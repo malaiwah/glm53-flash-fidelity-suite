@@ -1,160 +1,167 @@
-# Measuring on rented GPUs: current safe contract
+# Measuring on rented GPUs
 
-Paid measurement is temporarily **RunPod-only, SSH-only and exact-target-only**.
-JarvisLabs, Vast, Lambda, provider-native containers, spot instances, recovery,
-adoption, persistent volumes, preview/race and remote publication are refused
-before provider mutation.
+`bin/measure-cloud` rents one RunPod GPU pod, runs a fidelity measurement on
+it, pulls the sealed result back and destroys the pod. Paid measurement is
+RunPod-only and SSH-only; JarvisLabs, Vast, Lambda, spot instances, recovery,
+adoption and race mode are refused before provider mutation.
 
-The canonical executable walkthrough is
-[`THIRD-PARTY-QUICKSTART.md`](THIRD-PARTY-QUICKSTART.md). Keep commands there
-rather than copying them into a second drifting recipe. This document explains
-the operational boundary.
+`bin/measure-cloud --help` is the ground truth for every flag below. The
+executable walkthrough is [`THIRD-PARTY-QUICKSTART.md`](THIRD-PARTY-QUICKSTART.md);
+this document explains the boundary.
+
+## What is always enforced
+
+These four hold on every paid run. Nothing else is required to start one.
+
+**Cost cap — `--max-cost`.** Before anything is created the controller
+computes the all-in maximum liability: the live GPU rate for the whole
+deadline, storage for the deadline at the tariff defaults, and the retrieval
+and delete reserve (`--retrieval-delete-reserve`, default 21600 s). If that
+exceeds `--max-cost` the run is refused. There is no default cap; a cap the
+tool picked would turn a legitimate run into a refusal you cannot attribute.
+
+**Absolute deadline — `--max-runtime`.** The workload deadline is written into
+the durable lease (the reaper destroys the pod at it), the on-pod watchdog and
+the provider's own timer. The provider timer is a hint, never evidence of
+cleanup; the lease is what the reaper enforces.
+
+**Teardown on every exit path.** Success, failure, exception and Ctrl-C all
+request deletion of the exact pod id the run created. A pod is "gone" only
+when provider inventory proves exact absence; `EXITED` is not absence.
+Retrieval exhaustion still deletes the pod.
+
+**Autonomous reaper.** `measure-cloud reaper --provider runpod --install` puts
+a user-systemd timer on this machine that reads the leases and destroys any
+pod past its deadline, even if the controller process is dead. Every paid run
+refuses unless that timer is installed, active and its user manager survives
+logout (`loginctl enable-linger`). The timer executes a sealed snapshot; a
+checkout that has since moved on is a `source_drift` warning in the dry-run
+plan, not a refusal — the installed reaper still guards the run. Reinstall to
+pick up the newer checkout. An install sealed under the older v2 control
+schema is refused with the same reinstall command.
+
+## The recipe
+
+Once per machine and RunPod account:
+
+```bash
+bin/measure-cloud reaper --provider runpod --install
+```
+
+Then the minimal root capture, exactly as the `--help` epilog shows it:
+
+```bash
+bin/measure-cloud --provider runpod --role root \
+    --model zai-org/GLM-5.3-BF16 --revision <40-hex> \
+    --panel-dir engines/panels/<panel> \
+    --dataset-id fidelity--<id> --publish-root-to <owner>/<repo> \
+    --hf-token-file ~/.hf_token --measurer <hub-handle> \
+    --max-cost 40 --max-runtime 3h30m --out ~/fidelity-runs/<name> --dry-run
+```
+
+`--dry-run` runs every check, prints the plan and spends $0.00. Re-run the
+same command without `--dry-run` to spend; the interactive prompt quotes the
+calculated maximum and the hard cap, and only `y`/`yes` permits the single
+create POST. `--yes` skips the prompt.
+
+Required: `--provider`, `--role`, `--model`, `--revision` (for a paid run;
+`--dry-run` resolves and prints `main`'s commit when it is omitted),
+`--panel-dir`, `--dataset-id`, `--measurer`, `--max-cost`, `--max-runtime`,
+`--out`. `--publish-root-to` and `--hf-token-file` are only needed when the
+dataset is to be published from this machine after teardown; without them the
+sealed dataset stays under `--out`.
+
+Derived unless you override them: GPU from the target's authored timing
+evidence (`--gpu` when it has none); pod storage from the checkpoint plus both
+cold captures (`--storage`); host vCPU and memory minima from the model bytes
+(`--min-vcpu`, `--min-memory-gb`); `--dataset-repository` from
+`--publish-root-to`; `--dataset-name` from `--dataset-id`; the
+unexpected-tensor allowlist from the authored evidence for the target; the
+download token from `--hf-token-file` (`--hf-download-token-file` to ship a
+separate read-only token to the pod); the RunPod key from
+`~/.config/runpod/api_key` (`--runpod-key-file`); on-demand, secure cloud and
+fail-on-preempt. Every derived value is printed in the dry-run plan.
+
+Each run also gets its own ledger under the reaper state directory with
+ceiling = `--max-cost`. Pods in the account that this tool did not create are
+tolerated. An earlier lease that may still hold a pod refuses the run and
+names the lease; `--allow-unresolved-leases` proceeds anyway, and the reaper
+destroys that pod at its own deadline regardless.
+
+## Strict campaign mode (opt-in)
+
+Use it when the RunPod account is dedicated to this suite, when several
+attempts must share one ceiling, or when you want a sealed proof that the
+installed reaper really destroyed a pod after the controller died. All four
+flags go together:
+
+```text
+--campaign-ledger FILE --campaign-ceiling USD --campaign-reserve USD --campaign-reaper-margin USD
+```
+
+The ledger is a locked file beside `--lease-dir` that accounts for every
+attempt against one ceiling, refuses admission beside pods it does not own,
+and holds liability until billing settles. `--campaign-width 2` is admitted
+only with a verified published root archive for the exact root identity.
+
+`measure-cloud drill` is the paid controller-loss drill: it creates one small
+pod, kills its own controller, and seals `proof.json` only after the
+user-systemd reaper issued the exact-id destroy at the lease deadline,
+inventory proved absence and billing settled. Pass that file as
+`--runpod-safety-proof` (requires `--campaign-ledger`) and it is validated
+exactly as before: it binds to this exact checkout, this ledger and this
+account, and a stale or foreign proof is refused. The `--help` epilog shows
+both commands.
+
+| mechanism | default mode | strict campaign mode |
+|---|---|---|
+| safety proof | not required | `--runpod-safety-proof` validated against this checkout, ledger and account |
+| campaign ledger | auto-created per run, ceiling = `--max-cost`, foreign pods tolerated | one explicit locked ledger; admission refused beside pods it does not own |
+| billing settlement | advisory; the reaper settles it after teardown | liability held in the ledger until billing settles |
+| reaper health | snapshot integrity; checkout drift is a warning | the same |
 
 ## Credentials and identity
 
-- RunPod API bytes come from an absolute owner-only mode-0600 regular file.
-  They never appear in argv, logs, receipts or bundles.
-- Official target identity is still resolved anonymously from the literal
-  `https://huggingface.co` endpoint. The high-bandwidth target download then
-  uses the explicit read-scoped `--hf-download-token-file`: the controller
-  transports it as `.secrets/hf_token` with mode 0600 inside a 0700 directory,
-  never puts its bytes in argv or logs, and confirms erasure immediately after
-  `fetch_target`. Panels remain anonymous.
-- An ED25519 public key must exist locally before create.
-- Before the first SSH byte, the controller waits at most 15 minutes for one
-  exact ED25519 fingerprint line from the fresh pod's bounded authenticated
-  RunPod v2 container-log stream. Each network read and the whole stream have
-  independent deadlines. It compares that value to the untrusted network
-  keyscan, then writes a fresh per-attempt `known_hosts` file and uses
-  `StrictHostKeyChecking=yes`. No operator fingerprint prompt or first-hop TOFU
-  is permitted.
-- A separate owner/write token used for optional root publication stays on the
-  controller. Local publication is possible only after qualification, verified
-  retrieval, provider-confirmed absence and billing reconciliation.
+- RunPod API bytes come from an owner-only mode-0600 regular file
+  (`--runpod-key-file`). They never appear in argv, logs, receipts or
+  bundles.
+- Target identity is resolved anonymously from `https://huggingface.co`. The
+  target download on the pod uses the read token from
+  `--hf-download-token-file` (default: `--hf-token-file`), transported as a
+  0600 file in a 0700 directory and shredded right after `fetch_target`.
+  Panels remain anonymous.
+- An ED25519 public key must exist locally before create. The controller
+  reads the fresh pod's ED25519 fingerprint from RunPod's authenticated
+  container-log stream, compares it to the network keyscan, and connects
+  with `StrictHostKeyChecking=yes`; there is no fingerprint prompt or TOFU.
+- The write token in `--hf-token-file` stays on the controller and is used
+  only for optional publication.
 
-## Lifecycle prerequisites
+## Publication
 
-The paid route requires all of these before one create POST:
+Publication is optional and controller-local. With `--publish-root-to`, the
+qualified dataset is pushed from this machine after verified retrieval and
+provider-confirmed absence of the pod; the token never reaches the pod.
+Without it the sealed dataset stays under `--out`. Billing is advisory: if
+RunPod has not published the bucket yet, the lease closes on proven absence
+and the reaper settles billing later.
 
-1. exact official HF repository and 40-hex revision identity;
-2. exact target metadata, shard census, allowlist and scientific profile;
-3. a committed fully clean checkout, including no untracked files;
-4. an account-bound healthy user-systemd reaper;
-5. a current accepted controller-loss/autonomous-reaper drill proof from the
-   same checkout and control-plane closure;
-6. a fresh complete RunPod pods-plus-network-volumes inventory;
-7. a fresh RunPod balance and tariff-validity observation;
-8. one locked campaign ledger admitting cumulative settled, unresolved and
-   proposed exposure under the configured ceiling, reserve and cleanup margin;
-9. exact runtime, retrieval/delete reserve and per-attempt cost caps;
-10. explicit confirmation unless the operator deliberately passes `--yes`.
+## Exit codes
 
-The checkout, manifests, provider account, reaper health, balance, inventory
-and campaign generation are checked again immediately before mutation. A
-failure is a refusal, never a fallback estimate.
-
-## One-POST execution
-
-The controller writes a durable lease in `PREPARED`, records campaign
-`CREATING`, fsyncs `POST_INTENT`, then performs exactly one create POST with a
-full job hash plus random 96-bit attempt id in the resource name. It never
-retries an ambiguous response as a new science attempt. Any exact ids found
-during response-loss reconciliation are bound only for cleanup.
-
-The pod must converge as one exact secure on-demand resource with the quoted
-GPU, image, storage and CPU/RAM minima. The create request carries
-`terminateAfter`, but admission treats it only as an untrusted hint; the
-account-bound reaper independently enforces the same absolute lease deadline.
-Scientific stages then execute only from sealed `job.json`; ambient
-configuration cannot change their paths, profile, threading, cache, panel or
-target.
-
-## Retrieval and deletion
-
-Results are archived on the pod under a role-specific member with stored
-DEFLATE and exact uncompressed/transfer-size contracts. Retrieval gets at most
-three fresh-temporary-directory attempts. Deadline planning funds every
-remaining attempt plus final deletion. Before extracting a large payload, the
-controller authenticates the manifest and `job.json`, then applies the
-job-specific archive bounds. Accepted output is SHA-256/size/member verified
-and extracted without symlinks, hardlinks, traversal, duplicate paths or
-special files.
-
-Success or failure then requests deletion of every exact campaign-owned id.
-The pod remains chargeable until full inventory proves exact absence; `EXITED`
-is not absence. Billing reconciliation follows provider absence. The campaign
-reservation releases only when both proof sets bind the exact same ids.
-Every provider bucket and aggregate decimal is preserved unchanged. Component
-aggregates must match their bucket sums within at most one femtodollar
-($10^{-15}$ USD) of provider aggregation roundoff.
-Retrieval exhaustion still deletes the pod; the durable lease, provider
-deadline and independent reaper remain backstops.
-
-## Campaign limits
-
-`--max-cost` caps one attempt. It is not a campaign budget.
-`--campaign-ceiling`, `--campaign-reserve` and
-`--campaign-reaper-margin` govern the shared ledger atomically. Requested width
-is admitted under the ledger lock. Width two additionally requires a verified
-published root archive for the exact root identity; otherwise effective width
-is one.
-
-Tariff defaults are evidence with an expiry, not timeless constants. Once
-`--tariff-valid-until` has passed, planning refuses until the operator supplies
-current authored rates and validity.
-
-## Scientific admission
-
-The first production quant route admits only:
-
-```text
-malaiwah/GLM-5.3-Flash-TR3-6bpw
-@ 9ab94105a71708a19c6d960d24b4aa6d459f5623
-```
-
-It binds the exact K6 public seal, materialization evidence, runtime profile,
-official BF16 metadata and historical checkpoint-verdict bridge. The pinned K8
-release is refused because no equivalent evidence binds its measured student
-checkpoint identity to the sealed K8 surface; K6 evidence is not transferable.
-
-The root route admits only exact authored BF16 pins with their matching
-checked-in panel, unexpected-tensor allowlist, target identity, timing and
-license contract. Each creates two distinct fresh-process `run_count=1`
-hidden-state captures, independently verifies both, forces an exact
-self-comparison using NumPy/CPU float32 replay with vocabulary chunks, and
-emits root qualification. Remote work ends there. Publication is optional and
-controller-local after teardown proof.
-
-## Spend-free planning versus the paid drill
-
-`measure-cloud ... --dry-run` creates no provider resource. It still performs
-read-only account queries and refuses without current lifecycle/campaign
-evidence.
-
-`measure-cloud drill ... --dry-run` validates the drill plan without mutation.
-The same command with `--yes` is deliberately paid: it creates one small pod,
-kills its controller, and accepts proof only after the independent
-user-systemd reaper issues the exact-id destroy at the absolute lease deadline,
-fresh complete inventory proves absence, and billing stabilizes. The requested
-provider `terminateAfter` value is recorded but explicitly untrusted. Run it
-only with explicit spend authorization.
-
-## Local image and other providers
-
-The container image remains a tested local/developer transport on hardware the
-operator already controls. It is not a shortcut around paid admission.
-Provider adapters for JarvisLabs, Vast and Lambda remain historical/read-only
-implementation evidence; the current `measure-cloud` command refuses them
-before mutation.
+| code | meaning |
+|---|---|
+| 0 | ok |
+| 1 | the run failed and the pod is proven gone |
+| 3 | refused before anything was created ($0.00) |
+| 90 | a pod may remain — run `bin/measure-cloud reaper --provider runpod --list` |
 
 ## Emergency inspection
-
-Use the same key, account-bound state and lease directories as installation:
 
 ```bash
 bin/measure-cloud reaper --provider runpod --list
 bin/measure-cloud reaper --provider runpod --sweep --dry-run
 ```
 
-A real sweep is deliberate and destroys only exact ids authorized by leases
-this tool wrote. Never delete, pause or adopt a resource you did not create.
+`--list` shows every lease with its state and whether the timer is healthy.
+A real `--sweep` destroys only exact ids authorized by leases this tool wrote.
+Never delete, pause or adopt a resource you did not create.
