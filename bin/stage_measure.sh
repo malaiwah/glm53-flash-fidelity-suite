@@ -284,6 +284,14 @@ finally:
     os.close(fd)
 PYTOKEN
   export HF_TOKEN_PATH="$token_path"
+  # The controller launches every stage with HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+  # so that capture stages read public metadata anonymously. That setting
+  # also makes huggingface_hub ignore HF_TOKEN_PATH, and the first real
+  # RunPod fetch ran unauthenticated with the verified token sitting beside
+  # it (2026-09-03: "You are sending unauthenticated requests"). The token
+  # this function just verified is meant to be used: re-enable it here, for
+  # this stage's process tree only.
+  export HF_HUB_DISABLE_IMPLICIT_TOKEN=0
 }
 
 require_stage_marker() {  # prerequisite stage, bound to this exact job attempt
