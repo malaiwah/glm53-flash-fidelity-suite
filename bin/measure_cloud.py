@@ -4257,6 +4257,10 @@ def _plan_runpod_anonymous(
     chosen = {
         "provider": "runpod", "provider_gpu_id": provider_gpu_id,
         "provider_gpu_display": provider_gpu_id,
+        # resultsink._validate_runpod_attestation binds the attestation's
+        # gpu_model to environment.gpu; without this key the archive build
+        # refused a complete, qualified Fruit capture (2026-09-03).
+        "gpu": provider_gpu_id,
         "gpu_type": gpu, "gpus": 1, "region": offer.region,
         "hard_cap_usd": str(Decimal(str(args.max_cost))),
         "vram_bytes": int(offer.vram_bytes),
