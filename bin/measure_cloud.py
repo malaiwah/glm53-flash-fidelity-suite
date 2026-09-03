@@ -3162,7 +3162,7 @@ def _runpod_quote(args, chosen, target, profile, timing, storage_gb,
     workload = Decimal(str(workload_seconds))
     provider_deadline = workload + reserve
     rate = Decimal(str(chosen["price_per_gpu_hour"])) * Decimal(chosen["gpus"])
-    quote = CostQuote(
+    quote_fields = dict(
         reserved_compute_usd_per_hour=rate,
         live_compute_usd_per_hour=rate,
         container_disk_size_gb=Decimal(int(container_disk_gb)),
@@ -3191,12 +3191,26 @@ def _runpod_quote(args, chosen, target, profile, timing, storage_gb,
         workload_deadline_seconds=workload,
         provider_termination_deadline_seconds=provider_deadline,
         retrieval_delete_reserve_seconds=reserve,
-        timer_api_lag_seconds=lag,
-        hard_cap_usd=Decimal(str(args.max_cost)))
-    if quote.calculated_maximum_usd() > Decimal(str(args.max_cost)):
-        raise Refusal("all-in RunPod liability %s exceeds --max-cost %s"
-                      % (quote.calculated_maximum_usd(), args.max_cost), [])
-    return quote
+        timer_api_lag_seconds=lag)
+    # Price the run with a cap that cannot bind, so a refusal can say what
+    # the run actually costs and which flag moves it, instead of CostQuote's
+    # bare "hard_cap_usd is below the all-in calculated maximum".
+    unbounded = Decimal(10) ** 9
+    priced = CostQuote(hard_cap_usd=unbounded, **quote_fields)
+    calculated = priced.calculated_maximum_usd()
+    cap = Decimal(str(args.max_cost))
+    if calculated > cap:
+        hours = (workload + reserve) / Decimal(3600)
+        raise Refusal(
+            "all-in maximum $%s exceeds --max-cost %s"
+            % (calculated.quantize(Decimal("0.01")), args.max_cost),
+            ["GPU $%s/h for %s h (workload %s s + retrieval/delete reserve "
+             "%s s) plus storage for that window"
+             % (rate, hours.quantize(Decimal("0.01")), workload, reserve),
+             "raise --max-cost, or shorten --retrieval-delete-reserve "
+             "(default 21600 s) if archive build + three download attempts "
+             "+ delete fit in less"])
+    return CostQuote(hard_cap_usd=cap, **quote_fields)
 
 
 def _write_verified_panel_archive(panel_root: Path, destination: Path,
