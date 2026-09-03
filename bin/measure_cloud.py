@@ -3030,9 +3030,15 @@ def _runpod_forbidden(args) -> List[str]:
             forbidden.append(
                 "--%s must be in 1..%d"
                 % (name.replace("_", "-"), maximum))
+    # Two admissible values, both deliberate: "Paris" (the default) enforces
+    # the on-pod generation probe; "" records the probe without enforcing it,
+    # which is the operator's declaration that the target is an undertrained
+    # proxy (the 5B Fruit fixture answers " the"). Anything else is a typo.
     if (getattr(args, "role", None) == "root"
-            and getattr(args, "sanity_expect", None) != "Paris"):
-        forbidden.append("--sanity-expect must be exactly Paris for root")
+            and getattr(args, "sanity_expect", None) not in ("Paris", "")):
+        forbidden.append(
+            "--sanity-expect must be Paris (enforced) or '' (recorded, not "
+            "enforced; undertrained proxies only) for root")
     if getattr(args, "campaign_name", None) != "fidcloud-":
         forbidden.append(
             "--campaign-name is fixed to fidcloud- in safe RunPod mode")
@@ -4211,6 +4217,12 @@ def _plan_runpod_anonymous(
                 "one under engines/tools/layer-outer-evidence/ and register "
                 "it in bin/fidelity/runpodsafety.py"
                 % (target.repo_id, target.revision[:12]))
+        if args.sanity_expect == "":
+            plan_data["warnings"].append(
+                "--sanity-expect '': the on-pod generation probe (\"The "
+                "capital of France is\") is RECORDED in the dataset but not "
+                "enforced. That is the declaration of an undertrained proxy; "
+                "a production root must run with the default (Paris).")
 
     offers = provider.gpus()
     provider_gpu_id = _RUNPOD_GPU_IDS.get(
@@ -8324,8 +8336,11 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument(
         "--sanity-expect", default="Paris",
         help="the continuation the on-pod generation probe requires for "
-             "\"The capital of France is\" (default Paris; the root profile "
-             "requires exactly this)")
+             "\"The capital of France is\" (default Paris, enforced). Pass '' "
+             "to record the probe without enforcing it -- only for an "
+             "undertrained proxy such as the 5B Fruit fixture, never a "
+             "production root; the plan warns and the dataset records the "
+             "probe's verdict either way.")
     rt.add_argument(
         "--panel-tokenizer-root",
         help="local pinned tokenizer receipt files; otherwise prefetched")
