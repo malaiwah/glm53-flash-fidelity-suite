@@ -1301,6 +1301,12 @@ def extract_bundle_archive(archive_path, manifest_path, destination,
     target = Path(destination)
     if target.exists() or target.is_symlink():
         raise SafetyProofError("fresh bundle destination must be absent")
+    # A fresh pod has no /workspace/fidelity/<job>/ yet; the staging
+    # directory is created beside the destination, so its parent chain must
+    # exist first.  The first real H200 run failed here with
+    # FileNotFoundError after every local rehearsal had used an existing
+    # parent.
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     staging = target.with_name(".%s.%d.staging" % (target.name, os.getpid()))
     if staging.exists() or staging.is_symlink():
         raise SafetyProofError("bundle staging path already exists")

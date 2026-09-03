@@ -426,6 +426,56 @@ def check_public_refetch():
         urllib.request.urlopen = real_urlopen
 
 
+def check_bundle_extraction_on_fresh_root():
+    """The pod-side extractor must create the run root's parent itself.
+
+    A fresh pod has no /workspace/fidelity/<job>/ directory.  The first real
+    H200 run failed here with FileNotFoundError after every local rehearsal
+    had handed the extractor an existing parent.
+    """
+    import io
+    import json
+    import os
+    import tarfile
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        members = {"bin/a.sh": b"echo a\n", "engines/b.py": b"print(1)\n"}
+        archive = root / "bundle.tar.gz"
+        with tarfile.open(str(archive), mode="w:gz") as tar:
+            for name in sorted(members):
+                info = tarfile.TarInfo(name)
+                info.size = len(members[name])
+                tar.addfile(info, io.BytesIO(members[name]))
+        manifest = jobcontract.finalize_bundle_manifest(
+            [{"path": name, "bytes": len(raw),
+              "sha256": hashlib.sha256(raw).hexdigest()}
+             for name, raw in members.items()], "selftest")
+        manifest_path = root / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True))
+        raw_archive = archive.read_bytes()
+        destination = root / "workspace" / "fidelity" / "JOB" / "ATTEMPT"
+        result = safety.extract_bundle_archive(
+            str(archive), str(manifest_path), str(destination),
+            hashlib.sha256(raw_archive).hexdigest(), len(raw_archive))
+        check("extractor creates the missing run-root parent chain",
+              result["files"] == 2
+              and (destination / "bin" / "a.sh").read_bytes() == b"echo a\n"
+              and (destination / "engines" / "b.py").read_bytes()
+                  == b"print(1)\n"
+              and oct(os.stat(destination.parent).st_mode & 0o777) == "0o700"
+              and not any(p.name.endswith(".staging")
+                          for p in destination.parent.iterdir()))
+        try:
+            safety.extract_bundle_archive(
+                str(archive), str(manifest_path), str(destination),
+                hashlib.sha256(raw_archive).hexdigest(), len(raw_archive))
+        except safety.SafetyProofError:
+            pass
+        else:
+            raise AssertionError("existing destination was overwritten")
+
+
 def main():
     canonical = fruit_binding()
     safety._validate_fruit_panel_binding(canonical)
@@ -448,6 +498,7 @@ def main():
         else:
             raise AssertionError("%s safety JSON was accepted" % label)
     check_public_refetch()
+    check_bundle_extraction_on_fresh_root()
     check("canonical Fruit contexts", canonical["panel"]["contexts"] == 16)
     print("PASS: exact Fruit width-two binding and strict nested safety JSON")
     return 0

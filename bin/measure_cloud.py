@@ -4684,7 +4684,7 @@ def _plan_runpod_anonymous(
     for name in sorted(plan_data["gates"]):
         con.ok(name)
     for line in plan_data["warnings"]:
-        con.warn("note", line)
+        con.warn("note: " + line)
     return plan_data
 
 
@@ -6749,9 +6749,8 @@ def execute_runpod(
                                     "check with: measure-cloud reaper "
                                     "--provider runpod --list")
                             con.warn(
-                                "billing pending",
-                                "pod %s is proven absent; billing did not "
-                                "settle yet (%s). %s"
+                                "billing pending: pod %s is proven absent; "
+                                "billing did not settle yet (%s). %s"
                                 % (pod_id, billing_pending_reason
                                    or "stabilization", settle_note))
                             exit_evidence["billing"] = {
@@ -8537,7 +8536,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             # a perfectly good use of the flag. But sealing run 1 under the FINAL
             # id and publishing it is the exact failure --preview-of exists to
             # prevent, and the moment to say so is before the rental.
-            con.warn("--race without --preview-of",
+            con.warn("--race without --preview-of: "
                      "this capture will be sealed under the FINAL dataset id from "
                      "ONE cold run. Fine if a second cold capture and the "
                      "self-compare come before you publish it; if you intend to "
