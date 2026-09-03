@@ -46,7 +46,7 @@
       "conservative_upper_hours": 6.0,
       "bound_kind": "named_conservative_upper",
       "model_identity": {
-        "model_bytes": 642646653816,
+        "model_bytes": 642652070880,
         "config_sha256": "33e63ec7fe607658be712bd6dd3c16c6549960d8e7f0483d34b939881b55f943",
         "index_sha256": "e6007bd58fb7e07f9fe69544257ee2713f252ef5855bbf685b48c991d524ef0f"
       },
@@ -62,7 +62,10 @@
           1.6
         ],
         "window_count": 25,
-        "derivation": "6 hours conservatively covers 25 windows in each of two fresh processes plus fetch, comparison, setup and result-retrieval reserve; it is an upper bound, not a generic minutes/window value."
+        "derivation": "6 hours conservatively covers 25 windows in each of two fresh processes plus fetch, comparison, setup and result-retrieval reserve; it is an upper bound, not a generic minutes/window value.",
+        "shard_file_bytes_note": "model_bytes is the sum of the 120 pinned safetensors shard file sizes (642652070880), the identity the controller reads from the repository census. The row previously carried the index's metadata.total_size (642646653816), which is tensor payload bytes; the whole-repository total is 642676397788. Corrected 2026-09-03 when the M2 dry-run refused on it.",
+        "shard_count": 120,
+        "shard_manifest_sha256": "52ab3cf5788f22ebe6da711fe9e578529849391a3d8b93a9493d657b059697a4"
       }
     },
     {
