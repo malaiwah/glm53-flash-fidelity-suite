@@ -3221,3 +3221,70 @@ matches checkout `83d3aa4`. The sequence that works is: freeze the controller,
 prove, capture — with nothing in between.
 
 No H200 was created, no GLM-5.3 capture ran, and nothing was published.
+
+## 2026-09-03 — the controller was the campaign; making strictness opt-in
+
+The operator's verdict, verbatim in spirit: the project's purpose is
+measuring quantization fidelity and publishing root datasets, and the last
+several days went into a cloud-safety controller instead. The review that
+followed was read-only and ran while the H200 capture loop waited for
+capacity. Its findings, each cited in the review artifacts:
+
+- Last scientific output: **2026-08-30**. Since then, seven paid RunPod
+  drills (`$0.592067871941253531`) and zero measurements.
+- Commit `607d207` (2026-09-01, +43,065 lines, never journaled) turned a
+  ten-flag, one-paid-step recipe into **37 flags, 15 environment variables
+  and two paid steps**, and refused the race mode the plan of record assumed.
+  Twelve of the 37 flags admit exactly one value.
+- **63 gates** ran before the single create POST, several of them twice or
+  three times; the safety layer was ~10,450 lines plus ~3,750 in the
+  controller, with ~1,900 lines of JarvisLabs-era code unreachable.
+- The only leaked instance in the project's history was defect 13 on
+  JarvisLabs, fixed by the era-2 lease and reaper. No mechanism added on
+  2026-09-01 has ever prevented a leak; each has only refused a correct
+  lifecycle.
+- On RunPod the systemd reaper is the **only** autonomous destroy after a
+  controller dies: the on-pod watchdog cannot destroy a pod and
+  `terminateAfter` is ignored. The drill and its proof are a paid regression
+  test of that reaper, read by nothing in the runtime teardown path.
+- Two latent defects on the never-exercised post-create path: one failed
+  ssh probe aborted a multi-hour capture, and billing was read once at
+  +300 s when RunPod needs up to ~64 minutes, so a successful capture would
+  have refused its own publication and exited 90 with the pod already gone.
+  The pinned storage tariffs also expired on 2026-09-07 — a four-day time
+  bomb that would have refused every paid run.
+
+The principle adopted is **layered strictness**. The default path enforces
+exactly the four things that keep money and machines safe — `--max-cost`
+as an all-in cap, `--max-runtime` as an absolute deadline in the lease, the
+watchdog and the provider, teardown on every controller exit path, and the
+installed reaper as backstop — and nothing else. Everything layered on top
+is preserved and opt-in.
+
+| mechanism | before | after |
+|---|---|---|
+| safety proof | required; bound to ~216 files; 7-day expiry | `--runpod-safety-proof`, validated unchanged when given |
+| campaign ledger | required, pre-existing, drill-proven | per-run ledger auto-created (ceiling = `--max-cost`, foreign pods tolerated); `--campaign-ledger` keeps the strict posture |
+| billing settlement | gated the lease, publication and the next admission | advisory: publish at proven absence; the reaper settles later without failing health |
+| reaper health | checkout ≠ snapshot ⇒ unhealthy AND the timer refused to sweep | control seals the snapshot only (v3); drift is a warning naming the reinstall command |
+| install source perms | group-writable checkout refused | read once, copied to a 0600 snapshot |
+| tariffs | literals inside a seven-day window | flag defaults with an age reminder; GPU rate stays live |
+| target allowlist | four hardcoded tuples | gone; identity still proven from bytes |
+| GPU / capacity | per-repo literals | timing evidence or `--gpu`; capacity from model bytes with overrides |
+| single-value flags | twelve typed by hand | defaulted or derived |
+| exit codes | 90 for any exception, even at $0 | 3 nothing created; 1 failed but gone; 90 only when a pod may remain |
+| ssh probe | one `unknown` aborted | tolerated for 300 s; `failed` still aborts at once |
+| clean checkout | zero untracked files | tracked files clean |
+| lease sinks | CREATING-forever and ambiguous-without-candidates failed every sweep | expire TERMINAL 900 s after the window; reported for an operator |
+| help | twelve flags with no help; nine legacy flags | grouped, every flag explained, examples in the epilog |
+
+The recipe is now `reaper --install` once, then twelve flags (thirteen with
+`--dry-run` for the rehearsal). Nothing in the
+four guarantees changed. Three tests that claimed to refuse writable source
+files were found to refuse for the snapshot's world-writable `/tmp` ancestor
+instead, and now test what they claim. Race mode is unchanged this pass: the
+engine-level race works, and the gap is the stage wiring, which is named in
+`docs/RACE-MODE.md`.
+
+The H200 capture loop kept running from the previous checkout throughout;
+the branch merges after it finishes, followed by one reaper reinstall.
