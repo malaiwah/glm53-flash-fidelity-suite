@@ -2329,6 +2329,61 @@ def _campaign_coordinates(document: Mapping[str, Any]) -> Optional[Tuple[str, st
             "with an exact campaign_attempt_key")
     return ledger, attempt
 
+
+LIVE_LIABILITY_STATES = (PREPARED, CREATING, ACTIVE, DESTROYING, AMBIGUOUS)
+
+
+def validate_lease_liability_scope(
+        store: LeaseStore, *, provider: str, provider_account_id: str,
+        allow_live: bool = False) -> Dict[str, Any]:
+    """Refuse new spend only while an earlier lease may still hold a pod.
+
+    This is the default-path replacement for `validate_unresolved_lease_scope`,
+    which additionally binds every unresolved lease to one campaign ledger
+    and to the reaper's last sealed count.  Those bindings are what a
+    multi-attempt campaign wants; for one measurement with its own per-run
+    ledger they made a previous run's pod-gone-billing-pending lease refuse
+    the next run.  ABSENCE_CONFIRMED carries no liability and is ignored.
+    A lease in any live-liability state is named with its deadline; the
+    installed reaper destroys it at that deadline regardless, and
+    ``allow_live`` lets an operator proceed beside it deliberately.
+    """
+    live = []
+    for ref, document in store.list(include_terminal=False):
+        if document["create"]["provider"] != provider:
+            continue
+        if _expected_provider_account(document) != provider_account_id:
+            continue
+        if document["state"] not in LIVE_LIABILITY_STATES:
+            continue
+        live.append({
+            "lease": ref.path.name,
+            "state": document["state"],
+            "provider_ids": sorted(
+                document.get("provider_resource_ids") or []),
+            "reap_deadline_utc": _utc_now(
+                document["create"]["reap_deadline_epoch"]),
+        })
+    live.sort(key=lambda item: item["lease"])
+    if live and not allow_live:
+        detail = "; ".join(
+            "%s is %s (pods %s, reaper destroys by %s)" % (
+                item["lease"][:24], item["state"],
+                ",".join(item["provider_ids"]) or "none yet",
+                item["reap_deadline_utc"])
+            for item in live)
+        raise LeaseError(
+            "an earlier lease may still hold a pod: %s. Wait for the reaper, "
+            "run `measure-cloud reaper --provider runpod --sweep`, or pass "
+            "--allow-unresolved-leases to proceed beside it" % detail)
+    return {
+        "live_liability_count": len(live),
+        "live_liability_leases": live,
+        "scope_sha256": _sha256(live),
+    }
+
+
+
 def campaign_coordinates(
         document: Mapping[str, Any],
         lease_root: Path) -> Optional[Tuple[Path, str]]:

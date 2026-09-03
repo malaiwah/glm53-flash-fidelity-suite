@@ -781,7 +781,9 @@ def main():
         "--publish-root-to", "malaiwah/fruit-root-v1-preview"])
     forbidden = MC._runpod_forbidden(race_args)
     check("RP10 safe controller rejects preview/race before provider access",
-          "--race" in forbidden and "--preview-of" in forbidden, forbidden)
+          any(item.startswith("--race") for item in forbidden)
+          and any(item.startswith("--preview-of") for item in forbidden),
+          forbidden)
 
     import contextlib
     import io

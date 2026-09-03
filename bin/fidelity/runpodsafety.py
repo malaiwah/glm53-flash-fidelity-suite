@@ -1228,6 +1228,22 @@ def validate_safety_proof(path, bundle_manifest_sha256,
         "campaign_release": campaign, "campaign_ledger": ledger_document,
     }
 
+def authored_allowlist_path(target_repo, target_revision,
+                            suite_root=None):
+    """Return the checked-in allowlist path for this pin, or None.
+
+    The controller resolves the artifact itself when one is authored, so
+    the operator need not name a file that is fully determined by the
+    target they already gave.
+    """
+    expected = _ALLOWLISTS.get((target_repo, target_revision))
+    if expected is None:
+        return None
+    root = (Path(suite_root).resolve() if suite_root is not None
+            else Path(__file__).resolve().parents[2])
+    return str(root / expected["path"])
+
+
 def validate_unexpected_tensor_allowlist(path, *, target_repo, target_revision,
                                          suite_root=None):
     expected = _ALLOWLISTS.get((target_repo, target_revision))

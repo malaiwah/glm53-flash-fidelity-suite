@@ -48,7 +48,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 SUITE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -89,9 +89,30 @@ LEASE_DIR = Path.home() / ".fidelity-cloud" / "leases"
 GB = C.GB
 
 EXIT_OK = 0
-EXIT_REFUSED = 3
+EXIT_FAILED = 1          # the run failed; every pod it created is proven gone
+EXIT_REFUSED = 3         # refused before anything was created; $0.00 spent
 EXIT_INTERRUPTED = 130
 EXIT_LEAK = 90          # teardown could not be confirmed -- the loudest failure
+# How long consecutive liveness-probe failures (ssh timeouts, proxy errors)
+# are tolerated during a remote stage before the pod is treated as
+# unreachable.  Well under the 900-second heartbeat window the on-pod
+# watchdog uses, so the controller decides first.
+STAGE_PROBE_OUTAGE_SECONDS = 300
+
+
+class RunFailed(RuntimeError):
+    """A paid run that did not succeed.
+
+    ``liability_may_remain`` decides the exit code: 90 is reserved for the
+    case an operator must act on -- a pod this controller created is not
+    proven absent.  A run that captured nothing useful but tore down cleanly
+    is a failure, not a leak, and saying "leak" for it trained operators to
+    ignore the code that matters.
+    """
+
+    def __init__(self, message: str, *, liability_may_remain: bool) -> None:
+        super().__init__(message)
+        self.liability_may_remain = liability_may_remain
 
 
 # ==========================================================================
@@ -2899,7 +2920,37 @@ def _identity_is_placeholder(value: Any) -> bool:
     )
 
 
+def _apply_runpod_defaults(args) -> None:
+    """Fill every flag whose only admissible value is derivable.
+
+    The first safe path required the operator to type twelve flags that
+    admit exactly one value.  A recipe of 37 tokens is not a safety
+    property; it is a transcription test.  Each default here is the value
+    the profile would otherwise refuse anything but, or is read from
+    another flag the operator already had to give.
+    """
+    if getattr(args, "region", None) is None:
+        args.region = "secure"
+    if getattr(args, "on_preempt", None) is None:
+        args.on_preempt = "fail"
+    if getattr(args, "role", None) == "root":
+        if not getattr(args, "dataset_name", None):
+            args.dataset_name = getattr(args, "dataset_id", None)
+        if (not getattr(args, "dataset_repository", None)
+                and getattr(args, "publish_root_to", None)):
+            args.dataset_repository = args.publish_root_to
+    if not getattr(args, "hf_download_token_file", None):
+        candidate = getattr(args, "hf_token_file", None)
+        if candidate and Path(candidate).expanduser().is_file():
+            args.hf_download_token_file = candidate
+
+
+def _campaign_ledger_requested(args) -> bool:
+    return bool(getattr(args, "campaign_ledger", None))
+
+
 def _runpod_forbidden(args) -> List[str]:
+    _apply_runpod_defaults(args)
     forbidden = []
     checks = (
         ("spot/interruptible offer", bool(args.spot)),
@@ -2908,8 +2959,10 @@ def _runpod_forbidden(args) -> List[str]:
         ("--hold-on-failure", bool(getattr(args, "hold_on_failure", False))),
         ("--i-accept-leak-risk", bool(getattr(args, "i_accept_leak_risk", False))),
         ("--allow-unpublished-root", bool(getattr(args, "allow_unpublished_root", False))),
-        ("--race", bool(getattr(args, "race", False))),
-        ("--preview-of", bool(getattr(args, "preview_of", None))),
+        ("--race (not wired on the RunPod path yet; see docs/RACE-MODE.md)",
+         bool(getattr(args, "race", False))),
+        ("--preview-of (not wired on the RunPod path yet)",
+         bool(getattr(args, "preview_of", None))),
         ("--skip-registry-check", bool(getattr(args, "skip_registry_check", False))),
         ("--force", bool(getattr(args, "force", False))),
         ("--accept-measured-revision", bool(getattr(args, "accept_measured_revision", False))),
@@ -2979,14 +3032,33 @@ def _runpod_forbidden(args) -> List[str]:
             "--campaign-name is fixed to fidcloud- in safe RunPod mode")
     if not getattr(args, "max_runtime", None):
         forbidden.append("--max-runtime is required")
-    required = (
-        "campaign_ledger", "campaign_ceiling", "campaign_reserve",
-        "campaign_reaper_margin", "runpod_safety_proof",
-        "hf_download_token_file",
-    )
-    for name in required:
-        if getattr(args, name, None) in (None, ""):
-            forbidden.append("--%s is required" % name.replace("_", "-"))
+    if getattr(args, "hf_download_token_file", None) in (None, ""):
+        forbidden.append(
+            "--hf-download-token-file is required (or give --hf-token-file "
+            "pointing at an existing owner-only read token file)")
+    if _campaign_ledger_requested(args):
+        # Strict campaign mode: cross-run accounting with explicit limits.
+        for name in ("campaign_ceiling", "campaign_reserve",
+                     "campaign_reaper_margin"):
+            if getattr(args, name, None) in (None, ""):
+                forbidden.append(
+                    "--%s is required with --campaign-ledger"
+                    % name.replace("_", "-"))
+    else:
+        for name in ("campaign_ceiling", "campaign_reserve",
+                     "campaign_reaper_margin"):
+            if getattr(args, name, None) not in (None, ""):
+                forbidden.append(
+                    "--%s only applies with --campaign-ledger; without a "
+                    "campaign, --max-cost is the whole budget"
+                    % name.replace("_", "-"))
+        if getattr(args, "runpod_safety_proof", None):
+            forbidden.append(
+                "--runpod-safety-proof binds to a campaign ledger; pass "
+                "--campaign-ledger (and its limits) with it")
+        if getattr(args, "campaign_width", 1) != 1:
+            forbidden.append(
+                "--campaign-width 2 needs --campaign-ledger")
     if (getattr(args, "campaign_width", 1) == 2
             and not getattr(args, "width_two_root_archive", None)):
         forbidden.append("--width-two-root-archive is required for width 2")
@@ -3030,7 +3102,7 @@ def _runpod_forbidden(args) -> List[str]:
         if getattr(args, "form", None) != "hidden":
             forbidden.append("--form must be hidden")
     if getattr(args, "region", None) != "secure":
-        forbidden.append("--region secure is required explicitly")
+        forbidden.append("--region must be secure (the default)")
     return forbidden
 
 
@@ -3038,35 +3110,54 @@ def _exact_utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# RunPod's published per-GB-month storage rates on the date below.  They are
+# the DEFAULTS of the five --runpod-*-tariff flags and change rarely; the
+# GPU rate itself is always the live offer.  A previous version refused every
+# paid run unless the flags equalled these literals AND the wall clock fell
+# inside a seven-day window ending 2026-09-07 -- a time bomb that would have
+# refused all spend four days after the last edit.  Age is now advisory.
+RUNPOD_STORAGE_TARIFF_PINNED_AT = "2026-08-31T00:00:00Z"
+RUNPOD_STORAGE_TARIFF_STALE_AFTER_DAYS = 30
+
+
 def _runpod_quote(args, chosen, target, profile, timing, storage_gb,
-                  container_disk_gb, workload_seconds, result_archive_contract):
+                  container_disk_gb, workload_seconds, result_archive_contract,
+                  warnings: Optional[List[str]] = None):
     from fidelity.campaign import CostQuote, RUNPOD_TARIFF_SOURCE
 
-    official = {
-        "runpod_container_running_tariff": Decimal("0.10"),
-        "runpod_container_stopped_tariff": Decimal("0.00"),
-        "runpod_pod_running_tariff": Decimal("0.10"),
-        "runpod_pod_stopped_tariff": Decimal("0.20"),
-        "runpod_network_tariff": Decimal("0.07"),
-    }
-    drift = [name for name, expected in official.items()
-             if Decimal(str(getattr(args, name))) != expected]
-    if drift:
-        raise Refusal("RunPod tariff flags differ from pinned official rates",
-                      ["drift: " + ", ".join(drift)])
-    if (args.tariff_effective_at != "2026-08-31T00:00:00Z"
-            or args.tariff_valid_until != "2026-09-07T00:00:00Z"):
-        raise Refusal("RunPod tariff as-of/validity differs from authored current evidence", [])
+    tariffs = {}
+    for name in ("runpod_container_running_tariff",
+                 "runpod_container_stopped_tariff",
+                 "runpod_pod_running_tariff", "runpod_pod_stopped_tariff",
+                 "runpod_network_tariff"):
+        try:
+            tariffs[name] = Decimal(str(getattr(args, name)))
+        except (InvalidOperation, ValueError):
+            raise Refusal("--%s is not a decimal" % name.replace("_", "-"), [])
+        if not tariffs[name].is_finite() or tariffs[name] < 0:
+            raise Refusal(
+                "--%s must be a non-negative decimal"
+                % name.replace("_", "-"), [])
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    tariff_effective = datetime.strptime(
-        args.tariff_effective_at, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc)
-    tariff_until = datetime.strptime(
-        args.tariff_valid_until, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc)
-    if not tariff_effective <= now < tariff_until:
-        raise Refusal("authored RunPod tariff is not currently valid", [])
-    quote_until = min(now + timedelta(minutes=5), tariff_until)
+    try:
+        tariff_effective = datetime.strptime(
+            args.tariff_effective_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        raise Refusal(
+            "--tariff-effective-at must be an exact UTC timestamp "
+            "like 2026-08-31T00:00:00Z", [])
+    tariff_age_days = (now - tariff_effective).days
+    if (warnings is not None
+            and tariff_age_days > RUNPOD_STORAGE_TARIFF_STALE_AFTER_DAYS):
+        warnings.append(
+            "storage tariffs were pinned %d days ago (%s); verify them "
+            "against %s and pass --runpod-*-tariff / --tariff-effective-at "
+            "if RunPod changed its per-GB-month prices. The GPU rate is live "
+            "and --max-cost still caps the whole run."
+            % (tariff_age_days, args.tariff_effective_at,
+               RUNPOD_TARIFF_SOURCE))
+    quote_until = now + timedelta(minutes=5)
     reserve = Decimal(str(args.retrieval_delete_reserve))
     lag = Decimal(str(args.timer_api_lag))
     workload = Decimal(str(workload_seconds))
@@ -3076,17 +3167,17 @@ def _runpod_quote(args, chosen, target, profile, timing, storage_gb,
         reserved_compute_usd_per_hour=rate,
         live_compute_usd_per_hour=rate,
         container_disk_size_gb=Decimal(int(container_disk_gb)),
-        container_disk_running_usd_per_gb_month=official[
+        container_disk_running_usd_per_gb_month=tariffs[
             "runpod_container_running_tariff"],
-        container_disk_stopped_usd_per_gb_month=official[
+        container_disk_stopped_usd_per_gb_month=tariffs[
             "runpod_container_stopped_tariff"],
         pod_disk_size_gb=Decimal(int(storage_gb)),
-        pod_disk_running_usd_per_gb_month=official[
+        pod_disk_running_usd_per_gb_month=tariffs[
             "runpod_pod_running_tariff"],
-        pod_disk_stopped_usd_per_gb_month=official[
+        pod_disk_stopped_usd_per_gb_month=tariffs[
             "runpod_pod_stopped_tariff"],
         network_volume_size_gb=Decimal(0),
-        network_volume_usd_per_gb_month=official["runpod_network_tariff"],
+        network_volume_usd_per_gb_month=tariffs["runpod_network_tariff"],
         storage_month_hours=Decimal(672),
         network_billing_increment_seconds=Decimal(3600),
         tariff_source=RUNPOD_TARIFF_SOURCE,
@@ -3378,13 +3469,215 @@ def _open_existing_runpod_campaign(args, provider_account_id: str):
     return campaign_path, ledger
 
 
+def _auto_campaign_ledger_path(args, job_id_full: str) -> str:
+    """Per-run ledger beside the lease directory, named by the job."""
+    from fidelity.cloudlease import DEFAULT_STATE_DIR
+    state_dir = Path(
+        getattr(args, "reaper_state_dir", None) or DEFAULT_STATE_DIR)
+    return str((state_dir / ("auto-%s.json" % job_id_full[:24])).resolve())
+
+
+def _auto_campaign_limits(args) -> Dict[str, Any]:
+    """Ceiling = --max-cost, nothing reserved, nothing held for the reaper.
+
+    A per-run ledger exists so the reaper can release liability after a
+    controller crash and so the receipt carries a durable accounting record;
+    it does not span runs.  Cross-run accounting is what --campaign-ledger
+    opts into.  Foreign resources are tolerated: a pod someone else runs on
+    the same account is not this measurement's liability and must not
+    refuse it.
+    """
+    return {
+        "hard_ceiling_usd": Decimal(str(args.max_cost)),
+        "reserve_floor_usd": Decimal(0),
+        "cleanup_reaper_margin_usd": Decimal(0),
+        "max_concurrent_attempts": 1,
+        "foreign_resources_policy": "tolerate",
+    }
+
+
+def _create_auto_campaign_ledger(args, provider_account_id: str,
+                                 job_id_full: str):
+    """Create (or reopen, identically) the per-run ledger for execution."""
+    from fidelity.campaign import CampaignLedger, CampaignLedgerError
+    limits = _auto_campaign_limits(args)
+    campaign_path = _auto_campaign_ledger_path(args, job_id_full)
+    try:
+        ledger = CampaignLedger.create(
+            campaign_path, limits["hard_ceiling_usd"],
+            limits["reserve_floor_usd"], limits["cleanup_reaper_margin_usd"],
+            max_concurrent_attempts=limits["max_concurrent_attempts"],
+            provider="runpod", provider_account_id=provider_account_id,
+            foreign_resources_policy=limits["foreign_resources_policy"])
+    except (CampaignLedgerError, OSError, ValueError) as exc:
+        raise Refusal(
+            "per-run campaign ledger could not be created at %s: %s"
+            % (campaign_path, redact(str(exc))),
+            ["the reaper state directory must be an owner-only directory"])
+    return campaign_path, ledger
+
+
+# RunPod's gpuTypeId for the normalized --gpu spellings this controller has
+# rented or benchmarked (reports/provider-bench).  Extend here, not in a
+# per-target branch.
+_RUNPOD_GPU_IDS = {
+    "L4": "NVIDIA L4",
+    "A100": "NVIDIA A100-SXM4-80GB",
+    "A100PCIE": "NVIDIA A100 80GB PCIe",
+    "H100": "NVIDIA H100 80GB HBM3",
+    "H100NVL": "NVIDIA H100 NVL",
+    "H200": "NVIDIA H200",
+    "B200": "NVIDIA B200",
+}
+
+# Authored host capacity for the roots measured so far.  Anything else is
+# derived from model bytes: the streaming capture keeps roughly one fifth of
+# the checkpoint resident in host memory at a time, and a vCPU per ten GB of
+# host memory keeps the H2D path fed.  Both are overridable per run.
+_ROOT_HOST_CAPACITY_TABLE = {
+    "malaiwah/GLM-5.2-SIQ-Fruit-bf16": (4, 32),
+    "zai-org/GLM-5.3-Flash-BF16": (28, 300),
+    "zai-org/GLM-5.3-BF16": (28, 300),
+}
+_ROOT_HOST_BYTES_PER_MEMORY_GB = 5 * 10 ** 9
+_ROOT_HOST_MIN_MEMORY_GB = 32
+_ROOT_HOST_MIN_VCPU = 4
+
+
+def _root_host_capacity(args, target, identity) -> Tuple[int, int, str]:
+    override_vcpu = getattr(args, "min_vcpu", None)
+    override_memory = getattr(args, "min_memory_gb", None)
+    if override_vcpu is not None and override_memory is not None:
+        return int(override_vcpu), int(override_memory), "operator-override"
+    authored = _ROOT_HOST_CAPACITY_TABLE.get(target.repo_id)
+    if authored is not None:
+        vcpu, memory = authored
+        basis = "controller-conservative-capacity"
+    else:
+        memory = max(
+            _ROOT_HOST_MIN_MEMORY_GB,
+            -(-int(identity["model_bytes"]) // _ROOT_HOST_BYTES_PER_MEMORY_GB))
+        vcpu = max(_ROOT_HOST_MIN_VCPU, memory // 10)
+        basis = "derived-from-model-bytes"
+    if override_vcpu is not None:
+        vcpu, basis = int(override_vcpu), "operator-override"
+    if override_memory is not None:
+        memory, basis = int(override_memory), "operator-override"
+    return vcpu, memory, basis
+
+
+def _root_gpu_choice(args, target, *, form: str) -> str:
+    """The GPU the timing table names for this target, else --gpu."""
+    from fidelity.engines import _load_engine_config
+    evidenced = sorted({
+        str(row.get("gpu"))
+        for row in (_load_engine_config(None).get("root_timing_profiles") or [])
+        if row.get("target_repo") == target.repo_id
+        and row.get("target_revision") == target.revision
+        and row.get("form") == form
+        and isinstance(row.get("gpu"), str)})
+    requested = (args.gpu or "").upper().replace("-", "").replace(" ", "")
+    if requested:
+        return next(
+            (gpu for gpu in evidenced
+             if gpu.upper().replace("-", "") == requested),
+            args.gpu)
+    if len(evidenced) == 1:
+        return evidenced[0]
+    if evidenced:
+        raise Refusal(
+            "timing evidence exists for more than one GPU (%s); pass --gpu"
+            % ", ".join(evidenced), [])
+    raise Refusal(
+        "no authored timing evidence for %s@%s; pass --gpu (for example "
+        "--gpu H200) and --max-runtime becomes the workload bound"
+        % (target.repo_id, target.revision[:12]), [])
+
+
+def _operator_bound_root_timing(args, target, gpu: str,
+                                identity: Dict[str, Any]) -> Dict[str, Any]:
+    """A timing record whose only evidence is the operator's --max-runtime."""
+    hours = Decimal(parse_duration(args.max_runtime)) / Decimal(3600)
+    return {
+        "target_repo": target.repo_id,
+        "target_revision": target.revision,
+        "gpu": gpu, "form": args.form,
+        "schedule": "two-fresh-process-qualification",
+        "conservative_upper_hours": float(hours),
+        "resource_admission": {
+            "required": True,
+            "mode": "controller_explicit_safe_resources"},
+        "evidence": {
+            "source": "operator --max-runtime",
+            "max_runtime": args.max_runtime,
+            "derivation": (
+                "No authored timing row exists for this target and GPU. "
+                "The operator's --max-runtime is the workload bound; the "
+                "reap deadline, on-pod watchdog and cost quote derive from "
+                "it and the run is torn down at that deadline."),
+        },
+        "model_identity": {
+            "model_bytes": identity["model_bytes"],
+            "config_sha256": identity["config_sha256"],
+            "index_sha256": identity["index_sha256"],
+        },
+    }
+
+
+def _reaper_health_remedy(health: Dict[str, Any], args) -> List[str]:
+    """Name what is wrong with the reaper and the exact command that fixes it.
+
+    The reaper is the only thing that destroys a pod after this controller
+    dies, so it is a hard gate -- but a hard gate whose refusal says only
+    "not healthy" costs an operator a read of three thousand lines.
+    """
+    install = (
+        "measure-cloud reaper --provider runpod --install"
+        + (" --reaper-state-dir %s" % args.reaper_state_dir
+           if args.reaper_state_dir else "")
+        + (" --lease-dir %s" % args.lease_dir if args.lease_dir else ""))
+    advice = []
+    timer = health.get("timer") or {}
+    if not timer.get("is-enabled") or not timer.get("is-active"):
+        advice.append(
+            "the user systemd timer is not enabled/active; run: %s" % install)
+    linger = health.get("user_manager_persistence") or {}
+    if not linger.get("ok"):
+        advice.append(
+            "your user manager does not survive logout; run: "
+            "loginctl enable-linger $USER   (then reinstall: %s)" % install)
+    service = health.get("service_last_result") or {}
+    if not service.get("ok"):
+        advice.append(
+            "the last reaper sweep failed (%s); inspect: journalctl --user "
+            "-u fidelity-cloud-reaper.service -n 50"
+            % (service.get("error") or service.get("result") or "unknown"))
+    if not health.get("control_ok"):
+        advice.append(
+            "the installed snapshot no longer matches its sealed control "
+            "(or it predates control v3); reinstall: %s" % install)
+    age = health.get("stamp_age_seconds")
+    if health.get("stamp") is None:
+        advice.append(
+            "no health stamp yet; the timer writes one on its first "
+            "successful sweep -- run: measure-cloud reaper --provider runpod "
+            "--sweep")
+    elif isinstance(age, (int, float)) and age > 900:
+        advice.append(
+            "the last healthy sweep is %d s old (limit 900); run: "
+            "measure-cloud reaper --provider runpod --sweep" % int(age))
+    if not advice:
+        advice.append("reinstall: %s" % install)
+    return advice
+
+
 def _plan_runpod_anonymous(
         args, con: Console, provider,
         anonymous_access: Dict[str, Any]) -> Dict[str, Any]:
     """Build the complete finalized job and every paid gate before admission."""
     from fidelity.cloudlease import (
         DEFAULT_STATE_DIR, LeaseStore, systemd_reaper_health,
-        validate_unresolved_lease_scope)
+        validate_lease_liability_scope, validate_unresolved_lease_scope)
     from fidelity.panel import (
         PanelError, validate_reference_manifest, validate_root_panel_binding)
     from fidelity.runpodsafety import (
@@ -3394,7 +3687,7 @@ def _plan_runpod_anonymous(
 
     plan_data: Dict[str, Any] = {
         "provider": "runpod", "created": False, "gates": {},
-        "would_refuse": [], "safe_runpod": True,
+        "would_refuse": [], "safe_runpod": True, "warnings": [],
     }
     plan_data["anonymous_access"] = anonymous_access
     target = repo_meta(args.model, "model", args.revision or "main")
@@ -3416,11 +3709,10 @@ def _plan_runpod_anonymous(
         raise Refusal(
             "K8 is refused before spend because its pinned target has no "
             "sealed surface-to-measurement verdict bridge", [])
-    if not _safe_runpod_target_allowed(
-            args.role, target.repo_id, target.revision):
-        raise Refusal(
-            "initial safe RunPod path is restricted to exact authored targets",
-            [])
+    # Any public model with an exact revision may be planned.  Identity is
+    # still proven from bytes below (surface sniff, unquantized root,
+    # pinned license where one is authored); what is gone is the hardcoded
+    # four-tuple allowlist that made every new model a source edit.
     from fidelity.registry_client import front_gate
     registry_gate = None
     if args.role == "quant":
@@ -3445,7 +3737,10 @@ def _plan_runpod_anonymous(
             raise Refusal(
                 "registry identity gate refuses an unavailable output",
                 ["status: %s" % registry_gate.get("status")])
-    initial_source_proof = _source_checkout_proof(include_untracked=True)
+    # Tracked files must be clean so the receipt's code digest means what
+    # it says.  Untracked scratch files are not part of any bundle or
+    # digest and no longer refuse a run.
+    initial_source_proof = _source_checkout_proof(include_untracked=False)
     plan_data["source_checkout"] = {
         "initial": initial_source_proof,
         "pre_post": dict(initial_source_proof),
@@ -3499,8 +3794,21 @@ def _plan_runpod_anonymous(
         lease_dir=Path(args.lease_dir), provider="runpod",
         provider_account_id=initial_account_id)
     if not health.get("ok"):
-        raise Refusal("systemd-user RunPod reaper is not healthy", [])
-    gate_verified(plan_data, "reaper-health", **health)
+        raise Refusal(
+            "the installed RunPod reaper is not healthy",
+            _reaper_health_remedy(health, args))
+    drift = health.get("source_drift") or {}
+    if drift.get("drift"):
+        plan_data["warnings"].append(
+            "installed reaper is older than this checkout (%s changed); it "
+            "still guards this run. Update it when convenient: "
+            "measure-cloud reaper --provider runpod --install"
+            % (", ".join(drift.get("changed") or [])
+               or drift.get("reason") or "unknown"))
+    gate_verified(
+        plan_data, "reaper-health",
+        **{key: value for key, value in health.items()
+           if key != "source_drift"})
 
     surface = sniff_surface(target, getattr(args, "path", None))
     identity = _model_file_identity(target)
@@ -3612,8 +3920,7 @@ def _plan_runpod_anonymous(
     if args.role == "root":
         if not (SUITE_ROOT / "engines/tools/hf_capture.py").is_file():
             raise Refusal("root capture engine is absent", [])
-        gpu = ("L4" if target.repo_id
-               == "malaiwah/GLM-5.2-SIQ-Fruit-bf16" else "H200")
+        gpu = _root_gpu_choice(args, target, form=args.form)
     else:
         probe = engine.probe(
             SUITE_ROOT, paid=True, python="python3", env=dict(os.environ))
@@ -3623,9 +3930,10 @@ def _plan_runpod_anonymous(
                 [json.dumps(probe, sort_keys=True)])
         gpu = "H200"
         plan_data["cli_probe"] = probe
-    normalized_arg_gpu = (args.gpu or gpu).upper().replace("-", "").replace(" ", "")
-    if normalized_arg_gpu != gpu.upper().replace("-", ""):
-        raise Refusal("exact target timing requires GPU %s" % gpu, [])
+        normalized_arg_gpu = (
+            (args.gpu or gpu).upper().replace("-", "").replace(" ", ""))
+        if normalized_arg_gpu != gpu.upper().replace("-", ""):
+            raise Refusal("exact target timing requires GPU %s" % gpu, [])
     descriptor = None
     pmeta = None
     reference_manifest = None
@@ -3649,10 +3957,25 @@ def _plan_runpod_anonymous(
         _validate_quant_panel_descriptor(
             descriptor, pmeta, quant_panel_validation, reference_manifest)
     if args.role == "root":
-        timing = resolve_root_timing(
-            target_repo=target.repo_id, target_revision=target.revision,
-            gpu=gpu, form=args.form,
-            schedule="two-fresh-process-qualification")
+        from fidelity.engines import RootTimingUnavailable
+        try:
+            timing = resolve_root_timing(
+                target_repo=target.repo_id, target_revision=target.revision,
+                gpu=gpu, form=args.form,
+                schedule="two-fresh-process-qualification")
+        except RootTimingUnavailable:
+            # No authored timing evidence for this exact target/GPU.  The
+            # operator's --max-runtime IS the bound: the reap deadline, the
+            # on-pod watchdog and the cost quote all derive from it.  A
+            # named-conservative table entry is better evidence when one
+            # exists, and the registry receipt records which was used.
+            timing = _operator_bound_root_timing(args, target, gpu, identity)
+            plan_data["warnings"].append(
+                "no authored timing evidence for %s@%s on %s; using your "
+                "--max-runtime %s as the workload bound. If the capture "
+                "needs longer it is stopped and torn down at that deadline."
+                % (target.repo_id, target.revision[:12], gpu,
+                   args.max_runtime))
         timing_identity = timing["model_identity"]
         for key, actual in (("model_bytes", identity["model_bytes"]),
                             ("config_sha256", identity["config_sha256"]),
@@ -3731,22 +4054,15 @@ def _plan_runpod_anonymous(
             reduce_order="fp32",
             capacity_basis="authored-profile-measured-host")
     else:
-        if target.repo_id == "malaiwah/GLM-5.2-SIQ-Fruit-bf16":
-            min_vcpu_count, min_memory_gb = 4, 32
-        elif target.repo_id in (
-                "zai-org/GLM-5.3-Flash-BF16",
-                "zai-org/GLM-5.3-BF16"):
-            min_vcpu_count, min_memory_gb = 28, 300
-        else:
-            raise Refusal("root target lacks conservative controller capacity",
-                          [])
+        min_vcpu_count, min_memory_gb, capacity_basis = _root_host_capacity(
+            args, target, identity)
         runtime_contract = {
             "min_vcpu_count": min_vcpu_count,
             "min_memory_gb": min_memory_gb,
             "gpu_count": 1, "device": "cuda",
             "expert_parallel": {"mode": "single_device", "world_size": 1},
             "reduce_order": "fp32",
-            "capacity_basis": "controller-conservative-capacity",
+            "capacity_basis": capacity_basis,
         }
     plan_data["runtime_contract"] = runtime_contract
     max_runtime = parse_duration(args.max_runtime)
@@ -3826,30 +4142,43 @@ def _plan_runpod_anonymous(
 
     allowlist = None
     if args.role == "root":
+        from fidelity.runpodsafety import authored_allowlist_path
         if not args.unexpected_tensor_allowlist:
-            raise Refusal("root requires an exact checked-in unexpected tensor allowlist", [])
-        allowlist = validate_unexpected_tensor_allowlist(
-            args.unexpected_tensor_allowlist, target_repo=target.repo_id,
-            target_revision=target.revision, suite_root=SUITE_ROOT)
-        gate_verified(
-            plan_data, "exact-unexpected-tensor-allowlist",
-            artifact_sha256=allowlist["artifact_sha256"],
-            names_sha256=allowlist[
-                "canonical_sorted_names_sha256"])
-        allowlist_bundle_rows = [
-            row for row in bundle["files"]
-            if row["path"] == allowlist["path"]]
-        if (len(allowlist_bundle_rows) != 1
-                or allowlist_bundle_rows[0]["sha256"]
-                != allowlist["artifact_sha256"]):
-            raise Refusal(
-                "authored allowlist differs from frozen bundle manifest", [])
+            args.unexpected_tensor_allowlist = authored_allowlist_path(
+                target.repo_id, target.revision, suite_root=SUITE_ROOT)
+        if args.unexpected_tensor_allowlist:
+            allowlist = validate_unexpected_tensor_allowlist(
+                args.unexpected_tensor_allowlist, target_repo=target.repo_id,
+                target_revision=target.revision, suite_root=SUITE_ROOT)
+            gate_verified(
+                plan_data, "exact-unexpected-tensor-allowlist",
+                artifact_sha256=allowlist["artifact_sha256"],
+                names_sha256=allowlist[
+                    "canonical_sorted_names_sha256"])
+            allowlist_bundle_rows = [
+                row for row in bundle["files"]
+                if row["path"] == allowlist["path"]]
+            if (len(allowlist_bundle_rows) != 1
+                    or allowlist_bundle_rows[0]["sha256"]
+                    != allowlist["artifact_sha256"]):
+                raise Refusal(
+                    "authored allowlist differs from frozen bundle manifest", [])
+        else:
+            plan_data["warnings"].append(
+                "no authored unexpected-tensor allowlist for %s@%s: the "
+                "capture refuses on the pod if the checkpoint carries tensors "
+                "the architecture does not declare. If that happens, author "
+                "one under engines/tools/layer-outer-evidence/ and register "
+                "it in bin/fidelity/runpodsafety.py"
+                % (target.repo_id, target.revision[:12]))
 
     offers = provider.gpus()
-    provider_gpu_id = {
-        "L4": "NVIDIA L4",
-        "H200": "NVIDIA H200",
-    }[gpu]
+    provider_gpu_id = _RUNPOD_GPU_IDS.get(
+        gpu.upper().replace("-", "").replace(" ", ""))
+    if provider_gpu_id is None:
+        raise Refusal(
+            "GPU %r has no RunPod offer name here; known: %s"
+            % (gpu, ", ".join(sorted(_RUNPOD_GPU_IDS))), [])
     candidates = [offer for offer in offers
                   if offer.gpu_type == provider_gpu_id
                   and offer.spot is False
@@ -4019,7 +4348,7 @@ def _plan_runpod_anonymous(
     quote = _runpod_quote(
         args, chosen, target, profile, timing, storage_gb,
         plan_data["container_disk_gb"], Decimal(max_runtime),
-        result_archive_contract)
+        result_archive_contract, warnings=plan_data["warnings"])
     plan_data["cost_quote"] = quote.to_dict()
     from fidelity.runpodapi import DEFAULT_IMAGE as RUNPOD_IMAGE
     chosen["image"] = RUNPOD_IMAGE
@@ -4063,24 +4392,38 @@ def _plan_runpod_anonymous(
                   network_volumes=len(
                       inventory["families"]["network_volumes"]["resources"]))
 
-    proof = validate_safety_proof(
-        args.runpod_safety_proof, bundle_contract_sha256,
-        control["manifest_sha256"], provider_account_id,
-        str(Path(args.campaign_ledger).resolve()))
-    proof_account_id = str(
-        (proof.get("proof") or {}).get("provider_account_id") or "")
-    if proof_account_id != provider_account_id:
-        raise Refusal(
-            "RunPod safety proof belongs to a different provider account", [])
-    plan_data["safety_proof_sha256"] = proof["proof"]["proof_sha256"]
-    gate_verified(plan_data, "current-paid-fault-drill",
-                  proof_sha256=proof["proof"]["proof_sha256"])
+    if args.runpod_safety_proof:
+        # Opt-in: a sealed controller-loss drill proof for this exact
+        # checkout, ledger and account.  The reaper is what tears down after
+        # a controller dies; the proof is empirical evidence that it did so
+        # once, here.  Validated exactly as before when given.
+        proof = validate_safety_proof(
+            args.runpod_safety_proof, bundle_contract_sha256,
+            control["manifest_sha256"], provider_account_id,
+            str(Path(args.campaign_ledger).resolve()))
+        proof_account_id = str(
+            (proof.get("proof") or {}).get("provider_account_id") or "")
+        if proof_account_id != provider_account_id:
+            raise Refusal(
+                "RunPod safety proof belongs to a different provider account", [])
+        plan_data["safety_proof_sha256"] = proof["proof"]["proof_sha256"]
+        gate_verified(plan_data, "current-paid-fault-drill",
+                      proof_sha256=proof["proof"]["proof_sha256"])
+    else:
+        plan_data["safety_proof_sha256"] = None
+        gate_verified(
+            plan_data, "teardown-backstops",
+            controller="delete-on-exit-exception-interrupt",
+            on_pod="watchdog at deadline",
+            autonomous="installed systemd reaper at reap deadline",
+            drill_proof="not requested (--runpod-safety-proof)")
 
     capture: Dict[str, Any] = {}
     if args.role == "root":
-        allowlist_job = {
-            key: allowlist[key] for key in (
+        allowlist_job = (
+            {key: allowlist[key] for key in (
                 "path", "artifact_sha256", "canonical_sorted_names_sha256")}
+            if allowlist is not None else None)
         binding_panel = panel_doc["resolved_binding"]["panel"]
         capture = {
             "engine": "hf-transformers",
@@ -4221,25 +4564,54 @@ def _plan_runpod_anonymous(
         "inventory_source": inventory["schema"],
     }
     preview_attempt = "0" * 24
-    campaign_path, preview_ledger = _open_existing_runpod_campaign(
-        args, provider_account_id)
-    try:
-        unresolved_scope = validate_unresolved_lease_scope(
-            LeaseStore(Path(args.lease_dir)), health,
-            provider="runpod", provider_account_id=provider_account_id,
-            campaign_ledger_path=Path(campaign_path))
-    except Exception as exc:
-        raise Refusal(
-            "unresolved leases are outside current reaper/campaign scope: %s"
-            % exc, [])
-    plan_data["unresolved_lease_scope"] = unresolved_scope
-    gate_verified(
-        plan_data, "canonical-unresolved-lease-scope", **unresolved_scope)
-    preview_snapshot = preview_ledger.snapshot()
-    decision = preview_ledger.preview_reserve_with_provider_snapshot(
-        preview_snapshot["generation"], job["job_id_full"],
-        preview_attempt, quote, preview_now,
-        effective_width=args.campaign_width, **preview_common)
+    lease_store_plan = LeaseStore(Path(args.lease_dir))
+    if _campaign_ledger_requested(args):
+        # Strict campaign: the ledger must pre-exist with matching limits,
+        # and every unresolved lease must belong to it and to the reaper's
+        # last sealed count.
+        campaign_path, preview_ledger = _open_existing_runpod_campaign(
+            args, provider_account_id)
+        try:
+            unresolved_scope = validate_unresolved_lease_scope(
+                lease_store_plan, health,
+                provider="runpod", provider_account_id=provider_account_id,
+                campaign_ledger_path=Path(campaign_path))
+        except Exception as exc:
+            raise Refusal(
+                "unresolved leases are outside current reaper/campaign scope: %s"
+                % exc, [])
+        plan_data["unresolved_lease_scope"] = unresolved_scope
+        gate_verified(
+            plan_data, "canonical-unresolved-lease-scope", **unresolved_scope)
+        preview_snapshot = preview_ledger.snapshot()
+        decision = preview_ledger.preview_reserve_with_provider_snapshot(
+            preview_snapshot["generation"], job["job_id_full"],
+            preview_attempt, quote, preview_now,
+            effective_width=args.campaign_width, **preview_common)
+        plan_data["campaign_mode"] = "explicit"
+    else:
+        # Per-run campaign: refuse only while an earlier lease may still
+        # hold a pod; preview admission in memory against --max-cost.
+        from fidelity.campaign import CampaignLedger
+        from fidelity.cloudlease import LeaseError
+        campaign_path = _auto_campaign_ledger_path(args, job["job_id_full"])
+        try:
+            liability_scope = validate_lease_liability_scope(
+                lease_store_plan, provider="runpod",
+                provider_account_id=provider_account_id,
+                allow_live=bool(getattr(args, "allow_unresolved_leases", False)))
+        except LeaseError as exc:
+            raise Refusal(str(exc), [])
+        plan_data["unresolved_lease_scope"] = liability_scope
+        gate_verified(
+            plan_data, "no-live-liability-leases", **liability_scope)
+        limits = _auto_campaign_limits(args)
+        decision = CampaignLedger.preview_new_campaign(
+            job_hash=job["job_id_full"], attempt=preview_attempt,
+            quote=quote, now=preview_now,
+            effective_width=1, **limits, **preview_common)
+        plan_data["campaign_mode"] = "per-run"
+    plan_data["campaign_ledger_path"] = campaign_path
     plan_data["campaign_admission_preview"] = decision.to_dict()
     if not decision.admitted:
         raise Refusal(
@@ -4262,14 +4634,23 @@ def _plan_runpod_anonymous(
         }
     else:
         gate_verified(plan_data, "campaign-width", width=1)
-    con.say("SAFE RUNPOD PLAN")
+    con.say("RUNPOD PLAN")
     con.kv("target", "%s@%s" % (target.repo_id, target.revision))
     con.kv("profile timing", "%s / %s" % (profile, timing.get("evidence")))
     con.kv("job hash", job["job_id_full"])
     con.kv("all-in hard cap", "$%s (calculated $%s)"
            % (quote.hard_cap_usd, quote.calculated_maximum_usd()))
+    con.kv("campaign", (
+        "per-run ledger %s (ceiling = --max-cost; foreign pods tolerated)"
+        % Path(campaign_path).name
+        if plan_data["campaign_mode"] == "per-run" else
+        "explicit ledger %s (ceiling $%s, reserve $%s, reaper margin $%s)"
+        % (Path(campaign_path).name, args.campaign_ceiling,
+           args.campaign_reserve, args.campaign_reaper_margin)))
     for name in sorted(plan_data["gates"]):
         con.ok(name)
+    for line in plan_data["warnings"]:
+        con.warn("note", line)
     return plan_data
 
 
@@ -4663,14 +5044,34 @@ def _runpod_stage(
     run_id = (run or {}).get("run_id") or (run or {}).get("id")
     if not run_id:
         raise RuntimeError("stage launch returned no run id")
+    # The transport returns "unknown" when the PROBE could not run -- an ssh
+    # timeout, a proxy hiccup -- and documents that it is never evidence of
+    # death.  Treating it as terminal aborted a multi-hour capture on one
+    # thirty-second blip, the failure class that lost drill #5.  Only an
+    # evidence-based verdict ends the stage immediately; probe failures are
+    # tolerated for STAGE_PROBE_OUTAGE_SECONDS, after which the host is
+    # treated as unreachable and the run is torn down.
+    probe_outage_started = None
     while time.time() < deadline:
         status = provider.run_status(run_id, machine_id=pod_id)
         state = str(status.get("state") or "").lower()
         if state == "succeeded":
             return
-        if state in ("failed", "error", "unknown"):
+        if state in ("failed", "error"):
             raise RuntimeError("stage %s ended in %s; recovery is refused"
                                % (stage, state))
+        if state == "unknown":
+            if probe_outage_started is None:
+                probe_outage_started = time.time()
+            elif (time.time() - probe_outage_started
+                  > STAGE_PROBE_OUTAGE_SECONDS):
+                raise RuntimeError(
+                    "stage %s liveness probe has failed for %d s (%s); the "
+                    "pod is treated as unreachable"
+                    % (stage, STAGE_PROBE_OUTAGE_SECONDS,
+                       status.get("note") or "no detail"))
+        else:
+            probe_outage_started = None
         time.sleep(15)
     raise RuntimeError("workload deadline reached during stage %s" % stage)
 
@@ -4684,7 +5085,8 @@ def execute_runpod(
         ABSENCE_CONFIRMED, CreateResponsePersistenceError, LeaseStore,
         campaign_cleanup_binding_evidence, exact_resource_name,
         finalize_campaign_after_absence, runpod_authoritative_listing,
-        systemd_reaper_health, utc_iso, validate_unresolved_lease_scope)
+        systemd_reaper_health, utc_iso, validate_lease_liability_scope,
+        validate_unresolved_lease_scope)
     from fidelity.runpodsafety import (
         validate_current_public_root, validate_safety_proof,
         validate_width_two_root_archive)
@@ -4739,12 +5141,19 @@ def execute_runpod(
             and args.publish_root_to != args.dataset_repository):
         raise Refusal(
             "root publication authorization differs from destination", [])
-    ledger_file = Path(args.campaign_ledger).resolve()
-    if ledger_file.parent != Path(args.lease_dir).resolve().parent:
-        raise Refusal(
-            "campaign ledger must be a sibling of the lease directory", [])
-    ledger_path, ledger = _open_existing_runpod_campaign(
-        args, plan_data["provider_account_id"])
+    campaign_mode = plan_data.get("campaign_mode") or "explicit"
+    if campaign_mode == "explicit":
+        ledger_file = Path(args.campaign_ledger).resolve()
+        if ledger_file.parent != Path(args.lease_dir).resolve().parent:
+            raise Refusal(
+                "campaign ledger must be a sibling of the lease directory", [])
+        ledger_path, ledger = _open_existing_runpod_campaign(
+            args, plan_data["provider_account_id"])
+    else:
+        ledger_path, ledger = _create_auto_campaign_ledger(
+            args, plan_data["provider_account_id"], plan_data["job_id_full"])
+    foreign_tolerated = (
+        ledger.foreign_resources_policy(ledger.snapshot()) == "tolerate")
 
     # Refresh all admission facts immediately under durable ledger locking.
     status = provider.status()
@@ -4758,29 +5167,33 @@ def execute_runpod(
         provider_account_id=current_account_id)
     if not fresh_health.get("ok"):
         raise Refusal(
-            "RunPod reaper health expired before paid admission",
-            [str(value) for value in fresh_health.get("reasons") or []])
-    try:
-        fresh_unresolved_scope = validate_unresolved_lease_scope(
-            LeaseStore(Path(args.lease_dir)), fresh_health,
-            provider="runpod", provider_account_id=current_account_id,
-            campaign_ledger_path=Path(ledger_path))
-    except Exception as exc:
-        raise Refusal(
-            "RunPod unresolved lease scope changed before paid admission: %s"
-            % exc, [])
-    fresh_proof = validate_safety_proof(
-        args.runpod_safety_proof,
-        plan_data["bundle_contract_sha256"],
-        plan_data["control_plane"]["manifest_sha256"],
-        current_account_id, ledger_path)
+            "the installed RunPod reaper stopped being healthy after planning",
+            _reaper_health_remedy(fresh_health, args))
+    if campaign_mode == "explicit":
+        try:
+            fresh_unresolved_scope = validate_unresolved_lease_scope(
+                LeaseStore(Path(args.lease_dir)), fresh_health,
+                provider="runpod", provider_account_id=current_account_id,
+                campaign_ledger_path=Path(ledger_path))
+        except Exception as exc:
+            raise Refusal(
+                "RunPod unresolved lease scope changed before paid admission: %s"
+                % exc, [])
+    else:
+        from fidelity.cloudlease import LeaseError
+        try:
+            fresh_unresolved_scope = validate_lease_liability_scope(
+                LeaseStore(Path(args.lease_dir)), provider="runpod",
+                provider_account_id=current_account_id,
+                allow_live=bool(getattr(args, "allow_unresolved_leases", False)))
+        except LeaseError as exc:
+            raise Refusal(str(exc), [])
     fresh_safety = {
         "checked_at": _exact_utc_now(),
         "reaper_health_sha256": hashlib.sha256(
             _canonical_bytes(fresh_health)).hexdigest(),
-        "safety_proof_file_sha256": sha256_file(
-            args.runpod_safety_proof),
-        "safety_proof_sha256": fresh_proof["proof"]["proof_sha256"],
+        "safety_proof_file_sha256": None,
+        "safety_proof_sha256": None,
         "provider_account_id": current_account_id,
         "provider_gpu_id": plan_data["chosen"]["provider_gpu_id"],
         "image": plan_data["chosen"]["image"],
@@ -4788,6 +5201,16 @@ def execute_runpod(
         "control_manifest_sha256":
             plan_data["control_plane"]["manifest_sha256"],
     }
+    if args.runpod_safety_proof:
+        fresh_proof = validate_safety_proof(
+            args.runpod_safety_proof,
+            plan_data["bundle_contract_sha256"],
+            plan_data["control_plane"]["manifest_sha256"],
+            current_account_id, ledger_path)
+        fresh_safety["safety_proof_file_sha256"] = sha256_file(
+            args.runpod_safety_proof)
+        fresh_safety["safety_proof_sha256"] = (
+            fresh_proof["proof"]["proof_sha256"])
     balance = status.get("clientBalance")
     inventory = provider.chargeable_inventory()
     if balance is None or not inventory.get("complete"):
@@ -4865,7 +5288,7 @@ def execute_runpod(
         raise Refusal("campaign snapshot was not recorded", [])
     canonical_inventory = ledger.snapshot()["inventory"]
     unknown_resources = canonical_inventory["unknown_resources"]
-    if unknown_resources:
+    if unknown_resources and not foreign_tolerated:
         raise Refusal(
             "canonical campaign classifier found unknown chargeable resources",
             ["unknown: %s" % value for value in unknown_resources])
@@ -5543,9 +5966,14 @@ def execute_runpod(
                     (row["family"], row["id"])
                     for row in strict_resources}
                 family_closure_exact = graphql_keys == strict_keys
+                # Pre-existing foreign pods are "unknown" to the classifier;
+                # the delta against the pre-create inventory (blockers,
+                # new_volume_ids, extra_exact) still catches anything that
+                # appeared during this create window.
                 strict_unknown_beyond_intended = [
                     row for row in classified_strict["unknown_resources"]
-                    if row != {"family": "pods", "id": str(pod_id)}]
+                    if row != {"family": "pods", "id": str(pod_id)}
+                    and not foreign_tolerated]
                 fatal_delta = bool(
                     blockers or new_volume_ids or extra_exact
                     or malformed_nonown_pod_ids
@@ -5714,8 +6142,11 @@ def execute_runpod(
                 "%s; exact acknowledged pod is cleanup-only"
                 % (convergence_failure or "post-create family delta"))
         canonical_post_inventory = ledger.snapshot()["inventory"]
-        if canonical_post_inventory["unknown_resources"] != [
-                {"family": "pods", "id": str(pod_id)}]:
+        unknown_after_create = [
+            row for row in canonical_post_inventory["unknown_resources"]
+            if not (foreign_tolerated
+                    and row != {"family": "pods", "id": str(pod_id)})]
+        if unknown_after_create != [{"family": "pods", "id": str(pod_id)}]:
             raise RuntimeError(
                 "post-create campaign classifier found resources beyond the "
                 "single acknowledged pod; cleanup is restricted to attributed IDs")
@@ -5789,7 +6220,8 @@ def execute_runpod(
                 or bound.action == "TERMINATE_IMMEDIATELY"):
             raise RuntimeError(
                 "campaign provider/rate binding failed: %s" % bound.message)
-        if ledger.snapshot()["inventory"]["unknown_resources"]:
+        if (ledger.snapshot()["inventory"]["unknown_resources"]
+                and not foreign_tolerated):
             raise RuntimeError(
                 "campaign inventory remains unknown after exact quote binding")
         running = _ledger_transition(
@@ -6202,6 +6634,16 @@ def execute_runpod(
                             and absence_error is not None):
                         raise absence_error
                     if lease_ref.state == ABSENCE_CONFIRMED:
+                        # The pod is proven absent from a complete listing:
+                        # nothing is billing.  Settlement is advisory from
+                        # here.  RunPod publishes its hour bucket up to an
+                        # hour and some minutes later; one attempt is made
+                        # now, and the installed reaper settles it on a
+                        # later sweep otherwise.  Treating "not yet
+                        # published" as an operational failure refused the
+                        # publication of a qualified dataset and exited 90
+                        # with the pod already gone.
+                        billing_pending_reason = None
                         try:
                             billing_lease = lease_store.read(lease_ref)
                             absence_rows = [
@@ -6231,12 +6673,27 @@ def execute_runpod(
                                 lease_store.root)
                             lease_ref = lease_store.record_billing_reconciled(
                                 lease_ref, billing)
-                        except BaseException as exc:
-                            run_error = record_operational_error(exc)
+                        except BaseException as exc:  # noqa: BLE001
+                            billing_pending_reason = redact(str(exc))[:300]
                         if lease_store.read(lease_ref).get("state") != "TERMINAL":
-                            run_error = record_operational_error(RuntimeError(
-                                "billing/campaign is unreconciled; "
-                                "liability retained"))
+                            con.warn(
+                                "billing pending",
+                                "pod %s is proven absent; RunPod has not "
+                                "published its bill yet (%s). The installed "
+                                "reaper settles it on a later sweep; check "
+                                "with: measure-cloud reaper --provider runpod "
+                                "--list" % (pod_id, billing_pending_reason
+                                            or "stabilization"))
+                            exit_evidence["billing"] = {
+                                "settled": False,
+                                "pending_reason": billing_pending_reason,
+                                "lease": lease_ref.path.name,
+                            }
+                        else:
+                            exit_evidence["billing"] = {
+                                "settled": True,
+                                "lease": lease_ref.path.name,
+                            }
                     else:
                         remedy = ""
                         if not secret_cleanup.get("confirmed"):
@@ -6256,10 +6713,11 @@ def execute_runpod(
         current_lease = lease_store.read(lease_ref)
         if (archive_verified is None
                 or "qualify_root" not in stages_done
-                or current_lease.get("state") != "TERMINAL"):
+                or current_lease.get("state") not in (
+                    ABSENCE_CONFIRMED, "TERMINAL")):
             run_error = record_operational_error(RuntimeError(
-                "local publication requires qualified archive, exact pod "
-                "absence, and terminal billing reconciliation"))
+                "local publication requires a qualified verified archive and "
+                "exact pod absence (lease is %s)" % current_lease.get("state")))
         else:
             frozen_suite = Path(frozen_bundle["suite_root"])
             publisher = frozen_suite / "bin/fidelity_dataset.py"
@@ -6350,10 +6808,13 @@ def execute_runpod(
     scientific_status = (
         str(verified_manifest.get("status"))
         if isinstance(verified_manifest, dict) else "unverified")
-    operational_success = (
-        not operational_errors
-        and receipt_lease.get("state") == "TERMINAL"
-        and receipt_attempt.get("released") is True)
+    # Operational success means: no operational errors and the pod is proven
+    # absent.  Billing settlement and campaign release follow the provider's
+    # publication lag and are the installed reaper's job from here; they are
+    # reported in the receipt, not required for success.
+    lease_state = receipt_lease.get("state")
+    pod_gone = lease_state in (ABSENCE_CONFIRMED, "TERMINAL")
+    operational_success = not operational_errors and pod_gone
     operational_status = "completed" if operational_success else "failed"
     combined_status = scientific_status
     if (not operational_success
@@ -6427,23 +6888,38 @@ def execute_runpod(
         os.fsync(receipt_directory_fd)
     finally:
         os.close(receipt_directory_fd)
+    liability_may_remain = not pod_gone
     if operational_errors:
         operational_detail = "; ".join(
             redact(str(error)) for error in operational_errors)
         primary_detail = (
             "; primary scientific/execution error: %s"
             % redact(str(primary_error)) if primary_error is not None else "")
-        raise RuntimeError(
-            "unreconciled operational liability/failure: "
-            + operational_detail + primary_detail)
+        if pod_id is None:
+            # No pod was ever acknowledged (e.g. the provider refused the
+            # create): nothing was spent and nothing can be leaking.
+            raise Refusal(
+                redact(str(primary_error)) if primary_error is not None
+                else operational_detail,
+                [line for line in operational_detail.split("; ")
+                 if primary_error is None
+                 or line != redact(str(primary_error))])
+        raise RunFailed(
+            ("unreconciled operational liability/failure: "
+             if liability_may_remain else "run failed after clean teardown: ")
+            + operational_detail + primary_detail,
+            liability_may_remain=liability_may_remain)
     if run_error is not None:
-        raise run_error
+        raise RunFailed(
+            redact(str(run_error)), liability_may_remain=liability_may_remain)
     if not operational_success:
-        raise RuntimeError(
-            "success requires terminal lease billing and a durably released "
-            "campaign attempt")
+        raise RunFailed(
+            "success requires the pod to be proven absent (lease is %s)"
+            % lease_state, liability_may_remain=liability_may_remain)
     if archive_verified is None:
-        raise RuntimeError("success requires a verified off-pod result archive")
+        raise RunFailed(
+            "success requires a verified off-pod result archive",
+            liability_may_remain=False)
     return {"estimated_usd": float(quote.calculated_maximum_usd()),
             "result_archive": archive_verified,
             "secret_cleanup": secret_cleanup}
@@ -7462,6 +7938,7 @@ def _main_runpod(args, con: Console, provider) -> int:
     if args.subcommand == "adopt":
         con.err("safe RunPod mode refuses adoption/recovery")
         return EXIT_REFUSED
+    phase = "plan"
     try:
         plan_data = plan_runpod(args, con, provider)
         public_plan = {key: value for key, value in plan_data.items()
@@ -7475,13 +7952,16 @@ def _main_runpod(args, con: Console, provider) -> int:
         if not args.yes:
             from fidelity.campaign import CostQuote
             prompt_quote = CostQuote.from_dict(plan_data["cost_quote"])
+            budget = (
+                "campaign ceiling $%s with reserve $%s"
+                % (args.campaign_ceiling, args.campaign_reserve)
+                if plan_data.get("campaign_mode") == "explicit"
+                else "--max-cost is the whole budget")
             answer = input(
                 "Create one secure on-demand RunPod (calculated maximum "
-                "$%s; hard cap $%s; campaign ceiling $%s with reserve $%s)? "
-                "[y/N] " % (
+                "$%s; hard cap $%s; %s)? [y/N] " % (
                     prompt_quote.calculated_maximum_usd(),
-                    prompt_quote.hard_cap_usd, args.campaign_ceiling,
-                    args.campaign_reserve))
+                    prompt_quote.hard_cap_usd, budget))
             if answer.strip().lower() not in ("y", "yes"):
                 return EXIT_REFUSED
         download_token = _load_required_hf_download_token(
@@ -7493,6 +7973,7 @@ def _main_runpod(args, con: Console, provider) -> int:
 
         for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             previous[signum] = signal.signal(signum, _interrupt)
+        phase = "execute"
         try:
             result = execute_runpod(
                 args, con, provider, plan_data, download_token)
@@ -7508,8 +7989,25 @@ def _main_runpod(args, con: Console, provider) -> int:
         for line in exc.advice:
             con.err("        %s" % line)
         return EXIT_REFUSED
+    except RunFailed as exc:
+        if exc.liability_may_remain:
+            con.err("RunPod execution failed and a pod may remain: %s"
+                    % redact(str(exc)))
+            con.err("        the installed reaper destroys it at its reap "
+                    "deadline; check now with: measure-cloud reaper "
+                    "--provider runpod --list")
+            return EXIT_LEAK
+        con.err("RunPod run failed (pod proven gone): %s" % redact(str(exc)))
+        return EXIT_FAILED
     except BaseException as exc:
+        if phase == "plan":
+            # Nothing was created; a safety-module exception during
+            # planning is a refusal with a reason, not a leak.
+            con.err("REFUSE: %s" % redact(str(exc)))
+            return EXIT_REFUSED
         con.err("RunPod execution failed: %s" % redact(str(exc)))
+        con.err("        teardown could not be confirmed; check with: "
+                "measure-cloud reaper --provider runpod --list")
         return EXIT_LEAK
 
 
@@ -7526,254 +8024,345 @@ def _nonnegative_decimal_arg(value: str) -> Decimal:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="measure-cloud",
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("subcommand", nargs="?", default=None,
-                   choices=("reaper", "adopt", "drill"),
-                   help="reaper: lifecycle backstop; drill: RunPod proof; "
-                        "adopt: always refused")
-    p.add_argument("--min-h2d-gbps", type=float,
-                   help="ABORT after setup if the rented machine's "
-                        "host-to-device bandwidth is below this. The streaming "
-                        "lane is bandwidth-bound, and a host that wires the "
-                        "card at PCIe x1 turns a 3-hour run into a 20-hour one "
-                        "while looking identical in the catalogue. 8 is a "
-                        "reasonable floor for an x16 slot.")
-    p.add_argument("--min-gemm-tflops", type=float,
-                   help="ABORT after setup if the measured expert-shape bf16 "
-                        "GEMM is below this")
-    p.add_argument("--no-preflight-bench", action="store_true",
-                   help="legacy flag; the safe RunPod path refuses it")
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Rent one GPU pod, run a fidelity measurement on it, pull the\n"
+            "sealed result back, and destroy the pod.\n"
+            "\n"
+            "What is always enforced: --max-cost caps the whole run's\n"
+            "liability (GPU + storage for the full deadline); --max-runtime\n"
+            "is an absolute deadline written into the lease, the on-pod\n"
+            "watchdog and the provider; the pod is destroyed on success,\n"
+            "failure, exception and Ctrl-C; and an installed user-systemd\n"
+            "reaper destroys it at the deadline even if this process dies.\n"
+            "Nothing is created until every check passes; --dry-run runs\n"
+            "them all for $0.00."),
+        epilog=(
+            "one-time setup (per machine and RunPod account):\n"
+            "  measure-cloud reaper --provider runpod --install\n"
+            "\n"
+            "capture a root fidelity dataset (the common case):\n"
+            "  measure-cloud --provider runpod --role root \\\n"
+            "    --model zai-org/GLM-5.3-BF16 --revision <40-hex> \\\n"
+            "    --panel-dir engines/panels/<panel> \\\n"
+            "    --dataset-id fidelity--<id> "
+            "--publish-root-to <owner>/<repo> \\\n"
+            "    --hf-token-file ~/.hf_token --measurer <hub-handle> \\\n"
+            "    --max-cost 40 --max-runtime 3h30m "
+            "--out ~/fidelity-runs/<name> --dry-run\n"
+            "  # re-run without --dry-run to spend\n"
+            "\n"
+            "strict campaign mode (opt-in; cross-run accounting and a\n"
+            "sealed controller-loss drill proof bound to this checkout):\n"
+            "  measure-cloud drill --provider runpod --campaign-ledger "
+            "~/.fidelity-cloud/c.json \\\n"
+            "    --campaign-ceiling 48 --campaign-reserve 5 "
+            "--campaign-reaper-margin 1 --max-cost 2 --out <dir>\n"
+            "  measure-cloud ... --campaign-ledger ~/.fidelity-cloud/c.json "
+            "--campaign-ceiling 48 \\\n"
+            "    --campaign-reserve 5 --campaign-reaper-margin 1 "
+            "--runpod-safety-proof <dir>/proof.json\n"
+            "\n"
+            "exit codes: 0 ok; 1 the run failed and the pod is proven gone;\n"
+            "3 refused before anything was created ($0.00); 90 a pod may\n"
+            "remain -- run `measure-cloud reaper --provider runpod --list`."))
+    p.add_argument(
+        "subcommand", nargs="?", default=None,
+        choices=("reaper", "adopt", "drill"),
+        help="reaper: install/inspect/sweep the autonomous teardown timer "
+             "(--install, --list, --sweep). drill: run a paid controller-loss "
+             "drill that seals a safety proof for strict campaign mode. "
+             "adopt: not supported on RunPod.")
     p.add_argument(
         "--provider", default=None,
         choices=("jarvislabs", "runpod", "vast", "lambda"),
-        help="required explicitly; paid measurement is RunPod-only. "
-             "jarvislabs remains available only for historical lease cleanup")
+        help="required. Paid measurement runs on runpod only; jarvislabs is "
+             "accepted solely for `reaper` cleanup of historical leases.")
 
-    t = p.add_argument_group("target")
-    t.add_argument("--role", default="quant", choices=("quant", "root"),
-                   help="quant (default): measure an artifact's divergence from a "
-                        "reference and seal a submission receipt. root: CAPTURE a "
-                        "reference model's own activations on a panel and seal a "
-                        "publishable fidelity dataset -- no divergence, no "
-                        "reference, nothing to compare against yet. A root is paid "
-                        "for once and read by every later measurement.")
-    t.add_argument("--model", help="HF repo id of the artifact to measure")
-    t.add_argument("--revision", help="40-hex pin (default: resolve main and show it)")
-    t.add_argument("--path",
-                   help="which artifact inside a repo that publishes several at "
-                        "one revision (a GGUF shelf: --path UD-Q4_K_XL). The "
-                        "planner lists the builds when the choice is yours to make.")
-    t.add_argument("--registry", default="auto",
-                   help="auto | hf | local[:PATH] -- where the already-measured "
-                        "front gate reads from")
-    t.add_argument("--skip-registry-check", action="store_true",
-                   help="legacy flag; safe RunPod requires the registry front gate")
-    t.add_argument("--force", action="store_true",
-                   help="legacy provider override; safe RunPod refuses duplicate "
-                        "paid measurements")
-    t.add_argument("--accept-measured-revision", action="store_true",
-                   help="legacy drift override; safe RunPod requires the exact "
-                        "authored revision")
+    t = p.add_argument_group("what to measure")
+    t.add_argument(
+        "--role", default="quant", choices=("quant", "root"),
+        help="quant (default): measure a quantized artifact's divergence "
+             "from its reference and seal a submittable receipt. root: "
+             "capture an unquantized reference model's own activations on a "
+             "panel and seal a publishable fidelity dataset; paid for once, "
+             "read by every later quant measurement.")
+    t.add_argument("--model", help="Hugging Face repo id to measure, e.g. "
+                                   "zai-org/GLM-5.3-BF16")
+    t.add_argument(
+        "--revision",
+        help="exact 40-hex commit of that repo. Required for a paid run so "
+             "the receipt names bytes, not a moving branch. Omit to have "
+             "--dry-run resolve and print main's current commit.")
+    t.add_argument(
+        "--path",
+        help="which artifact inside a repo that ships several at one "
+             "revision (a GGUF shelf: --path UD-Q4_K_XL). The planner lists "
+             "the choices when there are several.")
+    t.add_argument(
+        "--measurer",
+        help="your Hugging Face handle, credited as the measurer on the "
+             "sealed receipt. Required for anything that may be published.")
+    t.add_argument(
+        "--registry", default="auto",
+        help="where the already-measured front gate reads from: auto "
+             "(default), hf, or local[:PATH]")
 
     rt = p.add_argument_group("root capture (--role root)")
-    rt.add_argument("--panel-dir",
-                    help="LOCAL panel directory (panel.json + arrays/) shipped to "
-                         "the instance with the bundle. A root capture for a model "
-                         "family with no published panel needs one; build it with "
-                         "engines/tools/build_token_panel.py against that family's OWN "
-                         "tokenizer. Mutually exclusive with --panel.")
-    rt.add_argument("--dataset-id",
-                    help="identity of the fidelity dataset to write, e.g. "
-                         "minimaxm3-fidelity-root-v1")
     rt.add_argument(
-        "--dataset-repository",
-        help="canonical owner/name dataset repository identity; publication optional")
-    rt.add_argument("--dataset-name", help="human-readable name for that dataset")
-    rt.add_argument("--publish-root-to", metavar="HF_DATASET_REPO",
-                    help="After remote qualification and verified off-pod "
-                         "archive retrieval, prove exact pod absence and publish "
-                         "the extracted dataset atomically from this controller. "
-                         "The owner-only token file never reaches the rented pod; "
-                         "the published revision is anonymously reverified and "
-                         "recorded in receipts/publish-root.json.")
+        "--panel-dir",
+        help="local panel directory (panel.json + arrays/) shipped to the "
+             "pod. Build one for a new model family with "
+             "engines/tools/build_token_panel.py against that family's own "
+             "tokenizer.")
     rt.add_argument(
-        "--hf-token-file",
-        default=os.path.expanduser("~/.cache/huggingface/token"),
-        help="owner-only 0600 token file; RunPod mode never reads HF_TOKEN")
+        "--dataset-id",
+        help="identity of the fidelity dataset this capture writes, e.g. "
+             "fidelity--glm53.malaiwah.root.bf16. Required for root.")
+    rt.add_argument(
+        "--publish-root-to", metavar="OWNER/REPO",
+        help="after qualification and verified retrieval, publish the "
+             "dataset to this public Hub dataset repo from this machine "
+             "(the token never reaches the pod). Optional; without it the "
+             "sealed dataset stays under --out.")
+    rt.add_argument(
+        "--dataset-repository", metavar="OWNER/REPO",
+        help="canonical repo identity recorded in the dataset. Defaults to "
+             "--publish-root-to.")
+    rt.add_argument(
+        "--dataset-name",
+        help="human-readable dataset name. Defaults to --dataset-id.")
+    rt.add_argument(
+        "--unexpected-tensor-allowlist",
+        help="checked-in JSON list of tensor names this exact revision "
+             "carries beyond what its architecture declares. Resolved "
+             "automatically when one is authored for the target; only needed "
+             "for a new model that turns out to need one.")
+    rt.add_argument(
+        "--sanity-expect", default="Paris",
+        help="the continuation the on-pod generation probe requires for "
+             "\"The capital of France is\" (default Paris; the root profile "
+             "requires exactly this)")
+    rt.add_argument(
+        "--panel-tokenizer-root",
+        help="local pinned tokenizer receipt files; otherwise prefetched")
     rt.add_argument("--form", default="hidden", choices=("hidden", "logit"),
-                    help="hidden (default) stores hidden states and applies the "
-                         "head at compare time; logit stores full-vocabulary "
-                         "logits, which for a 200k vocab is ~32x larger and is "
-                         "why published roots are hidden-form")
+                    help=argparse.SUPPRESS)
     rt.add_argument("--schedule", default="layer-outer",
-                    choices=("layer-outer", "window-outer", "window-major"))
-    rt.add_argument(
-        "--designated-reference", action="store_true",
-        help="legacy root mode; the safe RunPod path refuses quantified "
-             "proxy roots and admits only exact authored BF16 root pins")
-    rt.add_argument(
-        "--race", action="store_true",
-        help="legacy preview/race mode; the first safe paid path refuses it "
-             "because it has no equivalent recovery and qualification proof")
-    rt.add_argument("--race-workers", type=int, default=8,
-                    help="parallel downloads for --race (default 8)")
-    rt.add_argument("--preview-of", metavar="FINAL_DATASET_ID",
-                    help="seal this capture as a PRELIMINARY dataset superseded by "
-                         "FINAL_DATASET_ID -- one cold run, determinism NOT "
-                         "demonstrated, its own dataset id, not_submittable, and a "
-                         "blocking disclosure. A preview and a final are two "
-                         "datasets, never two versions of one: `reference_id` is a "
-                         "comparability-key field, so updating a published root in "
-                         "place would silently make old and new rows share a table.")
-    rt.add_argument("--sanity-expect", default="Paris",
-                    help="the continuation the generation sanity probe requires for "
-                         "\"The capital of France is\" (default Paris). Pass '' to "
-                         "record the probe without enforcing it -- for a model that "
-                         "is genuinely expected to answer otherwise. The probe runs "
-                         "either way: it is one extra window through a schedule that "
-                         "is already loading every layer.")
-    rt.add_argument(
-        "--capture-device", default="cuda",
-        help="root forward device; safe RunPod requires exactly cuda")
-    rt.add_argument("--unexpected-tensor-allowlist",
-                    help="checked-in authored raw JSON array for this exact target pin")
-    rt.add_argument("--panel-tokenizer-root",
-                    help="local pinned tokenizer receipt files; otherwise prefetch exactly")
-    rt.add_argument("--replay-device", default="numpy")
-    rt.add_argument("--replay-dtype", default="float32")
-    rt.add_argument("--replay-vocab-chunk", type=int, default=8192)
+                    choices=("layer-outer", "window-outer", "window-major"),
+                    help=argparse.SUPPRESS)
+    rt.add_argument("--capture-device", default="cuda", help=argparse.SUPPRESS)
+    rt.add_argument("--replay-device", default="numpy", help=argparse.SUPPRESS)
+    rt.add_argument("--replay-dtype", default="float32", help=argparse.SUPPRESS)
+    rt.add_argument("--replay-vocab-chunk", type=int, default=8192,
+                    help=argparse.SUPPRESS)
 
-    pl = p.add_argument_group("panel (a parameter, never a constant)")
-    pl.add_argument("--panel", help="HF dataset id of the panel/teacher")
-    pl.add_argument("--panel-revision")
+    pl = p.add_argument_group("quant measurement (--role quant)")
+    pl.add_argument("--panel", help="Hub dataset id of the panel/teacher")
+    pl.add_argument("--panel-revision", help="exact revision of that panel")
     pl.add_argument("--panel-descriptor",
                     help="JSON file with include globs, contexts, positions")
+    pl.add_argument(
+        "--scope-json",
+        help="JSON file carrying the artifact's quantization scope "
+             "(policy/head_policy/kv_cache_dtype/assignments) read off the "
+             "release; copied verbatim into the receipt. Without it the "
+             "receipt records the honest default.")
+    pl.add_argument("--lane", default="streaming",
+                    choices=("streaming", "sealed-ep8"), help=argparse.SUPPRESS)
+    pl.add_argument("--reduce-order", default="fp32",
+                    choices=("fp32", "native"), help=argparse.SUPPRESS)
+    pl.add_argument("--cold-runs", type=int, default=None,
+                    help=argparse.SUPPRESS)
 
-    ln = p.add_argument_group("lane")
-    ln.add_argument("--lane", default="streaming", choices=("streaming", "sealed-ep8"),
-                    help="safe RunPod requires streaming")
-    ln.add_argument("--reduce-order", default="fp32", choices=("fp32", "native"),
-                    help="safe RunPod requires fp32")
-    ln.add_argument("--cold-runs", type=int, default=None,
-                    help="safe RunPod requires exactly 2")
+    i = p.add_argument_group("where to run, and how much it may cost")
+    i.add_argument(
+        "--max-cost", type=_nonnegative_decimal_arg, metavar="USD",
+        help="REQUIRED. Refuse if the all-in maximum (GPU rate x deadline "
+             "+ storage for the deadline + retrieval reserve) exceeds this. "
+             "There is no default: a cap the tool picked for you would turn "
+             "a legitimate run into a refusal you cannot attribute.")
+    i.add_argument(
+        "--max-runtime", metavar="DURATION",
+        help="REQUIRED. Absolute workload deadline like 3h30m. Written "
+             "into the lease (the reaper destroys the pod at it), the on-pod "
+             "watchdog and the provider's own timer.")
+    i.add_argument(
+        "--gpu",
+        help="GPU class, e.g. H200, L4, A100. Defaults to the one named by "
+             "the target's authored timing evidence; required for a target "
+             "that has none.")
+    i.add_argument(
+        "--storage", type=int, metavar="GB",
+        help="pod volume size (default: computed from the checkpoint plus "
+             "both cold captures)")
+    i.add_argument("--min-vcpu", type=int,
+                   help="override the derived minimum host vCPU count")
+    i.add_argument("--min-memory-gb", type=int,
+                   help="override the derived minimum host memory")
+    i.add_argument(
+        "--retrieval-delete-reserve", type=int, default=21600, metavar="SEC",
+        help="seconds funded after the workload deadline for archive build, "
+             "up to three download attempts and the final delete (default "
+             "21600). Part of the cost cap.")
+    i.add_argument("--region", default="secure", help=argparse.SUPPRESS)
+    i.add_argument("--spot", dest="spot", action="store_true", default=False,
+                   help=argparse.SUPPRESS)
+    i.add_argument("--on-demand", dest="spot", action="store_false",
+                   help=argparse.SUPPRESS)
+    i.add_argument("--on-preempt", default="fail",
+                   choices=("resume", "recreate", "fail"),
+                   help=argparse.SUPPRESS)
+    i.add_argument("--heartbeat-timeout", type=int, default=900,
+                   help=argparse.SUPPRESS)
+    i.add_argument("--max-preemptions", type=int, default=3,
+                   help=argparse.SUPPRESS)
+    i.add_argument("--timer-api-lag", type=int, default=600,
+                   help=argparse.SUPPRESS)
+    i.add_argument("--min-h2d-gbps", type=float,
+                   help="abort after setup if the pod's measured "
+                        "host-to-device bandwidth is below this (GB/s). A "
+                        "card wired at PCIe x1 turns a 3-hour run into 20; "
+                        "8 is a reasonable floor for x16.")
+    i.add_argument("--min-gemm-tflops", type=float,
+                   help="abort after setup if the measured bf16 GEMM is "
+                        "below this")
 
-    i = p.add_argument_group("instance")
-    i.add_argument(
-        "--spot", dest="spot", action="store_true", default=True,
-        help="request interruptible capacity; the safe RunPod path refuses "
-             "this before spend")
-    i.add_argument(
-        "--on-demand", dest="spot", action="store_false",
-        help="request non-interruptible capacity; required by safe RunPod")
-    i.add_argument("--gpu", help="override the selector (still fit-checked)")
-    i.add_argument(
-        "--region",
-        help="provider region; safe RunPod requires the literal value secure")
-    i.add_argument("--storage", type=int, help="filesystem GB (default: computed)")
-    i.add_argument("--fs-id", type=int)
-    i.add_argument(
-        "--keep-fs", action="store_true",
-        help="retain a provider filesystem where supported; safe RunPod "
-             "refuses this before spend")
-    i.add_argument("--keep-student-logits", action="store_true")
+    c = p.add_argument_group("credentials (files only; never argv or env)")
+    c.add_argument(
+        "--runpod-key-file", metavar="FILE",
+        help="RunPod API key file (default ~/.config/runpod/api_key)")
+    c.add_argument(
+        "--hf-token-file", metavar="FILE",
+        default=os.path.expanduser("~/.cache/huggingface/token"),
+        help="owner-only 0600 Hugging Face token file used on THIS machine "
+             "for publication (default ~/.cache/huggingface/token)")
+    c.add_argument(
+        "--hf-download-token-file", metavar="FILE",
+        help="owner-only 0600 Hugging Face READ token file transported to "
+             "the pod for the target download and shredded right after. "
+             "Defaults to --hf-token-file when that file exists; give a "
+             "separate read-only token if you prefer not to ship a write "
+             "token to a rented machine.")
+
+    o = p.add_argument_group("output and control")
+    o.add_argument("--out", metavar="DIR",
+                   help="local output directory (must not exist yet). "
+                        "Receives job.json, the verified result archive, the "
+                        "extracted dataset and terminal-receipt.json.")
+    o.add_argument("--dry-run", action="store_true",
+                   help="run every check, print the plan, create nothing, "
+                        "spend $0.00")
+    o.add_argument("--yes", action="store_true",
+                   help="skip the spend confirmation prompt")
+    o.add_argument(
+        "--allow-unresolved-leases", action="store_true",
+        help="proceed even though an earlier lease may still hold a pod "
+             "(the reaper destroys it at its deadline regardless). Without "
+             "this the run refuses and names the lease.")
+    o.add_argument("--install", action="store_true",
+                   help="with `reaper`: install the user-systemd timer from "
+                        "this checkout")
+    o.add_argument("--sweep", action="store_true",
+                   help="with `reaper`: run one sweep now")
+    o.add_argument("--list", action="store_true",
+                   help="with `reaper`: list every lease and the timer's "
+                        "health")
+    o.add_argument("--lease-dir", metavar="DIR",
+                   default=str(Path.home() / ".fidelity-cloud" / "leases-v2"),
+                   help="lease directory (default ~/.fidelity-cloud/leases-v2)")
+    o.add_argument("--reaper-state-dir", metavar="DIR",
+                   default=str(Path.home() / ".fidelity-cloud"),
+                   help="reaper state directory (default ~/.fidelity-cloud)")
+    o.add_argument(
+        "--runpod-billing-wait", type=int, default=1800, metavar="SEC",
+        help="how long to wait after teardown for the first billing read "
+             "(default 1800). Billing is advisory: the reaper settles it "
+             "later if RunPod has not published the bucket yet.")
 
     s = p.add_argument_group(
-        "safety (default-on except --max-cost, which has no default)")
-    s.add_argument("--max-runtime")
-    s.add_argument("--heartbeat-timeout", type=int, default=900)
-    s.add_argument("--max-preemptions", type=int, default=3)
-    # NOT default-on, unlike its neighbours in this group, and the --help
-    # heading says "safety (all default-on)". Left off by default deliberately:
-    # a cap the runner picked for you turns a legitimate expensive run into a
-    # refusal the user cannot attribute. But the help text has to say so, or a
-    # reader budgeting a rental believes a cap is in force when none is.
-    s.add_argument("--max-cost", type=_nonnegative_decimal_arg,
-                   help="refuse if the estimated cost BAND HIGH exceeds this "
-                        "many dollars. NO DEFAULT -- without it there is no "
-                        "cost cap, only --max-runtime's ceiling")
+        "strict campaign mode (opt-in; all four flags go together)")
     s.add_argument(
-        "--on-preempt", default="resume",
-        choices=("resume", "recreate", "fail"),
-        help="preemption policy; safe RunPod requires fail and refuses "
-             "resume/recreate")
+        "--campaign-ledger", metavar="FILE",
+        help="a locked ledger beside --lease-dir that accounts for EVERY "
+             "attempt against one ceiling, refuses admission beside pods it "
+             "does not own, and holds liability until billing settles. "
+             "Without it, each run gets its own ledger with ceiling = "
+             "--max-cost and foreign pods are tolerated.")
+    s.add_argument("--campaign-ceiling", metavar="USD",
+                   help="total campaign liability ceiling")
+    s.add_argument("--campaign-reserve", metavar="USD",
+                   help="balance floor the campaign never spends below")
+    s.add_argument("--campaign-reaper-margin", metavar="USD",
+                   help="liability held back for the reaper's own cleanup")
     s.add_argument(
-        "--i-accept-leak-risk", action="store_true",
-        help="legacy provider override; safe RunPod refuses it before spend")
-    s.add_argument("--measurer",
-                   help="explicit non-placeholder handle credited as the "
-                        "MEASURER on the sealed receipt (the artifact's producer "
-                        "is read from the repo id and is a separate field)")
-    s.add_argument("--scope-json",
-                   help="JSON file carrying the artifact's quantization SCOPE "
-                        "(policy/head_policy/kv_cache_dtype/assignments), for a "
-                        "release that publishes its own per-tensor-class recipe. "
-                        "Without it the sealed receipt records the honest default: "
-                        "routed experts quantized, everything else 'unknown'. The "
-                        "file's content is copied verbatim into job.json and into "
-                        "the artifact record -- so it must be READ off the release, "
-                        "never assumed.")
-    s.add_argument(
-        "--allow-unpublished-root", action="store_true",
-        help="legacy provider override for destroying an unpublished root; "
-             "safe RunPod refuses it. Safe RunPod first retrieves and verifies "
-             "the qualified archive off-pod, then deletes the pod; publication "
-             "is an optional controller-local step after absence and billing.")
-    s.add_argument(
-        "--hold-on-failure", action="store_true",
-        help="retain a failed instance where supported; safe RunPod refuses "
-             "this before spend because every paid pod has bounded teardown")
-    s.add_argument("--yes", action="store_true", help="skip the cost confirmation")
-    s.add_argument("--dry-run", action="store_true",
-                   help="validate everything, create nothing, spend $0.00")
-    rp = p.add_argument_group("safe RunPod paid admission")
-    rp.add_argument("--runpod-key-file")
-    rp.add_argument("--runpod-safety-proof")
-    rp.add_argument(
-        "--hf-download-token-file",
-        help="required owned 0600 read-token file; transported to the pod "
-             "without argv/log exposure, used only for the exact target "
-             "download, then shredded immediately")
-    rp.add_argument("--campaign-ledger")
-    rp.add_argument("--campaign-name", default="fidcloud-")
-    rp.add_argument("--campaign-ceiling")
-    rp.add_argument("--campaign-reserve")
-    rp.add_argument("--campaign-reaper-margin")
-    rp.add_argument("--campaign-width", type=int, default=1)
-    rp.add_argument("--width-two-root-archive")
-    rp.add_argument("--lease-dir",
-                    default=str(Path.home() / ".fidelity-cloud" / "leases-v2"))
-    rp.add_argument("--runpod-billing-wait", type=int, default=1800,
-                    help="maximum local seconds to await the mandatory RunPod "
-                         "post-absence billing stabilization (default: 1800)")
-    rp.add_argument("--reaper-state-dir",
-                    default=str(Path.home() / ".fidelity-cloud"))
-    rp.add_argument("--retrieval-delete-reserve", type=int, default=21600)
-    rp.add_argument("--timer-api-lag", type=int, default=600)
-    rp.add_argument("--runpod-container-running-tariff", default="0.10")
-    rp.add_argument("--runpod-container-stopped-tariff", default="0.00")
-    rp.add_argument("--runpod-pod-running-tariff", default="0.10")
-    rp.add_argument("--runpod-pod-stopped-tariff", default="0.20")
-    rp.add_argument("--runpod-network-tariff", default="0.07")
-    rp.add_argument("--tariff-effective-at", default="2026-08-31T00:00:00Z")
-    rp.add_argument("--tariff-valid-until", default="2026-09-07T00:00:00Z")
+        "--runpod-safety-proof", metavar="FILE",
+        help="proof.json sealed by `measure-cloud drill` for this exact "
+             "checkout, ledger and account; validated as evidence that the "
+             "installed reaper destroyed a real pod after this controller "
+             "was killed. Requires --campaign-ledger.")
+    s.add_argument("--campaign-width", type=int, default=1,
+                   help="concurrent attempts admitted (1 or 2; 2 needs "
+                        "--width-two-root-archive)")
+    s.add_argument("--width-two-root-archive", help=argparse.SUPPRESS)
+    s.add_argument("--campaign-name", default="fidcloud-",
+                   help=argparse.SUPPRESS)
 
-    o = p.add_argument_group("output")
+    d = p.add_argument_group("drill (with the `drill` subcommand)")
     from fidelity.runpoddrill import (
         DEFAULT_TERMINATE_SECONDS, DEFAULT_WORKLOAD_SECONDS)
-    rp.add_argument(
-        "--runpod-drill-workload-seconds", type=int,
-        default=DEFAULT_WORKLOAD_SECONDS)
-    rp.add_argument(
-        "--runpod-drill-terminate-seconds", type=int,
-        default=DEFAULT_TERMINATE_SECONDS)
-    rp.add_argument("--runpod-drill-poll-seconds", type=int, default=15)
-    rp.add_argument(
-        "--runpod-drill-billing-wait-seconds", type=int, default=3600)
-    o.add_argument("--out", help="default ./fidelity-runs/<jobid>")
-    o.add_argument("--install", action="store_true", help="reaper --install")
-    o.add_argument("--sweep", action="store_true", help="reaper --sweep")
-    o.add_argument("--list", action="store_true", help="reaper --list")
+    d.add_argument("--runpod-drill-workload-seconds", type=int,
+                   default=DEFAULT_WORKLOAD_SECONDS, metavar="SEC",
+                   help="seconds the drill pod must reach ready within "
+                        "(default %d)" % DEFAULT_WORKLOAD_SECONDS)
+    d.add_argument("--runpod-drill-terminate-seconds", type=int,
+                   default=DEFAULT_TERMINATE_SECONDS, metavar="SEC",
+                   help="seconds until the reaper must have destroyed the "
+                        "drill pod (default %d)" % DEFAULT_TERMINATE_SECONDS)
+    d.add_argument("--runpod-drill-poll-seconds", type=int, default=15,
+                   metavar="SEC", help="provider poll interval (default 15)")
+    d.add_argument(
+        "--runpod-drill-billing-wait-seconds", type=int, default=7200,
+        metavar="SEC",
+        help="how long the drill waits for RunPod to publish the pod's "
+             "billing bucket (default 7200; RunPod publishes hourly and "
+             "settles a few minutes after the hour closes)")
+
+    a = p.add_argument_group("storage tariffs (defaults are RunPod's "
+                             "published per-GB-month rates)")
+    a.add_argument("--runpod-container-running-tariff", default="0.10",
+                   metavar="USD")
+    a.add_argument("--runpod-container-stopped-tariff", default="0.00",
+                   metavar="USD")
+    a.add_argument("--runpod-pod-running-tariff", default="0.10",
+                   metavar="USD")
+    a.add_argument("--runpod-pod-stopped-tariff", default="0.20",
+                   metavar="USD")
+    a.add_argument("--runpod-network-tariff", default="0.07", metavar="USD")
+    a.add_argument("--tariff-effective-at",
+                   default=RUNPOD_STORAGE_TARIFF_PINNED_AT,
+                   help="when the tariff defaults were last verified; older "
+                        "than %d days prints a reminder"
+                        % RUNPOD_STORAGE_TARIFF_STALE_AFTER_DAYS)
+
+    # Legacy flags from the JarvisLabs controller.  Parsed so old scripts
+    # fail with a clear refusal instead of an argparse error; every one is
+    # refused before spend on RunPod.
+    legacy = p.add_argument_group("legacy (refused on RunPod)")
+    for flag in ("--race", "--preview-of", "--designated-reference",
+                 "--skip-registry-check", "--force",
+                 "--accept-measured-revision", "--no-preflight-bench",
+                 "--i-accept-leak-risk", "--allow-unpublished-root",
+                 "--hold-on-failure", "--keep-fs", "--keep-student-logits"):
+        if flag == "--preview-of":
+            legacy.add_argument(flag, metavar="FINAL_DATASET_ID",
+                                help=argparse.SUPPRESS)
+        else:
+            legacy.add_argument(flag, action="store_true",
+                                help=argparse.SUPPRESS)
+    legacy.add_argument("--race-workers", type=int, default=8,
+                        help=argparse.SUPPRESS)
+    legacy.add_argument("--fs-id", type=int, help=argparse.SUPPRESS)
     return p
 
 
