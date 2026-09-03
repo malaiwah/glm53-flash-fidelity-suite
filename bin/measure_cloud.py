@@ -3543,18 +3543,29 @@ _RUNPOD_GPU_IDS = {
     "B200": "NVIDIA B200",
 }
 
-# Authored host capacity for the roots measured so far.  Anything else is
-# derived from model bytes: the streaming capture keeps roughly one fifth of
-# the checkpoint resident in host memory at a time, and a vCPU per ten GB of
-# host memory keeps the H2D path fed.  Both are overridable per run.
+# Host capacity for a root capture.  The layer-outer engine
+# (docs/LAYER-OUTER.md) keeps ONE decoder layer plus the embeddings, head and
+# norms resident; everything else is an mmap the OS may evict.  So host
+# memory scales with the largest layer, not the checkpoint: assume a large
+# checkpoint has at least 40 layers, hold three layers' worth for torch,
+# hidden states and page-cache headroom, plus 8 GB for the resident set.
+# vCPU feeds hf_transfer and the numpy replay; one per 8 GB, 8..24.
+#
+# The previous literals for both GLM-5.3 roots were (28 vCPU, 300 GB),
+# copied from the K6 quant lane that keeps a whole model resident on a
+# JarvisLabs host.  On 2026-09-03 no secure H200 host offered that pair and
+# twelve consecutive creates were refused SUPPLY_CONSTRAINT while H200
+# stock itself read Medium; (16, 128) with the same 1.9 TB disk read Medium.
+# Fruit's pair is measured on an L4 and kept.  All of it is overridable.
 _ROOT_HOST_CAPACITY_TABLE = {
     "malaiwah/GLM-5.2-SIQ-Fruit-bf16": (4, 32),
-    "zai-org/GLM-5.3-Flash-BF16": (28, 300),
-    "zai-org/GLM-5.3-BF16": (28, 300),
 }
-_ROOT_HOST_BYTES_PER_MEMORY_GB = 5 * 10 ** 9
-_ROOT_HOST_MIN_MEMORY_GB = 32
-_ROOT_HOST_MIN_VCPU = 4
+_ROOT_HOST_ASSUMED_MIN_LAYERS = 40
+_ROOT_HOST_LAYERS_HELD = 3
+_ROOT_HOST_RESIDENT_SET_GB = 8
+_ROOT_HOST_MIN_MEMORY_GB = 64
+_ROOT_HOST_MIN_VCPU = 8
+_ROOT_HOST_MAX_VCPU = 24
 
 
 def _root_host_capacity(args, target, identity) -> Tuple[int, int, str]:
@@ -3565,13 +3576,15 @@ def _root_host_capacity(args, target, identity) -> Tuple[int, int, str]:
     authored = _ROOT_HOST_CAPACITY_TABLE.get(target.repo_id)
     if authored is not None:
         vcpu, memory = authored
-        basis = "controller-conservative-capacity"
+        basis = "measured-host-capacity"
     else:
-        memory = max(
-            _ROOT_HOST_MIN_MEMORY_GB,
-            -(-int(identity["model_bytes"]) // _ROOT_HOST_BYTES_PER_MEMORY_GB))
-        vcpu = max(_ROOT_HOST_MIN_VCPU, memory // 10)
-        basis = "derived-from-model-bytes"
+        layer_gb = -(-int(identity["model_bytes"])
+                     // (_ROOT_HOST_ASSUMED_MIN_LAYERS * 10 ** 9))
+        memory = _ROOT_HOST_RESIDENT_SET_GB + _ROOT_HOST_LAYERS_HELD * layer_gb
+        memory = max(_ROOT_HOST_MIN_MEMORY_GB, -(-memory // 32) * 32)
+        vcpu = max(_ROOT_HOST_MIN_VCPU,
+                   min(_ROOT_HOST_MAX_VCPU, memory // 8))
+        basis = "derived-from-layer-residency"
     if override_vcpu is not None:
         vcpu, basis = int(override_vcpu), "operator-override"
     if override_memory is not None:

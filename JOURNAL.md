@@ -3286,5 +3286,20 @@ instead, and now test what they claim. Race mode is unchanged this pass: the
 engine-level race works, and the gap is the stage wiring, which is named in
 `docs/RACE-MODE.md`.
 
-The H200 capture loop kept running from the previous checkout throughout;
-the branch merges after it finishes, followed by one reaper reinstall.
+The branch merged and pushed (`131fd18..893cce8`) while the H200 loop was
+still refused for capacity, and the loop was switched to the new controller:
+a live dry-run passed all nineteen gates on thirteen flags, and the first
+paid attempt on the new code ran plan, job binding, per-attempt ledger
+reservation and a real create POST, then closed the lease `TERMINAL`,
+released the reservation and exited 3 at `$0.00` on `SUPPLY_CONSTRAINT`.
+
+Twelve consecutive refusals later, a read-only `lowestPrice` probe found the
+cause. H200 secure on-demand stock read **Medium**; H200 with the 1.9 TB disk
+read Medium; H200 with **28 vCPU and 300 GB host memory together** returned
+nothing at all. Those two numbers had been copied from the K6 quant-lane
+profile, which keeps a whole model resident on a JarvisLabs host. The
+layer-outer root engine keeps one decoder layer plus the embeddings, head and
+norms resident — for GLM-5.3 roughly 19 GB plus 4 GB — so the host contract
+now derives from that residency: (16 vCPU, 128 GB) for GLM-5.3, which the
+same probe read as Medium stock. The controller had been asking for a
+machine that does not exist, for a reason that no longer applied.

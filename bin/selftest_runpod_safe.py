@@ -271,15 +271,20 @@ def main():
           and new_refused)
     big = {"model_bytes": 1506667387408}
     small = {"model_bytes": 10 ** 9}
-    check("host capacity: authored table, derived from bytes, or overridden",
+    # GLM-5.3 derives to (16, 128): one ~19 GB layer plus the resident set,
+    # held three times over.  The former (28, 300) literal, copied from the
+    # quant lane, matched no secure H200 host on 2026-09-03 and was refused
+    # SUPPLY_CONSTRAINT twelve times while (16, 128) read Medium stock.
+    check("host capacity: measured for Fruit, derived from layer residency, "
+          "or overridden",
           MC._root_host_capacity(_no_gpu, _FullMeta, big)
-              == (28, 300, "controller-conservative-capacity")
-          and MC._root_host_capacity(_no_gpu, _NewMeta, big)
-              == (30, 302, "derived-from-model-bytes")
+              == (16, 128, "derived-from-layer-residency")
+          and MC._root_host_capacity(_no_gpu, _FruitMeta, small)
+              == (4, 32, "measured-host-capacity")
           and MC._root_host_capacity(_no_gpu, _NewMeta, small)
-              == (4, 32, "derived-from-model-bytes")
+              == (8, 64, "derived-from-layer-residency")
           and MC._root_host_capacity(_over, _NewMeta, small)
-              == (64, 32, "operator-override"))
+              == (64, 64, "operator-override"))
     from fidelity.runpodsafety import authored_allowlist_path
     check("tensor allowlist resolves from the pin and is absent for a new model",
           authored_allowlist_path(
