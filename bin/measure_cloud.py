@@ -5099,8 +5099,11 @@ def _runpod_stage(
         if state == "succeeded":
             return
         if state in ("failed", "error"):
-            raise RuntimeError("stage %s ended in %s; recovery is refused"
-                               % (stage, state))
+            raise RuntimeError(
+                "stage %s ended in %s; recovery is refused; stage log tail:\n%s"
+                % (stage, state,
+                   _runpod_stage_log_tail(provider, pod_id, fs_root, stage,
+                                          run_id=run_id)))
         if state == "unknown":
             if probe_outage_started is None:
                 probe_outage_started = time.time()
@@ -5115,6 +5118,36 @@ def _runpod_stage(
             probe_outage_started = None
         time.sleep(15)
     raise RuntimeError("workload deadline reached during stage %s" % stage)
+
+
+def _runpod_stage_log_tail(provider, pod_id, fs_root, stage, *,
+                           run_id=None, max_bytes: int = 6000) -> str:
+    """Best-effort tail of a stage log, read BEFORE the pod is destroyed.
+
+    The pod is the only place the log exists; teardown follows the failure
+    within seconds, and a bare "stage setup ended in failed" cost a rental
+    to diagnose (Fruit smoke, 2026-09-03). The launch wrapper's own output
+    is appended because a wrapper failure (watchdog pgid record -> exit 70)
+    never reaches the stage log at all.
+    """
+    command = "tail -c %d %s/logs/stage-%s.log 2>&1 || true" % (
+        int(max_bytes), shlex.quote(fs_root), shlex.quote(stage))
+    parts = []
+    try:
+        result = provider.exec(pod_id, command, timeout=90, check=False)
+        text = str((result or {}).get("stdout") or "").strip()
+        parts.append(text or "(stage log is empty or absent)")
+    except Exception as exc:  # noqa: BLE001
+        parts.append("(stage log unavailable: %s)" % str(exc)[:300])
+    if run_id:
+        try:
+            wrapper = str(provider.run_logs(
+                run_id, tail=20, machine_id=pod_id) or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            wrapper = "(unavailable: %s)" % str(exc)[:300]
+        parts.append("launch wrapper output:\n%s"
+                     % (wrapper or "(empty)"))
+    return redact("\n".join(parts))
 
 def execute_runpod(
         args, con: Console, provider, plan_data,
