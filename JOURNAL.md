@@ -3278,7 +3278,7 @@ is preserved and opt-in.
 | lease sinks | CREATING-forever and ambiguous-without-candidates failed every sweep | expire TERMINAL 900 s after the window; reported for an operator |
 | help | twelve flags with no help; nine legacy flags | grouped, every flag explained, examples in the epilog |
 
-The recipe is now `reaper --install` once, then twelve flags (thirteen with
+The recipe is now `reaper --install` once, then thirteen flags (fourteen with
 `--dry-run` for the rehearsal). Nothing in the
 four guarantees changed. Three tests that claimed to refuse writable source
 files were found to refuse for the snapshot's world-writable `/tmp` ancestor

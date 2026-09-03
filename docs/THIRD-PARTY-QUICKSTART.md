@@ -59,7 +59,8 @@ bin/measure-cloud --provider runpod --role root \
     --panel-dir engines/panels/panel--glm53.malaiwah.corpus5x5-v1 \
     --dataset-id fidelity--glm53.malaiwah.root.bf16 --publish-root-to malaiwah/glm53-fidelity-root-v1 \
     --hf-token-file ~/.hf_token --measurer malaiwah \
-    --max-cost 40 --max-runtime 3h30m --out ~/fidelity-runs/glm53-root --dry-run
+    --max-cost 40 --max-runtime 3h30m --retrieval-delete-reserve 14400 \
+    --out ~/fidelity-runs/glm53-root --dry-run
 ```
 
 Replace `--dataset-id`, `--publish-root-to`, `--measurer`, `--hf-token-file`

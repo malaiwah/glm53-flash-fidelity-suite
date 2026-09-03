@@ -183,7 +183,8 @@ bin/measure-cloud --provider runpod --role root \
     --panel-dir engines/panels/<panel> \
     --dataset-id fidelity--<id> --publish-root-to <owner>/<repo> \
     --hf-token-file ~/.hf_token --measurer <your-hf-handle> \
-    --max-cost 40 --max-runtime 3h30m --out ~/fidelity-runs/<name> --dry-run
+    --max-cost 40 --max-runtime 3h30m --retrieval-delete-reserve 14400 \
+    --out ~/fidelity-runs/<name> --dry-run
 ```
 
 `--dry-run` prints the plan with every derived value and creates nothing;
