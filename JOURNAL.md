@@ -3154,3 +3154,70 @@ a reinstall before the next paid create.
 
 This attempt produced no accepted `proof.json`. No H200 was created, no
 GLM-5.3 capture ran, and nothing was published.
+
+## 2026-09-03 — the first accepted proof, and the capacity refusal that closed the gate
+
+The sixth prerequisite attempt, on checkout `166215c` with
+`--runpod-drill-billing-wait-seconds 7200`, **produced the campaign's first
+accepted `proof.json`**. One secure on-demand L4 (`k8zqoisv9aezz6`) was created
+at `01:12:40Z`; the autonomous installed reaper requested exact-id destruction
+at `01:37:53Z` and complete GraphQL and REST inventory proved exact absence one
+second later. The resolved billing window `01:00–02:00Z` published after the
+hour closed and the lease reconciled terminal at `02:18:39Z` to exactly
+`$0.048252253560349345`. The proof is
+`fidelity-suite/runpod-safety-proof.v2`, sealed
+`cfe861c64d7592416306d018538744b58afb93685f3489b535eccb9310a2edc7`, binding 12
+artifacts. Six prerequisite attempts cost exactly
+`$0.592067871941253531` in total.
+
+The extended billing wait was the difference. It is not a weakened gate: the
+bound is the authored `300..86400` range, and the settlement it waited for is
+the same complete two-bucket window the validator has always demanded.
+
+With the proof accepted, the exact H200 plan passed all eighteen gates —
+`current-paid-fault-drill` among them — at a calculated maximum of
+`$39.41123015873015873015873017` against the `$40` cap. The create POST then
+came back `SUPPLY_CONSTRAINT`: **no H200 capacity at that instant**. Nothing
+was created; an independent authenticated `myself { pods }` read returned zero
+pods.
+
+And that refusal closed the campaign's paid admission gate permanently. The
+lease protocol had exactly one classification for a create that raised:
+"response lost". With zero matches it parks in `CREATING` forever by design
+(`LOST_CREATE_RESPONSE_RECONCILED_ZERO_WINDOW_CLOSED_UNRESOLVED`, and the
+state graph offered `CREATING` no terminal edge at all), and the ledger's
+`cancel_before_create` refuses any release once POST intent is fsynced. So one
+capacity refusal left an unresolved lease holding a `$40` reservation, and
+`validate_unresolved_lease_scope(require_empty=True)` then refused every
+further paid create. That is a fail-closed design meeting a case it had never
+been shown.
+
+A create the provider **refused by name** is not a create whose response was
+lost. `SUPPLY_CONSTRAINT` on a parseable response carrying no id anywhere is
+positive evidence that nothing was ever accepted. That distinction is now
+explicit end to end: `RunPodCreateRejectedError` is raised only for an
+enumerated code on an id-free response, the lease gains
+`PROVIDER_REJECTED_CREATE_NO_RESOURCE` (`CREATING -> TERMINAL`) whose evidence
+must name its codes and leave nothing attributable, and the ledger accepts
+`PROVIDER_REJECTED_CREATE` as durable no-resource proof. Every ambiguous
+failure keeps the old path: a timeout, a transport error, an unparseable body,
+any response mentioning an id, any incomplete listing. A refusal contradicted
+by a real pod still binds that pod for cleanup and never closes.
+
+The stranded lease was then resolved through that new path rather than by
+hand: its own history carried the provider's refusal, a fresh complete
+inventory showed zero pods and zero volumes, and it closed `TERMINAL` with a
+`provider_rejected_create` proof and no provider ids. The reservation released
+to `$0` and paid admission reopened.
+
+Two operational lessons, both cheap and both paid for twice today. Editing any
+file in the reaper's control closure — which includes `cloudlease.py`,
+`campaign.py` and `runpodapi.py` — makes the installed reaper report `not
+healthy` until it is reinstalled; and the installer refuses a **group-writable**
+source, which a `umask 002` checkout produces by default. Second, and more
+expensive: a safety proof is bound to the controller bytes that produced it, so
+**every** controller change invalidates it. The accepted proof above no longer
+matches checkout `83d3aa4`. The sequence that works is: freeze the controller,
+prove, capture — with nothing in between.
+
+No H200 was created, no GLM-5.3 capture ran, and nothing was published.
