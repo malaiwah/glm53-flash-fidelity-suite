@@ -104,15 +104,19 @@ def ready_ledger(path, *, ceiling="10", floor="1", margin="1", width=2,
                  balance_valid_until=FRESH_UNTIL,
                  inventory_observed_at=NOW,
                  inventory_valid_until=FRESH_UNTIL,
-                 inventory_complete=True, provider_resources=None):
+                 inventory_complete=True, provider_resources=None,
+                 foreign_resources_policy=None):
     if balance is None:
         balance = ceiling
     if provider_resources is None:
         provider_resources = []
+    create_kwargs = {}
+    if foreign_resources_policy is not None:
+        create_kwargs["foreign_resources_policy"] = foreign_resources_policy
     ledger = CampaignLedger.create(
         str(path), Decimal(ceiling), Decimal(floor), Decimal(margin),
         max_concurrent_attempts=width, provider=PROVIDER,
-        provider_account_id=PROVIDER_ACCOUNT_ID)
+        provider_account_id=PROVIDER_ACCOUNT_ID, **create_kwargs)
     result = ledger.record_provider_snapshot(
         0,
         provider=PROVIDER,
@@ -615,8 +619,9 @@ def main():
                   == ["campaign-only-id"]
               and repaired_ambiguity[
                   "unattributable_wrong_name_pod_ids"] == []
-              and any("billing" in failure["error"]
-                      for failure in repair_result.failures),
+              and any(action["action"] in ("billing-pending",
+                                           "billing-stabilization-waiting")
+                      for action in repair_result.actions),
               (repair_result, repaired_document))
 
 
@@ -1422,6 +1427,76 @@ def main():
                   ["campaign_phase_before_cancel"] == "CREATING"
               and refused_next.admitted and bad_state,
               (refused_released, refused_item, refused_next, bad_state))
+
+        # C16c: a POST whose response was lost, and for which nothing ever
+        # appeared across complete listings long after the create window
+        # closed, is equally definitive no-resource proof.
+        expired = ready_ledger(
+            root / "expired-cancel.json", ceiling="30", width=1)
+        expired_reserved = expired.reserve(
+            1, JOB_A, ATTEMPT_A, quote(cap="4"), NOW)
+        expired_creating = expired.mark_creating(
+            expired_reserved.generation, expired_reserved.attempt_key)
+        expired_released = expired.cancel_before_create(
+            expired_creating.generation, expired_reserved.attempt_key, NOW,
+            "LOST_CREATE_EXPIRED", "lost create expired: nothing attributable")
+        expired_item = expired.snapshot()["attempts"][
+            expired_reserved.attempt_key]
+        expired_next = expired.reserve(
+            expired_released.generation, JOB_B, ATTEMPT_B, quote(cap="4"), NOW)
+        check("C16c expired lost create releases its reservation",
+              expired_released.code == "CANCELLED_BEFORE_CREATE"
+              and expired_item["released"]
+              and expired_item["maximum_remaining_liability_usd"] == "0"
+              and expired_item["precreate_cancellation"]["lease_state"]
+                  == "LOST_CREATE_EXPIRED"
+              and expired_next.admitted,
+              (expired_released, expired_item, expired_next))
+
+        # C16d: foreign_resources_policy.  A ledger written before the field
+        # existed reads as "refuse"; a per-run ledger created with "tolerate"
+        # admits beside a pod it does not own and never counts it.  The
+        # explicit campaign posture is unchanged.
+        foreign_pod = [{"family": "pods", "id": "someone-elses-pod",
+                        "name": "unrelated", "status": "RUNNING"}]
+        strict_ledger = ready_ledger(
+            root / "strict-foreign.json", ceiling="30", width=1,
+            provider_resources=foreign_pod)
+        strict_doc = strict_ledger.snapshot()
+        strict_refused = strict_ledger.reserve(
+            strict_doc["generation"], JOB_A, ATTEMPT_A, quote(cap="4"), NOW)
+        tolerant_ledger = ready_ledger(
+            root / "tolerant-foreign.json", ceiling="30", width=1,
+            provider_resources=foreign_pod,
+            foreign_resources_policy="tolerate")
+        tolerant_doc = tolerant_ledger.snapshot()
+        tolerant_admitted = tolerant_ledger.reserve(
+            tolerant_doc["generation"], JOB_A, ATTEMPT_A, quote(cap="4"), NOW)
+        bad_policy = False
+        try:
+            CampaignLedger.foreign_resources_policy(
+                dict(tolerant_doc, foreign_resources_policy="ignore"))
+        except ValueError:
+            bad_policy = True
+        legacy_doc = dict(strict_doc)
+        legacy_doc.pop("foreign_resources_policy")
+        legacy_validates = True
+        try:
+            CampaignLedger._validate_document(legacy_doc)
+        except ValueError:
+            legacy_validates = False
+        check("C16d foreign resources: a pre-field ledger reads as refuse, "
+              "an explicit ledger refuses, tolerate admits, unknown is rejected",
+              strict_doc["foreign_resources_policy"] == "refuse"
+              and legacy_validates
+              and CampaignLedger.foreign_resources_policy(legacy_doc) == "refuse"
+              and strict_refused.code == "UNKNOWN_RESOURCES"
+              and tolerant_doc["foreign_resources_policy"] == "tolerate"
+              and tolerant_doc["inventory"]["unknown_resources"]
+                  == [{"family": "pods", "id": "someone-elses-pod"}]
+              and tolerant_admitted.admitted
+              and bad_policy,
+              (strict_refused, tolerant_admitted, legacy_validates))
 
         # C17: after a controller crash, the systemd reaper can atomically bind
         # every exact lease ID and project complete absence + aggregate billing

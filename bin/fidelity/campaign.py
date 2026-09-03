@@ -37,6 +37,16 @@ _ALLOWED_PHASES = {
     "RECONCILED",
 }
 _RESOURCE_FAMILIES = {"pods", "network_volumes"}
+# Lease states that prove no provider resource was ever accepted, so a
+# reservation may be released without deletion or billing evidence.  The
+# first two never sent a POST; the last two sent one that the provider
+# refused by name, or whose response was lost and which nothing ever
+# appeared for across complete listings long after the create window closed.
+_NO_RESOURCE_LEASE_STATES = (
+    "LEASE_ABSENT", "PREPARED",
+    "PROVIDER_REJECTED_CREATE", "LOST_CREATE_EXPIRED")
+_NO_RESOURCE_AFTER_POST = ("PREPARED", "PROVIDER_REJECTED_CREATE",
+                           "LOST_CREATE_EXPIRED")
 
 
 def _bootstrap_drill_blocked_by_prior_attempts(
@@ -390,6 +400,30 @@ class CampaignLedger:
         "width_authorization", "settled_charges_usd",
         "balance", "inventory", "attempts",
     }
+    # Added after the schema froze; absent means "refuse" so every ledger
+    # written before it keeps its strict behaviour without a migration.
+    _OPTIONAL_TOP_KEYS = {"foreign_resources_policy"}
+    FOREIGN_RESOURCE_POLICIES = ("refuse", "tolerate")
+
+    @staticmethod
+    def foreign_resources_policy(doc: Dict[str, Any]) -> str:
+        """Return how this campaign treats provider resources it does not own.
+
+        ``refuse`` (the original behaviour, and the default for an explicit
+        `--campaign-ledger`) treats any pod or volume on the account that no
+        unreleased attempt owns as a reason to refuse admission and to refuse
+        terminal projection.  That is the right posture for a dedicated
+        account running a multi-attempt campaign.  ``tolerate`` (the default
+        for the per-run ledger the controller creates when no campaign is
+        named) never counts foreign resources as this campaign's liability
+        and never refuses on their presence; the lease still binds and tears
+        down only its own exact pod id.  A single measurement on a shared
+        account was refused by the first posture for a pod it did not create.
+        """
+        policy = doc.get("foreign_resources_policy", "refuse")
+        if policy not in CampaignLedger.FOREIGN_RESOURCE_POLICIES:
+            raise ValueError("foreign_resources_policy is unsupported")
+        return policy
 
     def __init__(self, path: str, provider: str, provider_account_id: str):
         if (not isinstance(path, str) or not os.path.isabs(path)
@@ -512,7 +546,8 @@ class CampaignLedger:
             cls, hard_ceiling_usd: Any, reserve_floor_usd: Any,
             cleanup_reaper_margin_usd: Any, max_concurrent_attempts: int,
             provider: str, provider_account_id: str,
-            currency: str = CURRENCY) -> Dict[str, Any]:
+            currency: str = CURRENCY,
+            foreign_resources_policy: str = "refuse") -> Dict[str, Any]:
         ceiling = _positive(hard_ceiling_usd, "hard_ceiling_usd")
         floor = _decimal(reserve_floor_usd, "reserve_floor_usd")
         margin = _decimal(cleanup_reaper_margin_usd, "cleanup_reaper_margin_usd")
@@ -542,6 +577,7 @@ class CampaignLedger:
             "balance": None,
             "inventory": None,
             "attempts": {},
+            "foreign_resources_policy": foreign_resources_policy,
         }
         cls._validate_document(doc)
         return doc
@@ -550,11 +586,13 @@ class CampaignLedger:
     def create(cls, path: str, hard_ceiling_usd: Any, reserve_floor_usd: Any,
                cleanup_reaper_margin_usd: Any, max_concurrent_attempts: int,
                provider: str, provider_account_id: str,
-               currency: str = CURRENCY) -> "CampaignLedger":
+               currency: str = CURRENCY,
+               foreign_resources_policy: str = "refuse") -> "CampaignLedger":
         ledger = cls(path, provider, provider_account_id)
         new_doc = cls._new_campaign_document(
             hard_ceiling_usd, reserve_floor_usd, cleanup_reaper_margin_usd,
-            max_concurrent_attempts, provider, provider_account_id, currency)
+            max_concurrent_attempts, provider, provider_account_id, currency,
+            foreign_resources_policy)
         expected = (
             Decimal(new_doc["hard_ceiling_usd"]),
             Decimal(new_doc["reserve_floor_usd"]),
@@ -635,7 +673,13 @@ class CampaignLedger:
 
     @classmethod
     def _validate_document(cls, doc: Dict[str, Any]) -> None:
-        _require_exact_keys(doc, cls._TOP_KEYS, "campaign ledger")
+        if not isinstance(doc, dict):
+            raise ValueError("campaign ledger must be an object")
+        _require_exact_keys(
+            {key: value for key, value in doc.items()
+             if key not in cls._OPTIONAL_TOP_KEYS},
+            cls._TOP_KEYS, "campaign ledger")
+        cls.foreign_resources_policy(doc)
         if doc["schema"] != SCHEMA or doc["currency"] != CURRENCY:
             raise ValueError("unsupported campaign ledger schema or currency")
         if not isinstance(doc["provider"], str) or not doc["provider"]:
@@ -867,11 +911,9 @@ class CampaignLedger:
             lease_state = cancellation["lease_state"]
             if origin not in ("RESERVED", "CREATING"):
                 raise ValueError("invalid campaign cancellation origin")
-            if (lease_state not in (
-                    "LEASE_ABSENT", "PREPARED", "PROVIDER_REJECTED_CREATE")
+            if (lease_state not in _NO_RESOURCE_LEASE_STATES
                     or (origin == "CREATING"
-                        and lease_state not in (
-                            "PREPARED", "PROVIDER_REJECTED_CREATE"))):
+                        and lease_state not in _NO_RESOURCE_AFTER_POST)):
                 raise ValueError(
                     "cancellation evidence does not prove that no provider "
                     "resource was ever accepted")
@@ -1253,7 +1295,8 @@ class CampaignLedger:
         if not inventory["complete"]:
             return cls._admission_refusal(
                 doc, "INVENTORY_UNKNOWN", "provider resource inventory is incomplete", key)
-        if inventory["unknown_resources"]:
+        if (inventory["unknown_resources"]
+                and cls.foreign_resources_policy(doc) == "refuse"):
             return cls._admission_refusal(
                 doc, "UNKNOWN_RESOURCES", "provider inventory contains unknown resources",
                 key)
@@ -1315,7 +1358,8 @@ class CampaignLedger:
             inventory_source: str,
             job_hash: str, attempt: str,
             quote: CostQuote, now: str, currency: str = CURRENCY,
-            effective_width: int = 1) -> AdmissionResult:
+            effective_width: int = 1,
+            foreign_resources_policy: str = "refuse") -> AdmissionResult:
         """Preview a brand-new campaign entirely in memory.
 
         This is the absent-ledger dry-plan path: it builds and validates the
@@ -1325,7 +1369,8 @@ class CampaignLedger:
         """
         doc = cls._new_campaign_document(
             hard_ceiling_usd, reserve_floor_usd, cleanup_reaper_margin_usd,
-            max_concurrent_attempts, provider, provider_account_id, currency)
+            max_concurrent_attempts, provider, provider_account_id, currency,
+            foreign_resources_policy)
         balance_doc, inventory_doc = cls._provider_snapshot_documents(
             provider=provider,
             provider_account_id=provider_account_id,
@@ -1483,11 +1528,10 @@ class CampaignLedger:
         2026-09-03T02:35Z for a `SUPPLY_CONSTRAINT` refusal.
         """
         _timestamp(cancelled_at, "cancelled_at")
-        if lease_state not in (
-                "LEASE_ABSENT", "PREPARED", "PROVIDER_REJECTED_CREATE"):
+        if lease_state not in _NO_RESOURCE_LEASE_STATES:
             raise ValueError(
-                "lease_state must be LEASE_ABSENT, PREPARED or "
-                "PROVIDER_REJECTED_CREATE")
+                "lease_state must be one of %s"
+                % ", ".join(_NO_RESOURCE_LEASE_STATES))
         if not isinstance(no_create_evidence, str) or not no_create_evidence:
             raise ValueError("durable no-create evidence is required")
         with self._locked(exclusive=True):
@@ -1516,8 +1560,7 @@ class CampaignLedger:
             phase_permits_cancel = (
                 phase == "RESERVED"
                 or (phase == "CREATING"
-                    and lease_state in ("PREPARED",
-                                        "PROVIDER_REJECTED_CREATE")))
+                    and lease_state in _NO_RESOURCE_AFTER_POST))
             if (not phase_permits_cancel or item["provider_ids"]
                     or item["actual_quote"] is not None
                     or item["cleanup_binding_evidence"] is not None
@@ -1827,7 +1870,8 @@ class CampaignLedger:
                 known_pod_ids=self._known_pod_ids(doc),
                 inventory_source=provider_snapshot["inventory_source"])
             if (inventory_doc["complete"] is not True
-                    or inventory_doc["unknown_resources"]):
+                    or (inventory_doc["unknown_resources"]
+                        and self.foreign_resources_policy(doc) == "refuse")):
                 return TransitionResult(
                     False, "TERMINAL_SNAPSHOT_UNSAFE",
                     "terminal provider snapshot is incomplete or unknown",

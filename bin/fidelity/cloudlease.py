@@ -38,10 +38,28 @@ from .common import redact
 
 SCHEMA = "fidelity-suite/cloud-lease.v2"
 HEALTH_SCHEMA = "fidelity-suite/reaper-health.v2"
-CONTROL_SCHEMA = "fidelity-suite/reaper-control.v2"
+# v3: control seals the runtime snapshot only; the checkout it was copied
+# from is an advisory drift probe.  A v2 manifest is refused with a reinstall
+# remedy rather than silently re-verified under the new rule.
+CONTROL_SCHEMA = "fidelity-suite/reaper-control.v3"
+CONTROL_CLOSURE_PATHS = frozenset({
+    "bin/reap_cloud_leases.py",
+    "bin/fidelity/__init__.py",
+    "bin/fidelity/cloudlease.py",
+    "bin/fidelity/campaign.py",
+    "bin/fidelity/common.py",
+    "bin/fidelity/runpodapi.py",
+    "bin/fidelity/jlapi.py",
+    "bin/fidelity/sshbase.py",
+})
 DEFAULT_STATE_DIR = Path.home() / ".fidelity-cloud"
 DEFAULT_LEASE_DIR = DEFAULT_STATE_DIR / "leases-v2"
 ATTEMPT_BYTES = 12                    # 96 bits
+# A lost create response with nothing attributable across complete listings
+# for this long after its create window closed is expired to TERMINAL by the
+# reaper.  RunPod answers a create synchronously; fifteen minutes is the same
+# provider-lag bound the proof validator applies to destroy and absence.
+LOST_CREATE_EXPIRY_SECONDS = 900
 PROVIDER_DEADLINE_DRILL_MODE = "paid-controller-loss-provider-deadline"
 _PROCESS_STARTED_EPOCH = time.time()
 _PROCESS_INVOCATION_ID = secrets.token_hex(16)
@@ -387,6 +405,7 @@ _EVENT_TRANSITIONS = {
     "LOST_CREATE_RESPONSE_RECONCILED_ZERO_WINDOW_CLOSED_UNRESOLVED":
         {(CREATING, CREATING)},
     "PROVIDER_REJECTED_CREATE_NO_RESOURCE": {(CREATING, TERMINAL)},
+    "LOST_CREATE_RESPONSE_EXPIRED_NO_RESOURCE": {(CREATING, TERMINAL)},
     "DESTROY_REQUESTED": {
         (CREATING, DESTROYING), (ACTIVE, DESTROYING),
         (DESTROYING, DESTROYING), (AMBIGUOUS, DESTROYING),
@@ -1031,7 +1050,8 @@ def _validate_event_evidence(event: str, evidence: Any,
             raise InvalidLease("create response name comparison is inconsistent")
         return
     if (event.startswith("LOST_CREATE_RESPONSE_RECONCILED_")
-            or event == "PROVIDER_REJECTED_CREATE_NO_RESOURCE"):
+            or event in ("PROVIDER_REJECTED_CREATE_NO_RESOURCE",
+                         "LOST_CREATE_RESPONSE_EXPIRED_NO_RESOURCE")):
         evidence = _exact_keys(
             evidence,
             ("complete_listing", "listed_resource_count",
@@ -1041,8 +1061,20 @@ def _validate_event_evidence(event: str, evidence: Any,
              "unattributable_wrong_name_pod_ids",
              "new_network_volume_ids", "response_provider_id",
              "create_window_closed"),
-            ("response_error_redacted", "provider_rejection_codes"),
+            ("response_error_redacted", "provider_rejection_codes",
+             "expired_after_seconds"),
             "response-loss evidence")
+        if event == "LOST_CREATE_RESPONSE_EXPIRED_NO_RESOURCE":
+            expired = evidence.get("expired_after_seconds")
+            if (isinstance(expired, bool) or not isinstance(expired, int)
+                    or expired < LOST_CREATE_EXPIRY_SECONDS
+                    or evidence["create_window_closed"] is not True
+                    or evidence["new_pod_ids"]
+                    or evidence["new_network_volume_ids"]
+                    or evidence["response_provider_id"] is not None):
+                raise InvalidLease(
+                    "lost-create expiry must follow a closed window with "
+                    "nothing attributable")
         if event == "PROVIDER_REJECTED_CREATE_NO_RESOURCE":
             codes = evidence.get("provider_rejection_codes")
             if (not isinstance(codes, list) or not codes
@@ -1352,7 +1384,7 @@ def _validate_lease_schema(document: Dict[str, Any]) -> None:
     if terminal is not None:
         terminal = _exact_keys(
             terminal, (), ("prepared_cancellation", "ambiguous_create",
-                           "provider_rejected_create",
+                           "provider_rejected_create", "lost_create_expired",
                            "provider_absence", "billing_reconciliation",
                            "closed_at"), "terminal proof")
         if not terminal:
@@ -1405,6 +1437,17 @@ def _validate_lease_schema(document: Dict[str, Any]) -> None:
             if ids or billing is not None:
                 raise InvalidLease(
                     "refused-create terminal lease carries cleanup evidence")
+        elif "lost_create_expired" in terminal:
+            # The POST's response was lost and nothing ever appeared for it
+            # across complete listings long after the window closed.
+            if (set(terminal) != {"lost_create_expired"}
+                    or terminal["lost_create_expired"]
+                    != history[-1]["evidence"]):
+                raise InvalidLease(
+                    "lost-create expiry terminal proof is inconsistent")
+            if ids or billing is not None:
+                raise InvalidLease(
+                    "expired-create terminal lease carries cleanup evidence")
         else:
             if set(terminal) not in (
                     {"provider_absence", "billing_reconciliation", "closed_at"},
@@ -2024,7 +2067,8 @@ class LeaseStore:
             authorized_sibling_pod_ids: Iterable[Any] = (),
             create_window_closed: bool = False,
             response_error: Optional[str] = None,
-            provider_rejection_codes: Iterable[Any] = ()) -> LeaseRef:
+            provider_rejection_codes: Iterable[Any] = (),
+            seconds_since_window_closed: Optional[float] = None) -> LeaseRef:
         """Bind only provider-attributable IDs from a response-loss window.
 
         A sole exact-name new pod is the only delta eligible to become ACTIVE.
@@ -2115,6 +2159,24 @@ class LeaseStore:
                 event="PROVIDER_REJECTED_CREATE_NO_RESOURCE",
                 evidence=evidence,
                 terminal_proof={"provider_rejected_create": evidence})
+        if (create_window_closed
+                and seconds_since_window_closed is not None
+                and seconds_since_window_closed
+                >= LOST_CREATE_EXPIRY_SECONDS):
+            # The create window closed long ago and every complete listing
+            # since has shown nothing attributable: no exact-name pod, no
+            # wrong-name blocker, no new volume, no acknowledged id.  RunPod
+            # answers a create synchronously and never queues one, so a pod
+            # cannot still be on its way.  Leaving the lease CREATING kept
+            # paid admission closed for the whole campaign after one lost
+            # response; that liability was zero the entire time.
+            evidence["expired_after_seconds"] = int(
+                seconds_since_window_closed)
+            return self.transition(
+                ref, to_state=TERMINAL,
+                event="LOST_CREATE_RESPONSE_EXPIRED_NO_RESOURCE",
+                evidence=evidence,
+                terminal_proof={"lost_create_expired": evidence})
         event = (
             "LOST_CREATE_RESPONSE_RECONCILED_ZERO_WINDOW_CLOSED_UNRESOLVED"
             if create_window_closed else
@@ -2312,6 +2374,41 @@ def _cancel_prepared_campaign(
     if not result.applied and result.code != "ATTEMPT_UNKNOWN":
         raise LeaseError(
             "campaign prepared cancellation failed [%s]: %s"
+            % (result.code, result.message))
+    return result.to_dict()
+
+def _release_expired_create_campaign(
+        document: Mapping[str, Any], lease_root: Path) -> Optional[Dict[str, Any]]:
+    """Release the reservation behind a lost create that expired to TERMINAL."""
+    coordinates = campaign_coordinates(document, lease_root)
+    if coordinates is None:
+        return None
+    from .campaign import CampaignLedger
+    ledger_path, attempt_key = coordinates
+    expiry = next(
+        (event for event in reversed(document.get("history") or [])
+         if event.get("event") == "LOST_CREATE_RESPONSE_EXPIRED_NO_RESOURCE"),
+        None)
+    if expiry is None:
+        raise LeaseError("expired-create campaign release lacks the expiry event")
+    evidence = _sha256({
+        "lease": "%s.%s.json" % (
+            document["job_hash"], document["attempt_id"]),
+        "lease_state": document["state"],
+        "lease_generation": document["generation"],
+        "lease_record_sha256": document["record_sha256"],
+        "lost_create_expiry": expiry,
+    })
+    ledger = CampaignLedger(
+        str(ledger_path), document["create"]["provider"],
+        _expected_provider_account(document))
+    result = ledger.cancel_before_create(
+        ledger.snapshot()["generation"], attempt_key,
+        expiry["at"], "LOST_CREATE_EXPIRED", evidence)
+    if not result.applied and result.code not in (
+            "ATTEMPT_UNKNOWN", "CANCELLATION_ALREADY_RECORDED"):
+        raise LeaseError(
+            "campaign expired-create release failed [%s]: %s"
             % (result.code, result.message))
     return result.to_dict()
 
@@ -2749,7 +2846,9 @@ def finalize_campaign_after_absence(
         raise LeaseError(
             "current lease target reappeared in fresh full-family inventory: "
             + ",".join(sorted(refreshed_target_ids)))
-    if classification["unknown_resources"]:
+    tolerate_foreign = (
+        ledger.foreign_resources_policy(snapshot) == "tolerate")
+    if classification["unknown_resources"] and not tolerate_foreign:
         raise LeaseError(
             "fresh full-family inventory contains unknown chargeable resources")
     inventory_observed = _exact_utc_string(
@@ -2798,7 +2897,7 @@ def finalize_campaign_after_absence(
         raise LeaseError(
             "current lease target remains in full-family inventory: "
             + ",".join(sorted(persisted_target_ids)))
-    if persisted_inventory["unknown_resources"]:
+    if persisted_inventory["unknown_resources"] and not tolerate_foreign:
         raise LeaseError(
             "campaign inventory retains unknown chargeable resources")
     return campaign_projection
@@ -3022,29 +3121,52 @@ def reap_once(store: LeaseStore, providers: Mapping[str, Any], *,
                             continue
                         response_provider_id = campaign_bound_response_id(
                             document, store.root)
+                        create_deadline = document["create"][
+                            "create_deadline_epoch"]
                         ref = store.reconcile_response_lost(
                             ref, listing,
                             network_volumes=authoritative_volumes,
                             response_provider_id=response_provider_id,
                             create_window_closed=(
-                                instant
-                                >= document["create"][
-                                    "create_deadline_epoch"]),
+                                instant >= create_deadline),
                             response_error=(
                                 "campaign-bound create response persistence "
                                 "recovery"
-                                if response_provider_id is not None else None))
+                                if response_provider_id is not None else None),
+                            seconds_since_window_closed=max(
+                                0.0, instant - float(create_deadline)))
                         document = store.read(ref)
-                        actions.append({
+                        action = {
                             "lease": ref.path.name,
                             "action": "reconciled-create",
                             "state": ref.state,
-                        })
+                        }
+                        if (ref.state == TERMINAL
+                                and "lost_create_expired"
+                                in (document.get("terminal_proof") or {})):
+                            action["action"] = "lost-create-expired"
+                            action["campaign_release"] = (
+                                _release_expired_create_campaign(
+                                    document, store.root))
+                        actions.append(action)
 
                 if document["state"] == AMBIGUOUS:
                     candidates = sorted(document.get("provider_resource_ids") or [])
                     if not candidates:
-                        raise LeaseError("ambiguous lease has no attributable candidates")
+                        # Wrong-name pods or new volumes appeared in the
+                        # create window and none is attributable to this
+                        # lease.  There is nothing this reaper may delete,
+                        # and raising here every sweep marked the whole
+                        # reaper unhealthy, which blocked every other lease
+                        # and every new admission behind one operator call.
+                        actions.append({
+                            "lease": ref.path.name,
+                            "action": "ambiguous-needs-operator",
+                            "blockers": (
+                                (document.get("terminal_proof") or {})
+                                .get("ambiguous_create") or {}),
+                        })
+                        continue
                     if dry_run:
                         actions.append({
                             "lease": ref.path.name,
@@ -3172,8 +3294,23 @@ def reap_once(store: LeaseStore, providers: Mapping[str, Any], *,
                         continue
                     billing = document.get("billing_reconciliation")
                     if billing is None:
-                        billing = _stabilized_billing(
-                            provider, document, instant)
+                        # The pod is proven absent; nothing is billing.  The
+                        # provider publishes its hour bucket up to an hour
+                        # and some minutes later, and a 503 on the read is
+                        # routine.  Neither is a reaper failure: record it
+                        # and try again next sweep.  Failing the sweep here
+                        # deleted the health stamp and refused every new
+                        # admission for the whole time the bucket was late.
+                        try:
+                            billing = _stabilized_billing(
+                                provider, document, instant)
+                        except Exception as exc:  # noqa: BLE001
+                            actions.append({
+                                "lease": ref.path.name,
+                                "action": "billing-pending",
+                                "reason": str(exc)[:300],
+                            })
+                            continue
                         if billing is None:
                             actions.append({
                                 "lease": ref.path.name,
@@ -3263,19 +3400,29 @@ def _logical_control_name(path: Path) -> str:
     return value
 
 
-def _verified_file_fd(path: Path) -> int:
-    """Open a trusted file without following any source path component."""
+def _verified_file_fd(path: Path, *, strict: bool = True) -> int:
+    """Open a trusted file without following any source path component.
+
+    ``strict`` additionally refuses any group/other write bit on the file or
+    its ancestors.  That is the right rule for the installed runtime snapshot,
+    which the systemd timer executes unattended with the provider credential.
+    It is the wrong rule for the checkout the snapshot is copied FROM: a
+    ``umask 002`` clone is group-writable by default, and refusing to read it
+    blocked every reinstall until the operator chmod'ed eight files by hand.
+    Ownership, regular-file and no-symlink rules apply in both modes.
+    """
     target = Path(os.path.abspath(str(path)))
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     trusted_owners = {0}
     if hasattr(os, "getuid"):
         trusted_owners.add(os.getuid())
+    writable_mask = 0o022 if strict else 0
     fd = os.open("/", directory_flags)
     try:
         root_info = os.fstat(fd)
         if (root_info.st_uid not in trusted_owners
-                or root_info.st_mode & 0o022):
+                or root_info.st_mode & writable_mask):
             raise LeaseError("source root directory is writable or untrusted")
         for component in target.parts[1:-1]:
             next_fd = os.open(
@@ -3283,7 +3430,7 @@ def _verified_file_fd(path: Path) -> int:
             info = os.fstat(next_fd)
             if (not stat.S_ISDIR(info.st_mode)
                     or info.st_uid not in trusted_owners
-                    or info.st_mode & 0o022):
+                    or info.st_mode & writable_mask):
                 os.close(next_fd)
                 raise LeaseError(
                     "source path parent is writable or untrusted: %s"
@@ -3295,7 +3442,7 @@ def _verified_file_fd(path: Path) -> int:
         info = os.fstat(file_fd)
         if (not stat.S_ISREG(info.st_mode)
                 or info.st_uid not in trusted_owners
-                or info.st_mode & 0o022):
+                or info.st_mode & writable_mask):
             os.close(file_fd)
             raise LeaseError(
                 "source file must be trusted-owner regular and non-writable: %s"
@@ -3309,8 +3456,8 @@ def _verified_file_fd(path: Path) -> int:
         os.close(fd)
 
 
-def _verified_file_bytes(path: Path) -> bytes:
-    fd = _verified_file_fd(path)
+def _verified_file_bytes(path: Path, *, strict: bool = True) -> bytes:
+    fd = _verified_file_fd(path, strict=strict)
     try:
         chunks = []
         while True:
@@ -3322,13 +3469,14 @@ def _verified_file_bytes(path: Path) -> bytes:
         os.close(fd)
 
 
-def _control_file_rows(paths: Iterable[Path]) -> List[Dict[str, Any]]:
+def _control_file_rows(paths: Iterable[Path], *,
+                       strict: bool = True) -> List[Dict[str, Any]]:
     rows = []
     seen = set()
     for path in sorted(
             (Path(os.path.abspath(str(item))) for item in paths),
             key=lambda item: str(item)):
-        raw = _verified_file_bytes(path)
+        raw = _verified_file_bytes(path, strict=strict)
         logical = _logical_control_name(path)
         if logical in seen:
             raise LeaseError("duplicate logical control file name %s" % logical)
@@ -3377,7 +3525,10 @@ def _install_runtime_snapshot(
     # Read every byte from the already verified descriptor before publishing
     # any runtime name. A rename in the source checkout cannot redirect a copy.
     source_paths = [path for unused, path in closure]
-    payloads = [(logical, _verified_file_bytes(path))
+    # The checkout is read without the write-bit rule; the snapshot copies
+    # written below are 0600 inside a 0700 directory and are what the timer
+    # executes, so they are the bytes that must stay immutable.
+    payloads = [(logical, _verified_file_bytes(path, strict=False))
                 for logical, path in closure]
     digest = hashlib.sha256()
     for logical, raw in payloads:
@@ -3471,22 +3622,15 @@ def _control_documents(
     verified_interpreter = _control_file_rows([Path(interpreter["path"])])[0]
     if verified_interpreter["sha256"] != interpreter["sha256"]:
         raise LeaseError("trusted system Python changed during installation")
-    source_rows = _control_file_rows(sources)
+    # Control binds the RUNTIME snapshot: those are the bytes the timer
+    # executes.  The checkout they were copied from is recorded for the
+    # advisory drift probe (`reaper_source_drift`) and is deliberately not
+    # part of the sealed control, so editing the checkout never makes an
+    # installed, unchanged reaper report itself unhealthy or refuse to sweep.
     runtime_rows = _control_file_rows(runtime)
-    expected_control_paths = {
-        "bin/reap_cloud_leases.py",
-        "bin/fidelity/__init__.py",
-        "bin/fidelity/cloudlease.py",
-        "bin/fidelity/campaign.py",
-        "bin/fidelity/common.py",
-        "bin/fidelity/runpodapi.py",
-        "bin/fidelity/jlapi.py",
-        "bin/fidelity/sshbase.py",
-    }
-    if ({row["path"] for row in source_rows} != expected_control_paths
-            or runtime_rows != source_rows):
+    if {row["path"] for row in runtime_rows} != CONTROL_CLOSURE_PATHS:
         raise LeaseError(
-            "reaper control source/runtime closure is noncanonical")
+            "reaper control runtime closure is noncanonical")
     public = {
         "command_sha256": _sha256(argv),
         "source_command_sha256": _sha256(original_argv),
@@ -3494,7 +3638,6 @@ def _control_documents(
         "service_unit_sha256": hashlib.sha256(service_raw).hexdigest(),
         "timer_unit": timer.name,
         "timer_unit_sha256": hashlib.sha256(timer_raw).hexdigest(),
-        "source_files": source_rows,
         "runtime_files": runtime_rows,
         "interpreter": {
             "executable_path_sha256": hashlib.sha256(
@@ -3557,7 +3700,14 @@ def _read_sealed_document(path: Path, schema: str) -> Dict[str, Any]:
     seal = document.get("record_sha256")
     unsealed = dict(document)
     unsealed.pop("record_sha256", None)
-    if (document.get("schema") != schema or not isinstance(seal, str)
+    observed_schema = document.get("schema")
+    if (observed_schema == "fidelity-suite/reaper-control.v2"
+            and schema == CONTROL_SCHEMA):
+        raise LeaseError(
+            "installed reaper control is the older v2 schema; run "
+            "`measure-cloud reaper --provider runpod --install` once to "
+            "re-snapshot it")
+    if (observed_schema != schema or not isinstance(seal, str)
             or not secrets.compare_digest(seal, _sha256(unsealed))):
         raise LeaseError("sealed state file is invalid: %s" % path.name)
     return document
@@ -3839,6 +3989,35 @@ def _systemd_reaper_service_result(
     }
 
 
+def reaper_source_drift(state_dir: Path) -> Dict[str, Any]:
+    """Report whether the checkout differs from the installed snapshot.
+
+    Advisory only.  The timer executes the snapshot, which is what control
+    seals, so drift never makes the reaper unhealthy and never stops a
+    sweep; it means a newer reaper exists in the checkout than the one
+    installed, and `reaper --install` would pick it up.  Any failure to read
+    the checkout is reported as drift with its reason rather than raised.
+    """
+    state = Path(os.path.abspath(str(state_dir)))
+    try:
+        manifest = _read_sealed_document(
+            state / "reaper-control.json", CONTROL_SCHEMA)
+        installed = {
+            row["path"]: row["sha256"]
+            for row in manifest["public_control"]["runtime_files"]}
+        checkout = {
+            row["path"]: row["sha256"]
+            for row in _control_file_rows(
+                [Path(value) for value in manifest["source_paths"]],
+                strict=False)}
+    except (OSError, ValueError, KeyError, TypeError, LeaseError) as exc:
+        return {"drift": True, "changed": [], "reason": str(exc)}
+    changed = sorted(
+        path for path in set(installed) | set(checkout)
+        if installed.get(path) != checkout.get(path))
+    return {"drift": bool(changed), "changed": changed, "reason": None}
+
+
 def systemd_reaper_health(
         *, state_dir: Path, lease_dir: Path, provider: str,
         provider_account_id: str, max_age_seconds: int = 900,
@@ -3881,7 +4060,7 @@ def systemd_reaper_health(
             and 0 <= age <= int(max_age_seconds))
     except (OSError, ValueError, KeyError, TypeError, LeaseError):
         stamp, age, stamp_ok, control_ok = None, None, False, False
-    return {
+    result = {
         "ok": (
             all(checks.values()) and service_result["ok"]
             and linger["ok"] and stamp_ok),
@@ -3893,3 +4072,5 @@ def systemd_reaper_health(
         "stamp_age_seconds": age,
         "stamp": stamp,
     }
+    result["source_drift"] = reaper_source_drift(state_dir)
+    return result

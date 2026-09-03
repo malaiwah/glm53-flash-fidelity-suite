@@ -3,6 +3,7 @@
 import base64
 import calendar
 import json
+import stat
 from dataclasses import replace
 from decimal import Decimal
 import email.message
@@ -726,12 +727,16 @@ def reaper_cases():
             partial_store,
             {"runpod": PartialThenIncreasesProvider([], "acct-test")},
             now=1301.0)
-        check("partial billing that increases across retrievals stays reserved",
+        # The pod is proven absent, so unstable billing is a pending action
+        # the next sweep retries, never a failure that deletes reaper health.
+        check("partial billing that increases across retrievals stays pending",
               partial_store.read(partial_ref)["state"] == ABSENCE_CONFIRMED
               and partial_store.read(partial_ref)["billing_reconciliation"] is None
-              and any("changed between stabilization retrievals"
-                      in failure["error"]
-                      for failure in partial_result.failures))
+              and partial_result.ok
+              and any(action["action"] == "billing-pending"
+                      and "changed between stabilization retrievals"
+                      in action["reason"]
+                      for action in partial_result.actions))
         store = LeaseStore(root / "exited", clock=lambda: 1000.0)
         ref = begin(store, "e")
         exact_name = store.read(ref)["create"]["exact_name"]
@@ -856,13 +861,17 @@ def reaper_cases():
         wrong_rest_result = reap_once(
             wrong_rest_store, {"runpod": wrong_rest_provider}, now=1001.0)
         wrong_rest_document = wrong_rest_store.read(wrong_rest_ref)
-        check("REST-only wrong-name delta remains unbound and blocking",
+        # Nothing attributable means nothing this reaper may delete; the
+        # lease is reported for an operator and the sweep stays healthy.
+        check("REST-only wrong-name delta remains unbound and needs an operator",
               wrong_rest_document["state"] == AMBIGUOUS
               and wrong_rest_document["provider_resource_ids"] == []
               and wrong_rest_document["terminal_proof"]["ambiguous_create"]
                   ["unattributable_wrong_name_pod_ids"]
                   == ["rest-only-wrong-name"]
-              and not wrong_rest_result.ok)
+              and wrong_rest_result.ok
+              and any(action["action"] == "ambiguous-needs-operator"
+                      for action in wrong_rest_result.actions))
         volume_rest_store = LeaseStore(
             root / "response-lost-rest-volume", clock=lambda: 1000.0)
         volume_rest_ref = begin(volume_rest_store, "d")
@@ -877,7 +886,9 @@ def reaper_cases():
               and volume_rest_document["provider_resource_ids"] == []
               and volume_rest_document["terminal_proof"]["ambiguous_create"]
                   ["new_network_volume_ids"] == ["rest-only-volume"]
-              and not volume_rest_result.ok)
+              and volume_rest_result.ok
+              and any(action["action"] == "ambiguous-needs-operator"
+                      for action in volume_rest_result.actions))
 
         legacy_store = LeaseStore(
             root / "legacy-absence-disagreement", clock=lambda: 1000.0)
@@ -1016,6 +1027,36 @@ def reaper_cases():
               and not late_result.unresolved,
               late_result.to_dict())
 
+        # A lost create response with nothing attributable across complete
+        # listings expires TERMINAL once the window has been closed for
+        # LOST_CREATE_EXPIRY_SECONDS; before that it stays CREATING.  On
+        # 2026-09-03 one such lease parked forever and closed paid admission
+        # for the whole campaign while its liability was zero throughout.
+        from fidelity.cloudlease import LOST_CREATE_EXPIRY_SECONDS
+        expiry_store = LeaseStore(root / "expiry", clock=lambda: 1000.0)
+        expiring = begin(expiry_store, "5")
+        early = reap_once(
+            expiry_store, {"runpod": StatefulProvider([])},
+            now=1060.0 + LOST_CREATE_EXPIRY_SECONDS - 1)
+        early_state = expiry_store.read(expiring)["state"]
+        late_result = reap_once(
+            expiry_store, {"runpod": StatefulProvider([])},
+            now=1060.0 + LOST_CREATE_EXPIRY_SECONDS)
+        expired_document = expiry_store.read(expiring)
+        check("lost create expires TERMINAL only after the window has been "
+              "closed for the expiry bound",
+              early.ok and early_state == CREATING
+              and late_result.ok
+              and expired_document["state"] == TERMINAL
+              and expired_document["provider_resource_ids"] == []
+              and expired_document["terminal_proof"]["lost_create_expired"]
+                  ["expired_after_seconds"] == LOST_CREATE_EXPIRY_SECONDS
+              and any(action["action"] == "lost-create-expired"
+                      and action["campaign_release"] is None
+                      for action in late_result.actions)
+              and expiring.path.name not in late_result.unresolved,
+              late_result.to_dict())
+
         mixed = LeaseStore(root / "mixed", clock=lambda: 1000.0)
         outage = begin(mixed, "f", provider="outage")
         healthy = begin(mixed, "1", provider="healthy")
@@ -1025,9 +1066,13 @@ def reaper_cases():
         check("one provider outage is reported and preserves its lease",
               not result.ok and mixed.read(outage)["state"] == CREATING
               and outage.path.name in result.unresolved, result.to_dict())
+        # The healthy provider's lease is still processed: its create window
+        # closed 940 s ago with nothing attributable, so it expires TERMINAL.
         check("provider outage does not block another provider's continued scan",
-              mixed.read(healthy)["state"] == CREATING
-              and healthy.path.name in result.unresolved,
+              mixed.read(healthy)["state"] == TERMINAL
+              and "lost_create_expired"
+                  in mixed.read(healthy)["terminal_proof"]
+              and healthy.path.name not in result.unresolved,
               result.to_dict())
         secure_parent = Path(tempfile.mkdtemp(
             prefix="fidelity-reaper-test-", dir=str(Path.home())))
@@ -1134,9 +1179,6 @@ def reaper_cases():
             Path(path).name for path in control_manifest["runtime_paths"]}
         runtime_entry = Path(control_manifest["command_argv"][3])
         installed_entry_bytes = runtime_entry.read_bytes()
-        public_source_names = {
-            row["path"] for row in
-            health["stamp"]["control"]["source_files"]}
         public_runtime_names = {
             row["path"] for row in
             health["stamp"]["control"]["runtime_files"]}
@@ -1150,16 +1192,22 @@ def reaper_cases():
             "bin/fidelity/runpodapi.py",
             "bin/fidelity/sshbase.py",
         }
-        check("reaper health binds private snapshot, unit, account, and sources",
+        # Control seals the runtime snapshot the timer executes.  The
+        # checkout it was copied from is an advisory drift probe, not part
+        # of the seal, so editing the checkout can never make an unchanged
+        # installed reaper unhealthy.
+        check("reaper health binds private snapshot, unit, and account",
               health["ok"] is True and health["control_ok"] is True
               and health["service_last_result"]["ok"] is True
               and health["stamp"]["control"].get("state_dir") is None
+              and "source_files" not in health["stamp"]["control"]
               and str(root) not in stamp_raw
               and {"__init__.py", "cloudlease.py", "campaign.py", "common.py",
                    "jlapi.py", "runpodapi.py", "sshbase.py",
                    "reap_cloud_leases.py"} == source_names == runtime_names
-              and expected_public_names
-                  == public_source_names == public_runtime_names)
+              and expected_public_names == public_runtime_names
+              and health["source_drift"] == {
+                  "drift": False, "changed": [], "reason": None})
         check("service executes isolated trusted Python and snapshot bytes only",
               control_manifest["command_argv"][:4] == [
                   control_manifest["interpreter"]["path"], "-I", "-S",
@@ -1196,39 +1244,58 @@ def reaper_cases():
                   state_dir=root / "install-refusal",
                   unit_dir=root / "refusal-units",
                   systemctl=str(systemctl), loginctl=str(linger_no))))
-        bad_mode_entry = copy_reaper_source_tree(source_parent / "bad-mode")
+        # The checkout is read once at install and copied into a 0600
+        # snapshot inside the 0700 state directory; the snapshot is what the
+        # timer executes.  A umask-002 clone is group-writable by default and
+        # refusing it forced a chmod of eight files before every reinstall.
+        # These cases run under the secure parent: under /tmp they refused
+        # for the snapshot's world-writable ancestor and proved nothing.
+        install_probe = {
+            "lease_dir": lease_health_dir, "provider": "runpod",
+            "provider_account_id": "acct-test",
+            "systemctl": str(systemctl), "loginctl": str(linger_yes),
+        }
+        bad_mode_entry = copy_reaper_source_tree(secure_parent / "bad-mode")
         bad_mode_entry.chmod(0o664)
-        check("reaper install refuses a group-writable source file",
-              raises(LeaseError, lambda: install_systemd_user_timer(
-                  [sys.executable, str(bad_mode_entry)],
-                  lease_dir=lease_health_dir, provider="runpod",
-                  provider_account_id="acct-test",
-                  state_dir=root / "bad-mode-state",
-                  unit_dir=root / "bad-mode-units",
-                  systemctl=str(systemctl), loginctl=str(linger_yes))))
-        writable_parent = source_parent / "writable-parent"
+        group_writable = install_systemd_user_timer(
+            [sys.executable, str(bad_mode_entry)],
+            state_dir=secure_parent / "bad-mode-state",
+            unit_dir=secure_parent / "bad-mode-units", **install_probe)
+        snapshot_entry = Path(json.loads(
+            Path(group_writable["control"]).read_text(encoding="utf-8"))
+            ["command_argv"][3])
+        check("reaper install copies a group-writable source into a 0600 snapshot",
+              snapshot_entry.is_file()
+              and stat.S_IMODE(snapshot_entry.stat().st_mode) == 0o600
+              and stat.S_IMODE(snapshot_entry.parent.stat().st_mode) == 0o700
+              and snapshot_entry.read_bytes() == bad_mode_entry.read_bytes())
+        writable_parent = secure_parent / "writable-parent"
         writable_parent.mkdir(mode=0o700)
         writable_entry = copy_reaper_source_tree(writable_parent / "source")
         writable_parent.chmod(0o770)
-        check("reaper install refuses a writable source ancestor",
-              raises(LeaseError, lambda: install_systemd_user_timer(
+        check("reaper install tolerates a writable source ancestor",
+              Path(install_systemd_user_timer(
                   [sys.executable, str(writable_entry)],
-                  lease_dir=lease_health_dir, provider="runpod",
-                  provider_account_id="acct-test",
-                  state_dir=root / "writable-parent-state",
-                  unit_dir=root / "writable-parent-units",
-                  systemctl=str(systemctl), loginctl=str(linger_yes))))
-        symlink_parent = source_parent / "source-link"
+                  state_dir=secure_parent / "writable-parent-state",
+                  unit_dir=secure_parent / "writable-parent-units",
+                  **install_probe)["control"]).is_file())
+        symlink_parent = secure_parent / "source-link"
         symlink_parent.symlink_to(source_entry.parent, target_is_directory=True)
         check("reaper install refuses a symlink source ancestor",
               raises(LeaseError, lambda: install_systemd_user_timer(
                   [sys.executable,
                    str(symlink_parent / "reap_cloud_leases.py")],
-                  lease_dir=lease_health_dir, provider="runpod",
-                  provider_account_id="acct-test",
-                  state_dir=root / "symlink-state",
-                  unit_dir=root / "symlink-units",
-                  systemctl=str(systemctl), loginctl=str(linger_yes))))
+                  state_dir=secure_parent / "symlink-state",
+                  unit_dir=secure_parent / "symlink-units", **install_probe)))
+        exposed_state = secure_parent / "exposed"
+        exposed_state.mkdir(mode=0o700)
+        exposed_state.chmod(0o770)
+        check("reaper install refuses a writable snapshot ancestor",
+              raises(LeaseError, lambda: install_systemd_user_timer(
+                  [sys.executable, str(source_entry)],
+                  state_dir=exposed_state / "state",
+                  unit_dir=exposed_state / "units", **install_probe)))
+        exposed_state.chmod(0o700)
         stamp_before_drift = stamp_path.read_bytes()
         check("health writer rejects credentials for another account",
               raises(LeaseError, lambda: write_reaper_health(
@@ -1253,9 +1320,14 @@ def reaper_cases():
         source_text = source_entry.read_text(encoding="utf-8")
         source_entry.write_text(source_text + "# source drift\n",
                                 encoding="utf-8")
-        check("source drift fails health but cannot alter installed bytes",
-              systemd_reaper_health(
-                  loginctl=str(linger_yes), **health_args)["ok"] is False
+        drifted = systemd_reaper_health(
+            loginctl=str(linger_yes), **health_args)
+        check("source drift is advisory: health stays ok, snapshot bytes "
+              "unchanged, drift names the file",
+              drifted["ok"] is True
+              and drifted["source_drift"]["drift"] is True
+              and drifted["source_drift"]["changed"]
+                  == ["bin/reap_cloud_leases.py"]
               and runtime_entry.read_bytes() == installed_entry_bytes
               and str(source_entry) not in service_text)
         source_entry.write_text(source_text, encoding="utf-8")
