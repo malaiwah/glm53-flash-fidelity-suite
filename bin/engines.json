@@ -23,7 +23,7 @@
         "reason": "The timing evidence does not establish portable vCPU/RAM minima; the cloud controller must bind explicit safe resources for this exact target."
       },
       "model_identity": {
-        "model_bytes": 10102776813,
+        "model_bytes": 10081800232,
         "config_sha256": "5a19697e555fff140d1b089b852c3ef227114b196f8d76796560feeeb34dc44a",
         "index_sha256": "86e6cc1d8548c7bdbbc117e93b85b8ae249f446de9b48d2195e51f358674ba56"
       },
@@ -31,7 +31,10 @@
         "source": "docs/CLOUD-COMPARISON.md",
         "measured_a100_old_four_stage_minutes": 11.0,
         "measured_l4_seconds_per_window": 0.253,
-        "derivation": "1 hour conservatively covers two fresh capture+verify process invocations, comparison, refetch, setup and result retrieval; it is an upper bound, not minutes/window."
+        "derivation": "1 hour conservatively covers two fresh capture+verify process invocations, comparison, refetch, setup and result retrieval; it is an upper bound, not minutes/window.",
+        "shard_file_bytes_note": "model_bytes is the sum of the 16 pinned safetensors shard file sizes (10081800232), the identity the controller reads from the repository census. The row previously carried the whole-repository byte total (10102776813, +20976581 of config/tokenizer/README files), which the shard-file identity rejected on 2026-09-03. The index's metadata.total_size (10080737792) is tensor payload bytes and is neither.",
+        "shard_count": 16,
+        "shard_manifest_sha256": "436c577fb8fab02fc435fd87be7c3bf77bc764ba04d3084a3b6a7e617345d0bd"
       }
     },
     {
