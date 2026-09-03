@@ -2058,6 +2058,12 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                  "author": {"name": args.author, "role": "capture-author", "handle": None,
                             "url": None, "is_registry_maintainer": False},
                  "license": args.dataset_license,
+                 # The intended HF dataset repository (schema: "HF dataset
+                 # repo id when published"; null when the capture stays local).
+                 # qualify-root binds it to the job's capture.dataset_repository;
+                 # a refactor dropped it and the first real qualify_root stage
+                 # refused on dataset_repository=None (2026-09-03).
+                 "repository": args.repository, "revision": None,
                  "base_capture": _base_capture(args.base_capture)},
         weights={"repository": args.weights_repository or args.model,
                  "revision": args.model_revision, "model_revision": args.model_revision,
