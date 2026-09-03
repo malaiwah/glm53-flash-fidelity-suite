@@ -690,6 +690,16 @@ def validate_execution_job(document: dict) -> None:
             "bundle_contract_sha256", "control_manifest_sha256",
             "server_time",
         }
+        proof_fields = (
+            safety.get("safety_proof_file_sha256"),
+            safety.get("safety_proof_sha256"))
+        # Both proof digests are present (strict campaign mode with a
+        # sealed drill proof) or both are absent (default mode); one without
+        # the other is a malformed binding.
+        proof_binding_ok = (
+            all(value is None for value in proof_fields)
+            or all(isinstance(value, str) and _HEX64.fullmatch(value)
+                   for value in proof_fields))
         if (set(safety) != expected_safety_keys
                 or safety.get("provider_account_id")
                     != environment.get("provider_account_id")
@@ -701,10 +711,10 @@ def validate_execution_job(document: dict) -> None:
                 or safety.get("control_manifest_sha256")
                     != (document.get("control_plane") or {}).get(
                         "manifest_sha256")
+                or not proof_binding_ok
                 or any(_HEX64.fullmatch(str(safety.get(name, ""))) is None
                        for name in (
-                           "reaper_health_sha256", "safety_proof_file_sha256",
-                           "safety_proof_sha256", "bundle_contract_sha256",
+                           "reaper_health_sha256", "bundle_contract_sha256",
                            "control_manifest_sha256"))):
             raise JobContractError(
                 "pre-create safety binding differs from finalized job")

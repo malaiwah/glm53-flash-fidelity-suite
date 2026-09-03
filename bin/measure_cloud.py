@@ -5687,6 +5687,9 @@ def execute_runpod(
                     "campaign CREATING was not recorded: %s"
                     % creating.message)
             lease_ref = lease_store.record_post_intent(lease_ref)
+            # From here a POST may reach the provider; an exception is no
+            # longer "nothing created" and must surface as a possible leak.
+            plan_data["_post_intent_recorded"] = True
         except BaseException:
             current = lease_store.read(lease_ref)
             if current.get("state") == "PREPARED":
@@ -8000,6 +8003,7 @@ def _main_runpod(args, con: Console, provider) -> int:
         con.err("safe RunPod mode refuses adoption/recovery")
         return EXIT_REFUSED
     phase = "plan"
+    plan_data = None
     try:
         plan_data = plan_runpod(args, con, provider)
         public_plan = {key: value for key, value in plan_data.items()
@@ -8061,9 +8065,14 @@ def _main_runpod(args, con: Console, provider) -> int:
         con.err("RunPod run failed (pod proven gone): %s" % redact(str(exc)))
         return EXIT_FAILED
     except BaseException as exc:
-        if phase == "plan":
-            # Nothing was created; a safety-module exception during
-            # planning is a refusal with a reason, not a leak.
+        post_intent = (
+            phase == "execute"
+            and isinstance(plan_data, dict)
+            and plan_data.get("_post_intent_recorded"))
+        if not post_intent:
+            # No POST intent was ever recorded: nothing was created and
+            # nothing can be leaking.  Whatever raised is a refusal with
+            # its reason, not a leak.
             con.err("REFUSE: %s" % redact(str(exc)))
             return EXIT_REFUSED
         con.err("RunPod execution failed: %s" % redact(str(exc)))
