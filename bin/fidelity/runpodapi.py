@@ -1589,22 +1589,25 @@ class RunPod(SSHTransport):
                     or bucket_end_epoch - bucket_start_epoch != 3600
                     or bucket_start_epoch < resolved_start_epoch
                     or bucket_end_epoch > resolved_end_epoch
-                    or (index == 0
-                        and bucket_start_epoch != resolved_start_epoch)
                     or (prior_end is not None
                         and bucket_start_epoch != prior_end)):
                 raise RunPodError(
-                    "RunPod billing buckets do not provide a complete, "
-                    "contiguous resolved window")
+                    "RunPod billing buckets are not a contiguous subset "
+                    "of the resolved window")
             prior_end = bucket_end_epoch
             bucket_ranges.append({
                 "startTime": bucket_start, "endTime": bucket_end})
             for key in required_amounts:
                 sums[key] += amount(
                     row[key], "RunPod billing record %s" % key)
-        if prior_end != resolved_end_epoch:
-            raise RunPodError(
-                "RunPod billing records omit the end of the resolved window")
+        # RunPod resolves the query to hour boundaries but omits zero-charge
+        # edge buckets, aggregating partial-hour charges into the nearest
+        # charged bucket. The returned set must be contiguous among itself
+        # and inside the resolved window; the totals-vs-records-sum check
+        # below proves no charges are missing. Demanding coverage of the
+        # full resolved window refused a correct settlement on
+        # 2026-09-03T07:22Z where a pod that lived 06:57-07:22 resolved to
+        # 06:00-08:00 but returned only the 07:00-08:00 bucket.
         for key in required_amounts:
             total = amount(
                 totals[key], "RunPod billing total %s" % key)

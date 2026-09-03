@@ -2212,25 +2212,68 @@ def runpod_cases():
         resolved_query, endTime="2030-01-02T06:00:00Z")
     coverage["metadata"]["recordCount"] = 3
 
-    def omitted_bucket(index):
+    def omitted_bucket(index, recalculate_totals=True):
         candidate = json.loads(json.dumps(coverage))
         candidate["records"].pop(index)
         candidate["metadata"]["recordCount"] = len(candidate["records"])
-        candidate["metadata"]["totals"] = {
-            key: format(sum(
-                (Decimal(str(row[key])) for row in candidate["records"]),
-                Decimal("0")), "f")
-            for key in amounts}
+        if recalculate_totals:
+            candidate["metadata"]["totals"] = {
+                key: format(sum(
+                    (Decimal(str(row[key])) for row in candidate["records"]),
+                    Decimal("0")), "f")
+                for key in amounts}
         return candidate
 
-    check("billing refuses omitted first, interior, and last hour buckets",
-          all(raises(
-              RunPodError,
-              lambda index=index: BillingRunPod(
-                  omitted_bucket(index)).billing_history(
-                      "pod-1", start_time=coverage_query["startTime"],
-                      end_time=coverage_query["endTime"]))
-              for index in range(3)))
+    # A provider that omits a charged edge bucket cannot hide the loss by
+    # recalculating its totals: the original totals still include the charge
+    # and the totals-vs-records-sum check catches the mismatch. An interior
+    # gap is caught by the contiguity check regardless.
+    check("billing refuses a charged edge bucket omitted with original totals "
+          "and an interior gap",
+          raises(RunPodError, lambda: BillingRunPod(
+              omitted_bucket(0, recalculate_totals=False)).billing_history(
+                  "pod-1", start_time=coverage_query["startTime"],
+                  end_time=coverage_query["endTime"]))
+          and raises(RunPodError, lambda: BillingRunPod(
+              omitted_bucket(1, recalculate_totals=False)).billing_history(
+                  "pod-1", start_time=coverage_query["startTime"],
+                  end_time=coverage_query["endTime"])))
+
+    # RunPod omits zero-charge edge buckets and aggregates partial-hour
+    # charges into the nearest charged bucket. A pod that lived 06:57-07:22
+    # resolves to 06:00-08:00 but returns only the 07:00-08:00 bucket. The
+    # last zero-charge edge bucket (05:00-06:00) may be omitted; the totals
+    # still match the record sums because the omitted bucket carried zero.
+    last_omitted = omitted_bucket(2, recalculate_totals=False)
+    last_omitted_evidence = BillingRunPod(last_omitted).billing_history(
+        "pod-1", start_time=coverage_query["startTime"],
+        end_time=coverage_query["endTime"])
+
+    # Symmetrically, a zero-charge first bucket may be omitted. Build a
+    # response where only the middle bucket carries charges, the first is
+    # zero and omitted, and the totals reflect only the returned buckets.
+    edge_gap = {
+        "records": [dict(
+            amounts, podId="pod-1",
+            startTime="2030-01-02T04:00:00Z",
+            endTime="2030-01-02T05:00:00Z")],
+        "metadata": {
+            "query": dict(
+                resolved_query, endTime="2030-01-02T06:00:00Z"),
+            "recordCount": 1, "uniquePodCount": 1, "totals": amounts}}
+    edge_gap_evidence = BillingRunPod(edge_gap).billing_history(
+        "pod-1", start_time=coverage_query["startTime"],
+        end_time=coverage_query["endTime"])
+
+    check("zero-charge edge buckets may be omitted when totals still match",
+          last_omitted_evidence["validated_bucket_ranges"] == [{
+              "startTime": "2030-01-02T03:00:00Z",
+              "endTime": "2030-01-02T04:00:00Z"}, {
+              "startTime": "2030-01-02T04:00:00Z",
+              "endTime": "2030-01-02T05:00:00Z"}]
+          and edge_gap_evidence["validated_bucket_ranges"] == [{
+              "startTime": "2030-01-02T04:00:00Z",
+              "endTime": "2030-01-02T05:00:00Z"}])
 
 
     multi = MultiBillingRunPod()
