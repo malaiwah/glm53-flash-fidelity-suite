@@ -2068,7 +2068,10 @@ class LeaseStore:
             create_window_closed: bool = False,
             response_error: Optional[str] = None,
             provider_rejection_codes: Iterable[Any] = (),
-            seconds_since_window_closed: Optional[float] = None) -> LeaseRef:
+            seconds_since_window_closed: Optional[float] = None,
+            before_expire: Optional[Callable[[Mapping[str, Any],
+                                              Mapping[str, Any]], Any]] = None
+            ) -> LeaseRef:
         """Bind only provider-attributable IDs from a response-loss window.
 
         A sole exact-name new pod is the only delta eligible to become ACTIVE.
@@ -2159,19 +2162,31 @@ class LeaseStore:
                 event="PROVIDER_REJECTED_CREATE_NO_RESOURCE",
                 evidence=evidence,
                 terminal_proof={"provider_rejected_create": evidence})
+        prior_closed_window = any(
+            item.get("event")
+            == "LOST_CREATE_RESPONSE_RECONCILED_ZERO_WINDOW_CLOSED_UNRESOLVED"
+            for item in document.get("history") or [])
         if (create_window_closed
+                and prior_closed_window
                 and seconds_since_window_closed is not None
                 and seconds_since_window_closed
                 >= LOST_CREATE_EXPIRY_SECONDS):
-            # The create window closed long ago and every complete listing
-            # since has shown nothing attributable: no exact-name pod, no
-            # wrong-name blocker, no new volume, no acknowledged id.  RunPod
-            # answers a create synchronously and never queues one, so a pod
-            # cannot still be on its way.  Leaving the lease CREATING kept
-            # paid admission closed for the whole campaign after one lost
-            # response; that liability was zero the entire time.
+            # The create window closed long ago and at least two complete
+            # listings since -- the one that recorded the earlier closed-
+            # window event and this one -- showed nothing attributable: no
+            # exact-name pod, no wrong-name blocker, no new volume, no
+            # acknowledged id.  RunPod answers a create synchronously and
+            # never queues one, so a pod cannot still be on its way.
+            # Leaving the lease CREATING kept paid admission closed for the
+            # whole campaign after one lost response; that liability was
+            # zero the entire time.  The caller's hook releases the campaign
+            # reservation FIRST; if it raises, the lease stays CREATING and
+            # the next sweep retries, so a terminal lease never strands an
+            # unreleased reservation.
             evidence["expired_after_seconds"] = int(
                 seconds_since_window_closed)
+            if before_expire is not None:
+                before_expire(document, evidence)
             return self.transition(
                 ref, to_state=TERMINAL,
                 event="LOST_CREATE_RESPONSE_EXPIRED_NO_RESOURCE",
@@ -2433,33 +2448,38 @@ def _cancel_prepared_campaign(
     return result.to_dict()
 
 def _release_expired_create_campaign(
-        document: Mapping[str, Any], lease_root: Path) -> Optional[Dict[str, Any]]:
-    """Release the reservation behind a lost create that expired to TERMINAL."""
+        document: Mapping[str, Any], expiry_evidence: Mapping[str, Any],
+        lease_root: Path, cancelled_at: str) -> Optional[Dict[str, Any]]:
+    """Release the reservation behind a lost create about to expire.
+
+    Called by the store immediately BEFORE the TERMINAL commit, with the
+    still-CREATING document and the evidence the expiry event will carry.
+    Raising here leaves the lease CREATING for the next sweep; a terminal
+    lease can therefore never strand an unreleased reservation.
+    """
     coordinates = campaign_coordinates(document, lease_root)
     if coordinates is None:
         return None
     from .campaign import CampaignLedger
     ledger_path, attempt_key = coordinates
-    expiry = next(
-        (event for event in reversed(document.get("history") or [])
-         if event.get("event") == "LOST_CREATE_RESPONSE_EXPIRED_NO_RESOURCE"),
-        None)
-    if expiry is None:
-        raise LeaseError("expired-create campaign release lacks the expiry event")
     evidence = _sha256({
         "lease": "%s.%s.json" % (
             document["job_hash"], document["attempt_id"]),
         "lease_state": document["state"],
         "lease_generation": document["generation"],
         "lease_record_sha256": document["record_sha256"],
-        "lost_create_expiry": expiry,
+        "lost_create_expiry": dict(expiry_evidence),
     })
     ledger = CampaignLedger(
         str(ledger_path), document["create"]["provider"],
         _expected_provider_account(document))
-    result = ledger.cancel_before_create(
-        ledger.snapshot()["generation"], attempt_key,
-        expiry["at"], "LOST_CREATE_EXPIRED", evidence)
+    result = None
+    for unused in range(8):
+        result = ledger.cancel_before_create(
+            ledger.snapshot()["generation"], attempt_key,
+            cancelled_at, "LOST_CREATE_EXPIRED", evidence)
+        if result.code != "GENERATION_CONFLICT":
+            break
     if not result.applied and result.code not in (
             "ATTEMPT_UNKNOWN", "CANCELLATION_ALREADY_RECORDED"):
         raise LeaseError(
@@ -3178,6 +3198,15 @@ def reap_once(store: LeaseStore, providers: Mapping[str, Any], *,
                             document, store.root)
                         create_deadline = document["create"][
                             "create_deadline_epoch"]
+                        campaign_release: Dict[str, Any] = {}
+
+                        def _release_before_expiry(
+                                creating_document, expiry_evidence,
+                                _root=store.root, _at=_utc_now(instant),
+                                _sink=campaign_release):
+                            _sink["result"] = _release_expired_create_campaign(
+                                creating_document, expiry_evidence, _root, _at)
+
                         ref = store.reconcile_response_lost(
                             ref, listing,
                             network_volumes=authoritative_volumes,
@@ -3189,7 +3218,8 @@ def reap_once(store: LeaseStore, providers: Mapping[str, Any], *,
                                 "recovery"
                                 if response_provider_id is not None else None),
                             seconds_since_window_closed=max(
-                                0.0, instant - float(create_deadline)))
+                                0.0, instant - float(create_deadline)),
+                            before_expire=_release_before_expiry)
                         document = store.read(ref)
                         action = {
                             "lease": ref.path.name,
@@ -3200,9 +3230,8 @@ def reap_once(store: LeaseStore, providers: Mapping[str, Any], *,
                                 and "lost_create_expired"
                                 in (document.get("terminal_proof") or {})):
                             action["action"] = "lost-create-expired"
-                            action["campaign_release"] = (
-                                _release_expired_create_campaign(
-                                    document, store.root))
+                            action["campaign_release"] = campaign_release.get(
+                                "result")
                         actions.append(action)
 
                 if document["state"] == AMBIGUOUS:

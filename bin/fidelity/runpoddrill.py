@@ -676,26 +676,26 @@ def _build_quote(args: Any, job: Mapping[str, Any], rate: Decimal,
         raise DrillError("paid drill requires --max-cost")
     quoted = datetime.strptime(planned_at, "%Y-%m-%dT%H:%M:%SZ").replace(
         tzinfo=timezone.utc)
-    expected_tariffs = {
-        "runpod_container_running_tariff": Decimal("0.10"),
-        "runpod_container_stopped_tariff": Decimal("0.00"),
-        "runpod_pod_running_tariff": Decimal("0.10"),
-        "runpod_pod_stopped_tariff": Decimal("0.20"),
-        "runpod_network_tariff": Decimal("0.07"),
-    }
-    for name, expected in expected_tariffs.items():
-        if _decimal(getattr(args, name, expected), name) != expected:
-            raise DrillError("RunPod drill tariff differs from pinned official rate")
+    # The five storage tariffs are flag values whose defaults are RunPod's
+    # published rates; the controller warns when the pin is old.  A
+    # literal-equality rule plus a seven-day validity window ending
+    # 2026-09-07 refused every drill from that date with no override once
+    # the flag that extended it was retired.  The GPU rate is always the
+    # live offer, and --max-cost still caps the drill.
+    for name in (
+            "runpod_container_running_tariff",
+            "runpod_container_stopped_tariff",
+            "runpod_pod_running_tariff", "runpod_pod_stopped_tariff",
+            "runpod_network_tariff"):
+        value = _decimal(getattr(args, name, "0"), name)
+        if not value.is_finite() or value < 0:
+            raise DrillError("RunPod drill tariff %s must be non-negative"
+                             % name)
     tariff_effective_at = str(getattr(
         args, "tariff_effective_at", "2026-08-31T00:00:00Z"))
-    tariff_valid_until = str(getattr(
-        args, "tariff_valid_until", "2026-09-07T00:00:00Z"))
     if (_utc_epoch(tariff_effective_at, "tariff effective time")
-            > int(quoted.timestamp())
-            or _utc_epoch(tariff_valid_until, "tariff validity")
-            < int((quoted + timedelta(
-                seconds=MAX_QUOTE_VALIDITY_SECONDS)).timestamp())):
-        raise DrillError("pinned RunPod tariff evidence is not current")
+            > int(quoted.timestamp())):
+        raise DrillError("tariff effective time is in the future")
     valid_until = quoted + timedelta(seconds=MAX_QUOTE_VALIDITY_SECONDS)
     quote = CostQuote(
         reserved_compute_usd_per_hour=rate,

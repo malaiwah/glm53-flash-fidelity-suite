@@ -1035,27 +1035,47 @@ def reaper_cases():
         from fidelity.cloudlease import LOST_CREATE_EXPIRY_SECONDS
         expiry_store = LeaseStore(root / "expiry", clock=lambda: 1000.0)
         expiring = begin(expiry_store, "5")
-        early = reap_once(
-            expiry_store, {"runpod": StatefulProvider([])},
-            now=1060.0 + LOST_CREATE_EXPIRY_SECONDS - 1)
-        early_state = expiry_store.read(expiring)["state"]
-        late_result = reap_once(
+        # Sweep 1: past the bound but the FIRST closed-window listing; must
+        # not expire on a single look.  Sweep 2: a second independent complete
+        # listing shows nothing attributable; expires with the release hook.
+        first_look = reap_once(
             expiry_store, {"runpod": StatefulProvider([])},
             now=1060.0 + LOST_CREATE_EXPIRY_SECONDS)
+        first_state = expiry_store.read(expiring)["state"]
+        late_result = reap_once(
+            expiry_store, {"runpod": StatefulProvider([])},
+            now=1060.0 + LOST_CREATE_EXPIRY_SECONDS + 300)
         expired_document = expiry_store.read(expiring)
-        check("lost create expires TERMINAL only after the window has been "
-              "closed for the expiry bound",
-              early.ok and early_state == CREATING
+        check("lost create expires TERMINAL only on a second closed-window "
+              "listing past the expiry bound",
+              first_look.ok and first_state == CREATING
               and late_result.ok
               and expired_document["state"] == TERMINAL
               and expired_document["provider_resource_ids"] == []
               and expired_document["terminal_proof"]["lost_create_expired"]
-                  ["expired_after_seconds"] == LOST_CREATE_EXPIRY_SECONDS
+                  ["expired_after_seconds"]
+                  == LOST_CREATE_EXPIRY_SECONDS + 300
               and any(action["action"] == "lost-create-expired"
                       and action["campaign_release"] is None
                       for action in late_result.actions)
               and expiring.path.name not in late_result.unresolved,
               late_result.to_dict())
+        # A release hook that raises leaves the lease CREATING for the next
+        # sweep, so a TERMINAL lease never strands an unreleased reservation.
+        hook_store = LeaseStore(root / "expiry-hook", clock=lambda: 1000.0)
+        hooked = begin(hook_store, "6")
+        hooked = hook_store.reconcile_response_lost(
+            hooked, [], create_window_closed=True)
+
+        def refusing_hook(unused_document, unused_evidence):
+            raise LeaseError("ledger unavailable")
+
+        check("expiry is withheld when the campaign release raises",
+              raises(LeaseError, lambda: hook_store.reconcile_response_lost(
+                  hooked, [], create_window_closed=True,
+                  seconds_since_window_closed=LOST_CREATE_EXPIRY_SECONDS,
+                  before_expire=refusing_hook))
+              and hook_store.read(hooked)["state"] == CREATING)
 
         mixed = LeaseStore(root / "mixed", clock=lambda: 1000.0)
         outage = begin(mixed, "f", provider="outage")
@@ -1066,13 +1086,13 @@ def reaper_cases():
         check("one provider outage is reported and preserves its lease",
               not result.ok and mixed.read(outage)["state"] == CREATING
               and outage.path.name in result.unresolved, result.to_dict())
-        # The healthy provider's lease is still processed: its create window
-        # closed 940 s ago with nothing attributable, so it expires TERMINAL.
+        # The healthy provider's lease is still processed: its first
+        # closed-window listing is recorded and it stays CREATING.
         check("provider outage does not block another provider's continued scan",
-              mixed.read(healthy)["state"] == TERMINAL
-              and "lost_create_expired"
-                  in mixed.read(healthy)["terminal_proof"]
-              and healthy.path.name not in result.unresolved,
+              mixed.read(healthy)["state"] == CREATING
+              and mixed.read(healthy)["history"][-1]["event"]
+                  == "LOST_CREATE_RESPONSE_RECONCILED_ZERO_WINDOW_CLOSED_UNRESOLVED"
+              and healthy.path.name in result.unresolved,
               result.to_dict())
         secure_parent = Path(tempfile.mkdtemp(
             prefix="fidelity-reaper-test-", dir=str(Path.home())))

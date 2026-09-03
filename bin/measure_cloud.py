@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
-"""measure-cloud -- safely capture or measure one exact authored RunPod target.
+"""measure-cloud -- rent one GPU pod, measure, retrieve, destroy.
 
-    bin/measure-cloud --provider runpod ... --on-demand --region secure \
-        --on-preempt fail --cold-runs 2 --max-cost <usd> \
-        --max-runtime <duration> --dry-run
+    bin/measure-cloud --provider runpod --role root --model <repo> \
+        --revision <40-hex> --panel-dir <panel> --dataset-id <id> \
+        --publish-root-to <owner/repo> --hf-token-file <file> \
+        --measurer <handle> --max-cost <usd> --max-runtime <duration> \
+        --out <dir> --dry-run
 
-Paid measurement is currently RunPod-only and SSH-only. The admitted route is
-one fresh secure-cloud on-demand pod, one durable POST intent, one provider
-POST, and unconditional delete after bounded verified result retrieval. It
-refuses spot, adoption/recovery, persistent volumes, race/preview, remote
-publication, ambient Hugging Face credentials, and any target without exact
-checked-in scientific evidence.
+Paid measurement is RunPod-only and SSH-only: one fresh secure-cloud
+on-demand pod, one durable POST intent, one provider POST, verified result
+retrieval, unconditional delete.  Four things are always enforced:
+`--max-cost` caps the all-in liability; `--max-runtime` is an absolute
+deadline in the lease, the on-pod watchdog and the provider; the pod is
+destroyed on success, failure, exception and interrupt; and an installed
+user-systemd reaper destroys it at the deadline if this process dies.
 
-Before provider mutation it requires: official anonymous Hugging Face identity,
-an explicit owned 0600 Hugging Face read-token file for the high-bandwidth
-target download, a clean unchanged checkout, a healthy independently installed
-user reaper, a successful controller-loss drill proof, a fresh full provider
-inventory and balance snapshot, cumulative campaign admission, exact
-runtime/cost limits and explicit confirmation. `--dry-run` never creates a
-provider resource.
+Strict campaign mode -- a cross-run ledger with explicit limits, foreign-pod
+refusal, and an optional sealed controller-loss drill proof -- is opt-in via
+`--campaign-ledger`.  `--dry-run` runs every check and creates nothing.
 
-Run `bin/measure-cloud --help` for the full flag list.
+Run `bin/measure-cloud --help` for the full flag list and examples.
 """
 
 from __future__ import annotations
@@ -3395,18 +3394,6 @@ _FULL_GLM53_LICENSE = {
 }
 
 
-_SAFE_RUNPOD_TARGETS = frozenset({
-    ("root", "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
-     "ef68013aa6e16453cf52b5b77647f72fbe258c3c"),
-    ("root", "zai-org/GLM-5.3-Flash-BF16", OFFICIAL_BF16_REVISION),
-    _FULL_GLM53_ROOT,
-    ("quant", "malaiwah/GLM-5.3-Flash-TR3-6bpw",
-     "9ab94105a71708a19c6d960d24b4aa6d459f5623"),
-})
-
-
-def _safe_runpod_target_allowed(role: str, repo_id: str, revision: str) -> bool:
-    return (role, repo_id, revision) in _SAFE_RUNPOD_TARGETS
 
 
 def _root_dataset_license_contract(target: RepoMeta) -> Dict[str, Any]:
@@ -3436,20 +3423,22 @@ def _root_dataset_license_contract(target: RepoMeta) -> Dict[str, Any]:
 
 
 def _open_existing_runpod_campaign(args, provider_account_id: str):
-    """Open the drill-proven paid campaign without creating replacement state."""
+    """Open the explicit campaign ledger; strict mode never creates one."""
     from fidelity.campaign import CampaignLedger, CampaignLedgerError
     campaign_path = str(Path(args.campaign_ledger).resolve())
     if not Path(campaign_path).is_file():
         raise Refusal(
-            "paid measurement requires the existing drill-proven campaign ledger",
-            [])
+            "--campaign-ledger names a file that does not exist; strict "
+            "campaign mode opens an existing ledger. Create one with "
+            "`measure-cloud drill --provider runpod --campaign-ledger ...` "
+            "or omit --campaign-ledger for a per-run ledger", [])
     try:
         ledger = CampaignLedger(
             campaign_path, "runpod", provider_account_id)
         snapshot = ledger.snapshot()
     except (CampaignLedgerError, OSError, ValueError) as exc:
         raise Refusal(
-            "existing drill-proven campaign ledger is unavailable: %s"
+            "campaign ledger is unavailable: %s"
             % redact(str(exc)), [])
     expected = (
         Decimal(str(args.campaign_ceiling)),
@@ -3469,12 +3458,21 @@ def _open_existing_runpod_campaign(args, provider_account_id: str):
     return campaign_path, ledger
 
 
-def _auto_campaign_ledger_path(args, job_id_full: str) -> str:
-    """Per-run ledger beside the lease directory, named by the job."""
-    from fidelity.cloudlease import DEFAULT_STATE_DIR
-    state_dir = Path(
-        getattr(args, "reaper_state_dir", None) or DEFAULT_STATE_DIR)
-    return str((state_dir / ("auto-%s.json" % job_id_full[:24])).resolve())
+def _auto_campaign_ledger_path(args, job_id_full: str,
+                               attempt: Optional[str] = None) -> str:
+    """Per-attempt ledger beside the lease directory.
+
+    The lease records only the ledger's leaf name and `campaign_coordinates`
+    joins it to the lease root's PARENT, so the file must live there, not in
+    an independently configurable state directory.  The attempt id is part
+    of the name: one ledger per paid attempt, so a retry of the same job
+    starts clean instead of inheriting the previous attempt's liability.
+    """
+    from fidelity.cloudlease import DEFAULT_LEASE_DIR
+    lease_dir = Path(getattr(args, "lease_dir", None) or DEFAULT_LEASE_DIR)
+    leaf = "auto-%s%s.json" % (
+        job_id_full[:16], ("-" + attempt) if attempt else "")
+    return str((lease_dir.resolve().parent / leaf))
 
 
 def _auto_campaign_limits(args) -> Dict[str, Any]:
@@ -3497,11 +3495,11 @@ def _auto_campaign_limits(args) -> Dict[str, Any]:
 
 
 def _create_auto_campaign_ledger(args, provider_account_id: str,
-                                 job_id_full: str):
-    """Create (or reopen, identically) the per-run ledger for execution."""
+                                 job_id_full: str, attempt: str):
+    """Create the per-attempt ledger for execution."""
     from fidelity.campaign import CampaignLedger, CampaignLedgerError
     limits = _auto_campaign_limits(args)
-    campaign_path = _auto_campaign_ledger_path(args, job_id_full)
+    campaign_path = _auto_campaign_ledger_path(args, job_id_full, attempt)
     try:
         ledger = CampaignLedger.create(
             campaign_path, limits["hard_ceiling_usd"],
@@ -3511,9 +3509,10 @@ def _create_auto_campaign_ledger(args, provider_account_id: str,
             foreign_resources_policy=limits["foreign_resources_policy"])
     except (CampaignLedgerError, OSError, ValueError) as exc:
         raise Refusal(
-            "per-run campaign ledger could not be created at %s: %s"
+            "per-attempt campaign ledger could not be created at %s: %s"
             % (campaign_path, redact(str(exc))),
-            ["the reaper state directory must be an owner-only directory"])
+            ["the parent of --lease-dir must be an owner-only directory "
+             "(mode 0700) that you own"])
     return campaign_path, ledger
 
 
@@ -3603,7 +3602,10 @@ def _operator_bound_root_timing(args, target, gpu: str,
         "target_revision": target.revision,
         "gpu": gpu, "form": args.form,
         "schedule": "two-fresh-process-qualification",
-        "conservative_upper_hours": float(hours),
+        # Kept as a string so the planner's Decimal(str(...)) * 3600 is
+        # exactly the operator's seconds; a float overshot 3h20m by 6e-13
+        # and refused its own bound.
+        "conservative_upper_hours": str(hours),
         "resource_admission": {
             "required": True,
             "mode": "controller_explicit_safe_resources"},
@@ -3983,7 +3985,11 @@ def _plan_runpod_anonymous(
             if timing_identity.get(key) != actual:
                 raise Refusal("root timing evidence differs from target %s" % key, [])
         profile = "root-hf-transformers-bf16"
-        estimated_seconds = Decimal(str(timing["conservative_upper_hours"])) * 3600
+        if (timing.get("evidence") or {}).get("source") == "operator --max-runtime":
+            estimated_seconds = Decimal(parse_duration(args.max_runtime))
+        else:
+            estimated_seconds = Decimal(
+                str(timing["conservative_upper_hours"])) * 3600
     else:
         profile = resolve_profile(engine, surface.surface, surface.bits)
         if not profile:
@@ -4372,7 +4378,8 @@ def _plan_runpod_anonymous(
         raise Refusal("RunPod pod/network-volume inventory is incomplete", [])
     if provider_account_id != initial_account_id:
         raise Refusal("RunPod account identity changed during planning", [])
-    if (Path(args.campaign_ledger).resolve().parent
+    if _campaign_ledger_requested(args) and (
+            Path(args.campaign_ledger).resolve().parent
             != Path(args.lease_dir).resolve().parent):
         raise Refusal(
             "campaign ledger must be a sibling of the lease directory", [])
@@ -5150,8 +5157,15 @@ def execute_runpod(
         ledger_path, ledger = _open_existing_runpod_campaign(
             args, plan_data["provider_account_id"])
     else:
+        # One ledger per attempt, beside the lease directory where the
+        # reaper resolves campaign coordinates (`campaign_coordinates` joins
+        # the leaf to the lease root's parent).  A per-job name reopened a
+        # previous attempt's history on retry and refused it for width or
+        # ceiling that --dry-run had never predicted.
+        attempt = secrets.token_hex(12)
         ledger_path, ledger = _create_auto_campaign_ledger(
-            args, plan_data["provider_account_id"], plan_data["job_id_full"])
+            args, plan_data["provider_account_id"], plan_data["job_id_full"],
+            attempt)
     foreign_tolerated = (
         ledger.foreign_resources_policy(ledger.snapshot()) == "tolerate")
 
@@ -5171,7 +5185,7 @@ def execute_runpod(
             _reaper_health_remedy(fresh_health, args))
     if campaign_mode == "explicit":
         try:
-            fresh_unresolved_scope = validate_unresolved_lease_scope(
+            validate_unresolved_lease_scope(
                 LeaseStore(Path(args.lease_dir)), fresh_health,
                 provider="runpod", provider_account_id=current_account_id,
                 campaign_ledger_path=Path(ledger_path))
@@ -5182,7 +5196,7 @@ def execute_runpod(
     else:
         from fidelity.cloudlease import LeaseError
         try:
-            fresh_unresolved_scope = validate_lease_liability_scope(
+            validate_lease_liability_scope(
                 LeaseStore(Path(args.lease_dir)), provider="runpod",
                 provider_account_id=current_account_id,
                 allow_live=bool(getattr(args, "allow_unresolved_leases", False)))
@@ -5300,7 +5314,8 @@ def execute_runpod(
 
     fresh_safety["server_time"] = provider.server_time_evidence(
         max_clock_delta_seconds=30, max_evidence_age_seconds=30)
-    attempt = secrets.token_hex(12)
+    if campaign_mode == "explicit":
+        attempt = secrets.token_hex(12)
     fs_root = "/workspace/fidelity/%s/%s" % (
         plan_data["job_id_full"], attempt)
     engine_root = "/workspace/fidelity-engine/%s/%s" % (
@@ -5421,11 +5436,24 @@ def execute_runpod(
         inventory["families"]["network_volumes"]["resources"])
     try:
         with lease_store.paid_admission_lock():
-            validate_unresolved_lease_scope(
-                lease_store, fresh_health,
-                provider="runpod",
-                provider_account_id=current_account_id,
-                campaign_ledger_path=Path(ledger_path))
+            try:
+                if campaign_mode == "explicit":
+                    validate_unresolved_lease_scope(
+                        lease_store, fresh_health,
+                        provider="runpod",
+                        provider_account_id=current_account_id,
+                        campaign_ledger_path=Path(ledger_path))
+                else:
+                    validate_lease_liability_scope(
+                        lease_store, provider="runpod",
+                        provider_account_id=current_account_id,
+                        allow_live=bool(getattr(
+                            args, "allow_unresolved_leases", False)))
+            except Exception as exc:
+                # Nothing has been created yet: a scope change at the lock
+                # is a refusal, not a leak.
+                raise Refusal(
+                    "lease scope changed at paid admission: %s" % exc, [])
             # PREPARED and the campaign reservation become visible together
             # while every paid controller sharing this lease root is excluded.
             lease_ref = lease_store.begin_create(
@@ -5607,7 +5635,7 @@ def execute_runpod(
         response = None
         try:
             pre_post_source = _source_checkout_proof(
-                include_untracked=True)
+                include_untracked=False)
             if pre_post_source != job["source_checkout"]["pre_post"]:
                 raise RuntimeError(
                     "suite HEAD/index/worktree changed before provider POST")
@@ -6673,17 +6701,29 @@ def execute_runpod(
                                 lease_store.root)
                             lease_ref = lease_store.record_billing_reconciled(
                                 lease_ref, billing)
-                        except BaseException as exc:  # noqa: BLE001
+                        except Exception as exc:  # noqa: BLE001
+                            # Provider or publication lag, never control
+                            # flow: an interrupt here must still fail the run.
                             billing_pending_reason = redact(str(exc))[:300]
                         if lease_store.read(lease_ref).get("state") != "TERMINAL":
+                            if foreign_tolerated:
+                                settle_note = (
+                                    "The installed reaper settles it on a "
+                                    "later sweep; check with: measure-cloud "
+                                    "reaper --provider runpod --list")
+                            else:
+                                settle_note = (
+                                    "This is a strict campaign ledger: the "
+                                    "reaper settles it only once the account "
+                                    "holds no pod the campaign does not own; "
+                                    "check with: measure-cloud reaper "
+                                    "--provider runpod --list")
                             con.warn(
                                 "billing pending",
-                                "pod %s is proven absent; RunPod has not "
-                                "published its bill yet (%s). The installed "
-                                "reaper settles it on a later sweep; check "
-                                "with: measure-cloud reaper --provider runpod "
-                                "--list" % (pod_id, billing_pending_reason
-                                            or "stabilization"))
+                                "pod %s is proven absent; billing did not "
+                                "settle yet (%s). %s"
+                                % (pod_id, billing_pending_reason
+                                   or "stabilization", settle_note))
                             exit_evidence["billing"] = {
                                 "settled": False,
                                 "pending_reason": billing_pending_reason,
@@ -6888,16 +6928,21 @@ def execute_runpod(
         os.fsync(receipt_directory_fd)
     finally:
         os.close(receipt_directory_fd)
+    # A lease that never left a no-resource state (nothing acknowledged, and
+    # TERMINAL, e.g. the provider refused the create) means nothing was
+    # spent and nothing can be leaking: that is a refusal.  A lease still
+    # CREATING/AMBIGUOUS/DESTROYING with no acknowledged id may hold a pod
+    # the reaper has yet to find; that is a leak-class failure even though
+    # `pod_id` is None.
     liability_may_remain = not pod_gone
+    nothing_created = pod_id is None and lease_state == "TERMINAL"
     if operational_errors:
         operational_detail = "; ".join(
             redact(str(error)) for error in operational_errors)
         primary_detail = (
             "; primary scientific/execution error: %s"
             % redact(str(primary_error)) if primary_error is not None else "")
-        if pod_id is None:
-            # No pod was ever acknowledged (e.g. the provider refused the
-            # create): nothing was spent and nothing can be leaking.
+        if nothing_created:
             raise Refusal(
                 redact(str(primary_error)) if primary_error is not None
                 else operational_detail,
@@ -6910,6 +6955,8 @@ def execute_runpod(
             + operational_detail + primary_detail,
             liability_may_remain=liability_may_remain)
     if run_error is not None:
+        if nothing_created:
+            raise Refusal(redact(str(run_error)), [])
         raise RunFailed(
             redact(str(run_error)), liability_may_remain=liability_may_remain)
     if not operational_success:

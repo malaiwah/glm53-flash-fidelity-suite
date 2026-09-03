@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import inspect
+import types
 import sys
 import tempfile
 import time
@@ -243,18 +244,49 @@ def main():
             raise AssertionError("K8 paid plan was admitted")
     finally:
         MC.repo_meta = original_repo_meta
-    check("M2 native quant is outside paid admission",
-          not MC._safe_runpod_target_allowed(
-              "quant", "zai-org/GLM-5.3-Flash-BF16",
-              MC.OFFICIAL_BF16_REVISION))
-    check("M2, Fruit, and full GLM exact roots remain admitted",
-          MC._safe_runpod_target_allowed(
-              "root", "zai-org/GLM-5.3-Flash-BF16",
-              MC.OFFICIAL_BF16_REVISION)
-          and MC._safe_runpod_target_allowed(
-              "root", "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
-              "ef68013aa6e16453cf52b5b77647f72fbe258c3c")
-          and MC._safe_runpod_target_allowed(*MC._FULL_GLM53_ROOT))
+    # The hardcoded target allowlist is gone: any public model with an exact
+    # revision may be planned.  What remains authored per target is timing
+    # evidence (GPU + bound), host capacity and the tensor allowlist; each
+    # derives when absent and can be overridden.
+    import types as _types
+    _FruitMeta = _types.SimpleNamespace(
+        repo_id="malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+        revision="ef68013aa6e16453cf52b5b77647f72fbe258c3c")
+    _FullMeta = _types.SimpleNamespace(
+        repo_id=MC._FULL_GLM53_ROOT[1], revision=MC._FULL_GLM53_ROOT[2])
+    _NewMeta = _types.SimpleNamespace(
+        repo_id="someone/new-bf16", revision="0" * 40)
+    _no_gpu = _types.SimpleNamespace(gpu=None, min_vcpu=None, min_memory_gb=None)
+    _gpu = _types.SimpleNamespace(gpu="h100", min_vcpu=None, min_memory_gb=None)
+    _over = _types.SimpleNamespace(gpu=None, min_vcpu=64, min_memory_gb=None)
+    new_refused = False
+    try:
+        MC._root_gpu_choice(_no_gpu, _NewMeta, form="hidden")
+    except MC.Refusal as exc:
+        new_refused = "--gpu" in exc.reason
+    check("GPU derives from timing evidence, else --gpu is required",
+          MC._root_gpu_choice(_no_gpu, _FruitMeta, form="hidden") == "L4"
+          and MC._root_gpu_choice(_no_gpu, _FullMeta, form="hidden") == "H200"
+          and MC._root_gpu_choice(_gpu, _NewMeta, form="hidden") == "h100"
+          and new_refused)
+    big = {"model_bytes": 1506667387408}
+    small = {"model_bytes": 10 ** 9}
+    check("host capacity: authored table, derived from bytes, or overridden",
+          MC._root_host_capacity(_no_gpu, _FullMeta, big)
+              == (28, 300, "controller-conservative-capacity")
+          and MC._root_host_capacity(_no_gpu, _NewMeta, big)
+              == (30, 302, "derived-from-model-bytes")
+          and MC._root_host_capacity(_no_gpu, _NewMeta, small)
+              == (4, 32, "derived-from-model-bytes")
+          and MC._root_host_capacity(_over, _NewMeta, small)
+              == (64, 32, "operator-override"))
+    from fidelity.runpodsafety import authored_allowlist_path
+    check("tensor allowlist resolves from the pin and is absent for a new model",
+          authored_allowlist_path(
+              MC._FULL_GLM53_ROOT[1], MC._FULL_GLM53_ROOT[2],
+              suite_root=MC.SUITE_ROOT) is not None
+          and authored_allowlist_path(
+              "someone/new-bf16", "0" * 40, suite_root=MC.SUITE_ROOT) is None)
     full_timing = MC.resolve_root_timing(
         target_repo=MC._FULL_GLM53_ROOT[1],
         target_revision=MC._FULL_GLM53_ROOT[2],
@@ -475,6 +507,81 @@ def main():
     check("live-checkout reaper commands cannot author installed health",
           function_calls(
               MC._runpod_reaper_command, "write_reaper_health") == [])
+
+    # Per-run (no --campaign-ledger) path contracts.  The first shipped
+    # version of this mode crashed at plan time on Path(None), compared a
+    # tracked-only checkout proof against an untracked-inclusive one before
+    # the POST, and ran the strict ledger-bound scope check under the
+    # admission lock; none of that was reachable by any selftest.
+    def guarded_campaign_ledger_paths(function):
+        """Every Path(args.campaign_ledger) sits under an explicit-mode guard."""
+        lines = inspect.getsource(function).splitlines()
+        unguarded = []
+        for index, line in enumerate(lines):
+            if "Path(args.campaign_ledger)" not in line:
+                continue
+            window = "\n".join(lines[max(0, index - 6):index + 1])
+            if ("_campaign_ledger_requested(args)" not in window
+                    and 'campaign_mode == "explicit"' not in window
+                    and "args.runpod_safety_proof" not in window):
+                unguarded.append(index + 1)
+        return unguarded
+
+    check("Path(args.campaign_ledger) is only evaluated in explicit mode",
+          guarded_campaign_ledger_paths(MC._plan_runpod_anonymous) == []
+          and guarded_campaign_ledger_paths(MC.execute_runpod) == [])
+    plan_proofs = function_calls(
+        MC._plan_runpod_anonymous, "_source_checkout_proof")
+    execute_proofs = function_calls(
+        MC.execute_runpod, "_source_checkout_proof")
+    check("plan and pre-POST checkout proofs use the same untracked policy",
+          len(plan_proofs) == len(execute_proofs) == 1
+          and ast.unparse(plan_proofs[0].keywords[0].value)
+              == ast.unparse(execute_proofs[0].keywords[0].value) == "False")
+    strict_scope = function_calls(
+        MC.execute_runpod, "validate_unresolved_lease_scope")
+    liability_scope = function_calls(
+        MC.execute_runpod, "validate_lease_liability_scope")
+    check("execute checks lease scope twice per mode, never the strict "
+          "check alone under the admission lock",
+          len(strict_scope) == len(liability_scope) == 2)
+    ledger_args = types.SimpleNamespace(
+        lease_dir="/tmp/qfs-scope/leases-v2", reaper_state_dir="/elsewhere")
+    auto_path = Path(MC._auto_campaign_ledger_path(
+        ledger_args, "f" * 64, "1" * 24))
+    check("per-attempt ledger lives beside the lease dir and names the attempt",
+          auto_path.parent == Path("/tmp/qfs-scope")
+          and auto_path.name == "auto-%s-%s.json" % ("f" * 16, "1" * 24))
+    per_run_args = types.SimpleNamespace(
+        spot=False, region=None, on_preempt=None, role="root",
+        dataset_id="fidelity--x.y.root.bf16", dataset_name=None,
+        dataset_repository=None, publish_root_to="owner/repo",
+        hf_token_file=__file__, hf_download_token_file=None,
+        measurer="someone", cold_runs=2, max_cost="40",
+        max_runtime="3h30m", heartbeat_timeout=900,
+        retrieval_delete_reserve=21600, timer_api_lag=600,
+        runpod_billing_wait=1800, sanity_expect="Paris",
+        campaign_name="fidcloud-", campaign_ledger=None,
+        campaign_ceiling=None, campaign_reserve=None,
+        campaign_reaper_margin=None, runpod_safety_proof=None,
+        campaign_width=1, width_two_root_archive=None,
+        schedule="layer-outer", lane="streaming", capture_device="cuda",
+        reduce_order="fp32", replay_device="numpy", replay_dtype="float32",
+        replay_vocab_chunk=8192, form="hidden")
+    per_run_forbidden = MC._runpod_forbidden(per_run_args)
+    check("the minimal recipe derives every single-value flag and passes "
+          "the profile",
+          per_run_forbidden == []
+          and per_run_args.region == "secure"
+          and per_run_args.on_preempt == "fail"
+          and per_run_args.dataset_name == per_run_args.dataset_id
+          and per_run_args.dataset_repository == "owner/repo"
+          and per_run_args.hf_download_token_file == __file__)
+    proof_without_ledger = types.SimpleNamespace(
+        **dict(vars(per_run_args), runpod_safety_proof="/x/proof.json"))
+    check("a safety proof without a campaign ledger is refused by name",
+          any("--runpod-safety-proof" in item and "--campaign-ledger" in item
+              for item in MC._runpod_forbidden(proof_without_ledger)))
 
     from fidelity.campaign import CampaignLedger  # noqa: E402
     with tempfile.TemporaryDirectory() as campaign_td:

@@ -256,6 +256,18 @@ def validate_job(document: dict) -> None:
         allowlist = (
             capture.get("unexpected_tensor_allowlist")
             if isinstance(capture, dict) else None)
+        # The allowlist is authored per pin and absent for a model that
+        # carries no tensors beyond its architecture; the pod-side engine
+        # refuses unexpected tensors on its own when none is given.
+        allowlist_ok = allowlist is None or (
+            isinstance(allowlist, dict)
+            and set(allowlist) == {
+                "path", "artifact_sha256",
+                "canonical_sorted_names_sha256"}
+            and all(_HEX64.fullmatch(str(allowlist.get(name, ""))) is not None
+                    for name in (
+                        "artifact_sha256",
+                        "canonical_sorted_names_sha256")))
         if (not isinstance(capture, dict)
                 or capture.get("engine") != "hf-transformers"
                 or capture.get("dtype") != "bfloat16"
@@ -270,14 +282,7 @@ def validate_job(document: dict) -> None:
                 or (capture.get("publish_root_to") is not None
                     and capture.get("publish_root_to")
                     != capture.get("dataset_repository"))
-                or not isinstance(allowlist, dict)
-                or set(allowlist) != {
-                    "path", "artifact_sha256",
-                    "canonical_sorted_names_sha256"}
-                or any(_HEX64.fullmatch(str(allowlist.get(name, ""))) is None
-                       for name in (
-                           "artifact_sha256",
-                           "canonical_sorted_names_sha256"))):
+                or not allowlist_ok):
             raise JobContractError("root capture contract is incomplete")
         dataset_license = capture.get("dataset_license")
         weights_license = capture.get("weights_license")
