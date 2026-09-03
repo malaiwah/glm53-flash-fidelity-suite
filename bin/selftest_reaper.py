@@ -5,6 +5,7 @@ import calendar
 import json
 from dataclasses import replace
 from decimal import Decimal
+import email.message
 import io
 import hashlib
 import multiprocessing
@@ -1639,6 +1640,90 @@ def runpod_cases():
     check("cross-origin RunPod redirect fails closed without key disclosure",
           "crossed its HTTPS origin" in redirect_error
           and redirected._key not in redirect_error)
+
+    # A single provider 503 on a read-only poll aborted a paid drill whose pod
+    # was already destroyed and whose absence was already proven. Reads must
+    # ride out a bounded outage; mutations must never be repeated.
+    class OutageResponse:
+        status = 200
+        url = runpod_module.GQL
+        headers = email.message.Message()
+        headers.add_header("Content-Type", "application/json")
+        headers.add_header(
+            "Date",
+            time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime()))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *unused):
+            return False
+
+        def geturl(self):
+            return runpod_module.GQL
+
+        def getcode(self):
+            return 200
+
+        def info(self):
+            return {}
+
+        def read(self, unused_limit=None):
+            return (b'{"data":{"myself":{"id":"acct",'
+                    b'"clientBalance":"10.5","currentSpendPerHr":"0"}}}')
+
+    def outage_opener(failures, record):
+        def opener(request, timeout=60):
+            record.append(bytes(request.data))
+            if len(record) <= failures:
+                raise urllib.error.HTTPError(
+                    request.full_url, 503, "Service Unavailable", {},
+                    io.BytesIO(b'{"message":"Service Unavailable"}'))
+            return OutageResponse()
+        return opener
+
+    original_backoff = runpod_module._READ_RETRY_BACKOFF_SECONDS
+    recovered_calls = []
+    exhausted_calls = []
+    mutation_calls = []
+    exhausted_error = ""
+    mutation_error = ""
+    try:
+        runpod_module._READ_RETRY_BACKOFF_SECONDS = (0.0, 0.0)
+        recovering = RunPod(key_file="/not/read")
+        recovering._key = "runpod-outage-secret"
+        runpod_module.safe_urlopen = outage_opener(2, recovered_calls)
+        recovered_status = recovering.status()
+
+        exhausting = RunPod(key_file="/not/read")
+        exhausting._key = "runpod-outage-secret"
+        runpod_module.safe_urlopen = outage_opener(99, exhausted_calls)
+        try:
+            exhausting.status()
+        except RunPodError as exc:
+            exhausted_error = str(exc)
+
+        mutating = RunPod(key_file="/not/read")
+        mutating._key = "runpod-outage-secret"
+        runpod_module.safe_urlopen = outage_opener(99, mutation_calls)
+        try:
+            mutating._gql("mutation { podTerminate(input:{podId:\"p\"}) }")
+        except RunPodError as exc:
+            mutation_error = str(exc)
+    finally:
+        runpod_module.safe_urlopen = original_urlopen
+        runpod_module._READ_RETRY_BACKOFF_SECONDS = original_backoff
+    check("bounded transient outage is ridden out on reads, never mutations",
+          recovered_status["id"] == "acct"
+          and len(recovered_calls) == 3
+          and len(exhausted_calls) == 3
+          and "503" in exhausted_error
+          and "3 attempt(s)" in exhausted_error
+          and len(mutation_calls) == 1
+          and "HTTP 503" in mutation_error
+          and "attempt(s)" not in mutation_error
+          and all(secret not in exhausted_error + mutation_error
+                  for secret in ("runpod-outage-secret",)))
     skewed = RunPod(key_file="/not/read")
     now_epoch = time.time()
     skewed._server_time = {

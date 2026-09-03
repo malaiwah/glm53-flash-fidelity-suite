@@ -92,6 +92,45 @@ def _billing_total_matches_record_sum(
     """Accept at most one femtodollar of provider aggregation roundoff."""
     return abs(total - record_sum) <= _BILLING_ROUNDING_TOLERANCE_USD
 
+# A single HTTP 503 on a read-only poll aborted an otherwise perfect paid
+# drill (2026-09-02T23:05Z): the pod had already been destroyed and its exact
+# absence proven by complete inventory, and the run still refused while
+# waiting for billing to publish. Repeating a read is safe; repeating a
+# mutation is not, so the create path deliberately does not use this and an
+# ambiguous create is still never retried. The budget is bounded so a retried
+# poll stays well inside DEADLINE_POLL_DURATION_MAX_SECONDS (120s); only
+# statuses the provider returns promptly are retried, never a timeout.
+_READ_RETRY_STATUSES = frozenset((429, 500, 502, 503, 504))
+_READ_RETRY_BACKOFF_SECONDS = (2.0, 4.0)
+_READ_RETRY_BUDGET_SECONDS = 30.0
+
+
+class _TransientProviderRead(Exception):
+    """A retryable provider status on an idempotent read."""
+
+    def __init__(self, status: int, detail: str):
+        super().__init__(detail)
+        self.status = int(status)
+        self.detail = detail
+
+
+def _retry_transient_read(attempt, label: str):
+    """Run `attempt` again across a bounded transient provider outage."""
+    deadline = time.monotonic() + _READ_RETRY_BUDGET_SECONDS
+    limit = len(_READ_RETRY_BACKOFF_SECONDS) + 1
+    for index in range(limit):
+        try:
+            return attempt()
+        except _TransientProviderRead as exc:
+            remaining = limit - index - 1
+            delay = (
+                _READ_RETRY_BACKOFF_SECONDS[index] if remaining else 0.0)
+            if not remaining or time.monotonic() + delay > deadline:
+                raise RunPodError(
+                    "RunPod %s HTTP %d after %d attempt(s): %s"
+                    % (label, exc.status, index + 1, exc.detail))
+            time.sleep(delay)
+    raise RunPodError("RunPod %s exhausted transient retries" % label)
 
 
 
@@ -507,19 +546,29 @@ class RunPod(SSHTransport):
                      "User-Agent": "quant-fidelity-suite/0.1",
                      # header, never argv: `ps` on a shared box would show it
                      "Authorization": "Bearer " + self._key})
-        try:
-            with safe_urlopen(req, timeout=timeout) as resp:
-                doc = _response_json(resp, GQL, "GraphQL")
-                if query.lstrip().startswith("query"):
-                    self._capture_server_time(resp, GQL)
-        except urllib.error.HTTPError as exc:
-            raise RunPodError("RunPod HTTP %d: %s"
-                              % (exc.code, redact(
-                                  exc.read(300).decode("utf-8", "replace"))))
-        except RunPodError:
-            raise
-        except Exception as exc:                          # noqa: BLE001
-            raise RunPodError("RunPod request failed: %s" % redact(str(exc)))
+        read_only = query.lstrip().startswith("query")
+
+        def once():
+            try:
+                with safe_urlopen(req, timeout=timeout) as resp:
+                    document = _response_json(resp, GQL, "GraphQL")
+                    if read_only:
+                        self._capture_server_time(resp, GQL)
+                    return document
+            except urllib.error.HTTPError as exc:
+                detail = redact(exc.read(300).decode("utf-8", "replace"))
+                # Only an idempotent read may be repeated. A mutation -- above
+                # all a create -- must surface the exact status unretried.
+                if read_only and exc.code in _READ_RETRY_STATUSES:
+                    raise _TransientProviderRead(exc.code, detail)
+                raise RunPodError("RunPod HTTP %d: %s" % (exc.code, detail))
+            except RunPodError:
+                raise
+            except Exception as exc:                      # noqa: BLE001
+                raise RunPodError(
+                    "RunPod request failed: %s" % redact(str(exc)))
+
+        doc = _retry_transient_read(once, "GraphQL") if read_only else once()
         if not isinstance(doc, dict):
             raise RunPodError("RunPod GraphQL returned non-object JSON")
         if doc.get("errors"):
@@ -542,21 +591,27 @@ class RunPod(SSHTransport):
             headers={"Accept": "application/json",
                      "User-Agent": "quant-fidelity-suite/0.1",
                      "Authorization": "Bearer " + self._key})
-        try:
-            with safe_urlopen(req, timeout=timeout) as resp:
-                doc = _response_json(resp, url, label)
-                self._capture_server_time(resp, url)
-                return doc
-        except urllib.error.HTTPError as exc:
-            raise RunPodError(
-                "RunPod %s GET %s -> HTTP %d: %s"
-                % (label, path, exc.code,
-                   redact(exc.read(300).decode("utf-8", "replace"))))
-        except RunPodError:
-            raise
-        except Exception as exc:                          # noqa: BLE001
-            raise RunPodError("RunPod %s request failed: %s"
-                              % (label, redact(str(exc))))
+        def once():
+            try:
+                with safe_urlopen(req, timeout=timeout) as resp:
+                    document = _response_json(resp, url, label)
+                    self._capture_server_time(resp, url)
+                    return document
+            except urllib.error.HTTPError as exc:
+                detail = redact(exc.read(300).decode("utf-8", "replace"))
+                # A GET is idempotent by definition.
+                if exc.code in _READ_RETRY_STATUSES:
+                    raise _TransientProviderRead(exc.code, detail)
+                raise RunPodError(
+                    "RunPod %s GET %s -> HTTP %d: %s"
+                    % (label, path, exc.code, detail))
+            except RunPodError:
+                raise
+            except Exception as exc:                      # noqa: BLE001
+                raise RunPodError("RunPod %s request failed: %s"
+                                  % (label, redact(str(exc))))
+
+        return _retry_transient_read(once, "%s GET %s" % (label, path))
 
     def _get_v2(self, path: str, query: Dict[str, str], *,
                 timeout: float = 60) -> Dict[str, Any]:
