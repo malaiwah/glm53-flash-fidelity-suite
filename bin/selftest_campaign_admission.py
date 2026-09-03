@@ -274,6 +274,26 @@ def main():
               (invalid_bootstrap_quote_refused, drill_reserved, drill_billed,
                measurement_after_drill, second_bootstrap, bootstrap_doc))
 
+        # C0c: a measurement whose create the provider REFUSED spent nothing
+        # and released its reservation, so it must not forbid re-proving the
+        # controller. A live measurement still must.
+        reprove = ready_ledger(root / "reprove.json", ceiling="30", width=1)
+        refused_measurement = reprove.reserve(
+            1, JOB_A, ATTEMPT_A, quote(cap="2"), NOW)
+        refused_creating = reprove.mark_creating(
+            refused_measurement.generation, refused_measurement.attempt_key)
+        refused_released = reprove.cancel_before_create(
+            refused_creating.generation, refused_measurement.attempt_key,
+            NOW, "PROVIDER_REJECTED_CREATE",
+            "provider refused create: SUPPLY_CONSTRAINT")
+        reprove_again = reprove.reserve_bootstrap_drill(
+            refused_released.generation, "c" * 64, "2" * 24, drill_quote, NOW)
+        check("C0c a refused measurement does not forbid re-proving the controller",
+              refused_released.code == "CANCELLED_BEFORE_CREATE"
+              and reprove_again.admitted
+              and reprove_again.code == "ADMITTED",
+              (refused_released, reprove_again))
+
         # C0b: a later full-family response can disprove an earlier absence.
         # That response must freeze before any deletion proof reaches campaign
         # state; otherwise the later true absence can never replace the stale

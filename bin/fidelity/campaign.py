@@ -43,11 +43,18 @@ def _bootstrap_drill_blocked_by_prior_attempts(
         attempts: Iterable[Dict[str, Any]]) -> bool:
     """Return whether prior paid work forbids the bootstrap drill."""
     for item in attempts:
+        if item.get("phase") == "CANCELLED_BEFORE_CREATE":
+            # Nothing was ever created and the reservation is released, so
+            # this attempt did no paid work and cannot order anything. The
+            # exemption used to apply only to drills, purely because the
+            # measurement test came first: on 2026-09-03 a measurement whose
+            # create RunPod refused with SUPPLY_CONSTRAINT -- $0.00 spent --
+            # permanently blocked re-proving the controller.
+            continue
         if item.get("reservation_kind") == "measurement":
             return True
         if (item.get("reservation_kind")
-                != "bootstrap-controller-loss-drill"
-                or item.get("phase") == "CANCELLED_BEFORE_CREATE"):
+                != "bootstrap-controller-loss-drill"):
             continue
         if (item.get("phase") == "RECONCILED"
                 and item.get("released") is True
