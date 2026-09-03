@@ -3105,3 +3105,52 @@ This attempt produced no accepted `proof.json`. No H200 was created, no
 GLM-5.3 capture ran, and nothing was published. The remaining H200
 authorization was explicitly conditional on an accepted proof, so the next
 paid create requires a fresh operator decision.
+
+## 2026-09-03 — the fifth proof lost to one 503 on a read it had already earned
+
+The authorized retry ran on checkout
+`0e93522` and created exactly one secure, on-demand RunPod L4
+(`y2wmt4dnr41lss`) at `2026-09-02T22:39:56Z`. The one-second-resolution fix
+held: nothing in the ordering chains refused. The autonomous installed reaper
+requested exact-id destruction at `23:05:04Z` and complete GraphQL and REST
+inventory proved exact absence one second later. An independent authenticated
+`myself { pods }` read afterwards returned zero pods.
+
+Then, while polling for billing to publish, RunPod answered a **read** with
+`HTTP 503: Service Unavailable` and the drill aborted. The pod was already
+destroyed and its absence already proven; the run threw away a correct,
+paid lifecycle over one transient status on an idempotent query. There was no
+retry anywhere in the RunPod transport: every `HTTPError` became a refusal on
+the first response.
+
+Idempotent reads now ride out a bounded outage — statuses `{429, 500, 502,
+503, 504}`, at most three attempts, 2s then 4s, inside a 30-second budget so a
+retried poll stays well within the 120-second `DEADLINE_POLL_DURATION_MAX`
+the proof validator enforces. Only timeouts are excluded, because a timeout
+consumes the budget it would need. **Mutations are never repeated**: the
+GraphQL path retries only a document beginning `query`, the create path is
+untouched, and an ambiguous create is still never retried. The regression
+drives a 503-then-recover opener and asserts three attempts on a read, exactly
+one attempt on a `mutation`, and no key material in either message. Against
+the pre-fix transport the same read aborts after one attempt with exactly the
+production string.
+
+Billing then refused settlement four more times with `RunPod billing records
+omit the end of the resolved window`. That was the validator being right:
+RunPod snaps the query to hour boundaries, so a pod that died at `23:05`
+resolves a window ending at `00:00`, and the `23:00–00:00` bucket cannot be
+published while that hour is still open. It settled at `00:04:42Z`, four
+minutes after the hour closed, to exactly `$0.19510014518164098`
+(`$0.1927853301167488` GPU plus `$0.002314815064892173` disk) across the two
+expected buckets. Five prerequisite attempts have now cost exactly
+`$0.543815618380904186`. All ten leases are terminal.
+
+Changing `bin/fidelity/runpodapi.py` also made the installed reaper report
+`not healthy`, because that file is inside the reaper's control closure and
+the health check compares the installed snapshot against the current
+checkout. That is the drift mechanism working, not a fault; reinstalling
+restored `ok`. Worth remembering: **any** edit to the control closure requires
+a reinstall before the next paid create.
+
+This attempt produced no accepted `proof.json`. No H200 was created, no
+GLM-5.3 capture ran, and nothing was published.
