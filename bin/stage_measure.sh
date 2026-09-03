@@ -28,7 +28,13 @@ SCRIPT_PATH="$(readlink -f -- "$0")"
 FS="$(readlink -f -- "$(dirname "$SCRIPT_PATH")/..")"
 # The engine checkout is controller-provisioned outside the staged suite.  Resolve
 # it once, then overwrite every ambient compatibility spelling passed to children.
-ROOT="$(readlink -f -- "${FIDELITY_ENGINE_ROOT:-${FIDELITY_K6_ROOT:-/home/jl_fs/fidelity-engine}}")"
+# GNU `readlink -f` exits 1 and prints NOTHING when the parent of the last
+# component is absent; under `set -e` that killed a paid stage with an empty
+# log (Fruit smoke, 2026-09-03). Name the failure instead.
+ROOT="$(readlink -f -- "${FIDELITY_ENGINE_ROOT:-${FIDELITY_K6_ROOT:-/home/jl_fs/fidelity-engine}}")" || {
+  echo "stage_measure: engine root cannot be resolved (parent directory absent?): ${FIDELITY_ENGINE_ROOT:-${FIDELITY_K6_ROOT:-/home/jl_fs/fidelity-engine}}" >&2
+  exit 3
+}
 RCPT="$FS/receipts"
 DONE="$RCPT/done"
 LOGS="$FS/logs"
@@ -36,6 +42,10 @@ MODELS="$FS/models"
 PANEL="$FS/panel"
 VENV="$ROOT/venv"
 PY="$VENV/bin/python"
+# The controller may place the token on a filesystem that honours modes when
+# the run root's does not (RunPod's /workspace volume reports 0666 after
+# chmod 600). Default: beside the run root, as every other transport does.
+SECRETS="${FIDELITY_SECRETS_DIR:-$FS/.secrets}"
 export VENV
 export FIDELITY_FS_ROOT="$FS"
 export FIDELITY_SUITE_ROOT="$FS"
@@ -80,8 +90,8 @@ PYJOB
 JOB_BINDING="${JOB_PREFLIGHT%%:*}"
 JOB_SHA="${JOB_PREFLIGHT#*:}"
 
-mkdir -p "$RCPT" "$DONE" "$LOGS" "$MODELS" "$PANEL" "$FS/.secrets"
-chmod 700 "$FS/.secrets" 2>/dev/null || true
+mkdir -p "$RCPT" "$DONE" "$LOGS" "$MODELS" "$PANEL" "$SECRETS"
+chmod 700 "$SECRETS" 2>/dev/null || true
 # Read a dotted path out of strict job.json using stock Python before the venv.
 jqget() {  # jqget <dotted.path> [default]
   python3 -c '
@@ -242,7 +252,7 @@ trap 'rm -rf "$LOCK"' EXIT
 # Point Hugging Face clients at the controller-written token file without ever
 # materializing its bytes in this shell or a process environment.
 load_token() {
-  local token_path="$FS/.secrets/hf_token"
+  local token_path="$SECRETS/hf_token"
   unset HF_TOKEN HUGGING_FACE_HUB_TOKEN HUGGINGFACE_HUB_TOKEN HF_TOKEN_PATH
   if [ ! -e "$token_path" ]; then
     [ ! -L "$token_path" ] || {

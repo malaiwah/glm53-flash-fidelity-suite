@@ -4783,8 +4783,20 @@ def _bind_lease_cleanup_to_campaign(
         raise Refusal("campaign and lease exact provider ID sets differ", [])
 
 
-def _cleanup_remote_secret(provider, pod_id, fs_root):
-    secret_dir = "%s/.secrets" % fs_root
+def _runpod_secrets_dir(fs_root: str) -> str:
+    """Where the RunPod path keeps the HF token on the pod.
+
+    NOT under fs_root: /workspace is the pod volume, and it accepted
+    `chmod 600` while reporting 0666 (Fruit smoke, 2026-09-03). The
+    container's own disk honours modes, so the 0700/0600 contract lives
+    there, keyed by the attempt so two attempts can never share a path.
+    """
+    return "/root/.fidelity-secrets/%s" % hashlib.sha256(
+        fs_root.encode("utf-8")).hexdigest()[:24]
+
+
+def _cleanup_remote_secret(provider, pod_id, fs_root, *, secrets_dir=None):
+    secret_dir = secrets_dir or "%s/.secrets" % fs_root
     secret = "%s/hf_token" % secret_dir
     command = (
         "set -eu; "
@@ -5066,6 +5078,7 @@ def _runpod_stage(
         "HF_HOME={fs}/hf-anonymous "
         "FIDELITY_FS_ROOT={fs} FIDELITY_SUITE_ROOT={fs} "
         "FIDELITY_ENGINE_ROOT={engine} "
+        "FIDELITY_SECRETS_DIR={secrets} "
         "STACKPRINT_IMAGE_PIN={image_digest} "
         "FIDELITY_IMAGE_REFERENCE={image_reference} "
         "bash {fs}/bin/stage_measure.sh {stage} "
@@ -5078,6 +5091,7 @@ def _runpod_stage(
         "wait \"$leader\""
     ).format(
         fs=shlex.quote(fs_root), engine=shlex.quote(engine_root),
+        secrets=shlex.quote(_runpod_secrets_dir(fs_root)),
         stage=shlex.quote(stage),
         image_digest=shlex.quote(image_digest),
         image_reference=shlex.quote(str(image_reference)))
@@ -6340,9 +6354,12 @@ def execute_runpod(
 
         _upload_verified_bundle(
             provider, pod_id, fs_root, plan_data["bundle"], frozen_bundle)
+        # The engine root's parent does not exist on a fresh pod, and
+        # stage_measure.sh resolves it with `readlink -f` before anything
+        # else; that exits 1 silently under `set -e` (Fruit smoke, 2026-09-03).
         provider.exec(pod_id, "mkdir -p {0}/inputs {0}/logs "
-                      "{0}/receipts/done {0}/runtime".format(
-                          shlex.quote(fs_root)))
+                      "{0}/receipts/done {0}/runtime {1}".format(
+                          shlex.quote(fs_root), shlex.quote(engine_root)))
         provider.upload(pod_id, str(job_path), "%s/job.json" % fs_root)
         provider.upload(
             pod_id, str(attestation_path),
@@ -6405,7 +6422,8 @@ def execute_runpod(
         token_cleanup_required = True
         try:
             _transport_hf_token(
-                provider, pod_id, fs_root, outdir, download_token)
+                provider, pod_id, fs_root, outdir, download_token,
+                secrets_dir=_runpod_secrets_dir(fs_root))
         finally:
             download_token = ""
         con.ok(
@@ -6491,7 +6509,8 @@ def execute_runpod(
                 run_error = record_operational_error(exc)
             if token_cleanup_required:
                 secret_cleanup = _cleanup_remote_secret(
-                    provider, pod_id, fs_root)
+                    provider, pod_id, fs_root,
+                    secrets_dir=_runpod_secrets_dir(fs_root))
                 if not secret_cleanup.get("confirmed"):
                     run_error = record_operational_error(RuntimeError(
                         "remote token erasure is unconfirmed; revoke the "
@@ -7271,34 +7290,50 @@ def _load_required_hf_download_token(path_value: Optional[str]) -> str:
 
 
 def _transport_hf_token(
-        provider, machine_id, fs_root: str, outdir: Path, token: str) -> None:
+        provider, machine_id, fs_root: str, outdir: Path, token: str,
+        *, secrets_dir: Optional[str] = None) -> None:
     """Move the token to the instance without one loose instant at either end.
 
     Never on a command line: it would land in the remote process list and in
     provider request records. Locally the file is born 0600 inside a 0700
-    directory. Remotely the .secrets directory is chmod 700 BEFORE anything
+    directory. Remotely the secrets directory is chmod 700 BEFORE anything
     lands in it, the upload goes to a unique temporary name, is tightened to
     0600, and only then atomically renamed to the path the stages read. No
-    reader can observe a partial or loose-mode token at `.secrets/hf_token`.
+    reader can observe a partial or loose-mode token at `<secrets>/hf_token`.
+
+    Both modes are read back and compared, not assumed: RunPod's /workspace
+    volume accepted `chmod 600` and reported 0666 (Fruit smoke, 2026-09-03),
+    which is why the RunPod path keeps its secrets on the container disk.
+    A filesystem that will not hold the mode is a refusal, never a warning.
     """
     local = outdir / ".secrets-local" / "hf_token"
     write_secret_file(str(local), token)
-    remote_dir = "%s/.secrets" % fs_root
+    remote_dir = secrets_dir or "%s/.secrets" % fs_root
     remote_tmp = "%s/.hf_token.up.%d" % (remote_dir, os.getpid())
     try:
         provider.exec(
             machine_id,
             "set -eu; test ! -e {0}; test ! -L {0}; "
-            "mkdir -m 700 -- {0}; test ! -e {1}; test ! -L {1}"
+            "mkdir -p -m 700 -- {0}; "
+            "test \"$(stat -c %a -- {0})\" = 700; "
+            "test ! -e {1}; test ! -L {1}"
             .format(shlex.quote(remote_dir), shlex.quote(remote_tmp)))
         provider.upload(machine_id, str(local), remote_tmp)
         provider.exec(
             machine_id,
             "set -eu; test ! -L {tmp}; test -f {tmp}; "
-            "chmod 600 -- {tmp}; test ! -e {final}; test ! -L {final}; "
+            "chmod 600 -- {tmp}; "
+            "test \"$(stat -c %a -- {tmp})\" = 600; "
+            "test ! -e {final}; test ! -L {final}; "
             "mv -- {tmp} {final}"
             .format(tmp=shlex.quote(remote_tmp),
                     final=shlex.quote("%s/hf_token" % remote_dir)))
+    except Exception as exc:
+        raise RuntimeError(
+            "HF token transport refused: the remote secrets directory %s "
+            "must be an owner-only 0700 directory holding a 0600 file; the "
+            "pod volume did not hold those modes (%s)"
+            % (remote_dir, redact(str(exc))[:300]))
     finally:
         shred_secret_file(str(local))
 
@@ -7314,7 +7349,8 @@ def _runpod_fetch_target_and_remove_token(
             deadline, image_reference)
     except BaseException as exc:
         stage_error = exc
-    cleanup = _cleanup_remote_secret(provider, pod_id, fs_root)
+    cleanup = _cleanup_remote_secret(
+        provider, pod_id, fs_root, secrets_dir=_runpod_secrets_dir(fs_root))
     if not cleanup.get("confirmed"):
         failure = RuntimeError(
             "remote token erasure after target fetch is unconfirmed; revoke "
