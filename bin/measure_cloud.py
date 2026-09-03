@@ -2935,9 +2935,16 @@ def _apply_runpod_defaults(args) -> None:
     if getattr(args, "role", None) == "root":
         if not getattr(args, "dataset_name", None):
             args.dataset_name = getattr(args, "dataset_id", None)
-        if (not getattr(args, "dataset_repository", None)
-                and getattr(args, "publish_root_to", None)):
-            args.dataset_repository = args.publish_root_to
+        if not getattr(args, "dataset_repository", None):
+            if getattr(args, "publish_root_to", None):
+                args.dataset_repository = args.publish_root_to
+            elif (getattr(args, "measurer", None)
+                    and getattr(args, "dataset_id", None)):
+                # Unpublished: the canonical identity is the measurer's own
+                # namespace under the dataset id.  Publishing later with a
+                # different repo needs --dataset-repository at capture time.
+                args.dataset_repository = "%s/%s" % (
+                    args.measurer, args.dataset_id)
     if not getattr(args, "hf_download_token_file", None):
         candidate = getattr(args, "hf_token_file", None)
         if candidate and Path(candidate).expanduser().is_file():
