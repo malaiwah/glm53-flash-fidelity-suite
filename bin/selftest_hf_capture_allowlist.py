@@ -2,7 +2,9 @@
 """Focused exact-set tests for hf_capture unexpected-tensor admission."""
 from __future__ import annotations
 
+import ast
 import hashlib
+import inspect
 import json
 import sys
 import tempfile
@@ -89,15 +91,73 @@ def main():
         check("same names in differently encoded artifact cannot substitute", refused(
             lambda: HC.load_unexpected_tensor_allowlist(str(reordered), raw_sha, names_sha)))
 
+        # Layer-outer streaming: the pre-capture report predates every layer
+        # load, so names the allowlist correctly carries for streamed layers
+        # are not yet observed. The non-exact form tolerates that -- and ONLY
+        # that; an extra still refuses -- and the exact form is run on the
+        # union after the layers have streamed. Before 2026-09-03 the exact
+        # form ran on the early report and the union was never checked or
+        # disclosed (the published Fruit root under-reports its unused set).
+        resident = ["model.layers.13.a", "model.layers.13.b"]
+        streamed = ["model.layers.3.self_attn.indexer.wk.weight"]
+        union_path = Path(work) / "union.json"
+        union_raw = (json.dumps(resident + streamed, indent=2) + "\n").encode()
+        union_path.write_bytes(union_raw)
+        union_binding = HC.load_unexpected_tensor_allowlist(
+            str(union_path), *identities(union_raw))
+        early = report(resident)
+        check("non-exact (pre-streaming) check tolerates not-yet-observed names",
+              HC.refuse_on_load_report(early, False, union_binding,
+                                       require_exact_unexpected=False) == []
+              and early["unexpected_tensor_allowlist"]["missing_keys"] == streamed
+              and early["unexpected_tensor_allowlist"]["exact_match"] is False)
+        check("non-exact check still refuses an extra name", refused(
+            lambda: HC.refuse_on_load_report(
+                report(resident + ["model.layers.3.extra"]), False, union_binding,
+                require_exact_unexpected=False)))
+        check("exact (post-streaming) check refuses the pre-streaming subset", refused(
+            lambda: HC.refuse_on_load_report(report(resident), False, union_binding)))
+        final = report(streamed + resident)
+        check("exact check passes on the streamed union",
+              HC.refuse_on_load_report(final, False, union_binding) == []
+              and final["unexpected_tensor_allowlist"]["exact_match"] is True)
+        tree = ast.parse(inspect.getsource(HC.run_capture))
+        guard_calls = [node for node in ast.walk(tree)
+                       if isinstance(node, ast.Call)
+                       and getattr(node.func, "id", None) == "refuse_on_load_report"]
+        modes = sorted(
+            ast.unparse(kw.value)
+            for call in guard_calls for kw in call.keywords
+            if kw.arg == "require_exact_unexpected")
+        exact_calls = [call for call in guard_calls if not any(
+            kw.arg == "require_exact_unexpected" for kw in call.keywords)]
+        check("run_capture guards the load three times: per streamed layer "
+              "(non-exact), before streaming (exact only without a streamer), "
+              "and exactly on the union after streaming",
+              len(guard_calls) == 3 and modes == ["False", "streamer is None"]
+              and len(exact_calls) == 1)
+
         m2 = REPO / "engines" / "tools" / "dione-evidence" / "m2-layer45-unexpected-keys.json"
-        fruit = REPO / "engines" / "tools" / "layer-outer-evidence" / "fruit-layer13-unexpected-keys.json"
+        fruit = REPO / "engines" / "tools" / "layer-outer-evidence" / "fruit-unexpected-keys.json"
         m2_raw, fruit_raw = m2.read_bytes(), fruit.read_bytes()
         check("checked-in M2 list is exact 889-name public layer-45 evidence",
               len(json.loads(m2_raw)) == 889 and identities(m2_raw)[1]
               == "acc1e9f10c0f903c735a7fcf5fd267fc879bce65623f0b850f80016da5e903b7")
-        check("checked-in Fruit list is exact 791-name pinned layer-13 evidence",
-              len(json.loads(fruit_raw)) == 791 and identities(fruit_raw)[1]
-              == "41b825b0045a2e1e90eea8f88bb06022459d26a3957c40c52d65d677d8a17968")
+        # 791 MTP-block names (layer 13) plus 5 DSA indexer tensors on each of
+        # layers 3..12 (`indexer_types` says `shared`, so transformers builds no
+        # indexer there). Derived by derive_unexpected_allowlist.py from the
+        # streamed loader; the 791-only list refused a paid capture at layer 3.
+        fruit_names = json.loads(fruit_raw)
+        check("checked-in Fruit list is the exact 841-name streamed-load evidence",
+              len(fruit_names) == 841 and identities(fruit_raw)[1]
+              == "f7a80a42958ad694212db5dd249d32cd55a1ccbca2622713fc3433a718ec3257"
+              and sum(1 for n in fruit_names if ".indexer." in n
+                      and not n.startswith("model.layers.13.")) == 50)
+        provenance = json.loads((fruit.parent / (fruit.name + ".provenance.json")).read_bytes())
+        check("Fruit provenance sidecar binds the artifact it describes",
+              provenance.get("artifact_sha256") == identities(fruit_raw)[0]
+              and provenance.get("canonical_sorted_names_sha256") == identities(fruit_raw)[1]
+              and provenance.get("count") == 841)
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
 

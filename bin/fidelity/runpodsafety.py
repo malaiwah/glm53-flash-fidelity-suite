@@ -36,10 +36,14 @@ _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _ALLOWLISTS = {
     (FRUIT_REPO, FRUIT_REVISION): {
-        "path": "engines/tools/layer-outer-evidence/fruit-layer13-unexpected-keys.json",
-        "artifact_sha256": "5731fac8f82305c6d3b41fa9fbbd87db3f81a33e27533a0acdf6b28bed1566a2",
-        "canonical_sorted_names_sha256": "41b825b0045a2e1e90eea8f88bb06022459d26a3957c40c52d65d677d8a17968",
-        "count": 791,
+        # Derived by engines/tools/derive_unexpected_allowlist.py from the
+        # streamed loader itself: the 791-tensor MTP block (layer 13) plus 5
+        # DSA indexer tensors on each of layers 3..12, whose `indexer_types`
+        # entry is `shared` and which transformers therefore never builds.
+        "path": "engines/tools/layer-outer-evidence/fruit-unexpected-keys.json",
+        "artifact_sha256": "bada75f50fe39e4dd1101befbe756a651494baad98422958ebc3ea190939d1aa",
+        "canonical_sorted_names_sha256": "f7a80a42958ad694212db5dd249d32cd55a1ccbca2622713fc3433a718ec3257",
+        "count": 841,
     },
     ("zai-org/GLM-5.3-Flash-BF16",
      "a6c167b62691b2bac901344b65cb651a70f53e43"): {

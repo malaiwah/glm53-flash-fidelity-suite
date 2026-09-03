@@ -1313,9 +1313,14 @@ def run_capture(args: argparse.Namespace) -> int:
         conversion_errors=len(report["conversion_errors"]),
         error_msgs=len(report["error_msgs"]),
         unexpected_sample=report["unexpected_keys"][:6])
+    # Under streaming this report predates every layer load, so an allowlist
+    # that (correctly) names per-layer unused tensors would read as "missing"
+    # here. Extras are refused now; exactness is decided after the layers have
+    # streamed (see the final pass below the capture).
     missing = refuse_on_load_report(
         report, args.allow_missing_weights,
-        args.unexpected_tensor_allowlist_binding)
+        args.unexpected_tensor_allowlist_binding,
+        require_exact_unexpected=streamer is None)
     if missing:
         log(stage="missing_weights", count=len(missing), keys=missing[:12])
 
@@ -1418,6 +1423,25 @@ def run_capture(args: argparse.Namespace) -> int:
         # forward and costs nothing but its own compute.
         forward_window(probe_index)
     probe = _resolve_probe(args, probe_plan, probe_logits)
+
+    # CAPTURE-03, the exact check the docstring of refuse_on_load_report
+    # promises "after all layers load". Under layer-outer streaming the layers
+    # load DURING the capture, and each layer's own unexpected keys are absorbed
+    # into the streamer's aggregate only then -- the `report` built above is a
+    # copy taken before any layer streamed. Sealing that copy under-disclosed:
+    # the published Fruit root reported 791 unused tensors (the MTP block) when
+    # the loader had also skipped 50 indexer tensors on layers whose
+    # `indexer_types` entry is `shared` (found 2026-09-03, first exact-allowlist
+    # run). The per-layer guard refuses EXTRA keys as each layer lands, so this
+    # final pass can only add allowlisted names to the disclosure, never admit
+    # new ones -- and it refuses an allowlist name that was never observed.
+    if streamer is not None:
+        report = load_report(layer_outer.streamed_loading_info(streamer))
+        refuse_on_load_report(
+            report, args.allow_missing_weights,
+            args.unexpected_tensor_allowlist_binding)
+        log(stage="load_report_final", unexpected=len(report["unexpected_keys"]),
+            unexpected_sample=report["unexpected_keys"][:6])
 
     # The outer meter: how far through the panel, and when this capture ends.
     # `every=1` because a window is minutes long -- every completed one earns a
