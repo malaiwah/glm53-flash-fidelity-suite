@@ -2867,11 +2867,16 @@ def _model_file_identity(target: RepoMeta) -> Dict[str, Any]:
                 "target repository contains an unsafe or size-unknown file",
                 [])
         repository_files.append({"path": path, "bytes": size})
-    vocab_size = config.get("vocab_size")
+    # A vision-language config (GLM-5.3-Flash-BF16, MiniMax-M3) nests the
+    # language model's geometry under text_config; the engines already read
+    # it there. The identity digests stay over the raw bytes.
+    text_config = config.get("text_config")
+    geometry = text_config if isinstance(text_config, dict) else config
+    vocab_size = geometry.get("vocab_size")
     if (isinstance(vocab_size, bool)
             or not isinstance(vocab_size, int) or vocab_size <= 0):
         raise Refusal("target config lacks positive exact vocab_size", [])
-    hidden_size = config.get("hidden_size")
+    hidden_size = geometry.get("hidden_size")
     if (isinstance(hidden_size, bool)
             or not isinstance(hidden_size, int) or hidden_size <= 0):
         raise Refusal("target config lacks positive exact hidden_size", [])
