@@ -3303,3 +3303,78 @@ norms resident — for GLM-5.3 roughly 19 GB plus 4 GB — so the host contract
 now derives from that residency: (16 vCPU, 128 GB) for GLM-5.3, which the
 same probe read as Medium stock. The controller had been asking for a
 machine that does not exist, for a reason that no longer applied.
+
+## 2026-09-03 — the RunPod SSH transport reproduces the Fruit root bitwise
+
+`bin/measure-cloud --provider runpod --role root` on `malaiwah/GLM-5.2-SIQ-Fruit-bf16`
+(L4, `--sanity-expect ''`, `$5` cap) ran every stage — bootstrap, authenticated
+fetch, panel, two cold captures, verify, `compare_root`, `qualify_root`, a 770 MB
+result archive retrieved, pod proven absent — and both cold runs sealed
+
+```
+capture_content_digest b417acc22b8aa7f3294b8e62c4b619bc5051aef9fd8a073602572a30af6b3e1c
+```
+
+the digest of the published root and of the 2026-08-31 container acceptance.
+`terminal-receipt.json`: `qualified-unpublished`, zero operational errors.
+Eleven paid attempts to get there, each a few minutes of L4 (one 15-minute
+pod that never surfaced its host key), roughly `$1.6` by wall time; the
+reaper's hour-bucket reconciliation lags and reads `$0.22` at time of writing.
+
+What each attempt paid for, in order (every one is now a regression test that
+was proven failing on the pre-fix code, or a gathered piece of evidence):
+
+1. `extract-bundle` on the pod assumed `/workspace/fidelity/<job>/` existed.
+2. `jobcontract.validate_execution_job` imports `.campaign` at call time;
+   `campaign.py` was not in `BUNDLE.txt`, and `selftest_bundle_complete` only
+   ran the setup-time selftests. It now resolves every intra-package import
+   of every bundled `fidelity` module, at every scope, in the staged tree.
+3. `sshbase.exec` kept the first 400 bytes of remote stderr — the head of a
+   traceback, never the exception.
+4. "stage setup ended in failed" was the whole diagnosis of a pod destroyed
+   four seconds later. The poller now reads the stage log, the launch
+   wrapper's output and state, the watchdog log and `ABANDONED.json` first.
+5. That evidence showed exit 1 with an empty log: `readlink -f` on an engine
+   root whose parent does not exist exits 1 silently under `set -e`.
+   Provision creates the engine root; the preamble names the failure.
+6. The same listing showed `/workspace` (the pod volume) ignoring modes:
+   `heartbeat` 0666 after `chmod 600`, `.secrets` 0777 after `mkdir -m 700`.
+   The HF token now lives under `/root/.fidelity-secrets/<attempt-hash>` on
+   the container disk; the install reads both modes back and refuses if
+   they did not hold; the stage driver honours `FIDELITY_SECRETS_DIR`.
+7. The exact unexpected-tensor allowlist was authored from the pre-streaming
+   aggregate (the 791-tensor MTP block). Fruit's checkpoint also carries 5
+   DSA indexer tensors on each of layers 3..12, whose `indexer_types` entry
+   is `shared`; transformers builds no indexer there and the streamed loader
+   reports them unused as each layer lands. The exact check ran on the early
+   report and the seal read that same copy, so the **published Fruit root
+   discloses 791 unused tensors where the loader left 841** — the numbers are
+   untouched (unused weights take no part in the forward pass; the digest
+   above is the proof), the disclosure is incomplete. Registry-session
+   correction item. `hf_capture` now runs the exact check on the streamed
+   union after the capture; `engines/tools/derive_unexpected_allowlist.py`
+   authors allowlists from the loader itself (Fruit: 841 names, with a
+   provenance sidecar). GLM-5.3-BF16 and GLM-5.3-Flash-BF16 carry indexer
+   tensors only on `full` layers, so their over-index-only lists stand.
+8. The controller pinned `--sanity-expect Paris` for every root; the 5B
+   fixture answers " the". `''` (recorded, not enforced, plan warning) is
+   admissible now; anything but those two is refused.
+9. A refactor had dropped `dataset.repository` from the sealed manifest
+   while `qualify_root` binds it to the job. Restored (it is in the schema).
+10. `resultsink` binds the attestation's `gpu_model` to `environment.gpu`;
+    the RunPod job environment only had `provider_gpu_display`.
+11. The fetch ran anonymously with the verified token beside it:
+    `HF_HUB_DISABLE_IMPLICIT_TOKEN=1` from the stage env also disables
+    `HF_TOKEN_PATH`. `load_token` re-enables it for its own stage.
+
+Also fixed on the way: `Console.warn` arity at three call sites, the Fruit
+timing row's `model_bytes` (whole-repository bytes where the controller
+derives shard-file bytes), the never-attested teardown path (no `EXITED`
+from `CREATING`, no archive fetch without an authenticated host key), and
+`--dataset-repository` defaulting to `<measurer>/<dataset-id>` for an
+unpublished root.
+
+Measured on the L4 pod: 10.08 GB fetched and censused in 44 s anonymously
+(≥230 MB/s), bootstrap 13 min, one Fruit cold capture 86 s, `compare_root`
+383 s for 16 windows. The GLM-5.3 H200 loop is running again on this
+controller; its dry-run calculates `$39.41` under the `$40` cap.
