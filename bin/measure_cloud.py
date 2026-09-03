@@ -5100,10 +5100,13 @@ def _runpod_stage(
             return
         if state in ("failed", "error"):
             raise RuntimeError(
-                "stage %s ended in %s; recovery is refused; stage log tail:\n%s"
+                "stage %s ended in %s (%s); recovery is refused; evidence:\n%s"
                 % (stage, state,
-                   _runpod_stage_log_tail(provider, pod_id, fs_root, stage,
-                                          run_id=run_id)))
+                   ", ".join("%s=%s" % (key, status[key])
+                             for key in ("exit_code", "note")
+                             if status.get(key) is not None) or "no detail",
+                   _runpod_stage_failure_evidence(
+                       provider, pod_id, fs_root, stage, run_id)))
         if state == "unknown":
             if probe_outage_started is None:
                 probe_outage_started = time.time()
@@ -5120,33 +5123,39 @@ def _runpod_stage(
     raise RuntimeError("workload deadline reached during stage %s" % stage)
 
 
-def _runpod_stage_log_tail(provider, pod_id, fs_root, stage, *,
-                           run_id=None, max_bytes: int = 6000) -> str:
-    """Best-effort tail of a stage log, read BEFORE the pod is destroyed.
+def _runpod_stage_failure_evidence(provider, pod_id, fs_root, stage, run_id,
+                                   max_bytes: int = 6000) -> str:
+    """Best-effort evidence of a failed stage, read BEFORE the pod is destroyed.
 
-    The pod is the only place the log exists; teardown follows the failure
-    within seconds, and a bare "stage setup ended in failed" cost a rental
-    to diagnose (Fruit smoke, 2026-09-03). The launch wrapper's own output
-    is appended because a wrapper failure (watchdog pgid record -> exit 70)
-    never reaches the stage log at all.
+    The pod is the only place any of this exists; teardown follows the
+    failure within seconds, and a bare "stage setup ended in failed" cost a
+    rental to diagnose (Fruit smoke, 2026-09-03). Each item is one shell
+    command whose failure is itself evidence, never an exception.
     """
-    command = "tail -c %d %s/logs/stage-%s.log 2>&1 || true" % (
-        int(max_bytes), shlex.quote(fs_root), shlex.quote(stage))
+    fs = shlex.quote(fs_root)
+    run_dir = "%s/%s" % (provider.RUNS, run_id)
+    items = (
+        ("stage log tail",
+         "tail -c %d %s/logs/stage-%s.log" % (
+             int(max_bytes), fs, shlex.quote(stage))),
+        ("launch wrapper output", "tail -c 2000 %s/output.log" % run_dir),
+        ("launch wrapper state",
+         "ls -la %s; echo exit_code=$(cat %s/exit_code 2>/dev/null); "
+         "echo pid=$(cat %s/pid 2>/dev/null)" % (run_dir, run_dir, run_dir)),
+        ("watchdog log tail", "tail -c 2000 %s/logs/watchdog.log" % fs),
+        ("ABANDONED.json", "cat %s/receipts/ABANDONED.json" % fs),
+        ("run root", "ls -la %s %s/logs %s/runtime %s/receipts" % (
+            fs, fs, fs, fs)),
+    )
     parts = []
-    try:
-        result = provider.exec(pod_id, command, timeout=90, check=False)
-        text = str((result or {}).get("stdout") or "").strip()
-        parts.append(text or "(stage log is empty or absent)")
-    except Exception as exc:  # noqa: BLE001
-        parts.append("(stage log unavailable: %s)" % str(exc)[:300])
-    if run_id:
+    for label, command in items:
         try:
-            wrapper = str(provider.run_logs(
-                run_id, tail=20, machine_id=pod_id) or "").strip()
+            result = provider.exec(pod_id, command + " 2>&1", timeout=90,
+                                   check=False)
+            text = str((result or {}).get("stdout") or "").strip()
         except Exception as exc:  # noqa: BLE001
-            wrapper = "(unavailable: %s)" % str(exc)[:300]
-        parts.append("launch wrapper output:\n%s"
-                     % (wrapper or "(empty)"))
+            text = "(unavailable: %s)" % str(exc)[:300]
+        parts.append("--- %s ---\n%s" % (label, text or "(empty)"))
     return redact("\n".join(parts))
 
 def execute_runpod(
