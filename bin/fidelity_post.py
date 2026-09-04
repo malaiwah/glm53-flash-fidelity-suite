@@ -111,7 +111,7 @@ def render(loaded: dict) -> str:
         "| panel | `%s`, %s contexts, %s scored positions |" % (
             reference["panel_id"],
             (comparison.get("panel") or {}).get("contexts"),
-            (comparison.get("panel") or {}).get("scored_positions_total")),
+            (comparison.get("panel") or {}).get("scored_positions")),
         "| direction / vocabulary / accumulation | %s / full / %s |" % (
             metric.get("direction_label", metric.get("direction")),
             (comparison.get("estimator") or {}).get("accumulation_dtype")),
