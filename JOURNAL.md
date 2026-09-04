@@ -3578,3 +3578,46 @@ Allowlists authored by index census for both admitted artifacts (791 keys
 drowzeys, 1569 wrldsuksgo2mars); the non-scale set of each is exactly the
 committed `glm53-layer78-unexpected-keys.json`. No number sealed for either
 artifact yet. Spend today on this lane ~$6; RunPod $179.54, no pods live.
+
+## 2026-09-04 - first Trellis row on the full GLM-5.3: wrldsuksgo2mars K4
+
+**Published.** `malaiwah/glm53-fidelity-exl3-wrld-k4-v1` @
+`9ef6de77ca2a534739ae314f498fa1019d74e235`, dataset_sha256
+`8d3b458e01a62c18578e037ca742b09943d7cefa079f5a6ae07225f859c6da14`, verified
+anonymously after publish. Candidate `wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1` @
+`47af23347db743b4666d952e2eb48f2b01c3fede`: 57,600 routed expert modules in
+exl3 trellis (mcg codebook, K4), attention / shared experts / dense MLP / MTP
+kept in the source release's block-scaled FP8, decoded per module per layer on
+the capture device by `layer_outer.materialize_trellis_subset`.
+
+**KLD(root || candidate) = 0.04480384821023634 nats, top-1 0.939990229604299**,
+panel `panel--glm53.malaiwah.corpus5x5-v1`, 51,175 scored positions, reference
+`malaiwah/glm53-fidelity-root-v1@9c4a29ee`, same lane, comparability class
+**strict**. Percentiles: median 0.00296, p95 0.198, p99 0.697, max 9.84. Only
+disclosure is `shared_reference_head` (info). Self-compare exactly 0.0 / 1.0.
+
+**Determinism across HOSTS, not just processes.** Cold runs 1 and 2 both sealed
+`capture_content_digest ba0e9beacbf0aaf351a8f13cbb226db9d5df4c54bf30a57f43cc554e4e9a0f94`
+-- and so did two earlier pods on different machines. The generation probe was
+enforced and passed on trellis-decoded weights: top-1 `" Paris"`.
+
+**Timing, H200 / US-NC-1:** fetch 394 GB in 4m22s, cold run 9m00s, repeat
+7m10s, self-compare 5m42s, qualify 18s, reference comparison 5m28s. Whole run
+~33 min, and the trellis decode is 4.4 s per 768-module layer on the GPU
+against >480 s on the host -- the single change that made the lane viable.
+
+**Beside the FP8 row on the same reference and panel:** FP8 (8 bits)
+0.0223051, top-1 0.9564; this K4 trellis (4 bits, routed experts only, rest
+FP8) 0.0448038, top-1 0.9400. Ranking these two against each other is the
+registry session's call, not stated here.
+
+**Seven attempts, seven defects, and where they lived.** Decode layer: stats
+dict, 0-dim lazy slice, host-side device. Controller/contract layer: capture
+exit 2 (which contradicted our own M1 learning 20 and destroyed a sealed
+capture), scope format vocabulary, an unrecorded `weights_decode`, and a
+qualification target surface hardcoded to `fp8-block`. The Fruit fixture
+catches the first class in fifteen seconds and none of the second. What is
+missing, and is worth more than any of the individual fixes: a local
+end-to-end harness that drives the CONTRACT path -- job contract, qualify,
+archive, publish -- over a fake sealed dataset. Five of the seven pods would
+not have been rented.
