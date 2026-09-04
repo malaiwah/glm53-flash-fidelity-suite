@@ -4741,6 +4741,11 @@ def _plan_runpod_anonymous(
         raise Refusal("--runpod-image must be an immutable name@sha256:<64-hex> reference",
                       ["a tag can be repointed after the receipt is sealed"])
     chosen["image"] = runpod_image
+    # Pin the datacenter when asked: Hub fetch throughput differed ~10x
+    # between RunPod secure hosts on 2026-09-04 (1.7 GB/s vs 240 MB/s on
+    # the same repo), and the location is the one lever the request has.
+    # Recorded on the plan; the attestation records what was served.
+    chosen["data_center_id"] = getattr(args, "runpod_datacenter", None)
     chosen["image_reference_mutable"] = False
     plan_data["max_runtime_seconds"] = max_runtime
     plan_data["provider_termination_seconds"] = int(
@@ -6092,6 +6097,7 @@ def execute_runpod(
     prepared_create = provider.prepare_safe_create(
         gpu_type=plan_data["chosen"]["provider_gpu_id"],
         num_gpus=1, spot=False, region="secure", offer="on-demand",
+        data_center_id=plan_data["chosen"].get("data_center_id"),
         storage_gb=plan_data["storage_gb"],
         container_disk_gb=container_disk_gb,
         min_vcpu=plan_data["runtime_contract"]["min_vcpu_count"],
@@ -9007,6 +9013,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--resume-origin-job", default=None,
         help="the executed job.json that produced --resume-capture; its "
              "identity is recorded as the imported cold run's origin")
+    rt.add_argument(
+        "--runpod-datacenter", default=None, metavar="ID",
+        help="pin the RunPod secure datacenter (e.g. US-MO-1); the create "
+             "refuses rather than falls back elsewhere. Recorded on the "
+             "plan; the live attestation records the datacenter served.")
     rt.add_argument(
         "--runpod-image", default=None, metavar="NAME@sha256:HEX",
         help="the pod image, pinned by digest (default: runpod/pytorch, on "

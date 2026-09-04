@@ -116,7 +116,15 @@ print(cur if not isinstance(cur, (dict, list)) else json.dumps(cur))
 ' "$CONF" "$1" "${2-}" "$FS/bin"
 }
 
-log() { echo "[$(date -u +%FT%TZ)] stage_measure/$STAGE: $*"; }
+# Stage lines also go to the container's PID 1 stdout when it is writable:
+# that stream is what a provider dashboard (RunPod "Logs") shows, so an
+# operator can watch a detached stage without SSH. Advisory only; the
+# per-stage log files under $LOGS stay the evidence.
+if [ -w /proc/1/fd/1 ]; then
+  log() { local line="[$(date -u +%FT%TZ)] stage_measure/$STAGE: $*"; echo "$line"; echo "$line" >/proc/1/fd/1 2>/dev/null || true; }
+else
+  log() { echo "[$(date -u +%FT%TZ)] stage_measure/$STAGE: $*"; }
+fi
 
 # --------------------------------------------------------------------------
 # Atomic job+attempt-bound stage markers.

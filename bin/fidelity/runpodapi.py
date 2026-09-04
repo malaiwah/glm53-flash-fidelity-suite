@@ -952,7 +952,7 @@ class RunPod(SSHTransport):
         "id name desiredStatus costPerHr imageName gpuCount "
         "containerDiskInGb volumeInGb networkVolumeId "
         "machine { id gpuTypeId gpuDisplayName secureCloud "
-        "currentPricePerGpu podHostId } "
+        "currentPricePerGpu podHostId dataCenterId location } "
         "runtime { uptimeInSeconds ports { ip isIpPublic privatePort publicPort } }"
     )
 
@@ -1090,6 +1090,11 @@ class RunPod(SSHTransport):
                 "current_price_per_gpu": machine.get("currentPricePerGpu"),
                 "provider_machine_id": machine.get("id"),
                 "pod_host_id": machine.get("podHostId"),
+                # Host network throughput to the Hub varied 10x between
+                # datacenters on 2026-09-04 (see docs/CLOUD-RECIPES.md);
+                # recorded so a slow fetch can be traced to a location.
+                "data_center_id": machine.get("dataCenterId"),
+                "location": machine.get("location"),
                 "volume_gb": pod.get("volumeInGb"),
                 "container_disk_gb": pod.get("containerDiskInGb"),
                 "network_volume_id": pod.get("networkVolumeId"),
@@ -1886,9 +1891,17 @@ class RunPod(SSHTransport):
             raise RunPodError("RunPod image must be nonempty")
         public_key = _canonical_public_key(
             self._validated_ssh_public_key())
+        data_center_id = kw.get("data_center_id")
+        if data_center_id is not None:
+            data_center_id = str(data_center_id).strip()
+            if not re.fullmatch(r"[A-Z]{2}-[A-Z]{2,3}-[0-9]{1,2}", data_center_id):
+                raise RunPodError(
+                    "RunPod data_center_id must look like US-MO-1; got %r"
+                    % data_center_id)
 
         request_identity = {
             "cloud_type": "SECURE",
+            "data_center_id": data_center_id,
             "is_spot": False,
             "offer": "on-demand",
             "gpu_type_id": gpu,
@@ -1909,14 +1922,19 @@ class RunPod(SSHTransport):
 
         env_gql = '{key:"PUBLIC_KEY", value:%s}' % _gql_string(
             public_key, "RunPod SSH public key")
+        datacenter_gql = ""
+        if data_center_id is not None:
+            datacenter_gql = "dataCenterId:%s, " % _gql_string(
+                data_center_id, "RunPod create dataCenterId")
         query = ('mutation { podFindAndDeployOnDemand(input:{'
+                 '%s'
                  'cloudType:%s, gpuCount:%d, volumeInGb:%d, '
                  'containerDiskInGb:%d, minVcpuCount:%d, minMemoryInGb:%d, '
                  'gpuTypeId:%s, name:%s, imageName:%s, '
                  'terminateAfter:%s, ports:"22/tcp", '
                  'volumeMountPath:"/workspace", env:[%s] '
                  '}) { id name costPerHr } }'
-                 % (request_identity["cloud_type"], gpu_count, volume_gb,
+                 % (datacenter_gql, request_identity["cloud_type"], gpu_count, volume_gb,
                     container_disk_gb, min_vcpu, min_ram_gb,
                     _gql_string(gpu, "RunPod create gpu_type"),
                     _gql_string(name, "RunPod create name"),

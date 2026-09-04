@@ -266,6 +266,25 @@ def main():
                          name="fidcloud-" + "a" * 32,
                          terminate_after=terminate_after)
     check("dry create", created["dry_run"] is True)
+    pinned = dry.prepare_safe_create(
+        gpu_type="NVIDIA L4", storage_gb=20, container_disk_gb=20,
+        region="secure", name="fidcloud-" + "a" * 32,
+        terminate_after=terminate_after, data_center_id="US-MO-1")
+    check("datacenter pin lands in the create mutation and its identity",
+          b'dataCenterId:\\"US-MO-1\\", ' in pinned.graphql_body
+          and pinned.to_dict()["request_identity"]["data_center_id"] == "US-MO-1")
+    unpinned = dry.prepare_safe_create(
+        gpu_type="NVIDIA L4", storage_gb=20, container_disk_gb=20,
+        region="secure", name="fidcloud-" + "a" * 32,
+        terminate_after=terminate_after)
+    check("no datacenter pin sends no dataCenterId",
+          b"dataCenterId" not in unpinned.graphql_body
+          and unpinned.to_dict()["request_identity"]["data_center_id"] is None)
+    check("malformed datacenter id refused", refuses(
+        lambda: dry.prepare_safe_create(
+            gpu_type="NVIDIA L4", storage_gb=20, container_disk_gb=20,
+            region="secure", name="fidcloud-" + "a" * 32,
+            terminate_after=terminate_after, data_center_id="mo1")))
     check("network volume refused", refuses(lambda: dry.create(
         gpu_type="NVIDIA L4", storage_gb=20, container_disk_gb=20,
         network_volume_id="volume", terminate_after=terminate_after)))
