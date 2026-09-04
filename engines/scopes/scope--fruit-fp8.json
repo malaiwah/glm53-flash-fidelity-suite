@@ -1,0 +1,133 @@
+{
+  "activation_quantization": null,
+  "assignments": [
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "13 tensors: model.layers.N.self_attn.o_proj.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "attn.o",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "26 tensors: model.layers.N.self_attn.indexer.wk.weight, model.layers.N.self_attn.indexer.wq_b.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "attn.other",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "65 tensors: model.layers.N.self_attn.indexer.k_norm.bias, model.layers.N.self_attn.indexer.k_norm.weight, model.layers.N.self_attn.indexer.weights_proj.weight, model.layers.N.self_attn.kv_a_layernorm.weight, model.layers.N.self_attn.q_a_layernorm.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "attn.other",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "52 tensors: model.layers.N.self_attn.kv_a_proj_with_mqa.weight, model.layers.N.self_attn.kv_b_proj.weight, model.layers.N.self_attn.q_a_proj.weight, model.layers.N.self_attn.q_b_proj.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "attn.qkv",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "1 tensors: model.embed_tokens.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "embed_tokens",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "1 tensors: lm_head.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "lm_head",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "3 tensors: model.layers.N.mlp.down_proj.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "mlp.down",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "3 tensors: model.layers.N.mlp.gate_proj.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "mlp.gate",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "3 tensors: model.layers.N.mlp.up_proj.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "mlp.up",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "7680 tensors: model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "moe.experts",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "20 tensors: model.layers.N.mlp.gate.e_score_correction_bias, model.layers.N.mlp.gate.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "moe.router",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "30 tensors: model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "moe.shared_expert",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "778 tensors: model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight, model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "mtp",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "13 tensors: model.layers.N.eh_proj.weight, model.layers.N.enorm.weight, model.layers.N.hnorm.weight, model.layers.N.input_layernorm.weight, model.layers.N.mlp.gate.e_score_correction_bias, model.layers.N.mlp.gate.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "mtp",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "27 tensors: model.layers.N.input_layernorm.weight, model.layers.N.post_attention_layernorm.weight, model.norm.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "tensor_class": "norm",
+      "treatment": "native"
+    }
+  ],
+  "head_policy": "native",
+  "kv_cache_dtype": "bf16",
+  "mtp_included": true,
+  "policy": "mixed",
+  "weight_block_size": [
+    128,
+    128
+  ]
+}

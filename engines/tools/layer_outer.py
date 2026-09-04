@@ -101,6 +101,7 @@ import json
 import os
 import re
 import struct
+import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 SCHEDULE_WINDOW_OUTER = "window-outer"
@@ -981,12 +982,15 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
             # Decoded per layer into a transient dict: the streamer keeps the
             # lazy slices, never the 19 GB of decoded bf16, across layers.
             before = dict(fp8_stats)
+            started = time.monotonic()
             decoded = materialize_fp8_subset(subset, fp8_plan, torch_dtype, fp8_stats)
+            decode_seconds = time.monotonic() - started
             info, _ = convert_and_load(model, decoded, load_config)
             del decoded
             log(stage="fp8_decode_layer", index=index,
                 dequantized=fp8_stats["dequantized"] - before["dequantized"],
-                fp8_elements=fp8_stats["fp8_bytes"] - before["fp8_bytes"])
+                fp8_elements=fp8_stats["fp8_bytes"] - before["fp8_bytes"],
+                decode_seconds=round(decode_seconds, 3))
         else:
             info, _ = convert_and_load(model, subset, load_config)
         _absorb(info)
