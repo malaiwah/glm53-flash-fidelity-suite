@@ -116,8 +116,16 @@ def teardown(tmp, **flags):
     return td, jl, con, lease
 
 def fruit_target_descriptor(root):
+    # The descriptor must carry the identity the authored timing row binds
+    # (shard-file bytes, config and index digests), or job_document refuses
+    # for the wrong reason: read the row rather than restate it.
     revision = "ef68013aa6e16453cf52b5b77647f72fbe258c3c"
-    model_bytes = 10102776813
+    row = next(
+        row for row in json.load(
+            open(ROOT / "bin" / "engines.json", encoding="utf-8"))["root_timing_profiles"]
+        if row["target_repo"] == "malaiwah/GLM-5.2-SIQ-Fruit-bf16"
+        and row["target_revision"] == revision)
+    model_bytes = row["model_identity"]["model_bytes"]
     shards = [{
         "path": "model-00001-of-00001.safetensors",
         "bytes": model_bytes,
@@ -133,10 +141,8 @@ def fruit_target_descriptor(root):
         "codec": "bf16",
         "bits": 16.0,
         "path": None,
-        "config_sha256":
-            "5a19697e555fff140d1b089b852c3ef227114b196f8d76796560feeeb34dc44a",
-        "index_sha256":
-            "86e6cc1d8548c7bdbbc117e93b85b8ae249f446de9b48d2195e51f358674ba56",
+        "config_sha256": row["model_identity"]["config_sha256"],
+        "index_sha256": row["model_identity"]["index_sha256"],
         "model_bytes": model_bytes,
         "shards": shards,
         "shard_manifest_sha256": hashlib.sha256(shard_raw).hexdigest(),
@@ -768,6 +774,32 @@ def main():
                   "--lane", "streaming", "--dataset-id", "d",
                   "--publish-root-to", "not-a-repo"])
     check("RP8b a malformed repo id is refused", rc == MC.EXIT_REFUSED, rc)
+    # The Hub's own rule, enforced before spend: a paid Fruit capture on
+    # 2026-09-04 reached its final step before the publisher learned that
+    # 'fidelity--fruit.malaiwah.root.bf16' is not a legal Hub name.
+    forbidden_ids = ("malaiwah/fidelity--fruit.malaiwah.root.bf16",
+                     "malaiwah/a..b", "mal--aiwah/ok", "malaiwah/x" * 50,
+                     "malaiwah/name.git")
+    refused_ids = [
+        repo for repo in forbidden_ids
+        if MC.main(["--role", "root", "--model", "x/y", "--panel", "o/p",
+                    "--lane", "streaming", "--dataset-id", "d",
+                    "--publish-root-to", repo]) == MC.EXIT_REFUSED]
+    check("RP8c the Hub's forbidden repo-id forms are refused before spend",
+          refused_ids == list(forbidden_ids), refused_ids)
+    from fidelity import dshub as rule_dshub
+
+    def rule_refuses(repo):
+        try:
+            rule_dshub.validate_repo_id(repo)
+        except rule_dshub.HubError:
+            return True
+        return False
+    check("RP8d legal ids pass the rule and forbidden ids raise in the publisher",
+          rule_dshub.validate_repo_id("malaiwah/glm53-fidelity-root-v1")
+          == "malaiwah/glm53-fidelity-root-v1"
+          and not rule_refuses("malaiwah/fruit-fidelity-root-container-v1")
+          and all(rule_refuses(repo) for repo in forbidden_ids))
 
     # RP10/RP11: the first safe paid path has no preview/race branch, under
     # either SSH controller or container composition.

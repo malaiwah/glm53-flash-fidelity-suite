@@ -371,14 +371,39 @@ def _expect_absent(
     raise HubError("%s already exists or collides with the destination" % owner)
 
 
+def validate_repo_id(repo: str) -> str:
+    """The Hub's own repo-id rule, applied before any spend.
+
+    Mirrors huggingface_hub.utils.validate_repo_id: exact owner/name, each
+    part alphanumeric plus ``-``, ``_``, ``.``; ``--`` and ``..`` forbidden
+    anywhere; the name at most 96 characters and not ending in ``.git``. The
+    2026-09-04 Fruit rehearsal paid for a full capture before the publisher
+    learned that ``fidelity--fruit...`` is not a legal Hub name.
+    """
+    if not isinstance(repo, str) or re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*", repo) is None:
+        raise HubError("publication repository must be exact owner/name: %r" % (repo,))
+    namespace, name = repo.split("/", 1)
+    if "--" in repo or ".." in repo:
+        raise HubError(
+            "publication repository %r: the Hub forbids '--' and '..' in a repo id"
+            % repo)
+    if len(name) > 96 or len(namespace) > 96:
+        raise HubError(
+            "publication repository %r: the Hub limits each part to 96 characters"
+            % repo)
+    if name.endswith(".git"):
+        raise HubError(
+            "publication repository %r: the Hub forbids a name ending in .git" % repo)
+    return repo
+
+
 def preflight_create(repo: str, token_file: str) -> Dict[str, Any]:
     """Prove a public dataset destination is absent without mutating the Hub."""
     if HF_ENDPOINT != "https://huggingface.co":
         raise HubError(
             "publication preflight requires exact https://huggingface.co endpoint")
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*",
-                    repo) is None:
-        raise HubError("publication repository must be exact owner/name")
+    validate_repo_id(repo)
     token = read_token(token_file)
     whoami = _strict_object(
         _get(HF_ENDPOINT + "/api/whoami-v2", token=token),
@@ -527,6 +552,7 @@ def publish_dataset(root: str, repo: str, qualification_path: str, *,
     """Publish one qualified root dataset with an optimistic one-commit cutover."""
     from . import dsvalidate
 
+    validate_repo_id(repo)
     report = dsvalidate.validate_dataset(root, verify_tensors=True)
     if not report.passed:
         raise HubError("REFUSED to publish: %s did not verify (%d errors, first: %s)"

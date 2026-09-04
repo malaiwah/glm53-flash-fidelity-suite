@@ -7318,9 +7318,12 @@ def execute_runpod(
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE, text=True, check=False)
                 if publication.returncode != 0:
+                    # The publisher frames its refusal on stdout; a traceback
+                    # lands on stderr. Report both or the receipt says nothing.
                     raise RuntimeError(
-                        "local atomic root publication failed: %s"
-                        % redact(publication.stderr[-1000:]))
+                        "local atomic root publication failed (exit %d): %s"
+                        % (publication.returncode,
+                           redact((publication.stdout + publication.stderr)[-1500:])))
                 _verify_frozen_suite(
                     frozen_bundle, plan_data["bundle"])
                 rebuild = subprocess.run(
@@ -9021,12 +9024,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "dataset being written; a capture with no identity cannot "
                     "be published or cited)")
             return EXIT_REFUSED
-        if args.publish_root_to and not re.match(
-                r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$",
-                args.publish_root_to):
-            con.err("--publish-root-to %r is not an owner/name Hub repo id"
-                    % args.publish_root_to)
-            return EXIT_REFUSED
+        if args.publish_root_to:
+            from fidelity import dshub
+            try:
+                dshub.validate_repo_id(args.publish_root_to)
+            except dshub.HubError as exc:
+                con.err("--publish-root-to: %s" % exc)
+                return EXIT_REFUSED
         if args.publish_root_to and getattr(args, "preview_of", None) and \
                 args.publish_root_to.rsplit("/", 1)[-1] == args.preview_of:
             con.err("--publish-root-to %r wears the FINAL dataset's name while "
