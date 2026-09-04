@@ -3378,3 +3378,66 @@ Measured on the L4 pod: 10.08 GB fetched and censused in 44 s anonymously
 (≥230 MB/s), bootstrap 13 min, one Fruit cold capture 86 s, `compare_root`
 383 s for 16 windows. The GLM-5.3 H200 loop is running again on this
 controller; its dry-run calculates `$39.41` under the `$40` cap.
+
+## 2026-09-04 — GLM-5.3 root on an H200: one sealed cold capture, salvaged under a documented override
+
+First H200 attempt on the proven controller bound on the first try
+(`2g4emitafqvka7`, RunPod secure `us-co-1`, 16 vCPU / 128 GB / 1.8 TB pod
+volume, created 19:46:34Z, hard cap `$40`, `--max-runtime 3h30m` from the
+timing row). Setup 7 min. Authenticated fetch of the 282 shards: 1,506,667,387,408
+bytes in 92 min, **274 MB/s** sustained (network-bound; the volume writes at
+784 MB/s direct). `/workspace` on this pod type is **MooseFS**
+(`mfs#us-co-1.runpod.net:9421`, FUSE) — which is also why it ignored file modes
+earlier in the day. The container disk on the same host measured 3.5 GB/s
+write / **5.9 GB/s** direct read.
+
+Cold run 1 started 21:23:42Z. Layer loads streamed from MooseFS at a median
+**89.7 s per layer** (max 124.9 s; 78 layers, 6,789 s of loads in a 9,720 s
+run — 19.3 GB per layer at ~215 MB/s on a host shared with other tenants),
+plus ~38 s of forward per layer for 26 windows. The 3.5 h bound — one-hour
+fetch, 37-minute runs — was going to expire at 23:16:31Z with run 1 at layer
+~30 of 78. Michel chose to salvage one capture over a clean `$18` failure.
+
+The override, in full, because it is the only time this campaign has done it:
+the on-pod watchdog (pid 284, deadline epoch 1788477391) was SIGKILLed at
+22:34:32Z; the controller (pid 1193434) was SIGSTOPped at 22:34:40Z; the
+capture ran on; a read-only rsync over the controller's own authenticated
+channel copied `dataset/` the moment `capture.done` appeared; the controller
+was SIGCONTed at 00:09:57Z, saw the deadline past, and tore down normally —
+destroy 00:09:58Z, absence confirmed 00:10:00Z, billing reconciled `$16.76`
+(GPU `$15.83` + disk `$0.92`; ≈4 h 23 min of H200 by wall time). No live
+pods remain. The provider-side `terminateAfter` (03:16:31Z) and the reaper's
+lease deadline were never touched. The disarm step at teardown refused
+("recorded watchdog process is not live") exactly as it should, so the
+controller's failed archive was not retrieved; `receipts/`, `logs/` and
+`job.json` were copied from the pod beforehand.
+
+What the run produced (`~/fidelity-runs/glm53-root-sidecopy/dataset`,
+2,532,593,132 bytes, 84/84 checksums, `fidelity-dataset verify` VERIFIED with
+tensors recomputed):
+
+```
+capture_content_digest  9eba97dddb4ff2e2a1d1fad8fdac1a57ec22963f1f85345451fcadcfc42682b8
+dataset_sha256          01b09bac3f1a5169ff0175a899f9c3846dc511f2ee7e18633b22fe8241fd621c
+checkpoint_identity     02963bc5f9012be8a597a29737adcb9204fe5a7513f66e9b1f85075449f4dda1
+head tensor content     864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd
+```
+
+`zai-org/GLM-5.3-BF16@304b8051…`, `panel--glm53.malaiwah.corpus5x5-v1`
+(25 windows, 51,175 positions), hidden form, layer-outer stream, H200,
+generation probe " Paris" p=0.245 enforced and passed, 791 unused MTP-block
+tensors exactly matching the pinned allowlist on the post-streaming union.
+Disclosures: `reduced_run_count` (one cold run). It is **sealed and
+unqualified**: `fidelity-dataset publish` requires the qualification receipt,
+both captures and the result archive, and nothing here argues for bypassing
+that. Its value is as the reproduction target: the next run's two captures
+either match this digest bitwise across pods and days, or they say something
+worth knowing.
+
+Lessons, in the order they cost money: the timing bound must come from
+measured rates on the storage the pod actually has (row re-authored to 8 h on
+MooseFS; `bin/engines.json`); a large time buffer is not optional on a shared
+host; the pod volume is the wrong place for weights the capture streams twice —
+the container disk is ~10x faster to read, and a 1.9 TB container-disk layout
+is the next controller change; and a failed run must be able to hand back a
+sealed capture it finished (the failed archive excludes `dataset/`).
