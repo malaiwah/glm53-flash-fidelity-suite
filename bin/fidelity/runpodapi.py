@@ -70,7 +70,13 @@ MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_LOG_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_LOG_EVENT_LINE_BYTES = 64 * 1024
 RUNPOD_LOG_TAIL_LINES = 5000
-RUNPOD_HOST_KEY_LOG_WAIT_SECONDS = 900
+# 2026-09-03/04: three of nine L4 pods never surfaced their host key within
+# 900 s while every pod that did surface it did so within ~40 s. The likely
+# cause is a cold pull of the ~20 GB pinned image on a host that does not
+# cache it; re-rolling lands on another cold host as often as not, and each
+# roll costs the 15 minutes anyway. Thirty minutes costs at most one extra
+# quarter hour of the cheapest GPU here.
+RUNPOD_HOST_KEY_LOG_WAIT_SECONDS = 1800
 RUNPOD_HOST_KEY_LOG_IO_SECONDS = 60
 RUNPOD_HOST_KEY_LOG_RETRY_SECONDS = 2
 _ED25519_HOST_KEY_LOG_RE = re.compile(

@@ -39,6 +39,7 @@ from .cloudlease import (CreateResponsePersistenceError, HEALTH_SCHEMA,
                          campaign_coordinates, systemd_reaper_health, utc_iso,
                          validate_unresolved_lease_scope)
 from .runpodapi import (
+    RUNPOD_HOST_KEY_LOG_WAIT_SECONDS,
     RunPodCreateResponseError, _billing_total_matches_record_sum)
 from .jobcontract import (finalize_job, seal_execution_job,
                           validate_execution_job, verify_bundle_manifest,
@@ -55,8 +56,11 @@ IMAGE = (
 DRILL_LAG_SECONDS = 900
 DEADLINE_POLL_DURATION_MAX_SECONDS = 120
 DEADLINE_INTERPOLL_GAP_MAX_SECONDS = 120
-DEFAULT_WORKLOAD_SECONDS = 1200
-DEFAULT_TERMINATE_SECONDS = 1320
+# Bounded boot (the host-key log wait) plus five minutes of remote ready
+# evidence; tracks runpodapi's wait bound so the drill funds what a real
+# run may spend before its first stage.
+DEFAULT_WORKLOAD_SECONDS = RUNPOD_HOST_KEY_LOG_WAIT_SECONDS + 300
+DEFAULT_TERMINATE_SECONDS = DEFAULT_WORKLOAD_SECONDS + 120
 DEFAULT_POLL_SECONDS = 15
 DEFAULT_STORAGE_GB = 20
 MIN_VCPU = 4
