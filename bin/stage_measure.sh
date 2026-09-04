@@ -1161,10 +1161,10 @@ if observed != expected:
 print(target)
 PYPANEL
 )"
+  TOKENIZER_ROOT="$MODELS/target"
   EXTRA=(--sanity-expect "$EXPECT"
          --panel-binding "$PANEL_BINDING"
          --panel-binding-sha256 "$PANEL_BINDING_SHA"
-         --panel-tokenizer-root "$MODELS/target"
          --dataset-license "$DATASET_LICENSE")
   if [ "$DATASET_LICENSE" = "other" ]; then
     EXTRA+=(--weights-license-file "$MODELS/target/LICENSE"
@@ -1270,8 +1270,25 @@ PYSCOPE
     CAPTURE_ROLE=quant
     EXTRA+=(--scope-file "$CANDIDATE_SCOPE"
             --codec "$CANDIDATE_CODEC" --declared-bits "$CANDIDATE_BITS")
+    # Tokenizer verification root for a candidate: tokenizer-class files from
+    # the candidate itself, model-class files from the reference root's
+    # release (fetch_reference), each byte-checked against the panel's
+    # declared digests by the capture.
+    TOKENIZER_ROOT="$FS/inputs/tokenizer-root"
+    rm -rf "$TOKENIZER_ROOT"; mkdir -p "$TOKENIZER_ROOT"
+    for name in config.json generation_config.json LICENSE; do
+      [ -f "$FS/reference-model/$name" ] && ln -s "$FS/reference-model/$name" "$TOKENIZER_ROOT/$name"
+    done
+    for path in "$MODELS/target"/*; do
+      name="$(basename "$path")"
+      case "$name" in config.json|generation_config.json|LICENSE|*.safetensors|*.index.json) ;;
+        *) [ -f "$path" ] && [ ! -e "$TOKENIZER_ROOT/$name" ] && ln -s "$path" "$TOKENIZER_ROOT/$name" ;;
+      esac
+    done
+    require_stage_marker fetch_reference
     log "candidate capture: role quant, scope $CANDIDATE_SCOPE_REL ($CANDIDATE_SCOPE_SHA), codec $CANDIDATE_CODEC, $CANDIDATE_BITS bits"
   fi
+  EXTRA+=(--panel-tokenizer-root "$TOKENIZER_ROOT")
   log "capturing fresh process $PROCESS_LABEL: $REPO @ $REV -> $OUT"
     # The two repository arguments are intentionally different identities:
     # weights_repository is what was executed; repository is the intended
@@ -1436,6 +1453,27 @@ PYREF
   [ -n "$REF_ROOT" ] || exit 3
   ln -sfn "$REF_ROOT" "$FS/reference"
   log "reference verified: dataset_sha256 $REF_SHA, capture_content_digest $REF_CCD -> $FS/reference"
+  # The panel's tokenizer identity names the ROOT's config.json,
+  # generation_config.json and LICENSE beside the tokenizer files. A candidate
+  # shares the tokenizer files byte for byte but has its own config
+  # (quantization_config): the capture verifies the model-class files against
+  # the reference root's release, fetched anonymously at the revision the
+  # verified reference dataset names, so the binding evidence is the job's.
+  REF_MODEL_DIR="$FS/reference-model"
+  REF_WEIGHTS="$(python3 - "$REF_ROOT" <<'PYW'
+import json, sys
+m = json.load(open(sys.argv[1] + "/fidelity-dataset.json"))
+w = m.get("weights") or {}
+print("%s %s" % (w.get("repository"), w.get("model_revision") or w.get("revision")))
+PYW
+)"
+  set -- $REF_WEIGHTS
+  log "fetching the reference root's model-class files: $1 @ $2"
+  mkdir -p "$REF_MODEL_DIR"
+  env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN -u HUGGINGFACE_HUB_TOKEN -u HF_TOKEN_PATH \
+      HF_HUB_DISABLE_IMPLICIT_TOKEN=1 HF_HOME="$FS/hf-anonymous" \
+      "$VENV/bin/hf" download "$1" --revision "$2" --local-dir "$REF_MODEL_DIR" \
+      config.json generation_config.json LICENSE >>"$LOGS/fetch_reference.log" 2>&1
   write_marker
   log "done"
   ;;
