@@ -1070,11 +1070,59 @@ def _validate_bound_panel_receipt(prefix, manifest_panel, binding,
         raise ArchiveError(str(exc)) from exc
 
 
+def _validate_imported_canonical(prefix, identity, bodies, contract):
+    """A resumed root's canonical capture names where cold run 1 came from.
+
+    The annotation is accepted only on the canonical tree, only when the
+    job contract declares the same resume_capture, and only when the sealed
+    receipts/imported-capture.json travelling in the archive is the receipt
+    it names and binds this exact dataset.
+    """
+    imported = identity.get("imported_from")
+    if prefix != "dataset":
+        raise ArchiveError(
+            "only the canonical capture may be an imported cold run")
+    resume = (contract.get("resume_capture")
+              if isinstance(contract, dict) else None)
+    if not isinstance(resume, dict):
+        raise ArchiveError(
+            "canonical capture is marked imported but the job contract "
+            "declares no resume_capture")
+    if (not isinstance(imported, dict)
+            or set(imported) != {"receipt", "receipt_sha256", "origin",
+                                 "imported_at"}
+            or imported.get("receipt") != "imported-capture.json"
+            or not _valid_hex(imported.get("receipt_sha256"), 64)
+            or imported.get("origin") != resume.get("origin")):
+        raise ArchiveError(
+            "canonical capture import annotation differs from the job contract")
+    body = bodies.get("receipts/imported-capture.json")
+    if not isinstance(body, bytes):
+        raise ArchiveError(
+            "archive lacks receipts/imported-capture.json for the imported "
+            "canonical capture")
+    receipt = _parse_json_member("receipts/imported-capture.json", body)
+    if (not verify_seal(receipt)
+            or receipt.get("receipt_sha256") != imported["receipt_sha256"]
+            or receipt.get("dataset_sha256") != identity.get("dataset_sha256")
+            or receipt.get("dataset_sha256") != resume.get("dataset_sha256")
+            or receipt.get("capture_content_digest")
+                != identity.get("capture_content_digest")
+            or receipt.get("dataset_manifest_file_sha256")
+                != identity.get("dataset_manifest_file_sha256")
+            or receipt.get("origin") != resume.get("origin")):
+        raise ArchiveError(
+            "imported-capture receipt does not bind the canonical dataset "
+            "the qualification names")
+
+
 def _validate_dataset_tree(prefix, identity, bodies, digests=None,
                            contract=None):
     if not isinstance(identity, dict):
         raise ArchiveError("qualification %s capture identity is missing" % prefix)
-    if set(identity) != ROOT_CAPTURE_IDENTITY_FIELDS:
+    if "imported_from" in identity:
+        _validate_imported_canonical(prefix, identity, bodies, contract)
+    if set(identity) - {"imported_from"} != ROOT_CAPTURE_IDENTITY_FIELDS:
         raise ArchiveError(
             "qualification %s capture identity fields differ" % prefix)
     expected_process = (

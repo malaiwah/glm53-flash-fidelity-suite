@@ -55,7 +55,8 @@ def _sealed(schema, **fields):
 
 
 def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
-              publish=False, abandoned=False, weights_license_body=None):
+              publish=False, abandoned=False, weights_license_body=None,
+              resumed=False):
     root = Path(tmp) / "run"
     (root / "receipts" / "done").mkdir(parents=True)
     (root / "reports").mkdir(parents=True)
@@ -335,21 +336,25 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
         }
     job = JC.finalize_job(job)
     job_bytes = json.dumps(job).encode("utf-8")
-    census = _sealed(
-        RS.TARGET_CENSUS_SCHEMA,
-        verified_at="2026-01-01T00:00:00Z",
-        job_id_full=job["job_id_full"],
-        job_file_sha256=hashlib.sha256(job_bytes).hexdigest(),
-        repository=target["repo_id"],
-        revision=target["revision"],
-        config_sha256=target["config_sha256"],
-        index_sha256=target["index_sha256"],
-        shard_manifest_sha256=target["shard_manifest_sha256"],
-        model_bytes=target["model_bytes"],
-        shards=target["shards"],
-        index_shards=["model-00001-of-00001.safetensors"])
-    (root / "receipts" / "fetch-target-census.json").write_text(
-        json.dumps(census), encoding="utf-8")
+
+    def write_census(job, job_bytes):
+        census = _sealed(
+            RS.TARGET_CENSUS_SCHEMA,
+            verified_at="2026-01-01T00:00:00Z",
+            job_id_full=job["job_id_full"],
+            job_file_sha256=hashlib.sha256(job_bytes).hexdigest(),
+            repository=target["repo_id"],
+            revision=target["revision"],
+            config_sha256=target["config_sha256"],
+            index_sha256=target["index_sha256"],
+            shard_manifest_sha256=target["shard_manifest_sha256"],
+            model_bytes=target["model_bytes"],
+            shards=target["shards"],
+            index_shards=["model-00001-of-00001.safetensors"])
+        (root / "receipts" / "fetch-target-census.json").write_text(
+            json.dumps(census), encoding="utf-8")
+
+    write_census(job, job_bytes)
     run_report_hashes = []
     for cold_run in (1, 2):
         report_path = root / "reports" / ("cold-run-%d.json" % cold_run)
@@ -647,6 +652,42 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                 "weights_revision": target["revision"],
                 "determinism_run_count": 1,
             }
+        if resumed:
+            # Cold run 1 imported from a prior attempt: the job names the
+            # exact dataset, the controller's sealed receipt travels in
+            # receipts/, and the qualification annotates the canonical.
+            canonical_identity = capture_identities["canonical"]
+            resume_identity = {
+                "dataset_sha256": canonical_identity["dataset_sha256"],
+                "capture_content_digest":
+                    canonical_identity["capture_content_digest"],
+                "dataset_manifest_file_sha256":
+                    canonical_identity["dataset_manifest_file_sha256"],
+                "origin": {"job_id_full": "a" * 64, "attempt_id": "b" * 24,
+                           "job_file_sha256": "c" * 64},
+            }
+            job = json.loads(json.dumps(job))
+            job.pop("job_id", None)
+            job.pop("job_id_full", None)
+            job["capture"]["resume_capture"] = resume_identity
+            job = JC.finalize_job(job)
+            job_bytes = json.dumps(job).encode("utf-8")
+            write_census(job, job_bytes)
+            import_receipt = JC.build_imported_capture_receipt(
+                job_id_full=job["job_id_full"],
+                attempt_id=job["execution_attempt"]["attempt_id"],
+                resume=resume_identity, archive_sha256="d" * 64,
+                archive_bytes=4096, manifest_sha256="e" * 64, file_count=7,
+                source_path="/prior/dataset",
+                imported_at="2026-09-04T01:00:00Z")
+            (root / "receipts" / "imported-capture.json").write_text(
+                json.dumps(import_receipt), encoding="utf-8")
+            canonical_identity["imported_from"] = {
+                "receipt": "imported-capture.json",
+                "receipt_sha256": import_receipt["receipt_sha256"],
+                "origin": resume_identity["origin"],
+                "imported_at": import_receipt["imported_at"],
+            }
         qualification = _sealed(
             RS.ROOT_QUALIFICATION_SCHEMA,
             qualified_at="2026-01-01T00:00:00Z",
@@ -886,6 +927,25 @@ def rung_logs():
             check("R31e ... and extracts the sealed dataset for a later resume",
                   (Path(out) / "result" / "dataset" / "fidelity-dataset.json").is_file()
                   and not (Path(out) / "result" / "dataset-repeat").exists())
+
+    # The resumed root's archive: the canonical capture carries its import
+    # annotation, the sealed import receipt rides in receipts/, and the
+    # validator binds the two to the job contract. Drop the receipt and the
+    # archive is refused; the annotation is never taken on trust.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _run_root(tmp, role="root", resumed=True)
+        summary = RS.build_summary(
+            root, "capture", "qualified-unpublished",
+            ["setup", "capture", "verify", "capture_repeat", "verify_repeat",
+             "compare_root", "qualify_root"])
+        blob = RS.build_archive(root, summary)
+        verified = RS.verify_archive(blob)
+        check("R31f a resumed root archive builds and verifies with the "
+              "imported cold run 1 bound to its receipt and job contract",
+              verified["manifest"]["status"] == "qualified-unpublished")
+        (root / "receipts" / "imported-capture.json").unlink()
+        _refused("R31g ... and refuses without the import receipt",
+                 lambda: RS.build_archive(root, summary))
 
 
 def rung_http():
