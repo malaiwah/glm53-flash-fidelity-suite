@@ -147,6 +147,18 @@ container's PID 1 stdout, so the RunPod dashboard **Logs** tab shows stage
 progress for a detached run without SSH. That stream is advisory; the
 per-stage log files retrieved through `--result-sink` are the evidence.
 
+## RunPod: the measurement image on the safe SSH path
+
+`--runpod-image ghcr.io/malaiwah/quant-fidelity-measure@sha256:<digest>` boots the
+`:ssh` target of the measurement image (sshd + the locked stack baked at
+`/opt/fidelity`). The bootstrap seeds the per-attempt venv and pipeline from the
+image when the wheel lock matches, so `setup` is seconds instead of ~7 minutes of
+pip; the live attestation probes CUDA through the image venv and records
+`cuda.interpreter`. Proven 2026-09-04 on an L40S (US-MO-1): Fruit root, two
+cold runs bitwise (`d75e830c…`), qualified, torn down, $0.53. The digest differs
+from the published L4 root because determinism is per device, not because of
+the image. The `:ssh` tag is amd64 only; pin the digest, never the tag.
+
 ## Credentials and identity
 
 - RunPod API bytes come from an owner-only mode-0600 regular file

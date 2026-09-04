@@ -3513,3 +3513,22 @@ root. Fruit FP8 rehearsed the whole route first (`malaiwah/fruit-fidelity-fp8-v1
 
 Not claimed: this row does not upgrade any GLM-5.3 row measured against another
 teacher; admissibility is the registry session's call.
+
+## 2026-09-04 - measurement image on the safe RunPod path; three defects the $2 of rehearsals bought
+
+`ghcr.io/malaiwah/quant-fidelity-measure@sha256:e0ac27c3…` (`:ssh`, amd64, CI-built
+from `4e4292a`) ran the Fruit root on an L40S in US-MO-1: venv and pipeline seeded from
+the image, two cold runs bitwise `d75e830c7c7ba50f…`, self-compare 0.0, qualified,
+`ABSENCE_CONFIRMED`. Not the published L4 digest (`b417acc2…`): per-device determinism.
+
+Paid for on the way: (1) the live attestation probed CUDA with the system python,
+which has no torch on the image - it now probes with the interpreter that will
+measure and records which; (2) a refused attestation was discarded with its reason -
+it is now written before the floor check and the refusal names the failures; (3) a
+MooseFS attribute cache hid a fresh `exit_code=0` from the next ssh session and the
+controller declared the verify stage dead and tore the pod down - `run_status`
+re-probes GONE three times over ~6 s. Regressions for all three.
+
+Container CI: arm64 has been failing since the x86_64-only wheel lock landed
+(`607d207`); `:main` was not re-tagged. Balances: RunPod $184.80, JarvisLabs $100.08,
+Vast $19.56.
