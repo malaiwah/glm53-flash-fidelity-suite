@@ -8726,7 +8726,10 @@ def build_parser() -> argparse.ArgumentParser:
              "model). It becomes cold run 1 on the pod; cold run 2 is "
              "captured fresh and must reproduce it bitwise for "
              "qualification. Verified locally (tensors recomputed) before "
-             "any spend, and again by the pod.")
+             "any spend, and again by the pod. The imported capture is the "
+             "one published, so it must be publishable: captures sealed "
+             "before 2026-09-04 carry their pod path in validation/ and "
+             "the publisher refuses them.")
     rt.add_argument(
         "--resume-origin-job", default=None,
         help="the executed job.json that produced --resume-capture; its "

@@ -2176,7 +2176,11 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
             else default_card_body(args, manifest, scope))
     writer.add_readme(render_card(args, manifest, body))
 
-    report = dsvalidate.Report(args.out)
+    # The record is sealed into the dataset, so its subject is the dataset's
+    # own identity, never the directory it was written to: an absolute pod
+    # path ("/workspace/fidelity/<job>/<attempt>/dataset") made every capture
+    # before 2026-09-04 unpublishable under the private-path rule.
+    report = dsvalidate.Report("dataset:%s" % args.dataset_id)
     report.ok("pre-seal")
     manifest = writer.finish(manifest, panel_doc, capture_doc, head_doc, runtime_doc,
                              validation_report=report.to_dict())
