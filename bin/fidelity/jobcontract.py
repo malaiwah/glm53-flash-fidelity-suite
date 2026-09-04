@@ -101,7 +101,33 @@ _IMPORTED_CAPTURE_KEYS = frozenset({
     "schema", "receipt_sha256", "imported_at", "job_id_full", "attempt_id",
     "dataset_sha256", "capture_content_digest",
     "dataset_manifest_file_sha256", "archive_sha256", "archive_bytes",
-    "manifest_sha256", "file_count", "origin", "source_path"})
+    "manifest_sha256", "file_count", "origin", "source_path", "resealed_from"})
+
+#: capture.resume_capture on a resumed root. `resealed_from` is null for a
+#: dataset imported exactly as its pod sealed it, or the identity of the
+#: seal it was re-sealed from (fidelity-dataset reseal: the validator's
+#: verdict named a private path; tensors and capture_content_digest are
+#: unchanged and the receipt travels inside the tree). The chain is named
+#: in the job, the import receipt, the qualification and the archive so no
+#: reader has to infer it from the dataset alone.
+RESUME_CAPTURE_KEYS = frozenset({
+    "dataset_sha256", "capture_content_digest",
+    "dataset_manifest_file_sha256", "origin", "resealed_from"})
+RESEALED_FROM_KEYS = frozenset({
+    "dataset_sha256", "reason", "receipt", "receipt_sha256"})
+
+
+def valid_resealed_from(value: Any) -> bool:
+    """None, or the exact re-seal origin block (see RESUME_CAPTURE_KEYS)."""
+    if value is None:
+        return True
+    return (isinstance(value, dict)
+            and set(value) == RESEALED_FROM_KEYS
+            and _HEX64.fullmatch(str(value.get("dataset_sha256", ""))) is not None
+            and _HEX64.fullmatch(str(value.get("receipt_sha256", ""))) is not None
+            and value.get("receipt") == "validation/reseal-receipt.json"
+            and isinstance(value.get("reason"), str)
+            and bool(value.get("reason")))
 
 
 def build_imported_capture_receipt(*, job_id_full: str, attempt_id: str,
@@ -130,6 +156,7 @@ def build_imported_capture_receipt(*, job_id_full: str, attempt_id: str,
         "file_count": int(file_count),
         "origin": resume.get("origin"),
         "source_path": source_path,
+        "resealed_from": resume.get("resealed_from"),
     }
     return seal(doc)
 
@@ -157,11 +184,14 @@ def verify_imported_capture_receipt(doc: Any, *, job: Dict[str, Any],
         "capture_content_digest": resume["capture_content_digest"],
         "dataset_manifest_file_sha256": resume["dataset_manifest_file_sha256"],
         "origin": resume.get("origin"),
+        "resealed_from": resume.get("resealed_from"),
     }
     for name, value in expected.items():
         if doc.get(name) != value:
             raise JobContractError(
                 "imported-capture receipt %s differs from job.json" % name)
+    if not valid_resealed_from(doc.get("resealed_from")):
+        raise JobContractError("imported-capture receipt resealed_from is invalid")
     if (doc["dataset_sha256"] != dataset_sha256
             or doc["dataset_manifest_file_sha256"]
             != dataset_manifest_file_sha256):
@@ -378,9 +408,8 @@ def validate_job(document: dict) -> None:
         if resume is not None:
             origin = resume.get("origin") if isinstance(resume, dict) else None
             if (not isinstance(resume, dict)
-                    or set(resume) != {
-                        "dataset_sha256", "capture_content_digest",
-                        "dataset_manifest_file_sha256", "origin"}
+                    or set(resume) != RESUME_CAPTURE_KEYS
+                    or not valid_resealed_from(resume.get("resealed_from"))
                     or any(_HEX64.fullmatch(str(resume.get(name, ""))) is None
                            for name in ("dataset_sha256",
                                         "capture_content_digest",

@@ -5038,11 +5038,39 @@ def _resume_capture_identity(args) -> Optional[Dict[str, Any]]:
         if (re.fullmatch(r"[0-9a-f]{64}", origin["job_id_full"]) is None
                 or re.fullmatch(r"[0-9a-f]{24}", origin["attempt_id"]) is None):
             raise Refusal("--resume-origin-job lacks an executed job identity", [])
+    resealed = (doc.get("dataset") or {}).get("resealed")
+    resealed_from = None
+    if resealed is not None:
+        # A re-sealed import (fidelity-dataset reseal) names the seal it came
+        # from; the job carries that chain so every later receipt can too.
+        if (not isinstance(resealed, dict)
+                or resealed.get("schema") != "fidelity-dataset.reseal.v1"
+                or re.fullmatch(r"[0-9a-f]{64}",
+                                str(resealed.get("from_dataset_sha256", ""))) is None
+                or re.fullmatch(r"[0-9a-f]{64}",
+                                str(resealed.get("receipt_sha256", ""))) is None
+                or resealed.get("receipt") != "validation/reseal-receipt.json"
+                or not isinstance(resealed.get("reason"), str)):
+            raise Refusal("--resume-capture dataset.resealed block is not the "
+                          "v1 reseal identity", [])
+        receipt_path = root / "validation" / "reseal-receipt.json"
+        if (receipt_path.is_symlink() or not receipt_path.is_file()
+                or hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+                != resealed["receipt_sha256"]):
+            raise Refusal("--resume-capture reseal receipt is missing or differs "
+                          "from the manifest's receipt_sha256", [])
+        resealed_from = {
+            "dataset_sha256": resealed["from_dataset_sha256"],
+            "reason": resealed["reason"],
+            "receipt": resealed["receipt"],
+            "receipt_sha256": resealed["receipt_sha256"],
+        }
     return {
         "dataset_sha256": dataset_sha,
         "capture_content_digest": digest,
         "dataset_manifest_file_sha256": hashlib.sha256(raw).hexdigest(),
         "origin": origin,
+        "resealed_from": resealed_from,
     }
 
 

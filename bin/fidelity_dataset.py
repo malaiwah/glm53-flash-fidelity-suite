@@ -149,6 +149,34 @@ def cmd_verify(args):
 
 
 # ---------------------------------------------------------------------------
+# reseal
+# ---------------------------------------------------------------------------
+
+
+def cmd_reseal(args):
+    """Repair the one publication defect a sealed dataset may carry without
+    touching science: a private path as the validator's sealed subject."""
+    from fidelity import dsreseal
+
+    try:
+        receipt = dsreseal.reseal_dataset(args.dataset, args.out)
+    except dsreseal.ResealError as exc:
+        return refuse("reseal_refused", str(exc),
+                      "a reseal repairs exactly validation/structural-validation.json's "
+                      "subject on a dataset that verifies; anything else is a re-capture")
+    if args.receipt:
+        F.write_json(args.receipt, receipt)
+    emit("RESEALED %s" % args.out)
+    emit("  from dataset_sha256     %s" % receipt["from_dataset_sha256"])
+    emit("  dataset_sha256          %s" % receipt["resealed_dataset_sha256"])
+    emit("  capture_content_digest  %s (unchanged)" % receipt["capture_content_digest"])
+    emit("  members rewritten       %s" % ", ".join(
+        "%s.%s" % (m["path"], m["field"]) for m in receipt["members_rewritten"]))
+    emit("  receipt                 %s" % dsreseal.RESEAL_RECEIPT_NAME)
+    return OK
+
+
+# ---------------------------------------------------------------------------
 # describe
 # ---------------------------------------------------------------------------
 
@@ -712,6 +740,11 @@ def _verified_report(path, dataset_root, label):
     }
 
 
+def first_manifest_dataset(root):
+    """The `dataset` block of a sealed tree's manifest (already verified)."""
+    return (F.load_manifest(root).get("dataset") or {})
+
+
 def _capture_identity(root, expected_label, label):
     report = dsvalidate.validate_dataset(root, verify_tensors=True)
     if report.errors:
@@ -1173,11 +1206,22 @@ def cmd_qualify_root(args):
                 raise RootQualificationError(
                     "imported canonical capture content digest differs from the "
                     "job's resume_capture identity")
+            resealed = (first_manifest_dataset(args.first) or {}).get("resealed")
+            if (resealed is None) != (import_receipt.get("resealed_from") is None) or (
+                    resealed is not None and (
+                        resealed.get("from_dataset_sha256")
+                        != import_receipt["resealed_from"]["dataset_sha256"]
+                        or resealed.get("receipt_sha256")
+                        != import_receipt["resealed_from"]["receipt_sha256"])):
+                raise RootQualificationError(
+                    "imported canonical capture's reseal identity differs from "
+                    "the import receipt")
             first["imported_from"] = {
                 "receipt": os.path.basename(args.imported_canonical),
                 "receipt_sha256": import_receipt["receipt_sha256"],
                 "origin": import_receipt.get("origin"),
                 "imported_at": import_receipt["imported_at"],
+                "resealed_from": import_receipt.get("resealed_from"),
             }
         execution_kind = (job.get("execution_attempt") or {}).get("kind")
         environment = job.get("environment") or {}
@@ -1636,6 +1680,17 @@ def build_parser():
     p.add_argument("passthrough", nargs=argparse.REMAINDER,
                    help="everything after `--` is passed to the scorer verbatim")
     p.set_defaults(func=cmd_capture)
+
+    p = sub.add_parser(
+        "reseal",
+        help="copy a verified dataset whose validator verdict names a private path "
+             "(every capture sealed before 2026-09-04) into a publishable tree: one "
+             "field rewritten, disclosure and receipt added, tensors untouched")
+    p.add_argument("dataset", help="local sealed dataset directory")
+    p.add_argument("--out", required=True, help="new dataset directory (must not exist)")
+    p.add_argument("--receipt", help="also write the reseal receipt, with the new "
+                                     "dataset_sha256, to this path")
+    p.set_defaults(func=cmd_reseal)
 
     p = sub.add_parser("verify", help="seal + digest verification; stops at the first refusal")
     p.add_argument("dataset")

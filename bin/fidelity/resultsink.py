@@ -1090,10 +1090,12 @@ def _validate_imported_canonical(prefix, identity, bodies, contract):
             "declares no resume_capture")
     if (not isinstance(imported, dict)
             or set(imported) != {"receipt", "receipt_sha256", "origin",
-                                 "imported_at"}
+                                 "imported_at", "resealed_from"}
             or imported.get("receipt") != "imported-capture.json"
             or not _valid_hex(imported.get("receipt_sha256"), 64)
-            or imported.get("origin") != resume.get("origin")):
+            or imported.get("origin") != resume.get("origin")
+            or imported.get("resealed_from") != resume.get("resealed_from")
+            or not jobcontract.valid_resealed_from(imported.get("resealed_from"))):
         raise ArchiveError(
             "canonical capture import annotation differs from the job contract")
     body = bodies.get("receipts/imported-capture.json")
@@ -1110,10 +1112,44 @@ def _validate_imported_canonical(prefix, identity, bodies, contract):
                 != identity.get("capture_content_digest")
             or receipt.get("dataset_manifest_file_sha256")
                 != identity.get("dataset_manifest_file_sha256")
-            or receipt.get("origin") != resume.get("origin")):
+            or receipt.get("origin") != resume.get("origin")
+            or receipt.get("resealed_from") != resume.get("resealed_from")):
         raise ArchiveError(
             "imported-capture receipt does not bind the canonical dataset "
             "the qualification names")
+    _validate_resealed_canonical(prefix, resume.get("resealed_from"), bodies)
+
+
+def _validate_resealed_canonical(prefix, resealed_from, bodies):
+    """A re-sealed cold run 1 carries its own receipt inside the sealed tree,
+    and the manifest's dataset.resealed block names the same origin seal."""
+    manifest = _parse_json_member(
+        prefix + "/fidelity-dataset.json", bodies.get(prefix + "/fidelity-dataset.json"))
+    resealed = (manifest.get("dataset") or {}).get("resealed")
+    if resealed_from is None:
+        if resealed is not None:
+            raise ArchiveError(
+                "canonical dataset is re-sealed but the job contract declares "
+                "no reseal origin")
+        return
+    receipt_member = prefix + "/" + resealed_from["receipt"]
+    body = bodies.get(receipt_member)
+    if not isinstance(body, bytes):
+        raise ArchiveError("archive lacks %s for the re-sealed canonical capture"
+                           % receipt_member)
+    receipt = _parse_json_member(receipt_member, body)
+    if (not isinstance(resealed, dict)
+            or resealed.get("from_dataset_sha256") != resealed_from["dataset_sha256"]
+            or resealed.get("receipt_sha256") != resealed_from["receipt_sha256"]
+            or resealed.get("reason") != resealed_from["reason"]
+            or hashlib.sha256(body).hexdigest() != resealed_from["receipt_sha256"]
+            or not verify_seal(receipt)
+            or receipt.get("from_dataset_sha256") != resealed_from["dataset_sha256"]
+            or receipt.get("capture_content_digest")
+                != manifest.get("capture", {}).get("capture_content_digest")):
+        raise ArchiveError(
+            "re-sealed canonical dataset's reseal receipt does not bind the "
+            "origin seal the job contract names")
 
 
 def _validate_dataset_tree(prefix, identity, bodies, digests=None,

@@ -1554,6 +1554,7 @@ def section_root_qualification(tmp):
         "dataset_manifest_file_sha256": hashlib.sha256(first_manifest_raw).hexdigest(),
         "origin": {"job_id_full": "a" * 64, "attempt_id": "b" * 24,
                    "job_file_sha256": "c" * 64},
+        "resealed_from": None,
     }
     resumed_job = json.loads(json.dumps(job))
     resumed_job["capture"]["resume_capture"] = resume_identity
@@ -1594,6 +1595,111 @@ def section_root_qualification(tmp):
     check("Q1f a resealed receipt naming a different dataset refuses",
           qualify(job=resumed_job_path, imported_canonical=wrong_path,
                   out=os.path.join(tmp, "q-x3.json")) != CLI.OK)
+    # A re-sealed cold run 1 (fidelity-dataset reseal): the fixture's own
+    # validation verdict names its /tmp directory, exactly the defect every
+    # capture sealed before 2026-09-04 carries. Reseal it, import THAT, and
+    # the qualification must carry the origin seal; a job that names the
+    # re-sealed dataset without its reseal origin refuses.
+    from fidelity import dsreseal
+
+    def refuses(thunk):
+        try:
+            thunk()
+        except dsreseal.ResealError:
+            return True
+        return False
+    resealed_first = os.path.join(tmp, "q-first-resealed")
+    reseal_receipt = dsreseal.reseal_dataset(first, resealed_first)
+    resealed_manifest_raw = Path(
+        os.path.join(resealed_first, "fidelity-dataset.json")).read_bytes()
+    resealed_manifest = json.loads(resealed_manifest_raw)
+    check("Q1r reseal keeps capture_content_digest and changes dataset_sha256",
+          reseal_receipt["capture_content_digest"]
+          == first_manifest["capture"]["capture_content_digest"]
+          and resealed_manifest["capture"]["capture_content_digest"]
+          == first_manifest["capture"]["capture_content_digest"]
+          and resealed_manifest["dataset_sha256"] != first_manifest["dataset_sha256"]
+          and resealed_manifest["dataset"]["resealed"]["from_dataset_sha256"]
+          == first_manifest["dataset_sha256"]
+          and reseal_receipt["resealed_dataset_sha256"]
+          == resealed_manifest["dataset_sha256"])
+    reseal_origin = {
+        "dataset_sha256": first_manifest["dataset_sha256"],
+        "reason": dsreseal.REASON,
+        "receipt": dsreseal.RESEAL_RECEIPT_NAME,
+        "receipt_sha256": resealed_manifest["dataset"]["resealed"]["receipt_sha256"],
+    }
+    resealed_identity = {
+        "dataset_sha256": resealed_manifest["dataset_sha256"],
+        "capture_content_digest":
+            resealed_manifest["capture"]["capture_content_digest"],
+        "dataset_manifest_file_sha256":
+            hashlib.sha256(resealed_manifest_raw).hexdigest(),
+        "origin": resume_identity["origin"],
+        "resealed_from": reseal_origin,
+    }
+    resealed_job = json.loads(json.dumps(job))
+    resealed_job["capture"]["resume_capture"] = resealed_identity
+    resealed_job = jobcontract.finalize_job(resealed_job)
+    resealed_job_path = os.path.join(tmp, "q-resealed-job.json")
+    common.write_json(resealed_job_path, resealed_job)
+    resealed_import = jobcontract.build_imported_capture_receipt(
+        job_id_full=resealed_job["job_id_full"], attempt_id="9" * 24,
+        resume=resealed_identity, archive_sha256="d" * 64, archive_bytes=4096,
+        manifest_sha256="e" * 64, file_count=8, source_path="/prior/dataset",
+        imported_at="2026-09-04T01:00:00Z")
+    resealed_import_path = os.path.join(tmp, "q-resealed-import.json")
+    common.write_json(resealed_import_path, resealed_import)
+    resealed_verify = os.path.join(tmp, "q-resealed-verify.json")
+    common.write_json(resealed_verify, dsvalidate.validate_dataset(
+        resealed_first, verify_tensors=True).to_dict())
+    resealed_comparison_dir = os.path.join(tmp, "q-resealed-comparison")
+    dscompare.compare(resealed_first, repeat, resealed_comparison_dir, {
+        "self_compare": True, "force_compute": True,
+        "device": "cpu", "replay_device": "numpy", "replay_dtype": "float32",
+        "vocab_chunk": 8192, "reference_label": "root-cold-1",
+        "candidate_label": "root-cold-2", "verify_tensors": True,
+    })
+    resealed_comparison = os.path.join(
+        resealed_comparison_dir, "comparison-receipt.json")
+    resealed_out = os.path.join(tmp, "q-resealed-qualification.json")
+    rc = qualify(first=resealed_first, first_verify=resealed_verify,
+                 comparison=resealed_comparison, job=resealed_job_path,
+                 imported_canonical=resealed_import_path, out=resealed_out)
+    resealed_q = F.read_json(resealed_out) if rc == CLI.OK else {}
+    check("Q1s a re-sealed cold run 1 qualifies with its origin seal recorded "
+          "on the canonical capture",
+          rc == CLI.OK
+          and resealed_q["captures"]["canonical"]["imported_from"]["resealed_from"]
+          == reseal_origin
+          and resealed_q["job_contract"]["resume_capture"] == resealed_identity,
+          "rc=%s" % rc)
+    unnamed_identity = dict(resealed_identity, resealed_from=None)
+    unnamed_job = json.loads(json.dumps(job))
+    unnamed_job["capture"]["resume_capture"] = unnamed_identity
+    unnamed_job = jobcontract.finalize_job(unnamed_job)
+    unnamed_job_path = os.path.join(tmp, "q-unnamed-job.json")
+    common.write_json(unnamed_job_path, unnamed_job)
+    unnamed_import = jobcontract.build_imported_capture_receipt(
+        job_id_full=unnamed_job["job_id_full"], attempt_id="9" * 24,
+        resume=unnamed_identity, archive_sha256="d" * 64, archive_bytes=4096,
+        manifest_sha256="e" * 64, file_count=8, source_path="/prior/dataset",
+        imported_at="2026-09-04T01:00:00Z")
+    unnamed_import_path = os.path.join(tmp, "q-unnamed-import.json")
+    common.write_json(unnamed_import_path, unnamed_import)
+    check("Q1t a job that imports the re-sealed dataset without naming its "
+          "reseal origin refuses",
+          qualify(first=resealed_first, first_verify=resealed_verify,
+                  comparison=resealed_comparison, job=unnamed_job_path,
+                  imported_canonical=unnamed_import_path,
+                  out=os.path.join(tmp, "q-x5.json")) != CLI.OK)
+    check("Q1u a second reseal of a re-sealed dataset refuses",
+          refuses(lambda: dsreseal.reseal_dataset(
+              resealed_first, os.path.join(tmp, "q-twice"))))
+    check("Q1v a reseal of a dataset that is already publishable refuses",
+          refuses(lambda: dsreseal.reseal_dataset(
+              resealed_first, os.path.join(tmp, "q-again")))
+          and not os.path.exists(os.path.join(tmp, "q-again")))
     tampered = dict(import_receipt)
     tampered["origin"] = None
     tampered_path = os.path.join(tmp, "q-tampered-import.json")

@@ -56,7 +56,7 @@ def _sealed(schema, **fields):
 
 def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
               publish=False, abandoned=False, weights_license_body=None,
-              resumed=False):
+              resumed=False, resealed=False):
     root = Path(tmp) / "run"
     (root / "receipts" / "done").mkdir(parents=True)
     (root / "reports").mkdir(parents=True)
@@ -540,6 +540,46 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
             ]
             if weights_license_body is not None:
                 checksum_paths.append("LICENSE")
+            reseal_block = None
+            if resealed and label == "canonical":
+                # A re-sealed cold run 1 (fidelity-dataset reseal): the receipt
+                # rides inside the sealed tree and names the origin seal.
+                reseal_receipt = _sealed(
+                    "fidelity-dataset.reseal-receipt.v1",
+                    resealed_utc="2026-09-04T00:00:00Z",
+                    reason="validation_subject_private_path",
+                    dataset_id=job["capture"]["dataset_id"],
+                    from_dataset_sha256="1" * 64,
+                    from_checksums_sha256="2" * 64,
+                    capture_content_digest=content_digest,
+                    capture_manifest_file_sha256=hashlib.sha256(
+                        capture_body).hexdigest(),
+                    members_rewritten=[{
+                        "path": "validation/structural-validation.json",
+                        "field": "subject"}],
+                    members_added=["validation/reseal-receipt.json"],
+                    tool={"file": "bin/fidelity/dsreseal.py", "sha256": "3" * 64})
+                reseal_body = json.dumps(reseal_receipt).encode("utf-8")
+                (tree_root / "validation").mkdir()
+                (tree_root / "validation" / "reseal-receipt.json").write_bytes(
+                    reseal_body)
+                checksum_paths.append("validation/reseal-receipt.json")
+                reseal_block = {
+                    "schema": "fidelity-dataset.reseal.v1",
+                    "reason": "validation_subject_private_path",
+                    "from_dataset_sha256": "1" * 64,
+                    "resealed_utc": "2026-09-04T00:00:00Z",
+                    "receipt": "validation/reseal-receipt.json",
+                    "receipt_sha256": hashlib.sha256(reseal_body).hexdigest(),
+                    "members_rewritten": [
+                        "validation/structural-validation.json"],
+                }
+                reseal_origin = {
+                    "dataset_sha256": "1" * 64,
+                    "reason": "validation_subject_private_path",
+                    "receipt": "validation/reseal-receipt.json",
+                    "receipt_sha256": reseal_block["receipt_sha256"],
+                }
             for relative in sorted(checksum_paths):
                 body = (tree_root / relative).read_bytes()
                 checksum_rows.append(
@@ -561,6 +601,7 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                     "author": {"name": job["capture"]["author"]},
                     "repository": job["capture"]["dataset_repository"],
                     "license": dataset_license,
+                    "resealed": reseal_block,
                 },
                 "weights": {
                     "repository": job["target"]["repo_id"],
@@ -665,6 +706,7 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                     canonical_identity["dataset_manifest_file_sha256"],
                 "origin": {"job_id_full": "a" * 64, "attempt_id": "b" * 24,
                            "job_file_sha256": "c" * 64},
+                "resealed_from": reseal_origin if resealed else None,
             }
             job = json.loads(json.dumps(job))
             job.pop("job_id", None)
@@ -687,6 +729,7 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                 "receipt_sha256": import_receipt["receipt_sha256"],
                 "origin": resume_identity["origin"],
                 "imported_at": import_receipt["imported_at"],
+                "resealed_from": resume_identity["resealed_from"],
             }
         qualification = _sealed(
             RS.ROOT_QUALIFICATION_SCHEMA,
@@ -946,6 +989,42 @@ def rung_logs():
         (root / "receipts" / "imported-capture.json").unlink()
         _refused("R31g ... and refuses without the import receipt",
                  lambda: RS.build_archive(root, summary))
+
+    # A re-sealed cold run 1: the job, the import receipt, the qualification
+    # and the tree's own reseal receipt all name the origin seal; the archive
+    # validates only while every one of them agrees.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _run_root(tmp, role="root", resumed=True, resealed=True)
+        summary = RS.build_summary(
+            root, "capture", "qualified-unpublished",
+            ["setup", "capture", "verify", "capture_repeat", "verify_repeat",
+             "compare_root", "qualify_root"])
+        blob = RS.build_archive(root, summary)
+        verified = RS.verify_archive(blob)
+        check("R31h a resumed root whose cold run 1 was re-sealed archives "
+              "and verifies with the reseal origin bound through every receipt",
+              verified["manifest"]["status"] == "qualified-unpublished")
+        bodies = {}
+        for relative in ("dataset/fidelity-dataset.json",
+                         "dataset/validation/reseal-receipt.json"):
+            bodies[relative] = (root / relative).read_bytes()
+        job = json.loads((root / "job.json").read_text())
+        origin = job["capture"]["resume_capture"]["resealed_from"]
+        RS._validate_resealed_canonical("dataset", origin, bodies)
+        _refused("R31i ... and the reseal validator refuses an origin seal "
+                 "that differs from the tree's receipt",
+                 lambda: RS._validate_resealed_canonical(
+                     "dataset", dict(origin, dataset_sha256="9" * 64), bodies))
+        _refused("R31j ... and refuses a re-sealed tree the job contract "
+                 "declares as imported exactly as sealed",
+                 lambda: RS._validate_resealed_canonical("dataset", None, bodies))
+        _refused("R31k ... and refuses a receipt whose bytes differ from the "
+                 "manifest's receipt_sha256",
+                 lambda: RS._validate_resealed_canonical(
+                     "dataset", origin, dict(
+                         bodies, **{"dataset/validation/reseal-receipt.json":
+                                    bodies["dataset/validation/reseal-receipt.json"]
+                                    + b" "})))
 
 
 def rung_http():
