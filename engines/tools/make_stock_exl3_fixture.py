@@ -24,6 +24,27 @@ module's payload -- the whole path, for free, in about fifteen seconds.
 
 This writes a FIXTURE, not an artifact: the tree is a renamed copy and no
 number measured on it may be published.
+
+What proves what
+----------------
+* `--verify` proves the PLUMBING: grouping, per-module codebook, placement and
+  orientation, bitwise against `decode_payload_hf`. It cannot prove the decoder
+  reproduces the quantizer's weights -- both sides would agree and both be
+  wrong.
+* That is proven separately, against the bf16 source of a real trellis quant:
+  `materialize_exl3_experts.py --reference` on `malaiwah/GLM-5.2-SIQ-Fruit` vs
+  `malaiwah/GLM-5.2-SIQ-Fruit-bf16` measures cosine 0.99773 and rel_l2 6.74% in
+  fp64 at K4 -- the expected reconstruction error at that bit rate, where a
+  wrong codebook or unpack gives cosine near 0. Receipt committed at
+  `engines/tools/layer-outer-evidence/fruit-siq-trellis-reconstruction.json`.
+* COHERENCE is the capture's own generation probe ("The capital of France is"
+  -> " Paris"), enforced by default and refusing the capture on failure. It has
+  never run on trellis-decoded weights, because no trellis capture has
+  completed yet; Fruit cannot answer it either, being an undertrained proxy
+  (which is exactly why `--sanity-expect ''` exists for Fruit and why a
+  production capture must NOT pass it).
+* Do NOT use `training/fruit_pilot.pt` as a reference: it is a different
+  snapshot (`w_down` 128-wide against the artifact's declared 256).
 """
 from __future__ import annotations
 
@@ -119,13 +140,33 @@ def verify(model_dir: Path, layer: int) -> dict:
             handle.get_tensor(module + ".svh"), codebook=codebook).to(torch.bfloat16)
     down = model.get_parameter([n for n in fused if "down" in n][0])
     slice0 = down[0]
-    exact = bool(torch.equal(slice0, want) or torch.equal(slice0, want.T))
-    if not exact:
+    # ORIENTATION IS PINNED, not accepted either way. A `.T` fallback here
+    # would pass a transposed load, which is the failure this check is for.
+    if tuple(slice0.shape) != tuple(want.shape):
+        raise SystemExit(
+            "REFUSED: fused expert-0 slice is %s, the independent decode is %s -- "
+            "the decoded tensor is not landing in the model's orientation"
+            % (tuple(slice0.shape), tuple(want.shape)))
+    if not bool(torch.equal(slice0, want)):
         raise SystemExit(
             "REFUSED: the fused expert-0 slice is NOT bitwise equal to an "
             "independent decode of %s" % module)
-    return {"fused_parameters": fused, "layer": layer,
-            "expert0_bitwise_equal_to_independent_decode": True}
+    return {
+        "fused_parameters": fused, "layer": layer,
+        "expert0_bitwise_equal_to_independent_decode": True,
+        "orientation": "pinned (no transpose fallback)",
+        # WHAT THIS DOES NOT PROVE, stated so nobody reads more into it:
+        # equality against `decode_payload_hf` proves the PLUMBING -- grouping,
+        # per-module codebook, placement, orientation -- not that the decoder
+        # itself reproduces the quantizer's weights. That needs a comparison
+        # against the bf16 source (`materialize_exl3_experts.py --reference`
+        # computes rel_l2 in fp64), and coherence needs the capture's own
+        # generation probe, which is enforced on a production capture
+        # (--sanity-expect default "Paris") and has NEVER run on
+        # trellis-decoded weights.
+        "not_proven": ["decoder-vs-quantizer weight error (needs a bf16 reference)",
+                       "output coherence (needs the capture's generation probe)"],
+    }
 
 
 def main(argv=None) -> int:

@@ -1,0 +1,48 @@
+{
+  "bits_histogram": {
+    "4": 2
+  },
+  "created_utc": "2026-09-04T20:27:38Z",
+  "decoder": {
+    "codebook_lut_sha256": "95383563929baa9d1ae5de0be22490284382673620bdd85929feea7bdbef04a9",
+    "codebook_source": "exllamav3 v1.4.2 exllamav3/exllamav3_ext/quant/codebook.cuh, decode_3inst<1>",
+    "function": "decode_payload_hf",
+    "module": "engines/tools/exl3hf_surface.py"
+  },
+  "modules_decoded": 2,
+  "per_module": [
+    {
+      "bits": 4,
+      "codebook": "mcg",
+      "cosine": 0.9977247974532635,
+      "module": "model.layers.3.mlp.experts.0.down_proj",
+      "rel_l2": 0.06741411842378622,
+      "rel_mse": 0.004544663362856274
+    },
+    {
+      "bits": 4,
+      "codebook": "mcg",
+      "cosine": 0.9977312043060971,
+      "module": "model.layers.3.mlp.experts.0.gate_proj",
+      "rel_l2": 0.06731878308907234,
+      "rel_mse": 0.004531818556593572
+    }
+  ],
+  "quantization_config_removed": true,
+  "reconstruction_vs_reference": {
+    "by_bits": {
+      "4": {
+        "cosine_mean": 0.9977280008796803,
+        "cosine_min": 0.9977247974532635,
+        "modules": 2,
+        "rel_l2_max": 0.06741411842378622,
+        "rel_l2_mean": 0.06736645075642927
+      }
+    },
+    "modules_scored": 2,
+    "note": "rel_l2 = ||reconstructed - reference|| / ||reference|| in fp64. A WRONG codebook or unpack gives cosine near 0; these values are the expected trellis reconstruction error at the stated bit rate."
+  },
+  "schema": "malaiwah.exl3-reconstruction-receipt.v1",
+  "tier_bitmap_crosscheck": null,
+  "tool": "engines/tools/materialize_exl3_experts.py"
+}
