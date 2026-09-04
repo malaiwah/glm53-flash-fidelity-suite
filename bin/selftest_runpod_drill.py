@@ -43,6 +43,7 @@ class Prepared:
             "volume_mount_path": "/workspace", "network_volume_id": None,
             "public_key_sha256": hashlib.sha256(
                 b"fixture-public-key").hexdigest(),
+            "data_center_id": kw.get("data_center_id"),
         }
         self.body = json.dumps({
             "query": "mutation { podFindAndDeployOnDemand(input:{}) { id } }"

@@ -1894,7 +1894,7 @@ class RunPod(SSHTransport):
         data_center_id = kw.get("data_center_id")
         if data_center_id is not None:
             data_center_id = str(data_center_id).strip()
-            if not re.fullmatch(r"[A-Z]{2}-[A-Z]{2,3}-[0-9]{1,2}", data_center_id):
+            if not re.fullmatch(r"[A-Z]{2,3}-[A-Z]{2,3}-[0-9]{1,2}", data_center_id):
                 raise RunPodError(
                     "RunPod data_center_id must look like US-MO-1; got %r"
                     % data_center_id)

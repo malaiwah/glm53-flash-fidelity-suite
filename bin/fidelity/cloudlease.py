@@ -549,7 +549,15 @@ def _validate_prepared_create(value: Any) -> Dict[str, Any]:
          "volume_gb", "container_disk_gb", "min_vcpu", "min_ram_gb",
          "name", "image_name", "terminate_after", "ports",
          "volume_mount_path", "network_volume_id", "public_key_sha256"),
-        (), "RunPod prepared request identity")
+        # Absent on leases written before 2026-09-04; None means unpinned.
+        ("data_center_id",), "RunPod prepared request identity")
+    data_center_id = identity.get("data_center_id")
+    if data_center_id is not None and (
+            not isinstance(data_center_id, str)
+            or not re.fullmatch(r"[A-Z]{2,3}-[A-Z]{2,3}-[0-9]{1,2}", data_center_id)):
+        raise InvalidLease(
+            "RunPod prepared request data_center_id is malformed: %r"
+            % (data_center_id,))
     if (identity["cloud_type"] != "SECURE"
             or identity["is_spot"] is not False
             or identity["offer"] != "on-demand"

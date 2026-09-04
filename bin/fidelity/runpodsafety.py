@@ -509,7 +509,10 @@ def validate_safety_proof(path, bundle_manifest_sha256,
             or prepared_create.get("schema")
                 != "fidelity-suite/runpod-prepared-create.v1"
             or not isinstance(prepared_identity, dict)
-            or set(prepared_identity)
+            # The drill is never datacenter-pinned; the key is absent on
+            # proofs recorded before 2026-09-04 and None after.
+            or prepared_identity.get("data_center_id") is not None
+            or set(prepared_identity) - {"data_center_id"}
                 != set(expected_provider_identity) | {"public_key_sha256"}
             or any(prepared_identity.get(key) != value
                    for key, value in expected_provider_identity.items())
