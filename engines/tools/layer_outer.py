@@ -101,8 +101,9 @@ import json
 import os
 import re
 import struct
+import sys
 import time
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 SCHEDULE_WINDOW_OUTER = "window-outer"
 SCHEDULE_LAYER_OUTER = "layer-outer"
@@ -593,6 +594,218 @@ def materialize_fp8_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_d
     return out
 
 
+# ---------------------------------------------------------------------------
+# EXL3 trellis checkpoints: decode to bf16 on the host, per module, per layer
+# ---------------------------------------------------------------------------
+
+TRELLIS_DECODE_METHOD = "exl3-trellis-decode-to-bf16"
+#: Every byte of decode math is `engines/tools/exl3hf_surface.py`'s
+#: `decode_payload_hf` -- the exllamav3 v1.4.x `mul1`/`mcg` codebooks
+#: transcribed from `exllamav3_ext/quant/codebook.cuh`, whose LUTs and anybits
+#: unpack are proven bitwise offline against an independent fp64 route, against
+#: `dione_surface`'s copy (K2/K3/K4/K6/K8) and against the campaign reader
+#: (`engines/tools/selftest_exl3hf_offline.py`). This module adds NO
+#: arithmetic: it groups a checkpoint's payload objects, picks each module's
+#: codebook from the object that is actually present, and hands the decoded
+#: dense tensor to the same converter a bf16 checkpoint would reach.
+TRELLIS_DECODE_REFERENCE = "engines/tools/exl3hf_surface.py::decode_payload_hf"
+TRELLIS_PAYLOAD_OBJECTS = ("trellis", "suh", "svh")
+TRELLIS_CODEBOOKS = ("mul1", "mcg")
+#: davidsyoung's TR3 releases split one projection across `rank0..rank3`
+#: payload groups and say so on the card: "Not loadable by vanilla exllamav3
+#: model loading. The mixed-K projection-tiers patch is REQUIRED; a stock
+#: loader that assumes a uniform K per layer will produce fluent garbage."
+#: How those four groups compose into one weight is not published, and a
+#: guess would produce a confident wrong number rather than a crash. Refused
+#: by name until the composition is authored from an authoritative source.
+TRELLIS_RANK_SPLIT_RE = re.compile(r"\.rank\d+\.(?:%s)$" % "|".join(
+    TRELLIS_PAYLOAD_OBJECTS + TRELLIS_CODEBOOKS))
+
+
+def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Dict[str, Any]]:
+    """The exact EXL3 trellis form this schedule decodes, or None.
+
+    Accepts `quant_method: exl3` whose payload groups are the stock
+    exllamav3 object layout `M.{trellis,suh,svh,<codebook>}`, one group per
+    quantized module, `<codebook>` in {mul1, mcg} PER MODULE -- drowzeys'
+    `keys-GLM-5.3-EXL3` uses `mcg` on layer 3 and `mul1` on layers 4-77, so
+    the codebook is read from the object each module actually carries and not
+    from `quantization_config.codebook`, which names only one of them.
+    """
+    qc = getattr(config, "quantization_config", None)
+    if not qc:
+        return None
+    if not isinstance(qc, dict):
+        qc = qc.to_dict() if hasattr(qc, "to_dict") else dict(getattr(qc, "__dict__", {}))
+    if qc.get("quant_method") != "exl3":
+        return None
+    rank_split = sorted(key for key in declared_keys
+                        if TRELLIS_RANK_SPLIT_RE.search(key))
+    if rank_split:
+        raise LayerOuterError(
+            "REFUSED: this checkpoint stores %d rank-split trellis payload(s) "
+            "(e.g. %s). That is the TR3 layout whose own model card says it is "
+            "'not loadable by vanilla exllamav3 model loading' and requires a "
+            "mixed-K projection-tiers patch; how rank0..rankN compose into one "
+            "weight is not published, and this schedule refuses to guess it. "
+            "Author the composition from an authoritative source first."
+            % (len(rank_split), rank_split[0]))
+    groups = trellis_payload_groups(declared_keys)
+    if not groups:
+        raise LayerOuterError(
+            "REFUSED: quantization_config declares quant_method=exl3 but the "
+            "checkpoint carries no %s payload group; the payload cannot be "
+            "decoded and loading it as-is would read trellis bytes as weights."
+            % "/".join(TRELLIS_PAYLOAD_OBJECTS))
+    codebooks: Dict[str, int] = {}
+    for objects in groups.values():
+        codebooks[objects["codebook"]] = codebooks.get(objects["codebook"], 0) + 1
+    return {
+        "quant_method": "exl3",
+        "declared_codebook": qc.get("codebook"),
+        "declared_bits": qc.get("bits"),
+        "declared_head_bits": qc.get("head_bits"),
+        "quantized_module_count": len(groups),
+        "codebook_histogram": dict(sorted(codebooks.items())),
+    }
+
+
+def trellis_payload_groups(keys: Iterable[str]) -> Dict[str, Dict[str, str]]:
+    """Group `<module>.{trellis,suh,svh,<codebook>}` keys by module.
+
+    A group is returned only when all three payload objects AND exactly one
+    codebook marker are present; a partial group is a refusal, not a skip,
+    because a module whose trellis is loaded without its scales is the silent
+    failure this decoder exists to prevent.
+    """
+    staged: Dict[str, Dict[str, str]] = {}
+    for key in keys:
+        stem, _, last = key.rpartition(".")
+        if not stem:
+            continue
+        if last in TRELLIS_PAYLOAD_OBJECTS:
+            staged.setdefault(stem, {})[last] = key
+        elif last in TRELLIS_CODEBOOKS:
+            staged.setdefault(stem, {}).setdefault("codebooks", []).append(last)  # type: ignore[union-attr]
+    groups: Dict[str, Dict[str, str]] = {}
+    partial: List[str] = []
+    for module, found in staged.items():
+        marks = found.get("codebooks") or []
+        missing = [name for name in TRELLIS_PAYLOAD_OBJECTS if name not in found]
+        if missing or len(marks) != 1:
+            partial.append("%s (missing %s, codebook markers %s)"
+                           % (module, missing or "none", sorted(marks) or "none"))
+            continue
+        groups[module] = {name: found[name] for name in TRELLIS_PAYLOAD_OBJECTS}
+        groups[module]["codebook"] = marks[0]
+        groups[module]["marker"] = "%s.%s" % (module, marks[0])
+    if partial:
+        raise LayerOuterError(
+            "REFUSED: %d incomplete trellis payload group(s): %s%s"
+            % (len(partial), "; ".join(sorted(partial)[:3]),
+               " (+%d more)" % (len(partial) - 3) if len(partial) > 3 else ""))
+    return groups
+
+
+def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_dtype,
+                               stats: Dict[str, int], fp8_plan: Optional[Dict[str, Any]] = None,
+                               device: str = "cpu") -> Dict[str, Any]:
+    """Replace every trellis payload group in a lazy subset by one decoded `.weight`.
+
+    Composes with the FP8 decoder when the artifact keeps part of itself in
+    block-scaled FP8 beside the trellis payloads -- wrldsuksgo2mars'
+    `GLM-5.3-EXL3-K4-v1` keeps `shared_experts`/`self_attn` as
+    `weight_scale_inv` FP8 and quantizes only the routed experts, so one
+    subset carries both surfaces and both hooks must run over it.
+    """
+    surface = _exl3hf()
+    groups = trellis_payload_groups(subset)
+    consumed = {key for objects in groups.values()
+                for name, key in objects.items() if name != "codebook"}
+    passthrough = {key: value for key, value in subset.items() if key not in consumed}
+    out: Dict[str, Any] = (
+        materialize_fp8_subset(passthrough, fp8_plan, torch_dtype, stats)
+        if fp8_plan is not None else dict(passthrough))
+    for module, objects in groups.items():
+        payload = {}
+        for name in TRELLIS_PAYLOAD_OBJECTS:
+            value = subset[objects[name]]
+            payload[name] = value if hasattr(value, "dtype") else value[:]
+        marker = subset[objects["marker"]]
+        marker = marker if hasattr(marker, "dtype") else marker[:]
+        expected = surface.CODEBOOK_OBJECTS[objects["codebook"]]
+        observed = int(marker.reshape(-1)[0])
+        if observed != expected:
+            raise LayerOuterError(
+                "REFUSED: %s carries a %s marker of %d, not the codebook's own "
+                "multiplier %d; the payload was not written by the codebook it names"
+                % (module, objects["codebook"], observed, expected))
+        decoded = surface.decode_payload_hf(
+            payload["trellis"].to(device), payload["suh"].to(device),
+            payload["svh"].to(device), codebook=objects["codebook"])
+        out["%s.weight" % module] = decoded.to(torch_dtype)
+        stats["decoded_modules"] += 1
+        stats["trellis_bits"] += int(payload["trellis"].shape[-1]) // 16
+    return out
+
+
+def _quant_method(config) -> Optional[str]:
+    qc = getattr(config, "quantization_config", None)
+    if not qc:
+        return None
+    if not isinstance(qc, dict):
+        qc = qc.to_dict() if hasattr(qc, "to_dict") else dict(getattr(qc, "__dict__", {}))
+    method = qc.get("quant_method")
+    return str(method) if method is not None else None
+
+
+def fp8_checkpoint_plan_for_mixed(config) -> Dict[str, Any]:
+    """The FP8 half of a mixed trellis+FP8 artifact, defaulted where unstated.
+
+    An EXL3 config declares `quant_method: exl3` and says nothing about the
+    tensors the quantizer LEFT in the source's block-scaled FP8, so the block
+    geometry cannot come from `quantization_config`. It comes from the source
+    release this artifact declares as its base -- GLM-5.3's own 128x128 e4m3 --
+    and every decoded tensor is still checked against its own scale grid by
+    `dequantize_block_fp8`, which refuses a grid that does not match the
+    tensor's shape.
+    """
+    qc = getattr(config, "quantization_config", None) or {}
+    if not isinstance(qc, dict):
+        qc = qc.to_dict() if hasattr(qc, "to_dict") else dict(getattr(qc, "__dict__", {}))
+    return {
+        "quant_method": "fp8", "fmt": "e4m3",
+        "weight_block_size": [128, 128],
+        "activation_scheme": None,
+        "modules_to_not_convert": sorted(
+            str(m) for m in (qc.get("modules_to_not_convert") or [])),
+        "block_size_source": "source release (zai-org/GLM-5.3) 128x128 e4m3; "
+                             "the exl3 config declares no block geometry",
+    }
+
+
+def _materialized(subset: Dict[str, Any], fp8_plan, trellis_plan, trellis_fp8_plan,
+                  torch_dtype, fp8_stats, trellis_stats) -> Dict[str, Any]:
+    """Whichever decoders this artifact needs, in the one order that is safe."""
+    if trellis_plan is not None:
+        return materialize_trellis_subset(
+            subset, trellis_plan, torch_dtype, trellis_stats,
+            fp8_plan=trellis_fp8_plan)
+    if fp8_plan is not None:
+        return materialize_fp8_subset(subset, fp8_plan, torch_dtype, fp8_stats)
+    return subset
+
+
+def _exl3hf():
+    """Import the decode ABI lazily: torch-heavy, and only a quant run needs it."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import exl3hf_surface
+
+    return exl3hf_surface
+
+
 def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: str,
                          log: Callable[..., None],
                          layer_guard: Optional[Callable[[int, Dict[str, Any]], None]] = None,
@@ -667,11 +880,30 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     # reaches the loader. "Dequantize-and-run, weights-only", the M1 method,
     # under the streaming schedule. Any other quantization_config is refused
     # by `fp8_checkpoint_plan` before anything is instantiated.
-    fp8_plan = fp8_checkpoint_plan(config)
+    fp8_plan = fp8_checkpoint_plan(config) if _quant_method(config) != "exl3" else None
     fp8_stats = {"dequantized": 0, "scales_consumed": 0, "fp8_bytes": 0}
     if fp8_plan is not None:
         log(stage="fp8_decode_plan", method=FP8_DECODE_METHOD,
             reference=FP8_DECODE_REFERENCE, **fp8_plan)
+    # An EXL3 trellis artifact may ALSO keep part of itself in block-scaled
+    # FP8 (wrldsuksgo2mars keeps shared_experts/self_attn that way), so the
+    # trellis plan is resolved from the checkpoint's own keys and the FP8 hook
+    # runs under it rather than beside it. The index is read ONLY for an exl3
+    # artifact: a bf16 or FP8 checkpoint must not acquire a dependency on an
+    # index file it may not have (a single-shard tree has none, and under a
+    # gate it has not landed yet).
+    trellis_plan = None
+    trellis_stats = {"decoded_modules": 0, "trellis_bits": 0}
+    trellis_fp8_plan = None
+    if _quant_method(config) == "exl3":
+        keys = list(_index_weight_map(model_dir))
+        trellis_plan = trellis_checkpoint_plan(config, keys)
+        if any(key.endswith(FP8_SCALE_SUFFIX) for key in keys):
+            trellis_fp8_plan = fp8_checkpoint_plan_for_mixed(config)
+    if trellis_plan is not None:
+        log(stage="trellis_decode_plan", method=TRELLIS_DECODE_METHOD,
+            reference=TRELLIS_DECODE_REFERENCE,
+            mixed_fp8=trellis_fp8_plan is not None, **trellis_plan)
 
     # Build with the SAME context managers `from_pretrained` uses, so the module
     # tree (kernel patches, dtype, tie-weight suppression) is the one the
@@ -910,8 +1142,8 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
 
     base_info, _ = convert_and_load(
         model,
-        (materialize_fp8_subset(base_subset, fp8_plan, torch_dtype, fp8_stats)
-         if fp8_plan is not None else base_subset),
+        _materialized(base_subset, fp8_plan, trellis_plan, trellis_fp8_plan,
+                      torch_dtype, fp8_stats, trellis_stats),
         load_config)
     _absorb(base_info)
 
@@ -978,18 +1210,23 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
                 "weights does not fail to run -- it runs on whatever the meta-device "
                 "placeholder is replaced by, which is nothing anybody measured."
                 % (layers_prefix, index))
-        if fp8_plan is not None:
+        if fp8_plan is not None or trellis_plan is not None:
             # Decoded per layer into a transient dict: the streamer keeps the
             # lazy slices, never the 19 GB of decoded bf16, across layers.
             before = dict(fp8_stats)
+            before_trellis = dict(trellis_stats)
             started = time.monotonic()
-            decoded = materialize_fp8_subset(subset, fp8_plan, torch_dtype, fp8_stats)
+            decoded = _materialized(subset, fp8_plan, trellis_plan, trellis_fp8_plan,
+                                    torch_dtype, fp8_stats, trellis_stats)
             decode_seconds = time.monotonic() - started
             info, _ = convert_and_load(model, decoded, load_config)
             del decoded
-            log(stage="fp8_decode_layer", index=index,
+            log(stage=("trellis_decode_layer" if trellis_plan is not None
+                       else "fp8_decode_layer"), index=index,
                 dequantized=fp8_stats["dequantized"] - before["dequantized"],
                 fp8_elements=fp8_stats["fp8_bytes"] - before["fp8_bytes"],
+                decoded_modules=(trellis_stats["decoded_modules"]
+                                 - before_trellis["decoded_modules"]) or None,
                 decode_seconds=round(decode_seconds, 3))
         else:
             info, _ = convert_and_load(model, subset, load_config)
