@@ -186,6 +186,27 @@ def main() -> int:
           out2["model.layers.3.input_layernorm.weight"]
           is mixed["model.layers.3.input_layernorm.weight"])
 
+    # [10] THROUGH THE REAL CALLER: build_streamed_model keeps two separate
+    # counter dicts and passes both. The mixed rung above seeded one combined
+    # dict, which is more generous than any real caller -- and that gap let a
+    # KeyError('dequantized') reach a live pod.
+    fp8_counters = {"dequantized": 0, "scales_consumed": 0, "fp8_bytes": 0}
+    trellis_counters = {"decoded_modules": 0, "trellis_bits": 0}
+    out3 = lo._materialized(mixed, None, plan, fp8_plan, torch.bfloat16,
+                            fp8_counters, trellis_counters)
+    check("[10] _materialized with the caller's two stats dicts decodes both surfaces",
+          torch.equal(out3["model.layers.3.self_attn.o_proj.weight"], want_fp8)
+          and trellis_counters["decoded_modules"] == 2
+          and fp8_counters["dequantized"] == 1,
+          "trellis %r fp8 %r" % (trellis_counters, fp8_counters))
+    trellis_only = {"decoded_modules": 0, "trellis_bits": 0}
+    out4 = lo._materialized(subset, None, plan, None, torch.bfloat16,
+                            {"dequantized": 0, "scales_consumed": 0, "fp8_bytes": 0},
+                            trellis_only)
+    check("[10] _materialized on a pure trellis subset needs no FP8 plan",
+          set(out4) == {"%s.weight" % module_a, "%s.weight" % module_b}
+          and trellis_only["decoded_modules"] == 2)
+
     passed = sum(1 for _, ok, _ in RESULTS if ok)
     print("\nselftest_trellis_decode_offline: %d passed, %d failed"
           % (passed, len(RESULTS) - passed))

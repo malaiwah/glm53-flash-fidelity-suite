@@ -709,6 +709,7 @@ def trellis_payload_groups(keys: Iterable[str]) -> Dict[str, Dict[str, str]]:
 
 def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_dtype,
                                stats: Dict[str, int], fp8_plan: Optional[Dict[str, Any]] = None,
+                               fp8_stats: Optional[Dict[str, int]] = None,
                                device: str = "cpu") -> Dict[str, Any]:
     """Replace every trellis payload group in a lazy subset by one decoded `.weight`.
 
@@ -723,9 +724,18 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
     consumed = {key for objects in groups.values()
                 for name, key in objects.items() if name != "codebook"}
     passthrough = {key: value for key, value in subset.items() if key not in consumed}
-    out: Dict[str, Any] = (
-        materialize_fp8_subset(passthrough, fp8_plan, torch_dtype, stats)
-        if fp8_plan is not None else dict(passthrough))
+    # The FP8 half counts into ITS OWN counter dict: the two decoders keep
+    # separate stats and the log line reads both by name, so handing the
+    # trellis dict to the FP8 decoder is a KeyError on the first dequantized
+    # tensor (it was, on a live wrldsuksgo2mars pod).
+    if fp8_plan is not None:
+        counters = fp8_stats if fp8_stats is not None else stats
+        for key in ("dequantized", "scales_consumed", "fp8_bytes"):
+            counters.setdefault(key, 0)
+        out: Dict[str, Any] = materialize_fp8_subset(
+            passthrough, fp8_plan, torch_dtype, counters)
+    else:
+        out = dict(passthrough)
     for module, objects in groups.items():
         payload = {}
         for name in TRELLIS_PAYLOAD_OBJECTS:
@@ -790,7 +800,7 @@ def _materialized(subset: Dict[str, Any], fp8_plan, trellis_plan, trellis_fp8_pl
     if trellis_plan is not None:
         return materialize_trellis_subset(
             subset, trellis_plan, torch_dtype, trellis_stats,
-            fp8_plan=trellis_fp8_plan)
+            fp8_plan=trellis_fp8_plan, fp8_stats=fp8_stats)
     if fp8_plan is not None:
         return materialize_fp8_subset(subset, fp8_plan, torch_dtype, fp8_stats)
     return subset
