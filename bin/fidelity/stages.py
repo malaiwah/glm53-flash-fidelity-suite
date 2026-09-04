@@ -44,12 +44,28 @@ ROOT_STAGES = (
 KNOWN_STAGES = ("setup", "fetch_target", "fetch_panel", "materialize", "measure",
                 "score", "seal", "capture", "verify", "capture_repeat",
                 "verify_repeat", "compare_root", "qualify_root",
+                "fetch_reference", "compare_reference",
                 "race_bootstrap", "race_capture", "publish_root")
+
+#: A candidate: the root protocol applied to a quantized target, plus the
+#: published root it is scored against. `fetch_reference` lands and fully
+#: verifies that root right after the target (its 2.5 GB are trivial next to
+#: the weights, and a reference that fails to verify should refuse before a
+#: single cold run is paid for); `compare_reference` runs after the
+#: candidate is qualified, so the KLD is computed only over a capture that
+#: two fresh processes reproduced bitwise.
+CANDIDATE_STAGES = (
+    "setup", "fetch_target", "fetch_reference",
+    "capture", "verify",
+    "capture_repeat", "verify_repeat",
+    "compare_root", "qualify_root", "compare_reference",
+)
 
 
 def stage_sequence(role: str = "quant", *, race: bool = False,
                    surface: Optional[str] = None,
-                   publish_root: bool = False) -> List[str]:
+                   publish_root: bool = False,
+                   candidate: bool = False) -> List[str]:
     """The ordered stage list for one job.
 
     role="root"  -- two fresh processes capture the same reference into
@@ -72,7 +88,7 @@ def stage_sequence(role: str = "quant", *, race: bool = False,
             raise ValueError(
                 "root publication is controller-local after qualified result "
                 "retrieval and provider-confirmed teardown; no remote stage may publish")
-        return list(ROOT_STAGES)
+        return list(CANDIDATE_STAGES if candidate else ROOT_STAGES)
     stages = list(QUANT_STAGES)
     if surface in MATERIALIZING_SURFACES:
         # After fetch_target, before fetch_panel: the tree it writes is what the

@@ -1228,12 +1228,56 @@ PYALLOW
     echo "  Use a fresh run root; a partial/stale capture is never adopted as a fresh process." >&2
     exit 3
   fi
+  # A candidate: the same two-process protocol on a QUANTIZED target. The
+  # dataset is captured with --role quant under the job's authored scope
+  # (verified by digest here, bound by scope_digest in the qualification),
+  # and the loader decodes the weights per job.capture.candidate.weights_decode.
+  CAPTURE_ROLE=root
+  CANDIDATE_SCOPE_REL="$(jqget capture.candidate.scope.path)"
+  if [ -n "$CANDIDATE_SCOPE_REL" ]; then
+    CANDIDATE_SCOPE_SHA="$(jqget capture.candidate.scope.sha256)"
+    CANDIDATE_CODEC="$(jqget capture.candidate.codec)"
+    CANDIDATE_BITS="$(jqget capture.candidate.declared_bits)"
+    [ -n "$CANDIDATE_SCOPE_SHA" ] && [ -n "$CANDIDATE_CODEC" ] && [ -n "$CANDIDATE_BITS" ] || {
+      echo "$STAGE REFUSES: capture.candidate must name scope.sha256, codec and declared_bits." >&2
+      exit 3
+    }
+    CANDIDATE_SCOPE="$(python3 - "$FS" "$CANDIDATE_SCOPE_REL" "$CANDIDATE_SCOPE_SHA" "$FS/bin" <<'PYSCOPE'
+import hashlib, pathlib, stat, sys
+sys.path.insert(0, sys.argv[4])
+from fidelity import jobcontract
+
+root = pathlib.Path(sys.argv[1]).resolve()
+rel = jobcontract.canonical_relative_path(sys.argv[2], "capture.candidate.scope.path")
+target = root
+for part in rel.parts:
+    target = target / part
+    try:
+        mode = target.lstat().st_mode
+    except OSError as exc:
+        raise SystemExit("candidate scope file is absent: %s" % exc)
+    if stat.S_ISLNK(mode):
+        raise SystemExit("candidate scope path may not traverse a symlink")
+if not stat.S_ISREG(target.lstat().st_mode):
+    raise SystemExit("candidate scope path is not a regular file")
+raw = target.read_bytes()
+if hashlib.sha256(raw).hexdigest() != sys.argv[3]:
+    raise SystemExit("candidate scope file SHA-256 mismatch")
+jobcontract.parse_job_bytes(raw)
+print(target)
+PYSCOPE
+)"
+    CAPTURE_ROLE=quant
+    EXTRA+=(--scope-file "$CANDIDATE_SCOPE"
+            --codec "$CANDIDATE_CODEC" --declared-bits "$CANDIDATE_BITS")
+    log "candidate capture: role quant, scope $CANDIDATE_SCOPE_REL ($CANDIDATE_SCOPE_SHA), codec $CANDIDATE_CODEC, $CANDIDATE_BITS bits"
+  fi
   log "capturing fresh process $PROCESS_LABEL: $REPO @ $REV -> $OUT"
     # The two repository arguments are intentionally different identities:
     # weights_repository is what was executed; repository is the intended
     # dataset identity whether or not a later mutation is authorized.
     HF_HOME="$FS/hf" "$PY" "$FS/bin/fidelity_dataset.py" capture \
-        --out "$OUT" --form "$FORM" --role root --lane "$LANE" \
+        --out "$OUT" --form "$FORM" --role "$CAPTURE_ROLE" --lane "$LANE" \
         --engine "$ENGINE" -- \
         --model "$MODELS/target" --weights-repository "$REPO" \
         --repository "$DATASET_REPO" --model-revision "$REV" \
@@ -1241,7 +1285,7 @@ PYALLOW
         --schedule "$SCHED" --device "$DEVICE" --dtype "$DTYPE" \
         --dataset-id "$DSID" --dataset-name "$DSNAME" \
         --run-name "$PROCESS_LABEL" --cold-run "$PROCESS_LABEL" \
-        --author "$AUTHOR" --role root \
+        --author "$AUTHOR" --role "$CAPTURE_ROLE" \
         "${EXTRA[@]}" \
         2>&1 | tee -a "$LOGS/$STAGE.log"
   du -sh "$OUT" | tee -a "$LOGS/$STAGE.log"
@@ -1350,10 +1394,93 @@ qualify_root)
   log "done"
   ;;
 
+fetch_reference)
+  # The published root a candidate is scored against, fetched ANONYMOUSLY
+  # (it is public, and the target token is gone by now) and fully verified,
+  # tensors recomputed. The job names the exact seal and content digest it
+  # expects, so a repository that moved under the same name refuses here,
+  # before a cold run is paid for.
+  require_stage_marker fetch_target
+  REF_REPO="$(jqget capture.candidate.reference.repository)"
+  REF_REV="$(jqget capture.candidate.reference.revision)"
+  REF_SHA="$(jqget capture.candidate.reference.dataset_sha256)"
+  REF_CCD="$(jqget capture.candidate.reference.capture_content_digest)"
+  [ -n "$REF_REPO" ] && [ -n "$REF_REV" ] && [ -n "$REF_SHA" ] && [ -n "$REF_CCD" ] || {
+    echo "fetch_reference REFUSES: job.json has no complete capture.candidate.reference." >&2
+    exit 3
+  }
+  REF_CACHE="$FS/reference-cache"
+  log "fetching reference $REF_REPO@$REF_REV anonymously -> $REF_CACHE"
+  env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN -u HUGGINGFACE_HUB_TOKEN -u HF_TOKEN_PATH \
+      HF_HUB_DISABLE_IMPLICIT_TOKEN=1 HF_HOME="$FS/hf-anonymous" \
+      "$PY" "$FS/bin/fidelity_dataset.py" verify "hf://$REF_REPO@$REF_REV" \
+      --cache "$REF_CACHE" --json "$RCPT/reference-verify.json" \
+      2>&1 | tee -a "$LOGS/fetch_reference.log"
+  REF_ROOT="$(python3 - "$REF_CACHE" "$REF_REPO" "$REF_REV" "$REF_SHA" "$REF_CCD" "$FS/bin" <<'PYREF'
+import json, os, sys
+sys.path.insert(0, sys.argv[6])
+from fidelity import dsformat as F
+cache, repo, rev, sha, ccd = sys.argv[1:6]
+root = os.path.join(cache, repo.replace("/", "__"), rev)
+manifest = F.load_manifest(root)
+if manifest.get(F.SEAL_FIELD) != sha:
+    raise SystemExit("fetch_reference REFUSES: %s@%s seals %s, the job expects %s"
+                     % (repo, rev, manifest.get(F.SEAL_FIELD), sha))
+if (manifest.get("capture") or {}).get("capture_content_digest") != ccd:
+    raise SystemExit("fetch_reference REFUSES: reference capture_content_digest differs from the job")
+if (manifest.get("dataset") or {}).get("role") != "root":
+    raise SystemExit("fetch_reference REFUSES: the reference is not a root dataset")
+print(root)
+PYREF
+)"
+  [ -n "$REF_ROOT" ] || exit 3
+  ln -sfn "$REF_ROOT" "$FS/reference"
+  log "reference verified: dataset_sha256 $REF_SHA, capture_content_digest $REF_CCD -> $FS/reference"
+  write_marker
+  log "done"
+  ;;
+
+compare_reference)
+  # KLD(reference || candidate) over the QUALIFIED candidate: the canonical
+  # capture two fresh processes reproduced bitwise, scored against the
+  # verified published root with the job's replay contract (the same
+  # comparator and settings compare_root used, so no replay caveat differs
+  # between the floor and the number).
+  require_stage_marker fetch_reference
+  require_stage_marker qualify_root
+  [ -L "$FS/reference" ] && [ -f "$FS/reference/fidelity-dataset.json" ] || {
+    echo "compare_reference REFUSES: $FS/reference is not the verified reference dataset." >&2
+    exit 3
+  }
+  REPLAY_DEVICE="$(jqget capture.replay_device)"
+  REPLAY_DTYPE="$(jqget capture.replay_dtype)"
+  VOCAB_CHUNK="$(jqget capture.vocab_chunk)"
+  [ -n "$REPLAY_DEVICE" ] && [ -n "$REPLAY_DTYPE" ] && [ -n "$VOCAB_CHUNK" ] || {
+    echo "compare_reference REFUSES: job.json must name capture.replay_device/replay_dtype/vocab_chunk." >&2
+    exit 2
+  }
+  if [ "$REPLAY_DEVICE" = "numpy" ]; then
+    COMPARE_DEVICE="cpu"
+  else
+    COMPARE_DEVICE="$REPLAY_DEVICE"
+  fi
+  log "scoring the qualified candidate against the reference (replay=$REPLAY_DEVICE/$REPLAY_DTYPE)"
+  "$PY" "$FS/bin/fidelity_dataset.py" compare \
+      --reference "$FS/reference" --candidate "$FS/dataset" \
+      --reference-label root --candidate-label candidate \
+      --device "$COMPARE_DEVICE" \
+      --replay-device "$REPLAY_DEVICE" --replay-dtype "$REPLAY_DTYPE" \
+      --vocab-chunk "$VOCAB_CHUNK" --out "$RCPT/reference-comparison" \
+      2>&1 | tee -a "$LOGS/compare_reference.log"
+  write_marker
+  log "done"
+  ;;
+
 *)
   echo "unknown stage: $STAGE" >&2
   echo "stages: setup fetch_target fetch_panel materialize measure score seal" >&2
   echo "        capture verify capture_repeat verify_repeat compare_root qualify_root publish_root" >&2
+  echo "        fetch_reference compare_reference (candidate: the root protocol on a quantized target)" >&2
   echo "        race_bootstrap/race_capture explicitly refuse paid roots" >&2
   exit 2
   ;;

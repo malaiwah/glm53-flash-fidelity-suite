@@ -745,7 +745,7 @@ def first_manifest_dataset(root):
     return (F.load_manifest(root).get("dataset") or {})
 
 
-def _capture_identity(root, expected_label, label):
+def _capture_identity(root, expected_label, label, candidate=None):
     report = dsvalidate.validate_dataset(root, verify_tensors=True)
     if report.errors:
         raise RootQualificationError(
@@ -757,9 +757,23 @@ def _capture_identity(root, expected_label, label):
     determinism = manifest.get("determinism") or {}
     capture = manifest.get("capture") or {}
     runtime = manifest.get("runtime") or {}
-    if dataset.get("role") != "root":
-        raise RootQualificationError("%s dataset role is %r, not root"
-                                     % (label, dataset.get("role")))
+    weights = manifest.get("weights") or {}
+    expected_role = "quant" if candidate is not None else "root"
+    if dataset.get("role") != expected_role:
+        raise RootQualificationError("%s dataset role is %r, not %s"
+                                     % (label, dataset.get("role"), expected_role))
+    candidate_identity = None
+    if candidate is not None:
+        # The two-process protocol on a quantized target: the dataset must
+        # carry the authored scope, codec and bits the job names, and its
+        # runtime receipt must record the decode the loader applied.
+        candidate_identity = {
+            "quantized": weights.get("quantized"),
+            "codec": weights.get("codec"),
+            "declared_bits": weights.get("declared_bits"),
+            "scope_digest": (manifest.get("scope") or {}).get("scope_digest"),
+            "weights_decode": None,
+        }
     if determinism.get("run_count") != 1:
         raise RootQualificationError(
             "%s dataset determinism.run_count is %r; each public manifest must remain "
@@ -781,6 +795,24 @@ def _capture_identity(root, expected_label, label):
     stack_fingerprint = runtime_doc.get("stack_fingerprint") or {}
     capture_tool = runtime_doc.get("capture_tool") or {}
     runtime_container = runtime_doc.get("container")
+    if candidate_identity is not None:
+        decode = capture_tool.get("weights_decode")
+        candidate_identity["weights_decode"] = (
+            {"method": decode.get("method"),
+             "quantization_config": decode.get("quantization_config")}
+            if isinstance(decode, dict) else None)
+        expected_decode = candidate["weights_decode"]
+        if (candidate_identity["quantized"] is not True
+                or candidate_identity["codec"] != candidate["codec"]
+                or candidate_identity["declared_bits"] != candidate["declared_bits"]
+                or candidate_identity["scope_digest"] != candidate["scope"]["scope_digest"]
+                or candidate_identity["weights_decode"] != expected_decode):
+            raise RootQualificationError(
+                "%s candidate identity differs from the job's candidate block "
+                "(quantized=%r codec=%r bits=%r scope_digest=%r weights_decode=%r)"
+                % (label, candidate_identity["quantized"], candidate_identity["codec"],
+                   candidate_identity["declared_bits"], candidate_identity["scope_digest"],
+                   candidate_identity["weights_decode"]))
     if not isinstance(runtime_container, dict):
         raise RootQualificationError(
             "%s runtime manifest container identity is not an object" % label)
@@ -832,7 +864,7 @@ def _capture_identity(root, expected_label, label):
         except (OSError, F.FormatError) as exc:
             raise RootQualificationError(
                 "%s dataset license file is invalid: %s" % (label, exc)) from exc
-    return {
+    identity = {
         "process_label": expected_label,
         "dataset_id": dataset.get("id"),
         "dataset_name": dataset.get("name"),
@@ -874,6 +906,9 @@ def _capture_identity(root, expected_label, label):
         "weights_revision": (manifest.get("weights") or {}).get("revision"),
         "determinism_run_count": 1,
     }
+    if candidate_identity is not None:
+        identity["candidate"] = candidate_identity
+    return identity
 
 
 
@@ -1176,8 +1211,11 @@ def cmd_qualify_root(args):
             raise RootQualificationError(
                 "capture.publish_root_to must equal capture.dataset_repository when set")
 
-        first = _capture_identity(args.first, args.first_label, "canonical")
-        repeat = _capture_identity(args.repeat, args.repeat_label, "repeat")
+        candidate = capture_job.get("candidate")
+        first = _capture_identity(args.first, args.first_label, "canonical",
+                                  candidate=candidate)
+        repeat = _capture_identity(args.repeat, args.repeat_label, "repeat",
+                                   candidate=candidate)
         # A resumed root: cold run 1 was imported from an earlier attempt of
         # the same recipe. The job names that exact dataset, the controller's
         # sealed receipt proves what landed in dataset/, and the identity

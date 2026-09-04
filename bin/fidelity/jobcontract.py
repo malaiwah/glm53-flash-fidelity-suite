@@ -398,8 +398,18 @@ def validate_job(document: dict) -> None:
                 or (capture.get("publish_root_to") is not None
                     and capture.get("publish_root_to")
                     != capture.get("dataset_repository"))
-                or not allowlist_ok):
+                or not allowlist_ok
+                or not valid_candidate(capture.get("candidate"))):
             raise JobContractError("root capture contract is incomplete")
+        candidate = capture.get("candidate")
+        if candidate is not None:
+            if candidate["reference"]["panel_id"] != (
+                    ((panel.get("resolved_binding") or {}).get("panel") or {}).get("id")):
+                raise JobContractError(
+                    "candidate reference dataset was captured on another panel")
+            if candidate["reference"]["repository"] == capture.get("dataset_repository"):
+                raise JobContractError(
+                    "candidate dataset repository must differ from its reference")
         # A resumed root: cold run 1 is a sealed dataset from an earlier
         # attempt of the same recipe, imported into dataset/ before the
         # stages run; cold run 2 is captured fresh. The job names the exact
@@ -951,16 +961,70 @@ ROOT_QUALIFICATION_CONTRACT_KEYS = frozenset({
     "panel_receipt_seal_mode", "panel_binding_file_sha256",
     "panel_binding_path", "tokenizer_identity_sha256",
     "unexpected_tensor_allowlist", "target", "profile",
-    "panel_resolved_binding", "resume_capture",
+    "panel_resolved_binding", "resume_capture", "candidate",
 })
+
+#: capture.candidate: the two-fresh-process protocol applied to a QUANTIZED
+#: target. Null for a root. When present the pod captures with --role quant
+#: under the authored scope, the qualification binds a role=quant dataset,
+#: and one more stage (compare_reference) scores the qualified capture
+#: against the published root the block names -- the same-stack KLD the
+#: registry ingests. The reference identity is exact (repo, revision, seal,
+#: content digest) so the pod refuses any other dataset under that name.
+CANDIDATE_KEYS = frozenset({
+    "scope", "codec", "declared_bits", "weights_decode", "reference"})
+CANDIDATE_SCOPE_KEYS = frozenset({"path", "sha256", "scope_digest"})
+CANDIDATE_REFERENCE_KEYS = frozenset({
+    "repository", "revision", "dataset_sha256", "capture_content_digest",
+    "dataset_id", "panel_id", "suite_token_hash_sha256"})
+CANDIDATE_DECODE_KEYS = frozenset({"method", "quantization_config"})
+
+
+def valid_candidate(value: Any) -> bool:
+    """None, or the exact candidate block (see CANDIDATE_KEYS)."""
+    if value is None:
+        return True
+    if not isinstance(value, dict) or set(value) != CANDIDATE_KEYS:
+        return False
+    scope, reference, decode = (
+        value.get("scope"), value.get("reference"), value.get("weights_decode"))
+    return (
+        isinstance(scope, dict) and set(scope) == CANDIDATE_SCOPE_KEYS
+        and isinstance(scope.get("path"), str) and bool(scope["path"])
+        and _HEX64.fullmatch(str(scope.get("sha256", ""))) is not None
+        and _HEX64.fullmatch(str(scope.get("scope_digest", ""))) is not None
+        and isinstance(value.get("codec"), str) and bool(value["codec"])
+        and isinstance(value.get("declared_bits"), (int, float))
+        and not isinstance(value.get("declared_bits"), bool)
+        and 0 < float(value["declared_bits"]) <= 16
+        and isinstance(decode, dict) and set(decode) == CANDIDATE_DECODE_KEYS
+        and isinstance(decode.get("method"), str) and bool(decode["method"])
+        and isinstance(decode.get("quantization_config"), dict)
+        and isinstance(reference, dict)
+        and set(reference) == CANDIDATE_REFERENCE_KEYS
+        and isinstance(reference.get("repository"), str)
+        and re.fullmatch(r"[^\s/]+/[^\s/]+", reference["repository"]) is not None
+        and re.fullmatch(r"[0-9a-f]{40}", str(reference.get("revision", ""))) is not None
+        and all(_HEX64.fullmatch(str(reference.get(name, ""))) is not None
+                for name in ("dataset_sha256", "capture_content_digest",
+                             "suite_token_hash_sha256"))
+        and isinstance(reference.get("dataset_id"), str) and bool(reference["dataset_id"])
+        and isinstance(reference.get("panel_id"), str) and bool(reference["panel_id"]))
 
 
 def validate_root_qualification_contract(contract: dict) -> None:
     """Validate the closed public projection without requiring its source job."""
     if not isinstance(contract, dict) \
-            or set(contract) != ROOT_QUALIFICATION_CONTRACT_KEYS:
+            or set(contract) not in (
+                ROOT_QUALIFICATION_CONTRACT_KEYS,
+                # Receipts sealed before 2026-09-04 carry no candidate key;
+                # a root's candidate is null either way.
+                ROOT_QUALIFICATION_CONTRACT_KEYS - {"candidate"}):
         raise JobContractError(
             "root qualification job_contract fields differ")
+    if not valid_candidate(contract.get("candidate")):
+        raise JobContractError(
+            "root qualification job_contract candidate block is invalid")
     dataset_license = contract.get("dataset_license")
     weights_license = contract.get("weights_license")
     if dataset_license == "mit":
@@ -1153,6 +1217,9 @@ def _root_qualification_contract(document: dict) -> dict:
         # Null for a two-fresh-process root; the imported cold run 1's exact
         # identity and origin for a resumed one (validate_job checks it).
         "resume_capture": capture.get("resume_capture"),
+        # Null for a root; for a candidate, the authored scope, codec, bits,
+        # the decode the loader must apply and the exact reference dataset.
+        "candidate": capture.get("candidate"),
         "dataset_repository": capture.get("dataset_repository"),
         "publish_root_to": capture.get("publish_root_to"),
         "dataset_license": capture.get("dataset_license"),

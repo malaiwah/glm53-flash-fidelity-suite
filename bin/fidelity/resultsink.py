@@ -485,6 +485,17 @@ def _load_job(fs_root):
     return job
 
 
+def _read_json_receipt(fs_root, relative):
+    """A strict-JSON receipt under the run root, or an ArchiveError."""
+    path = Path(fs_root) / relative
+    try:
+        with open(path, "rb") as handle:
+            body = handle.read()
+    except OSError as exc:
+        raise ArchiveError("%s is unreadable: %s" % (relative, exc))
+    return _parse_json_member(relative, body)
+
+
 def _require_sealed_receipt(fs_root, relative, purpose):
     path = Path(fs_root) / relative
     if not path.is_file() or path.is_symlink():
@@ -630,6 +641,12 @@ def _role_contract(fs_root, summary, source_paths):
         _validate_root_evidence(
             job, qualification, published, qualification_file_sha,
             sha256_file(str(Path(fs_root) / "job.json")))
+        if (job.get("capture") or {}).get("candidate") is not None:
+            _validate_candidate_comparison(
+                job, qualification,
+                _require_sealed_receipt(
+                    fs_root, CANDIDATE_COMPARISON_MEMBER, "candidate comparison"),
+                _read_json_receipt(fs_root, CANDIDATE_REFERENCE_VERIFY_MEMBER))
     if failed:
         if not any(path.relative_to(Path(fs_root)).as_posix().startswith("logs/")
                    for path in source_paths):
@@ -1158,7 +1175,7 @@ def _validate_dataset_tree(prefix, identity, bodies, digests=None,
         raise ArchiveError("qualification %s capture identity is missing" % prefix)
     if "imported_from" in identity:
         _validate_imported_canonical(prefix, identity, bodies, contract)
-    if set(identity) - {"imported_from"} != ROOT_CAPTURE_IDENTITY_FIELDS:
+    if set(identity) - {"imported_from", "candidate"} != ROOT_CAPTURE_IDENTITY_FIELDS:
         raise ArchiveError(
             "qualification %s capture identity fields differ" % prefix)
     expected_process = (
@@ -1193,6 +1210,31 @@ def _validate_dataset_tree(prefix, identity, bodies, digests=None,
     }
     expected_allowlist = contract.get("unexpected_tensor_allowlist")
     observed_allowlist = identity.get("unexpected_tensor_allowlist")
+    # A candidate (the two-process protocol on a quantized target) captures
+    # a role=quant dataset under the authored scope; the identity carries a
+    # candidate block that must match the contract's exactly, and a root
+    # carries none.
+    candidate = contract.get("candidate")
+    if not jobcontract.valid_candidate(candidate):
+        raise ArchiveError("%s job contract candidate block is invalid" % prefix)
+    expected_role = "quant" if candidate is not None else "root"
+    observed_candidate = identity.get("candidate")
+    if candidate is None:
+        if observed_candidate is not None:
+            raise ArchiveError(
+                "%s capture identity carries a candidate block the job contract "
+                "does not declare" % prefix)
+    elif (not isinstance(observed_candidate, dict)
+            or set(observed_candidate) != {
+                "quantized", "codec", "declared_bits", "scope_digest", "weights_decode"}
+            or observed_candidate.get("quantized") is not True
+            or observed_candidate.get("codec") != candidate["codec"]
+            or observed_candidate.get("declared_bits") != candidate["declared_bits"]
+            or observed_candidate.get("scope_digest") != candidate["scope"]["scope_digest"]
+            or observed_candidate.get("weights_decode") != candidate["weights_decode"]):
+        raise ArchiveError(
+            "%s candidate identity differs from the job contract's candidate block"
+            % prefix)
     bound_panel = binding.get("panel") if isinstance(binding, dict) else None
     bound_receipt = (
         binding.get("receipt") if isinstance(binding, dict) else None)
@@ -1327,11 +1369,11 @@ def _validate_dataset_tree(prefix, identity, bodies, digests=None,
                 != contract.get("dataset_repository")
             or manifest_dataset.get("license")
                 != contract.get("dataset_license")
-            or manifest_dataset.get("role") != "root"
+            or manifest_dataset.get("role") != expected_role
             or manifest_weights.get("repository") != target.get("repo_id")
             or manifest_weights.get("revision") != target.get("revision")
             or manifest_weights.get("model_revision") != target.get("revision")
-            or manifest_weights.get("quantized") is not False
+            or manifest_weights.get("quantized") is not (candidate is not None)
             or manifest_panel.get("panel_id") != bound_panel.get("id")
             or manifest_panel.get("suite_token_hash_sha256")
                 != bound_panel.get("suite_token_hash_sha256")
@@ -1344,6 +1386,14 @@ def _validate_dataset_tree(prefix, identity, bodies, digests=None,
             or manifest_runtime_block.get("source") != "native"):
         raise ArchiveError(
             "%s top manifest inputs differ from the exact root job" % prefix)
+    if candidate is not None and (
+            (manifest.get("scope") or {}).get("scope_digest")
+                != candidate["scope"]["scope_digest"]
+            or manifest_weights.get("codec") != candidate["codec"]
+            or manifest_weights.get("declared_bits") != candidate["declared_bits"]):
+        raise ArchiveError(
+            "%s top manifest scope/codec/bits differ from the job's candidate block"
+            % prefix)
     checksums_name = "%s/checksums.txt" % prefix
     checksums_body = bodies.get(checksums_name)
     seal_block = manifest.get("seal")
@@ -2230,6 +2280,60 @@ def _enforce_quant_archive_caps(job, member_count, uncompressed, transfer=None):
         raise ArchiveError("quant result exceeds job archive transfer bound")
 
 
+COMPARISON_RECEIPT_SCHEMA = "malaiwah.fidelity-comparison-receipt.v1"
+CANDIDATE_COMPARISON_MEMBER = "receipts/reference-comparison/comparison-receipt.json"
+CANDIDATE_REFERENCE_VERIFY_MEMBER = "receipts/reference-verify.json"
+
+
+def _validate_candidate_comparison(job, qualification, comparison, reference_verify):
+    """A candidate's deliverable: KLD(reference || candidate) over the
+    qualified canonical capture, against exactly the published root the job
+    names, with the job's replay contract and no self-compare shortcut."""
+    candidate = ((job.get("capture") or {}).get("candidate")
+                 if isinstance(job.get("capture"), dict) else None)
+    if not jobcontract.valid_candidate(candidate) or candidate is None:
+        raise ArchiveError("candidate comparison requires a job candidate block")
+    expected_reference = candidate["reference"]
+    canonical = ((qualification.get("captures") or {}).get("canonical")
+                 if isinstance(qualification.get("captures"), dict) else None)
+    if not isinstance(canonical, dict):
+        raise ArchiveError("candidate comparison requires the qualified canonical capture")
+    if (not isinstance(comparison, dict)
+            or comparison.get("schema") != COMPARISON_RECEIPT_SCHEMA
+            or not verify_seal(comparison)
+            or comparison.get("comparison_kind") != "measurement"
+            or comparison.get("self_compare") not in (False, None)):
+        raise ArchiveError("candidate comparison receipt schema/seal/kind is invalid")
+    reference = comparison.get("reference") or {}
+    candidate_side = comparison.get("candidate") or {}
+    if (reference.get("dataset_sha256") != expected_reference["dataset_sha256"]
+            or reference.get("capture_content_digest")
+                != expected_reference["capture_content_digest"]
+            or reference.get("dataset_id") != expected_reference["dataset_id"]
+            or reference.get("role") != "root"):
+        raise ArchiveError(
+            "candidate comparison reference is not the root the job names")
+    if (candidate_side.get("dataset_sha256") != canonical.get("dataset_sha256")
+            or candidate_side.get("capture_content_digest")
+                != canonical.get("capture_content_digest")
+            or candidate_side.get("role") != "quant"
+            or candidate_side.get("scope_digest")
+                != candidate["scope"]["scope_digest"]):
+        raise ArchiveError(
+            "candidate comparison candidate side is not the qualified canonical capture")
+    metric = comparison.get("metric") or {}
+    value = metric.get("value")
+    if (metric.get("direction") != "reference_to_candidate"
+            or metric.get("name") != "mean_of_run_means_tokenwise_kld"
+            or isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(float(value)) or float(value) < 0):
+        raise ArchiveError("candidate comparison metric is not a finite KLD(reference || candidate)")
+    if (not isinstance(reference_verify, dict)
+            or reference_verify.get("structural_status") != "sealed"
+            or reference_verify.get("error_count") != 0):
+        raise ArchiveError("candidate reference verification receipt is not a clean full verify")
+
+
 def _validate_root_evidence(job, qualification, publication=None,
                             qualification_file_sha256=None,
                             job_file_sha256=None):
@@ -2252,7 +2356,14 @@ def _validate_root_evidence(job, qualification, publication=None,
         raise ArchiveError(
             "root job cannot produce a public qualification contract: %s"
             % exc) from exc
-    if qualification.get("job_contract") != expected_contract:
+    sealed_contract = qualification.get("job_contract")
+    if (isinstance(sealed_contract, dict) and "candidate" not in sealed_contract
+            and expected_contract.get("candidate") is None):
+        # Receipts sealed before 2026-09-04 carry no candidate key; for a
+        # root the block is null either way.
+        expected_contract = {k: v for k, v in expected_contract.items()
+                             if k != "candidate"}
+    if sealed_contract != expected_contract:
         raise ArchiveError(
             "root qualification job_contract differs from exact job.json")
     if (not _valid_hex(job_sha, 64)
@@ -2436,6 +2547,12 @@ def _verify_role_members(manifest, bodies, digests=None):
             hashlib.sha256(bodies["job.json"]).hexdigest())
         _validate_qualified_dataset_bodies(
             qualification, bodies, digests, job=job)
+        if (job.get("capture") or {}).get("candidate") is not None:
+            _validate_candidate_comparison(
+                job, qualification, sealed(CANDIDATE_COMPARISON_MEMBER),
+                _parse_json_member(
+                    CANDIDATE_REFERENCE_VERIFY_MEMBER,
+                    bodies.get(CANDIDATE_REFERENCE_VERIFY_MEMBER, b"")))
     if failed:
         if not any(name.startswith("logs/") for name in bodies):
             raise ArchiveError("failed/abandoned archive has no stage log")

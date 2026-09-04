@@ -1414,6 +1414,170 @@ def _validate_scope_json(con: Console, path: str) -> None:
     con.ok("scope file schema", "valid against submission.schema.json")
 
 
+CANDIDATE_DECODE_METHOD = "fp8-block-dequant-to-bf16"
+
+
+def _candidate_decode_plan(qc) -> Dict[str, Any]:
+    """The decode the streaming loader will apply, from the config alone.
+
+    Mirrors `engines/tools/layer_outer.fp8_checkpoint_plan` field for field
+    (the pod compares its runtime receipt against this block), without
+    importing torch on the controller.
+    """
+    if not isinstance(qc, dict) or not qc:
+        raise Refusal(
+            "--candidate-scope, but this checkpoint publishes no quantization_config: "
+            "it is an unquantized release; capture it as a root", [])
+    method, fmt, block = qc.get("quant_method"), qc.get("fmt"), qc.get("weight_block_size")
+    activation = qc.get("activation_scheme")
+    if not (method == "fp8" and fmt == "e4m3"
+            and isinstance(block, list) and len(block) == 2
+            and all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in block)
+            and activation in (None, "dynamic")):
+        raise Refusal(
+            "candidate quantization_config quant_method=%r fmt=%r weight_block_size=%r "
+            "activation_scheme=%r is not the block-scaled FP8 e4m3 weights-only form the "
+            "layer-outer loader decodes" % (method, fmt, block, activation),
+            ["Only zai-org/GLM-5.3-style FineGrainedFP8 checkpoints are decodable today; "
+             "a trellis/exl3 surface needs its own decoder first."])
+    return {
+        "method": CANDIDATE_DECODE_METHOD,
+        "quantization_config": {
+            "quant_method": method, "fmt": fmt,
+            "weight_block_size": [int(block[0]), int(block[1])],
+            "activation_scheme": activation,
+            "modules_to_not_convert": sorted(
+                str(m) for m in (qc.get("modules_to_not_convert") or [])),
+        },
+    }
+
+
+CANDIDATE_SCOPE_REMOTE = "candidate/scope.json"
+
+
+def _candidate_block(args, plan_data: Dict[str, Any], con: Console,
+                     binding_panel: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """job.capture.candidate: the authored scope (by digest), codec, bits,
+    the decode the loader must apply, and the exact reference dataset."""
+    flags = (args.candidate_scope, args.candidate_codec, args.candidate_bits,
+             args.reference_dataset)
+    if not any(flag is not None for flag in flags):
+        return None
+    if not all(flag is not None for flag in flags):
+        raise Refusal(
+            "--candidate-scope, --candidate-codec, --candidate-bits and "
+            "--reference-dataset are all-or-none", [])
+    from fidelity import dshub, dsmanifest
+    from fidelity import dsformat as F
+
+    scope_path = Path(args.candidate_scope).expanduser().resolve()
+    if scope_path.is_symlink() or not scope_path.is_file():
+        raise Refusal("--candidate-scope must be a regular JSON file", [])
+    raw = scope_path.read_bytes()
+    try:
+        doc = parse_job_bytes(raw)
+    except JobContractError as exc:
+        raise Refusal("--candidate-scope is not strict JSON: %s" % exc, [])
+    for key in ("policy", "head_policy", "assignments"):
+        if key not in doc:
+            raise Refusal("--candidate-scope lacks %r" % key, [])
+    try:
+        scope_block = dsmanifest.scope_block(
+            doc["assignments"], doc["head_policy"],
+            doc.get("kv_cache_dtype", "bf16"), doc["policy"])
+    except Exception as exc:
+        raise Refusal("--candidate-scope does not form a scope block: %s" % exc, [])
+    if not (isinstance(args.candidate_bits, float) and 0 < args.candidate_bits <= 16):
+        raise Refusal("--candidate-bits must be in (0, 16]", [])
+    if not re.fullmatch(r"[a-z0-9_.-]+", args.candidate_codec or ""):
+        raise Refusal("--candidate-codec must be a lowercase registry codec token", [])
+    decode = (plan_data.get("target") or {}).get("candidate_decode")
+    if decode is None:
+        raise Refusal("candidate decode plan is absent; the target gate did not run", [])
+
+    match = re.fullmatch(r"([^\s/@]+/[^\s/@]+)@([0-9a-f]{40})", args.reference_dataset)
+    if match is None:
+        raise Refusal("--reference-dataset must be OWNER/REPO@<40-hex revision>", [])
+    ref_repo, ref_rev = match.group(1), match.group(2)
+    dshub.validate_repo_id(ref_repo)
+    if ref_repo == args.dataset_repository:
+        raise Refusal("--reference-dataset must differ from --dataset-repository", [])
+    with tempfile.TemporaryDirectory(prefix="fidelity-reference-") as cache:
+        try:
+            root = dshub.fetch_dataset(
+                "hf://%s@%s" % (ref_repo, ref_rev), os.path.join(cache, "reference"),
+                token=None, manifest_only=True)
+            manifest = F.load_manifest(root)
+        except Exception as exc:
+            raise Refusal("--reference-dataset could not be read anonymously: %s"
+                          % redact(str(exc)), [])
+    dataset = manifest.get("dataset") or {}
+    ref_panel = manifest.get("panel") or {}
+    if dataset.get("role") != "root" or dataset.get("structural_status") != "sealed":
+        raise Refusal("--reference-dataset is not a sealed root dataset", [])
+    if ref_panel.get("panel_id") != binding_panel.get("id") or (
+            ref_panel.get("suite_token_hash_sha256")
+            != binding_panel.get("suite_token_hash_sha256")):
+        raise Refusal(
+            "--reference-dataset was captured on panel %r (%s), not this job's %r (%s)"
+            % (ref_panel.get("panel_id"), str(ref_panel.get("suite_token_hash_sha256"))[:16],
+               binding_panel.get("id"), str(binding_panel.get("suite_token_hash_sha256"))[:16]),
+            [])
+    reference = {
+        "repository": ref_repo, "revision": ref_rev,
+        "dataset_sha256": manifest.get(F.SEAL_FIELD),
+        "capture_content_digest": (manifest.get("capture") or {}).get("capture_content_digest"),
+        "dataset_id": dataset.get("id"),
+        "panel_id": ref_panel.get("panel_id"),
+        "suite_token_hash_sha256": ref_panel.get("suite_token_hash_sha256"),
+    }
+    plan_data["_candidate_scope_local"] = str(scope_path)
+    block = {
+        "scope": {"path": CANDIDATE_SCOPE_REMOTE,
+                  "sha256": hashlib.sha256(raw).hexdigest(),
+                  "scope_digest": scope_block["scope_digest"]},
+        "codec": args.candidate_codec,
+        "declared_bits": args.candidate_bits,
+        "weights_decode": decode,
+        "reference": reference,
+    }
+    from fidelity.jobcontract import valid_candidate
+    if not valid_candidate(block):
+        raise Refusal("candidate block is incomplete: %s" % json.dumps(block)[:300], [])
+    con.ok("candidate reference",
+           "%s@%s dataset_sha256 %s, capture %s, panel %s"
+           % (ref_repo, ref_rev[:12], reference["dataset_sha256"][:16],
+              reference["capture_content_digest"][:16], reference["panel_id"]))
+    return block
+
+
+def _report_candidate_result(con: Console, extracted: Path, job: Dict[str, Any]) -> None:
+    """The number, from the verified archive, on the console: KLD(root || candidate)
+    with its top-1 agreement, the reference and candidate seals, and the
+    receipt path. The registry session ingests the receipt; this line is for
+    the operator watching the run."""
+    receipt_path = extracted / "receipts" / "reference-comparison" / "comparison-receipt.json"
+    if not receipt_path.is_file():
+        con.warn("candidate comparison receipt is absent from the verified archive")
+        return
+    doc = json.loads(receipt_path.read_text(encoding="utf-8"))
+    metric = doc.get("metric") or {}
+    top1 = doc.get("top1_agreement")
+    if isinstance(top1, dict):
+        top1 = top1.get("value", top1.get("mean"))
+    candidate = job["capture"]["candidate"]
+    con.ok("candidate scored",
+           "KLD(root || candidate) = %r nats (%s); top-1 agreement %r; "
+           "reference %s@%s (%s); candidate %s %s bits (%s); receipt %s"
+           % (metric.get("value"), metric.get("name"), top1,
+              candidate["reference"]["repository"],
+              candidate["reference"]["revision"][:12],
+              candidate["reference"]["dataset_sha256"][:16],
+              candidate["codec"], candidate["declared_bits"],
+              str((doc.get("candidate") or {}).get("dataset_sha256"))[:16],
+              receipt_path.relative_to(extracted)))
+
+
 def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
                            args=None) -> None:
     """A reference must be the unquantized thing, or it is not a reference.
@@ -1450,6 +1614,23 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
     qc = cfg.get("quantization_config") or (
         cfg.get("text_config") or {}).get("quantization_config")
     designated = bool(getattr(args, "designated_reference", False))
+    if getattr(args, "candidate_scope", None):
+        # A candidate is the root protocol on a quantized target: the config
+        # MUST declare the one form the streaming loader decodes, and what it
+        # declares is bound into the job so the pod's runtime receipt has to
+        # record exactly that decode.
+        decode = _candidate_decode_plan(qc)
+        con.ok("candidate is block-scaled FP8",
+               "quant_method %s fmt %s block %s; decoded to bf16 per tensor "
+               "(%s), %d modules kept native"
+               % (decode["quantization_config"]["quant_method"],
+                  decode["quantization_config"]["fmt"],
+                  decode["quantization_config"]["weight_block_size"],
+                  decode["method"],
+                  len(decode["quantization_config"]["modules_to_not_convert"])))
+        plan.setdefault("target", {})["root_unquantized"] = False
+        plan["target"]["candidate_decode"] = decode
+        return
     if not qc:
         if designated:
             # The flag on an UNQUANTIZED checkpoint is a contradiction, and
@@ -4426,6 +4607,11 @@ def _plan_runpod_anonymous(
     if (args.role == "quant"
             and surface.surface in ("exl3hf", "tr3-published", "dione", "gguf")):
         extra_bytes += C.glm53_flash_census().nonrouted_bytes
+    if args.role == "root" and getattr(args, "candidate_scope", None):
+        # The verified reference root dataset lands beside the candidate's
+        # own two captures: one more hidden-form dataset plus its download
+        # cache (the fetch hashes into place, so ~2x the tree at peak).
+        extra_bytes += 2 * 4 * 1024 ** 3
     storage_need = C.storage_need(
         artifact_bytes=float(artifact_bytes), panel_bytes=float(panel_bytes),
         keep_student_logits=False, cold_runs=2, extra_bytes=float(extra_bytes))
@@ -4594,6 +4780,7 @@ def _plan_runpod_anonymous(
             "publish_root_to": args.publish_root_to,
             "unexpected_tensor_allowlist": allowlist_job,
             "resume_capture": _resume_capture_identity(args),
+            "candidate": _candidate_block(args, plan_data, con, binding_panel),
             "dataset_license": license_contract["dataset_license"],
             "weights_license": license_contract["weights_license"],
             "replay_device": args.replay_device,
@@ -5235,13 +5422,17 @@ def _freeze_root_inputs(plan_data: Dict[str, Any], outdir: Path) -> None:
     """Copy the two job-bound panel files before any campaign reservation."""
     destination = outdir / ".frozen-inputs"
     destination.mkdir(mode=0o700)
-    rows = (
+    rows = [
         ("_panel_archive_local", "panel.tar",
          plan_data["job"]["panel"]["archive_sha256"],
          plan_data["job"]["panel"]["archive_bytes"]),
         ("_panel_binding_local", "panel.binding.json",
          plan_data["job"]["panel"]["binding_file_sha256"], None),
-    )
+    ]
+    candidate = (plan_data["job"]["capture"] or {}).get("candidate")
+    if candidate is not None:
+        rows.append(("_candidate_scope_local", "candidate-scope.json",
+                     candidate["scope"]["sha256"], None))
     for key, name, expected_sha, expected_bytes in rows:
         source = Path(plan_data[key])
         metadata = source.lstat()
@@ -6775,6 +6966,11 @@ def execute_runpod(
                             "%s/inputs/panel.tar" % fs_root)
             provider.upload(pod_id, plan_data["_panel_binding_local"],
                             "%s/inputs/panel.binding.json" % fs_root)
+            if plan_data.get("_candidate_scope_local"):
+                provider.exec(pod_id, "mkdir -p -m 0700 %s/candidate"
+                              % shlex.quote(fs_root), timeout=60)
+                provider.upload(pod_id, plan_data["_candidate_scope_local"],
+                                "%s/%s" % (fs_root, CANDIDATE_SCOPE_REMOTE))
             provider.exec(
                 pod_id,
                 "python3 {fs}/bin/fidelity/runpodsafety.py extract-panel "
@@ -6840,7 +7036,8 @@ def execute_runpod(
         for stage in stage_sequence(
                 args.role, race=False,
                 surface=plan_data["target"]["surface"],
-                publish_root=False):
+                publish_root=False,
+                candidate=(job.get("capture") or {}).get("candidate") is not None):
             failed_stage = stage
             if stage == "fetch_target":
                 secret_cleanup = _runpod_fetch_target_and_remove_token(
@@ -7078,6 +7275,8 @@ def execute_runpod(
                         or durable_provider_ids != [str(pod_id)]):
                     raise RuntimeError(
                         "live attestation provider id differs from durable lease")
+                if (job.get("capture") or {}).get("candidate") is not None:
+                    _report_candidate_result(con, extracted, job)
             except BaseException as exc:
                 if run_error is None:
                     primary_error = exc
@@ -7879,7 +8078,8 @@ def _bootstrap_and_run(args, con, jl, td, plan_data, outdir) -> None:
                             race=bool(getattr(args, "race", False)),
                             surface=(plan_data.get("target") or {}).get("surface"),
                             publish_root=bool(getattr(args, "publish_root_to",
-                                                      None)))
+                                                      None)),
+                            candidate=bool(getattr(args, "candidate_scope", None)))
     for stage in stages:
         _run_stage(args, con, jl, td, plan_data, stage)
         if stage == "setup":
@@ -8756,6 +8956,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--resume-origin-job", default=None,
         help="the executed job.json that produced --resume-capture; its "
              "identity is recorded as the imported cold run's origin")
+    rt.add_argument(
+        "--candidate-scope", default=None, metavar="SCOPE.json",
+        help="root only, with --candidate-codec, --candidate-bits and "
+             "--reference-dataset: run the two-fresh-process protocol on a "
+             "QUANTIZED target. The dataset is captured with --role quant "
+             "under this authored scope (tensor classes, formats, bits), the "
+             "loader decodes the checkpoint's block-scaled FP8 to bf16 per "
+             "tensor (dequantize-and-run, weights-only), the qualified "
+             "capture is scored against --reference-dataset on the pod, and "
+             "the comparison receipt travels in the result archive.")
+    rt.add_argument("--candidate-codec", default=None, metavar="CODEC",
+                    help="registry codec of the candidate, e.g. fp8_e4m3")
+    rt.add_argument("--candidate-bits", type=float, default=None, metavar="BITS",
+                    help="declared bits per weight of the candidate, e.g. 8")
+    rt.add_argument(
+        "--reference-dataset", default=None, metavar="OWNER/REPO@40HEX",
+        help="the published root dataset the candidate is scored against; its "
+             "seal, content digest and panel are bound into the job and the "
+             "pod refuses any other dataset under that name")
     rt.add_argument(
         "--storage-layout", choices=sorted(RUNPOD_STORAGE_LAYOUTS),
         default="container-disk",
