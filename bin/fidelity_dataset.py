@@ -1090,7 +1090,11 @@ def _load_qualification(
     if dataset is not None:
         observed = _capture_identity(
             dataset, first.get("process_label"), "publish")
-        if observed != first:
+        # imported_from is the qualification's annotation of where cold run 1
+        # was captured; it is not a property the dataset carries.
+        recorded = {key: value for key, value in first.items()
+                    if key != "imported_from"}
+        if observed != recorded:
             raise RootQualificationError(
                 "qualification canonical capture identity differs from the "
                 "dataset selected for publication")

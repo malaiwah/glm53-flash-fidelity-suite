@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 
 import json
+from pathlib import Path
 import hashlib
 import os
 import shutil
@@ -1494,6 +1495,7 @@ def section_root_qualification(tmp):
             "comparison": comparison_path, "first_verify": first_verify,
             "repeat_verify": repeat_verify, "first_label": "root-cold-1",
             "repeat_label": "root-cold-2",
+            "imported_canonical": None,
             "out": os.path.join(tmp, "q-qualification.json"),
         }
         values.update(overrides)
@@ -1540,6 +1542,69 @@ def section_root_qualification(tmp):
         forged_refused = False
     check("Q1b a coherently resealed alternate job cannot publish the "
           "unchanged capture", forged_refused)
+
+    # A resumed root: cold run 1 imported from a prior attempt of the same
+    # recipe. The job names the exact dataset, the controller's sealed
+    # receipt proves what landed, and the qualification records the origin.
+    first_manifest_raw = Path(os.path.join(first, "fidelity-dataset.json")).read_bytes()
+    first_manifest = json.loads(first_manifest_raw)
+    resume_identity = {
+        "dataset_sha256": first_manifest["dataset_sha256"],
+        "capture_content_digest": first_manifest["capture"]["capture_content_digest"],
+        "dataset_manifest_file_sha256": hashlib.sha256(first_manifest_raw).hexdigest(),
+        "origin": {"job_id_full": "a" * 64, "attempt_id": "b" * 24,
+                   "job_file_sha256": "c" * 64},
+    }
+    resumed_job = json.loads(json.dumps(job))
+    resumed_job["capture"]["resume_capture"] = resume_identity
+    resumed_job = jobcontract.finalize_job(resumed_job)
+    resumed_job_path = os.path.join(tmp, "q-resumed-job.json")
+    common.write_json(resumed_job_path, resumed_job)
+    import_receipt = jobcontract.build_imported_capture_receipt(
+        job_id_full=resumed_job["job_id_full"], attempt_id="9" * 24,
+        resume=resume_identity, archive_sha256="d" * 64, archive_bytes=4096,
+        manifest_sha256="e" * 64, file_count=7, source_path="/prior/dataset",
+        imported_at="2026-09-04T01:00:00Z")
+    import_path = os.path.join(tmp, "q-imported-capture.json")
+    common.write_json(import_path, import_receipt)
+    resumed_out = os.path.join(tmp, "q-resumed-qualification.json")
+    rc = qualify(job=resumed_job_path, imported_canonical=import_path,
+                 out=resumed_out)
+    resumed = F.read_json(resumed_out) if rc == CLI.OK else {}
+    check("Q1c a resumed root qualifies with the imported cold run 1 recorded "
+          "as the canonical capture's origin",
+          rc == CLI.OK and common.verify_seal(resumed)
+          and resumed["captures"]["canonical"]["imported_from"]["origin"]
+          == resume_identity["origin"]
+          and resumed["captures"]["canonical"]["imported_from"]["receipt_sha256"]
+          == import_receipt["receipt_sha256"]
+          and resumed["job_contract"]["resume_capture"] == resume_identity
+          and "imported_from" not in resumed["captures"]["repeat"])
+    check("Q1d the import receipt alone, without the job naming a resume, refuses",
+          qualify(imported_canonical=import_path,
+                  out=os.path.join(tmp, "q-x1.json")) != CLI.OK)
+    check("Q1e the job naming a resume without the receipt refuses",
+          qualify(job=resumed_job_path, out=os.path.join(tmp, "q-x2.json"))
+          != CLI.OK)
+    wrong = dict(import_receipt)
+    wrong["dataset_sha256"] = "f" * 64
+    wrong = common.seal({k: v for k, v in wrong.items() if k != "receipt_sha256"})
+    wrong_path = os.path.join(tmp, "q-wrong-import.json")
+    common.write_json(wrong_path, wrong)
+    check("Q1f a resealed receipt naming a different dataset refuses",
+          qualify(job=resumed_job_path, imported_canonical=wrong_path,
+                  out=os.path.join(tmp, "q-x3.json")) != CLI.OK)
+    tampered = dict(import_receipt)
+    tampered["origin"] = None
+    tampered_path = os.path.join(tmp, "q-tampered-import.json")
+    common.write_json(tampered_path, tampered)
+    check("Q1g a receipt whose bytes no longer match its seal refuses",
+          qualify(job=resumed_job_path, imported_canonical=tampered_path,
+                  out=os.path.join(tmp, "q-x4.json")) != CLI.OK)
+    check("Q1h the resumed qualification reloads under the strict loader",
+          CLI._load_qualification(resumed_out, job_path=resumed_job_path,
+                                  dataset=first, repository=destination)
+          is not None)
     source_license = {
         "source_path": "LICENSE", "dataset_path": "LICENSE",
         "bytes": 17, "sha256": "3" * 64,

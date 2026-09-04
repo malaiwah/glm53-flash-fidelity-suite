@@ -5849,9 +5849,9 @@ def execute_runpod(
     finally:
         os.close(output_directory_fd)
     frozen_bundle = _freeze_verified_bundle(plan_data["bundle"], outdir)
-    frozen_resume = _freeze_resume_capture(plan_data, outdir)
     if args.role == "root":
         _freeze_root_inputs(plan_data, outdir)
+    frozen_resume = _freeze_resume_capture(plan_data, outdir)
     campaign_key = campaign_attempt_key(plan_data["job_id_full"], attempt)
     lease_ref = None
     request = {
