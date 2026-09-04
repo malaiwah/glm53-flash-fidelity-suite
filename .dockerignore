@@ -42,3 +42,5 @@ engines/tools/hidden-replay-evidence
 # capture reads them FROM the image (the SSH-era --panel-dir upload does not
 # exist there). C5g asserts every BUNDLE.txt file survives this ignore file.
 !engines/panels/**
+# The ssh target's PID 1 (container/Dockerfile, stage ssh).
+!container/ssh-start.sh
