@@ -84,6 +84,8 @@ engines/tools/student_capture.py
 engines/tools/kld_report.py
 # Exact root-capture unexpected-tensor allowlists; job.json binds one digest.
 engines/tools/layer-outer-evidence/fruit-unexpected-keys.json
+engines/tools/layer-outer-evidence/fruit-fp8-unexpected-keys.json
+engines/tools/layer-outer-evidence/glm53-fp8-layer78-unexpected-keys.json
 engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json
 engines/tools/dione-evidence/m2-layer45-unexpected-keys.json
 # The UNSEALED Dione (0xSero) selective-EXL3 surface. It serves BOTH lanes:
