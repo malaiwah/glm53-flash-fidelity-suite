@@ -992,7 +992,10 @@ def valid_candidate(value: Any) -> bool:
         isinstance(scope, dict) and set(scope) == CANDIDATE_SCOPE_KEYS
         and isinstance(scope.get("path"), str) and bool(scope["path"])
         and _HEX64.fullmatch(str(scope.get("sha256", ""))) is not None
-        and _HEX64.fullmatch(str(scope.get("scope_digest", ""))) is not None
+        # The registry's scope digest is a canonical class=treatment:format@bits
+        # string (registry/tools scope_digest), not a hash.
+        and isinstance(scope.get("scope_digest"), str) and bool(scope["scope_digest"])
+        and "=" in scope["scope_digest"]
         and isinstance(value.get("codec"), str) and bool(value["codec"])
         and isinstance(value.get("declared_bits"), (int, float))
         and not isinstance(value.get("declared_bits"), bool)
