@@ -4733,9 +4733,15 @@ def _plan_runpod_anonymous(
         result_archive_contract, warnings=plan_data["warnings"])
     plan_data["cost_quote"] = quote.to_dict()
     from fidelity.runpodapi import DEFAULT_IMAGE as RUNPOD_IMAGE
-    chosen["image"] = RUNPOD_IMAGE
-    chosen["image_reference_mutable"] = (
-        "@sha256:" not in RUNPOD_IMAGE)
+    # The pod's image: runpod/pytorch by digest (the locked stack is rebuilt
+    # on the pod), or the measurement image's ssh target pinned by digest
+    # (the stack is baked and the bootstrap seeds from it). Never a tag.
+    runpod_image = getattr(args, "runpod_image", None) or RUNPOD_IMAGE
+    if re.fullmatch(r"[a-z0-9.\-/]+@sha256:[0-9a-f]{64}", runpod_image) is None:
+        raise Refusal("--runpod-image must be an immutable name@sha256:<64-hex> reference",
+                      ["a tag can be repointed after the receipt is sealed"])
+    chosen["image"] = runpod_image
+    chosen["image_reference_mutable"] = False
     plan_data["max_runtime_seconds"] = max_runtime
     plan_data["provider_termination_seconds"] = int(
         quote.provider_termination_deadline_seconds)
@@ -6146,7 +6152,7 @@ def execute_runpod(
         },
         "engine_root": engine_root,
         "container_disk_gb": container_disk_gb,
-        "image": DEFAULT_IMAGE,
+        "image": plan_data["chosen"]["image"],
         "min_vcpu_count": plan_data["runtime_contract"]["min_vcpu_count"],
         "min_memory_gb": plan_data["runtime_contract"]["min_memory_gb"],
         "workload_contract": plan_data["runtime_contract"],
@@ -9001,6 +9007,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--resume-origin-job", default=None,
         help="the executed job.json that produced --resume-capture; its "
              "identity is recorded as the imported cold run's origin")
+    rt.add_argument(
+        "--runpod-image", default=None, metavar="NAME@sha256:HEX",
+        help="the pod image, pinned by digest (default: runpod/pytorch, on "
+             "which the locked stack is rebuilt every pod). The measurement "
+             "image's ssh target, ghcr.io/malaiwah/quant-fidelity-measure:ssh, "
+             "boots with the stack baked and the bootstrap seeds from it.")
     rt.add_argument(
         "--candidate-scope", default=None, metavar="SCOPE.json",
         help="root only, with --candidate-codec, --candidate-bits and "
