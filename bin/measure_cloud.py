@@ -97,6 +97,8 @@ EXIT_LEAK = 90          # teardown could not be confirmed -- the loudest failure
 # unreachable.  Well under the 900-second heartbeat window the on-pod
 # watchdog uses, so the controller decides first.
 STAGE_PROBE_OUTAGE_SECONDS = 300
+# One progress line per stage this often while it runs.
+STAGE_PROGRESS_SECONDS = 300
 
 
 class RunFailed(RuntimeError):
@@ -5124,7 +5126,7 @@ def _cleanup_ambiguous_runpod_create(
 
 def _runpod_stage(
         provider, pod_id, fs_root, engine_root, stage, deadline,
-        image_reference):
+        image_reference, progress=None):
     image_match = re.fullmatch(
         r".+@(sha256:[0-9a-f]{64})", str(image_reference))
     if image_match is None:
@@ -5174,6 +5176,9 @@ def _runpod_stage(
     # tolerated for STAGE_PROBE_OUTAGE_SECONDS, after which the host is
     # treated as unreachable and the run is torn down.
     probe_outage_started = None
+    started = time.time()
+    last_progress = started
+    last_bytes = None
     while time.time() < deadline:
         status = provider.run_status(run_id, machine_id=pod_id)
         state = str(status.get("state") or "").lower()
@@ -5200,8 +5205,52 @@ def _runpod_stage(
                        status.get("note") or "no detail"))
         else:
             probe_outage_started = None
+        # A three-hour stage that prints nothing is a run nobody can judge
+        # (2026-09-03: the deadline decision was made from a manual ssh
+        # probe). One line every STAGE_PROGRESS_SECONDS: bytes landed and
+        # rate for a fetch, the engine's last progress line otherwise, and
+        # the time left before the workload deadline.
+        if progress is not None and time.time() - last_progress >= (
+                STAGE_PROGRESS_SECONDS):
+            now = time.time()
+            line, landed = _runpod_stage_progress(
+                provider, pod_id, fs_root, stage)
+            detail = []
+            if landed is not None:
+                rate = ((landed - last_bytes) / (now - last_progress)
+                        if last_bytes is not None else None)
+                detail.append("%.1f GB on disk%s" % (
+                    landed / 1e9,
+                    " (%.0f MB/s)" % (rate / 1e6) if rate else ""))
+                last_bytes = landed
+            if line:
+                detail.append(line)
+            progress("stage %s +%dm, %dm before the workload deadline: %s" % (
+                stage, (now - started) // 60, max(0, deadline - now) // 60,
+                " | ".join(detail) or "no output yet"))
+            last_progress = now
         time.sleep(15)
     raise RuntimeError("workload deadline reached during stage %s" % stage)
+
+
+def _runpod_stage_progress(provider, pod_id, fs_root, stage):
+    """Best-effort (last engine log line, bytes landed) for a running stage."""
+    fs = shlex.quote(fs_root)
+    command = (
+        "tail -c 4000 %s/logs/%s.log 2>/dev/null | tr '\\r' '\\n' | grep . "
+        "| tail -1 | cut -c1-220; echo; "
+        "du -sb %s/models/target 2>/dev/null | cut -f1"
+        % (fs, shlex.quote(stage), fs))
+    try:
+        result = provider.exec(pod_id, command, timeout=60, check=False)
+    except Exception:  # noqa: BLE001 -- a progress line is never a verdict
+        return None, None
+    lines = str((result or {}).get("stdout") or "").split("\n")
+    line = redact(lines[0].strip()) if lines else ""
+    landed = None
+    if stage == "fetch_target" and len(lines) > 2 and lines[2].strip().isdigit():
+        landed = int(lines[2].strip())
+    return (line or None), landed
 
 
 def _runpod_stage_failure_evidence(provider, pod_id, fs_root, stage, run_id,
@@ -6504,15 +6553,18 @@ def execute_runpod(
             if stage == "fetch_target":
                 secret_cleanup = _runpod_fetch_target_and_remove_token(
                     provider, pod_id, fs_root, engine_root,
-                    workload_epoch, job["environment"]["image"])
+                    workload_epoch, job["environment"]["image"],
+                    progress=con.say)
                 token_cleanup_required = False
                 con.ok(
                     "HF download token removed",
                     "authenticated target fetch complete; remote erasure confirmed")
             else:
+                con.say("stage %s started" % stage)
                 _runpod_stage(
                     provider, pod_id, fs_root, engine_root, stage,
-                    workload_epoch, job["environment"]["image"])
+                    workload_epoch, job["environment"]["image"],
+                    progress=con.say)
             stages_done.append(stage)
             if stage == "setup":
                 bench_doc = _preflight_bench(
@@ -7407,13 +7459,13 @@ def _transport_hf_token(
 
 def _runpod_fetch_target_and_remove_token(
         provider, pod_id, fs_root: str, engine_root: str, deadline: float,
-        image_reference: str) -> Dict[str, Any]:
+        image_reference: str, progress=None) -> Dict[str, Any]:
     """Run the authenticated target fetch and always remove its remote token."""
     stage_error = None
     try:
         _runpod_stage(
             provider, pod_id, fs_root, engine_root, "fetch_target",
-            deadline, image_reference)
+            deadline, image_reference, progress=progress)
     except BaseException as exc:
         stage_error = exc
     cleanup = _cleanup_remote_secret(
