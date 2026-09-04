@@ -126,6 +126,122 @@ def tiny_moe_model(path, vocab=64, hidden=16, layers=3, experts=4, seed=3):
     return path
 
 
+# 12 does not divide the fixture's 16-wide hidden or 32-wide intermediate, so
+# every quantized tensor has a PARTIAL last block along both axes -- the form
+# GLM-5.3's 576-row kv_a_proj_with_mqa takes under its 128 x 128 block.
+FP8_BLOCK = [12, 12]
+FP8_SKIP = ("embed_tokens", "lm_head", "norm", "gate.weight", "e_score_correction_bias")
+
+
+def block_fp8_checkpoint(src, dst, block=FP8_BLOCK):
+    """A block-scaled FP8 e4m3 copy of a bf16 checkpoint, in the FineGrainedFP8
+    form transformers loads with dequantize=True: every 2-D projection weight
+    becomes (fp8 weight, fp32 weight_scale_inv); embeddings, head, norms and
+    routers stay bf16 and are named in modules_to_not_convert. Returns the
+    quantized key names."""
+    import torch
+    from safetensors.torch import load_file, save_file
+
+    os.makedirs(dst, exist_ok=True)
+    for name in os.listdir(src):
+        if name.endswith(".safetensors"):
+            continue
+        shutil.copy(os.path.join(src, name), os.path.join(dst, name))
+    quantized = []
+    skipped_modules = set()
+    for name in sorted(os.listdir(src)):
+        if not name.endswith(".safetensors"):
+            continue
+        tensors = load_file(os.path.join(src, name))
+        out = {}
+        for key, tensor in tensors.items():
+            module = key.rsplit(".", 1)[0]
+            eligible = (tensor.ndim == 2 and key.endswith(".weight")
+                        and not any(marker in key for marker in FP8_SKIP))
+            if not eligible:
+                out[key] = tensor
+                if key.endswith(".weight") and tensor.ndim == 2:
+                    skipped_modules.add(module)
+                continue
+            rows, cols = tensor.shape
+            grid_rows, grid_cols = -(-rows // block[0]), -(-cols // block[1])
+            w = torch.nn.functional.pad(
+                tensor.to(torch.float32),
+                (0, grid_cols * block[1] - cols, 0, grid_rows * block[0] - rows))
+            w = w.reshape(grid_rows, block[0], grid_cols, block[1])
+            amax = w.abs().amax(dim=(1, 3), keepdim=True).clamp(min=1e-12)
+            scale = amax / 448.0
+            q = (w / scale).to(torch.float8_e4m3fn)
+            q = q.reshape(grid_rows * block[0], grid_cols * block[1])[:rows, :cols]
+            out[key] = q.contiguous()
+            out[key + "_scale_inv"] = scale.reshape(grid_rows, grid_cols).contiguous()
+            quantized.append(key)
+        save_file(out, os.path.join(dst, name), metadata={"format": "pt"})
+    config_path = os.path.join(dst, "config.json")
+    doc = json.load(open(config_path))
+    doc["quantization_config"] = {
+        "quant_method": "fp8", "fmt": "e4m3", "weight_block_size": list(block),
+        "activation_scheme": "dynamic",
+        "modules_to_not_convert": sorted(skipped_modules)}
+    json.dump(doc, open(config_path, "w"), indent=2)
+    return quantized
+
+
+def reference_dequantized_checkpoint(fp8_dir, dst):
+    """The bf16 checkpoint transformers' own Fp8Dequantize produces from the
+    FP8 one: the independent side of the end-to-end parity check."""
+    import torch
+    from safetensors.torch import load_file, save_file
+    from transformers.integrations.finegrained_fp8 import Fp8Dequantize
+
+    os.makedirs(dst, exist_ok=True)
+    reference = Fp8Dequantize(None)
+    for name in os.listdir(fp8_dir):
+        if name.endswith(".safetensors"):
+            continue
+        shutil.copy(os.path.join(fp8_dir, name), os.path.join(dst, name))
+    for name in sorted(os.listdir(fp8_dir)):
+        if not name.endswith(".safetensors"):
+            continue
+        tensors = load_file(os.path.join(fp8_dir, name))
+        out = {}
+        for key, tensor in tensors.items():
+            if key.endswith("_scale_inv"):
+                continue
+            scale_key = key + "_scale_inv"
+            if scale_key in tensors:
+                scales = tensors[scale_key]
+                rows, cols = tensor.shape
+                padded = torch.nn.functional.pad(
+                    tensor.to(torch.float32),
+                    (0, scales.shape[1] * FP8_BLOCK[1] - cols,
+                     0, scales.shape[0] * FP8_BLOCK[0] - rows)).to(torch.float8_e4m3fn)
+                out[key] = reference._dequantize_one(
+                    padded, scales, output_dtype=torch.bfloat16)[:rows, :cols].contiguous()
+            else:
+                out[key] = tensor
+        save_file(out, os.path.join(dst, name), metadata={"format": "pt"})
+    config_path = os.path.join(dst, "config.json")
+    doc = json.load(open(config_path))
+    doc.pop("quantization_config", None)
+    json.dump(doc, open(config_path, "w"), indent=2)
+
+
+FP8_SCOPE = {
+    "policy": "mixed", "head_policy": "native", "kv_cache_dtype": "bf16",
+    "assignments": [
+        {"tensor_class": cls, "treatment": "quantized", "format": "fp8_e4m3",
+         "bits_per_weight": 8, "layer_range": None}
+        for cls in ("attn.qkv", "attn.o", "mlp.gate", "mlp.up", "mlp.down",
+                    "moe.experts")
+    ] + [
+        {"tensor_class": cls, "treatment": "native", "format": "bf16",
+         "bits_per_weight": 16, "layer_range": None}
+        for cls in ("embed_tokens", "moe.router", "norm", "lm_head")
+    ],
+}
+
+
 def tiny_panel(path, windows=3, length=12, vocab=64, seed=1):
     """A panel tree in the upstream `quant-pipeline.glm53-token-panel.v1` layout."""
     import numpy as np
@@ -157,9 +273,10 @@ def tiny_panel(path, windows=3, length=12, vocab=64, seed=1):
     return path
 
 
-def capture(model, panel, out, *, dataset_id, name, extra=(), memory_report=None):
+def capture(model, panel, out, *, dataset_id, name, extra=(), memory_report=None,
+            role="root"):
     argv = [os.path.join(REPO, "engines", "tools", "hf_capture.py"),
-            "--model", model, "--panel", panel, "--out", out, "--role", "root",
+            "--model", model, "--panel", panel, "--out", out, "--role", role,
             "--lane", "local-cuda-budget", "--dataset-id", dataset_id,
             "--dataset-name", name, "--device", "cpu",
             "--weights-repository", "selftest/tiny", "--model-revision", "0" * 40]
@@ -516,12 +633,142 @@ def _body(work):
     proc = capture(quantized, panel, out, dataset_id="fidelity--lo.quantized",
                    name="quantized refusal", extra=("--schedule", "layer-outer"))
     text = (proc.stdout or "") + (proc.stderr or "")
-    check("L15 layer-outer REFUSES a checkpoint declaring quantization_config, "
-          "naming the missing quantizer and the silent-FP8 reading",
+    check("L15 layer-outer REFUSES a config declaring FP8 over a checkpoint with "
+          "no scale tensors, naming the silent-FP8 reading",
           proc.returncode != 0
           and "quantization_config" in text and "window-outer" in text
+          and "_scale_inv" in text
           and not os.path.isfile(os.path.join(out, "fidelity-dataset.json")),
           "rc=%s tail=%s" % (proc.returncode, text[-200:]))
+    for label, patch in (("L15b a packed/other quant_method", {"quant_method": "mxfp4"}),
+                         ("L15c a static activation scheme",
+                          {"quant_method": "fp8", "fmt": "e4m3",
+                           "weight_block_size": [128, 128],
+                           "activation_scheme": "static"})):
+        doc = json.load(open(config_path))
+        doc["quantization_config"] = patch
+        json.dump(doc, open(config_path, "w"), indent=2)
+        proc = capture(quantized, panel, out + label[:4], dataset_id="fidelity--lo.q",
+                       name="q", extra=("--schedule", "layer-outer"))
+        text = (proc.stdout or "") + (proc.stderr or "")
+        check("%s is refused before anything is instantiated" % label,
+              proc.returncode != 0 and "not the block-scaled FP8" in text,
+              "rc=%s tail=%s" % (proc.returncode, text[-200:]))
+
+    # -- L16: the one quantized form this schedule DECODES ------------------
+    # A block-scaled FP8 e4m3 checkpoint (the zai-org/GLM-5.3 form) is decoded
+    # to bf16 per tensor on the host before the converter sees it. Parity is
+    # asserted two ways: the decoder against transformers' own
+    # Fp8Dequantize arithmetic tensor by tensor, and the whole capture against
+    # a native capture of the checkpoint that reference produces.
+    import torch
+    from safetensors.torch import load_file
+    from transformers.integrations.finegrained_fp8 import Fp8Dequantize
+    sys.path.insert(0, os.path.join(REPO, "engines", "tools"))
+    import layer_outer as LO
+
+    scope_file = os.path.join(work, "fp8-scope.json")
+    json.dump(FP8_SCOPE, open(scope_file, "w"))
+    for slug, builder in (("dense", lambda path: tiny_model(path, layers=2, seed=5)),
+                          ("moe", lambda path: tiny_moe_model(path, layers=2, seed=6))):
+        bf16_dir = os.path.join(work, "fp8-%s-bf16" % slug)
+        if builder(bf16_dir) is None:
+            print("  SKIP L16 %s: this transformers cannot build the MoE fixture" % slug)
+            continue
+        fp8_dir = os.path.join(work, "fp8-%s" % slug)
+        quantized_keys = block_fp8_checkpoint(bf16_dir, fp8_dir)
+        check("L16a-%s the fixture quantized the projections and nothing else" % slug,
+              quantized_keys and not any(m in k for k in quantized_keys for m in FP8_SKIP),
+              "%d keys" % len(quantized_keys))
+        reference = Fp8Dequantize(None)
+        agree, compared = True, 0
+        for name in os.listdir(fp8_dir):
+            if not name.endswith(".safetensors"):
+                continue
+            tensors = load_file(os.path.join(fp8_dir, name))
+            for key in quantized_keys:
+                if key not in tensors:
+                    continue
+                scales = tensors[key + "_scale_inv"]
+                rows, cols = tensors[key].shape
+                ours = LO.dequantize_block_fp8(tensors[key], scales, torch.bfloat16, FP8_BLOCK)
+                padded = torch.nn.functional.pad(
+                    tensors[key].to(torch.float32),
+                    (0, scales.shape[1] * FP8_BLOCK[1] - cols,
+                     0, scales.shape[0] * FP8_BLOCK[0] - rows)).to(torch.float8_e4m3fn)
+                theirs = reference._dequantize_one(
+                    padded, scales, output_dtype=torch.bfloat16)[:rows, :cols].contiguous()
+                compared += 1
+                if ours.dtype != theirs.dtype or not torch.equal(
+                        ours.view(torch.int16), theirs.view(torch.int16)):
+                    agree = False
+        check("L16b-%s dequantize_block_fp8 is bitwise transformers' Fp8Dequantize on "
+              "every quantized tensor (partial last blocks via the padded reference)" % slug,
+              agree and compared == len(quantized_keys),
+              "compared=%d of %d" % (compared, len(quantized_keys)))
+        ref_dir = os.path.join(work, "fp8-%s-refdeq" % slug)
+        reference_dequantized_checkpoint(fp8_dir, ref_dir)
+        fp8_out = os.path.join(work, "fp8-%s-capture" % slug)
+        ref_out = os.path.join(work, "fp8-%s-refcapture" % slug)
+        fp8_proc = capture(fp8_dir, panel, fp8_out, dataset_id="fidelity--lo.fp8." + slug,
+                           name="fp8 " + slug, role="quant",
+                           extra=("--schedule", "layer-outer", "--scope-file", scope_file,
+                                  "--codec", "fp8_e4m3", "--declared-bits", "8",
+                                  "--no-sanity-check"))
+        ref_proc = capture(ref_dir, panel, ref_out, dataset_id="fidelity--lo.fp8ref." + slug,
+                           name="fp8 reference " + slug,
+                           extra=("--schedule", "layer-outer", "--no-sanity-check"))
+        check("L16c-%s the FP8 checkpoint captures under layer-outer as a quant" % slug,
+              fp8_proc.returncode == 0 and ref_proc.returncode == 0,
+              "fp8 rc=%s %s | ref rc=%s %s" % (
+                  fp8_proc.returncode, (fp8_proc.stderr or "")[-300:],
+                  ref_proc.returncode, (ref_proc.stderr or "")[-300:]))
+        if fp8_proc.returncode == 0 and ref_proc.returncode == 0:
+            check("L16d-%s ... and its capture_content_digest is bitwise the native "
+                  "capture of the reference-dequantized checkpoint" % slug,
+                  digest_of(fp8_out) == digest_of(ref_out),
+                  "%s vs %s" % (digest_of(fp8_out)[:16], digest_of(ref_out)[:16]))
+            manifest = json.load(open(os.path.join(fp8_out, "fidelity-dataset.json")))
+            runtime = json.load(open(os.path.join(fp8_out, manifest["runtime"]["file"])))
+            decode = runtime["capture_tool"].get("weights_decode") or {}
+            ref_manifest = json.load(open(os.path.join(ref_out, "fidelity-dataset.json")))
+            ref_runtime = json.load(open(os.path.join(ref_out, ref_manifest["runtime"]["file"])))
+            check("L16e-%s the runtime receipt records the decode: method, reference, "
+                  "config, and one decoded tensor per quantized key" % slug,
+                  decode.get("method") == LO.FP8_DECODE_METHOD
+                  and decode.get("reference") == LO.FP8_DECODE_REFERENCE
+                  and decode.get("tensors_dequantized") == len(quantized_keys)
+                  and decode.get("scale_tensors_consumed") == len(quantized_keys)
+                  and decode.get("quantization_config", {}).get("weight_block_size") == FP8_BLOCK
+                  and manifest["weights"]["quantized"] is True
+                  and ref_runtime["capture_tool"].get("weights_decode") is None,
+                  json.dumps(decode)[:300])
+            check("L16f-%s no scale tensor reached the loader as unexpected" % slug,
+                  not any(k.endswith("_scale_inv") for k in
+                          (runtime["capture_tool"].get("unexpected_tensor_allowlist") or {})
+                          .get("observed", []) or []),
+                  "")
+    # An fp8 tensor whose scale is missing is the silent case: refused by name.
+    dense_fp8 = os.path.join(work, "fp8-dense")
+    if os.path.isdir(dense_fp8):
+        broken = os.path.join(work, "fp8-dense-noscale")
+        shutil.copytree(dense_fp8, broken)
+        from safetensors.torch import save_file
+        shard = os.path.join(broken, "model.safetensors")
+        tensors = load_file(shard)
+        victim = next(k for k in tensors if k.endswith("_scale_inv"))
+        del tensors[victim]
+        save_file(tensors, shard, metadata={"format": "pt"})
+        proc = capture(broken, panel, os.path.join(work, "fp8-noscale-capture"),
+                       dataset_id="fidelity--lo.fp8.noscale", name="noscale", role="quant",
+                       extra=("--schedule", "layer-outer", "--scope-file", scope_file,
+                              "--codec", "fp8_e4m3", "--declared-bits", "8",
+                              "--no-sanity-check"))
+        text = (proc.stdout or "") + (proc.stderr or "")
+        check("L16g an fp8 tensor with no scale beside it is REFUSED by name",
+              proc.returncode != 0 and "no block scale" in text
+              and victim[:-len("_scale_inv")] in text,
+              "rc=%s tail=%s" % (proc.returncode, text[-300:]))
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, detail in FAIL:

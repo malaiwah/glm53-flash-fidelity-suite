@@ -442,6 +442,156 @@ def _model_device(device: str):
     return torch.device(device)
 
 
+# ---------------------------------------------------------------------------
+# FP8 block-scaled checkpoints: decode to bf16 on the host, per tensor
+# ---------------------------------------------------------------------------
+
+FP8_DECODE_METHOD = "fp8-block-dequant-to-bf16"
+#: The arithmetic this decoder reproduces, and the parity evidence that shows
+#: it does so bitwise on real tensors: transformers 5.16.1
+#: `integrations.finegrained_fp8.Fp8Dequantize._dequantize_one` -- fp8 -> fp32,
+#: one multiply per element by the block's fp32 scale, one cast to the
+#: destination dtype. `engines/tools/selftest_fp8_decode_offline.py` asserts
+#: equality against that function on synthetic and on real fetched shards.
+FP8_DECODE_REFERENCE = "transformers.integrations.finegrained_fp8.Fp8Dequantize._dequantize_one"
+FP8_SCALE_SUFFIX = "_scale_inv"
+
+
+def fp8_checkpoint_plan(config) -> Optional[Dict[str, Any]]:
+    """The exact FP8 form this schedule decodes, read from the config, or None.
+
+    Accepts only the FineGrainedFP8 checkpoint form `transformers` itself
+    loads with `dequantize=True`: `quant_method: fp8`, `fmt: e4m3`, a 2-D
+    `weight_block_size`, dynamic (or unstated) activation scaling. Anything
+    else is refused by the caller: a static activation scale is not a
+    weights-only artifact, and a packed format has other shapes.
+    """
+    qc = getattr(config, "quantization_config", None)
+    if not qc:
+        return None
+    if not isinstance(qc, dict):
+        qc = qc.to_dict() if hasattr(qc, "to_dict") else dict(getattr(qc, "__dict__", {}))
+    method = qc.get("quant_method")
+    fmt = qc.get("fmt")
+    block = qc.get("weight_block_size")
+    activation = qc.get("activation_scheme")
+    ok = (method == "fp8" and fmt == "e4m3"
+          and isinstance(block, (list, tuple)) and len(block) == 2
+          and all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in block)
+          and activation in (None, "dynamic"))
+    if not ok:
+        raise LayerOuterError(
+            "REFUSED: quantization_config quant_method=%r fmt=%r weight_block_size=%r "
+            "activation_scheme=%r is not the block-scaled FP8 e4m3 weights-only form "
+            "this schedule decodes (the form transformers loads with dequantize=True). "
+            "Use --schedule window-outer, or author a decoder for this surface."
+            % (method, fmt, block, activation))
+    return {
+        "quant_method": method, "fmt": fmt,
+        "weight_block_size": [int(block[0]), int(block[1])],
+        "activation_scheme": activation,
+        "modules_to_not_convert": sorted(str(m) for m in (qc.get("modules_to_not_convert") or [])),
+    }
+
+
+def dequantize_block_fp8(quantized, scales, output_dtype, block_size=(128, 128)):
+    """fp8 e4m3 x fp32 block scale -> output dtype, the reference arithmetic exactly.
+
+    `quantized` is (rows, cols); `scales` is (ceil(rows/bm), ceil(cols/bn)) in
+    fp32 -- the DeepSeek-V3 block form `weight_block_size` declares, where the
+    LAST block along either axis may be partial (GLM-5.3's kv_a_proj_with_mqa
+    is 576 x 6144 under a 128 x 128 block: a 5 x 48 grid). Each element is
+    promoted to fp32, multiplied ONCE by its block's scale in fp32, and cast
+    once to `output_dtype` (round to nearest even). No accumulation, no fused
+    multiply-add, no device-dependent kernel.
+
+    Full blocks: bitwise `transformers` `Fp8Dequantize._dequantize_one`, which
+    performs this exact reshape-multiply-cast. Partial blocks: the same
+    arithmetic on the zero-padded tensor, cropped -- an element's value never
+    depends on its neighbours, so this equals the kernel rule every FP8 server
+    (DeepSeek `weight_dequant`, vLLM, DeepGEMM) applies: `s[i // bm, j // bn]`.
+    `engines/tools/fp8_parity.py` asserts both on real fetched shards.
+    """
+    import torch
+
+    if quantized.dtype != torch.float8_e4m3fn:
+        raise LayerOuterError(
+            "REFUSED: block-scaled FP8 decode was handed a %s tensor" % quantized.dtype)
+    if scales.dtype != torch.float32:
+        raise LayerOuterError(
+            "REFUSED: block-scaled FP8 decode expects fp32 scales, got %s" % scales.dtype)
+    if quantized.dim() != 2 or scales.dim() != 2:
+        raise LayerOuterError(
+            "REFUSED: block-scaled FP8 decode expects 2-D weight and scale, got %s and %s"
+            % (tuple(quantized.shape), tuple(scales.shape)))
+    block_m, block_n = int(block_size[0]), int(block_size[1])
+    rows, cols = quantized.shape
+    scale_rows, scale_cols = scales.shape
+    if (scale_rows != -(-rows // block_m)) or (scale_cols != -(-cols // block_n)):
+        raise LayerOuterError(
+            "REFUSED: weight shape (%d, %d) under a (%d, %d) block needs a (%d, %d) "
+            "scale grid; the checkpoint carries (%d, %d)"
+            % (rows, cols, block_m, block_n, -(-rows // block_m), -(-cols // block_n),
+               scale_rows, scale_cols))
+    pad_rows = scale_rows * block_m - rows
+    pad_cols = scale_cols * block_n - cols
+    q = quantized.to(torch.float32)
+    if pad_rows or pad_cols:
+        q = torch.nn.functional.pad(q, (0, pad_cols, 0, pad_rows))
+    q = q.reshape(scale_rows, block_m, scale_cols, block_n)
+    s = scales.to(torch.float32).reshape(scale_rows, 1, scale_cols, 1)
+    out = (q * s).to(output_dtype).reshape(scale_rows * block_m, scale_cols * block_n)
+    if pad_rows or pad_cols:
+        out = out[:rows, :cols].contiguous()
+    return out
+
+
+def materialize_fp8_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_dtype,
+                           stats: Dict[str, int]) -> Dict[str, Any]:
+    """Replace every (weight, weight_scale_inv) pair in a lazy subset by one decoded tensor.
+
+    Keys keep their order and the weight keeps its name, so the model's own
+    conversion mapping sees exactly what it would see for a bf16 checkpoint.
+    A scale without its weight, or an fp8 tensor without a scale, is refused:
+    the second case is the silent one (the payload would load as bf16 with
+    the block scale never applied).
+    """
+    import torch
+
+    out: Dict[str, Any] = {}
+    scale_keys = {key for key in subset if key.endswith(FP8_SCALE_SUFFIX)}
+    for key, value in subset.items():
+        if key in scale_keys:
+            continue
+        scale_key = key + FP8_SCALE_SUFFIX
+        if scale_key in scale_keys:
+            quantized = value if hasattr(value, "dtype") else value[:]
+            scales = subset[scale_key]
+            scales = scales if hasattr(scales, "dtype") else scales[:]
+            out[key] = dequantize_block_fp8(quantized, scales, torch_dtype,
+                                            plan["weight_block_size"])
+            stats["dequantized"] += 1
+            stats["scales_consumed"] += 1
+            stats["fp8_bytes"] += int(quantized.numel())
+            continue
+        dtype = getattr(value, "dtype", None)
+        if dtype is None and hasattr(value, "get_dtype"):
+            dtype = value.get_dtype()
+        if str(dtype) in ("torch.float8_e4m3fn", "F8_E4M3", "float8_e4m3fn"):
+            raise LayerOuterError(
+                "REFUSED: %s is an fp8 tensor with no %s sibling in the checkpoint; "
+                "loading it as bf16 would apply no block scale" % (key, scale_key))
+        out[key] = value
+    orphans = sorted(key for key in scale_keys
+                     if key[:-len(FP8_SCALE_SUFFIX)] not in subset)
+    if orphans:
+        raise LayerOuterError(
+            "REFUSED: %d scale tensor(s) have no weight beside them: %s%s"
+            % (len(orphans), ", ".join(orphans[:4]),
+               " (+%d more)" % (len(orphans) - 4) if len(orphans) > 4 else ""))
+    return out
+
+
 def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: str,
                          log: Callable[..., None],
                          layer_guard: Optional[Callable[[int, Dict[str, Any]], None]] = None,
@@ -490,9 +640,9 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     # would refuse a checkpoint that is merely still arriving. It happens a few
     # dozen lines below, over exactly the shards the base load will open.
 
-    # QUANTIZED CHECKPOINTS ARE NOT SUPPORTED BY THIS SCHEDULE, and the reason
-    # this is a refusal rather than a comment is that one of the two ways it
-    # fails is silent.
+    # QUANTIZED CHECKPOINTS: one form is decoded here, every other is refused,
+    # and the reason this is a refusal rather than a comment is that one of
+    # the two ways it fails is silent.
     #
     # `from_pretrained` builds an `HfQuantizer`, which (a) replaces the module
     # tree's Linear/Experts with quantized ones and (b) contributes weight
@@ -508,24 +658,19 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     #     it is loaded into. The fp8 values are cast to bf16, the scale tensor
     #     falls out as `unexpected`, AND THE SCALE IS NEVER APPLIED. That is
     #     numerically the M1 Qwen3.8-27B-FP8 defect -- a confident number for a
-    #     projection whose weights are off by a per-block factor -- and its only
-    #     signal is `unexpected_keys`, which a Stage-A sparse tree already needs
-    #     `--allow-unexpected-tensors` to get past.
+    #     projection whose weights are off by a per-block factor.
     #
-    # So: refuse on the config's own `quantization_config`, before any of it.
-    if getattr(config, "quantization_config", None):
-        method = getattr(config.quantization_config, "quant_method", None) or \
-            (config.quantization_config.get("quant_method")
-             if isinstance(config.quantization_config, dict) else None)
-        raise LayerOuterError(
-            "REFUSED: this checkpoint declares quantization_config (quant_method=%r) and "
-            "the layer-outer schedule does not build a quantizer. It instantiates the "
-            "architecture directly and loads with the MODEL's conversion mapping only, so "
-            "the quantizer's module replacement, its `*.scale` -> `*.weight_scale_inv` "
-            "rename and its dequantization op are all absent. For packed formats that "
-            "raises a shape mismatch; for plain FP8 the shapes MATCH and the payload is "
-            "read as bf16 with the block scale never applied, which is silent and wrong. "
-            "Use --schedule window-outer for quantized checkpoints." % (method,))
+    # So the block-scaled FP8 e4m3 form is DECODED on the host, per tensor,
+    # before the subset reaches the converter (`materialize_fp8_subset`): the
+    # weight arrives as bf16 with its scale applied and the scale key never
+    # reaches the loader. "Dequantize-and-run, weights-only", the M1 method,
+    # under the streaming schedule. Any other quantization_config is refused
+    # by `fp8_checkpoint_plan` before anything is instantiated.
+    fp8_plan = fp8_checkpoint_plan(config)
+    fp8_stats = {"dequantized": 0, "scales_consumed": 0, "fp8_bytes": 0}
+    if fp8_plan is not None:
+        log(stage="fp8_decode_plan", method=FP8_DECODE_METHOD,
+            reference=FP8_DECODE_REFERENCE, **fp8_plan)
 
     # Build with the SAME context managers `from_pretrained` uses, so the module
     # tree (kernel patches, dtype, tie-weight suppression) is the one the
@@ -707,6 +852,20 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     if routing_counts["routed"]:
         log(stage="stream_routing", renamed_checkpoint_keys=routing_counts["routed"],
             total_checkpoint_keys=routing_counts["seen"], layers_prefix=layers_prefix)
+    if fp8_plan is not None:
+        # A config that declares FP8 over a checkpoint with no scale tensors is
+        # lying about itself; decoding nothing and capturing as native would be
+        # a confident number for an artifact nobody described.
+        declared_keys = (list(base_subset) + [key for subset in layer_subset.values()
+                                              for key in subset]
+                         if gate is None else list(_index_weight_map(model_dir)))
+        if not any(key.endswith(FP8_SCALE_SUFFIX) for key in declared_keys):
+            raise LayerOuterError(
+                "REFUSED: quantization_config declares block-scaled FP8 but the "
+                "checkpoint carries no *%s tensor; the payload cannot be decoded and "
+                "loading it as-is would apply no block scale. Use --schedule "
+                "window-outer with a quantizer that understands this artifact, or "
+                "fix the artifact's config." % FP8_SCALE_SUFFIX)
 
     aggregate = {"missing_keys": set(), "unexpected_keys": set(), "mismatched_keys": [],
                  "error_msgs": [], "conversion_errors": {}}
@@ -748,7 +907,11 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
         aggregate["error_msgs"].extend(list(info.error_msgs or []))
         aggregate["conversion_errors"].update(dict(info.conversion_errors or {}))
 
-    base_info, _ = convert_and_load(model, base_subset, load_config)
+    base_info, _ = convert_and_load(
+        model,
+        (materialize_fp8_subset(base_subset, fp8_plan, torch_dtype, fp8_stats)
+         if fp8_plan is not None else base_subset),
+        load_config)
     _absorb(base_info)
 
     # Finalisation would otherwise materialise AND randomly initialise every
@@ -814,7 +977,18 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
                 "weights does not fail to run -- it runs on whatever the meta-device "
                 "placeholder is replaced by, which is nothing anybody measured."
                 % (layers_prefix, index))
-        info, _ = convert_and_load(model, subset, load_config)
+        if fp8_plan is not None:
+            # Decoded per layer into a transient dict: the streamer keeps the
+            # lazy slices, never the 19 GB of decoded bf16, across layers.
+            before = dict(fp8_stats)
+            decoded = materialize_fp8_subset(subset, fp8_plan, torch_dtype, fp8_stats)
+            info, _ = convert_and_load(model, decoded, load_config)
+            del decoded
+            log(stage="fp8_decode_layer", index=index,
+                dequantized=fp8_stats["dequantized"] - before["dequantized"],
+                fp8_elements=fp8_stats["fp8_bytes"] - before["fp8_bytes"])
+        else:
+            info, _ = convert_and_load(model, subset, load_config)
         _absorb(info)
         names = layer_param_names(index)
         head = "%s.%d." % (layers_prefix, index)
@@ -889,7 +1063,28 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     # handles and under-report every layer that had not landed yet.
     streamer.pointers = pointers
     streamer.layer_counts = _LayerCounts(layer_subset)
+    streamer.fp8_plan = fp8_plan
+    streamer.fp8_stats = fp8_stats
     return streamer
+
+
+def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]:
+    """What the streamer did to the checkpoint's bytes before the forward, for
+    the runtime receipt: None for a native checkpoint, else the FP8 plan and
+    the counts of tensors decoded and scale tensors consumed."""
+    plan = getattr(streamer, "fp8_plan", None)
+    if plan is None:
+        return None
+    stats = dict(getattr(streamer, "fp8_stats", {}))
+    return {
+        "method": FP8_DECODE_METHOD,
+        "reference": FP8_DECODE_REFERENCE,
+        "output_dtype": "bfloat16",
+        "quantization_config": plan,
+        "tensors_dequantized": int(stats.get("dequantized", 0)),
+        "scale_tensors_consumed": int(stats.get("scales_consumed", 0)),
+        "fp8_elements": int(stats.get("fp8_bytes", 0)),
+    }
 
 
 def streamed_loading_info(streamer: StreamedModel) -> Dict[str, Any]:

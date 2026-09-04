@@ -1286,6 +1286,9 @@ def run_capture(args: argparse.Namespace) -> int:
             raise fail(str(exc))
         model = streamer.model
         loading_info = layer_outer.streamed_loading_info(streamer)
+        # The decode counts grow as layers stream; the receipt reads them
+        # after the capture, from this streamer.
+        args._weights_decode_streamer = streamer
     else:
         model, config, loading_info = load_model(
             model_dir, args.device, args.dtype, device_map=args.device_map,
@@ -1968,6 +1971,15 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                       "layer_residency": (args.layer_residency
                                           if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER
                                           else None),
+                      # What the loader did to the checkpoint's bytes before
+                      # the forward: None for a native checkpoint; for a
+                      # block-scaled FP8 one, the decode method, its reference
+                      # arithmetic and the counts. The number is "dequantize-
+                      # and-run, weights-only" and the receipt says so.
+                      "weights_decode": (
+                          layer_outer.weights_decode_evidence(args._weights_decode_streamer)
+                          if getattr(args, "_weights_decode_streamer", None) is not None
+                          else None),
                       "mechanism": SCHEDULE_MECHANISM[args.schedule]})
 
     evidence = capture_doc["capture_content_digest"]
