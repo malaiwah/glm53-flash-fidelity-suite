@@ -1991,7 +1991,9 @@ def rung_archive():
         "verification_source": "runpod-authenticated-v2-container-log",
         "provider_log_endpoint_origin": "https://api.runpod.io",
         "provider_log_source": "container",
-        "provider_log_tail": 5000,
+        # The reader's tail ladder records the tail that answered (1000 first);
+        # a proof carrying it must validate as the pre-ladder 5000 did.
+        "provider_log_tail": 1000,
         "provider_log_observed_at_utc": "2026-01-01T00:00:00Z",
         "provider_log_line": provider_log_line,
         "provider_log_line_sha256": hashlib.sha256(

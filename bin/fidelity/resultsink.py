@@ -1806,7 +1806,9 @@ def _validate_runpod_host_key_proof(job, proof, attestation):
             or proof.get("provider_log_endpoint_origin")
                 != "https://api.runpod.io"
             or proof.get("provider_log_source") != "container"
-            or proof.get("provider_log_tail") != 5000
+            # The tail the reader used: 5000 before 2026-09-04, then the
+            # ladder (bin/fidelity/runpodapi.py RUNPOD_LOG_TAIL_LADDER).
+            or proof.get("provider_log_tail") not in (5000, 1000, 500, 200)
             or not _valid_hex(proof.get("provider_log_line_sha256"), 64)
             or provider_log_line_match is None
             or hashlib.sha256(
