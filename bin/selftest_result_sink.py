@@ -19,6 +19,7 @@ import http.server
 import io
 import json
 import os
+import shutil
 import socket
 import sys
 import tarfile
@@ -854,6 +855,37 @@ def rung_logs():
               "a pod-scoped volume takes to the grave",
               "logs/capture.log (the stage that failed)" in text
               and "REFUSED [capture_failed]: the reason" in text)
+
+    # A workload deadline that expires during cold run 2 must not cost the
+    # sealed cold run 1 (GLM-5.3, 2026-09-04: rescued by hand from a pod that
+    # was about to be destroyed). A failed root capture archive carries every
+    # dataset tree a capture finished SEALING, and never a partial one.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _run_root(tmp, role="root")
+        shutil.rmtree(root / "dataset-repeat")
+        partial = root / "dataset-repeat"
+        partial.mkdir()
+        (partial / "fidelity-dataset.json").write_text(
+            json.dumps({"schema": "malaiwah.fidelity-dataset.v1",
+                        "dataset_sha256": ""}), encoding="utf-8")
+        summary = RS.build_summary(
+            root, "capture", "failed", ["setup", "capture", "verify"],
+            None, "capture_repeat")
+        paths = [f["path"] for f in summary["files"]]
+        check("R31b a failed root capture archive salvages the SEALED cold run 1",
+              "dataset/fidelity-dataset.json" in paths
+              and "dataset/checksums.txt" in paths, "%s" % paths[:12])
+        check("R31c ... and never a partial, unsealed dataset tree",
+              not any(p.startswith("dataset-repeat/") for p in paths))
+        blob = RS.build_archive(root, summary)
+        verified = RS.verify_archive(blob)
+        check("R31d the salvaged archive verifies as a failed capture result",
+              verified["manifest"]["status"] == "failed")
+        with tempfile.TemporaryDirectory() as out:
+            RS.extract_verified_archive(blob, Path(out) / "result")
+            check("R31e ... and extracts the sealed dataset for a later resume",
+                  (Path(out) / "result" / "dataset" / "fidelity-dataset.json").is_file()
+                  and not (Path(out) / "result" / "dataset-repeat").exists())
 
 
 def rung_http():

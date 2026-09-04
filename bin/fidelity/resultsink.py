@@ -267,13 +267,38 @@ def parse_sinks(values, env=None):
 LOG_TAIL_BYTES = 64 * 1024
 
 
-def _relevant(fs_root, include_datasets=False):
-    """Return every deliverable regular file without following links."""
+def _sealed_dataset_present(root, sub):
+    """A dataset tree that a capture finished sealing, whatever happened after."""
+    base = Path(root) / sub
+    manifest = base / "fidelity-dataset.json"
+    if base.is_symlink() or not base.is_dir() or manifest.is_symlink() \
+            or not manifest.is_file() or not (base / "checksums.txt").is_file():
+        return False
+    try:
+        doc = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return _valid_hex((doc.get("dataset_sha256") if isinstance(doc, dict)
+                       else None), 64)
+
+
+def _relevant(fs_root, include_datasets=False, salvage_datasets=False):
+    """Return every deliverable regular file without following links.
+
+    `include_datasets` REQUIRES both dataset trees (a completed root).
+    `salvage_datasets` takes whichever of them a capture finished SEALING
+    before the run failed: a workload deadline that expires during cold run
+    2 must not cost the sealed cold run 1 (GLM-5.3, 2026-09-04, 2h42m of
+    H200 that had to be rescued by hand).
+    """
     root = Path(fs_root)
     out = []
     trees = ["receipts", "reports", "control", "logs"]
     if include_datasets:
         trees.extend(("dataset", "dataset-repeat"))
+    elif salvage_datasets:
+        trees.extend(sub for sub in ("dataset", "dataset-repeat")
+                     if _sealed_dataset_present(root, sub))
     for sub in trees:
         base = root / sub
         if not base.exists():
@@ -386,14 +411,16 @@ def _payload(path, fs_root):
 def build_summary(fs_root, verb, status, stages, pin=None, failed_stage=None):
     """Build the stdout summary over delivered bytes, not pre-tail source bytes."""
     fs_root = Path(fs_root)
+    is_root_capture = (
+        verb == "capture" and _load_job(fs_root).get("role") == "root")
     include_datasets = (
-        verb == "capture"
+        is_root_capture
         and str(status).lower() in (
             "ok", "complete", "completed", "success",
-            "qualified-unpublished", "completed-operational-failure")
-        and _load_job(fs_root).get("role") == "root")
+            "qualified-unpublished", "completed-operational-failure"))
     files = []
-    for path in _relevant(fs_root, include_datasets=include_datasets):
+    for path in _relevant(fs_root, include_datasets=include_datasets,
+                          salvage_datasets=is_root_capture):
         _body, record = _payload_record(path, fs_root, retain=False)
         files.append(record)
     return {
@@ -641,10 +668,11 @@ def _archive_parts(fs_root, summary, stream=False):
     _normalized_status, complete, _failed = _status_kind(summary)
     qualified_unpublished = (
         str(summary.get("status") or "").lower() == "qualified-unpublished")
-    include_datasets = (
-        verb == "capture" and (complete or qualified_unpublished)
-        and _load_job(root).get("role") == "root")
-    source_paths = _relevant(root, include_datasets=include_datasets)
+    is_root_capture = (
+        verb == "capture" and _load_job(root).get("role") == "root")
+    include_datasets = is_root_capture and (complete or qualified_unpublished)
+    source_paths = _relevant(root, include_datasets=include_datasets,
+                             salvage_datasets=is_root_capture)
     role, status, publication_requested = _role_contract(
         root, summary, source_paths)
     parts = []
