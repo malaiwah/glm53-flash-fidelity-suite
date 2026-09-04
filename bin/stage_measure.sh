@@ -1465,6 +1465,10 @@ compare_reference)
     COMPARE_DEVICE="$REPLAY_DEVICE"
   fi
   log "scoring the qualified candidate against the reference (replay=$REPLAY_DEVICE/$REPLAY_DTYPE)"
+  # The comparator exits 2 for a SEALED comparison that carries caveats
+  # (advisory class, e.g. a cross-stack pair); that is a result, not a
+  # failure -- the receipt says what the caveats are. Anything else refuses.
+  set +e
   "$PY" "$FS/bin/fidelity_dataset.py" compare \
       --reference "$FS/reference" --candidate "$FS/dataset" \
       --reference-label root --candidate-label candidate \
@@ -1472,6 +1476,16 @@ compare_reference)
       --replay-device "$REPLAY_DEVICE" --replay-dtype "$REPLAY_DTYPE" \
       --vocab-chunk "$VOCAB_CHUNK" --out "$RCPT/reference-comparison" \
       2>&1 | tee -a "$LOGS/compare_reference.log"
+  COMPARE_STATUS="${PIPESTATUS[0]}"
+  set -e
+  case "$COMPARE_STATUS" in
+    0|2) ;;
+    *) echo "compare_reference REFUSES: comparator exited $COMPARE_STATUS" >&2; exit "$COMPARE_STATUS" ;;
+  esac
+  [ -f "$RCPT/reference-comparison/comparison-receipt.json" ] || {
+    echo "compare_reference REFUSES: no comparison receipt was sealed." >&2
+    exit 3
+  }
   write_marker
   log "done"
   ;;
