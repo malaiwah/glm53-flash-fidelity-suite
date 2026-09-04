@@ -5196,7 +5196,10 @@ def _import_resume_capture(provider, pod_id, fs_root, plan_data, job,
     remote_manifest = "%s/.fidelity-resume-%s.json" % (run_base, suffix)
     con.say("Importing the resumed cold run 1 (%.2f GB)..."
             % (frozen["archive_bytes"] / 1e9))
-    provider.upload(pod_id, frozen["archive_path"], remote_archive)
+    # The archive's bound is its own frozen size: a root dataset is 2.5 GB
+    # for GLM-5.3 and the transport's default 512 MiB cap is for bundles.
+    provider.upload(pod_id, frozen["archive_path"], remote_archive,
+                    max_bytes=int(frozen["archive_bytes"]))
     provider.upload(pod_id, frozen["manifest_path"], remote_manifest)
     provider.exec(
         pod_id,
@@ -5213,7 +5216,7 @@ def _import_resume_capture(provider, pod_id, fs_root, plan_data, job,
         attempt_id=job["execution_attempt"]["attempt_id"],
         resume={key: resume[key] for key in (
             "dataset_sha256", "capture_content_digest",
-            "dataset_manifest_file_sha256", "origin")},
+            "dataset_manifest_file_sha256", "origin", "resealed_from")},
         archive_sha256=frozen["archive_sha256"],
         archive_bytes=frozen["archive_bytes"],
         manifest_sha256=frozen["manifest_sha256"],
