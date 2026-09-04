@@ -1284,7 +1284,15 @@ PYSCOPE
     # declared digests by the capture.
     TOKENIZER_ROOT="$FS/inputs/tokenizer-root"
     rm -rf "$TOKENIZER_ROOT"; mkdir -p "$TOKENIZER_ROOT"
-    for name in config.json generation_config.json LICENSE; do
+    # PUBLISHER-METADATA files come from the reference root, TOKENIZATION
+    # files from the candidate. The panel binding pins the ROOT's digest for
+    # every file it lists; a quantizer legitimately ships its own
+    # config.json (quantization_config), generation_config.json, LICENSE and
+    # chat_template.jinja, none of which can change the tokenization of the
+    # panel's already-frozen token IDs. tokenizer.json and
+    # tokenizer_config.json DO decide tokenization and are taken from the
+    # candidate, so a candidate that retokenizes differently still refuses.
+    for name in config.json generation_config.json LICENSE chat_template.jinja; do
       [ -f "$FS/reference-model/$name" ] && ln -s "$FS/reference-model/$name" "$TOKENIZER_ROOT/$name"
     done
     for path in "$MODELS/target"/*; do
@@ -1481,7 +1489,8 @@ PYW
   env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN -u HUGGINGFACE_HUB_TOKEN -u HF_TOKEN_PATH \
       HF_HUB_DISABLE_IMPLICIT_TOKEN=1 HF_HOME="$FS/hf-anonymous" \
       "$VENV/bin/hf" download "$1" --revision "$2" --local-dir "$REF_MODEL_DIR" \
-      config.json generation_config.json LICENSE >>"$LOGS/fetch_reference.log" 2>&1
+      config.json generation_config.json LICENSE chat_template.jinja \
+      >>"$LOGS/fetch_reference.log" 2>&1
   write_marker
   log "done"
   ;;
