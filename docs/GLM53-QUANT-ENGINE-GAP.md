@@ -48,18 +48,32 @@ registry knows.
 | **exl3 fused experts, `mcg` codebook + kept FP8 scales** (wrldsuksgo2mars K4: 1,444 `weight_scale_inv`) | exllamav3 `mcg` + transformers FP8 | `exl3hf_surface.py` (`mcg_lut`) | both hooks at once: FP8 dequant for the non-routed tensors it kept in FP8, trellis for routed |
 | **TR3 per-expert atoms, mixed K3/K4** (davidsyoung 3.0 / 3.25 / 3.42 bpw: 233,472 × `mcg/suh/svh/trellis`, 1,119 bf16 non-routed) | exllamav3 `mcg`; the per-expert layout `tr3_surface.py` already reads | `tr3_surface.py` composing `exl3hf_surface.py` | decoded per-expert `gate/up/down` tensors go through transformers' own expert-fusing converter (the loader already fuses per-expert bf16 sources); parity on the full model's tensors; a K3 (3-bit) atom width must be confirmed against the decoder's K-range |
 
-Per-artifact facts (pinned revisions in
-`~/fidelity-scratch/glm53-exl3-candidates.json`):
+Per-artifact facts, re-verified against the Hub 2026-09-04 (every revision
+below moved since this doc's first draft the same day — these repos are
+actively updated; re-verify again before spending on a capture):
 
 | artifact | parent | bpw | size | note |
 |---|---|---:|---:|---|
-| `davidsyoung/GLM-5.3-EXL3-TR3-3.42bpw@6136d7ac` | `zai-org/GLM-5.3` (FP8) | 3.42 | 355 GB | pure quant of the FP8 release |
-| `davidsyoung/GLM-5.3-EXL3-TR3-3.25bpw@7c899410` | `zai-org/GLM-5.3` (FP8) | 3.25 | 340 GB | README reports **0.0240** KLD — the number to measure first |
-| `davidsyoung/GLM-5.3-EXL3-TR3-3.0bpw@ffb7770e` | `zai-org/GLM-5.3` (FP8) | 3.0 | 317 GB | pure |
-| `drowzeys/keys-GLM-5.3-EXL3@c4f5da04` | `zai-org/GLM-5.3` (FP8) | 3.00 | 330 GB | pure; head 16-bit |
-| `wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@dd270970` | `zai-org/GLM-5.3` (FP8) | 4.0 | 394 GB | pure but mixed surface (routed trellis, rest FP8) |
+| `davidsyoung/GLM-5.3-EXL3-TR3-3.42bpw@99c6f951333d2b38f1efefa533c7afadf0d376e3` | `zai-org/GLM-5.3` (FP8) | 3.42 | 355 GB | pure quant of the FP8 release |
+| `davidsyoung/GLM-5.3-EXL3-TR3-3.25bpw@6d6bd738c0c1635513e0bd0fdf0302049bd820a9` | `zai-org/GLM-5.3` (FP8) | 3.25 | 340 GB | README reports **0.0240** KLD — the number to measure first |
+| `davidsyoung/GLM-5.3-EXL3-TR3-3.0bpw@eeab94eb6e95b4e4d13d94af55ab3c420d6f52d3` | `zai-org/GLM-5.3` (FP8) | 3.0 | 317 GB | pure |
+| `drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5` | `zai-org/GLM-5.3` (FP8) | 3.00 | 330 GB | pure; head 16-bit; single-rank `mcg/suh/svh/trellis` per expert (byte-confirmed) |
+| `wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede` | `zai-org/GLM-5.3` (FP8) | 4.0 | 394 GB | pure but mixed surface: routed experts trellis, `shared_experts`/`self_attn` kept `weight_scale_inv` FP8 (byte-confirmed) |
 | `brandonmusic/GLM-5.3-EXL3-TR3-3bpw@4576d601` | `zai-org/GLM-5.3-BF16` | 3.0 | 316 GB | DRAFT, no `config.json` — not measurable as shipped |
 | `Blackfrost-Research/GLM-5.3-DERISKED-EXL3-2.0bpw-HQ`, `drowzeys/keys-GLM-5.3-EXL3-Abliterated` | derivatives | — | — | not quants of the root; out of scope |
+
+**`config.json.quantization_config.quant_method` is not authoritative for
+davidsyoung's TR3 repos.** All three (3.0/3.25/3.42bpw) declare
+`"quant_method": "modelopt"` at their current revisions — checked live,
+2026-09-04. The tensor bytes disagree: `model.safetensors.index.json` for
+every one carries per-expert, per-rank `*.rank{0..3}.{mcg,suh,svh,trellis}`
+keys, the same exllamav3 TR3 layout drowzeys and wrldsuksgo2mars use (and
+this doc already described from an earlier byte census). Any sniffer that
+trusts `quant_method` for these three repos will misclassify them as
+ModelOpt (FP4/INT4) checkpoints. `drowzeys` and `wrldsuksgo2mars` declare
+`quant_method: exl3` and their bytes match that label; only davidsyoung's
+label is wrong. Read the surface from `model.safetensors.index.json` key
+names, never from this field, for any davidsyoung TR3 repo.
 
 **Every serving-ready Trellis quant of the full model descends from the FP8
 release**, not from BF16. Measured against the BF16 root they carry the FP8
