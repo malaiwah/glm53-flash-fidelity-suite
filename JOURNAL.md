@@ -3532,3 +3532,49 @@ re-probes GONE three times over ~6 s. Regressions for all three.
 Container CI: arm64 has been failing since the x86_64-only wheel lock landed
 (`607d207`); `:main` was not re-tagged. Balances: RunPod $184.80, JarvisLabs $100.08,
 Vast $19.56.
+
+## 2026-09-04 - the GLM-5.3 Trellis lane: engine built, and Fruit made the smoke test free
+
+**Engine.** `layer_outer` now has an EXL3 trellis weight source beside the FP8
+one: stock exllamav3 payload groups (`M.{trellis,suh,svh,<codebook>}`) decoded
+to bf16 per module, per layer, through `exl3hf_surface.decode_payload_hf` --
+no new arithmetic. New: per-MODULE codebook (drowzeys ships `mcg` on layer 3,
+`mul1` on 4-77 in ONE checkpoint, which `quantization_config.codebook` cannot
+express); composition with the FP8 decoder for a mixed artifact; the capture
+device, not the host; and refusals for every partial or unrecognised payload.
+`selftest_trellis_decode_offline.py`, 24 rungs.
+
+**Three paid pods, three bugs, one per pod** -- all of which a small tree in
+that layout would have caught for free: a stats-dict `KeyError` at layer 0, a
+0-dim lazy-slice `IndexError` at layer 3 (the codebook marker is an I32
+scalar; `PySafeSlice[:]` raises on rank 0), and a host-side decode that ran
+~1 s per FP8 layer and did not finish layer 3 in eight minutes. Each has a
+regression rung verified failing against the pre-fix commit, and each fixture
+that hid it was made realistic (0-dim markers, real `PySafeSlice` objects, the
+caller's two separate counter dicts).
+
+**Fruit closed the loop.** `engines/tools/make_stock_exl3_fixture.py` drops the
+`.rank0.` path element from `malaiwah/GLM-5.2-SIQ-Fruit-pilot` (0.6 GB, real
+`GlmMoeDsaForCausalLM`, our own trellis bytes) and gets a complete tree in the
+stock layout. `--verify` drives the real streamed loader and asserts the fused
+expert parameter's expert-0 slice is **bitwise equal** to an independent decode
+of that module's payload: 768 modules decoded for layer 3 in 8.1 s, exact.
+That also answers the gap doc's open question -- transformers' expert-fusing
+converter accepts per-expert decoded tensors.
+
+**Artifact findings, from bytes.** Of the five pure-lineage Trellis quants:
+`wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1` is measurable (shapes match the root
+exactly; 57,600 routed modules trellis, the rest kept in source FP8).
+`drowzeys/keys-GLM-5.3-EXL3` REFUSES on its own contradiction --
+`kv_a_proj_with_mqa` is `[640, 6144]` where its own `config.json` declares
+`kv_lora_rank 512 + qk_rope_head_dim 64 = 576`, and both the root and
+wrldsuksgo2mars ship `[576, 6144]`; 640 = 512 + `index_head_dim`, i.e. shaped
+for its patched vLLM stack. davidsyoung's three are `.rank0..rank3` multi-atom
+TR3, unpublished composition, refused by name. All five revisions moved during
+the day; davidsyoung's `config.json` says `quant_method: modelopt` while its
+bytes are exl3 atoms.
+
+Allowlists authored by index census for both admitted artifacts (791 keys
+drowzeys, 1569 wrldsuksgo2mars); the non-scale set of each is exactly the
+committed `glm53-layer78-unexpected-keys.json`. No number sealed for either
+artifact yet. Spend today on this lane ~$6; RunPod $179.54, no pods live.
