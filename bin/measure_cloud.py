@@ -5812,6 +5812,15 @@ def execute_runpod(
     if outstanding >= args.campaign_width:
         raise Refusal("campaign outstanding count reached width", [])
 
+    # Freeze every run input BEFORE sealing the 30-second server-time
+    # window: copying a 2.5 GB resumed dataset (GLM-5.3, 2026-09-04) took
+    # longer than the window and the POST was refused as expired.
+    outdir.mkdir(mode=0o700, parents=True, exist_ok=False)
+    outdir.chmod(0o700)
+    frozen_bundle = _freeze_verified_bundle(plan_data["bundle"], outdir)
+    if args.role == "root":
+        _freeze_root_inputs(plan_data, outdir)
+    frozen_resume = _freeze_resume_capture(plan_data, outdir)
     fresh_safety["server_time"] = provider.server_time_evidence(
         max_clock_delta_seconds=30, max_evidence_age_seconds=30)
     if campaign_mode == "explicit":
@@ -5864,8 +5873,6 @@ def execute_runpod(
     job_bytes = (
         json.dumps(job, indent=2, sort_keys=True, ensure_ascii=False,
                    allow_nan=False) + "\n").encode("utf-8")
-    outdir.mkdir(mode=0o700, parents=True, exist_ok=False)
-    outdir.chmod(0o700)
     job_path = outdir / "job.json"
     with job_path.open("xb") as stream:
         stream.write(job_bytes)
@@ -5876,10 +5883,6 @@ def execute_runpod(
         os.fsync(output_directory_fd)
     finally:
         os.close(output_directory_fd)
-    frozen_bundle = _freeze_verified_bundle(plan_data["bundle"], outdir)
-    if args.role == "root":
-        _freeze_root_inputs(plan_data, outdir)
-    frozen_resume = _freeze_resume_capture(plan_data, outdir)
     campaign_key = campaign_attempt_key(plan_data["job_id_full"], attempt)
     lease_ref = None
     request = {
@@ -6169,26 +6172,19 @@ def execute_runpod(
             # From here a POST may reach the provider; an exception is no
             # longer "nothing created" and must surface as a possible leak.
             plan_data["_post_intent_recorded"] = True
-        except BaseException:
-            current = lease_store.read(lease_ref)
-            if current.get("state") == "PREPARED":
-                evidence = hashlib.sha256(
-                    _canonical_bytes(current)).hexdigest()
-                cancelled = _ledger_transition(
-                    ledger, "cancel_before_create", campaign_key,
-                    _exact_utc_now(), "PREPARED", evidence)
-                if not cancelled.applied:
-                    raise RuntimeError(
-                        "prepared campaign cancellation failed: %s"
-                        % cancelled.message)
-                lease_ref = lease_store.cancel_prepared(
-                    lease_ref, {
-                        "campaign_cancel_code": cancelled.code,
-                        "campaign_evidence_sha256": evidence,
-                        "reason": "controller failure before provider POST",
-                    })
-                # Preserve sealed pre-POST evidence for diagnosis.
-                pass
+        except BaseException as primary:
+            from fidelity.cloudlease import cancel_prepared_lease
+            try:
+                current = lease_store.read(lease_ref)
+                if current.get("state") == "PREPARED":
+                    lease_ref = cancel_prepared_lease(
+                        lease_store, lease_ref,
+                        "controller failure before provider POST: %s"
+                        % redact(str(primary))[:400])
+            except BaseException as cleanup:
+                raise RuntimeError(
+                    "%s (and closing the PREPARED lease failed: %s)"
+                    % (primary, cleanup)) from primary
             raise
         try:
             # Sole create POST. The lease-side submission lock excludes a
