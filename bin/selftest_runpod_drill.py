@@ -434,7 +434,7 @@ def job_fixture():
           "planned_at": "2026-09-01T00:00:00Z",
           "pre_create_safety": None, "prepared_create": None,
           "remote_root": None, "provider_terminate_after": None,
-          "workload_deadline_utc": None}})
+          "storage_layout": None, "workload_deadline_utc": None}})
 
 def fixture(root, healthy=True):
     root = Path(root); root.mkdir(parents=True, exist_ok=True)

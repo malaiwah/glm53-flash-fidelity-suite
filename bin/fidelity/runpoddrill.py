@@ -1633,6 +1633,9 @@ def _controller(plan: DrillPlan, provider: Any, stage: Path,
         },
         "prepared_create": prepared_evidence,
         "provider_terminate_after": plan.terminate_after,
+        # The drill's payload root is fixed (/workspace/fidelity-drill); the
+        # layout field exists so the attempt keeps the runpod-ssh field set.
+        "storage_layout": "pod-volume",
         "remote_root": REMOTE_ROOT,
         "workload_deadline_utc": utc_iso(plan.workload_deadline_epoch),
     }

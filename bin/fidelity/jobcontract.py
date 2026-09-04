@@ -17,6 +17,10 @@ from decimal import Decimal
 from pathlib import PurePosixPath
 from typing import Any, Dict
 
+# Run-root base per declared RunPod storage layout (measure_cloud
+# RUNPOD_STORAGE_LAYOUTS is the authoring side; this is the validating side).
+RUNPOD_RUN_BASES = {"container-disk": "/root", "pod-volume": "/workspace"}
+
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _EXCLUDED_TOP_LEVEL = frozenset(("job_id", "job_id_full", "execution_attempt"))
@@ -445,7 +449,7 @@ def validate_job(document: dict) -> None:
         "attempt_id", "cost_quote", "engine_root",
         "execution_contract_sha256", "kind", "lease_path",
         "planned_at", "pre_create_safety", "prepared_create", "remote_root",
-        "provider_terminate_after", "workload_deadline_utc",
+        "provider_terminate_after", "storage_layout", "workload_deadline_utc",
     }
     if set(attempt) != fields:
         raise JobContractError("runpod-ssh execution_attempt fields differ")
@@ -618,13 +622,21 @@ def validate_execution_job(document: dict) -> None:
             raise JobContractError(
                 "drill remote paths differ from its fresh-pod payload root")
     else:
-        expected_remote_root = "/workspace/fidelity/%s/%s" % (
-            document["job_id_full"], attempt["attempt_id"])
+        # The run root's base is declared by the job: the container disk
+        # (/root, the host's local NVMe) or the pod volume (/workspace).
+        layout = attempt.get("storage_layout")
+        run_base = RUNPOD_RUN_BASES.get(layout)
+        if run_base is None:
+            raise JobContractError(
+                "storage_layout must be one of %s"
+                % ", ".join(sorted(RUNPOD_RUN_BASES)))
+        expected_remote_root = "%s/fidelity/%s/%s" % (
+            run_base, document["job_id_full"], attempt["attempt_id"])
         if attempt["remote_root"] != expected_remote_root:
             raise JobContractError(
                 "remote_root is not the exact fresh job/attempt directory")
-        expected_engine_root = "/workspace/fidelity-engine/%s/%s" % (
-            document["job_id_full"], attempt["attempt_id"])
+        expected_engine_root = "%s/fidelity-engine/%s/%s" % (
+            run_base, document["job_id_full"], attempt["attempt_id"])
         if attempt["engine_root"] != expected_engine_root:
             raise JobContractError(
                 "engine_root is not the exact fresh job/attempt directory")

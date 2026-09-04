@@ -1414,7 +1414,7 @@ def main():
             "execution_contract_sha256": None, "lease_path": None,
             "planned_at": None, "pre_create_safety": None,
             "remote_root": None, "provider_terminate_after": None,
-            "workload_deadline_utc": None,
+            "storage_layout": None, "workload_deadline_utc": None,
         }
         incomplete_execution["execution_attempt"]["execution_contract_sha256"] = (
             jobcontract.execution_contract_sha256(incomplete_execution))

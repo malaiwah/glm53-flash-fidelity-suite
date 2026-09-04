@@ -2735,6 +2735,26 @@ CONTROL_PLANE_PATHS = (
     "bin/fidelity/sshbase.py", "bin/fidelity/stages.py",
 )
 
+# Where a RunPod pod's run root lives. Measured 2026-09-03 on a secure H200
+# (us-co-1): the pod VOLUME at /workspace is MooseFS over FUSE, shared with
+# other tenants, mode-forcing, 508 MB/s direct read idle and ~215 MB/s under
+# contention -- the layer-outer capture streams the whole checkpoint through
+# it once per cold run (162 min for GLM-5.3). The CONTAINER disk is the host's
+# local NVMe overlay: 3.5 GB/s write, 5.9 GB/s read. Nothing here survives
+# the pod, and the safe path never restarts or adopts one, so the run root
+# belongs on the container disk. A nominal volume is still created so the
+# live attestation's /workspace probe keeps its meaning.
+RUNPOD_STORAGE_LAYOUTS = {
+    "container-disk": {"run_base": "/root", "nominal_volume_gb": 10},
+    "pod-volume": {"run_base": "/workspace", "nominal_volume_gb": None},
+}
+
+
+def _runpod_run_roots(layout: str, job_id_full: str, attempt: str):
+    base = RUNPOD_STORAGE_LAYOUTS[layout]["run_base"]
+    return ("%s/fidelity/%s/%s" % (base, job_id_full, attempt),
+            "%s/fidelity-engine/%s/%s" % (base, job_id_full, attempt))
+
 
 def _canonical_bytes(document: Any) -> bytes:
     return json.dumps(document, sort_keys=True, separators=(",", ":"),
@@ -4359,16 +4379,31 @@ def _plan_runpod_anonymous(
         raise Refusal("--storage is smaller than exact storage arithmetic", [])
     storage_gb = int(args.storage or computed_storage)
     plan_data["storage_need"] = storage_need.to_dict()
-    plan_data["storage_gb"] = storage_gb
     archive_container_bytes = result_archive_contract[
         "result_archive_max_transfer_bytes"]
-    plan_data["container_disk_gb"] = max(
-        20, C.round_up_storage_gb(archive_container_bytes + 67108864))
-    workspace_available_bytes_minimum = int(
+    layout = args.storage_layout
+    plan_data["storage_layout"] = layout
+    run_bytes = int(
         Decimal(str(storage_need.total_bytes)).to_integral_value(
             rounding=ROUND_CEILING))
-    container_available_bytes_minimum = int(
-        archive_container_bytes + 67108864)
+    if layout == "container-disk":
+        # Weights, captures and the archive staging all live on the
+        # container disk; the volume is nominal (see RUNPOD_STORAGE_LAYOUTS).
+        plan_data["storage_gb"] = RUNPOD_STORAGE_LAYOUTS[layout][
+            "nominal_volume_gb"]
+        plan_data["container_disk_gb"] = max(
+            20, C.round_up_storage_gb(
+                run_bytes + archive_container_bytes + 67108864))
+        workspace_available_bytes_minimum = 1024 ** 3
+        container_available_bytes_minimum = int(
+            run_bytes + archive_container_bytes + 67108864)
+    else:
+        plan_data["storage_gb"] = storage_gb
+        plan_data["container_disk_gb"] = max(
+            20, C.round_up_storage_gb(archive_container_bytes + 67108864))
+        workspace_available_bytes_minimum = run_bytes
+        container_available_bytes_minimum = int(
+            archive_container_bytes + 67108864)
     plan_data["resource_requirements"] = {
         "workspace_available_bytes_minimum":
             workspace_available_bytes_minimum,
@@ -4583,7 +4618,7 @@ def _plan_runpod_anonymous(
             "execution_contract_sha256": None,
             "lease_path": None, "pre_create_safety": None,
             "prepared_create": None,
-            "remote_root": None,
+            "remote_root": None, "storage_layout": None,
             "workload_deadline_utc": None, "provider_terminate_after": None,
             "planned_at": None,
         },
@@ -4702,6 +4737,14 @@ def _plan_runpod_anonymous(
     con.kv("job hash", job["job_id_full"])
     con.kv("all-in hard cap", "$%s (calculated $%s)"
            % (quote.hard_cap_usd, quote.calculated_maximum_usd()))
+    con.kv("storage", "%s: container disk %d GB, pod volume %d GB, "
+           "run root under %s" % (
+               plan_data["storage_layout"], plan_data["container_disk_gb"],
+               plan_data["storage_gb"],
+               RUNPOD_STORAGE_LAYOUTS[plan_data["storage_layout"]]["run_base"]))
+    con.kv("workload bound", "%s s (--max-runtime); retrieval/delete reserve %s s"
+           % (quote.workload_deadline_seconds,
+              quote.retrieval_delete_reserve_seconds))
     con.kv("campaign", (
         "per-run ledger %s (ceiling = --max-cost; foreign pods tolerated)"
         % Path(campaign_path).name
@@ -4956,9 +4999,12 @@ def _upload_verified_bundle(provider, pod_id, fs_root, bundle, frozen):
             or sha256_file(str(manifest_path)) != frozen["manifest_sha256"]):
         raise RuntimeError("frozen bundle changed before transfer")
     suffix = re.sub(r"[^A-Za-z0-9_-]", "_", str(pod_id))
-    remote_archive = "/workspace/.fidelity-bundle-%s.tar.gz" % suffix
-    remote_manifest = "/workspace/.fidelity-manifest-%s.json" % suffix
-    remote_helper_dir = "/workspace/.fidelity-helper-%s" % suffix
+    # Beside the run root, on the same disk, so the extractor's atomic
+    # rename never crosses filesystems.
+    run_base = fs_root.rsplit("/fidelity/", 1)[0]
+    remote_archive = "%s/.fidelity-bundle-%s.tar.gz" % (run_base, suffix)
+    remote_manifest = "%s/.fidelity-manifest-%s.json" % (run_base, suffix)
+    remote_helper_dir = "%s/.fidelity-helper-%s" % (run_base, suffix)
     provider.exec(
         pod_id,
         "set -eu; test ! -e {root}; test ! -L {root}; "
@@ -5427,10 +5473,9 @@ def execute_runpod(
         max_clock_delta_seconds=30, max_evidence_age_seconds=30)
     if campaign_mode == "explicit":
         attempt = secrets.token_hex(12)
-    fs_root = "/workspace/fidelity/%s/%s" % (
-        plan_data["job_id_full"], attempt)
-    engine_root = "/workspace/fidelity-engine/%s/%s" % (
-        plan_data["job_id_full"], attempt)
+    storage_layout = plan_data["storage_layout"]
+    fs_root, engine_root = _runpod_run_roots(
+        storage_layout, plan_data["job_id_full"], attempt)
     container_disk_gb = plan_data["container_disk_gb"]
     quote_epoch = datetime.strptime(
         quote.quoted_at, "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -5465,6 +5510,7 @@ def execute_runpod(
         "pre_create_safety": fresh_safety,
         "prepared_create": prepared_create_doc,
         "engine_root": engine_root,
+        "storage_layout": storage_layout,
         "lease_path": expected_lease_name, "remote_root": fs_root,
         "workload_deadline_utc": utc_iso(workload_epoch),
         "provider_terminate_after": terminate_after,
@@ -8342,6 +8388,12 @@ def build_parser() -> argparse.ArgumentParser:
              "carries beyond what its architecture declares. Resolved "
              "automatically when one is authored for the target; only needed "
              "for a new model that turns out to need one.")
+    rt.add_argument(
+        "--storage-layout", choices=sorted(RUNPOD_STORAGE_LAYOUTS),
+        default="container-disk",
+        help="where the run root lives on the pod: container-disk (the "
+             "host's local NVMe; default, ~10x faster weight streaming) or "
+             "pod-volume (/workspace, MooseFS on RunPod secure cloud)")
     rt.add_argument(
         "--sanity-expect", default="Paris",
         help="the continuation the on-pod generation probe requires for "
