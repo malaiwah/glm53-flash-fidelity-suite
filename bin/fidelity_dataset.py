@@ -1157,7 +1157,8 @@ def _load_qualification(
     first = (doc.get("captures") or {}).get("canonical") or {}
     if dataset is not None:
         observed = _capture_identity(
-            dataset, first.get("process_label"), "publish")
+            dataset, first.get("process_label"), "publish",
+            candidate=contract.get("candidate"))
         # imported_from is the qualification's annotation of where cold run 1
         # was captured; it is not a property the dataset carries.
         recorded = {key: value for key, value in first.items()
