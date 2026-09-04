@@ -3773,6 +3773,8 @@ def _create_auto_campaign_ledger(args, provider_account_id: str,
 # per-target branch.
 _RUNPOD_GPU_IDS = {
     "L4": "NVIDIA L4",
+    "A40": "NVIDIA A40",
+    "L40S": "NVIDIA L40S",
     "A100": "NVIDIA A100-SXM4-80GB",
     "A100PCIE": "NVIDIA A100 80GB PCIe",
     "H100": "NVIDIA H100 80GB HBM3",
