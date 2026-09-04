@@ -121,6 +121,32 @@ both commands.
 | billing settlement | advisory; the reaper settles it after teardown | liability held in the ledger until billing settles |
 | reaper health | snapshot integrity; checkout drift is a warning | the same |
 
+## RunPod: pin the datacenter, watch the dashboard
+
+Hub fetch throughput on RunPod secure H200 hosts differed **10x** on
+2026-09-04 with the same repository, command and container-disk layout:
+
+| pod host | datacenter (ipinfo) | fetch rate | 750 GB fetch |
+|---|---|---:|---:|
+| `103.196.86.20`, `.112`, `.136` | Raleigh NC (`US-NC-1`) | 1.3-2.9 s per 5 GB shard, ~1.7-2.4 GB/s | ~12 min |
+| `152.236.142.242` | Denver CO | 15-28 s per shard, ~240 MB/s | ~52 min |
+
+Three attempts landed on the slow host in a row (RunPod re-offers the same
+box). At $4.59/h the slow fetch alone is ~$4 per attempt. The receipts of
+those runs did not record where the pod ran; they do now
+(`machine.data_center_id` / `location` in the live attestation), and
+`--runpod-datacenter US-NC-1` pins the create. A pin **refuses** when the
+datacenter has no stock; it never falls back elsewhere. Stock per datacenter:
+
+```
+query { dataCenters { id gpuAvailability(input: {secureCloud: true}) { available stockStatus gpuTypeId } } }
+```
+
+The stage driver mirrors its `stage_measure/<stage>:` lines to the
+container's PID 1 stdout, so the RunPod dashboard **Logs** tab shows stage
+progress for a detached run without SSH. That stream is advisory; the
+per-stage log files retrieved through `--result-sink` are the evidence.
+
 ## Credentials and identity
 
 - RunPod API bytes come from an owner-only mode-0600 regular file
