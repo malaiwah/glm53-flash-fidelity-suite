@@ -1587,6 +1587,21 @@ def main():
               and "controller-local only" in (proc.stdout + proc.stderr),
               proc.stdout + proc.stderr)
 
+    # The capture stage accepts exit 2 -- "sealed, with warnings" (M1 learning
+    # 20) -- exactly as the comparator does, and refuses anything else. A
+    # sealed 78-layer trellis capture (wrldsuksgo2mars, 438 s, 51,175 scored
+    # rows, sanity probe " Paris" PASS) was destroyed by treating 2 as failure.
+    driver = Path("bin/stage_measure.sh").read_text(encoding="utf-8")
+    block = driver[driver.index("capturing fresh process"):]
+    block = block[:block.index("write_marker")]
+    check("capture stage captures its own exit status",
+          'CAPTURE_STATUS="${PIPESTATUS[0]}"' in block, block[-400:])
+    check("capture stage accepts 0 and 2 and refuses anything else",
+          '"$CAPTURE_STATUS" != 0 ] && [ "$CAPTURE_STATUS" != 2 ' in block
+          and 'exit "$CAPTURE_STATUS"' in block, block[-400:])
+    check("a sealed-with-caveats capture is logged, not hidden",
+          "sealed WITH CAVEATS" in block, block[-400:])
+
     print()
     if FAILED:
         print("selftest_stage_measure: %d FAILED" % len(FAILED))

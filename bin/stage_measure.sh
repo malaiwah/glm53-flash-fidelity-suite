@@ -1309,6 +1309,17 @@ PYSCOPE
     # The two repository arguments are intentionally different identities:
     # weights_repository is what was executed; repository is the intended
     # dataset identity whether or not a later mutation is authorized.
+    #
+    # The capture exits 2 for a SEALED dataset that carries caveat
+    # disclosures, exactly as the comparator does below -- M1 learning 20:
+    # "Exit code 2 from capture means 'sealed, with warnings', not 'failed'.
+    # The dataset is written and valid." Treating it as a failure destroyed a
+    # sealed 78-layer trellis capture (wrldsuksgo2mars, 2026-09-04: 438 s,
+    # 51,175 scored rows, sanity probe ' Paris' PASS, allowlist matched
+    # exactly) whose only caveats were the intentionally-unused MTP tensors
+    # and run_count 1 -- which is what cold run 1 of 2 always is. The seal is
+    # verified by the `verify` stage that follows; anything but 0 or 2 refuses.
+    set +e
     HF_HOME="$FS/hf" "$PY" "$FS/bin/fidelity_dataset.py" capture \
         --out "$OUT" --form "$FORM" --role "$CAPTURE_ROLE" --lane "$LANE" \
         --engine "$ENGINE" -- \
@@ -1321,6 +1332,15 @@ PYSCOPE
         --author "$AUTHOR" --role "$CAPTURE_ROLE" \
         "${EXTRA[@]}" \
         2>&1 | tee -a "$LOGS/$STAGE.log"
+  CAPTURE_STATUS="${PIPESTATUS[0]}"
+  set -e
+  if [ "$CAPTURE_STATUS" != 0 ] && [ "$CAPTURE_STATUS" != 2 ]; then
+    echo "stage_measure/$STAGE REFUSES: capture exited $CAPTURE_STATUS" >&2
+    exit "$CAPTURE_STATUS"
+  fi
+  if [ "$CAPTURE_STATUS" = 2 ]; then
+    log "capture sealed WITH CAVEATS (exit 2); the disclosures are in the dataset and the verify stage re-checks the seal"
+  fi
   du -sh "$OUT" | tee -a "$LOGS/$STAGE.log"
   write_marker
   log "done"
