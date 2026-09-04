@@ -3441,3 +3441,39 @@ host; the pod volume is the wrong place for weights the capture streams twice �
 the container disk is ~10x faster to read, and a 1.9 TB container-disk layout
 is the next controller change; and a failed run must be able to hand back a
 sealed capture it finished (the failed archive excludes `dataset/`).
+
+## 2026-09-04 — GLM-5.3-BF16 root published; FP8 candidate route built; four paid defects
+
+**Published.** `malaiwah/glm53-fidelity-root-v1` @ `9c4a29ee10f393ed2fdbdb9262c1192ddb1507b4`,
+dataset_sha256 `6b8d3a7bdf934f18fc819cc72d85c5385c3351fa50a8c9c2612dd9a29172a4a4`,
+capture_content_digest `9eba97dddb4ff2e2a1d1fad8fdac1a57ec22963f1f85345451fcadcfc42682b8`.
+Cold run 1 is the 2026-09-03 H200 capture salvaged by hand, **re-sealed** (owner
+decision, `fidelity-dataset reseal`: the validator's sealed verdict named the pod's
+`/workspace/...` path, which the publisher refuses; one field rewritten, tensors
+untouched, origin seal `01b09bac…` named in `dataset.resealed` and
+`validation/reseal-receipt.json`). Cold run 2, captured fresh on a second H200
+(container disk), reproduced it bitwise: self-compare 0.0, top-1 1.0. Same-lane root:
+it does not retroactively upgrade any row measured against another teacher.
+
+**What the container disk changed.** 1.5 TB fetched in 12 min (2.36 GB/s); cold run
+~10 min of forward (vs 162 min from the MooseFS pod volume). The checkpoint identity
+hash was 22 of the 33-minute cold run; it is now parallel (same value).
+
+**Paid defects, each fixed with a regression that fails on the previous commit:**
+1. `validation/structural-validation.json` sealed the output directory as its subject
+   (every capture before today) — unpublishable under the private-path rule.
+2. `--` is not a legal Hub repo id; a $1 Fruit run reached its final step to learn it.
+3. The streaming archive builder dropped `LICENSE` bodies: the first non-MIT root to
+   qualify (run 3, ~$9) refused its own archive after the science had passed.
+4. The RunPod host-key log reader followed one SSE session for the whole 30-minute
+   bound; a fresh request returns the line at once. Two L40S pods and the "never
+   surfaced" L4 pods were this.
+Also: pre-POST lease cancellation now shares the reaper's protocol; the resumed
+dataset is frozen before the admission snapshots; upload bound = archive size.
+
+**Built.** Block-scaled FP8 decode in the layer-outer streamer (bitwise transformers
+`Fp8Dequantize` on 367/367 real GLM-5.3 tensors incl. the 576-row partial block),
+the candidate route (`--candidate-scope/--reference-dataset`: two fresh captures,
+qualification, KLD(root‖candidate) on the pod), scopes and allowlists authored from
+bytes, `fidelity-post` for the model-page discussion. GLM-5.3 FP8 candidate launched
+at 13:12Z against the published root.
