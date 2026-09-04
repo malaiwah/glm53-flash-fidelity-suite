@@ -732,6 +732,14 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
                                device: str = "cpu") -> Dict[str, Any]:
     """Replace every trellis payload group in a lazy subset by one decoded `.weight`.
 
+    Decodes on `device` -- the capture device, not the host. The trellis
+    decode is matmul-heavy (two 128x128 Hadamard passes plus a 65,536-entry
+    LUT gather per module) where the FP8 decode is one elementwise multiply,
+    and 768 modules per MoE layer x 75 layers on a CPU extrapolates to ~11 h
+    per cold run: measured on a live wrldsuksgo2mars pod, where layer 3 alone
+    did not finish loading in 8 minutes while the three FP8 layers before it
+    took ~1 s each.
+
     Composes with the FP8 decoder when the artifact keeps part of itself in
     block-scaled FP8 beside the trellis payloads -- wrldsuksgo2mars'
     `GLM-5.3-EXL3-K4-v1` keeps `shared_experts`/`self_attn` as
@@ -812,12 +820,13 @@ def fp8_checkpoint_plan_for_mixed(config) -> Dict[str, Any]:
 
 
 def _materialized(subset: Dict[str, Any], fp8_plan, trellis_plan, trellis_fp8_plan,
-                  torch_dtype, fp8_stats, trellis_stats) -> Dict[str, Any]:
+                  torch_dtype, fp8_stats, trellis_stats,
+                  device: str = "cpu") -> Dict[str, Any]:
     """Whichever decoders this artifact needs, in the one order that is safe."""
     if trellis_plan is not None:
         return materialize_trellis_subset(
             subset, trellis_plan, torch_dtype, trellis_stats,
-            fp8_plan=trellis_fp8_plan, fp8_stats=fp8_stats)
+            fp8_plan=trellis_fp8_plan, fp8_stats=fp8_stats, device=device)
     if fp8_plan is not None:
         return materialize_fp8_subset(subset, fp8_plan, torch_dtype, fp8_stats)
     return subset
@@ -1170,7 +1179,7 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     base_info, _ = convert_and_load(
         model,
         _materialized(base_subset, fp8_plan, trellis_plan, trellis_fp8_plan,
-                      torch_dtype, fp8_stats, trellis_stats),
+                      torch_dtype, fp8_stats, trellis_stats, device=device),
         load_config)
     _absorb(base_info)
 
@@ -1244,7 +1253,8 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
             before_trellis = dict(trellis_stats)
             started = time.monotonic()
             decoded = _materialized(subset, fp8_plan, trellis_plan, trellis_fp8_plan,
-                                    torch_dtype, fp8_stats, trellis_stats)
+                                    torch_dtype, fp8_stats, trellis_stats,
+                                    device=device)
             decode_seconds = time.monotonic() - started
             info, _ = convert_and_load(model, decoded, load_config)
             del decoded

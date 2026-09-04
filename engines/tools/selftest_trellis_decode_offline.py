@@ -234,6 +234,26 @@ def main() -> int:
                   and lazy_stats["decoded_modules"] == 2,
                   repr(lazy_stats))
 
+    # [12] the decode device reaches the decoder. The trellis decode is
+    # matmul-heavy and a host decode is ~11 h per cold run at GLM-5.3 scale,
+    # so _materialized MUST forward the capture device; a default-to-cpu
+    # signature silently reintroduces that.
+    import inspect
+    sig = inspect.signature(lo._materialized)
+    check("[12] _materialized takes a device", "device" in sig.parameters)
+    src = Path(lo.__file__).read_text()
+    check("[12] both call sites pass device=device",
+          src.count("trellis_stats, device=device") + src.count("device=device)") >= 2,
+          "call sites must forward the model device, not default to cpu")
+    dev_stats = {"decoded_modules": 0, "trellis_bits": 0}
+    out6 = lo._materialized(subset, None, plan, None, torch.bfloat16,
+                            {"dequantized": 0, "scales_consumed": 0, "fp8_bytes": 0},
+                            dev_stats, device="cpu")
+    check("[12] an explicit device still decodes correctly",
+          torch.equal(out6["%s.weight" % module_a],
+                      xs.decode_payload_hf(pay_a["trellis"], pay_a["suh"], pay_a["svh"],
+                                            codebook="mcg").to(torch.bfloat16)))
+
     passed = sum(1 for _, ok, _ in RESULTS if ok)
     print("\nselftest_trellis_decode_offline: %d passed, %d failed"
           % (passed, len(RESULTS) - passed))
