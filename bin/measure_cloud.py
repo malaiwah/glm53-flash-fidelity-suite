@@ -5670,6 +5670,16 @@ def execute_runpod(
         ledger.foreign_resources_policy(ledger.snapshot()) == "tolerate")
 
     # Refresh all admission facts immediately under durable ledger locking.
+    # Freeze every run input BEFORE the fresh status/inventory/balance
+    # snapshots and the 30-second server-time window: archiving the 2.5 GB
+    # resumed GLM-5.3 dataset (2026-09-04) outlived both, and the POST was
+    # refused as expired.
+    outdir.mkdir(mode=0o700, parents=True, exist_ok=False)
+    outdir.chmod(0o700)
+    frozen_bundle = _freeze_verified_bundle(plan_data["bundle"], outdir)
+    if args.role == "root":
+        _freeze_root_inputs(plan_data, outdir)
+    frozen_resume = _freeze_resume_capture(plan_data, outdir)
     status = provider.status()
     current_account_id = str(status.get("id") or "").strip()
     if current_account_id != plan_data["provider_account_id"]:
@@ -5812,15 +5822,6 @@ def execute_runpod(
     if outstanding >= args.campaign_width:
         raise Refusal("campaign outstanding count reached width", [])
 
-    # Freeze every run input BEFORE sealing the 30-second server-time
-    # window: copying a 2.5 GB resumed dataset (GLM-5.3, 2026-09-04) took
-    # longer than the window and the POST was refused as expired.
-    outdir.mkdir(mode=0o700, parents=True, exist_ok=False)
-    outdir.chmod(0o700)
-    frozen_bundle = _freeze_verified_bundle(plan_data["bundle"], outdir)
-    if args.role == "root":
-        _freeze_root_inputs(plan_data, outdir)
-    frozen_resume = _freeze_resume_capture(plan_data, outdir)
     fresh_safety["server_time"] = provider.server_time_evidence(
         max_clock_delta_seconds=30, max_evidence_age_seconds=30)
     if campaign_mode == "explicit":
