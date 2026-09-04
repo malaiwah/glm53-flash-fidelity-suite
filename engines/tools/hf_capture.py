@@ -140,14 +140,28 @@ def log(**fields: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def checkpoint_identity(model_dir: str) -> Tuple[str, List[Dict[str, Any]]]:
+def checkpoint_identity(model_dir: str,
+                        workers: Optional[int] = None) -> Tuple[str, List[Dict[str, Any]]]:
+    """sha256 over the sorted per-file (name, size, sha256) census.
+
+    The per-file digests are independent, so they are computed in parallel
+    (hashlib releases the GIL); the census is assembled in sorted name order
+    exactly as before, so the identity value is unchanged. Sequential, this
+    was 22 minutes of a 33-minute GLM-5.3 cold run on an NVMe host.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     names = sorted(name for name in os.listdir(model_dir)
                    if name.endswith(".safetensors") or name == "config.json")
+    if workers is None:
+        workers = max(1, min(16, (os.cpu_count() or 2) - 1))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        digests = list(pool.map(
+            lambda name: F.sha256_file(os.path.join(model_dir, name)), names))
     files = []
-    for name in names:
+    for name, digest in zip(names, digests):
         full = os.path.join(model_dir, name)
-        files.append({"name": name, "size": os.path.getsize(full),
-                      "sha256": F.sha256_file(full)})
+        files.append({"name": name, "size": os.path.getsize(full), "sha256": digest})
     doc = {"algorithm": CHECKPOINT_IDENTITY_ALGORITHM, "files": files}
     payload = json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest(), files
