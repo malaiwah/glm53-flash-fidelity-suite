@@ -1436,6 +1436,17 @@ def rung_archive():
             licensed_blob, {"dataset/LICENSE": b"wrong upstream license\n"}, {})
         _refused("R92 source-license byte drift is refused off-pod",
                  lambda: RS.verify_archive(tampered_license))
+        # The pod builds a STREAMED archive (write_archive): every member the
+        # validators read must be retained there too. GLM-5.3's first
+        # qualified run (2026-09-04) refused its own archive on LICENSE bytes
+        # the streaming builder had not kept.
+        streamed_path = os.path.join(tmp, "licensed-streamed.tar.gz")
+        streamed = RS.write_archive(root, summary, streamed_path)
+        streamed_verified = RS.verify_archive(streamed_path)
+        check("R92b a non-MIT root archive streams to disk and verifies with its "
+              "source-license bytes retained",
+              streamed["sha256"] == streamed_verified["archive_sha256"]
+              and streamed_verified["manifest"]["role"] == "root")
 
     with tempfile.TemporaryDirectory() as tmp:
         root = _run_root(tmp, role="root")

@@ -708,8 +708,14 @@ def _archive_parts(fs_root, summary, stream=False):
     retained_bytes = 0
     for path in source_paths:
         relative = path.relative_to(root).as_posix()
+        # Every member a validator reads from `bodies` must be retained in
+        # streaming mode: JSON, checksums, logs, and the datasets' LICENSE
+        # (the source-license check reads its bytes; a non-MIT root's first
+        # streamed archive, GLM-5.3 on 2026-09-04, refused itself here after
+        # the whole qualification had passed, and the pod was gone).
         retain = (not stream or relative.endswith(".json")
                   or relative.endswith("/checksums.txt")
+                  or relative.endswith("/LICENSE")
                   or relative.startswith("logs/"))
         if stream and not retain:
             record = summary_by_name.get(relative)
