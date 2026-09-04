@@ -28,6 +28,25 @@ same vocabulary), and a ~0.13 ms/tensor size-independent load overhead that
 extrapolates to ~12.5 min/run over GLM-5.3's 76,800 source expert tensors per
 layer -- the same order as the IO itself.
 
+**Measured 2026-09-04, real GLM-5.3 (full, 78L/6144), not projected.** Two
+captures (root BF16 resume and FP8 candidate), same panel shape
+(`panel--glm53.malaiwah.corpus5x5-v1`, 25 contexts x 2,048), H200, container-
+disk. Stage wall times from the FP8 run's `done` markers (`glm53-fp8`):
+
+| stage | wall time | note |
+|---|---:|---|
+| `fetch_target` (750 GB checkpoint) | **9m 51s** | US-NC-1 pin, ~1.27 GB/s avg (docs/CLOUD-RECIPES.md) |
+| `capture` (cold run 1, 78 layers, layer-outer) | **27m 30s** | FP8 candidate, block-dequant-to-bf16 weight source |
+| `capture_repeat` (cold run 2) | **27m 27s** | matches cold run 1 to within 3 s |
+| `compare_root` (self-compare) | 5m 30s | |
+| `compare_reference` (vs BF16 root, numpy) | 5m 09s | see §3.4's M3 row |
+
+Full run (setup through publish) **1h 41m**, **≈ $6.45** on H200 at $4.59/h
+wall-clock-billed. The 0.4–1.6 min/window projection above was never checked
+per-window on a real run; the two whole-cold-run numbers above (27.5 min for
+78 layers, both windows and repeat) are what to quote instead, and they land
+inside the projected Stage C dollar range.
+
 ---
 
 ## 1. The parallelism decision, and why two of three options are wrong
@@ -216,15 +235,25 @@ Qwen3.8 measurement (2,047 positions, vocab 248,320, hidden 5,120 = 1.0):
 
 | rung | vocab | hidden | per-window vs Qwen3.8 | 512-window compare, cuda | 512-window compare, numpy |
 |---|---:|---:|---:|---:|---:|
-| M1 Qwen3.8-27B | 248,320 | 5,120 | 1.00 | **173 s** (measured) | **1,755 s** (measured) |
+| M1 Qwen3.8-27B | 248,320 | 5,120 | 1.00 | **173 s** (measured, 512 windows x 2,047 positions cuda) | **1,755 s** (measured, same panel, numpy) |
 | M2 GLM-5.3-Flash | 154,880 | 4,096 | 0.499 | ~86 s | ~876 s |
-| M3 GLM-5.3 / GLM-5.2 | 154,880* | 6,144 | 0.748 | ~130 s | ~1,313 s |
+| M3 GLM-5.3 (full) | **154,880** (confirmed) | **6,144** (confirmed) | 0.748 | not measured | **309 s** (measured, numpy) |
 
-\* GLM-5.3-Flash's vocabulary is 154,880
-(`hidden_replay.py::EXPECTED_VOCAB`). The safe root replay profile fixes
-`--vocab-chunk 8192`; its final block contains 7,424 columns. The 78L/6144
-GLM-5.3/GLM-5.2 row ASSUMES the same vocabulary and has not been checked
-against those configs — do that before quoting the M3 line, per M1 learning 16.
+**Vocabulary confirmed, not assumed** (2026-09-04): `zai-org/GLM-5.3`
+(78L/6144, the full model — not Flash) declares `vocab_size: 154880` in its
+own `config.json` at `187fb9ff…`, matching Flash's. The M3 row above is a
+real `compare_reference` stage from the GLM-5.3 FP8 candidate measurement
+(`glm53-fp8`, numpy:cpu:float32 backend, `shared_reference_head`,
+`vocab_chunk=8192`, two-pass): 51,175 scored positions (25 contexts x 2,048,
+`panel--glm53.malaiwah.corpus5x5-v1`, every causal position scored —
+`windowed: false`), 309 s wall (16:40:12Z-16:45:21Z). That is **not** the
+512-window profile the Qwen3.8/Flash rows use, so it is not directly
+comparable column-for-column: per scored position it is ~6.04 ms, well above
+Qwen3.8's measured numpy rate (~1.67 ms/position) despite GLM-5.3's lower
+vocab x hidden product (0.748x). The gap is unexplained by the per-window
+scaling model alone — record it as measured, not force-fit to the model; the
+`--replay-device cuda` path (§3.3) was not exercised on this run and remains
+the one to time next for an apples-to-apples M3 cuda figure.
 
 **The consequence for the ladder is that the comparison term stops mattering.**
 At four candidates on a 512-window Flash panel the comparison budget goes from
