@@ -1455,6 +1455,37 @@ def _candidate_decode_plan(qc) -> Dict[str, Any]:
 CANDIDATE_SCOPE_REMOTE = "candidate/scope.json"
 
 
+def _candidate_reference_manifest(args, plan_data: Dict[str, Any]) -> Dict[str, Any]:
+    """The reference root's top manifest, fetched ANONYMOUSLY once per plan."""
+    cached = plan_data.get("_candidate_reference_manifest")
+    if cached is not None:
+        return cached
+    from fidelity import dshub
+    from fidelity import dsformat as F
+
+    match = re.fullmatch(r"([^\s/@]+/[^\s/@]+)@([0-9a-f]{40})",
+                         args.reference_dataset or "")
+    if match is None:
+        raise Refusal("--reference-dataset must be OWNER/REPO@<40-hex revision>", [])
+    ref_repo, ref_rev = match.group(1), match.group(2)
+    dshub.validate_repo_id(ref_repo)
+    with tempfile.TemporaryDirectory(prefix="fidelity-reference-") as cache:
+        try:
+            root = dshub.fetch_dataset(
+                "hf://%s@%s" % (ref_repo, ref_rev), os.path.join(cache, "reference"),
+                token=None, manifest_only=True)
+            manifest = F.load_manifest(root)
+        except Exception as exc:
+            raise Refusal("--reference-dataset could not be read anonymously: %s"
+                          % redact(str(exc)), [])
+    dataset = manifest.get("dataset") or {}
+    if dataset.get("role") != "root" or dataset.get("structural_status") != "sealed":
+        raise Refusal("--reference-dataset is not a sealed root dataset", [])
+    plan_data["_candidate_reference_manifest"] = manifest
+    plan_data["_candidate_reference_ref"] = (ref_repo, ref_rev)
+    return manifest
+
+
 def _candidate_block(args, plan_data: Dict[str, Any], con: Console,
                      binding_panel: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """job.capture.candidate: the authored scope (by digest), codec, bits,
@@ -1495,26 +1526,12 @@ def _candidate_block(args, plan_data: Dict[str, Any], con: Console,
     if decode is None:
         raise Refusal("candidate decode plan is absent; the target gate did not run", [])
 
-    match = re.fullmatch(r"([^\s/@]+/[^\s/@]+)@([0-9a-f]{40})", args.reference_dataset)
-    if match is None:
-        raise Refusal("--reference-dataset must be OWNER/REPO@<40-hex revision>", [])
-    ref_repo, ref_rev = match.group(1), match.group(2)
-    dshub.validate_repo_id(ref_repo)
+    manifest = _candidate_reference_manifest(args, plan_data)
+    ref_repo, ref_rev = plan_data["_candidate_reference_ref"]
     if ref_repo == args.dataset_repository:
         raise Refusal("--reference-dataset must differ from --dataset-repository", [])
-    with tempfile.TemporaryDirectory(prefix="fidelity-reference-") as cache:
-        try:
-            root = dshub.fetch_dataset(
-                "hf://%s@%s" % (ref_repo, ref_rev), os.path.join(cache, "reference"),
-                token=None, manifest_only=True)
-            manifest = F.load_manifest(root)
-        except Exception as exc:
-            raise Refusal("--reference-dataset could not be read anonymously: %s"
-                          % redact(str(exc)), [])
     dataset = manifest.get("dataset") or {}
     ref_panel = manifest.get("panel") or {}
-    if dataset.get("role") != "root" or dataset.get("structural_status") != "sealed":
-        raise Refusal("--reference-dataset is not a sealed root dataset", [])
     if ref_panel.get("panel_id") != binding_panel.get("id") or (
             ref_panel.get("suite_token_hash_sha256")
             != binding_panel.get("suite_token_hash_sha256")):
@@ -4391,11 +4408,36 @@ def _plan_runpod_anonymous(
         panel_local = Path(panel_temp.name) / "panel.tar"
         archive, tokenizer_temp = _write_verified_panel_archive(
             panel_root, panel_local, args.panel_tokenizer_root)
-        validated_root_binding = validate_root_panel_binding(
-            archive["binding"], target.repo_id, target.revision)
-        if validated_root_binding != archive["binding"]:
-            raise PanelError(
-                "root panel validator changed the resolved binding")
+        if getattr(args, "candidate_scope", None):
+            # A candidate is scored against a published root, so the panel
+            # contract that applies is the REFERENCE root's, and the
+            # candidate's tokenizer files must be byte-identical to that
+            # root's (the binding names the candidate repo; only the
+            # repository/revision labels differ, every file digest and the
+            # identity must match, or the validator refuses).
+            reference = _candidate_reference_manifest(args, plan_data)
+            reference_weights = reference.get("weights") or {}
+            reference_repo = reference_weights.get("repository")
+            reference_revision = (reference_weights.get("model_revision")
+                                  or reference_weights.get("revision"))
+            relabelled = json.loads(_canonical_bytes(archive["binding"]).decode("utf-8"))
+            tokenizer_block = relabelled.get("tokenizer") or {}
+            tokenizer_block["repository"] = reference_repo
+            tokenizer_block["revision"] = reference_revision
+            validated_root_binding = validate_root_panel_binding(
+                relabelled, reference_repo, reference_revision)
+            if validated_root_binding != relabelled:
+                raise PanelError(
+                    "root panel validator changed the resolved binding")
+            con.ok("candidate panel",
+                   "exact for reference root %s@%s; tokenizer files byte-identical"
+                   % (reference_repo, str(reference_revision)[:12]))
+        else:
+            validated_root_binding = validate_root_panel_binding(
+                archive["binding"], target.repo_id, target.revision)
+            if validated_root_binding != archive["binding"]:
+                raise PanelError(
+                    "root panel validator changed the resolved binding")
         if tokenizer_temp is not None:
             _RUNPOD_TEMP_HOLDS.append(tokenizer_temp)
         binding_bytes = _canonical_bytes(archive["binding"])
