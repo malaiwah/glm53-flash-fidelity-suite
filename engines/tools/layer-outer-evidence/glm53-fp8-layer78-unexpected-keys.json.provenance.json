@@ -1,0 +1,16 @@
+{
+  "architecture": "GlmMoeDsaForCausalLM",
+  "artifact_sha256": "7de471fa705b1be0d05ced24f2c1f6735e5d947b4114c7b9fcf6f27ce87ba425",
+  "canonical_sorted_names_sha256": "806861c3e936e4eeb46fa519c1eedec4fa004dbcb53f6e432e6fa2b793bc4261",
+  "config_sha256": "3ac72612095574542f7fff847ada8e59d9199dd8af44bdf625d7e02615572e69",
+  "count": 1569,
+  "decoder_layers": 78,
+  "derived_at_utc": "2026-09-04T11:26:24Z",
+  "derived_by": "index census: every key of model.layers.78 (the MTP block transformers never builds), 791 tensors as in the BF16 allowlist plus their 778 weight_scale_inv siblings",
+  "derived_from": "zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json",
+  "index_sha256": "e0fe7f28c1f853d4824e4d796374e3dacf1fe470988773952c79b063768134bf",
+  "per_layer_unexpected_counts": {
+    "78": 1569
+  },
+  "relation_to_bf16_allowlist": "the 791 non-scale names are exactly engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json; the streamed loader reports over-index keys from the index (layer_outer.build_streamed_model), scale keys included, so the set is the index census, not a loader run"
+}

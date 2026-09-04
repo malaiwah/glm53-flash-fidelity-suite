@@ -59,6 +59,28 @@ _ALLOWLISTS = {
         "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
         "count": 791,
     },
+    # Candidates (the root protocol on an FP8 target): the same never-built
+    # tensors plus their weight_scale_inv siblings, which the streamed loader
+    # also reports as over-index keys.
+    ("malaiwah/GLM-5.2-SIQ-Fruit-fp8",
+     "bbe0c5ac74d1f20110974774c17f1b2449bd9ef3"): {
+        # Derived by engines/tools/derive_unexpected_allowlist.py from the
+        # streamed loader on the FP8 fixture: layer 13 (778 fp8 weights, 778
+        # scales, 13 native) plus the 5 shared-indexer tensors of layers 3..12.
+        "path": "engines/tools/layer-outer-evidence/fruit-fp8-unexpected-keys.json",
+        "artifact_sha256": "5b5091db7418b9572f887a6826c1adbbbfe8717d3beb009abf6921008b81e177",
+        "canonical_sorted_names_sha256": "6a93bf5c5fd008ae6689a012910cec20548e48201693676182c4ccae6406523c",
+        "count": 1619,
+    },
+    ("zai-org/GLM-5.3",
+     "187fb9fff6319062325ff825627ef6db084d9bc6"): {
+        # Index census of model.layers.78 (see the .provenance.json beside it):
+        # the BF16 list's 791 names plus 778 scales.
+        "path": "engines/tools/layer-outer-evidence/glm53-fp8-layer78-unexpected-keys.json",
+        "artifact_sha256": "7de471fa705b1be0d05ced24f2c1f6735e5d947b4114c7b9fcf6f27ce87ba425",
+        "canonical_sorted_names_sha256": "806861c3e936e4eeb46fa519c1eedec4fa004dbcb53f6e432e6fa2b793bc4261",
+        "count": 1569,
+    },
 }
 
 class SafetyProofError(ValueError):
