@@ -812,27 +812,40 @@ class SSHTransport:
         # found neither an exit_code nor a live pid); an ssh failure or an
         # empty answer must not wear that verdict, because the caller treats
         # "failed" as permission to act on a job that may be alive.
-        try:
-            out = self.exec_stdout(
-                machine_id,
-                "if [ -f {d}/exit_code ]; then echo DONE $(cat {d}/exit_code); "
-                "elif [ -f {d}/pid ] && kill -0 $(cat {d}/pid) 2>/dev/null; "
-                "then echo RUNNING; else echo GONE; fi".format(d=d),
-                timeout=120).strip().split()
-        except JLError as exc:
-            return {"state": "unknown", "run_id": run_id,
-                    "note": "liveness probe failed (%s); not evidence of "
-                            "death" % redact(str(exc))[:200]}
-        if not out:
-            return {"state": "unknown", "run_id": run_id}
-        if out[0] == "DONE":
-            code = int(out[1]) if len(out) > 1 and out[1].lstrip("-").isdigit() else 1
-            return {"state": "succeeded" if code == 0 else "failed",
-                    "exit_code": code, "run_id": run_id}
-        if out[0] == "RUNNING":
-            return {"state": "running", "run_id": run_id}
+        # GONE is re-probed before it becomes a verdict. The wrapper writes
+        # exit_code and THEN exits, so "no exit_code, wrapper dead" is only
+        # true of a killed wrapper -- or of a network filesystem whose
+        # attribute cache has not yet shown the file to a fresh ssh session.
+        # On 2026-09-04 a RunPod MooseFS /workspace answered GONE for a verify
+        # stage whose exit_code=0 was on disk, and the controller tore the
+        # pod down on it. Three probes over ~6 s outlast that cache.
+        probe = (
+            "if [ -f {d}/exit_code ]; then echo DONE $(cat {d}/exit_code); "
+            "elif [ -f {d}/pid ] && kill -0 $(cat {d}/pid) 2>/dev/null; "
+            "then echo RUNNING; else ls {d} >/dev/null 2>&1; echo GONE; fi"
+        ).format(d=d)
+        gone_probes = 0
+        for attempt in range(3):
+            if attempt:
+                time.sleep(3)
+            try:
+                out = self.exec_stdout(machine_id, probe, timeout=120).strip().split()
+            except JLError as exc:
+                return {"state": "unknown", "run_id": run_id,
+                        "note": "liveness probe failed (%s); not evidence of "
+                                "death" % redact(str(exc))[:200]}
+            if not out:
+                return {"state": "unknown", "run_id": run_id}
+            if out[0] == "DONE":
+                code = int(out[1]) if len(out) > 1 and out[1].lstrip("-").isdigit() else 1
+                return {"state": "succeeded" if code == 0 else "failed",
+                        "exit_code": code, "run_id": run_id}
+            if out[0] == "RUNNING":
+                return {"state": "running", "run_id": run_id}
+            gone_probes += 1
         return {"state": "failed", "run_id": run_id,
-                "note": "no exit_code file and no process matching the run id"}
+                "note": "no exit_code file and no process matching the run id "
+                        "(%d probes over ~6 s)" % gone_probes}
 
     def run_logs(self, run_id: str, *, tail: int = 50,
                  machine_id: Any = None) -> Any:

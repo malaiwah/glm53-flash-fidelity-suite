@@ -412,6 +412,39 @@ def main():
     check("CLI backend (no machine_id parameter) still reaches the verdict",
           verdict4 == "failed", "verdict: %r" % verdict4)
 
+    # run_status: a GONE answer is re-probed before it becomes a verdict
+    # (network-filesystem attribute cache showed exit_code late, 2026-09-04).
+    from fidelity import sshbase
+
+    class LaggyFS(sshbase.SSHTransport):
+        def __init__(self, answers):
+            self.answers = list(answers)
+            self.asked = 0
+            self.ssh_user = "root"
+            self.dry = False
+
+        def exec_stdout(self, mid, cmd, **k):
+            self.asked += 1
+            return self.answers.pop(0) if self.answers else "GONE\n"
+
+    real_sleep, time.sleep = time.sleep, lambda *_a: None
+    try:
+        lag = LaggyFS(["GONE\n", "DONE 0\n"])
+        verdict = sshbase.SSHTransport.run_status(lag, "r_lag", machine_id="m")
+        check("run_status: exit_code seen on the second probe wins",
+              verdict["state"] == "succeeded" and lag.asked == 2, "%r" % verdict)
+        dead = LaggyFS(["GONE\n", "GONE\n", "GONE\n"])
+        verdict = sshbase.SSHTransport.run_status(dead, "r_dead", machine_id="m")
+        check("run_status: three GONE probes are a failed verdict",
+              verdict["state"] == "failed" and dead.asked == 3
+              and "3 probes" in verdict["note"], "%r" % verdict)
+        live = LaggyFS(["RUNNING\n"])
+        verdict = sshbase.SSHTransport.run_status(live, "r_live", machine_id="m")
+        check("run_status: RUNNING answers on the first probe",
+              verdict["state"] == "running" and live.asked == 1, "%r" % verdict)
+    finally:
+        time.sleep = real_sleep
+
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0
 
