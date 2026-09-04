@@ -111,6 +111,17 @@
           "implied_weight_read_mb_s": 215,
           "forward_seconds_per_layer_26_windows": 38,
           "outcome": "cold run 1 sealed at 2h42m; the 3.5 h bound (one-hour fetch, 37-minute runs) expired during it. Bound re-authored: 92 min fetch + 2 x 162 min runs + setup, verify, compare, qualify with margin = 8 h on this storage. A container-disk (local NVMe, measured 5.9 GB/s read) layout should cut each run to ~1 h; re-measure and re-author before relying on that."
+        },
+        "components_seconds": {
+          "fetch": 5520,
+          "setup": 420,
+          "cold_run": {
+            "pod-volume": 9720,
+            "container-disk": 6600
+          },
+          "verify_compare_qualify": 2400,
+          "margin_factor": 1.25,
+          "basis": "fetch, setup and the pod-volume cold run are the 2026-09-03 measurements; the container-disk cold run is 2x a projection (78 layers x (19.3 GB at the measured 5.9 GB/s direct read + the measured 38 s forward for 26 windows) = 3300 s) until a run measures it; verify+compare+qualify is a bound on the L4 Fruit figures scaled to 25 windows. A resumed root captures once, a fresh root twice; the planner multiplies by margin_factor."
         }
       }
     }

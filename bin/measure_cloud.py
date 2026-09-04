@@ -3740,6 +3740,48 @@ def _reaper_health_remedy(health: Dict[str, Any], args) -> List[str]:
     return advice
 
 
+def _root_workload_bound(timing: Dict[str, Any], *, storage_layout: str,
+                         captures: int):
+    """Seconds the workload may take, from the row's measured components.
+
+    A row that carries evidence.components_seconds (fetch, setup, one cold
+    run per storage layout, verify+compare+qualify, margin_factor) yields a
+    bound shaped like the run that is about to happen: a resumed root
+    captures once, a fresh root twice, and a container-disk pod streams
+    weights ~10x faster than the pod volume. A row without components keeps
+    its single conservative_upper_hours. The derivation is recorded in the
+    plan; the 3.5 h bound that expired mid-run on 2026-09-03 was a number
+    with no shape.
+    """
+    components = (timing.get("evidence") or {}).get("components_seconds")
+    hours = Decimal(str(timing["conservative_upper_hours"]))
+    if not isinstance(components, dict):
+        return hours * 3600, {
+            "basis": "conservative_upper_hours", "hours": str(hours)}
+    try:
+        cold_run = Decimal(str(components["cold_run"][storage_layout]))
+        fetch = Decimal(str(components["fetch"]))
+        setup = Decimal(str(components["setup"]))
+        fixed = Decimal(str(components["verify_compare_qualify"]))
+        margin = Decimal(str(components["margin_factor"]))
+    except (KeyError, TypeError, InvalidOperation) as exc:
+        raise Refusal(
+            "timing row components_seconds lack an entry for storage layout "
+            "%r (%s); author it from a measurement or use a layout the row "
+            "measured" % (storage_layout, exc), [])
+    if any(value <= 0 for value in (cold_run, fetch, setup, fixed)) or margin < 1:
+        raise Refusal("timing row components_seconds are not positive", [])
+    seconds = ((fetch + setup + cold_run * captures + fixed) * margin
+               ).to_integral_value(rounding=ROUND_CEILING)
+    return seconds, {
+        "basis": "components_seconds", "storage_layout": storage_layout,
+        "captures": captures, "fetch": str(fetch), "setup": str(setup),
+        "cold_run": str(cold_run), "verify_compare_qualify": str(fixed),
+        "margin_factor": str(margin), "seconds": str(seconds),
+        "conservative_upper_hours_row": str(hours),
+    }
+
+
 def _plan_runpod_anonymous(
         args, con: Console, provider,
         anonymous_access: Dict[str, Any]) -> Dict[str, Any]:
@@ -4055,8 +4097,10 @@ def _plan_runpod_anonymous(
         if (timing.get("evidence") or {}).get("source") == "operator --max-runtime":
             estimated_seconds = Decimal(parse_duration(args.max_runtime))
         else:
-            estimated_seconds = Decimal(
-                str(timing["conservative_upper_hours"])) * 3600
+            estimated_seconds, derivation = _root_workload_bound(
+                timing, storage_layout=args.storage_layout,
+                captures=1 if getattr(args, "resume_capture", None) else 2)
+            plan_data["workload_bound_derivation"] = derivation
     else:
         profile = resolve_profile(engine, surface.surface, surface.bits)
         if not profile:
@@ -4140,9 +4184,18 @@ def _plan_runpod_anonymous(
     plan_data["runtime_contract"] = runtime_contract
     max_runtime = parse_duration(args.max_runtime)
     if estimated_seconds > Decimal(max_runtime):
-        raise Refusal("target-specific timing exceeds --max-runtime", [])
+        raise Refusal(
+            "target-specific timing exceeds --max-runtime: the bound is %s s "
+            "(%s), --max-runtime is %s s"
+            % (estimated_seconds,
+               plan_data.get("workload_bound_derivation", {}).get(
+                   "basis", "conservative_upper_hours"), max_runtime),
+            ["raise --max-runtime to at least the bound; it is the deadline "
+             "the watchdog enforces, not an estimate"])
     gate_verified(plan_data, "target-profile-timing", profile=profile,
-                  evidence_sha256=hashlib.sha256(_canonical_bytes(timing)).hexdigest())
+                  evidence_sha256=hashlib.sha256(_canonical_bytes(timing)).hexdigest(),
+                  workload_bound_seconds=str(estimated_seconds),
+                  derivation=plan_data.get("workload_bound_derivation"))
 
     panel_doc: Dict[str, Any]
     panel_local = None
