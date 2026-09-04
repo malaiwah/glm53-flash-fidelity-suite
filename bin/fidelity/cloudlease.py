@@ -2438,14 +2438,44 @@ def _cancel_prepared_campaign(
     ledger = CampaignLedger(
         str(ledger_path), document["create"]["provider"],
         _expected_provider_account(document))
-    result = ledger.cancel_before_create(
-        ledger.snapshot()["generation"], attempt_key,
-        intent["at"], "PREPARED", evidence)
+    snapshot = ledger.snapshot()
+    recorded = ((snapshot.get("attempts") or {}).get(attempt_key) or {})
+    if recorded.get("phase") == "CANCELLED_BEFORE_CREATE":
+        # The reservation was already released for this attempt (a
+        # controller that failed before its POST records the cancellation
+        # first and may not live to close the lease). The lease itself still
+        # proves no POST -- it is PREPARED with no POST intent -- so the
+        # ledger's recorded evidence stands; re-issuing it is idempotent and
+        # a fresh, different digest would only freeze the attempt.
+        prior = recorded["precreate_cancellation"]
+        result = ledger.cancel_before_create(
+            snapshot["generation"], attempt_key, prior["cancelled_at"],
+            prior["lease_state"], prior["no_create_evidence"])
+    else:
+        result = ledger.cancel_before_create(
+            snapshot["generation"], attempt_key,
+            intent["at"], "PREPARED", evidence)
     if not result.applied and result.code != "ATTEMPT_UNKNOWN":
         raise LeaseError(
             "campaign prepared cancellation failed [%s]: %s"
             % (result.code, result.message))
     return result.to_dict()
+
+
+def cancel_prepared_lease(store: "LeaseStore", ref: "LeaseRef",
+                          reason: str) -> "LeaseRef":
+    """The one way a PREPARED lease is closed: durable intent, the campaign
+    reservation released through the ledger, then the terminal no-POST
+    proof. The reaper and the controller both use it, so their evidence
+    agrees (2026-09-04: a controller-side digest of the whole lease record
+    froze the attempt when the reaper recomputed it differently)."""
+    ref = store.transition(
+        ref, to_state=PREPARED, event="PREPARED_CANCELLATION_INTENT",
+        evidence={"reason": reason})
+    document = store.read(ref)
+    campaign = _cancel_prepared_campaign(document, store.root)
+    return store.cancel_prepared(ref, {
+        "reason": reason, "campaign_projection": campaign})
 
 def _release_expired_create_campaign(
         document: Mapping[str, Any], expiry_evidence: Mapping[str, Any],
@@ -3107,18 +3137,15 @@ def reap_once(store: LeaseStore, providers: Mapping[str, Any], *,
                  if event.get("event") == "PREPARED_CANCELLATION_INTENT"),
                 None)
             if cancellation_intent is None:
-                ref = store.transition(
-                    ref, to_state=PREPARED,
-                    event="PREPARED_CANCELLATION_INTENT",
-                    evidence={
-                        "reason": "reaper found prepared lease with no POST intent",
-                    })
+                ref = cancel_prepared_lease(
+                    store, ref, "reaper cancelled prepared lease with no POST intent")
+            else:
                 document = store.read(ref)
-            campaign = _cancel_prepared_campaign(document, store.root)
-            ref = store.cancel_prepared(ref, {
-                "reason": "reaper cancelled prepared lease with no POST intent",
-                "campaign_projection": campaign,
-            })
+                campaign = _cancel_prepared_campaign(document, store.root)
+                ref = store.cancel_prepared(ref, {
+                    "reason": "reaper cancelled prepared lease with no POST intent",
+                    "campaign_projection": campaign,
+                })
             actions.append({
                 "lease": ref.path.name,
                 "action": "prepared-cancelled-no-post",

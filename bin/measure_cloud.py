@@ -6002,41 +6002,20 @@ def execute_runpod(
                 raise RuntimeError(
                     "campaign reservation key differs from prepared lease")
     except BaseException as primary:
-        # Nothing was POSTed: close the PREPARED lease and release the
-        # campaign reservation, but never let that bookkeeping replace the
-        # error that stopped the run (2026-09-04: a lease-evidence shape
-        # mismatch hid a refusal and the receipt named only the mismatch).
+        from fidelity.cloudlease import cancel_prepared_lease
+        # Nothing was POSTed: close the PREPARED lease through the same
+        # protocol the reaper uses (durable intent, ledger release, no-POST
+        # proof) so their evidence agrees, and never let that bookkeeping
+        # replace the error that stopped the run.
         lease_path = Path(args.lease_dir) / expected_lease_name
         try:
             if lease_path.exists():
                 document = lease_store.read(lease_path)
                 if document.get("state") == "PREPARED":
-                    prepared_ref = lease_store.ref(lease_path, document)
-                    cancellation_evidence = hashlib.sha256(
-                        _canonical_bytes(document)).hexdigest()
-                    item = (
-                        (ledger.snapshot().get("attempts") or {})
-                        .get(campaign_key))
-                    campaign_cancel_code = "ATTEMPT_ABSENT"
-                    if item is not None:
-                        cancelled = _ledger_transition(
-                            ledger, "cancel_before_create", campaign_key,
-                            _exact_utc_now(), "PREPARED",
-                            cancellation_evidence)
-                        if not cancelled.applied:
-                            raise RuntimeError(
-                                "pre-create reservation could not be "
-                                "cancelled: %s" % cancelled.message)
-                        campaign_cancel_code = cancelled.code
-                    lease_store.cancel_prepared(
-                        prepared_ref, {
-                            "reason": "controller failure before provider "
-                                      "POST: %s" % redact(str(primary))[:400],
-                            "campaign_projection": {
-                                "cancel_code": campaign_cancel_code,
-                                "evidence_sha256": cancellation_evidence,
-                            },
-                        })
+                    cancel_prepared_lease(
+                        lease_store, lease_store.ref(lease_path, document),
+                        "controller failure before provider POST: %s"
+                        % redact(str(primary))[:400])
         except BaseException as cleanup:
             raise RuntimeError(
                 "%s (and closing the PREPARED lease failed: %s)"
