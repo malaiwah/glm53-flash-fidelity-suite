@@ -96,6 +96,88 @@ def verify_bundle_manifest(bundle: dict) -> str:
     return expected["manifest_sha256"]
 
 
+IMPORTED_CAPTURE_SCHEMA = "fidelity-suite/imported-capture.v1"
+_IMPORTED_CAPTURE_KEYS = frozenset({
+    "schema", "receipt_sha256", "imported_at", "job_id_full", "attempt_id",
+    "dataset_sha256", "capture_content_digest",
+    "dataset_manifest_file_sha256", "archive_sha256", "archive_bytes",
+    "manifest_sha256", "file_count", "origin", "source_path"})
+
+
+def build_imported_capture_receipt(*, job_id_full: str, attempt_id: str,
+                                   resume: Dict[str, Any], archive_sha256: str,
+                                   archive_bytes: int, manifest_sha256: str,
+                                   file_count: int, source_path: str,
+                                   imported_at: str) -> Dict[str, Any]:
+    """The controller's sealed statement of which sealed dataset it imported.
+
+    Written to receipts/imported-capture.json beside the extracted dataset/;
+    the capture stage refuses to treat dataset/ as cold run 1 without it, and
+    qualify-root records it as the canonical capture's origin.
+    """
+    from .common import seal
+    doc = {
+        "schema": IMPORTED_CAPTURE_SCHEMA,
+        "imported_at": imported_at,
+        "job_id_full": job_id_full,
+        "attempt_id": attempt_id,
+        "dataset_sha256": resume["dataset_sha256"],
+        "capture_content_digest": resume["capture_content_digest"],
+        "dataset_manifest_file_sha256": resume["dataset_manifest_file_sha256"],
+        "archive_sha256": archive_sha256,
+        "archive_bytes": int(archive_bytes),
+        "manifest_sha256": manifest_sha256,
+        "file_count": int(file_count),
+        "origin": resume.get("origin"),
+        "source_path": source_path,
+    }
+    return seal(doc)
+
+
+def verify_imported_capture_receipt(doc: Any, *, job: Dict[str, Any],
+                                    dataset_sha256: str,
+                                    dataset_manifest_file_sha256: str) -> Dict[str, Any]:
+    """Refuse unless the receipt, the job and the dataset in dataset/ agree."""
+    from .common import verify_seal
+    resume = ((job.get("capture") or {}).get("resume_capture")
+              if isinstance(job.get("capture"), dict) else None)
+    if not isinstance(resume, dict):
+        raise JobContractError(
+            "job.json does not declare capture.resume_capture; an imported "
+            "dataset/ is never adopted as a fresh cold run")
+    if not isinstance(doc, dict) or set(doc) != _IMPORTED_CAPTURE_KEYS:
+        raise JobContractError("imported-capture receipt keys differ from v1")
+    if doc.get("schema") != IMPORTED_CAPTURE_SCHEMA or not verify_seal(doc):
+        raise JobContractError("imported-capture receipt schema/seal is invalid")
+    attempt = (job.get("execution_attempt") or {})
+    expected = {
+        "job_id_full": job.get("job_id_full"),
+        "attempt_id": attempt.get("attempt_id"),
+        "dataset_sha256": resume["dataset_sha256"],
+        "capture_content_digest": resume["capture_content_digest"],
+        "dataset_manifest_file_sha256": resume["dataset_manifest_file_sha256"],
+        "origin": resume.get("origin"),
+    }
+    for name, value in expected.items():
+        if doc.get(name) != value:
+            raise JobContractError(
+                "imported-capture receipt %s differs from job.json" % name)
+    if (doc["dataset_sha256"] != dataset_sha256
+            or doc["dataset_manifest_file_sha256"]
+            != dataset_manifest_file_sha256):
+        raise JobContractError(
+            "dataset/ is not the sealed dataset the job names for resumption")
+    if (isinstance(doc.get("archive_bytes"), bool)
+            or not isinstance(doc.get("archive_bytes"), int)
+            or doc["archive_bytes"] <= 0
+            or _HEX64.fullmatch(str(doc.get("archive_sha256", ""))) is None
+            or _HEX64.fullmatch(str(doc.get("manifest_sha256", ""))) is None
+            or isinstance(doc.get("file_count"), bool)
+            or not isinstance(doc.get("file_count"), int)
+            or doc["file_count"] <= 0):
+        raise JobContractError("imported-capture receipt transfer identity is invalid")
+    return doc
+
 def validate_job(document: dict) -> None:
     """Validate the role-neutral structure common to every job.v2 executor."""
     if not isinstance(document, dict) or document.get("schema") != (
@@ -288,6 +370,31 @@ def validate_job(document: dict) -> None:
                     != capture.get("dataset_repository"))
                 or not allowlist_ok):
             raise JobContractError("root capture contract is incomplete")
+        # A resumed root: cold run 1 is a sealed dataset from an earlier
+        # attempt of the same recipe, imported into dataset/ before the
+        # stages run; cold run 2 is captured fresh. The job names the exact
+        # dataset it expects so the pod refuses any other import.
+        resume = capture.get("resume_capture")
+        if resume is not None:
+            origin = resume.get("origin") if isinstance(resume, dict) else None
+            if (not isinstance(resume, dict)
+                    or set(resume) != {
+                        "dataset_sha256", "capture_content_digest",
+                        "dataset_manifest_file_sha256", "origin"}
+                    or any(_HEX64.fullmatch(str(resume.get(name, ""))) is None
+                           for name in ("dataset_sha256",
+                                        "capture_content_digest",
+                                        "dataset_manifest_file_sha256"))
+                    or not (origin is None or (
+                        isinstance(origin, dict)
+                        and set(origin) == {"job_id_full", "attempt_id",
+                                            "job_file_sha256"}
+                        and _HEX64.fullmatch(str(origin["job_id_full"])) is not None
+                        and _HEX64.fullmatch(str(origin["job_file_sha256"])) is not None
+                        and re.fullmatch(r"[0-9a-f]{24}",
+                                         str(origin["attempt_id"])) is not None))):
+                raise JobContractError(
+                    "root capture resume_capture identity is incomplete")
         dataset_license = capture.get("dataset_license")
         weights_license = capture.get("weights_license")
         if dataset_license == "mit":
@@ -815,7 +922,7 @@ ROOT_QUALIFICATION_CONTRACT_KEYS = frozenset({
     "panel_receipt_seal_mode", "panel_binding_file_sha256",
     "panel_binding_path", "tokenizer_identity_sha256",
     "unexpected_tensor_allowlist", "target", "profile",
-    "panel_resolved_binding",
+    "panel_resolved_binding", "resume_capture",
 })
 
 
@@ -1014,6 +1121,9 @@ def _root_qualification_contract(document: dict) -> dict:
         "dataset_id": capture.get("dataset_id"),
         "dataset_name": capture.get("dataset_name"),
         "author": capture.get("author"),
+        # Null for a two-fresh-process root; the imported cold run 1's exact
+        # identity and origin for a resumed one (validate_job checks it).
+        "resume_capture": capture.get("resume_capture"),
         "dataset_repository": capture.get("dataset_repository"),
         "publish_root_to": capture.get("publish_root_to"),
         "dataset_license": capture.get("dataset_license"),

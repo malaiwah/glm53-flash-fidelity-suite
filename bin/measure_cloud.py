@@ -76,10 +76,10 @@ from fidelity.hfmeta import (                          # noqa: E402
     load_panel_descriptor, repo_meta, safetensors_header, sniff_surface,
 )
 from fidelity.jlapi import JL, JLError, JLNotInstalled, select_offer  # noqa: E402
-from fidelity.jobcontract import (JobContractError, finalize_bundle_manifest,
-                                  finalize_job, parse_job_bytes,
-                                  seal_execution_job, validate_execution_job,
-                                  verify_job)  # noqa: E402
+from fidelity.jobcontract import (JobContractError, build_imported_capture_receipt,
+                                  finalize_bundle_manifest, finalize_job,
+                                  parse_job_bytes, seal_execution_job,
+                                  validate_execution_job, verify_job)  # noqa: E402
 from fidelity.receipt import produced_by_block                              # noqa: E402
 from fidelity.stages import stage_sequence                                  # noqa: E402
 
@@ -4540,6 +4540,7 @@ def _plan_runpod_anonymous(
             "device": args.capture_device,
             "publish_root_to": args.publish_root_to,
             "unexpected_tensor_allowlist": allowlist_job,
+            "resume_capture": _resume_capture_identity(args),
             "dataset_license": license_contract["dataset_license"],
             "weights_license": license_contract["weights_license"],
             "replay_device": args.replay_device,
@@ -4632,6 +4633,8 @@ def _plan_runpod_anonymous(
             "produced_by revision differs from clean source HEAD", [])
     plan_data["job"] = job
     plan_data["job_id"], plan_data["job_id_full"] = job["job_id"], job["job_id_full"]
+    if args.role == "root":
+        _validate_resume_capture(args, plan_data, con)
     preview_now = _exact_utc_now()
     preview_valid = (
         datetime.now(timezone.utc) + timedelta(minutes=5)
@@ -4933,6 +4936,216 @@ def _freeze_verified_bundle(bundle, outdir: Path) -> Dict[str, Any]:
         "suite_root": str(local / "suite"),
     }
 
+
+def _resume_capture_identity(args) -> Optional[Dict[str, Any]]:
+    """The job-side identity of the sealed dataset --resume-capture names.
+
+    Cheap and exact: the dataset manifest's own seal and content digest, the
+    manifest file's digest, and the origin job if one is named. The full
+    identity gate (tensors recomputed, every recipe field held to this job's
+    contract) runs once the job is finalized, in _validate_resume_capture.
+    """
+    if not getattr(args, "resume_capture", None):
+        return None
+    root = Path(args.resume_capture).expanduser().resolve()
+    manifest_path = root / "fidelity-dataset.json"
+    if (not root.is_dir() or root.is_symlink() or manifest_path.is_symlink()
+            or not manifest_path.is_file()):
+        raise Refusal("--resume-capture must be a sealed dataset directory", [
+            "it needs fidelity-dataset.json at its top level"])
+    raw = manifest_path.read_bytes()
+    try:
+        doc = parse_job_bytes(raw)
+    except JobContractError as exc:
+        raise Refusal("--resume-capture manifest is not strict JSON: %s" % exc, [])
+    dataset_sha = str(doc.get("dataset_sha256") or "")
+    digest = str(((doc.get("capture") or {}) if isinstance(doc, dict)
+                  else {}).get("capture_content_digest") or "")
+    if any(re.fullmatch(r"[0-9a-f]{64}", value) is None
+           for value in (dataset_sha, digest)):
+        raise Refusal("--resume-capture dataset is not sealed", [
+            "fidelity-dataset.json must carry a 64-hex dataset_sha256 and "
+            "capture.capture_content_digest"])
+    origin = None
+    if getattr(args, "resume_origin_job", None):
+        origin_path = Path(args.resume_origin_job).expanduser().resolve()
+        if origin_path.is_symlink() or not origin_path.is_file():
+            raise Refusal("--resume-origin-job must be a regular job.json", [])
+        origin_raw = origin_path.read_bytes()
+        try:
+            origin_job = parse_job_bytes(origin_raw)
+        except JobContractError as exc:
+            raise Refusal("--resume-origin-job is not strict JSON: %s" % exc, [])
+        attempt = (origin_job.get("execution_attempt") or {})
+        origin = {
+            "job_id_full": str(origin_job.get("job_id_full") or ""),
+            "attempt_id": str(attempt.get("attempt_id") or ""),
+            "job_file_sha256": hashlib.sha256(origin_raw).hexdigest(),
+        }
+        if (re.fullmatch(r"[0-9a-f]{64}", origin["job_id_full"]) is None
+                or re.fullmatch(r"[0-9a-f]{24}", origin["attempt_id"]) is None):
+            raise Refusal("--resume-origin-job lacks an executed job identity", [])
+    return {
+        "dataset_sha256": dataset_sha,
+        "capture_content_digest": digest,
+        "dataset_manifest_file_sha256": hashlib.sha256(raw).hexdigest(),
+        "origin": origin,
+    }
+
+
+def _validate_resume_capture(args, plan_data: Dict[str, Any], con: Console) -> None:
+    """Hold the imported cold run 1 to exactly this job's recipe, before spend.
+
+    Reuses the qualifier's own capture-vs-job check (fidelity_dataset
+    _check_capture_job_contract) so the plan cannot admit a dataset the pod's
+    qualify_root would later refuse, and adds the two facts a bitwise
+    reproduction depends on that the recipe does not name: the same
+    container image digest and the same GPU model.
+    """
+    resume = plan_data["job"]["capture"].get("resume_capture")
+    if resume is None:
+        return
+    import fidelity_dataset as FD
+    root = Path(args.resume_capture).expanduser().resolve()
+    con.say("Verifying the resumed cold run 1 (tensors recomputed)...")
+    try:
+        identity = FD._capture_identity(str(root), "root-cold-1", "canonical")
+        FD._check_capture_job_contract(
+            plan_data["job"], identity, "resumed canonical")
+    except FD.RootQualificationError as exc:
+        raise Refusal("--resume-capture does not match this job's recipe: %s"
+                      % exc, ["capture cold run 1 fresh instead, or point "
+                              "--resume-capture at a dataset of this recipe"])
+    target = plan_data["job"]["target"]
+    if (identity["weights_repository"] != target["repo_id"]
+            or identity["weights_revision"] != target["revision"]):
+        raise Refusal("--resume-capture was captured from different weights", [])
+    if (identity["dataset_sha256"] != resume["dataset_sha256"]
+            or identity["capture_content_digest"]
+            != resume["capture_content_digest"]):
+        raise Refusal("--resume-capture changed between planning steps", [])
+    image = plan_data["job"]["environment"]["image"]
+    container = identity.get("runtime_container") or {}
+    if (container.get("image_reference") != image
+            or container.get("image_digest") != image.rsplit("@", 1)[1]):
+        raise Refusal(
+            "--resume-capture ran in a different container image (%s); a "
+            "bitwise reproduction is only expected on the same image"
+            % container.get("image_reference"), [])
+    manifest = json.loads((root / "fidelity-dataset.json").read_text("utf-8"))
+    runtime = json.loads((root / manifest["runtime"]["file"]).read_text("utf-8"))
+    device_name = (runtime.get("stack_fingerprint") or {}).get("device_name")
+    expected_gpu = plan_data["chosen"]["provider_gpu_display"]
+    if device_name != expected_gpu:
+        raise Refusal(
+            "--resume-capture ran on %r; this plan rents %r, and a bitwise "
+            "reproduction is only expected on the same GPU model"
+            % (device_name, expected_gpu), ["pass --gpu to match"])
+    plan_data["resume_capture"] = dict(resume, path=str(root),
+                                       process_label=identity["process_label"],
+                                       device_name=device_name)
+    gate_verified(plan_data, "resume-capture-identity",
+                  dataset_sha256=resume["dataset_sha256"],
+                  capture_content_digest=resume["capture_content_digest"],
+                  device_name=device_name, origin=resume.get("origin"))
+
+
+def _freeze_resume_capture(plan_data: Dict[str, Any], outdir: Path) -> Optional[Dict[str, Any]]:
+    """Archive the imported cold run 1 exactly, with a verified-file manifest."""
+    resume = plan_data.get("resume_capture")
+    if resume is None:
+        return None
+    root = Path(resume["path"])
+    rows = []
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise Refusal("--resume-capture contains a symlink: %s" % path, [])
+        if path.is_file():
+            rel = path.relative_to(root).as_posix()
+            data = path.read_bytes()
+            rows.append({"path": rel, "bytes": len(data),
+                         "sha256": hashlib.sha256(data).hexdigest()})
+    manifest = finalize_bundle_manifest(rows, "resume-capture")
+    if not any(row["path"] == "fidelity-dataset.json"
+               and row["sha256"] == resume["dataset_manifest_file_sha256"]
+               for row in rows):
+        raise Refusal("--resume-capture changed before paid admission", [])
+    local = outdir / ".frozen-inputs"
+    local.mkdir(mode=0o700, exist_ok=True)
+    archive = local / "resume-capture.tar.gz"
+    manifest_path = local / "resume-capture.manifest.json"
+    manifest_bytes = _canonical_bytes(manifest)
+    manifest_path.write_bytes(manifest_bytes)
+    with archive.open("xb") as output:
+        # Level 1: bf16 tensors barely compress and the pod verifies bytes,
+        # not the container; the point is one exact stream, not size.
+        with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0,
+                           compresslevel=1) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w",
+                              format=tarfile.USTAR_FORMAT) as tar:
+                for row in rows:
+                    data = (root / row["path"]).read_bytes()
+                    if (len(data) != row["bytes"]
+                            or hashlib.sha256(data).hexdigest() != row["sha256"]):
+                        raise Refusal("--resume-capture changed while freezing", [])
+                    info = tarfile.TarInfo(row["path"])
+                    info.size = len(data); info.mode = 0o644
+                    info.uid = info.gid = 0
+                    info.uname = info.gname = ""; info.mtime = 0
+                    tar.addfile(info, io.BytesIO(data))
+        output.flush()
+        os.fsync(output.fileno())
+    return {
+        "archive_path": str(archive),
+        "archive_sha256": sha256_file(str(archive)),
+        "archive_bytes": archive.stat().st_size,
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": manifest["manifest_sha256"],
+        "file_count": len(rows),
+    }
+
+
+def _import_resume_capture(provider, pod_id, fs_root, plan_data, job,
+                           frozen, outdir: Path, con: Console) -> Dict[str, Any]:
+    """Land the frozen cold run 1 in {fs}/dataset exactly, then seal a receipt."""
+    resume = plan_data["resume_capture"]
+    run_base = fs_root.rsplit("/fidelity/", 1)[0]
+    suffix = re.sub(r"[^A-Za-z0-9_.-]", "_", str(pod_id))
+    remote_archive = "%s/.fidelity-resume-%s.tar.gz" % (run_base, suffix)
+    remote_manifest = "%s/.fidelity-resume-%s.json" % (run_base, suffix)
+    con.say("Importing the resumed cold run 1 (%.2f GB)..."
+            % (frozen["archive_bytes"] / 1e9))
+    provider.upload(pod_id, frozen["archive_path"], remote_archive)
+    provider.upload(pod_id, frozen["manifest_path"], remote_manifest)
+    provider.exec(
+        pod_id,
+        "python3 {fs}/bin/fidelity/runpodsafety.py extract-bundle "
+        "--archive {archive} --manifest {manifest} "
+        "--destination {fs}/dataset --sha256 {sha} --bytes {size} "
+        "&& rm -f -- {archive} {manifest}".format(
+            fs=shlex.quote(fs_root), archive=shlex.quote(remote_archive),
+            manifest=shlex.quote(remote_manifest),
+            sha=frozen["archive_sha256"], size=frozen["archive_bytes"]),
+        timeout=1800)
+    receipt = build_imported_capture_receipt(
+        job_id_full=job["job_id_full"],
+        attempt_id=job["execution_attempt"]["attempt_id"],
+        resume={key: resume[key] for key in (
+            "dataset_sha256", "capture_content_digest",
+            "dataset_manifest_file_sha256", "origin")},
+        archive_sha256=frozen["archive_sha256"],
+        archive_bytes=frozen["archive_bytes"],
+        manifest_sha256=frozen["manifest_sha256"],
+        file_count=frozen["file_count"], source_path=resume["path"],
+        imported_at=_exact_utc_now())
+    local = outdir / "imported-capture.json"
+    local.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+                     encoding="utf-8")
+    provider.upload(pod_id, str(local), "%s/receipts/imported-capture.json" % fs_root)
+    con.ok("cold run 1 imported",
+           "dataset_sha256 %s; cold run 2 is captured fresh and must "
+           "reproduce it bitwise" % resume["dataset_sha256"][:16])
+    return receipt
 
 def _freeze_root_inputs(plan_data: Dict[str, Any], outdir: Path) -> None:
     """Copy the two job-bound panel files before any campaign reservation."""
@@ -5583,6 +5796,7 @@ def execute_runpod(
     finally:
         os.close(output_directory_fd)
     frozen_bundle = _freeze_verified_bundle(plan_data["bundle"], outdir)
+    frozen_resume = _freeze_resume_capture(plan_data, outdir)
     if args.role == "root":
         _freeze_root_inputs(plan_data, outdir)
     campaign_key = campaign_attempt_key(plan_data["job_id_full"], attempt)
@@ -6498,6 +6712,10 @@ def execute_runpod(
         provider.upload(
             pod_id, str(convergence_path),
             "%s/receipts/runpod-post-create-convergence.json" % fs_root)
+        if frozen_resume is not None:
+            _import_resume_capture(
+                provider, pod_id, fs_root, plan_data, job, frozen_resume,
+                outdir, con)
         provider.exec(
             pod_id,
             "python3 -c {code} {job} {digest}".format(
@@ -8440,6 +8658,18 @@ def build_parser() -> argparse.ArgumentParser:
              "carries beyond what its architecture declares. Resolved "
              "automatically when one is authored for the target; only needed "
              "for a new model that turns out to need one.")
+    rt.add_argument(
+        "--resume-capture", default=None,
+        help="root only: a sealed dataset directory captured earlier with "
+             "exactly this recipe (same weights pin, panel, image and GPU "
+             "model). It becomes cold run 1 on the pod; cold run 2 is "
+             "captured fresh and must reproduce it bitwise for "
+             "qualification. Verified locally (tensors recomputed) before "
+             "any spend, and again by the pod.")
+    rt.add_argument(
+        "--resume-origin-job", default=None,
+        help="the executed job.json that produced --resume-capture; its "
+             "identity is recorded as the imported cold run's origin")
     rt.add_argument(
         "--storage-layout", choices=sorted(RUNPOD_STORAGE_LAYOUTS),
         default="container-disk",

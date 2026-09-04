@@ -1141,6 +1141,40 @@ def cmd_qualify_root(args):
 
         first = _capture_identity(args.first, args.first_label, "canonical")
         repeat = _capture_identity(args.repeat, args.repeat_label, "repeat")
+        # A resumed root: cold run 1 was imported from an earlier attempt of
+        # the same recipe. The job names that exact dataset, the controller's
+        # sealed receipt proves what landed in dataset/, and the identity
+        # checks below hold it to the same recipe as the fresh cold run 2.
+        # The receipt's origin is recorded on the canonical identity so a
+        # reader of the qualification sees where cold run 1 was captured.
+        resume = capture_job.get("resume_capture")
+        if (resume is None) != (args.imported_canonical is None):
+            raise RootQualificationError(
+                "job capture.resume_capture and --imported-canonical must be "
+                "given together or not at all")
+        if resume is not None:
+            import_receipt = _read_json_file(
+                args.imported_canonical, "imported-capture receipt")
+            try:
+                jobcontract.verify_imported_capture_receipt(
+                    import_receipt, job=job,
+                    dataset_sha256=first["dataset_sha256"],
+                    dataset_manifest_file_sha256=first[
+                        "dataset_manifest_file_sha256"])
+            except jobcontract.JobContractError as exc:
+                raise RootQualificationError(
+                    "imported canonical capture is not the one the job names: %s"
+                    % exc)
+            if first["capture_content_digest"] != resume["capture_content_digest"]:
+                raise RootQualificationError(
+                    "imported canonical capture content digest differs from the "
+                    "job's resume_capture identity")
+            first["imported_from"] = {
+                "receipt": os.path.basename(args.imported_canonical),
+                "receipt_sha256": import_receipt["receipt_sha256"],
+                "origin": import_receipt.get("origin"),
+                "imported_at": import_receipt["imported_at"],
+            }
         execution_kind = (job.get("execution_attempt") or {}).get("kind")
         environment = job.get("environment") or {}
         image_reference = environment.get("image")
@@ -1731,6 +1765,10 @@ def build_parser():
     p.add_argument("--repeat-verify", required=True)
     p.add_argument("--first-label", required=True)
     p.add_argument("--repeat-label", required=True)
+    p.add_argument("--imported-canonical", default=None,
+                   help="receipts/imported-capture.json when cold run 1 was "
+                        "imported from a prior sealed capture (job.json must "
+                        "declare capture.resume_capture)")
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_qualify_root)
 

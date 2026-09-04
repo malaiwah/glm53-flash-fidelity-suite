@@ -1070,9 +1070,55 @@ print(target)
 PYPATH
 )"
 
+  RESUME_SHA="$(jqget capture.resume_capture.dataset_sha256)"
+  IMPORT_RECEIPT="$RCPT/imported-capture.json"
   if [ "$STAGE" = "capture" ]; then
     OUT="$FS/dataset"
     PROCESS_LABEL="root-cold-1"
+    if [ -n "$RESUME_SHA" ]; then
+      # Resumed root: cold run 1 is the sealed dataset the job names,
+      # imported by the controller into dataset/ with a sealed receipt.
+      # Everything about it is checked, nothing is trusted: the receipt's
+      # seal, its binding to THIS job and attempt, and the dataset bytes.
+      # Cold run 2 is then captured fresh and must reproduce it bitwise.
+      [ -f "$IMPORT_RECEIPT" ] && [ ! -L "$IMPORT_RECEIPT" ] || {
+        echo "$STAGE REFUSES: job.json names a resumed cold run 1 but receipts/imported-capture.json is absent." >&2
+        exit 3
+      }
+      [ -d "$OUT" ] && [ ! -L "$OUT" ] && [ -f "$OUT/fidelity-dataset.json" ] || {
+        echo "$STAGE REFUSES: job.json names a resumed cold run 1 but $OUT holds no sealed dataset." >&2
+        exit 3
+      }
+      python3 - "$CONF" "$IMPORT_RECEIPT" "$OUT/fidelity-dataset.json" "$FS/bin" <<'PYIMPORT'
+import hashlib, json, sys
+sys.path.insert(0, sys.argv[4])
+from fidelity import jobcontract
+with open(sys.argv[1], "rb") as handle:
+    job = jobcontract.parse_job_bytes(handle.read())
+with open(sys.argv[2], "rb") as handle:
+    receipt = jobcontract.parse_job_bytes(handle.read())
+with open(sys.argv[3], "rb") as handle:
+    manifest_raw = handle.read()
+manifest = jobcontract.parse_job_bytes(manifest_raw)
+try:
+    jobcontract.verify_imported_capture_receipt(
+        receipt, job=job, dataset_sha256=str(manifest.get("dataset_sha256")),
+        dataset_manifest_file_sha256=hashlib.sha256(manifest_raw).hexdigest())
+except jobcontract.JobContractError as exc:
+    raise SystemExit("capture REFUSES: imported cold run 1 is not the one the job names: %s" % exc)
+print("imported cold run 1: dataset_sha256=%s capture_content_digest=%s origin=%s"
+      % (receipt["dataset_sha256"], receipt["capture_content_digest"],
+         json.dumps(receipt.get("origin"), sort_keys=True)))
+PYIMPORT
+      log "cold run 1 imported from a prior sealed capture; verify runs next, capture_repeat is fresh"
+      write_marker
+      log "done"
+      exit 0
+    fi
+    if [ -f "$IMPORT_RECEIPT" ] || [ -L "$IMPORT_RECEIPT" ]; then
+      echo "$STAGE REFUSES: receipts/imported-capture.json is present but job.json declares no resume_capture." >&2
+      exit 3
+    fi
   else
     require_stage_marker verify
     OUT="$FS/dataset-repeat"
@@ -1286,6 +1332,10 @@ qualify_root)
   require_stage_marker verify
   require_stage_marker verify_repeat
   require_stage_marker compare_root
+  QUALIFY_EXTRA=()
+  if [ -f "$RCPT/imported-capture.json" ]; then
+    QUALIFY_EXTRA+=(--imported-canonical "$RCPT/imported-capture.json")
+  fi
   "$PY" "$FS/bin/fidelity_dataset.py" qualify-root \
       --job "$CONF" \
       --first "$FS/dataset" --repeat "$FS/dataset-repeat" \
@@ -1294,6 +1344,7 @@ qualify_root)
       --repeat-verify "$RCPT/dataset-repeat-verify.json" \
       --comparison "$RCPT/root-comparison/comparison-receipt.json" \
       --out "$RCPT/root-qualification.json" \
+      "${QUALIFY_EXTRA[@]}" \
       2>&1 | tee -a "$LOGS/qualify_root.log"
   write_marker
   log "done"
