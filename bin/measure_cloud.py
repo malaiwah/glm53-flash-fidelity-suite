@@ -1666,14 +1666,21 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
         # declares is bound into the job so the pod's runtime receipt has to
         # record exactly that decode.
         decode = _candidate_decode_plan(qc)
-        con.ok("candidate is block-scaled FP8",
-               "quant_method %s fmt %s block %s; decoded to bf16 per tensor "
-               "(%s), %d modules kept native"
-               % (decode["quantization_config"]["quant_method"],
-                  decode["quantization_config"]["fmt"],
-                  decode["quantization_config"]["weight_block_size"],
-                  decode["method"],
-                  len(decode["quantization_config"]["modules_to_not_convert"])))
+        qcfg = decode["quantization_config"]
+        if qcfg["quant_method"] == "exl3":
+            con.ok("candidate is exl3 trellis",
+                   "quant_method %s codebook %s declared bits %s; decoded to bf16 per "
+                   "module (%s), %d modules kept native. Per-module codebook and the "
+                   "payload's own bit width are read from the checkpoint on the pod"
+                   % (qcfg["quant_method"], qcfg["codebook"], qcfg["bits"],
+                      decode["method"], len(qcfg["modules_to_not_convert"])))
+        else:
+            con.ok("candidate is block-scaled FP8",
+                   "quant_method %s fmt %s block %s; decoded to bf16 per tensor "
+                   "(%s), %d modules kept native"
+                   % (qcfg["quant_method"], qcfg["fmt"],
+                      qcfg["weight_block_size"], decode["method"],
+                      len(qcfg["modules_to_not_convert"])))
         plan.setdefault("target", {})["root_unquantized"] = False
         plan["_candidate_decode"] = decode
         return
