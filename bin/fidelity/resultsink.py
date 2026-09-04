@@ -160,6 +160,9 @@ RUNPOD_ATTESTATION_KEYS = frozenset((
     "expected", "observed", "transport_error", "checks", "failures", "ok",
     "attestation_sha256",
 ))
+RUNPOD_PROVIDER_RECORD_KEYS = frozenset((
+    "data_center_id", "location", "pod_host_id", "gpu_type_id", "error",
+))
 RUNPOD_CLOCK_KEYS = frozenset((
     "controller_send_epoch", "controller_send_utc",
     "controller_receive_epoch", "controller_receive_utc",
@@ -1663,7 +1666,13 @@ def _validate_runpod_attestation(job, attestation):
     computed_seal = hashlib.sha256(json.dumps(
         seal_body, sort_keys=True, separators=(",", ":"),
         ensure_ascii=True, allow_nan=False).encode("utf-8")).hexdigest()
-    if (set(attestation) != RUNPOD_ATTESTATION_KEYS
+    provider_record = attestation.get("provider_record")
+    if (set(attestation) - {"provider_record"} != RUNPOD_ATTESTATION_KEYS
+            or (provider_record is not None and (
+                not isinstance(provider_record, dict)
+                or set(provider_record) != RUNPOD_PROVIDER_RECORD_KEYS
+                or any(v is not None and not isinstance(v, str)
+                       for v in provider_record.values())))
             or attestation.get("schema") != RUNPOD_ATTESTATION_SCHEMA
             or not _valid_hex(claimed_seal, 64)
             or claimed_seal != computed_seal

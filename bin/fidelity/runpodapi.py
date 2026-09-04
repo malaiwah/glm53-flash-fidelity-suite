@@ -1364,11 +1364,27 @@ class RunPod(SSHTransport):
                 >= workspace_available_bytes_minimum)
             failures.extend(
                 name for name, passed in sorted(checks.items()) if not passed)
+        # Where the provider says the pod runs. Hub throughput differed 10x
+        # between datacenters (docs/CLOUD-RECIPES.md); the receipt has to
+        # say where a number was made. Read-only; a transport failure here
+        # is recorded, never hidden.
+        provider_record = {"data_center_id": None, "location": None,
+                           "pod_host_id": None, "gpu_type_id": None,
+                           "error": None}
+        try:
+            listed = self.get_lifecycle_resource(pod_id) or {}
+            for key in ("data_center_id", "location", "pod_host_id",
+                        "gpu_type_id"):
+                value = listed.get(key)
+                provider_record[key] = str(value) if value is not None else None
+        except Exception as exc:  # noqa: BLE001 - recorded verbatim
+            provider_record["error"] = "%s: %s" % (type(exc).__name__, exc)
         document = {
             "schema": "fidelity-suite/runpod-live-attestation.v2",
             "provider": "runpod", "provider_id": pod_id,
             "observed_at_utc": clock["controller_receive_utc"],
             "clock": clock,
+            "provider_record": provider_record,
             "expected": expected, "observed": observed,
             "transport_error": transport_error,
             "checks": checks, "failures": sorted(set(failures)),

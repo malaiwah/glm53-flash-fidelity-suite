@@ -1981,6 +1981,31 @@ def rung_archive():
     ).hexdigest()
     RS._validate_runpod_attestation(resource_job, attestation)
     check("R77 sealed live RunPod attestation binds exact job resources", True)
+
+    def _resealed(doc):
+        doc = json.loads(json.dumps(doc))
+        doc.pop("attestation_sha256", None)
+        doc["attestation_sha256"] = hashlib.sha256(
+            json.dumps(doc, sort_keys=True, separators=(",", ":"),
+                       ensure_ascii=True, allow_nan=False).encode("utf-8")
+        ).hexdigest()
+        return doc
+    located = _resealed(dict(attestation, provider_record={
+        "data_center_id": "US-NC-1", "location": "US",
+        "pod_host_id": "pod-123-abc", "gpu_type_id": "NVIDIA H200",
+        "error": None}))
+    RS._validate_runpod_attestation(resource_job, located)
+    check("R77b attestation carries the provider's datacenter record", True)
+    _refused("R77c a provider record with foreign keys is refused",
+             lambda: RS._validate_runpod_attestation(
+                 resource_job, _resealed(dict(attestation, provider_record={
+                     "data_center_id": "US-NC-1", "note": "x"}))))
+    _refused("R77d a non-string datacenter id is refused",
+             lambda: RS._validate_runpod_attestation(
+                 resource_job, _resealed(dict(attestation, provider_record={
+                     "data_center_id": 7, "location": None,
+                     "pod_host_id": None, "gpu_type_id": None,
+                     "error": None}))))
     provider_log_line = (
         "256 SHA256:%s fixture (ED25519)" % ("A" * 43))
     host_key_proof = {

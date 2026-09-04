@@ -797,7 +797,9 @@ def _validate_identity_attestation(
         evidence,
         ("schema", "provider", "provider_id", "observed_at_utc", "clock",
          "expected", "observed", "transport_error", "checks", "failures",
-         "ok", "attestation_sha256"), (), "resource identity attestation")
+         "ok", "attestation_sha256"),
+        # Absent on attestations written before 2026-09-04.
+        ("provider_record",), "resource identity attestation")
     if attestation["schema"] != "fidelity-suite/runpod-live-attestation.v2":
         raise InvalidLease("resource identity attestation schema differs")
     seal = attestation["attestation_sha256"]
