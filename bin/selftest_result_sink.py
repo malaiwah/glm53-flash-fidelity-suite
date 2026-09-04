@@ -56,7 +56,7 @@ def _sealed(schema, **fields):
 
 def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
               publish=False, abandoned=False, weights_license_body=None,
-              resumed=False, resealed=False):
+              resumed=False, resealed=False, candidate=False):
     root = Path(tmp) / "run"
     (root / "receipts" / "done").mkdir(parents=True)
     (root / "reports").mkdir(parents=True)
@@ -266,9 +266,34 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                 "sha256": source_license["sha256"],
             }
             dataset_license = "other"
-        job["target"].update({
-            "surface": "native-bf16", "codec": "bf16", "bits": 16})
+        if candidate:
+            job["target"].update({
+                "surface": "fp8-block", "codec": "fp8_e4m3", "bits": 8})
+        else:
+            job["target"].update({
+                "surface": "native-bf16", "codec": "bf16", "bits": 16})
         job["target"]["weights_license"] = source_license
+        candidate_block = None
+        candidate_scope_digest = "moe.experts=quantized:fp8_e4m3@8|norm=native:bf16@16"
+        candidate_decode = {
+            "method": "fp8-block-dequant-to-bf16",
+            "quantization_config": {
+                "quant_method": "fp8", "fmt": "e4m3", "weight_block_size": [128, 128],
+                "activation_scheme": "dynamic", "modules_to_not_convert": ["lm_head"]},
+        }
+        if candidate:
+            candidate_block = {
+                "scope": {"path": "candidate/scope.json", "sha256": "a" * 64,
+                          "scope_digest": candidate_scope_digest},
+                "codec": "fp8_e4m3", "declared_bits": 8,
+                "weights_decode": candidate_decode,
+                "reference": {
+                    "repository": "owner/reference-root", "revision": "5" * 40,
+                    "dataset_sha256": "6" * 64, "capture_content_digest": "9" * 64,
+                    "dataset_id": "dataset--reference-root",
+                    "panel_id": "panel--test-root",
+                    "suite_token_hash_sha256": "4" * 64},
+            }
         job["profile"] = {
             "profile_id": "root-hf-transformers-bf16",
             "lane": "root", "source": "native",
@@ -312,7 +337,10 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                     hashlib.sha256(allowlist_body).hexdigest(),
                 "canonical_sorted_names_sha256": allowlist_names_sha,
             },
+            "candidate": candidate_block,
         }
+        if candidate:
+            job["profile"]["surface"] = "fp8-block"
         archive_uncompressed = 2048 + RS.ARCHIVE_MARGIN_BYTES
         job["target"]["root_capture_storage"] = {
             "form": "hidden",
@@ -527,6 +555,7 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                     "resolved_panel_binding": binding_evidence,
                     "unexpected_tensor_allowlist": allowlist_evidence,
                     "weights_license": runtime_license,
+                    "weights_decode": candidate_decode if candidate else None,
                 },
             }
             runtime_body = (json.dumps(
@@ -597,19 +626,21 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                 "dataset": {
                     "id": job["capture"]["dataset_id"],
                     "name": job["capture"]["dataset_name"],
-                    "role": "root",
+                    "role": "quant" if candidate else "root",
                     "author": {"name": job["capture"]["author"]},
                     "repository": job["capture"]["dataset_repository"],
                     "license": dataset_license,
                     "resealed": reseal_block,
                 },
+                "scope": ({"policy": "mixed", "scope_digest": candidate_scope_digest}
+                          if candidate else {"policy": "none"}),
                 "weights": {
                     "repository": job["target"]["repo_id"],
                     "revision": job["target"]["revision"],
                     "model_revision": job["target"]["revision"],
-                    "quantized": False,
-                    "codec": None,
-                    "declared_bits": None,
+                    "quantized": bool(candidate),
+                    "codec": "fp8_e4m3" if candidate else None,
+                    "declared_bits": 8 if candidate else None,
                 },
                 "panel": {
                     "panel_id": resolved_panel_binding["panel"]["id"],
@@ -693,6 +724,12 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                 "weights_revision": target["revision"],
                 "determinism_run_count": 1,
             }
+            if candidate:
+                capture_identities[label]["candidate"] = {
+                    "quantized": True, "codec": "fp8_e4m3", "declared_bits": 8,
+                    "scope_digest": candidate_scope_digest,
+                    "weights_decode": candidate_decode,
+                }
         if resumed:
             # Cold run 1 imported from a prior attempt: the job names the
             # exact dataset, the controller's sealed receipt travels in
@@ -731,6 +768,30 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                 "imported_at": import_receipt["imported_at"],
                 "resealed_from": resume_identity["resealed_from"],
             }
+        if candidate:
+            (root / "receipts" / "reference-comparison").mkdir()
+            (root / "receipts" / "reference-verify.json").write_text(json.dumps(
+                {"schema": "malaiwah.fidelity-structural-validation.v1",
+                 "subject": "dataset:dataset--reference-root",
+                 "structural_status": "sealed", "error_count": 0,
+                 "warning_count": 0, "errors": [], "warnings": []}),
+                encoding="utf-8")
+            comparison_receipt = _sealed(
+                "malaiwah.fidelity-comparison-receipt.v1",
+                comparison_kind="measurement", self_compare=False,
+                reference={"dataset_sha256": "6" * 64, "capture_content_digest": "9" * 64,
+                           "dataset_id": "dataset--reference-root", "role": "root"},
+                candidate={"dataset_sha256": capture_identities["canonical"]["dataset_sha256"],
+                           "capture_content_digest":
+                               capture_identities["canonical"]["capture_content_digest"],
+                           "dataset_id": "dataset--selftest", "role": "quant",
+                           "scope_digest": candidate_scope_digest},
+                metric={"name": "mean_of_run_means_tokenwise_kld",
+                        "direction": "reference_to_candidate", "value": 0.0123,
+                        "units": "nats"},
+                top1_agreement=0.97)
+            (root / "receipts" / "reference-comparison" / "comparison-receipt.json"
+             ).write_text(json.dumps(comparison_receipt), encoding="utf-8")
         qualification = _sealed(
             RS.ROOT_QUALIFICATION_SCHEMA,
             qualified_at="2026-01-01T00:00:00Z",
@@ -1025,6 +1086,51 @@ def rung_logs():
                          bodies, **{"dataset/validation/reseal-receipt.json":
                                     bodies["dataset/validation/reseal-receipt.json"]
                                     + b" "})))
+
+
+def rung_candidate():
+    print("[T26.2c] a candidate: the root protocol on a quantized target, scored against a root")
+    # The whole archive path a paid candidate takes: the job contract builds
+    # with an fp8-block target, the qualification binds role=quant datasets,
+    # and the archive carries the reference comparison bound to the job's
+    # reference and the qualified canonical capture -- in memory and streamed.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _run_root(tmp, role="root", candidate=True,
+                         weights_license_body=b"upstream license\n")
+        job = json.loads((root / "job.json").read_text())
+        contract = JC.root_qualification_contract(job)
+        check("R60 a candidate job produces a qualification contract with its "
+              "candidate block and fp8-block target",
+              contract["candidate"]["codec"] == "fp8_e4m3"
+              and contract["target"]["surface"] == "fp8-block")
+        summary = RS.build_summary(
+            root, "capture", "qualified-unpublished",
+            ["setup", "fetch_target", "fetch_reference", "capture", "verify",
+             "capture_repeat", "verify_repeat", "compare_root", "qualify_root",
+             "compare_reference"])
+        blob = RS.build_archive(root, summary)
+        verified = RS.verify_archive(blob)
+        check("R61 a candidate archive builds and verifies with the reference "
+              "comparison bound to the job and the qualified canonical capture",
+              verified["manifest"]["status"] == "qualified-unpublished")
+        streamed_path = os.path.join(tmp, "candidate.tar.gz")
+        RS.write_archive(root, summary, streamed_path)
+        check("R61b ... and streams to disk and verifies the same way",
+              RS.verify_archive(streamed_path)["manifest"]["status"]
+              == "qualified-unpublished")
+        member = "receipts/reference-comparison/comparison-receipt.json"
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as archive:
+            comparison = json.loads(archive.extractfile(member).read())
+        forged = dict(comparison)
+        forged["reference"] = dict(forged["reference"], dataset_sha256="7" * 64)
+        forged = RS.seal({k: v for k, v in forged.items() if k != "receipt_sha256"})
+        tampered = _rewrite_consistent(
+            blob, {member: RS.canonical_json(forged).encode("utf-8")}, {})
+        _refused("R62 a comparison against a different reference than the job "
+                 "names is refused", lambda: RS.verify_archive(tampered))
+        (root / member).unlink()
+        _refused("R63 a candidate archive without its reference comparison is refused",
+                 lambda: RS.build_archive(root, summary))
 
 
 def rung_http():
@@ -1997,7 +2103,7 @@ def rung_wired():
 
 def main():
     print("== T26 result sinks: getting the answer off the box ==")
-    for rung in (rung_parse, rung_content, rung_logs, rung_http, rung_cap,
+    for rung in (rung_parse, rung_content, rung_logs, rung_candidate, rung_http, rung_cap,
                  rung_archive, rung_wired):
         rung()
     print("\nT26: %d passed, %d failed" % (PASS, FAIL))

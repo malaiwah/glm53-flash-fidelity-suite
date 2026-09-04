@@ -1060,6 +1060,14 @@ def validate_root_qualification_contract(contract: dict) -> None:
     tokenizer = (
         binding.get("tokenizer") if isinstance(binding, dict) else None)
     allowlist = contract.get("unexpected_tensor_allowlist")
+    candidate = contract.get("candidate")
+    # A root is the unquantized release; a candidate is the one quantized
+    # form the streaming loader decodes, and its target identity must say
+    # exactly that (surface, codec and bits agree with the candidate block).
+    if candidate is None:
+        expected_target = ("native-bf16", "bf16", 16)
+    else:
+        expected_target = ("fp8-block", candidate["codec"], candidate["declared_bits"])
     if (not isinstance(target, dict)
             or set(target) != {
                 "repo_id", "revision", "surface", "codec", "bits", "path"}
@@ -1068,9 +1076,9 @@ def validate_root_qualification_contract(contract: dict) -> None:
             or not isinstance(target.get("repo_id"), str)
             or not target["repo_id"]
             or _HEX40.fullmatch(str(target.get("revision", ""))) is None
-            or target.get("surface") != "native-bf16"
-            or target.get("codec") != "bf16"
-            or target.get("bits") != 16
+            or target.get("surface") != expected_target[0]
+            or target.get("codec") != expected_target[1]
+            or target.get("bits") != expected_target[2]
             or target.get("path") is not None):
         raise JobContractError(
             "root qualification target contract differs")
