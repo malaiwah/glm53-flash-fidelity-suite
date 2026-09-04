@@ -76,6 +76,11 @@ MAX_LOG_EVENT_LINE_BYTES = 64 * 1024
 # walks this ladder, largest first, and records the tail that answered.
 RUNPOD_LOG_TAIL_LADDER = (1000, 500, 200)
 RUNPOD_LOG_TAIL_LINES = RUNPOD_LOG_TAIL_LADDER[0]
+# One SSE session is read for at most this long, then re-requested with a
+# fresh tail. A session opened before the pod printed its fingerprint only
+# ever delivered heartbeats afterwards (2026-09-04, two L40S pods, 30 minutes
+# each on one connection) while a fresh request returned the line at once.
+RUNPOD_HOST_KEY_LOG_SESSION_SECONDS = 20
 # 2026-09-03/04: three of nine L4 pods never surfaced their host key within
 # 900 s while every pod that did surface it did so within ~40 s. The likely
 # cause is a cold pull of the ~20 GB pinned image on a host that does not
@@ -722,7 +727,10 @@ class RunPod(SSHTransport):
                             "RunPod pod logs returned a non-event-stream "
                             "response")
                     self._capture_server_time(resp, url)
-                    while time.monotonic() < deadline:
+                    session_deadline = min(
+                        deadline,
+                        time.monotonic() + RUNPOD_HOST_KEY_LOG_SESSION_SECONDS)
+                    while time.monotonic() < session_deadline:
                         raw = resp.readline(MAX_LOG_EVENT_LINE_BYTES + 1)
                         if time.monotonic() >= deadline:
                             break

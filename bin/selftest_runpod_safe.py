@@ -166,6 +166,42 @@ def main():
                   == "Bearer fixture-secret"
               and request.get_header("User-agent")
                   == "quant-fidelity-suite/0.1")
+        # A session opened before the pod printed its fingerprint delivers
+        # only heartbeats afterwards; the reader must re-request rather than
+        # follow that one stream for the whole wait.
+        class HeartbeatOnly(LogResponse):
+            def readline(self, size=-1):
+                return b": heartbeat\n"
+
+        heartbeat_requests = []
+
+        def heartbeat_then_line(request, *, timeout):
+            heartbeat_requests.append(request.full_url)
+            if len(heartbeat_requests) == 1:
+                return HeartbeatOnly([])
+            return LogResponse(log_lines)
+
+        original_session = getattr(
+            runpodapi_module, "RUNPOD_HOST_KEY_LOG_SESSION_SECONDS", None)
+        original_retry = runpodapi_module.RUNPOD_HOST_KEY_LOG_RETRY_SECONDS
+        runpodapi_module.RUNPOD_HOST_KEY_LOG_SESSION_SECONDS = 0.05
+        runpodapi_module.RUNPOD_HOST_KEY_LOG_RETRY_SECONDS = 0.01
+        runpodapi_module.safe_urlopen = heartbeat_then_line
+        heartbeat_evidence = None
+        try:
+            heartbeat_evidence = log_provider.ssh_host_ed25519_fingerprint(
+                "pod-exact", timeout=2)
+        except runpodapi_module.RunPodError:
+            pass
+        finally:
+            runpodapi_module.RUNPOD_HOST_KEY_LOG_SESSION_SECONDS = original_session
+            runpodapi_module.RUNPOD_HOST_KEY_LOG_RETRY_SECONDS = original_retry
+            runpodapi_module.safe_urlopen = log_urlopen
+        check("a heartbeat-only log session is abandoned and re-requested, and "
+              "the fingerprint from the fresh session is accepted",
+              heartbeat_evidence is not None
+              and heartbeat_evidence["fingerprint"] == "SHA256:" + "A" * 43
+              and len(heartbeat_requests) == 2)
         log_lines[:] = [
             b'data:{"source":"system","line":"256 SHA256:'
             + b"A" * 43 + b' fixture (ED25519)"}\n']
