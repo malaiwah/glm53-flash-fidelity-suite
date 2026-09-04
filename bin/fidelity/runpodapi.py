@@ -415,6 +415,7 @@ _LIVE_ATTEST_SCRIPT = r'''
 import json
 import os
 import subprocess
+import sys
 import time
 
 def mount(path):
@@ -475,19 +476,45 @@ if smi.returncode == 0:
             })
 cuda = {"usable": False, "count": 0, "name": None,
         "vram_bytes": None, "error": None}
-try:
-    import torch
-    cuda["usable"] = bool(torch.cuda.is_available())
-    cuda["count"] = int(torch.cuda.device_count())
-    if cuda["usable"] and cuda["count"]:
-        probe = torch.empty(1, device="cuda")
-        torch.cuda.synchronize()
-        del probe
-        props = torch.cuda.get_device_properties(0)
-        cuda["name"] = str(props.name)
-        cuda["vram_bytes"] = int(props.total_memory)
-except Exception as exc:
-    cuda["error"] = "%s: %s" % (type(exc).__name__, str(exc)[:300])
+# The torch that will do the measurement: the interpreter running this
+# probe (runpod/pytorch ships torch in the system python), else the
+# measurement image's baked venv ($FIDELITY_IMAGE_ROOT/venv). The probe
+# is a fresh process so a CUDA context never lingers in this one.
+CUDA_PROBE = (
+    "import json, torch\n"
+    "out = {'usable': bool(torch.cuda.is_available()),"
+    " 'count': int(torch.cuda.device_count()), 'name': None,"
+    " 'vram_bytes': None, 'error': None}\n"
+    "if out['usable'] and out['count']:\n"
+    "    probe = torch.empty(1, device='cuda'); torch.cuda.synchronize(); del probe\n"
+    "    props = torch.cuda.get_device_properties(0)\n"
+    "    out['name'] = str(props.name); out['vram_bytes'] = int(props.total_memory)\n"
+    "print(json.dumps(out))\n")
+candidates = [sys.executable]
+image_root = os.environ.get("FIDELITY_IMAGE_ROOT", "")
+if image_root and os.path.isfile(os.path.join(image_root, "venv", "bin", "python")):
+    candidates.append(os.path.join(image_root, "venv", "bin", "python"))
+errors = []
+for interpreter in candidates:
+    try:
+        run = subprocess.run([interpreter, "-c", CUDA_PROBE], capture_output=True,
+                             text=True, timeout=240)
+    except Exception as exc:
+        errors.append("%s: %s: %s" % (interpreter, type(exc).__name__, str(exc)[:200]))
+        continue
+    if run.returncode != 0:
+        tail = (run.stderr or "").strip().splitlines()[-1:] or ["exit %d" % run.returncode]
+        errors.append("%s: %s" % (interpreter, tail[0][:300]))
+        continue
+    try:
+        cuda = json.loads(run.stdout.strip().splitlines()[-1])
+        cuda["interpreter"] = interpreter
+    except Exception as exc:
+        errors.append("%s: probe output unreadable: %s" % (interpreter, str(exc)[:200]))
+        continue
+    break
+else:
+    cuda["error"] = "; ".join(errors)[:300]
 remote_time_epoch = int(time.time())
 remote_time_utc = time.strftime(
     "%Y-%m-%dT%H:%M:%SZ", time.gmtime(remote_time_epoch))
@@ -1315,7 +1342,8 @@ class RunPod(SSHTransport):
                 and vram_floor <= observed_vram <= vram_ceiling)
             cuda = observed.get("cuda")
             if not isinstance(cuda, dict) or set(cuda) != {
-                    "usable", "count", "name", "vram_bytes", "error"}:
+                    "usable", "count", "name", "vram_bytes", "error",
+                    "interpreter"}:
                 failures.append("CUDA attestation keys differ")
                 cuda = {}
             checks["cuda_usable"] = (

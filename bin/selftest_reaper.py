@@ -2022,7 +2022,7 @@ def runpod_cases():
         }],
         "cuda": {
             "usable": True, "count": 1, "name": "NVIDIA L4",
-            "vram_bytes": expected_vram, "error": None,
+            "vram_bytes": expected_vram, "error": None, "interpreter": "python3",
         },
         "filesystems": {
             "container": {
