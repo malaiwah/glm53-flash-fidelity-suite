@@ -52,6 +52,12 @@ SURFACE_MARKERS = {
     # by config.json's inline quantization_config.quant_method == "exl3" plus
     # a canonical model.safetensors.index.json.
     "exl3hf": ("config.json (inline quantization_config, quant_method exl3)",),
+    # FineGrainedFP8 release (zai-org/GLM-5.3, DeepSeek-V3 lineage): no marker
+    # file -- identified by config.json's inline quantization_config with
+    # quant_method fp8, fmt e4m3 and a 2-D weight_block_size, plus a
+    # canonical index. Read by the layer-outer loader's block decoder.
+    "fp8-block": ("config.json (inline quantization_config, quant_method fp8, "
+                  "fmt e4m3, weight_block_size)",),
     # llama.cpp container: no config.json, no index, no marker file at all --
     # identified by the .gguf extension itself.  A GGUF *repo* is a shelf of
     # independent builds, not one artifact (see `gguf_builds`).
@@ -659,6 +665,17 @@ def sniff_surface(meta: RepoMeta, path: Optional[str] = None) -> SurfaceInfo:
             # canonical index, per-module {trellis,suh,svh,<codebook>}
             # payloads, full-scope quant.  Read by the exl3hf surface.
             info.surface = "exl3hf"
+        block = quant_config.get("weight_block_size")
+        if info.surface == "unknown" and \
+                str(quant_config.get("quant_method", "")).lower() == "fp8" and \
+                str(quant_config.get("fmt", "")).lower() == "e4m3" and \
+                isinstance(block, list) and len(block) == 2 and \
+                "model.safetensors.index.json" in names and not info.tp_sliced:
+            info.surface = "fp8-block"
+            info.codec_family = "fp8_e4m3"
+            info.bits = 8.0
+            info.evidence["weight_block_size"] = [int(block[0]), int(block[1])]
+            info.evidence["activation_scheme"] = quant_config.get("activation_scheme")
         if quant_config.get("original_quantization_config") is not None:
             # quantized FROM another quant (e.g. the FP8 release): lineage
             # that the artifact record must disclose

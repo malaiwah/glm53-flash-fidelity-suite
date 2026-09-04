@@ -4151,6 +4151,7 @@ def _plan_runpod_anonymous(
         "codebook": surface.codebook,
         "container": {
             "native-bf16": "safetensors",
+            "fp8-block": "safetensors",
             "tr3-published": "tr3",
             "exl3hf": "exl3",
             "dione": "exl3",
