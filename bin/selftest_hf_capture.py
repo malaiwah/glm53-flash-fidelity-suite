@@ -378,6 +378,29 @@ def _body(work):
           manifest_a["capture"]["capture_content_digest"]
           == manifest_b["capture"]["capture_content_digest"])
 
+    # -- A2c -----------------------------------------------------------------
+    # Every sealed text member must pass the publisher's private-path scan,
+    # because the seal covers it and the publisher refuses the whole dataset.
+    # The validator's verdict once named the output directory as its subject
+    # (the pod's /workspace/... path), which made every capture unpublishable
+    # and was found by a paid run at its final step.
+    from fidelity import dshub
+    verdict = F.read_json(os.path.join(a, "validation", "structural-validation.json"))
+    leaked = []
+    for root_dir, _dirs, files in os.walk(a):
+        for filename in files:
+            relpath = os.path.relpath(os.path.join(root_dir, filename), a)
+            if not dshub._textual_publish_member(relpath):
+                continue
+            body = open(os.path.join(root_dir, filename), "rb").read()
+            if any(pattern in body for pattern in dshub._PRIVATE_ABSOLUTE_PATHS):
+                leaked.append(relpath)
+    check("A2c the sealed validation verdict names the dataset, not its directory",
+          verdict.get("subject") == "dataset:fidelity--selftest.hf.root",
+          "subject=%r" % verdict.get("subject"))
+    check("A2d no sealed text member carries a private absolute path",
+          leaked == [], "leaked=%r" % leaked)
+
     # -- A3 / A4 -------------------------------------------------------------
     for name, extra in (("A3 self-compare (hash proof)", []),
                         ("A4 self-compare (--force-compute)", ["--force-compute"])):
