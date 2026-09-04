@@ -1,0 +1,132 @@
+{
+  "activation_quantization": null,
+  "assignments": [
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "78 tensors kept in the source's block-scaled FP8: model.layers.N.self_attn.o_proj.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "attn.o",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "42 tensors kept in the source's block-scaled FP8: model.layers.N.self_attn.indexer.wk.weight, model.layers.N.self_attn.indexer.wq_b.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "attn.other",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "219 tensors: model.layers.N.self_attn.indexer.k_norm.bias, model.layers.N.self_attn.indexer.k_norm.weight, model.layers.N.self_attn.indexer.weights_proj.weight, model.layers.N.self_attn.kv_a_layernorm.weight, model.layers.N.self_attn.q_a_layernorm.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "attn.other",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "312 tensors kept in the source's block-scaled FP8: model.layers.N.self_attn.kv_a_proj_with_mqa.weight, model.layers.N.self_attn.kv_b_proj.weight, model.layers.N.self_attn.q_a_proj.weight, model.layers.N.self_attn.q_b_proj.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "attn.qkv",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "1 tensors: model.embed_tokens.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "embed_tokens",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "1 tensors: lm_head.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "lm_head",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "3 tensors kept in the source's block-scaled FP8: model.layers.N.mlp.down_proj.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "mlp.down",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "3 tensors kept in the source's block-scaled FP8: model.layers.N.mlp.gate_proj.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "mlp.gate",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "3 tensors kept in the source's block-scaled FP8: model.layers.N.mlp.up_proj.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "mlp.up",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 4.0,
+      "format": "exl3",
+      "layer_range": "all",
+      "note": "57600 modules: model.layers.N.mlp.experts.E.down_proj, model.layers.N.mlp.experts.E.gate_proj, model.layers.N.mlp.experts.E.up_proj. bits from quantization_config.bits=4 (the payload's own trellis shape is the authority and is checked at decode). read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "moe.experts",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "150 tensors: model.layers.N.mlp.gate.e_score_correction_bias, model.layers.N.mlp.gate.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "moe.router",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "225 tensors kept in the source's block-scaled FP8: model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "moe.shared_expert",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
+      "layer_range": "all",
+      "note": "778 tensors kept in the source's block-scaled FP8: model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight, model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "mtp",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "13 tensors: model.layers.N.eh_proj.weight, model.layers.N.enorm.weight, model.layers.N.hnorm.weight, model.layers.N.input_layernorm.weight, model.layers.N.mlp.gate.e_score_correction_bias, model.layers.N.mlp.gate.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "mtp",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "157 tensors: model.layers.N.input_layernorm.weight, model.layers.N.post_attention_layernorm.weight, model.norm.weight. read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "tensor_class": "norm",
+      "treatment": "native"
+    }
+  ],
+  "codebook_histogram": {
+    "mcg": 57600
+  },
+  "head_policy": "native",
+  "kv_cache_dtype": "bf16",
+  "mtp_included": true,
+  "policy": "mixed"
+}
