@@ -5172,7 +5172,7 @@ def _import_resume_capture(provider, pod_id, fs_root, plan_data, job,
     provider.upload(pod_id, frozen["manifest_path"], remote_manifest)
     provider.exec(
         pod_id,
-        "python3 {fs}/bin/fidelity/runpodsafety.py extract-bundle "
+        "PYTHONPATH={fs}/bin python3 -m fidelity.runpodsafety extract-bundle "
         "--archive {archive} --manifest {manifest} "
         "--destination {fs}/dataset --sha256 {sha} --bytes {size} "
         "&& rm -f -- {archive} {manifest}".format(
