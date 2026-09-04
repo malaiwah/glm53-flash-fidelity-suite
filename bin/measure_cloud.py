@@ -1522,7 +1522,7 @@ def _candidate_block(args, plan_data: Dict[str, Any], con: Console,
         raise Refusal("--candidate-bits must be in (0, 16]", [])
     if not re.fullmatch(r"[a-z0-9_.-]+", args.candidate_codec or ""):
         raise Refusal("--candidate-codec must be a lowercase registry codec token", [])
-    decode = (plan_data.get("target") or {}).get("candidate_decode")
+    decode = plan_data.get("_candidate_decode")
     if decode is None:
         raise Refusal("candidate decode plan is absent; the target gate did not run", [])
 
@@ -1646,7 +1646,7 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
                   decode["method"],
                   len(decode["quantization_config"]["modules_to_not_convert"])))
         plan.setdefault("target", {})["root_unquantized"] = False
-        plan["target"]["candidate_decode"] = decode
+        plan["_candidate_decode"] = decode
         return
     if not qc:
         if designated:
