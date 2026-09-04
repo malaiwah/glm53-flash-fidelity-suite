@@ -297,8 +297,12 @@ def main():
         target_revision=MC._FULL_GLM53_ROOT[2],
         gpu="H200", form="hidden",
         schedule="two-fresh-process-qualification")
+    # 8.0 h is the 2026-09-03 measurement on a RunPod H200 with the pod
+    # volume on MooseFS (92-minute fetch, 162-minute cold run); the 3.5 h it
+    # replaced expired mid-run. Re-author from measurement, never by feel.
     check("full GLM timing is exact-target and file-byte-bound",
-          full_timing["conservative_upper_hours"] == 3.5
+          full_timing["conservative_upper_hours"] == 8.0
+          and full_timing["evidence"]["measured_2026_09_03"]["cold_run_1_seconds"] == 9720
           and full_timing["model_identity"] == {
               "model_bytes": 1506667387408,
               "config_sha256":

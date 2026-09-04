@@ -74,7 +74,7 @@
       "gpu": "H200",
       "form": "hidden",
       "schedule": "two-fresh-process-qualification",
-      "conservative_upper_hours": 3.5,
+      "conservative_upper_hours": 8.0,
       "bound_kind": "named_conservative_upper",
       "model_identity": {
         "model_bytes": 1506667387408,
@@ -98,7 +98,20 @@
         "shard_count": 282,
         "shard_file_overhead_bytes": 7467536,
         "shard_manifest_sha256": "4500ebd01844457a106ed6031a67ff581d77406e8d2872ce43f2abd51a65ba2b",
-        "derivation": "The pinned index's metadata.total_size is tensor payload bytes, not downloadable file bytes. The 282 pinned safetensors shard sizes sum to 1506667387408 bytes; their 7467536-byte difference is safetensors framing/header overhead. The 3.5-hour bound conservatively covers the documented one-hour full fetch, two projected 37-minute layer-outer cold captures, setup, strict verification and forced comparison. Archive build, bounded retrieval attempts and final deletion are separately funded by the retrieval/delete reserve."
+        "derivation": "8 hours on RunPod H200 with the pod volume on MooseFS: measured 92-minute authenticated fetch at 274 MB/s, one measured 162-minute layer-outer cold run (weights stream at ~215 MB/s under shared-host contention), a second run of the same length, setup, strict verification, forced comparison and qualification, with margin. Archive build, bounded retrieval attempts and final deletion are separately funded by the retrieval/delete reserve. The previous 3.5-hour bound assumed a one-hour fetch and 37-minute runs and expired mid-run on 2026-09-03.",
+        "measured_2026_09_03": {
+          "provider": "runpod secure on-demand H200, us-co-1, /workspace on MooseFS (mfs) shared with other tenants",
+          "fetch_seconds": 5520,
+          "fetch_rate_mb_s": 274,
+          "setup_seconds": 420,
+          "cold_run_1_seconds": 9720,
+          "layer_load_seconds_median": 89.7,
+          "layer_load_seconds_max": 124.9,
+          "layer_load_total_seconds": 6789,
+          "implied_weight_read_mb_s": 215,
+          "forward_seconds_per_layer_26_windows": 38,
+          "outcome": "cold run 1 sealed at 2h42m; the 3.5 h bound (one-hour fetch, 37-minute runs) expired during it. Bound re-authored: 92 min fetch + 2 x 162 min runs + setup, verify, compare, qualify with margin = 8 h on this storage. A container-disk (local NVMe, measured 5.9 GB/s read) layout should cut each run to ~1 h; re-measure and re-author before relying on that."
+        }
       }
     }
   ],
