@@ -3,6 +3,7 @@
 import ast
 import hashlib
 import io
+import urllib.error
 import json
 import inspect
 import types
@@ -137,8 +138,28 @@ def main():
         check("authenticated v2 logs yield the exact container ED25519 key",
               log_evidence["fingerprint"] == "SHA256:" + "A" * 43
               and log_evidence["source"] == "container"
-              and log_evidence["tail"] == 5000
+              and log_evidence["tail"] == runpodapi_module.RUNPOD_LOG_TAIL_LADDER[0]
               and timeout == 60.0)
+        # The provider answers 404 to a tail above the pod's undocumented
+        # limit (2026-09-04, L40S): the reader steps down the ladder and
+        # records the tail that answered instead of waiting out the bound.
+        ladder_requests = []
+
+        def ladder_urlopen(request, *, timeout):
+            ladder_requests.append(request.full_url)
+            if "tail=%d" % runpodapi_module.RUNPOD_LOG_TAIL_LADDER[0] in request.full_url:
+                raise urllib.error.HTTPError(
+                    request.full_url, 404, "Not Found", {}, io.BytesIO(b"{}"))
+            return LogResponse(log_lines)
+
+        runpodapi_module.safe_urlopen = ladder_urlopen
+        ladder_evidence = log_provider.ssh_host_ed25519_fingerprint("pod-exact")
+        check("a tail the provider refuses steps down the ladder and the evidence "
+              "records the tail that answered",
+              ladder_evidence["fingerprint"] == "SHA256:" + "A" * 43
+              and ladder_evidence["tail"] == runpodapi_module.RUNPOD_LOG_TAIL_LADDER[1]
+              and len(ladder_requests) == 2)
+        runpodapi_module.safe_urlopen = log_urlopen
         check("RunPod API key stays in a request header",
               "fixture-secret" not in request.full_url
               and request.get_header("Authorization")

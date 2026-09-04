@@ -69,7 +69,13 @@ REST_V1 = "https://rest.runpod.io/v1"
 MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_LOG_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_LOG_EVENT_LINE_BYTES = 64 * 1024
-RUNPOD_LOG_TAIL_LINES = 5000
+# The provider's SSE log endpoint accepts `tail` only up to a per-pod limit it
+# does not document: on 2026-09-04 an L40S pod answered 404 to tail>=2000 and
+# an H200 pod never answered tail=5000 at all, while the ED25519 fingerprint
+# line sits within the first ~50 container lines of every boot. The reader
+# walks this ladder, largest first, and records the tail that answered.
+RUNPOD_LOG_TAIL_LADDER = (1000, 500, 200)
+RUNPOD_LOG_TAIL_LINES = RUNPOD_LOG_TAIL_LADDER[0]
 # 2026-09-03/04: three of nine L4 pods never surfaced their host key within
 # 900 s while every pod that did surface it did so within ~40 s. The likely
 # cause is a cold pull of the ~20 GB pinned image on a host that does not
@@ -687,22 +693,22 @@ class RunPod(SSHTransport):
         if self._key is None:
             self._key = _load_key(self._key_file)
         path = "/pods/%s/logs" % urllib.parse.quote(wanted, safe="")
-        url = V2 + path + "?" + urllib.parse.urlencode({
-            "tail": str(RUNPOD_LOG_TAIL_LINES),
-        })
-        req = urllib.request.Request(
-            url, method="GET",
-            headers={
-                "Accept": "text/event-stream",
-                "User-Agent": "quant-fidelity-suite/0.1",
-                "Authorization": "Bearer " + self._key,
-            })
+        ladder = list(RUNPOD_LOG_TAIL_LADDER)
         deadline = time.monotonic() + request_timeout
         total = 0
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
+            tail = ladder[0]
+            url = V2 + path + "?" + urllib.parse.urlencode({"tail": str(tail)})
+            req = urllib.request.Request(
+                url, method="GET",
+                headers={
+                    "Accept": "text/event-stream",
+                    "User-Agent": "quant-fidelity-suite/0.1",
+                    "Authorization": "Bearer " + self._key,
+                })
             try:
                 with safe_urlopen(
                         req, timeout=min(
@@ -765,7 +771,7 @@ class RunPod(SSHTransport):
                             "provider_id": wanted,
                             "endpoint_origin": "https://api.runpod.io",
                             "source": "container",
-                            "tail": RUNPOD_LOG_TAIL_LINES,
+                            "tail": tail,
                             "observed_at_utc": observed,
                             "line": canonical_line,
                             "line_sha256": hashlib.sha256(
@@ -773,6 +779,10 @@ class RunPod(SSHTransport):
                             "fingerprint": match.group(1),
                         }
             except urllib.error.HTTPError as exc:
+                if exc.code in (404, 422) and len(ladder) > 1:
+                    # The tail exceeded this pod's limit; step down.
+                    ladder.pop(0)
+                    continue
                 raise RunPodError(
                     "RunPod pod logs GET %s -> HTTP %d: %s"
                     % (path, exc.code,
@@ -780,12 +790,15 @@ class RunPod(SSHTransport):
             except RunPodError:
                 raise
             except TimeoutError:
-                pass
+                if len(ladder) > 1:
+                    ladder.pop(0)
             except urllib.error.URLError as exc:
                 if not isinstance(exc.reason, TimeoutError):
                     raise RunPodError(
                         "RunPod pod log request failed: %s"
                         % redact(str(exc)))
+                if len(ladder) > 1:
+                    ladder.pop(0)
             except Exception as exc:                      # noqa: BLE001
                 raise RunPodError(
                     "RunPod pod log request failed: %s" % redact(str(exc)))
