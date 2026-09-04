@@ -111,14 +111,34 @@ def main(argv=None) -> int:
         exl3 = sorted(set(census[cls]["exl3"]))
         fp8, native = census[cls]["fp8"], census[cls]["native"]
         if exl3:
-            assignments.append({
-                "tensor_class": cls, "treatment": "quantized", "format": "exl3",
-                "bits_per_weight": float(declared_bits) if declared_bits is not None else None,
-                "layer_range": "all",
-                "note": "%d modules: %s. bits from quantization_config.bits=%r "
-                        "(the payload's own trellis shape is the authority and is "
-                        "checked at decode). %s"
-                        % (len(exl3), ", ".join(_shapes(exl3)[:6]), declared_bits, source)})
+            # SPLIT BY CODEBOOK, the way fp8_scope splits a class whose bytes
+            # disagree. The registry's numeric_format enum names the codebook
+            # (`exl3-mcg` / `exl3-mul1`); a bare "exl3" is not in it and a
+            # submission carrying it is rejected by registry_validate.py --
+            # the capture's own verify stage warns [SCOPE-VOCAB] about exactly
+            # this. drowzeys ships mcg on layer 3 and mul1 on 4-77, so its
+            # moe.experts class legitimately becomes two assignments.
+            by_codebook = {}
+            for module in exl3:
+                by_codebook.setdefault(modules[module], []).append(module)
+            for codebook, group in sorted(by_codebook.items()):
+                assignments.append({
+                    "tensor_class": cls, "treatment": "quantized",
+                    "format": "exl3-%s" % codebook,
+                    "declared_scheme": {
+                        "codec_family": "exl3", "codebook": codebook,
+                        "quantizer": "exllamav3",
+                        "quantizer_version": qc.get("version"),
+                        "declared_bits": declared_bits,
+                    },
+                    "bits_per_weight": float(declared_bits) if declared_bits is not None else None,
+                    "layer_range": "all",
+                    "note": "%d modules: %s. codebook %s read from the object each "
+                            "module carries; bits from quantization_config.bits=%r "
+                            "(the payload's own trellis shape is the authority and is "
+                            "checked at decode). %s"
+                            % (len(group), ", ".join(_shapes(group)[:6]), codebook,
+                               declared_bits, source)})
         if fp8:
             assignments.append({
                 "tensor_class": cls, "treatment": "quantized", "format": "fp8_e4m3",

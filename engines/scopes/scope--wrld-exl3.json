@@ -75,9 +75,16 @@
     },
     {
       "bits_per_weight": 4.0,
-      "format": "exl3",
+      "declared_scheme": {
+        "codebook": "mcg",
+        "codec_family": "exl3",
+        "declared_bits": 4,
+        "quantizer": "exllamav3",
+        "quantizer_version": null
+      },
+      "format": "exl3-mcg",
       "layer_range": "all",
-      "note": "57600 modules: model.layers.N.mlp.experts.E.down_proj, model.layers.N.mlp.experts.E.gate_proj, model.layers.N.mlp.experts.E.up_proj. bits from quantization_config.bits=4 (the payload's own trellis shape is the authority and is checked at decode). read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
+      "note": "57600 modules: model.layers.N.mlp.experts.E.down_proj, model.layers.N.mlp.experts.E.gate_proj, model.layers.N.mlp.experts.E.up_proj. codebook mcg read from the object each module carries; bits from quantization_config.bits=4 (the payload's own trellis shape is the authority and is checked at decode). read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups, fp8_e4m3 when a _scale_inv sibling exists, native otherwise. Codebook per module from the object present (mcg:57600), not from quantization_config.codebook=None.",
       "tensor_class": "moe.experts",
       "treatment": "quantized"
     },
