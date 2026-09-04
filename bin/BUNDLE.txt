@@ -87,6 +87,8 @@ engines/tools/layer-outer-evidence/fruit-unexpected-keys.json
 engines/tools/layer-outer-evidence/fruit-fp8-unexpected-keys.json
 engines/tools/layer-outer-evidence/glm53-fp8-layer78-unexpected-keys.json
 engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json
+engines/tools/layer-outer-evidence/drowzeys-exl3-layer78-unexpected-keys.json
+engines/tools/layer-outer-evidence/wrld-exl3-layer78-unexpected-keys.json
 engines/tools/dione-evidence/m2-layer45-unexpected-keys.json
 # The UNSEALED Dione (0xSero) selective-EXL3 surface. It serves BOTH lanes:
 # student_capture --surface dione (sealed EP8) and stream_score --source
@@ -107,6 +109,7 @@ engines/tools/stream_score.py
 # which is the only place that check can be made before a paid capture.
 engines/tools/exl3hf_surface.py
 engines/tools/selftest_exl3hf_offline.py
+engines/tools/selftest_trellis_decode_offline.py
 # The SEALED tr3-published surface (stream_score.py --source tr3). It composes
 # exl3hf_surface for the decode, and needs official-nonrouted-names.json: the
 # seal's name-set check compares the release's 1,618 non-routed names against

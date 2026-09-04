@@ -35,6 +35,27 @@ _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _ALLOWLISTS = {
+    ("drowzeys/keys-GLM-5.3-EXL3",
+     "ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5"): {
+        # index census of model.layers.78, the MTP block transformers never builds.
+        # drowzeys keeps it whole in bf16 (`-mb 16`), so the set is exactly the
+        # 791 names of glm53-layer78-unexpected-keys.json and no scale siblings.
+        "path": "engines/tools/layer-outer-evidence/drowzeys-exl3-layer78-unexpected-keys.json",
+        "artifact_sha256": "969cee605deba10dd82afbaa9b1b7a35d2339fdb122efece14530c9030aa1436",
+        "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
+        "count": 791,
+    },
+    ("wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1",
+     "47af23347db743b4666d952e2eb48f2b01c3fede"): {
+        # index census of model.layers.78, the MTP block transformers never builds.
+        # This artifact retains the source release's representation there, so the
+        # set is those same 791 names plus the 778 weight_scale_inv siblings of
+        # the MTP tensors still in block-scaled FP8.
+        "path": "engines/tools/layer-outer-evidence/wrld-exl3-layer78-unexpected-keys.json",
+        "artifact_sha256": "7de471fa705b1be0d05ced24f2c1f6735e5d947b4114c7b9fcf6f27ce87ba425",
+        "canonical_sorted_names_sha256": "806861c3e936e4eeb46fa519c1eedec4fa004dbcb53f6e432e6fa2b793bc4261",
+        "count": 1569,
+    },
     (FRUIT_REPO, FRUIT_REVISION): {
         # Derived by engines/tools/derive_unexpected_allowlist.py from the
         # streamed loader itself: the 791-tensor MTP block (layer 13) plus 5

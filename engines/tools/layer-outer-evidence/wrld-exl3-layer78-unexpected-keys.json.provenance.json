@@ -1,0 +1,16 @@
+{
+ "architecture": "GlmMoeDsaForCausalLM",
+ "artifact_sha256": "7de471fa705b1be0d05ced24f2c1f6735e5d947b4114c7b9fcf6f27ce87ba425",
+ "canonical_sorted_names_sha256": "806861c3e936e4eeb46fa519c1eedec4fa004dbcb53f6e432e6fa2b793bc4261",
+ "config_sha256": "14b5c7ab15efe84146e89e4c510ddf0e9eca0754af995beba01e6e664d7a725b",
+ "count": 1569,
+ "decoder_layers": 78,
+ "derived_at_utc": "2026-09-04T19:21:16Z",
+ "derived_by": "index census: every key of model.layers.78 (the MTP block transformers never builds); the MTP block retains the source release's representation, so the census is the 791 weight names plus the weight_scale_inv siblings of the ones still in block-scaled FP8",
+ "derived_from": "wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede model.safetensors.index.json",
+ "index_sha256": "6c0a0d5ade9cb8758b6cc412a570a954852d133ef89540bbeee88dc9bd1b565b",
+ "per_layer_unexpected_counts": {
+  "78": 1569
+ },
+ "relation_to_bf16_allowlist": "the 791 non-scale names are exactly engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json; the streamed loader reports over-index keys from the index (layer_outer.build_streamed_model), scale keys included, so the set is the index census, not a loader run"
+}
