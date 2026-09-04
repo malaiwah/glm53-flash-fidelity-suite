@@ -7257,7 +7257,11 @@ def execute_runpod(
             heartbeat_stop.set()
     if args.role == "root" and args.publish_root_to:
         current_lease = lease_store.read(lease_ref)
-        if (archive_verified is None
+        if run_error is not None:
+            # The run already failed and says why; a publication that could
+            # not happen is a consequence, not a second operational error.
+            con.say("publication skipped: the run did not qualify a root")
+        elif (archive_verified is None
                 or "qualify_root" not in stages_done
                 or current_lease.get("state") not in (
                     ABSENCE_CONFIRMED, "TERMINAL")):
