@@ -567,9 +567,8 @@ def materialize_fp8_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_d
             continue
         scale_key = key + FP8_SCALE_SUFFIX
         if scale_key in scale_keys:
-            quantized = value if hasattr(value, "dtype") else value[:]
-            scales = subset[scale_key]
-            scales = scales if hasattr(scales, "dtype") else scales[:]
+            quantized = _eager(value)
+            scales = _eager(subset[scale_key])
             out[key] = dequantize_block_fp8(quantized, scales, torch_dtype,
                                             plan["weight_block_size"])
             stats["dequantized"] += 1
@@ -707,6 +706,22 @@ def trellis_payload_groups(keys: Iterable[str]) -> Dict[str, Dict[str, str]]:
     return groups
 
 
+def _eager(value):
+    """Read a lazy safetensors slice, whatever its rank.
+
+    `PySafeSlice[:]` raises `IndexError: slice() cannot be applied to a 0-dim
+    tensor`, and an exl3 codebook marker IS 0-dim -- an I32 scalar equal to the
+    codebook's own multiplier. `[...]` reads any rank. Hit at layer 3 of a live
+    wrldsuksgo2mars capture, after layers 0-2 (FP8 only, all rank>=1) decoded.
+    """
+    if hasattr(value, "dtype"):
+        return value
+    try:
+        return value[...]
+    except (TypeError, IndexError):
+        return value[:]
+
+
 def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_dtype,
                                stats: Dict[str, int], fp8_plan: Optional[Dict[str, Any]] = None,
                                fp8_stats: Optional[Dict[str, int]] = None,
@@ -739,10 +754,8 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
     for module, objects in groups.items():
         payload = {}
         for name in TRELLIS_PAYLOAD_OBJECTS:
-            value = subset[objects[name]]
-            payload[name] = value if hasattr(value, "dtype") else value[:]
-        marker = subset[objects["marker"]]
-        marker = marker if hasattr(marker, "dtype") else marker[:]
+            payload[name] = _eager(subset[objects[name]])
+        marker = _eager(subset[objects["marker"]])
         expected = surface.CODEBOOK_OBJECTS[objects["codebook"]]
         observed = int(marker.reshape(-1)[0])
         if observed != expected:

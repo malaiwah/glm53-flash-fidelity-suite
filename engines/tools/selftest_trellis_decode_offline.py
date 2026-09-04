@@ -80,7 +80,10 @@ def _payload(k_tiles=8, n_tiles=8, bits=3, seed=0):
 
 
 def _subset(module, payload, codebook):
-    marker = torch.tensor([xs.CODEBOOK_OBJECTS[codebook]], dtype=torch.int32)
+    # 0-dim, exactly as the real checkpoints write it (drowzeys layer 3
+    # gate_proj.mcg: shape [], dtype I32). A 1-element 1-D fixture hides the
+    # lazy-slice bug entirely.
+    marker = torch.tensor(xs.CODEBOOK_OBJECTS[codebook], dtype=torch.int32)
     return {
         "%s.trellis" % module: payload["trellis"],
         "%s.suh" % module: payload["suh"],
@@ -125,7 +128,7 @@ def main() -> int:
     check("[2] stats counted both modules", stats["decoded_modules"] == 2)
 
     wrong = dict(subset)
-    wrong["%s.mcg" % module_a] = torch.tensor([12345], dtype=torch.int32)
+    wrong["%s.mcg" % module_a] = torch.tensor(12345, dtype=torch.int32)
     ok, detail = refuses(
         lambda: lo.materialize_trellis_subset(wrong, plan, torch.bfloat16,
                                               {"decoded_modules": 0, "trellis_bits": 0}),
@@ -139,7 +142,7 @@ def main() -> int:
 
     two_markers = dict(subset)
     two_markers["%s.mul1" % module_a] = torch.tensor(
-        [xs.CODEBOOK_OBJECTS["mul1"]], dtype=torch.int32)
+        xs.CODEBOOK_OBJECTS["mul1"], dtype=torch.int32)
     ok, detail = refuses(lambda: lo.trellis_payload_groups(two_markers),
                          "incomplete trellis payload group")
     check("[5] two codebook markers on one module is refused", ok, detail)
@@ -148,7 +151,7 @@ def main() -> int:
         "model.layers.3.mlp.experts.0.down_proj.rank0.trellis": pay_a["trellis"],
         "model.layers.3.mlp.experts.0.down_proj.rank0.suh": pay_a["suh"],
         "model.layers.3.mlp.experts.0.down_proj.rank0.svh": pay_a["svh"],
-        "model.layers.3.mlp.experts.0.down_proj.rank0.mcg": torch.tensor([1], dtype=torch.int32),
+        "model.layers.3.mlp.experts.0.down_proj.rank0.mcg": torch.tensor(1, dtype=torch.int32),
     }
     ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(config, list(rank_split)),
                          "rank-split trellis payload")
@@ -206,6 +209,30 @@ def main() -> int:
     check("[10] _materialized on a pure trellis subset needs no FP8 plan",
           set(out4) == {"%s.weight" % module_a, "%s.weight" % module_b}
           and trellis_only["decoded_modules"] == 2)
+
+    # [11] THROUGH REAL LAZY SLICES, not eager tensors. safetensors hands the
+    # streamer PySafeSlice objects; `slice[:]` raises on the 0-dim I32 codebook
+    # marker, which every eager fixture above hides. This is the shape of the
+    # subset build_streamed_model actually passes.
+    import tempfile
+    from safetensors.torch import save_file
+    from safetensors import safe_open
+
+    with tempfile.TemporaryDirectory() as tmp:
+        shard = Path(tmp) / "shard.safetensors"
+        save_file({k: v.contiguous() for k, v in subset.items()}, str(shard))
+        with safe_open(str(shard), framework="pt", device="cpu") as handle:
+            lazy = {key: handle.get_slice(key) for key in subset}
+            check("[11] the marker really is a 0-dim lazy slice",
+                  list(lazy["%s.mcg" % module_a].get_shape()) == [], "fixture is wrong")
+            lazy_stats = {"decoded_modules": 0, "trellis_bits": 0}
+            out5 = lo.materialize_trellis_subset(lazy, plan, torch.bfloat16, lazy_stats)
+            want = xs.decode_payload_hf(pay_a["trellis"], pay_a["suh"], pay_a["svh"],
+                                        codebook="mcg").to(torch.bfloat16)
+            check("[11] lazy slices decode identically to eager tensors",
+                  torch.equal(out5["%s.weight" % module_a], want)
+                  and lazy_stats["decoded_modules"] == 2,
+                  repr(lazy_stats))
 
     passed = sum(1 for _, ok, _ in RESULTS if ok)
     print("\nselftest_trellis_decode_offline: %d passed, %d failed"
