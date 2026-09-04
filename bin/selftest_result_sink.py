@@ -786,7 +786,7 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                                capture_identities["canonical"]["capture_content_digest"],
                            "dataset_id": "dataset--selftest", "role": "quant",
                            "scope_digest": candidate_scope_digest},
-                metric={"name": "mean_of_run_means_tokenwise_kld",
+                metric={"name": "mean_tokenwise_kld",
                         "direction": "reference_to_candidate", "value": 0.0123,
                         "units": "nats"},
                 top1_agreement=0.97)

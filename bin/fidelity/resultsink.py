@@ -2332,7 +2332,9 @@ def _validate_candidate_comparison(job, qualification, comparison, reference_ver
     metric = comparison.get("metric") or {}
     value = metric.get("value")
     if (metric.get("direction") != "reference_to_candidate"
-            or metric.get("name") != "mean_of_run_means_tokenwise_kld"
+            # dscompare seals the metric as mean_tokenwise_kld (the registry
+            # row's mean_of_run_means_tokenwise_kld is the ingestion's name).
+            or metric.get("name") != "mean_tokenwise_kld"
             or isinstance(value, bool) or not isinstance(value, (int, float))
             or not math.isfinite(float(value)) or float(value) < 0):
         raise ArchiveError("candidate comparison metric is not a finite KLD(reference || candidate)")
