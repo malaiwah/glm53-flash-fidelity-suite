@@ -643,11 +643,15 @@ def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Di
     if rank_split:
         raise LayerOuterError(
             "REFUSED: this checkpoint stores %d rank-split trellis payload(s) "
-            "(e.g. %s). That is the TR3 layout whose own model card says it is "
-            "'not loadable by vanilla exllamav3 model loading' and requires a "
-            "mixed-K projection-tiers patch; how rank0..rankN compose into one "
-            "weight is not published, and this schedule refuses to guess it. "
-            "Author the composition from an authoritative source first."
+            "(e.g. %s), not the stock exllamav3 payload groups this weight "
+            "source decodes. A SINGLE-atom (.rank0 only) tree is handled by "
+            "engines/tools/materialize_exl3_experts.py, which reconstructs "
+            "plain bf16 weights and is captured with treatment 'reconstructed' "
+            "-- run that first and point the capture at its output. A "
+            "MULTI-atom tree (.rank0..rankN, e.g. davidsyoung's TR3 releases, "
+            "whose card says it is 'not loadable by vanilla exllamav3 model "
+            "loading') needs the rule by which the atoms compose into one "
+            "weight, and this schedule refuses to guess it."
             % (len(rank_split), rank_split[0]))
     groups = trellis_payload_groups(declared_keys)
     if not groups:

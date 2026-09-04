@@ -154,7 +154,7 @@ def main() -> int:
         "model.layers.3.mlp.experts.0.down_proj.rank0.mcg": torch.tensor(1, dtype=torch.int32),
     }
     ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(config, list(rank_split)),
-                         "rank-split trellis payload")
+                         "materialize_exl3_experts.py")
     check("[6] rank-split TR3 payloads are refused by name", ok, detail)
 
     ok, detail = refuses(
