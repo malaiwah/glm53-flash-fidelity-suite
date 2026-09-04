@@ -28,7 +28,7 @@
 # /opt/fidelity/BUILD.json.  An image that silently moved its torch version
 # would silently change the arithmetic -- and we have measured that even the
 # GPU MODEL shifts the result (docs/ARCHITECTURE-DETERMINISM.md).
-FROM ubuntu:24.04
+FROM ubuntu:24.04 AS base
 
 ARG SUITE_REVISION=""
 ARG IMAGE_REFERENCE=""
@@ -156,3 +156,32 @@ WORKDIR /workspace
 
 ENTRYPOINT ["python3.12", "/opt/fidelity/suite/bin/container_entry.py"]
 CMD ["doctor"]
+
+# ---------------------------------------------------------------------------
+# `ssh`: the same image, driven by the safe RunPod SSH controller.
+#
+# measure-cloud's RunPod path is an SSH transport (host key authenticated from
+# the provider's log stream, exact retrieval, live attestation); until now it
+# ran on runpod/pytorch and rebuilt the locked stack on every pod.  This
+# target adds sshd and RunPod's PUBLIC_KEY convention on top of the baked
+# stack, so a pod boots with the pinned closure at /opt/fidelity and the
+# bootstrap seeds the per-attempt engine root from it instead of
+# downloading it (bin/bootstrap_measure.sh, seed_from_image).  The bundle the
+# controller uploads stays the code identity the receipts bind to.
+#
+#   container/build.sh --target ssh --tag ghcr.io/malaiwah/quant-fidelity-measure:ssh
+# ---------------------------------------------------------------------------
+FROM base AS ssh
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends openssh-server \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /run/sshd /root/.ssh \
+ && chmod 0700 /root/.ssh
+COPY container/ssh-start.sh /opt/fidelity/ssh-start.sh
+RUN chmod 0755 /opt/fidelity/ssh-start.sh
+EXPOSE 22
+ENTRYPOINT ["/opt/fidelity/ssh-start.sh"]
+CMD []
+
+# The default target stays the entrypoint-driven measurement image.
+FROM base AS measure

@@ -95,6 +95,37 @@ PYBIN="$(command -v python3.12 || true)"
 "$PYBIN" -V | tee "$RCPT/python-version.txt"
 
 # ---- 2. venv + the exact hashed wheel closure ---------------------------
+# Inside the measurement image the exact closure is already baked at
+# FIDELITY_IMAGE_ROOT (venv, pipeline and exllamav3 at their pins).  A
+# per-attempt engine root elsewhere is SEEDED from it by symlink when the
+# image's wheel lock is byte-identical to this bundle's; otherwise the fresh
+# path below runs untouched.  The receipts record which happened.
+IMAGE_ROOT="${FIDELITY_IMAGE_ROOT:-}"
+seed_from_image() {
+  [ -n "$IMAGE_ROOT" ] && [ -d "$IMAGE_ROOT/venv" ] || return 0
+  [ "$(realpath -m "$ROOT")" != "$(realpath -m "$IMAGE_ROOT")" ] || return 0
+  local image_lock="$IMAGE_ROOT/suite/bin/requirements-cu130-py312.lock"
+  if [ ! -f "$image_lock" ] || [ "$(sha256sum < "$image_lock")" != "$(sha256sum < "$WHEEL_LOCK")" ]; then
+    log "image wheel lock differs from this bundle's; building a fresh venv"
+    echo "image-seed: refused (wheel lock differs)" | tee "$RCPT/image-seed.txt"
+    return 0
+  fi
+  if [ ! -e "$VENV" ]; then
+    ln -s "$IMAGE_ROOT/venv" "$VENV"
+    log "venv seeded from image $IMAGE_ROOT/venv (wheel lock matches)"
+  fi
+  local name dest
+  for name in pipeline exllamav3; do
+    case "$name" in pipeline) dest="$PIPE" ;; *) dest="$EXL3" ;; esac
+    if [ -d "$IMAGE_ROOT/$name/.git" ] && [ ! -e "$dest" ]; then
+      ln -s "$IMAGE_ROOT/$name" "$dest"
+      log "$name seeded from image $IMAGE_ROOT/$name (pins verified below)"
+    fi
+  done
+  echo "image-seed: venv=$(readlink -f "$VENV") pipeline=$(readlink -f "$PIPE" 2>/dev/null || echo absent) exllamav3=$(readlink -f "$EXL3" 2>/dev/null || echo absent)" \
+    | tee "$RCPT/image-seed.txt"
+}
+seed_from_image
 if [ ! -x "$PY" ]; then
   log "creating venv at $VENV"
   "$PYBIN" -m venv "$VENV"
@@ -192,7 +223,16 @@ reconstruct_checkout() {
       exit 1
       ;;
   esac
-  if [ ! -L "$destination" ] && [ -d "$destination" ]; then
+  # A symlink is never reused -- except one the image seed placed, pointing
+  # at the image's own checkout under FIDELITY_IMAGE_ROOT, which is reset to
+  # the exact pin below like any reused checkout.
+  local seeded=0
+  if [ -L "$destination" ] && [ -n "$IMAGE_ROOT" ]; then
+    case "$(realpath -m "$destination")" in
+      "$(realpath -m "$IMAGE_ROOT")"/*) seeded=1 ;;
+    esac
+  fi
+  if { [ ! -L "$destination" ] || [ "$seeded" -eq 1 ]; } && [ -d "$destination" ]; then
     destination_real="$(realpath "$destination" 2>/dev/null || true)"
     top="$(git -C "$destination" rev-parse --show-toplevel 2>/dev/null || true)"
     [ -z "$top" ] || top_real="$(realpath "$top" 2>/dev/null || true)"
