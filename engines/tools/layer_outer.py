@@ -663,13 +663,25 @@ def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Di
     codebooks: Dict[str, int] = {}
     for objects in groups.values():
         codebooks[objects["codebook"]] = codebooks.get(objects["codebook"], 0) + 1
+    # MIRRORS `measure_cloud._candidate_decode_plan`'s exl3 branch FIELD FOR
+    # FIELD, as the FP8 plan mirrors its own: `qualify_root` compares the
+    # capture's recorded quantization_config against the job's candidate block
+    # for exact equality, so an extra or renamed key here refuses the whole
+    # run after both cold runs and the self-compare have already passed.
+    # The observed census (module count, per-module codebook histogram) is
+    # NOT part of that contract and rides on the log line and the decode
+    # evidence instead.
     return {
         "quant_method": "exl3",
-        "declared_codebook": qc.get("codebook"),
-        "declared_bits": qc.get("bits"),
-        "declared_head_bits": qc.get("head_bits"),
-        "quantized_module_count": len(groups),
-        "codebook_histogram": dict(sorted(codebooks.items())),
+        "codebook": str(qc["codebook"]) if qc.get("codebook") is not None else None,
+        "bits": qc.get("bits"),
+        "head_bits": qc.get("head_bits"),
+        "modules_to_not_convert": sorted(
+            str(m) for m in (qc.get("modules_to_not_convert") or [])),
+        "_observed": {
+            "quantized_module_count": len(groups),
+            "codebook_histogram": dict(sorted(codebooks.items())),
+        },
     }
 
 
@@ -937,9 +949,14 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
         if any(key.endswith(FP8_SCALE_SUFFIX) for key in keys):
             trellis_fp8_plan = fp8_checkpoint_plan_for_mixed(config)
     if trellis_plan is not None:
+        observed = trellis_plan.pop("_observed", {})
         log(stage="trellis_decode_plan", method=TRELLIS_DECODE_METHOD,
             reference=TRELLIS_DECODE_REFERENCE,
-            mixed_fp8=trellis_fp8_plan is not None, **trellis_plan)
+            mixed_fp8=trellis_fp8_plan is not None, observed=observed,
+            **trellis_plan)
+        trellis_stats["quantized_module_count"] = observed.get(
+            "quantized_module_count", 0)
+        trellis_stats["codebook_histogram"] = observed.get("codebook_histogram", {})
 
     # Build with the SAME context managers `from_pretrained` uses, so the module
     # tree (kernel patches, dtype, tie-weight suppression) is the one the
@@ -1343,6 +1360,9 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     streamer.layer_counts = _LayerCounts(layer_subset)
     streamer.fp8_plan = fp8_plan
     streamer.fp8_stats = fp8_stats
+    streamer.trellis_plan = trellis_plan
+    streamer.trellis_stats = trellis_stats
+    streamer.trellis_fp8_plan = trellis_fp8_plan
     return streamer
 
 
@@ -1350,6 +1370,35 @@ def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]
     """What the streamer did to the checkpoint's bytes before the forward, for
     the runtime receipt: None for a native checkpoint, else the FP8 plan and
     the counts of tensors decoded and scale tensors consumed."""
+    trellis_plan = getattr(streamer, "trellis_plan", None)
+    if trellis_plan is not None:
+        # The candidate identity the qualification binds: the capture must
+        # RECORD the decode it applied, or `qualify_root` refuses with
+        # `weights_decode=None` against a job that declares one -- which it
+        # did, after both cold runs and the self-compare had already passed.
+        stats = dict(getattr(streamer, "trellis_stats", {}))
+        mixed = getattr(streamer, "trellis_fp8_plan", None)
+        fp8_stats = dict(getattr(streamer, "fp8_stats", {}))
+        evidence = {
+            "method": TRELLIS_DECODE_METHOD,
+            "reference": TRELLIS_DECODE_REFERENCE,
+            "output_dtype": "bfloat16",
+            "quantization_config": trellis_plan,
+            "modules_decoded": int(stats.get("decoded_modules", 0)),
+            "trellis_bits_seen": int(stats.get("trellis_bits", 0)),
+            "observed": {
+                "quantized_module_count": int(stats.get("quantized_module_count", 0)),
+                "codebook_histogram": dict(stats.get("codebook_histogram", {})),
+            },
+        }
+        if mixed is not None:
+            evidence["mixed_fp8"] = {
+                "quantization_config": mixed,
+                "tensors_dequantized": int(fp8_stats.get("dequantized", 0)),
+                "scale_tensors_consumed": int(fp8_stats.get("scales_consumed", 0)),
+                "fp8_elements": int(fp8_stats.get("fp8_bytes", 0)),
+            }
+        return evidence
     plan = getattr(streamer, "fp8_plan", None)
     if plan is None:
         return None

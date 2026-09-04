@@ -109,9 +109,19 @@ def main() -> int:
     config = _Config({"quant_method": "exl3", "codebook": "mcg", "bits": 3.0})
     plan = lo.trellis_checkpoint_plan(config, list(subset))
     check("[2] plan counts both modules and both codebooks",
-          plan["quantized_module_count"] == 2
-          and plan["codebook_histogram"] == {"mcg": 1, "mul1": 1},
-          repr(plan["codebook_histogram"]))
+          plan["_observed"]["quantized_module_count"] == 2
+          and plan["_observed"]["codebook_histogram"] == {"mcg": 1, "mul1": 1},
+          repr(plan["_observed"]))
+    # The CONTRACT half of the plan must mirror the controller's candidate
+    # block exactly: qualify_root compares them for equality, and a mismatch
+    # refuses only AFTER both cold runs and the self-compare have passed.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mc", "bin/measure_cloud.py")
+    contract_keys = {"quant_method", "codebook", "bits", "head_bits",
+                     "modules_to_not_convert"}
+    check("[2] the plan's contract keys mirror measure_cloud's candidate block",
+          set(plan) - {"_observed"} == contract_keys,
+          repr(sorted(set(plan) - {"_observed"})))
 
     stats = {"decoded_modules": 0, "trellis_bits": 0}
     out = lo.materialize_trellis_subset(subset, plan, torch.bfloat16, stats)
