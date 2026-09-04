@@ -802,6 +802,14 @@ def _validate_identity_attestation(
         ("provider_record",), "resource identity attestation")
     if attestation["schema"] != "fidelity-suite/runpod-live-attestation.v2":
         raise InvalidLease("resource identity attestation schema differs")
+    if attestation.get("provider_record") is not None:
+        record = _exact_keys(
+            attestation["provider_record"],
+            ("data_center_id", "location", "pod_host_id", "gpu_type_id",
+             "error"), (), "attestation provider record")
+        if any(value is not None and not isinstance(value, str)
+               for value in record.values()):
+            raise InvalidLease("attestation provider record values must be strings")
     seal = attestation["attestation_sha256"]
     unsealed = dict(attestation)
     unsealed.pop("attestation_sha256")

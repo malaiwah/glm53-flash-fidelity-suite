@@ -121,7 +121,7 @@ print(cur if not isinstance(cur, (dict, list)) else json.dumps(cur))
 # operator can watch a detached stage without SSH. Advisory only; the
 # per-stage log files under $LOGS stay the evidence.
 if [ -w /proc/1/fd/1 ]; then
-  log() { local line="[$(date -u +%FT%TZ)] stage_measure/$STAGE: $*"; echo "$line"; echo "$line" >/proc/1/fd/1 2>/dev/null || true; }
+  log() { local line="[$(date -u +%FT%TZ)] stage_measure/$STAGE: $*"; echo "$line"; ( echo "$line" >/proc/1/fd/1 ) 2>/dev/null || true; }
 else
   log() { echo "[$(date -u +%FT%TZ)] stage_measure/$STAGE: $*"; }
 fi

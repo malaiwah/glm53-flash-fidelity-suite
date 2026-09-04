@@ -1372,7 +1372,9 @@ class RunPod(SSHTransport):
                            "pod_host_id": None, "gpu_type_id": None,
                            "error": None}
         try:
-            listed = self.get_lifecycle_resource(pod_id) or {}
+            listed = self.get_lifecycle_resource(pod_id)
+            if listed is None:
+                raise RunPodError("pod %s is not listed" % pod_id)
             for key in ("data_center_id", "location", "pod_host_id",
                         "gpu_type_id"):
                 value = listed.get(key)

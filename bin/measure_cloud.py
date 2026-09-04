@@ -6955,16 +6955,9 @@ def execute_runpod(
         required_remote_peak = int(
             job["resource_requirements"][
                 "workspace_available_bytes_minimum"])
-        if (live_attestation.get("ok") is not True
-                or isinstance(workspace_available, bool)
-                or not isinstance(workspace_available, int)
-                or workspace_available < required_remote_peak
-                or isinstance(container_available, bool)
-                or not isinstance(container_available, int)
-                or container_available < job["resource_requirements"][
-                    "container_available_bytes_minimum"]):
-            raise RuntimeError(
-                "live RunPod resource attestation failed resource floors")
+        # Written BEFORE the floor check: a refused attestation is the only
+        # evidence of WHY a paid pod was refused (an ssh-image rehearsal on
+        # 2026-09-04 lost it and the reason with it).
         attestation_path = outdir / "runpod-live-attestation.json"
         with attestation_path.open("xb") as stream:
             stream.write(
@@ -6974,6 +6967,32 @@ def execute_runpod(
                 + b"\n")
             stream.flush()
             os.fsync(stream.fileno())
+        pinned_datacenter = plan_data["chosen"].get("data_center_id")
+        served = live_attestation.get("provider_record") or {}
+        if pinned_datacenter is not None and (
+                served.get("error") is not None
+                or served.get("data_center_id") != pinned_datacenter):
+            raise RuntimeError(
+                "RunPod served datacenter %r differs from the --runpod-datacenter "
+                "pin %r (provider_record error: %s); refusing to run there"
+                % (served.get("data_center_id"), pinned_datacenter,
+                   served.get("error")))
+        if (live_attestation.get("ok") is not True
+                or isinstance(workspace_available, bool)
+                or not isinstance(workspace_available, int)
+                or workspace_available < required_remote_peak
+                or isinstance(container_available, bool)
+                or not isinstance(container_available, int)
+                or container_available < job["resource_requirements"][
+                    "container_available_bytes_minimum"]):
+            raise RuntimeError(
+                "live RunPod resource attestation failed resource floors: "
+                "failures=%s transport_error=%s workspace_available=%s "
+                "container_available=%s (evidence: %s)"
+                % (live_attestation.get("failures"),
+                   live_attestation.get("transport_error"),
+                   workspace_available, container_available,
+                   attestation_path))
         live_rate = Decimal(str(binding["observed"]["cost_per_hr"]))
         quoted_rate = Decimal(str(quote.live_compute_usd_per_hour))
         if (not live_rate.is_finite() or live_rate <= 0
