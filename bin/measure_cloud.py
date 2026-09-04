@@ -6005,6 +6005,7 @@ def execute_runpod(
 
     pod_id = None
     token_cleanup_required = False
+    watchdog_armed = False
     secret_cleanup = {"confirmed": True, "not_applicable": True}
     run_error = None
     primary_error = None
@@ -6806,6 +6807,7 @@ def execute_runpod(
             "--heartbeat-timeout {heartbeat}".format(
                 fs=shlex.quote(fs_root), deadline=int(workload_epoch),
                 heartbeat=int(args.heartbeat_timeout)))
+        watchdog_armed = True
         token_cleanup_required = True
         try:
             _transport_hf_token(
@@ -7082,7 +7084,9 @@ def execute_runpod(
                 destroy_intent_recorded = True
             except BaseException as exc:
                 run_error = record_operational_error(exc)
-            if destroy_intent_recorded:
+            # A pod that failed before its watchdog was armed has nothing to
+            # disarm; the refusal that step would raise is not evidence.
+            if destroy_intent_recorded and watchdog_armed:
                 try:
                     provider.exec(
                         pod_id,
