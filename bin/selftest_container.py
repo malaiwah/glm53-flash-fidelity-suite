@@ -1535,8 +1535,8 @@ def rung_release():
               (probe.stderr or "").strip().splitlines()[-1])
         if probe.returncode == 0:
             doc = json.loads(probe.stdout.strip().splitlines()[-1])
-            check("C11o3 ... with the four jobs",
-                  doc["jobs"] == ["build", "changelog", "manifest", "plan"],
+            check("C11o3 ... with the five jobs",
+                  doc["jobs"] == ["build", "changelog", "manifest", "plan", "ssh"],
                   "%s" % doc["jobs"])
             check("C11o4 ... and one matrix job per architecture",
                   doc["platforms"] == ["linux/amd64", "linux/arm64"],
