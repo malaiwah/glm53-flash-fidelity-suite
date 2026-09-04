@@ -1415,6 +1415,8 @@ def _validate_scope_json(con: Console, path: str) -> None:
 
 
 CANDIDATE_DECODE_METHOD = "fp8-block-dequant-to-bf16"
+#: `engines/tools/layer_outer.TRELLIS_DECODE_METHOD`, kept in step with it.
+CANDIDATE_DECODE_METHOD_TRELLIS = "exl3-trellis-decode-to-bf16"
 
 
 def _candidate_decode_plan(qc) -> Dict[str, Any]:
@@ -1430,16 +1432,43 @@ def _candidate_decode_plan(qc) -> Dict[str, Any]:
             "it is an unquantized release; capture it as a root", [])
     method, fmt, block = qc.get("quant_method"), qc.get("fmt"), qc.get("weight_block_size")
     activation = qc.get("activation_scheme")
+    if method == "exl3":
+        # The trellis surface `engines/tools/layer_outer.materialize_trellis_subset`
+        # decodes: stock-exllamav3 payload groups, per-module codebook, bits
+        # from the payload's own trellis shape. The rank-split TR3 layout is
+        # refused on the pod by name (its composition is unpublished); the
+        # controller cannot see payload keys from the config alone, so that
+        # refusal stays where the index is readable.
+        codebook = qc.get("codebook")
+        if codebook is not None and str(codebook) not in ("mul1", "mcg"):
+            raise Refusal(
+                "candidate quantization_config codebook=%r is not one this decoder "
+                "speaks (mul1/mcg)" % (codebook,),
+                ["exl3hf_surface transcribes exllamav3's mul1 and mcg codebooks; "
+                 "another codebook needs its LUT authored and proven first."])
+        return {
+            "method": CANDIDATE_DECODE_METHOD_TRELLIS,
+            "quantization_config": {
+                "quant_method": method,
+                "codebook": str(codebook) if codebook is not None else None,
+                "bits": qc.get("bits"),
+                "head_bits": qc.get("head_bits"),
+                "modules_to_not_convert": sorted(
+                    str(m) for m in (qc.get("modules_to_not_convert") or [])),
+            },
+        }
     if not (method == "fp8" and fmt == "e4m3"
             and isinstance(block, list) and len(block) == 2
             and all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in block)
             and activation in (None, "dynamic")):
         raise Refusal(
             "candidate quantization_config quant_method=%r fmt=%r weight_block_size=%r "
-            "activation_scheme=%r is not the block-scaled FP8 e4m3 weights-only form the "
-            "layer-outer loader decodes" % (method, fmt, block, activation),
-            ["Only zai-org/GLM-5.3-style FineGrainedFP8 checkpoints are decodable today; "
-             "a trellis/exl3 surface needs its own decoder first."])
+            "activation_scheme=%r is not a surface the layer-outer loader decodes "
+            "(block-scaled FP8 e4m3 weights-only, or stock-exllamav3 exl3 trellis)"
+            % (method, fmt, block, activation),
+            ["Decodable today: zai-org/GLM-5.3-style FineGrainedFP8, and exl3 "
+             "trellis with mul1/mcg payload groups. Another surface needs its "
+             "decoder authored and proven bitwise first."])
     return {
         "method": CANDIDATE_DECODE_METHOD,
         "quantization_config": {
