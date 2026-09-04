@@ -3477,3 +3477,39 @@ the candidate route (`--candidate-scope/--reference-dataset`: two fresh captures
 qualification, KLD(root‖candidate) on the pod), scopes and allowlists authored from
 bytes, `fidelity-post` for the model-page discussion. GLM-5.3 FP8 candidate launched
 at 13:12Z against the published root.
+
+## 2026-09-04 - GLM-5.3 FP8 measured against the published root; the datacenter was the fetch
+
+**Published.** `malaiwah/glm53-fidelity-fp8-v1` @ `44eb57a8852d745e3ac9c026e65fcd214f948de3`,
+dataset_sha256 `ce1c873497d8f935d62d317d42c29bdabcaf3a88b816b3ec95ef34cf222d9b43`,
+capture_content_digest `e0102a154bebba73de98643941e043d36c948735ae804d65e87786b59e42b379`
+(cold run 2 reproduced cold run 1 bitwise; self-compare 0.0 / top-1 1.0).
+Candidate `zai-org/GLM-5.3` @ `187fb9fff6319062325ff825627ef6db084d9bc6`, block-scaled
+FP8 e4m3 [128,128] decoded to bf16 per tensor by the layer-outer streamer (541 modules
+kept native), scope `engines/scopes/scope--glm53-fp8.json`.
+
+**KLD(root ‖ FP8) = 0.02230513871040026 nats, top-1 0.9564435759648265**, panel
+`panel--glm53.malaiwah.corpus5x5-v1`, reference `malaiwah/glm53-fidelity-root-v1`
+@ `9c4a29ee` (dataset_sha256 `6b8d3a7bdf934f18…`), same lane, floor measured 0.0.
+Percentiles: median 0.00145, p95 0.0978, p99 0.322, p99.9 1.052, max 3.829.
+Disclosure: `shared_reference_head` (info, HEAD-1a; lm_head content digest identical on
+both sides). Receipt `reference-comparison/comparison-receipt.json` in the sink
+bundle (`result_archive_sha256 cd827ae4fd48276d18bbb6384754de529d2852b14d6309767a7ef32ac2067d01`).
+Pod `7z2q69tfpl9fcu`, H200 SXM, RunPod secure **US-NC-1**, 1h41m, ≈ $6.45 (balance
+191.78 → 185.33). Four earlier attempts today ≈ $15, none producing a number.
+
+**The fetch was the datacenter, not the repo.** Every fast pod was `103.196.86.x`
+(Raleigh, US-NC-1: 1.3-2.9 s per 5 GB shard); three slow attempts were one Denver host
+`152.236.142.242` (15-28 s per shard). Pinned to US-NC-1 the 750 GB FP8 fetch took
+~10 min. `--runpod-datacenter` pins the create; the live attestation now records
+`provider_record.data_center_id`; stage lines mirror to the RunPod dashboard log.
+
+**The candidate refusal that cost the fifth attempt.** The panel binding lists the
+ROOT's `config.json`; a quantized candidate carries its own, so the capture refused
+the binding after a full fetch. `fetch_reference` now fetches the reference root's
+model-class files anonymously and the candidate capture verifies a composed tokenizer
+root. Fruit FP8 rehearsed the whole route first (`malaiwah/fruit-fidelity-fp8-v1` @
+`113d9d0d`, 0.012402918051705871 nats, top-1 0.9364).
+
+Not claimed: this row does not upgrade any GLM-5.3 row measured against another
+teacher; admissibility is the registry session's call.
