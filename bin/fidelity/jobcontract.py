@@ -1067,7 +1067,23 @@ def validate_root_qualification_contract(contract: dict) -> None:
     if candidate is None:
         expected_target = ("native-bf16", "bf16", 16)
     else:
-        expected_target = ("fp8-block", candidate["codec"], candidate["declared_bits"])
+        # The surface follows the decode the candidate block declares, rather
+        # than being assumed FP8: the streaming loader decodes block-scaled
+        # FP8 and stock-exllamav3 trellis, and a trellis artifact's sniffed
+        # surface is `exl3hf`. Anything else is a decode this contract has
+        # never seen and refuses by name rather than defaulting.
+        decode = candidate.get("weights_decode") or {}
+        surfaces = {
+            "fp8-block-dequant-to-bf16": "fp8-block",
+            "exl3-trellis-decode-to-bf16": "exl3hf",
+        }
+        surface = surfaces.get(str(decode.get("method")))
+        if surface is None:
+            raise JobContractError(
+                "root qualification candidate declares decode method %r, which "
+                "maps to no known target surface (known: %s)"
+                % (decode.get("method"), ", ".join(sorted(surfaces))))
+        expected_target = (surface, candidate["codec"], candidate["declared_bits"])
     if (not isinstance(target, dict)
             or set(target) != {
                 "repo_id", "revision", "surface", "codec", "bits", "path"}
