@@ -157,15 +157,92 @@ def main() -> int:
                          "incomplete trellis payload group")
     check("[5] two codebook markers on one module is refused", ok, detail)
 
-    rank_split = {
-        "model.layers.3.mlp.experts.0.down_proj.rank0.trellis": pay_a["trellis"],
-        "model.layers.3.mlp.experts.0.down_proj.rank0.suh": pay_a["suh"],
-        "model.layers.3.mlp.experts.0.down_proj.rank0.svh": pay_a["svh"],
-        "model.layers.3.mlp.experts.0.down_proj.rank0.mcg": torch.tensor(1, dtype=torch.int32),
-    }
-    ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(config, list(rank_split)),
-                         "materialize_exl3_experts.py")
-    check("[6] rank-split TR3 payloads are refused by name", ok, detail)
+    # [6] TP-sharded payloads. Without a declared tp the plan refuses; with
+    # one, the ranks compose along the one axis the shapes admit, in
+    # ascending order, and every inconsistency refuses by name.
+    rank_keys = {}
+    for r, pay in enumerate((pay_a, pay_b)):
+        for name in ("trellis", "suh", "svh"):
+            rank_keys["model.layers.3.mlp.experts.0.down_proj.rank%d.%s" % (r, name)] = pay[name]
+        rank_keys["model.layers.3.mlp.experts.0.down_proj.rank%d.mcg" % r] = torch.tensor(
+            xs.CODEBOOK_OBJECTS["mcg"], dtype=torch.int32)
+    ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(config, list(rank_keys)),
+                         "declares no hybrid_tr3_tail.tp")
+    check("[6] rank-sharded payloads without a declared tp are refused", ok, detail)
+
+    class _TailConfig(_Config):
+        def __init__(self, qc, tail):
+            super().__init__(qc)
+            self.hybrid_tr3_tail = tail
+            self.hidden_size = 128 * 1  # decoded part is [128, 128]; see below
+            self.moe_intermediate_size = 128 * 2
+
+    # parts decode to [128, 128] (8x8 tiles); two ranks tile a down_proj
+    # [hidden=128, inter=256] along axis 1 only.
+    tail = {"format": "exl3-trellis", "codebook": "mcg", "tp": 2, "bits_avg": 3.0,
+            "slicing": {"down_proj": "K-sliced: rank r = input cols"}}
+    tcfg = _TailConfig({"quant_method": "modelopt"}, tail)
+    tplan = lo.trellis_checkpoint_plan(tcfg, list(rank_keys))
+    check("[6] a hybrid_tr3_tail declaration is accepted over a leftover quant_method",
+          tplan["quant_method"] == "exl3" and tplan["codebook"] == "mcg"
+          and tplan["_observed"]["quant_method_declared"] == "modelopt"
+          and tplan["_observed"]["composition"]["tp"] == 2, repr(tplan))
+    tail_shapes = {"model.layers.3.mlp.experts.0.down_proj.weight": (128, 256)}
+    comp = tplan["_observed"]["composition"]
+    tstats = {"decoded_modules": 0, "trellis_bits": 0}
+    out6 = lo.materialize_trellis_subset(rank_keys, tplan, torch.bfloat16, tstats,
+                                         composition=comp, expected_shape=tail_shapes.get)
+    want6 = torch.cat([xs.decode_payload_hf(p["trellis"], p["suh"], p["svh"], codebook="mcg")
+                       for p in (pay_a, pay_b)], dim=1).to(torch.bfloat16)
+    check("[6] two ranks compose along the one admissible axis in ascending order",
+          set(out6) == {"model.layers.3.mlp.experts.0.down_proj.weight"}
+          and torch.equal(out6["model.layers.3.mlp.experts.0.down_proj.weight"], want6)
+          and tstats["tp_composed_modules"] == 1 and tstats["tp_axes"] == {"down_proj": 1},
+          repr({k: tuple(v.shape) for k, v in out6.items()}) + repr(tstats))
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        rank_keys, tplan, torch.bfloat16, {"decoded_modules": 0, "trellis_bits": 0},
+        composition=comp, expected_shape={"model.layers.3.mlp.experts.0.down_proj.weight": (256, 128)}.get),
+        "the artifact declares")
+    check("[6] a declared slicing that contradicts the admissible axis is refused", ok, detail)
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        rank_keys, tplan, torch.bfloat16, {"decoded_modules": 0, "trellis_bits": 0},
+        composition=comp, expected_shape={"model.layers.3.mlp.experts.0.down_proj.weight": (256, 256)}.get),
+        "along exactly one axis")
+    check("[6] shapes that tile no axis are refused", ok, detail)
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        rank_keys, tplan, torch.bfloat16, {"decoded_modules": 0, "trellis_bits": 0},
+        composition=None, expected_shape=tail_shapes.get), "carries no composition")
+    check("[6] rank payloads without a composition are refused at decode", ok, detail)
+    missing_rank = {k: v for k, v in rank_keys.items() if ".rank1." not in k}
+    ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(tcfg, list(missing_rank)),
+                         "do not carry exactly ranks")
+    check("[6] a module missing a rank is refused at plan time", ok, detail)
+
+    # [6b] verified zero-pad truncation
+    plain = {"model.layers.3.self_attn.kv_a_proj_with_mqa.weight":
+             torch.cat([torch.randn(576, 64), torch.zeros(64, 64)]).to(torch.bfloat16)}
+    zstats = {}
+    out6b = lo.truncate_zero_padded_rows(
+        plain, {"model.layers.3.self_attn.kv_a_proj_with_mqa.weight": (576, 64)}.get, zstats)
+    check("[6b] an all-zero tail is truncated to the expected shape and recorded",
+          tuple(out6b["model.layers.3.self_attn.kv_a_proj_with_mqa.weight"].shape) == (576, 64)
+          and zstats["zero_padded_rows_truncated"]["count"] == 1
+          and zstats["zero_padded_rows_truncated"]["rows"] == 64, repr(zstats))
+    bad = {"model.layers.3.self_attn.kv_a_proj_with_mqa.weight":
+           torch.cat([torch.randn(576, 64), torch.zeros(64, 64)]).to(torch.bfloat16)}
+    bad["model.layers.3.self_attn.kv_a_proj_with_mqa.weight"][600, 3] = 1.0
+    ok, detail = refuses(lambda: lo.truncate_zero_padded_rows(
+        bad, {"model.layers.3.self_attn.kv_a_proj_with_mqa.weight": (576, 64)}.get, {}),
+        "not padding, a different tensor")
+    check("[6b] one non-zero element in the tail refuses by name", ok, detail)
+    exact = {"model.norm.weight": torch.ones(576)}
+    out6c = lo.truncate_zero_padded_rows(exact, {"model.norm.weight": (576,)}.get, {})
+    check("[6b] an exact-shape tensor passes through by identity",
+          out6c["model.norm.weight"] is exact["model.norm.weight"])
+    unknown = {"model.layers.3.self_attn.kv_a_proj_with_mqa.weight": torch.zeros(640, 64)}
+    out6d = lo.truncate_zero_padded_rows(unknown, lambda k: None, {})
+    check("[6b] with no expected shape nothing is truncated",
+          tuple(out6d["model.layers.3.self_attn.kv_a_proj_with_mqa.weight"].shape) == (640, 64))
 
     ok, detail = refuses(
         lambda: lo.trellis_checkpoint_plan(config, ["model.embed_tokens.weight"]),
@@ -252,9 +329,12 @@ def main() -> int:
     sig = inspect.signature(lo._materialized)
     check("[12] _materialized takes a device", "device" in sig.parameters)
     src = Path(lo.__file__).read_text()
+    import re as _re
+    calls = _re.findall(r"_materialized\((?:[^()]|\([^()]*\))*\)", src)
+    calls = [c for c in calls if "trellis_stats" in c and "Dict[str, Any]" not in c]
     check("[12] both call sites pass device=device",
-          src.count("trellis_stats, device=device") + src.count("device=device)") >= 2,
-          "call sites must forward the model device, not default to cpu")
+          len(calls) >= 2 and all("device=device" in c for c in calls),
+          "call sites must forward the model device, not default to cpu: %r" % calls)
     dev_stats = {"decoded_modules": 0, "trellis_bits": 0}
     out6 = lo._materialized(subset, None, plan, None, torch.bfloat16,
                             {"dequantized": 0, "scales_consumed": 0, "fp8_bytes": 0},
@@ -263,6 +343,39 @@ def main() -> int:
           torch.equal(out6["%s.weight" % module_a],
                       xs.decode_payload_hf(pay_a["trellis"], pay_a["suh"], pay_a["svh"],
                                             codebook="mcg").to(torch.bfloat16)))
+
+    # [13] DRIFT GUARD: the controller's candidate block and the pod's plan are
+    # two implementations of one contract that qualify_root compares for exact
+    # equality. Three real config shapes: inline exl3 with a codebook
+    # (drowzeys), inline exl3 without one (wrldsuksgo2mars), and a
+    # hybrid_tr3_tail declaration over a leftover ModelOpt block (davidsyoung).
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "measure_cloud_under_test", str(Path(__file__).resolve().parents[2] / "bin" / "measure_cloud.py"))
+    mc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mc)
+    shapes = {
+        "drowzeys": ({"quant_method": "exl3", "codebook": "mul1", "bits": 3, "head_bits": 16,
+                      "version": "1.4.5"}, None, list(subset), lo.TRELLIS_DECODE_METHOD),
+        "wrld": ({"quant_method": "exl3", "bits": 4}, None, list(subset), lo.TRELLIS_DECODE_METHOD),
+        "davidsyoung": ({"quant_method": "modelopt", "config_groups": {}},
+                        {"format": "exl3-trellis", "codebook": "mcg", "tp": 2, "bits_avg": 3.25,
+                         "slicing": {"down_proj": "K-sliced: rank r = input cols"}},
+                        list(rank_keys), lo.TRELLIS_TP_COMPOSE_METHOD),
+    }
+    for label, (qc, tail, keys, method) in shapes.items():
+        cfg = {"quantization_config": qc}
+        if tail is not None:
+            cfg["hybrid_tr3_tail"] = tail
+        ctrl = mc._candidate_decode_plan(qc, cfg)
+        pod_cfg = _TailConfig(qc, tail) if tail is not None else _Config(qc)
+        pod = lo.trellis_checkpoint_plan(pod_cfg, keys)
+        observed = pod.pop("_observed")
+        pod_method = lo.TRELLIS_TP_COMPOSE_METHOD if observed["composition"] else lo.TRELLIS_DECODE_METHOD
+        check("[13] %s: controller and pod agree on quantization_config" % label,
+              ctrl["quantization_config"] == pod, "ctrl %r pod %r" % (ctrl["quantization_config"], pod))
+        check("[13] %s: controller and pod agree on the method (%s)" % (label, method),
+              ctrl["method"] == pod_method == method, "ctrl %r pod %r" % (ctrl["method"], pod_method))
 
     passed = sum(1 for _, ok, _ in RESULTS if ok)
     print("\nselftest_trellis_decode_offline: %d passed, %d failed"

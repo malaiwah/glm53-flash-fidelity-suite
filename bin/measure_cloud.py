@@ -1417,21 +1417,54 @@ def _validate_scope_json(con: Console, path: str) -> None:
 CANDIDATE_DECODE_METHOD = "fp8-block-dequant-to-bf16"
 #: `engines/tools/layer_outer.TRELLIS_DECODE_METHOD`, kept in step with it.
 CANDIDATE_DECODE_METHOD_TRELLIS = "exl3-trellis-decode-to-bf16"
+#: `engines/tools/layer_outer.TRELLIS_TP_COMPOSE_METHOD`: the same decode with
+#: the artifact's tensor-parallel rank shards composed into whole weights.
+CANDIDATE_DECODE_METHOD_TRELLIS_TP = "exl3-trellis-tp-compose-to-bf16"
 
 
-def _candidate_decode_plan(qc) -> Dict[str, Any]:
+def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
     """The decode the streaming loader will apply, from the config alone.
 
-    Mirrors `engines/tools/layer_outer.fp8_checkpoint_plan` field for field
-    (the pod compares its runtime receipt against this block), without
-    importing torch on the controller.
+    Mirrors `engines/tools/layer_outer.fp8_checkpoint_plan` /
+    `trellis_checkpoint_plan` field for field (the pod compares its runtime
+    receipt against this block), without importing torch on the controller.
     """
-    if not isinstance(qc, dict) or not qc:
+    tail = (cfg or {}).get("hybrid_tr3_tail") if isinstance(cfg, dict) else None
+    tail = tail if isinstance(tail, dict) and tail.get("format") == "exl3-trellis" else None
+    if (not isinstance(qc, dict) or not qc) and tail is None:
         raise Refusal(
             "--candidate-scope, but this checkpoint publishes no quantization_config: "
             "it is an unquantized release; capture it as a root", [])
+    qc = qc if isinstance(qc, dict) else {}
     method, fmt, block = qc.get("quant_method"), qc.get("fmt"), qc.get("weight_block_size")
     activation = qc.get("activation_scheme")
+    if tail is not None:
+        # davidsyoung's TR3 releases: the exl3 declaration is the top-level
+        # hybrid_tr3_tail block; the quantization_config is a leftover
+        # ModelOpt/NVFP4 block that describes nothing in the checkpoint. The
+        # pod refuses unless the payload keys agree (rank shards, tp ranks
+        # each). Mirrors layer_outer.trellis_checkpoint_plan's tail branch.
+        codebook = tail.get("codebook")
+        if codebook is not None and str(codebook) not in ("mul1", "mcg"):
+            raise Refusal(
+                "hybrid_tr3_tail codebook=%r is not one this decoder speaks (mul1/mcg)"
+                % (codebook,), [])
+        tp = tail.get("tp")
+        composed = isinstance(tp, int) and not isinstance(tp, bool) and tp >= 2
+        return {
+            "method": (CANDIDATE_DECODE_METHOD_TRELLIS_TP if composed
+                       else CANDIDATE_DECODE_METHOD_TRELLIS),
+            "quantization_config": {
+                "quant_method": "exl3",
+                "codebook": str(codebook) if codebook is not None else None,
+                "bits": tail.get("bits_avg", tail.get("bits")),
+                "head_bits": None,
+                "modules_to_not_convert": [],
+            },
+            "declared_by": "hybrid_tr3_tail",
+            "quant_method_declared": method,
+            "tp": tp if composed else None,
+        }
     if method == "exl3":
         # The trellis surface `engines/tools/layer_outer.materialize_trellis_subset`
         # decodes: stock-exllamav3 payload groups, per-module codebook, bits
@@ -1665,15 +1698,19 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
         # MUST declare the one form the streaming loader decodes, and what it
         # declares is bound into the job so the pod's runtime receipt has to
         # record exactly that decode.
-        decode = _candidate_decode_plan(qc)
+        decode = _candidate_decode_plan(qc, cfg)
         qcfg = decode["quantization_config"]
         if qcfg["quant_method"] == "exl3":
             con.ok("candidate is exl3 trellis",
                    "quant_method %s codebook %s declared bits %s; decoded to bf16 per "
                    "module (%s), %d modules kept native. Per-module codebook and the "
-                   "payload's own bit width are read from the checkpoint on the pod"
+                   "payload's own bit width are read from the checkpoint on the pod%s"
                    % (qcfg["quant_method"], qcfg["codebook"], qcfg["bits"],
-                      decode["method"], len(qcfg["modules_to_not_convert"])))
+                      decode["method"], len(qcfg["modules_to_not_convert"]),
+                      ("; declared by hybrid_tr3_tail (quantization_config says %r), "
+                       "tp=%s rank shards composed per module"
+                       % (decode.get("quant_method_declared"), decode.get("tp")))
+                      if decode.get("declared_by") == "hybrid_tr3_tail" else ""))
         else:
             con.ok("candidate is block-scaled FP8",
                    "quant_method %s fmt %s block %s; decoded to bf16 per tensor "

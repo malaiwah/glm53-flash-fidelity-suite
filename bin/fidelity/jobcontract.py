@@ -1076,6 +1076,7 @@ def validate_root_qualification_contract(contract: dict) -> None:
         surfaces = {
             "fp8-block-dequant-to-bf16": "fp8-block",
             "exl3-trellis-decode-to-bf16": "exl3hf",
+            "exl3-trellis-tp-compose-to-bf16": "exl3hf",
         }
         surface = surfaces.get(str(decode.get("method")))
         if surface is None:

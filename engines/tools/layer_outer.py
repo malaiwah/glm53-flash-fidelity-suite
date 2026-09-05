@@ -610,15 +610,60 @@ TRELLIS_DECODE_METHOD = "exl3-trellis-decode-to-bf16"
 TRELLIS_DECODE_REFERENCE = "engines/tools/exl3hf_surface.py::decode_payload_hf"
 TRELLIS_PAYLOAD_OBJECTS = ("trellis", "suh", "svh")
 TRELLIS_CODEBOOKS = ("mul1", "mcg")
-#: davidsyoung's TR3 releases split one projection across `rank0..rank3`
-#: payload groups and say so on the card: "Not loadable by vanilla exllamav3
-#: model loading. The mixed-K projection-tiers patch is REQUIRED; a stock
-#: loader that assumes a uniform K per layer will produce fluent garbage."
-#: How those four groups compose into one weight is not published, and a
-#: guess would produce a confident wrong number rather than a crash. Refused
-#: by name until the composition is authored from an authoritative source.
+#: TP-SHARDED payloads. davidsyoung's TR3 releases store one projection as
+#: `M.rank{r}.{trellis,suh,svh,mcg}`, r in 0..tp-1: the atoms are the
+#: tensor-parallel shards their serving stack loads one per GPU, declared in
+#: the artifact's own `config.hybrid_tr3_tail` (`tp`, `slicing`, `tensor_schema`)
+#: and proven against the BF16 source they were encoded from: decoded per rank
+#: and concatenated in ascending rank order along the ONE axis the shapes admit,
+#: layer-3/expert-0 of the 3.25bpw release matches zai-org/GLM-5.3-BF16 at
+#: cosine 0.9994/0.9992/0.9993 (rel_l2 0.067 = the K4 trellis error measured on
+#: Fruit), the reversed order at cosine ~0, and the other axis is a shape
+#: mismatch (engines/tools/layer-outer-evidence/glm53-exl3-tp-rank-and-zero-pad-parity.json).
+#: The composition is therefore SHAPE-DETERMINED and verified, not read from
+#: prose: the axis is the one along which `tp` parts tile the parameter's shape;
+#: a declared `slicing` entry must agree when present; missing ranks, a rank
+#: count that is not `tp`, or two admissible axes all refuse.
+TRELLIS_TP_COMPOSE_METHOD = "exl3-trellis-tp-compose-to-bf16"
+TRELLIS_RANK_RE = re.compile(r"^(?P<module>.+)\.rank(?P<rank>\d+)$")
 TRELLIS_RANK_SPLIT_RE = re.compile(r"\.rank\d+\.(?:%s)$" % "|".join(
     TRELLIS_PAYLOAD_OBJECTS + TRELLIS_CODEBOOKS))
+#: Serving-kernel ZERO PADDING. drowzeys' `kv_a_proj_with_mqa` ships as
+#: [640, 6144] where its own config implies [576, 6144]; rows 0..575 are the
+#: root's tensor bitwise (after FP8 dequant) and rows 576..639 are exactly zero
+#: -- 640 = 5 x 128, an alignment pad for their kernel. Recoverable only under a
+#: hard check: every excess row exactly zero, every other dim equal, and the
+#: transformation recorded. A non-zero tail is a shape mismatch and refuses.
+ZERO_PAD_METHOD = "trailing-zero-rows-truncated"
+
+
+def _config_dict(value) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    return dict(getattr(value, "__dict__", {}))
+
+
+def trellis_tail_declaration(config) -> Optional[Dict[str, Any]]:
+    """`config.hybrid_tr3_tail` when it declares an exl3-trellis artifact, else None.
+
+    davidsyoung's releases carry a leftover ModelOpt/NVFP4 `quantization_config`
+    (`quant_method: modelopt`, `num_bits: 4, type: float, group_size: 16`) that
+    describes NOTHING in the checkpoint; the exl3 declaration lives in this
+    top-level block (`format: exl3-trellis`, `codebook`, `tp`, `tensor_schema`).
+    Read from bytes it is the payload keys that decide; this block is what the
+    artifact SAYS, and the two must agree.
+    """
+    tail = getattr(config, "hybrid_tr3_tail", None)
+    if tail is None and isinstance(config, dict):
+        tail = config.get("hybrid_tr3_tail")
+    tail = _config_dict(tail)
+    if not tail or tail.get("format") != "exl3-trellis":
+        return None
+    return tail
 
 
 def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Dict[str, Any]]:
@@ -631,38 +676,51 @@ def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Di
     the codebook is read from the object each module actually carries and not
     from `quantization_config.codebook`, which names only one of them.
     """
-    qc = getattr(config, "quantization_config", None)
-    if not qc:
+    qc = _config_dict(getattr(config, "quantization_config", None)
+                      if not isinstance(config, dict) else config.get("quantization_config"))
+    tail = trellis_tail_declaration(config)
+    declared_method = qc.get("quant_method")
+    if declared_method != "exl3" and tail is None:
         return None
-    if not isinstance(qc, dict):
-        qc = qc.to_dict() if hasattr(qc, "to_dict") else dict(getattr(qc, "__dict__", {}))
-    if qc.get("quant_method") != "exl3":
-        return None
-    rank_split = sorted(key for key in declared_keys
-                        if TRELLIS_RANK_SPLIT_RE.search(key))
-    if rank_split:
-        raise LayerOuterError(
-            "REFUSED: this checkpoint stores %d rank-split trellis payload(s) "
-            "(e.g. %s), not the stock exllamav3 payload groups this weight "
-            "source decodes. A SINGLE-atom (.rank0 only) tree is handled by "
-            "engines/tools/materialize_exl3_experts.py, which reconstructs "
-            "plain bf16 weights and is captured with treatment 'reconstructed' "
-            "-- run that first and point the capture at its output. A "
-            "MULTI-atom tree (.rank0..rankN, e.g. davidsyoung's TR3 releases, "
-            "whose card says it is 'not loadable by vanilla exllamav3 model "
-            "loading') needs the rule by which the atoms compose into one "
-            "weight, and this schedule refuses to guess it."
-            % (len(rank_split), rank_split[0]))
     groups = trellis_payload_groups(declared_keys)
     if not groups:
         raise LayerOuterError(
-            "REFUSED: quantization_config declares quant_method=exl3 but the "
-            "checkpoint carries no %s payload group; the payload cannot be "
-            "decoded and loading it as-is would read trellis bytes as weights."
-            % "/".join(TRELLIS_PAYLOAD_OBJECTS))
+            "REFUSED: the config declares an exl3 artifact (quant_method=%r, "
+            "hybrid_tr3_tail=%s) but the checkpoint carries no %s payload group; "
+            "loading it as-is would read trellis bytes as weights."
+            % (declared_method, "present" if tail else "absent",
+               "/".join(TRELLIS_PAYLOAD_OBJECTS)))
     codebooks: Dict[str, int] = {}
     for objects in groups.values():
         codebooks[objects["codebook"]] = codebooks.get(objects["codebook"], 0) + 1
+    # TP-sharded groups: every rank-stem must belong to a module with EXACTLY
+    # tp ranks 0..tp-1, and tp must be declared by the artifact.
+    ranked: Dict[str, Set[int]] = {}
+    for stem in groups:
+        match = TRELLIS_RANK_RE.match(stem)
+        if match:
+            ranked.setdefault(match.group("module"), set()).add(int(match.group("rank")))
+    composition = None
+    if ranked:
+        tp = (tail or {}).get("tp")
+        if isinstance(tp, bool) or not isinstance(tp, int) or tp < 2:
+            raise LayerOuterError(
+                "REFUSED: %d module(s) store rank-sharded trellis payloads (e.g. %s) "
+                "but the config declares no hybrid_tr3_tail.tp >= 2 to compose them "
+                "by; this schedule does not guess a shard count."
+                % (len(ranked), sorted(ranked)[0]))
+        bad = sorted(module for module, ranks in ranked.items() if ranks != set(range(tp)))
+        if bad:
+            raise LayerOuterError(
+                "REFUSED: %d module(s) do not carry exactly ranks 0..%d (e.g. %s: %s)"
+                % (len(bad), tp - 1, bad[0], sorted(ranked[bad[0]])))
+        composition = {
+            "tp": tp,
+            "modules": len(ranked),
+            "declared_slicing": {str(k): str(v) for k, v in
+                                 ((tail or {}).get("slicing") or {}).items()},
+            "tensor_schema": (tail or {}).get("tensor_schema"),
+        }
     # MIRRORS `measure_cloud._candidate_decode_plan`'s exl3 branch FIELD FOR
     # FIELD, as the FP8 plan mirrors its own: `qualify_root` compares the
     # capture's recorded quantization_config against the job's candidate block
@@ -671,18 +729,33 @@ def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Di
     # The observed census (module count, per-module codebook histogram) is
     # NOT part of that contract and rides on the log line and the decode
     # evidence instead.
-    return {
-        "quant_method": "exl3",
-        "codebook": str(qc["codebook"]) if qc.get("codebook") is not None else None,
-        "bits": qc.get("bits"),
-        "head_bits": qc.get("head_bits"),
-        "modules_to_not_convert": sorted(
-            str(m) for m in (qc.get("modules_to_not_convert") or [])),
-        "_observed": {
-            "quantized_module_count": len(groups),
-            "codebook_histogram": dict(sorted(codebooks.items())),
-        },
+    if tail is not None:
+        # The tail block is the artifact's exl3 declaration; the leftover
+        # quantization_config is not. Mirrored by the controller.
+        contract = {
+            "quant_method": "exl3",
+            "codebook": str(tail["codebook"]) if tail.get("codebook") is not None else None,
+            "bits": tail.get("bits_avg", tail.get("bits")),
+            "head_bits": None,
+            "modules_to_not_convert": [],
+        }
+    else:
+        contract = {
+            "quant_method": "exl3",
+            "codebook": str(qc["codebook"]) if qc.get("codebook") is not None else None,
+            "bits": qc.get("bits"),
+            "head_bits": qc.get("head_bits"),
+            "modules_to_not_convert": sorted(
+                str(m) for m in (qc.get("modules_to_not_convert") or [])),
+        }
+    contract["_observed"] = {
+        "quantized_module_count": len(groups),
+        "codebook_histogram": dict(sorted(codebooks.items())),
+        "quant_method_declared": declared_method,
+        "declared_by": "hybrid_tr3_tail" if tail is not None else "quantization_config",
+        "composition": composition,
     }
+    return contract
 
 
 def trellis_payload_groups(keys: Iterable[str]) -> Dict[str, Dict[str, str]]:
@@ -741,7 +814,10 @@ def _eager(value):
 def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_dtype,
                                stats: Dict[str, int], fp8_plan: Optional[Dict[str, Any]] = None,
                                fp8_stats: Optional[Dict[str, int]] = None,
-                               device: str = "cpu") -> Dict[str, Any]:
+                               device: str = "cpu",
+                               composition: Optional[Dict[str, Any]] = None,
+                               expected_shape: Optional[Callable[[str], Optional[Tuple[int, ...]]]] = None
+                               ) -> Dict[str, Any]:
     """Replace every trellis payload group in a lazy subset by one decoded `.weight`.
 
     Decodes on `device` -- the capture device, not the host. The trellis
@@ -775,6 +851,7 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
             passthrough, fp8_plan, torch_dtype, counters)
     else:
         out = dict(passthrough)
+    parts: Dict[str, Dict[int, Any]] = {}
     for module, objects in groups.items():
         payload = {}
         for name in TRELLIS_PAYLOAD_OBJECTS:
@@ -790,9 +867,118 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
         decoded = surface.decode_payload_hf(
             payload["trellis"].to(device), payload["suh"].to(device),
             payload["svh"].to(device), codebook=objects["codebook"])
-        out["%s.weight" % module] = decoded.to(torch_dtype)
         stats["decoded_modules"] += 1
         stats["trellis_bits"] += int(payload["trellis"].shape[-1]) // 16
+        ranked = TRELLIS_RANK_RE.match(module)
+        if ranked is None:
+            out["%s.weight" % module] = decoded.to(torch_dtype)
+            continue
+        if composition is None:
+            raise LayerOuterError(
+                "REFUSED: %s is a rank-sharded payload but the plan carries no "
+                "composition (the config declared no hybrid_tr3_tail.tp)" % module)
+        parts.setdefault(ranked.group("module"), {})[int(ranked.group("rank"))] = decoded
+    for module, by_rank in sorted(parts.items()):
+        out["%s.weight" % module] = _compose_tp_ranks(
+            module, by_rank, composition, expected_shape, torch_dtype, stats)
+    return out
+
+
+def _compose_tp_ranks(module: str, by_rank: Dict[int, Any], composition: Dict[str, Any],
+                      expected_shape, torch_dtype, stats: Dict[str, int]):
+    """Concatenate tp decoded shards along the ONE axis the shapes admit.
+
+    Ascending rank order is the artifact's declared and root-verified order
+    (see TRELLIS_TP_COMPOSE_METHOD). The axis is not read from prose: it is
+    the axis along which `tp` equal parts tile the parameter's expected shape,
+    and exactly one axis may qualify. A declared `slicing` entry for the
+    projection must agree when present.
+    """
+    import torch
+
+    tp = int(composition["tp"])
+    if sorted(by_rank) != list(range(tp)):
+        raise LayerOuterError(
+            "REFUSED: %s carries ranks %s, not 0..%d" % (module, sorted(by_rank), tp - 1))
+    shapes = {tuple(t.shape) for t in by_rank.values()}
+    if len(shapes) != 1:
+        raise LayerOuterError(
+            "REFUSED: %s rank shards differ in shape: %s" % (module, sorted(shapes)))
+    part = next(iter(shapes))
+    if len(part) != 2:
+        raise LayerOuterError("REFUSED: %s rank shard is %d-D, not 2-D" % (module, len(part)))
+    want = expected_shape("%s.weight" % module) if expected_shape is not None else None
+    if want is None or len(want) != 2:
+        raise LayerOuterError(
+            "REFUSED: %s: no expected 2-D shape is known for the composed weight, so "
+            "the concatenation axis cannot be determined" % module)
+    axes = [axis for axis in (0, 1)
+            if part[axis] * tp == want[axis] and part[1 - axis] == want[1 - axis]]
+    if len(axes) != 1:
+        raise LayerOuterError(
+            "REFUSED: %s: %d shards of %s do not tile %s along exactly one axis "
+            "(admissible: %s)" % (module, tp, part, tuple(want), axes))
+    axis = axes[0]
+    projection = module.rsplit(".", 1)[-1]
+    declared = (composition.get("declared_slicing") or {}).get(projection)
+    if declared is not None:
+        declared_axis = (0 if declared.startswith("N-sliced")
+                         else 1 if declared.startswith("K-sliced") else None)
+        if declared_axis != axis:
+            raise LayerOuterError(
+                "REFUSED: %s: the shapes admit concatenation along axis %d but the "
+                "artifact declares %r" % (module, axis, declared))
+    composed = torch.cat([by_rank[r] for r in range(tp)], dim=axis).to(torch_dtype)
+    stats["tp_composed_modules"] = stats.get("tp_composed_modules", 0) + 1
+    seen = stats.setdefault("tp_axes", {})
+    seen[projection] = axis
+    return composed
+
+
+def truncate_zero_padded_rows(subset: Dict[str, Any], expected_shape, stats: Dict[str, Any],
+                              consumed: Optional[Set[str]] = None) -> Dict[str, Any]:
+    """Drop all-zero trailing rows a serving kernel padded onto a plain weight.
+
+    Applies only to a plain tensor whose expected parameter shape is known, has
+    the same rank, equal dims beyond the first, and FEWER rows than the
+    checkpoint's. Every excess row must be exactly zero; one non-zero element
+    in the tail refuses by name, because then the tensor is not padded but
+    different. Payload objects and scale tensors are never touched. Every
+    truncation is counted and named for the decode evidence and the dataset's
+    disclosures.
+    """
+    out: Dict[str, Any] = {}
+    for key, value in subset.items():
+        if consumed and key in consumed or key.endswith(FP8_SCALE_SUFFIX):
+            out[key] = value
+            continue
+        stem, _, last = key.rpartition(".")
+        if last in TRELLIS_PAYLOAD_OBJECTS or last in TRELLIS_CODEBOOKS:
+            out[key] = value
+            continue
+        shape = getattr(value, "shape", None)
+        if shape is None and hasattr(value, "get_shape"):
+            shape = value.get_shape()
+        shape = tuple(int(d) for d in shape) if shape is not None else None
+        want = expected_shape(key) if expected_shape is not None else None
+        if (shape is None or want is None or len(shape) != len(want) or len(shape) < 1
+                or shape[0] <= want[0] or tuple(shape[1:]) != tuple(want[1:])):
+            out[key] = value
+            continue
+        tensor = _eager(value)
+        tail = tensor[want[0]:]
+        nonzero = int((tail != 0).sum())
+        if nonzero:
+            raise LayerOuterError(
+                "REFUSED: %s is %s where the model expects %s and the %d excess row(s) "
+                "carry %d non-zero element(s): not padding, a different tensor"
+                % (key, shape, want, shape[0] - want[0], nonzero))
+        out[key] = tensor[: want[0]].contiguous()
+        record = stats.setdefault("zero_padded_rows_truncated", {"count": 0, "rows": 0, "tensors": []})
+        record["count"] += 1
+        record["rows"] += shape[0] - want[0]
+        if len(record["tensors"]) < 8:
+            record["tensors"].append({"name": key, "stored": list(shape), "used": list(want)})
     return out
 
 
@@ -833,12 +1019,17 @@ def fp8_checkpoint_plan_for_mixed(config) -> Dict[str, Any]:
 
 def _materialized(subset: Dict[str, Any], fp8_plan, trellis_plan, trellis_fp8_plan,
                   torch_dtype, fp8_stats, trellis_stats,
-                  device: str = "cpu") -> Dict[str, Any]:
+                  device: str = "cpu", expected_shape=None) -> Dict[str, Any]:
     """Whichever decoders this artifact needs, in the one order that is safe."""
     if trellis_plan is not None:
+        composition = (trellis_plan.get("_observed") or {}).get("composition")
+        if composition is None:
+            composition = trellis_stats.get("composition")
+        subset = truncate_zero_padded_rows(subset, expected_shape, trellis_stats)
         return materialize_trellis_subset(
             subset, trellis_plan, torch_dtype, trellis_stats,
-            fp8_plan=trellis_fp8_plan, fp8_stats=fp8_stats, device=device)
+            fp8_plan=trellis_fp8_plan, fp8_stats=fp8_stats, device=device,
+            composition=composition, expected_shape=expected_shape)
     if fp8_plan is not None:
         return materialize_fp8_subset(subset, fp8_plan, torch_dtype, fp8_stats)
     return subset
@@ -950,7 +1141,12 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
             trellis_fp8_plan = fp8_checkpoint_plan_for_mixed(config)
     if trellis_plan is not None:
         observed = trellis_plan.pop("_observed", {})
-        log(stage="trellis_decode_plan", method=TRELLIS_DECODE_METHOD,
+        trellis_stats["composition"] = observed.get("composition")
+        trellis_stats["quant_method_declared"] = observed.get("quant_method_declared")
+        trellis_stats["declared_by"] = observed.get("declared_by")
+        log(stage="trellis_decode_plan",
+            method=(TRELLIS_TP_COMPOSE_METHOD if observed.get("composition")
+                    else TRELLIS_DECODE_METHOD),
             reference=TRELLIS_DECODE_REFERENCE,
             mixed_fp8=trellis_fp8_plan is not None, observed=observed,
             **trellis_plan)
@@ -1059,6 +1255,29 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
             if not isinstance(out, str):
                 return key
         return out
+
+    _expert_key = re.compile(r"\.mlp\.experts\.\d+\.(gate_proj|up_proj|down_proj)\.weight$")
+
+    def expected_shape(key: str) -> Optional[Tuple[int, ...]]:
+        """The parameter shape the converter will load `key` into, or None.
+
+        A plain parameter answers from the meta-device module tree. A routed
+        expert projection has no per-expert parameter (the model fuses them),
+        so its per-expert shape comes from the config's own geometry:
+        gate/up [moe_intermediate_size, hidden_size], down the transpose.
+        """
+        match = _expert_key.search(key)
+        if match:
+            text = getattr(config, "text_config", None) or config
+            hidden = getattr(text, "hidden_size", None)
+            inter = getattr(text, "moe_intermediate_size", None)
+            if not isinstance(hidden, int) or not isinstance(inter, int):
+                return None
+            return (inter, hidden) if match.group(1) != "down_proj" else (hidden, inter)
+        try:
+            return tuple(int(d) for d in model.get_parameter(routing_key(key)).shape)
+        except (AttributeError, KeyError, ValueError):
+            return None
 
     base_subset: Dict[str, Any] = {}
     layer_subset: Dict[int, Dict[str, Any]] = {}
@@ -1196,7 +1415,8 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     base_info, _ = convert_and_load(
         model,
         _materialized(base_subset, fp8_plan, trellis_plan, trellis_fp8_plan,
-                      torch_dtype, fp8_stats, trellis_stats, device=device),
+                      torch_dtype, fp8_stats, trellis_stats, device=device,
+                      expected_shape=expected_shape),
         load_config)
     _absorb(base_info)
 
@@ -1271,7 +1491,7 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
             started = time.monotonic()
             decoded = _materialized(subset, fp8_plan, trellis_plan, trellis_fp8_plan,
                                     torch_dtype, fp8_stats, trellis_stats,
-                                    device=device)
+                                    device=device, expected_shape=expected_shape)
             decode_seconds = time.monotonic() - started
             info, _ = convert_and_load(model, decoded, load_config)
             del decoded
@@ -1379,8 +1599,9 @@ def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]
         stats = dict(getattr(streamer, "trellis_stats", {}))
         mixed = getattr(streamer, "trellis_fp8_plan", None)
         fp8_stats = dict(getattr(streamer, "fp8_stats", {}))
+        composition = stats.get("composition")
         evidence = {
-            "method": TRELLIS_DECODE_METHOD,
+            "method": (TRELLIS_TP_COMPOSE_METHOD if composition else TRELLIS_DECODE_METHOD),
             "reference": TRELLIS_DECODE_REFERENCE,
             "output_dtype": "bfloat16",
             "quantization_config": trellis_plan,
@@ -1389,8 +1610,24 @@ def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]
             "observed": {
                 "quantized_module_count": int(stats.get("quantized_module_count", 0)),
                 "codebook_histogram": dict(stats.get("codebook_histogram", {})),
+                "quant_method_declared": stats.get("quant_method_declared"),
+                "declared_by": stats.get("declared_by"),
             },
         }
+        if composition:
+            evidence["tp_rank_composition"] = {
+                "tp": composition.get("tp"),
+                "modules_declared": composition.get("modules"),
+                "modules_composed": int(stats.get("tp_composed_modules", 0)),
+                "axes": dict(stats.get("tp_axes", {})),
+                "rank_order": "ascending",
+                "declared_slicing": composition.get("declared_slicing"),
+                "evidence": "engines/tools/layer-outer-evidence/"
+                            "glm53-exl3-tp-rank-and-zero-pad-parity.json",
+            }
+        if stats.get("zero_padded_rows_truncated"):
+            evidence["zero_padded_rows_truncated"] = dict(
+                stats["zero_padded_rows_truncated"], method=ZERO_PAD_METHOD)
         if mixed is not None:
             evidence["mixed_fp8"] = {
                 "quantization_config": mixed,

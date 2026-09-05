@@ -2045,6 +2045,54 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                       % (len(unexpected), unexpected_evidence["artifact_sha256"],
                          unexpected_evidence["canonical_sorted_names_sha256"])})
 
+    # The weight-source transformations a trellis artifact needed, said on the
+    # dataset itself so the registry session reads them from the seal and not
+    # from a log: tensor-parallel rank shards composed into whole weights
+    # (davidsyoung), serving-kernel zero padding truncated (drowzeys), and a
+    # quantization_config whose quant_method mislabels the artifact.
+    decode_evidence = (
+        layer_outer.weights_decode_evidence(args._weights_decode_streamer)
+        if getattr(args, "_weights_decode_streamer", None) is not None else None)
+    if isinstance(decode_evidence, dict):
+        composition = decode_evidence.get("tp_rank_composition")
+        if composition:
+            disclosures.append({
+                "code": "tp_rank_payloads_composed", "severity": "caveat",
+                "affects_comparability": False,
+                "detail": "%d routed-expert module(s) were stored as %d tensor-parallel "
+                          "rank shards each (the artifact's own hybrid_tr3_tail "
+                          "declaration) and composed into whole weights by concatenating "
+                          "the decoded shards in ascending rank order along the one axis "
+                          "the shapes admit (%s). The composition is verified against the "
+                          "artifact's declared source at %s."
+                          % (composition.get("modules_composed", 0), composition.get("tp"),
+                             ", ".join("%s: axis %d" % kv for kv in sorted(
+                                 (composition.get("axes") or {}).items())),
+                             composition.get("evidence"))})
+        truncated = decode_evidence.get("zero_padded_rows_truncated")
+        if truncated:
+            disclosures.append({
+                "code": "zero_padded_rows_truncated", "severity": "caveat",
+                "affects_comparability": False,
+                "detail": "%d tensor(s) were stored with %d trailing all-zero row(s) in "
+                          "total beyond the shape the architecture declares (serving-kernel "
+                          "alignment padding); every excess row was verified exactly zero "
+                          "and dropped. First: %s."
+                          % (truncated.get("count", 0), truncated.get("rows", 0),
+                             ", ".join("%s %s->%s" % (t["name"], t["stored"], t["used"])
+                                       for t in (truncated.get("tensors") or [])[:3]))})
+        observed = decode_evidence.get("observed") or {}
+        mislabel = observed.get("quant_method_declared")
+        if observed.get("declared_by") == "hybrid_tr3_tail" and mislabel not in (None, "exl3"):
+            disclosures.append({
+                "code": "quantization_config_mislabels_artifact", "severity": "caveat",
+                "affects_comparability": False,
+                "detail": "config.json's quantization_config declares quant_method=%r, "
+                          "which describes nothing in this checkpoint; the artifact is "
+                          "declared by its hybrid_tr3_tail block (exl3-trellis) and the "
+                          "payload bytes agree. The surface was read from the bytes."
+                          % mislabel})
+
     # DET-D4: `verify` warns when run_count < 5 and asks for this disclosure, but
     # nothing in the tooling emitted it, so every capture this engine writes
     # would carry a warning nobody could clear.  A single cold run is a real

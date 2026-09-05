@@ -51,7 +51,8 @@ SURFACE_MARKERS = {
     # stock exllamav3 HF-sharded release: no marker FILE at all -- identified
     # by config.json's inline quantization_config.quant_method == "exl3" plus
     # a canonical model.safetensors.index.json.
-    "exl3hf": ("config.json (inline quantization_config, quant_method exl3)",),
+    "exl3hf": ("config.json (inline quantization_config, quant_method exl3)",
+               "config.json (hybrid_tr3_tail, format exl3-trellis)"),
     # FineGrainedFP8 release (zai-org/GLM-5.3, DeepSeek-V3 lineage): no marker
     # file -- identified by config.json's inline quantization_config with
     # quant_method fp8, fmt e4m3 and a 2-D weight_block_size, plus a
@@ -639,6 +640,7 @@ def sniff_surface(meta: RepoMeta, path: Optional[str] = None) -> SurfaceInfo:
     # that ships both is not misclassified by which arm ran (that bug refused
     # turboderp/GLM-5.3-Flash-exl3 as "unreadable" while its codec parsed fine).
     quant_config = None
+    cfg = None
     if "config.json" in names:
         try:
             cfg = fetch_json(meta.repo_id, "config.json", revision=meta.revision)
@@ -682,6 +684,32 @@ def sniff_surface(meta: RepoMeta, path: Optional[str] = None) -> SurfaceInfo:
             oqc = quant_config["original_quantization_config"]
             info.evidence["original_quantization_config_fmt"] = \
                 str(oqc.get("fmt") or oqc.get("quant_method") or "unknown")
+    # davidsyoung's TR3 releases declare the exl3 artifact in a top-level
+    # `hybrid_tr3_tail` block (format exl3-trellis, codebook, tp, bits_avg) and
+    # carry a LEFTOVER ModelOpt/NVFP4 quantization_config that describes
+    # nothing in the checkpoint. The tail block is the declaration; the
+    # quant_method mislabel is recorded as evidence, never trusted. Payloads
+    # are `M.rank{r}.{trellis,suh,svh,<codebook>}` -- TP shards the exl3hf
+    # surface composes (layer_outer.TRELLIS_TP_COMPOSE_METHOD).
+    tail = cfg.get("hybrid_tr3_tail") if isinstance(cfg, dict) else None
+    if info.surface == "unknown" and isinstance(tail, dict) \
+            and tail.get("format") == "exl3-trellis" \
+            and "model.safetensors.index.json" in names and not info.tp_sliced:
+        info.surface = "exl3hf"
+        info.codebook = tail.get("codebook")
+        info.codec_family = normalize_codec("exl3", info.codebook)
+        bits_avg = tail.get("bits_avg", tail.get("bits"))
+        try:
+            info.bits = float(bits_avg)
+        except (TypeError, ValueError):
+            info.problems.append(
+                "hybrid_tr3_tail declares no numeric bits_avg (%r)" % (bits_avg,))
+        info.evidence["quantization_config_source"] = "config.json (hybrid_tr3_tail)"
+        info.evidence["hybrid_tr3_tail_tp"] = tail.get("tp")
+        info.evidence["hybrid_tr3_tail_source_repo"] = tail.get("source_repo")
+        declared = (quant_config or {}).get("quant_method") if isinstance(quant_config, dict) else None
+        if declared is not None and str(declared).lower() != "exl3":
+            info.evidence["quant_method_mislabel"] = str(declared)
 
     if "materialization-receipt.json" in names:
         try:
