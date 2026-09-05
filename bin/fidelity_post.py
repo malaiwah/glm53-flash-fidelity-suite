@@ -96,9 +96,10 @@ def _method_line(decode: dict) -> str:
                 "the same way" if mixed else "non-routed tensors carried as shipped")
         return ("decode-and-run, weights only: `%s` -- each exl3 payload group "
                 "(`trellis`/`suh`/`svh`/codebook marker) decoded to bf16 per module on "
-                "the capture device via exllamav3's transcribed codebooks (codebook %s, "
-                "declared %s bits), %s; same engine, schedule and device as the reference "
-                "capture" % (method, codebook, qc.get("bits"), rest))
+                "the capture device via exllamav3's transcribed codebooks (codebook %s as "
+                "declared -- the capture reads each module's own marker -- at %s declared "
+                "bits), %s; same engine, schedule and device as the reference capture"
+                % (method, codebook, qc.get("bits"), rest))
     if method == "exl3-trellis-tp-compose-to-bf16":
         codebook = qc.get("codebook") or "per-module (read from each payload's own marker)"
         return ("decode-and-run, weights only: `%s` -- each routed-expert module stored as "
