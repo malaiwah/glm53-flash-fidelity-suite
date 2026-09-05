@@ -121,9 +121,12 @@ takes ~33–45 min of pod time, ≈ $3–4; the `$45` is the hard cap the plan
 prints, not the estimate. The pre-spend gates read the trellis/FP8 identity
 from bytes, verify the panel is exact for the reference root, bind the
 reference dataset's seal and content digest into the job, and resolve the
-unexpected-tensor allowlist from the authored table (a quant without one is
-authored with `engines/tools/index_census_allowlist.py` and registered by
-the maintainer; the plan warns until then). The walkthrough with the observed
+unexpected-tensor allowlist from the authored table — or, for a pin without
+a row, derive it from the checkpoint's index at plan time
+(`engines/tools/index_census_allowlist.py`), bind it by both digests as
+`inputs/allowlist.json` and record the gate's provenance as
+`derived_from_index`; a row in `bin/fidelity/runpodsafety.py` is the
+attestation that upgrades it to `authored`. The walkthrough with the observed
 dry-run output is [QUICKSTART §3b](THIRD-PARTY-QUICKSTART.md).
 
 Derived unless you override them: GPU from the target's authored timing
@@ -131,7 +134,9 @@ evidence (`--gpu` when it has none); pod storage from the checkpoint plus both
 cold captures (`--storage`); host vCPU and memory minima from the model bytes
 (`--min-vcpu`, `--min-memory-gb`); `--dataset-repository` from
 `--publish-root-to`; `--dataset-name` from `--dataset-id`; the
-unexpected-tensor allowlist from the authored evidence for the target; the
+unexpected-tensor allowlist from the authored evidence for the target, else
+from its index census; `--max-runtime` from the authored bound and
+`--retrieval-delete-reserve` from the retrieval contract; the
 download token from `--hf-token-file` (`--hf-download-token-file` to ship a
 separate read-only token to the pod); the RunPod key from
 `~/.config/runpod/api_key` (`--runpod-key-file`); on-demand, secure cloud and

@@ -189,8 +189,25 @@ teacher-logits path is **not** this route — `bin/measure <url>` and
    the registry's scope rules at $0.
 3. *The unexpected-tensor allowlist* — the tensor names the checkpoint carries
    beyond what its architecture builds (GLM-5.3's MTP block, `model.layers.78`).
-   The capture refuses on the pod unless the observed set equals a bound list,
-   so it is authored before spend, from the same two files:
+   The capture refuses on the pod unless the observed set equals a bound list.
+   **You need not author it**: when no attested row exists for your pin, the
+   dry-run derives it from the same two files at plan time
+   (`engines/tools/index_census_allowlist.py`, the method behind every
+   GLM-5.3 allowlist), binds it into `job.json` by both digests as
+   `inputs/allowlist.json`, and says so:
+
+   ```text
+     allowlist derived from index           ok  12311 names past layer 78 (GlmMoeDsaForCausalLM); artifact 2d3aed8145884861..., names d567faf9576946cc...; register these in runpodsafety._ALLOWLISTS to attest it
+     exact-unexpected-tensor-allowlist      ok
+     WARNING  note: no authored unexpected-tensor allowlist for davidsyoung/GLM-5.3-EXL3-TR3-3.25bpw@6d6bd738c0c1: bound the index census instead (12311 names past layer 78, sha256 2d3aed8145884861...). The pod refuses unless the loader's unexpected set equals it exactly. To attest it, register the printed digests in bin/fidelity/runpodsafety.py _ALLOWLISTS and commit the file under engines/tools/layer-outer-evidence/
+   ```
+
+   (Observed 2026-09-05 on a scratch checkout with that pin's table row
+   removed; the derived digests are exactly the ones the committed row
+   attests.) The gate records `provenance: derived_from_index`; a row in
+   `bin/fidelity/runpodsafety.py` `_ALLOWLISTS` plus the file under
+   `engines/tools/layer-outer-evidence/` upgrades it to `authored`. To author
+   one for the record, or to see the digits before spending:
 
    ```bash
    python3 engines/tools/index_census_allowlist.py --repo <owner>/<quant> --revision <40-hex> \
@@ -200,14 +217,10 @@ teacher-logits path is **not** this route — `bin/measure <url>` and
 
    It writes the list plus a `.provenance.json` sidecar and prints the three
    digests (`artifact_sha256`, `canonical_sorted_names_sha256`, `count`).
-   **Today the paid controller admits an allowlist only when those digests
-   are registered in `bin/fidelity/runpodsafety.py` `_ALLOWLISTS` and the file
-   is in `bin/BUNDLE.txt`** — a source edit and a commit; without a row the
-   plan warns and the capture refuses on the pod. For a quant of a family the
-   table already covers, send the maintainer the repo, revision and the three
-   printed digests. (Reproducibility check: the tool regenerates the committed
-   `dy325-exl3-layer78-unexpected-keys.json` byte-for-byte,
-   `artifact_sha256 2d3aed81…`.)
+   Reproducibility check: it regenerates the committed
+   `dy325-exl3-layer78-unexpected-keys.json` and
+   `drowzeys-exl3-layer78-unexpected-keys.json` byte-for-byte
+   (`artifact_sha256 2d3aed81…`, `969cee60…`).
 4. *The reference* — the published root dataset at its immutable revision:
    `malaiwah/glm53-fidelity-root-v1@9c4a29ee10f393ed2fdbdb9262c1192ddb1507b4`
    for GLM-5.3 (`bin/fidelity-dataset describe hf://…` prints its
