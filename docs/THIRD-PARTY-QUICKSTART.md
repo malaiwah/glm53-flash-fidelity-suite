@@ -75,16 +75,51 @@ at least the **authored bound** for this target on an H200 —
 `(5520 fetch + 420 setup + 2 x 6600 cold run + 2400 verify/compare/qualify)
 x 1.25 = 26925 s`, so `7h30m` (27000 s) is the smallest round value — and
 `--max-cost` must cover the all-in maximum the controller computes from it,
-`$62.925` at today's $4.59/h for 11.5 h with the 14400 s reserve. When the
-bound moves, the dry-run tells you the new number (observed 2026-09-05 with
-the older `3h30m` / `40` recipe):
+`$62.925` at today's $4.59/h for 11.5 h with the 14400 s reserve. Since
+2026-09-05 you may **omit `--max-runtime`** for a target with an authored
+row: the controller defaults it to the bound and says so in the plan
+(`workload bound 26925 s (defaulted to the authored bound; --max-runtime to
+override upward)`); it stays required for a target without a row. When the
+numbers are below the bound the dry-run reports every finding at once
+(observed 2026-09-05 with the older `3h30m` / `40` recipe; four findings
+because the maintainer's destination exists and a lease was live):
 
 ```text
-  ERROR  REFUSE: target-specific timing exceeds --max-runtime: the bound is 26925 s (components_seconds), --max-runtime is 12600.0 s
-  ERROR          raise --max-runtime to at least the bound; it is the deadline the watchdog enforces, not an estimate
-  ERROR  REFUSE: all-in maximum $62.92 exceeds --max-cost 40
-  ERROR          GPU $4.59/h for 11.50 h (workload 27000 s + retrieval/delete reserve 14400 s) plus storage for that window
+  ERROR  REFUSE: 4 pre-spend findings; every one must be settled before a pod is created
+  ERROR          [1] target-specific timing exceeds --max-runtime: the bound is 26925 s (components_seconds), --max-runtime is 12600.0 s
+  ERROR              raise --max-runtime to at least the bound (or omit it: the authored bound is the default); it is the deadline the watchdog enforces, not an estimate
+  ERROR              the cost below is priced at the bound, so one edit settles both
+  ERROR          [2] all-in maximum $62.81 exceeds --max-cost 40
+  ERROR              GPU $4.59/h for 11.48 h (workload 26925 s + retrieval/delete reserve 14400 s) plus storage for that window
+  ERROR              raise --max-cost to at least 62.82; the reserve is already the retrieval contract's minimum unless you raised it
+  ERROR          [3] local root publication preflight failed: authenticated datasets/malaiwah/glm53-fidelity-root-v1 already exists or collides with the destination
+  ERROR          [4] an earlier lease may still hold a pod: ... is ACTIVE (pods hj0h6wjpqwjoj3, ...); a839fcd8c3b33bd8a3bbe517 is AMBIGUOUS (pods none yet, ...)
+  ERROR              inspect: measure-cloud reaper --provider runpod --list
 ```
+
+The plan a passing dry-run prints (2026-09-05, `--max-cost 65`, no
+`--max-runtime`, no `--retrieval-delete-reserve`, `--runpod-datacenter
+US-NC-1`):
+
+```text
+RUNPOD PLAN
+  target                 zai-org/GLM-5.3-BF16@304b8051cfb2b260b61ce0cbe330e02a98e73639
+  profile timing         root-hf-transformers-bf16 / bound 26925 s = (5520 fetch + 420 setup + 2 x 6600 cold run + 2400 verify/compare/qualify) x 1.25 margin; authored bin/engines.json root_timing_profiles[zai-org/GLM-5.3-BF16@304b8051] on H200
+  gpu                    NVIDIA H200 x1 (secure cloud, on-demand) $4.59/h
+  datacenter             US-NC-1 (pinned; the create refuses elsewhere)
+  all-in hard cap        $65 (calculated $61.94...) -- the BOUND: GPU rate x (workload deadline + retrieval/delete reserve) + storage; not the estimate
+  expected spend         ~$27.46 for ~359 min at $4.59/h -- the authored components without the margin (the row's measured run); the cap above is the bound
+  storage                container-disk: container disk 1800 GB, pod volume 10 GB, run root under /root
+  workload bound         26925 s (defaulted to the authored bound; --max-runtime to override upward); retrieval/delete reserve 13818 s (derived: 1800 build + 3 x (3600 download + 306 verify) + 300 delete; --retrieval-delete-reserve to override upward)
+```
+
+The reserve is the retrieval contract's own minimum (archive build, three
+bounded download attempts with local verification sized by the archive, the
+delete) and is derived by default; pass `--retrieval-delete-reserve` only to
+raise it. The expected-spend line is the authored row's measured components
+(the container-disk cold run in that row is still a projection until a run
+re-measures it — `bin/engines.json` says so); the receipts below are the
+observed reality.
 
 What the pod actually did for this root (JOURNAL 2026-09-04): 1.5 TB fetched
 in 12 min on the container disk, a cold run ~10 min of forward; the pod that
@@ -196,7 +231,8 @@ bin/measure-cloud --provider runpod --role root \
     --out ~/fidelity-runs/my-quant --dry-run
 ```
 
-Observed (23 s, exit 0, `--out` not created; plan JSON elided):
+Observed (29 s, exit 0, `--out` not created; the plan JSON is a byte count
+unless you pass `--plan-json FILE` or `--json`):
 
 ```text
   candidate is exl3 trellis              ok  quant_method exl3 codebook None declared bits 4; decoded to bf16 per module (exl3-trellis-decode-to-bf16). Per-module codebook and the payload's own bit width are read from the checkpoint on the pod and checked against the declaration
@@ -205,15 +241,18 @@ REGISTRY CHECK (before anything is planned or spent)
     [EXACT] artifact--wrldsuksgo2mars.glm-5.3-exl3-k4-v1
         measured at exactly this revision (47af23347d)
   ...
-ALREADY MEASURED: the rows above answer this request. Safe RunPod refuses --force; a separately identified root qualification continues only through its own gates.
+ALREADY MEASURED: the rows above answer this request. Safe RunPod refuses --force; a separately identified candidate measurement (new --dataset-id) continues only through its own gates.
   candidate panel                        ok  exact for reference root zai-org/GLM-5.3-BF16@304b8051cfb2; tokenizer files byte-identical
   candidate reference                    ok  malaiwah/glm53-fidelity-root-v1@9c4a29ee10f3 dataset_sha256 6b8d3a7bdf934f18, capture 9eba97dddb4ff2e2, panel panel--glm53.malaiwah.corpus5x5-v1
 RUNPOD PLAN
   target                 wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede
-  profile timing         root-hf-transformers-bf16 / {'source': 'operator --max-runtime', 'max_runtime': '3h30m', ...}
-  all-in hard cap        $45 (calculated $37.24357142857142857142857142)
+  profile timing         root-hf-transformers-bf16 / operator --max-runtime 3h30m (no authored timing row for this target on H200)
+  gpu                    NVIDIA H200 x1 (secure cloud, on-demand) $4.59/h
+  datacenter             US-NC-1 (pinned; the create refuses elsewhere)
+  all-in hard cap        $45 (calculated $36.45...) -- the BOUND: GPU rate x (workload deadline + retrieval/delete reserve) + storage; not the estimate
+  expected spend         not stated: no authored components for this target; the cap above is the bound, and the receipts of prior runs of this route are the only estimate (docs/THIRD-PARTY-QUICKSTART.md 3b)
   storage                container-disk: container disk 600 GB, pod volume 10 GB, run root under /root
-  workload bound         12600 s (--max-runtime); retrieval/delete reserve 14400 s
+  workload bound         12600 s (--max-runtime); retrieval/delete reserve 13818 s (derived: 1800 build + 3 x (3600 download + 306 verify) + 300 delete; --retrieval-delete-reserve to override upward)
   ... 18 gates ok (exact-unexpected-tensor-allowlist resolved from the authored table with no flag) ...
   WARNING  note: no authored timing evidence for wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db7 on H200; using your --max-runtime 3h30m as the workload bound.
 ```
@@ -223,8 +262,10 @@ proceeding` and the plan is the same. `--gpu H200` is required because no
 timing row exists for a quant; the reference root was captured on an H200
 and the GPU model moves bits, so use the same class. `$45` is the **hard
 cap** (GPU rate x deadline + reserve), not the expected spend — the receipts
-say ≈ $3–4. The default `--retrieval-delete-reserve` is 21600 s (6 h); the
-14400 s here is what every GLM-5.3 candidate ran with. Add
+say ≈ $3–4. `--retrieval-delete-reserve` defaults to the retrieval
+contract's minimum (13818 s for this archive bound; every GLM-5.3 candidate
+passed 13818 or 14400 by hand before the default was derived), so the flag
+in the command above is optional. Add
 `--publish-root-to <you>/<repo>` to publish the sealed candidate dataset from
 this machine after teardown (the token never reaches the pod).
 

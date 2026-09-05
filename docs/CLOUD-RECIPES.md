@@ -16,13 +16,18 @@ These four hold on every paid run. Nothing else is required to start one.
 **Cost cap — `--max-cost`.** Before anything is created the controller
 computes the all-in maximum liability: the live GPU rate for the whole
 deadline, storage for the deadline at the tariff defaults, and the retrieval
-and delete reserve (`--retrieval-delete-reserve`, default 21600 s). If that
-exceeds `--max-cost` the run is refused. There is no default cap; a cap the
+and delete reserve (`--retrieval-delete-reserve`; by default the retrieval
+contract's own minimum, derived from the result archive bound and printed in
+the plan — 13818 s for a 5 GB archive). If that exceeds `--max-cost` the run
+is refused, together with every other arithmetic finding of the same plan
+(timing bound, publication destination, unresolved leases) in one report. There is no default cap; a cap the
 tool picked would turn a legitimate run into a refusal you cannot attribute.
 
 **Absolute deadline — `--max-runtime`.** The workload deadline is written into
 the durable lease (the reaper destroys the pod at it), the on-pod watchdog and
-the provider's own timer. The provider timer is a hint, never evidence of
+the provider's own timer. For a root whose bound is authored in
+`bin/engines.json` `root_timing_profiles` it defaults to that bound (the plan
+says `defaulted to the authored bound`); for any other target it is required. The provider timer is a hint, never evidence of
 cleanup; the lease is what the reaper enforces.
 
 **Teardown on every exit path.** Success, failure, exception and Ctrl-C all
@@ -69,15 +74,19 @@ on 2026-09-05). When the bound moves, the dry-run refuses with the new
 number; `bin/selftest_readme_recipes.py` fails when a documented recipe
 falls below the authored bound.
 
-`--dry-run` runs every check, prints the plan and spends $0.00. Re-run the
+`--dry-run` runs every check, prints the plan (target, authored bound and its
+derivation, GPU and rate, datacenter, the hard cap labelled as the bound,
+the expected spend when the row carries measured components, storage, the
+reserve and its derivation, and every gate) and spends $0.00; the full plan
+JSON goes to `--plan-json FILE` or, with `--json`, to stdout. Re-run the
 same command without `--dry-run` to spend; the interactive prompt quotes the
 calculated maximum and the hard cap, and only `y`/`yes` permits the single
 create POST. `--yes` skips the prompt.
 
 Required: `--provider`, `--model`, `--revision` (for a paid run;
 `--dry-run` resolves and prints `main`'s commit when it is omitted),
-`--panel-dir`, `--dataset-id`, `--measurer`, `--max-cost`, `--max-runtime`,
-`--out`. `--role` defaults to `quant`; a root capture and the candidate route
+`--panel-dir`, `--dataset-id`, `--measurer`, `--max-cost`, `--out`, and
+`--max-runtime` unless the target has an authored timing row. `--role` defaults to `quant`; a root capture and the candidate route
 below both pass `--role root`. `--publish-root-to` and `--hf-token-file`
 are only needed when the dataset is to be published from this machine after
 teardown; without them the sealed dataset stays under `--out`
@@ -246,14 +255,24 @@ bin/measure-cloud reaper --provider runpod --list
 bin/measure-cloud reaper --provider runpod --sweep --dry-run
 ```
 
-`--list` prints one `<lease-file> <STATE>` line per lease (terminal ones
-included) and a `health` line for the timer; `--sweep --dry-run` prints only
-failures, so silence is "nothing would fail", not "nothing to do". A lease in
-state `AMBIGUOUS` with no pod id (create was attempted, no pod was ever
-observed) blocks new runs with *an earlier lease may still hold a pod*; the
-reaper cannot settle it by design (`cloudlease.py` yields
-`ambiguous-needs-operator`). Verify in the RunPod console that no pod of that
-lease exists, then pass `--allow-unresolved-leases` to proceed beside it —
-the reaper still destroys anything past its deadline. A real `--sweep`
-destroys only exact ids authorized by leases this tool wrote. Never delete,
-pause or adopt a resource you did not create.
+`--list` prints one block per unresolved lease — state, the pod ids it
+authorizes and whether they are in the account inventory now, created/
+workload/reap times with ages, the last event — and a count of settled
+leases (`--all` lists them) plus the timer's `health`. A lease in state
+`AMBIGUOUS` with no pod id (create was attempted, no pod of the exact name
+was ever observed) blocks new runs with *an earlier lease may still hold a
+pod*; the reaper cannot settle it by design (`cloudlease.py` yields
+`ambiguous-needs-operator`), so the block names the wrong-name pods that
+appeared in its create window, whether any still exists, and the operator
+act: verify in the RunPod console that no pod of that name exists, then pass
+`--allow-unresolved-leases` to proceed beside it — the reaper still destroys
+anything past its deadline. `--sweep --dry-run` prints every action row the
+sweep would take (`would-…`, `ambiguous-needs-operator`, `billing-pending`);
+a real `--sweep` destroys only exact ids authorized by leases this tool
+wrote. Never delete, pause or adopt a resource you did not create.
+
+Billing settles after the pod is gone: RunPod publishes an hourly bucket only
+when the hour closes, so a run whose pod vanished at :44 leaves the lease
+`ABSENCE_CONFIRMED` with `billing: settled: false` in `terminal-receipt.json`
+and the reaper closes it (`reconciled: true`) on a sweep after the hour plus
+300 s; a closure is never sealed over an unpublished bucket.

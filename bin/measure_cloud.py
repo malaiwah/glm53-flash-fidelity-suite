@@ -3519,6 +3519,8 @@ def _runpod_forbidden(args) -> List[str]:
     }
     for name, maximum in integer_bounds.items():
         value = getattr(args, name, None)
+        if name == "retrieval_delete_reserve" and value is None:
+            continue    # derived from the retrieval contract at plan time
         if (isinstance(value, bool) or not isinstance(value, int)
                 or value <= 0 or value > maximum):
             forbidden.append(
@@ -3536,7 +3538,7 @@ def _runpod_forbidden(args) -> List[str]:
     if getattr(args, "campaign_name", None) != "fidcloud-":
         forbidden.append(
             "--campaign-name is fixed to fidcloud- in safe RunPod mode")
-    if not getattr(args, "max_runtime", None):
+    if not getattr(args, "max_runtime", None) and getattr(args, "role", None) != "root":
         forbidden.append("--max-runtime is required")
     if getattr(args, "hf_download_token_file", None) in (None, ""):
         forbidden.append(
@@ -3628,7 +3630,8 @@ RUNPOD_STORAGE_TARIFF_STALE_AFTER_DAYS = 30
 
 def _runpod_quote(args, chosen, target, profile, timing, storage_gb,
                   container_disk_gb, workload_seconds, result_archive_contract,
-                  warnings: Optional[List[str]] = None):
+                  warnings: Optional[List[str]] = None,
+                  deferred: Optional[List["Refusal"]] = None):
     from fidelity.campaign import CostQuote, RUNPOD_TARIFF_SOURCE
 
     tariffs = {}
@@ -3708,16 +3711,50 @@ def _runpod_quote(args, chosen, target, profile, timing, storage_gb,
     cap = Decimal(str(args.max_cost))
     if calculated > cap:
         hours = (workload + reserve) / Decimal(3600)
-        raise Refusal(
+        refusal = Refusal(
             "all-in maximum $%s exceeds --max-cost %s"
             % (calculated.quantize(Decimal("0.01")), args.max_cost),
             ["GPU $%s/h for %s h (workload %s s + retrieval/delete reserve "
              "%s s) plus storage for that window"
              % (rate, hours.quantize(Decimal("0.01")), workload, reserve),
-             "raise --max-cost, or shorten --retrieval-delete-reserve "
-             "(default 21600 s) if archive build + three download attempts "
-             "+ delete fit in less"])
+             "raise --max-cost to at least %s; the reserve is already the "
+             "retrieval contract's minimum unless you raised it"
+             % calculated.quantize(Decimal("0.01"), rounding=ROUND_CEILING)])
+        if deferred is None:
+            raise refusal
+        # Planning accumulates the arithmetic findings (S1-2): report this
+        # one beside the others and keep going with the unbounded price so
+        # the rest of the plan can still be computed. Nothing is created
+        # while a deferred refusal is pending.
+        deferred.append(refusal)
+        return priced
     return CostQuote(hard_cap_usd=cap, **quote_fields)
+
+
+def _defer_refusal(plan_data: Dict[str, Any], refusal: "Refusal") -> None:
+    """Record an arithmetic pre-spend refusal instead of raising it.
+
+    The timing bound, the cost cap, the publication destination and the
+    lease scope are all computed from the same plan state and none has a
+    side effect, so a human should see every one of them in one dry-run
+    rather than one per 20-second round trip (AGENTS.md: accumulate
+    findings, do not stop at the first and hide the rest)."""
+    plan_data.setdefault("_deferred_refusals", []).append(refusal)
+
+
+def _raise_deferred_refusals(plan_data: Dict[str, Any]) -> None:
+    deferred = plan_data.get("_deferred_refusals") or []
+    if not deferred:
+        return
+    if len(deferred) == 1:
+        raise deferred[0]
+    lines: List[str] = []
+    for index, refusal in enumerate(deferred, 1):
+        lines.append("[%d] %s" % (index, refusal.reason))
+        lines.extend("    " + line for line in refusal.advice)
+    raise Refusal(
+        "%d pre-spend findings; every one must be settled before a pod is "
+        "created" % len(deferred), lines)
 
 
 def _write_verified_panel_archive(panel_root: Path, destination: Path,
@@ -4268,6 +4305,7 @@ def _plan_runpod_anonymous(
     plan_data: Dict[str, Any] = {
         "provider": "runpod", "created": False, "gates": {},
         "would_refuse": [], "safe_runpod": True, "warnings": [],
+        "_deferred_refusals": [],
     }
     plan_data["anonymous_access"] = anonymous_access
     target = repo_meta(args.model, "model", args.revision or "main")
@@ -4553,6 +4591,14 @@ def _plan_runpod_anonymous(
             # on-pod watchdog and the cost quote all derive from it.  A
             # named-conservative table entry is better evidence when one
             # exists, and the registry receipt records which was used.
+            if args.max_runtime is None:
+                raise Refusal(
+                    "no authored timing evidence for %s@%s on %s, and no --max-runtime"
+                    % (target.repo_id, target.revision[:12], gpu),
+                    ["pass --max-runtime: with no bin/engines.json root_timing_profiles "
+                     "row for this target the operator's deadline is the workload "
+                     "bound (GLM-5.3 candidates on an H200 ran with 3h30m; observed "
+                     "33-45 min)"])
             timing = _operator_bound_root_timing(args, target, gpu, identity)
             plan_data["warnings"].append(
                 "no authored timing evidence for %s@%s on %s; using your "
@@ -4655,16 +4701,33 @@ def _plan_runpod_anonymous(
             "capacity_basis": capacity_basis,
         }
     plan_data["runtime_contract"] = runtime_contract
+    if args.max_runtime is None:
+        # S1-2: the bound is the tool's own number when a timing row exists;
+        # requiring the human to retype it (and refusing when they were off)
+        # cost the documented recipe two round trips.
+        args.max_runtime = "%ds" % int(estimated_seconds)
+        plan_data["max_runtime_source"] = (
+            "defaulted to the authored bound; --max-runtime to override upward")
+        plan_data["warnings"].append(
+            "--max-runtime defaulted to the authored bound %d s (bin/engines.json "
+            "root_timing_profiles[%s@%s] on %s); pass --max-runtime to override "
+            "upward" % (int(estimated_seconds), target.repo_id,
+                        target.revision[:12], gpu))
     max_runtime = parse_duration(args.max_runtime)
     if estimated_seconds > Decimal(max_runtime):
-        raise Refusal(
+        _defer_refusal(plan_data, Refusal(
             "target-specific timing exceeds --max-runtime: the bound is %s s "
             "(%s), --max-runtime is %s s"
             % (estimated_seconds,
                plan_data.get("workload_bound_derivation", {}).get(
                    "basis", "conservative_upper_hours"), max_runtime),
-            ["raise --max-runtime to at least the bound; it is the deadline "
-             "the watchdog enforces, not an estimate"])
+            ["raise --max-runtime to at least the bound (or omit it: the "
+             "authored bound is the default); it is the deadline the watchdog "
+             "enforces, not an estimate",
+             "the cost below is priced at the bound, so one edit settles both"]))
+        # Price the run at the bound so the cost finding beside this one is
+        # the number the human will see after the one edit that fixes this.
+        max_runtime = float(estimated_seconds)
     gate_verified(plan_data, "target-profile-timing", profile=profile,
                   evidence_sha256=hashlib.sha256(_canonical_bytes(timing)).hexdigest(),
                   workload_bound_seconds=str(estimated_seconds),
@@ -4979,11 +5042,24 @@ def _plan_runpod_anonymous(
         1800
         + retrieval_attempts * (3600 + local_verify_bound_seconds)
         + 300)
-    if int(args.retrieval_delete_reserve) < retrieval_delete_minimum:
+    if args.retrieval_delete_reserve is None:
+        # S2-4: the reserve funds exactly this contract -- archive build
+        # (1800 s), three bounded 3600 s download attempts each followed by
+        # local verification sized by the archive, and the delete (300 s).
+        # Its minimum IS the derived value; every GLM-5.3 candidate passed
+        # it by hand (13818 s for a 5.13 GB archive). The old flat default
+        # (21600 s, 6 h) tipped a $4 candidate over a $45 cap.
+        args.retrieval_delete_reserve = retrieval_delete_minimum
+        plan_data["retrieval_delete_reserve_source"] = (
+            "derived: 1800 build + 3 x (3600 download + %d verify) + 300 delete; "
+            "--retrieval-delete-reserve to override upward"
+            % local_verify_bound_seconds)
+    elif int(args.retrieval_delete_reserve) < retrieval_delete_minimum:
         raise Refusal(
             "--retrieval-delete-reserve is below three bounded downloads, "
             "their local verification work, archive build, and deletion reserve",
-            ["minimum seconds: %d" % retrieval_delete_minimum])
+            ["minimum seconds: %d (omit the flag to use exactly that)"
+             % retrieval_delete_minimum])
     plan_data["retrieval_delete_contract"] = {
         "remote_archive_build_timeout_seconds": 1800,
         "download_attempts": retrieval_attempts,
@@ -5002,7 +5078,8 @@ def _plan_runpod_anonymous(
     quote = _runpod_quote(
         args, chosen, target, profile, timing, storage_gb,
         plan_data["container_disk_gb"], Decimal(max_runtime),
-        result_archive_contract, warnings=plan_data["warnings"])
+        result_archive_contract, warnings=plan_data["warnings"],
+        deferred=plan_data["_deferred_refusals"])
     plan_data["cost_quote"] = quote.to_dict()
     from fidelity.runpodapi import DEFAULT_IMAGE as RUNPOD_IMAGE
     # The pod's image: runpod/pytorch by digest (the locked stack is rebuilt
@@ -5049,9 +5126,13 @@ def _plan_runpod_anonymous(
             publication_preflight = dshub.preflight_create(
                 args.publish_root_to, args.hf_token_file)
         except Exception as exc:
-            raise Refusal(
-                "local root publication preflight failed: %s"
-                % redact(str(exc)), [])
+            _defer_refusal(plan_data, Refusal(
+                "local root publication preflight failed: %s" % redact(str(exc)),
+                ["--publish-root-to %s must be a dataset repo the token can create "
+                 "and that does not exist yet; pick a fresh name (the published "
+                 "GLM-5.3 root is malaiwah/glm53-fidelity-root-v1), or drop the "
+                 "flag and publish later with fidelity-dataset publish "
+                 "(docs/THIRD-PARTY-QUICKSTART.md 4)" % args.publish_root_to]))
     plan_data["inventory_plan"] = inventory
     gate_verified(plan_data, "complete-chargeable-inventory",
                   pods=len(inventory["families"]["pods"]["resources"]),
@@ -5277,6 +5358,7 @@ def _plan_runpod_anonymous(
         plan_data["unresolved_lease_scope"] = unresolved_scope
         gate_verified(
             plan_data, "canonical-unresolved-lease-scope", **unresolved_scope)
+        _raise_deferred_refusals(plan_data)
         preview_snapshot = preview_ledger.snapshot()
         decision = preview_ledger.preview_reserve_with_provider_snapshot(
             preview_snapshot["generation"], job["job_id_full"],
@@ -5295,10 +5377,26 @@ def _plan_runpod_anonymous(
                 provider_account_id=provider_account_id,
                 allow_live=bool(getattr(args, "allow_unresolved_leases", False)))
         except LeaseError as exc:
-            raise Refusal(str(exc), [])
-        plan_data["unresolved_lease_scope"] = liability_scope
-        gate_verified(
-            plan_data, "no-live-liability-leases", **liability_scope)
+            # An AMBIGUOUS lease with no pod id is not settled by waiting or
+            # sweeping (cloudlease yields ambiguous-needs-operator); say what
+            # settles it instead of the two remedies that cannot.
+            _defer_refusal(plan_data, Refusal(
+                str(exc).split(". Wait for the reaper", 1)[0],
+                ["inspect: measure-cloud reaper --provider runpod --list",
+                 "an ACTIVE lease is a pod of yours still running: wait for its "
+                 "deadline or finish that run first",
+                 "an AMBIGUOUS lease with no pod id needs you: verify in the RunPod "
+                 "console that no pod named fidcloud-* from that attempt exists, "
+                 "then pass --allow-unresolved-leases to proceed beside it (the "
+                 "reaper still destroys anything past its deadline)"]))
+            liability_scope = None
+        if liability_scope is not None:
+            plan_data["unresolved_lease_scope"] = liability_scope
+            gate_verified(
+                plan_data, "no-live-liability-leases", **liability_scope)
+        # Every arithmetic finding is in by now; the campaign preview below
+        # would only restate the cost one as CEILING_EXCEEDED.
+        _raise_deferred_refusals(plan_data)
         limits = _auto_campaign_limits(args)
         decision = CampaignLedger.preview_new_campaign(
             job_hash=job["job_id_full"], attempt=preview_attempt,
@@ -5328,20 +5426,69 @@ def _plan_runpod_anonymous(
         }
     else:
         gate_verified(plan_data, "campaign-width", width=1)
+    _raise_deferred_refusals(plan_data)
     con.say("RUNPOD PLAN")
     con.kv("target", "%s@%s" % (target.repo_id, target.revision))
-    con.kv("profile timing", "%s / %s" % (profile, timing.get("evidence")))
+    derivation = plan_data.get("workload_bound_derivation") or {}
+    if derivation.get("basis") == "components_seconds":
+        con.kv("profile timing",
+               "%s / bound %s s = (%s fetch + %s setup + %d x %s cold run + %s "
+               "verify/compare/qualify) x %s margin; authored bin/engines.json "
+               "root_timing_profiles[%s@%s] on %s"
+               % (profile, derivation["seconds"], derivation["fetch"],
+                  derivation["setup"], derivation["captures"], derivation["cold_run"],
+                  derivation["verify_compare_qualify"], derivation["margin_factor"],
+                  target.repo_id, target.revision[:8], chosen["gpu_type"]))
+    elif derivation.get("basis") == "conservative_upper_hours":
+        con.kv("profile timing", "%s / bound %s h authored in bin/engines.json "
+               "root_timing_profiles[%s@%s] (conservative_upper_hours, no components)"
+               % (profile, derivation["hours"], target.repo_id, target.revision[:8]))
+    elif (timing.get("evidence") or {}).get("source") == "operator --max-runtime":
+        con.kv("profile timing", "%s / operator --max-runtime %s (no authored timing "
+               "row for this target on %s)"
+               % (profile, args.max_runtime, chosen["gpu_type"]))
+    else:
+        con.kv("profile timing", "%s / %s" % (profile, timing.get("evidence")))
     con.kv("job hash", job["job_id_full"])
-    con.kv("all-in hard cap", "$%s (calculated $%s)"
+    rate = Decimal(str(chosen["price_per_gpu_hour"])) * Decimal(chosen["gpus"])
+    con.kv("gpu", "%s x%d (secure cloud, on-demand) $%s/h"
+           % (chosen["gpu"], chosen["gpus"], chosen["price_per_gpu_hour_display"]))
+    if chosen.get("data_center_id"):
+        con.kv("datacenter", "%s (pinned; the create refuses elsewhere)"
+               % chosen["data_center_id"])
+    else:
+        con.kv("datacenter", "UNPINNED -- RunPod re-offers slow hosts; "
+               "--runpod-datacenter US-NC-1 measured 1.7-2.4 GB/s vs 240 MB/s "
+               "(docs/CLOUD-RECIPES.md)")
+    con.kv("all-in hard cap", "$%s (calculated $%s) -- the BOUND: GPU rate x "
+           "(workload deadline + retrieval/delete reserve) + storage; not the estimate"
            % (quote.hard_cap_usd, quote.calculated_maximum_usd()))
+    if derivation.get("basis") == "components_seconds":
+        # The authored components without the margin are the run the row
+        # measured; that is the only spend estimate this tool will state.
+        measured = (Decimal(derivation["fetch"]) + Decimal(derivation["setup"])
+                    + Decimal(derivation["cold_run"]) * derivation["captures"]
+                    + Decimal(derivation["verify_compare_qualify"]))
+        con.kv("expected spend",
+               "~$%s for ~%d min at $%s/h -- the authored components without the "
+               "margin (the row's measured run); the cap above is the bound"
+               % ((measured / 3600 * rate).quantize(Decimal("0.01")),
+                  int(measured / 60), rate))
+    else:
+        con.kv("expected spend", "not stated: no authored components for this "
+               "target; the cap above is the bound, and the receipts of prior "
+               "runs of this route are the only estimate (docs/THIRD-PARTY-QUICKSTART.md 3b)")
     con.kv("storage", "%s: container disk %d GB, pod volume %d GB, "
            "run root under %s" % (
                plan_data["storage_layout"], plan_data["container_disk_gb"],
                plan_data["storage_gb"],
                RUNPOD_STORAGE_LAYOUTS[plan_data["storage_layout"]]["run_base"]))
-    con.kv("workload bound", "%s s (--max-runtime); retrieval/delete reserve %s s"
+    con.kv("workload bound", "%s s (%s); retrieval/delete reserve %s s (%s)"
            % (quote.workload_deadline_seconds,
-              quote.retrieval_delete_reserve_seconds))
+              plan_data.get("max_runtime_source", "--max-runtime"),
+              quote.retrieval_delete_reserve_seconds,
+              plan_data.get("retrieval_delete_reserve_source",
+                            "--retrieval-delete-reserve")))
     con.kv("campaign", (
         "per-run ledger %s (ceiling = --max-cost; foreign pods tolerated)"
         % Path(campaign_path).name
@@ -9016,12 +9163,66 @@ def _runpod_reaper_command(args, con: Console, provider) -> int:
             return EXIT_LEAK
         return EXIT_OK
     if args.list:
+        # One block per lease that still matters (S2-2): state, the pod ids
+        # it authorizes, ages and deadlines, the last event, and for an
+        # AMBIGUOUS lease the create-window evidence and what settles it.
+        # Terminal leases are a count unless --all; the old output was 96
+        # filenames and a state word.
+        now = datetime.now(timezone.utc)
+        inventory_ids = None
+        try:
+            inventory = provider.chargeable_inventory()
+            if inventory.get("complete"):
+                inventory_ids = {
+                    row["id"] for row in inventory["families"]["pods"]["resources"]}
+        except Exception as exc:                              # noqa: BLE001
+            con.warn("provider inventory unavailable (%s); pod presence not shown"
+                     % redact(str(exc)))
+        terminal = 0
         for ref, document in store.list(include_terminal=True):
-            con.kv(ref.path.name, document["state"])
-
-
-
-
+            state = document["state"]
+            if state == "TERMINAL" and not getattr(args, "all", False):
+                terminal += 1
+                continue
+            create = document.get("create") or {}
+            history = document.get("history") or []
+            first_at = history[0].get("at") if history else None
+            last = history[-1] if history else {}
+            con.say("%s  %s" % (ref.path.name[:24], state))
+            con.kv("  pod ids", ", ".join(document.get("provider_resource_ids") or [])
+                   or "none (no pod was ever attributed to this lease)")
+            if inventory_ids is not None and document.get("provider_resource_ids"):
+                present = [pod for pod in document["provider_resource_ids"]
+                           if pod in inventory_ids]
+                con.kv("  in inventory now", ", ".join(present) or "none")
+            con.kv("  created", "%s (%s)" % (first_at or "?", _age_text(first_at, now)))
+            con.kv("  workload deadline", "%s (%s)" % (
+                create.get("workload_deadline_utc") or "?",
+                _age_text(create.get("workload_deadline_utc"), now)))
+            con.kv("  reap deadline", "%s (%s)" % (
+                create.get("reap_deadline_utc") or "?",
+                _age_text(create.get("reap_deadline_utc"), now)))
+            con.kv("  last event", "%s %s" % (last.get("at") or "?",
+                                             last.get("event") or last.get("reason") or "?"))
+            if state == "AMBIGUOUS" and not document.get("provider_resource_ids"):
+                blockers = ((document.get("terminal_proof") or {})
+                            .get("ambiguous_create") or {})
+                wrong = blockers.get("wrong_name_new_pod_ids") or []
+                con.kv("  blockers", "create window closed with no pod of the exact "
+                       "name; %d wrong-name pod(s) appeared in the window: %s"
+                       % (len(wrong), ", ".join(wrong) or "none"))
+                if inventory_ids is not None:
+                    still = [pod for pod in wrong if pod in inventory_ids]
+                    con.kv("  those pods now", (
+                        "still in inventory: %s" % ", ".join(still) if still
+                        else "none exists in the account inventory"))
+                con.kv("  needs operator", "the reaper cannot settle a lease with no pod "
+                       "id (cloudlease: ambiguous-needs-operator). Verify in the "
+                       "RunPod console that no pod named %s exists; then pass "
+                       "--allow-unresolved-leases on the next run to proceed beside "
+                       "this lease" % (create.get("exact_name") or "fidcloud-*"))
+        if terminal:
+            con.kv("terminal", "%d lease(s) settled (--all to list them)" % terminal)
         health = systemd_reaper_health(
             state_dir=state_dir, lease_dir=store.root, provider="runpod",
             provider_account_id=provider_account_id)
@@ -9029,9 +9230,35 @@ def _runpod_reaper_command(args, con: Console, provider) -> int:
         return EXIT_OK if health["ok"] else EXIT_LEAK
     result = reap_once(
         store, {"runpod": provider}, dry_run=bool(args.dry_run))
+    # Every action row, dry-run or not: what was (or would be) destroyed,
+    # what was settled, and which lease needs an operator. Silence used to
+    # mean "nothing failed", which read as "nothing to do".
+    for action in result.actions:
+        detail = {key: value for key, value in action.items()
+                  if key not in ("action", "lease") and value not in (None, [], {})}
+        con.kv(str(action.get("action")),
+               "%s%s" % (str(action.get("lease"))[:24],
+                         ("  " + json.dumps(detail, sort_keys=True)[:160]) if detail else ""))
+    if not result.actions:
+        con.kv("actions", "none: no lease is past its deadline or awaiting settlement")
     for failure in result.failures:
         con.err(json.dumps(failure, sort_keys=True))
     return EXIT_OK if result.ok else EXIT_LEAK
+
+
+def _age_text(stamp: Optional[str], now: datetime) -> str:
+    if not stamp:
+        return "unknown"
+    try:
+        when = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return "unparsed"
+    delta = int((now - when).total_seconds())
+    hours, minutes = divmod(abs(delta) // 60, 60)
+    text = "%dh%02dm" % (hours, minutes)
+    return (text + " ago") if delta >= 0 else ("in " + text)
+
+
 def _runpod_drill_contract(args):
     """Build the synthetic, fully bound job used only by the proof producer."""
     args.runpod_drill_manifest_refresh = lambda: {
@@ -9102,6 +9329,23 @@ def _runpod_drill_contract(args):
     args.runpod_drill_job_json = None
     args.runpod_drill_bundle_manifest_sha256 = bundle_digest
     args.runpod_drill_control_manifest_sha256 = control["manifest_sha256"]
+def _emit_plan_json(args, con: Console, public_plan: Dict[str, Any]) -> None:
+    body = json.dumps(public_plan, sort_keys=True)
+    target = getattr(args, "plan_json", None)
+    if target:
+        path = Path(target).expanduser()
+        if path.exists():
+            raise Refusal("--plan-json %s exists; name a fresh file" % path, [])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body + "\n", encoding="utf-8")
+        con.kv("plan json", "%s (%d bytes)" % (path, len(body) + 1))
+    if getattr(args, "json", False):
+        con.say(body)
+    elif not target:
+        con.kv("plan json", "%d bytes; --plan-json FILE writes it, --json prints it"
+               % len(body))
+
+
 def _main_runpod(args, con: Console, provider) -> int:
     if args.subcommand == "adopt":
         con.err("safe RunPod mode refuses adoption/recovery")
@@ -9112,11 +9356,11 @@ def _main_runpod(args, con: Console, provider) -> int:
         plan_data = plan_runpod(args, con, provider)
         public_plan = {key: value for key, value in plan_data.items()
                        if not key.startswith("_")}
-        if plan_data.get("no_spend"):
-            con.say(json.dumps(public_plan, sort_keys=True))
-            return EXIT_OK
-        if args.dry_run:
-            con.say(json.dumps(public_plan, sort_keys=True))
+        if plan_data.get("no_spend") or args.dry_run:
+            # The plan JSON is for agents and files, not the terminal: the
+            # human block above is the plan a person reads, and the 150-200 KB
+            # single line used to be the last thing on their screen (S2-7).
+            _emit_plan_json(args, con, public_plan)
             return EXIT_OK
         if not args.yes:
             from fidelity.campaign import CostQuote
@@ -9448,9 +9692,12 @@ def build_parser() -> argparse.ArgumentParser:
              "a legitimate run into a refusal you cannot attribute.")
     i.add_argument(
         "--max-runtime", metavar="DURATION",
-        help="REQUIRED. Absolute workload deadline like 3h30m. Written "
-             "into the lease (the reaper destroys the pod at it), the on-pod "
-             "watchdog and the provider's own timer.")
+        help="absolute workload deadline like 3h30m, written into the lease "
+             "(the reaper destroys the pod at it), the on-pod watchdog and "
+             "the provider's own timer. REQUIRED for a target with no "
+             "authored timing row; for a root with one (bin/engines.json "
+             "root_timing_profiles) it defaults to that bound and the plan "
+             "says so -- pass it only to override upward.")
     i.add_argument(
         "--gpu",
         help="GPU class, e.g. H200, L4, A100. Defaults to the one named by "
@@ -9465,10 +9712,14 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--min-memory-gb", type=int,
                    help="override the derived minimum host memory")
     i.add_argument(
-        "--retrieval-delete-reserve", type=int, default=21600, metavar="SEC",
+        "--retrieval-delete-reserve", type=int, default=None, metavar="SEC",
         help="seconds funded after the workload deadline for archive build, "
-             "up to three download attempts and the final delete (default "
-             "21600). Part of the cost cap.")
+             "up to three bounded download attempts with their local "
+             "verification, and the final delete. Default: exactly that "
+             "contract's minimum, derived from the result archive bound "
+             "(1800 + 3 x (3600 + verify) + 300; 13818 s for a 5 GB "
+             "archive) and printed in the plan; pass a larger value to "
+             "override upward. Part of the cost cap.")
     i.add_argument("--region", default="secure", help=argparse.SUPPRESS)
     i.add_argument("--spot", dest="spot", action="store_true", default=False,
                    help=argparse.SUPPRESS)
@@ -9530,8 +9781,18 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--sweep", action="store_true",
                    help="with `reaper`: run one sweep now")
     o.add_argument("--list", action="store_true",
-                   help="with `reaper`: list every lease and the timer's "
-                        "health")
+                   help="with `reaper`: one block per unresolved lease (state, "
+                        "pod ids, deadlines, last event; for an AMBIGUOUS lease "
+                        "its blockers and what settles it) plus the timer's "
+                        "health; terminal leases are a count")
+    o.add_argument("--all", action="store_true",
+                   help="with `reaper --list`: list terminal leases too")
+    o.add_argument("--plan-json", metavar="FILE",
+                   help="with --dry-run: write the full plan JSON to this new "
+                        "file (--out stays untouched)")
+    o.add_argument("--json", action="store_true",
+                   help="with --dry-run: also print the full plan JSON to stdout "
+                        "as the last line (for agents; ~150 KB)")
     o.add_argument("--lease-dir", metavar="DIR",
                    default=str(Path.home() / ".fidelity-cloud" / "leases-v2"),
                    help="lease directory (default ~/.fidelity-cloud/leases-v2)")

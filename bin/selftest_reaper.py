@@ -2391,15 +2391,28 @@ def runpod_cases():
                                     response["metadata"]}).billing_history(
                          "pod-1", start_time=query["startTime"],
                          end_time=query["endTime"])))
-    reconciled_end_epoch = int(time.time()) - 600
+    # The absence lands at :44 of an hour; queried at :49 (m-dy325b,
+    # 2026-09-05) RunPod had published only the previous hour's bucket, and
+    # the closure sealed reconciled: true over half the bill. The hour that
+    # contains the absence must close, plus the 300 s stabilization, before
+    # a closure is returned; the reaper's later sweep settles it.
+    reconciled_end_epoch = (int(time.time()) // 3600 - 2) * 3600 + 44 * 60
     reconciled_start_epoch = reconciled_end_epoch - 3600
-    reconciled = multi.reconcile_billing({
+    open_hour_lease = {
         "provider_resource_ids": ["pod-b", "pod-a"],
         "create": {"pre_create_observed_at": time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.gmtime(reconciled_start_epoch))},
         "history": [{"to": ABSENCE_CONFIRMED, "at": time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.gmtime(reconciled_end_epoch))}],
-    })
+    }
+    check("billing closure refuses while the absence hour is open (queried at :49)",
+          raises(RunPodError, lambda: multi.reconcile_billing(
+              open_hour_lease, now=reconciled_end_epoch + 300))
+          and raises(RunPodError, lambda: multi.reconcile_billing(
+              open_hour_lease, now=reconciled_end_epoch + 16 * 60 + 200))
+          and multi.asked == [])
+    reconciled = multi.reconcile_billing(
+        open_hour_lease, now=reconciled_end_epoch + 16 * 60 + 300)
     check("billing binds two independent identical reads for every exact id",
           multi.asked == ["pod-a", "pod-b", "pod-a", "pod-b"]
           and reconciled["provider_resource_ids"] == ["pod-a", "pod-b"]

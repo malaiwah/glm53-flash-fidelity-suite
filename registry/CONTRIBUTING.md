@@ -181,8 +181,10 @@ reference points, from the receipts and the JOURNAL:
 
 Take the number the dry-run prints as the **cap** (`all-in hard cap`, GPU
 rate x deadline + storage + retrieval reserve); it is the liability ceiling,
-about ten times the observed spend for a candidate. Every real candidate ran
-with `--retrieval-delete-reserve 14400` rather than the 21600 s default.
+about ten times the observed spend for a candidate. The retrieval/delete
+reserve inside it defaults to the retrieval contract's minimum (13818 s for
+a 5 GB archive); the real candidates passed 13818 or 14400 by hand before
+the default was derived.
 
 #### Historical: the JarvisLabs teacher-logits path (2026-08)
 

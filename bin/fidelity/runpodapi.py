@@ -1707,8 +1707,18 @@ class RunPod(SSHTransport):
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
 
-    def reconcile_billing(self, lease: Dict[str, Any]) -> Dict[str, Any]:
-        """Return only a post-absence, independently stable billing closure."""
+    def reconcile_billing(self, lease: Dict[str, Any], *,
+                          now: Optional[float] = None) -> Dict[str, Any]:
+        """Return only a post-absence, independently stable billing closure.
+
+        RunPod publishes an hourly bucket only after that hour closes: a pod
+        proven absent at 03:44 and queried at 03:49 returned the 02:00-03:00
+        bucket alone, and the run sealed `reconciled: true` over one of its two
+        hours (m-dy325b, 2026-09-05). The closure therefore also requires the
+        hour containing the absence to have closed, plus the same 300 s
+        stabilization; until then this raises and the caller records billing
+        as pending, which the reaper settles on a later sweep.
+        """
         ids = sorted({str(value) for value
                       in lease.get("provider_resource_ids") or []
                       if str(value).strip()})
@@ -1728,10 +1738,22 @@ class RunPod(SSHTransport):
         absence_epoch = calendar.timegm(time.strptime(
             end, "%Y-%m-%dT%H:%M:%SZ"))
         stabilization_seconds = 300
-        if time.time() - absence_epoch < stabilization_seconds:
+        instant = time.time() if now is None else float(now)
+        if instant - absence_epoch < stabilization_seconds:
             raise RunPodError(
                 "RunPod billing remains inside the 300-second "
                 "post-absence stabilization window")
+        absence_hour_end = (absence_epoch // 3600 + 1) * 3600
+        if instant < absence_hour_end + stabilization_seconds:
+            raise RunPodError(
+                "RunPod billing hour containing the absence (%s-%s) has not "
+                "closed and stabilized yet; its bucket is unpublished, so a "
+                "closure now would seal a partial bill as reconciled. The reaper "
+                "settles it on a sweep after %s"
+                % (time.strftime("%H:%M", time.gmtime(absence_hour_end - 3600)),
+                   time.strftime("%H:%MZ", time.gmtime(absence_hour_end)),
+                   time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                 time.gmtime(absence_hour_end + stabilization_seconds))))
 
         def retrieve() -> Dict[str, Any]:
             histories = []
