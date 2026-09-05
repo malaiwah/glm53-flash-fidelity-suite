@@ -1,0 +1,15 @@
+{
+ "architecture": "GlmMoeDsaForCausalLM",
+ "artifact_sha256": "2d3aed8145884861c805143bf2306abf7d2e469d94a158bf6587d65faebeed2b",
+ "canonical_sorted_names_sha256": "d567faf9576946cced4795af68991a5432ddba38383a6baef59e33253e617193",
+ "config_sha256": "fcde001350291a0048318d4a1136e0732e31f829f804a57cfbb558903e54171a",
+ "count": 12311,
+ "decoder_layers": 78,
+ "derived_at_utc": "2026-09-05T13:36:54Z",
+ "derived_by": "index census: every key of model.layers.78 (the block GlmMoeDsaForCausalLM never builds; num_hidden_layers is 78); engines/tools/index_census_allowlist.py",
+ "derived_from": "brandonmusic/GLM-5.2-EXL3-TR3-3.0bpw@f79c9167690ca705e877ae4dc55a841d1aae1247 model.safetensors.index.json",
+ "index_sha256": "346227a4ea44b6063017739ee38a830319dc10305ccf714734095e27b28064c2",
+ "per_layer_unexpected_counts": {
+  "78": 12311
+ }
+}

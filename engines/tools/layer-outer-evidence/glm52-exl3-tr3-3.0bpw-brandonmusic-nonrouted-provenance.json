@@ -1,0 +1,518 @@
+{
+ "schema": "fidelity.nonrouted-provenance.v1",
+ "question": "Do the candidate's 16-bit non-routed tensors carry the BF16 release's values or the FP8 release's dequantized values?",
+ "verdict": "stored_16bit_of_bf16_root",
+ "verdict_text": "bitwise equal to the BF16 release cast to the stored dtype and NOT equal to the FP8 release dequantized: the class is native (a 16-bit round trip of the source).",
+ "covers_classes": [
+  "attn.o",
+  "attn.qkv",
+  "mlp.down",
+  "mlp.gate",
+  "mlp.up",
+  "moe.shared_expert"
+ ],
+ "candidate": {
+  "repo": "brandonmusic/GLM-5.2-EXL3-TR3-3.0bpw",
+  "revision": "f79c9167690ca705e877ae4dc55a841d1aae1247"
+ },
+ "bf16_root": {
+  "repo": "zai-org/GLM-5.2",
+  "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc"
+ },
+ "fp8_release": {
+  "repo": "zai-org/GLM-5.2-FP8",
+  "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+ },
+ "rows_requested": 576,
+ "tensors": {
+  "model.layers.0.self_attn.q_a_proj.weight": {
+   "candidate": {
+    "dtype": "BF16",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-layer-000.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00001-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 3538944,
+    "scale_inv": "model.layers.0.self_attn.q_a_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 3538944,
+   "stored_dtype": "BF16",
+   "eq_stored(bf16_root)": true,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": false,
+   "n_diff_vs_bf16_root": 0,
+   "n_diff_vs_fp8_dequant": 3309235,
+   "max_abs_diff_vs_bf16_root": 0.0,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.0035574734210968018
+  },
+  "model.layers.0.self_attn.kv_a_proj_with_mqa.weight": {
+   "candidate": {
+    "dtype": "BF16",
+    "shape": [
+     576,
+     6144
+    ],
+    "shard": "model-layer-000.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     576,
+     6144
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     576,
+     6144
+    ],
+    "shard": "model-00001-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 3538944,
+    "scale_inv": "model.layers.0.self_attn.kv_a_proj_with_mqa.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 3538944,
+   "stored_dtype": "BF16",
+   "eq_stored(bf16_root)": true,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": false,
+   "n_diff_vs_bf16_root": 0,
+   "n_diff_vs_fp8_dequant": 3308534,
+   "max_abs_diff_vs_bf16_root": 0.0,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.04352682828903198
+  },
+  "model.layers.0.self_attn.q_b_proj.weight": {
+   "candidate": {
+    "dtype": "BF16",
+    "shape": [
+     16384,
+     2048
+    ],
+    "shard": "model-layer-000.safetensors",
+    "rows_read": 576,
+    "bytes_read": 2359296
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     16384,
+     2048
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 2359296
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     16384,
+     2048
+    ],
+    "shard": "model-00001-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 1179648,
+    "scale_inv": "model.layers.0.self_attn.q_b_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 1179648,
+   "stored_dtype": "BF16",
+   "eq_stored(bf16_root)": true,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": false,
+   "n_diff_vs_bf16_root": 0,
+   "n_diff_vs_fp8_dequant": 1103201,
+   "max_abs_diff_vs_bf16_root": 0.0,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.01674109697341919
+  },
+  "model.layers.40.self_attn.kv_b_proj.weight": {
+   "candidate": {
+    "dtype": "BF16",
+    "shape": [
+     28672,
+     512
+    ],
+    "shard": "model-layer-040.safetensors",
+    "rows_read": 576,
+    "bytes_read": 589824
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     28672,
+     512
+    ],
+    "shard": "model-00123-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 589824
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     28672,
+     512
+    ],
+    "shard": "model-00062-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 294912,
+    "scale_inv": "model.layers.40.self_attn.kv_b_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 294912,
+   "stored_dtype": "BF16",
+   "eq_stored(bf16_root)": true,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": false,
+   "n_diff_vs_bf16_root": 0,
+   "n_diff_vs_fp8_dequant": 275281,
+   "max_abs_diff_vs_bf16_root": 0.0,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.005998879671096802
+  },
+  "model.layers.40.self_attn.o_proj.weight": {
+   "candidate": {
+    "dtype": "BF16",
+    "shape": [
+     6144,
+     16384
+    ],
+    "shard": "model-layer-040.safetensors",
+    "rows_read": 576,
+    "bytes_read": 18874368
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     6144,
+     16384
+    ],
+    "shard": "model-00123-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 18874368
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     6144,
+     16384
+    ],
+    "shard": "model-00062-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 9437184,
+    "scale_inv": "model.layers.40.self_attn.o_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 9437184,
+   "stored_dtype": "BF16",
+   "eq_stored(bf16_root)": true,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": false,
+   "n_diff_vs_bf16_root": 0,
+   "n_diff_vs_fp8_dequant": 8814815,
+   "max_abs_diff_vs_bf16_root": 0.0,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.004324778914451599
+  },
+  "model.layers.0.mlp.gate_proj.weight": {
+   "candidate": {
+    "dtype": "BF16",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-layer-000.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-00001-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 3538944,
+    "scale_inv": "model.layers.0.mlp.gate_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 3538944,
+   "stored_dtype": "BF16",
+   "eq_stored(bf16_root)": true,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": false,
+   "n_diff_vs_bf16_root": 0,
+   "n_diff_vs_fp8_dequant": 3306780,
+   "max_abs_diff_vs_bf16_root": 0.0,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.004010878503322601
+  },
+  "model.layers.2.mlp.up_proj.weight": {
+   "candidate": {
+    "dtype": "BF16",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-layer-002.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-00038-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-00020-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 3538944,
+    "scale_inv": "model.layers.2.mlp.up_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 3538944,
+   "stored_dtype": "BF16",
+   "eq_stored(bf16_root)": true,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": false,
+   "n_diff_vs_bf16_root": 0,
+   "n_diff_vs_fp8_dequant": 3304924,
+   "max_abs_diff_vs_bf16_root": 0.0,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.0041852667927742004
+  },
+  "model.layers.1.mlp.down_proj.weight": {
+   "candidate": {
+    "dtype": "BF16",
+    "shape": [
+     6144,
+     12288
+    ],
+    "shard": "model-layer-001.safetensors",
+    "rows_read": 576,
+    "bytes_read": 14155776
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     6144,
+     12288
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 14155776
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     6144,
+     12288
+    ],
+    "shard": "model-00001-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888,
+    "scale_inv": "model.layers.1.mlp.down_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 7077888,
+   "stored_dtype": "BF16",
+   "eq_stored(bf16_root)": true,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": false,
+   "n_diff_vs_bf16_root": 0,
+   "n_diff_vs_fp8_dequant": 6612145,
+   "max_abs_diff_vs_bf16_root": 0.0,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.004080638289451599
+  },
+  "model.layers.3.mlp.shared_experts.gate_proj.weight": {
+   "candidate": {
+    "dtype": "BF16",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-layer-003.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00079-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00040-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 3538944,
+    "scale_inv": "model.layers.3.mlp.shared_experts.gate_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 3538944,
+   "stored_dtype": "BF16",
+   "eq_stored(bf16_root)": true,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": false,
+   "n_diff_vs_bf16_root": 0,
+   "n_diff_vs_fp8_dequant": 3307896,
+   "max_abs_diff_vs_bf16_root": 0.0,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.0071149468421936035
+  },
+  "model.layers.77.mlp.shared_experts.down_proj.weight": {
+   "candidate": {
+    "dtype": "BF16",
+    "shape": [
+     6144,
+     2048
+    ],
+    "shard": "model-layer-077.safetensors",
+    "rows_read": 576,
+    "bytes_read": 2359296
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     6144,
+     2048
+    ],
+    "shard": "model-00270-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 2359296
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     6144,
+     2048
+    ],
+    "shard": "model-00136-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 1179648,
+    "scale_inv": "model.layers.77.mlp.shared_experts.down_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 1179648,
+   "stored_dtype": "BF16",
+   "eq_stored(bf16_root)": true,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": false,
+   "n_diff_vs_bf16_root": 0,
+   "n_diff_vs_fp8_dequant": 1103215,
+   "max_abs_diff_vs_bf16_root": 0.0,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.006068632006645203
+  }
+ },
+ "method": {
+  "reads": "safetensors header (8-byte length + JSON) and the leading rows of each tensor by HTTP Range against huggingface.co/<repo>/resolve/<revision>/<shard>; no shard downloaded; rows are contiguous in row-major storage.",
+  "dequantize": "engines/tools/layer_outer.py:dequantize_block_fp8(q, scale_inv, torch.float32) -- fp8 -> fp32, one multiply by the fp32 128x128 block scale, one RNE cast; the first ceil(rows/128) scale rows govern exactly the rows read.",
+  "equality": "torch.equal on the candidate's stored dtype after casting each reference to it (RNE); counts and max |diff| computed in fp32.",
+  "layer_outer_commit": "acac0cf370740b95b6889e9c4ccc9b9fff66eae2",
+  "layer_outer_sha256": "bec648063597523da369a753bf8193602eeb056225d2c10f29fbc81b9553c619",
+  "torch_version": "2.11.0+cpu",
+  "python_version": "3.14.4"
+ },
+ "produced_by": {
+  "script": "engines/tools/nonrouted_provenance.py",
+  "script_sha256": "3703ea0c9f105b52a955e1566914ad25bfd432baadd57f2910939b448a26f73e",
+  "repo_commit": "aca52c74670fc18b30323682f06321fa1d6f0c26",
+  "argv": [
+   "--candidate",
+   "brandonmusic/GLM-5.2-EXL3-TR3-3.0bpw@f79c9167690ca705e877ae4dc55a841d1aae1247",
+   "--bf16-root",
+   "zai-org/GLM-5.2@cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+   "--fp8-release",
+   "zai-org/GLM-5.2-FP8@f33c6dc501ee5a2c7e35155653b1b1abbc320951",
+   "--tensor",
+   "model.layers.0.self_attn.q_a_proj.weight",
+   "--tensor",
+   "model.layers.0.self_attn.kv_a_proj_with_mqa.weight",
+   "--tensor",
+   "model.layers.0.self_attn.q_b_proj.weight",
+   "--tensor",
+   "model.layers.40.self_attn.kv_b_proj.weight",
+   "--tensor",
+   "model.layers.40.self_attn.o_proj.weight",
+   "--tensor",
+   "model.layers.0.mlp.gate_proj.weight",
+   "--tensor",
+   "model.layers.2.mlp.up_proj.weight",
+   "--tensor",
+   "model.layers.1.mlp.down_proj.weight",
+   "--tensor",
+   "model.layers.3.mlp.shared_experts.gate_proj.weight",
+   "--tensor",
+   "model.layers.77.mlp.shared_experts.down_proj.weight",
+   "--covers-class",
+   "attn.qkv",
+   "--covers-class",
+   "attn.o",
+   "--covers-class",
+   "mlp.gate",
+   "--covers-class",
+   "mlp.up",
+   "--covers-class",
+   "mlp.down",
+   "--covers-class",
+   "moe.shared_expert",
+   "--rows",
+   "576",
+   "--out",
+   "engines/tools/layer-outer-evidence/glm52-exl3-tr3-3.0bpw-brandonmusic-nonrouted-provenance.json"
+  ],
+  "date_utc": "2026-09-05T13:40:15Z"
+ }
+}
