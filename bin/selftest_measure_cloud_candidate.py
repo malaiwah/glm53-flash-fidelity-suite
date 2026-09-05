@@ -28,6 +28,7 @@ Rungs (offline, $0.00; the Hub is never contacted -- config reads are stubbed):
       shows the candidate example and the authored root numbers
 """
 import contextlib
+import json
 import io
 import sys
 from pathlib import Path
@@ -313,6 +314,65 @@ def main():
           and hashlib.sha256(other_json["tokenizer.json"]).hexdigest()[:16] in text3
           and "candidate-tokenizer-files" not in repr(plan3),
           (text2 + " || " + text3)[:500])
+
+    # R8: the reference root is NOT the panel's pinned release (the GLM-5.2
+    # root pins GLM-5.3-BF16's tokenizer). The reference-sourced publisher-
+    # metadata files (LICENSE, chat_template, config.json) then differ from
+    # the pin and the pod's panel gate needs the pin's copies under .reference/
+    # and the panel's own equivalence rules; three paid pods refused on
+    # LICENSE after the whole fetch before this ran at $0.
+    if hasattr(MC, "_refuse_candidate_tokenizer_mismatch"):
+        pin_files = dict(root_files)
+        pin_files.setdefault("LICENSE", b"MIT (the pinned release's licence)\n")
+        ref52_files = dict(pin_files)
+        ref52_files["LICENSE"] = b"Apache-2.0 (the other release's licence)\n"
+        ref52_files["chat_template.jinja"] = b"[gMASK]<sop>{{ other }}\n"
+        pin_cfg = json.loads(pin_files["config.json"]) if "config.json" in pin_files else {"model_type": "glm"}
+        pin_files["config.json"] = json.dumps(dict(pin_cfg, transformers_version="5.15.0"), sort_keys=True).encode()
+        ref52_files["config.json"] = json.dumps(dict(pin_cfg, transformers_version="5.12.0"), sort_keys=True).encode()
+        binding52 = [{"name": n, "bytes": len(b), "sha256": hashlib.sha256(b).hexdigest()}
+                     for n, b in sorted(pin_files.items())]
+
+        def by_three(pin_bytes, ref_bytes, cand_bytes):
+            def fetch(repo, name, **kw):
+                table = {"zai-org/GLM-5.3-BF16": pin_bytes, "zai-org/GLM-5.2": ref_bytes}
+                return table.get(repo, cand_bytes)[name]
+            return fetch
+
+        def controller52(ref_bytes, plan):
+            original_fetch = MC.fetch_file
+            MC.fetch_file = by_three(pin_files, ref_bytes, candidate_files)
+            try:
+                return refusal_of(lambda: MC._refuse_candidate_tokenizer_mismatch(
+                    _Con(), _Target(),
+                    {"tokenizer": {"files": binding52, "repository": "zai-org/GLM-5.3-BF16",
+                                   "revision": "3" * 40}},
+                    "zai-org/GLM-5.2", "5" * 40, plan))
+            finally:
+                MC.fetch_file = original_fetch
+
+        plan52 = {"verified_gates": {}, "warnings": []}
+        refused52 = controller52(ref52_files, plan52)
+        gate52 = (plan52.get("gates") or {}).get("candidate-tokenizer-files") or {}
+        admitted = [r["name"] for r in gate52.get("reference_provenance_admitted") or []]
+        check("R8: a reference root that is not the pinned release is admitted at $0 when its "
+              "LICENSE/chat_template (per-model provenance) and config.json (loader key only) "
+              "pass fidelity.panel's rules, recorded on the gate and warned about",
+              refused52 is None and sorted(admitted) == ["LICENSE", "chat_template.jinja", "config.json"]
+              and any("not the panel's pinned release" in w for w in plan52["warnings"]),
+              repr((refused52 and refusal_text(refused52), gate52))[:400])
+        bad52 = dict(ref52_files)
+        bad52["config.json"] = json.dumps(dict(pin_cfg, transformers_version="5.12.0",
+                                               vocab_size=1), sort_keys=True).encode()
+        plan52b = {"verified_gates": {}, "warnings": []}
+        refused52b = controller52(bad52, plan52b)
+        text52b = refusal_text(refused52b) if refused52b is not None else ""
+        check("R8: a reference root whose config.json differs beyond the loader key REFUSES "
+              "before any rental, naming the file and the key, with no verified gate",
+              refused52b is not None and "config.json" in text52b and "vocab_size" in text52b
+              and "$0.00 spent" in text52b and "candidate-tokenizer-files" not in repr(plan52b),
+              text52b[:400])
+
 
     print()
     if failures:
