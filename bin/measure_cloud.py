@@ -6753,6 +6753,12 @@ def _runpod_stage_command(fs_root, engine_root, stage, image_digest,
     propagates its own exit code (it failed before it could record)."""
     return (
         "set -eu; "
+        # The record is per-STAGE but the path is per-run: without clearing
+        # it, from the second stage on the wait below is satisfied at once by
+        # the PREVIOUS leader's record (a stale pgid until this leader
+        # overwrites it moments later).  Clear it so the wait is for this
+        # stage's own self-record.
+        "rm -f {fs}/runtime/stage.pgid; "
         "setsid env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN "
         "-u HUGGINGFACE_HUB_TOKEN -u HF_HUB_OFFLINE "
         "-u HF_DATASETS_OFFLINE -u TRANSFORMERS_OFFLINE "

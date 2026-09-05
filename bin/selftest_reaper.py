@@ -2726,6 +2726,43 @@ def stage_pgid_race_case():
               % (proc.returncode, record.exists(), receipt.exists(),
                  proc.stderr[:300]))
 
+    # (d) The record path is per-RUN, the record is per-STAGE: a leftover
+    #     record from the previous stage must not satisfy this stage's wait.
+    #     A leader that records nothing and exits 42 after a delay would, with
+    #     the stale file present, have been waited on at once and then -- the
+    #     stale record being "present" -- reported as a recorded success path
+    #     with its own code; but the record left behind would be the OLD
+    #     leader's pgid, so the watchdog would target a dead group. The wrapper
+    #     clears the record before launching; the stale content must be gone
+    #     and the exit code must be the leader's.
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td)
+        (fs / "bin").mkdir(parents=True)
+        (fs / "logs").mkdir()
+        (fs / "runtime").mkdir()
+        shutil.copy(str(watchdog), str(fs / "bin" / "watchdog.sh"))
+        stale = fs / "runtime" / "stage.pgid"
+        stale.write_text("version=1\nleader_pid=1\npgid=1\nsession_id=1\n"
+                         "start_ticks=1\nrecorded_at_epoch=1\n", encoding="utf-8")
+        stub = fs / "bin" / "stage_measure.sh"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "sleep 1\n"
+            "exit 42\n", encoding="utf-8")
+        stub.chmod(0o755)
+        secrets = fs / ".secrets"
+        secrets.mkdir()
+        cmd = wrapper_command(fs, "capture", secrets)
+        proc = subprocess.run(
+            ["bash", "-c", cmd], capture_output=True, text=True,
+            env=dict(os.environ, STAGE_PGID_WAIT_SECS="5"), timeout=30)
+        leftover = stale.read_text(encoding="utf-8") if stale.exists() else ""
+        check("a stale record from the previous stage is cleared before launch and "
+              "never stands in for this stage's own",
+              proc.returncode == 42 and "leader_pid=1\n" not in leftover,
+              "rc=%d stale_present=%s content=%r" % (proc.returncode, stale.exists(), leftover[:60]))
+
     # (c) A stage that exits non-zero after self-recording must propagate that
     #     code -- not 70, not 0.
     with tempfile.TemporaryDirectory() as td:
