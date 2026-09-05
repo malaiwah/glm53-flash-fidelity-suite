@@ -4287,6 +4287,161 @@ def _root_workload_bound(timing: Dict[str, Any], *, storage_layout: str,
         "conservative_upper_hours_row": str(hours),
     }
 
+DERIVED_ALLOWLIST_REMOTE = "inputs/allowlist.json"
+
+
+def _derive_index_census_allowlist(target: RepoMeta, identity: Dict[str, Any],
+                                   plan_data: Dict[str, Any],
+                                   con: Console) -> Optional[Dict[str, Any]]:
+    """Bind the index census of the never-built block when nothing is authored.
+
+    The method that made every GLM-5.3 allowlist, run by its committed tool
+    (`engines/tools/index_census_allowlist.py`) on the two files the planner
+    already hashed into the identity: every index key at or past the declared
+    decoder count. The file rides to the pod as `inputs/allowlist.json` and is
+    bound into job.json by both digests exactly as an authored one; the pod's
+    guard is unchanged (the loader's unexpected set must equal the list). The
+    `_ALLOWLISTS` table in runpodsafety stays the attestation that upgrades
+    the gate's provenance from `derived_from_index` to `authored`. None when
+    the index has no key past the boundary (nothing to allowlist).
+    """
+    scratch = tempfile.TemporaryDirectory(prefix="fidelity-allowlist-plan-")
+    _RUNPOD_TEMP_HOLDS.append(scratch)
+    root = Path(scratch.name)
+    try:
+        config_raw = fetch_file(target.repo_id, "config.json", revision=target.revision)
+        index_raw = fetch_file(target.repo_id, "model.safetensors.index.json",
+                               revision=target.revision)
+    except HFError as exc:
+        raise Refusal("allowlist derivation cannot read config/index: %s"
+                      % redact(str(exc)), [])
+    if (hashlib.sha256(config_raw).hexdigest() != identity["config_sha256"]
+            or hashlib.sha256(index_raw).hexdigest() != identity["index_sha256"]):
+        raise Refusal("config/index bytes differ from the identity hashed moments ago", [])
+    (root / "config.json").write_bytes(config_raw)
+    (root / "model.safetensors.index.json").write_bytes(index_raw)
+    out = root / "allowlist.json"
+    run = subprocess.run(
+        [sys.executable, str(SUITE_ROOT / "engines/tools/index_census_allowlist.py"),
+         "--repo", target.repo_id, "--revision", target.revision,
+         "--index", str(root / "model.safetensors.index.json"),
+         "--config", str(root / "config.json"), "--out", str(out)],
+        cwd=str(SUITE_ROOT / "engines/tools"), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    if run.returncode != 0:
+        message = (run.stderr or run.stdout).strip()
+        if "nothing to allowlist" in message:
+            return None
+        raise Refusal("allowlist derivation failed: %s" % redact(message[-400:]), [])
+    raw = out.read_bytes()
+    sidecar = json.loads((root / "allowlist.json.provenance.json").read_text("utf-8"))
+    from fidelity.runpodsafety import _strict_json, canonical_bytes
+    names = _strict_json(raw, "derived allowlist")
+    if (not isinstance(names, list) or names != sorted(set(names))
+            or hashlib.sha256(raw).hexdigest() != sidecar["artifact_sha256"]
+            or sidecar["index_sha256"] != identity["index_sha256"]
+            or sidecar["config_sha256"] != identity["config_sha256"]):
+        raise Refusal("derived allowlist does not describe the identity it was made from", [])
+    names_sha = hashlib.sha256(canonical_bytes(names)).hexdigest()
+    if names_sha != sidecar["canonical_sorted_names_sha256"]:
+        raise Refusal("derived allowlist canonical digest differs from its sidecar", [])
+    plan_data["_derived_allowlist_local"] = str(out)
+    plan_data["derived_allowlist_provenance"] = sidecar
+    con.ok("allowlist derived from index",
+           "%d names past layer %d (%s); artifact %s..., names %s...; register "
+           "these in runpodsafety._ALLOWLISTS to attest it"
+           % (sidecar["count"], sidecar["decoder_layers"], sidecar["architecture"],
+              sidecar["artifact_sha256"][:16], names_sha[:16]))
+    return {"path": DERIVED_ALLOWLIST_REMOTE,
+            "artifact_sha256": sidecar["artifact_sha256"],
+            "canonical_sorted_names_sha256": names_sha,
+            "count": sidecar["count"], "decoder_layers": sidecar["decoder_layers"]}
+
+
+
+#: `bin/stage_measure.sh`'s candidate rule: these binding files are symlinked
+#: from the REFERENCE root's release on the pod (publisher metadata, no
+#: tokenization effect); every other bound file (tokenizer.json,
+#: tokenizer_config.json, ...) is taken from the CANDIDATE and byte-checked by
+#: the capture against the root's digest.
+CANDIDATE_TOKENIZER_FILES_FROM_REFERENCE = frozenset(
+    {"config.json", "generation_config.json", "LICENSE", "chat_template.jinja"})
+
+
+def candidate_tokenizer_files_mismatch(binding_files, fetch) -> List[Dict[str, Any]]:
+    """The bound tokenization files the candidate does NOT carry byte-identically.
+
+    `binding_files` is the panel binding's `tokenizer.files` (name, bytes,
+    sha256 of the ROOT's file); `fetch(name) -> bytes | None` reads the
+    candidate's file at its pinned revision (None when absent). Returns one
+    row per differing or absent file, empty when the pod's byte gate will
+    pass. Pure so the selftest can drive it without the Hub.
+
+    This is the gate the 2026-09-05 RadixArk attempt lacked: the controller
+    validated the binding's LABELS and rented a pod that refused on the first
+    tokenizer_config.json digest (one added loader key) after fetching 465 GB.
+    """
+    rows: List[Dict[str, Any]] = []
+    for entry in binding_files or []:
+        name = str(entry.get("name"))
+        if name in CANDIDATE_TOKENIZER_FILES_FROM_REFERENCE:
+            continue
+        want = str(entry.get("sha256"))
+        raw = fetch(name)
+        if raw is None:
+            rows.append({"name": name, "expected_sha256": want, "observed_sha256": None,
+                         "expected_bytes": entry.get("bytes"), "observed_bytes": None})
+            continue
+        got = hashlib.sha256(raw).hexdigest()
+        if got != want:
+            rows.append({"name": name, "expected_sha256": want, "observed_sha256": got,
+                         "expected_bytes": entry.get("bytes"), "observed_bytes": len(raw)})
+    return rows
+
+
+def _refuse_candidate_tokenizer_mismatch(con: Console, target, binding: Dict[str, Any],
+                                         reference_repo: str, reference_revision: str,
+                                         plan_data: Dict[str, Any]) -> None:
+    """Read the candidate's tokenization files NOW and refuse before any rental."""
+    files = (binding.get("tokenizer") or {}).get("files") or []
+
+    def fetch(name: str):
+        try:
+            return fetch_file(target.repo_id, name, revision=target.revision)
+        except HFError as exc:
+            if re.search(r"HTTP 404\b", str(exc)):
+                return None
+            raise Refusal(
+                "candidate tokenizer file %s could not be read from %s@%s: %s"
+                % (name, target.repo_id, target.revision[:12], redact(str(exc))),
+                ["Nothing was created. $0.00 spent."])
+
+    mismatch = candidate_tokenizer_files_mismatch(files, fetch)
+    checked = [str(e.get("name")) for e in files
+               if str(e.get("name")) not in CANDIDATE_TOKENIZER_FILES_FROM_REFERENCE]
+    if mismatch:
+        raise Refusal(
+            "candidate tokenizer file(s) differ from the reference root's panel binding: %s"
+            % ", ".join(r["name"] for r in mismatch),
+            ["%s: root sha256 %s (%s bytes) vs candidate %s (%s bytes)"
+             % (r["name"], r["expected_sha256"][:16], r["expected_bytes"],
+                (r["observed_sha256"] or "absent")[:16], r["observed_bytes"])
+             for r in mismatch]
+            + ["The candidate route takes tokenizer.json and tokenizer_config.json from "
+               "the CANDIDATE and the capture byte-checks them against the root's "
+               "digests (bin/stage_measure.sh); the pod would refuse on the first "
+               "mismatch after fetching the whole checkpoint.",
+               "Publisher-metadata files (%s) come from the reference root and are "
+               "not checked here." % ", ".join(sorted(CANDIDATE_TOKENIZER_FILES_FROM_REFERENCE)),
+               "Nothing was created. $0.00 spent."])
+    gate_verified(plan_data, "candidate-tokenizer-files",
+                  candidate=target.repo_id, candidate_revision=target.revision,
+                  reference=reference_repo, reference_revision=reference_revision,
+                  files_checked=checked)
+    con.ok("candidate tokenizer files",
+           "%s read from %s@%s and byte-identical to the reference root's binding"
+           % (", ".join(checked), target.repo_id, target.revision[:12]))
+
 
 def _plan_runpod_anonymous(
         args, con: Console, provider,
@@ -4766,8 +4921,10 @@ def _plan_runpod_anonymous(
             if validated_root_binding != relabelled:
                 raise PanelError(
                     "root panel validator changed the resolved binding")
+            _refuse_candidate_tokenizer_mismatch(
+                con, target, relabelled, reference_repo, reference_revision, plan_data)
             con.ok("candidate panel",
-                   "exact for reference root %s@%s; tokenizer files byte-identical"
+                   "exact for reference root %s@%s"
                    % (reference_repo, str(reference_revision)[:12]))
         else:
             validated_root_binding = validate_root_panel_binding(
@@ -4839,6 +4996,7 @@ def _plan_runpod_anonymous(
                 target_revision=target.revision, suite_root=SUITE_ROOT)
             gate_verified(
                 plan_data, "exact-unexpected-tensor-allowlist",
+                provenance="authored",
                 artifact_sha256=allowlist["artifact_sha256"],
                 names_sha256=allowlist[
                     "canonical_sorted_names_sha256"])
@@ -4851,13 +5009,31 @@ def _plan_runpod_anonymous(
                 raise Refusal(
                     "authored allowlist differs from frozen bundle manifest", [])
         else:
-            plan_data["warnings"].append(
-                "no authored unexpected-tensor allowlist for %s@%s: the "
-                "capture refuses on the pod if the checkpoint carries tensors "
-                "the architecture does not declare. If that happens, author "
-                "one under engines/tools/layer-outer-evidence/ and register "
-                "it in bin/fidelity/runpodsafety.py"
-                % (target.repo_id, target.revision[:12]))
+            allowlist = _derive_index_census_allowlist(
+                target, identity, plan_data, con)
+            if allowlist is not None:
+                gate_verified(
+                    plan_data, "exact-unexpected-tensor-allowlist",
+                    provenance="derived_from_index",
+                    artifact_sha256=allowlist["artifact_sha256"],
+                    names_sha256=allowlist["canonical_sorted_names_sha256"],
+                    count=allowlist["count"])
+                plan_data["warnings"].append(
+                    "no authored unexpected-tensor allowlist for %s@%s: bound "
+                    "the index census instead (%d names past layer %s, sha256 "
+                    "%s...). The pod refuses unless the loader's unexpected set "
+                    "equals it exactly. To attest it, register the printed "
+                    "digests in bin/fidelity/runpodsafety.py _ALLOWLISTS and "
+                    "commit the file under engines/tools/layer-outer-evidence/"
+                    % (target.repo_id, target.revision[:12], allowlist["count"],
+                       allowlist["decoder_layers"], allowlist["artifact_sha256"][:16]))
+            else:
+                plan_data["warnings"].append(
+                    "no unexpected-tensor allowlist for %s@%s and its index "
+                    "carries no key past the declared decoder layers: the "
+                    "capture refuses on the pod if the loader reports any "
+                    "tensor the architecture does not declare"
+                    % (target.repo_id, target.revision[:12]))
         if args.sanity_expect == "":
             plan_data["warnings"].append(
                 "--sanity-expect '': the on-pod generation probe (\"The "
@@ -5932,6 +6108,10 @@ def _freeze_root_inputs(plan_data: Dict[str, Any], outdir: Path) -> None:
     if candidate is not None:
         rows.append(("_candidate_scope_local", "candidate-scope.json",
                      candidate["scope"]["sha256"], None))
+    if plan_data.get("_derived_allowlist_local"):
+        rows.append(("_derived_allowlist_local", "allowlist.json",
+                     plan_data["job"]["capture"]["unexpected_tensor_allowlist"]["artifact_sha256"],
+                     None))
     for key, name, expected_sha, expected_bytes in rows:
         source = Path(plan_data[key])
         metadata = source.lstat()
@@ -7490,6 +7670,13 @@ def execute_runpod(
                               % shlex.quote(fs_root), timeout=60)
                 provider.upload(pod_id, plan_data["_candidate_scope_local"],
                                 "%s/%s" % (fs_root, CANDIDATE_SCOPE_REMOTE))
+            if plan_data.get("_derived_allowlist_local"):
+                # The pod resolves capture.unexpected_tensor_allowlist.path
+                # under the run root and re-checks both digests before the
+                # capture (bin/stage_measure.sh), exactly as for an authored
+                # file inside the bundle.
+                provider.upload(pod_id, plan_data["_derived_allowlist_local"],
+                                "%s/%s" % (fs_root, DERIVED_ALLOWLIST_REMOTE))
             provider.exec(
                 pod_id,
                 "python3 {fs}/bin/fidelity/runpodsafety.py extract-panel "

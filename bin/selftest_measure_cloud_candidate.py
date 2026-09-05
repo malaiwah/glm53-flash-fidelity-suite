@@ -213,6 +213,73 @@ def main():
           "--role candidate" in help_text and "--max-cost 65 --max-runtime 7h30m" in help_text
           and "block-scaled FP8" not in help_text[root_start:cand_start])
 
+    # R7: the candidate's tokenization files are read and digest-checked
+    # against the root's binding BEFORE any pod exists (the 2026-09-05
+    # RadixArk attempt: one added loader key in tokenizer_config.json refused
+    # on the pod after a 465 GB fetch). Publisher-metadata files come from the
+    # reference root on the pod and are not the candidate's to match.
+    import hashlib
+    root_files = {"tokenizer.json": b'{"model": {"type": "BPE"}}',
+                  "tokenizer_config.json": b'{"model_max_length": 1048576}',
+                  "chat_template.jinja": b"{{ messages }}",
+                  "config.json": b'{"model_type": "glm_moe_dsa"}'}
+    binding_files = [{"name": n, "bytes": len(b), "sha256": hashlib.sha256(b).hexdigest()}
+                     for n, b in sorted(root_files.items())]
+    candidate_files = dict(root_files)
+    candidate_files["tokenizer_config.json"] = (
+        b'{"local_files_only": false, "model_max_length": 1048576}')
+    candidate_files["config.json"] = b'{"model_type": "glm_moe_dsa", "quantization_config": {}}'
+    candidate_files["chat_template.jinja"] = b"{{ messages | tojson }}"
+    gate = getattr(MC, "candidate_tokenizer_files_mismatch", None)
+    rows = gate(binding_files, lambda name: candidate_files.get(name)) if gate else None
+    check("R7: a candidate whose tokenizer_config.json differs from the root's binding is "
+          "reported by name, with both digests; config.json/chat_template.jinja (taken from "
+          "the reference root on the pod) are not the candidate's to match",
+          rows is not None and [r["name"] for r in rows] == ["tokenizer_config.json"]
+          and rows[0]["expected_sha256"] == hashlib.sha256(root_files["tokenizer_config.json"]).hexdigest()
+          and rows[0]["observed_sha256"] == hashlib.sha256(candidate_files["tokenizer_config.json"]).hexdigest()
+          and rows[0]["observed_bytes"] == len(candidate_files["tokenizer_config.json"]),
+          repr(rows))
+    identical = gate(binding_files, lambda name: root_files.get(name)) if gate else None
+    absent = gate(binding_files, lambda name: None if name == "tokenizer.json"
+                  else root_files.get(name)) if gate else None
+    check("R7: byte-identical files pass; an absent tokenizer.json is a mismatch",
+          identical == [] and absent is not None and [r["name"] for r in absent] == ["tokenizer.json"]
+          and absent[0]["observed_sha256"] is None, repr((identical, absent)))
+
+    class _Target:
+        repo_id = "RadixArk/GLM-5.3-NVFP4"
+        revision = "1" * 40
+
+    class _Con(Console):
+        def __init__(self):
+            super().__init__()
+            self.lines = []
+
+        def ok(self, *a, **k):
+            self.lines.append(a)
+
+    plan_data = {"verified_gates": {}}
+    refused = None
+    if hasattr(MC, "_refuse_candidate_tokenizer_mismatch"):
+        original_fetch = MC.fetch_file
+        MC.fetch_file = lambda repo, name, **kw: candidate_files[name]
+        try:
+            refused = refusal_of(lambda: MC._refuse_candidate_tokenizer_mismatch(
+                _Con(), _Target(), {"tokenizer": {"files": binding_files}},
+                "zai-org/GLM-5.3-BF16", "3" * 40, plan_data))
+        finally:
+            MC.fetch_file = original_fetch
+    text = refusal_text(refused) if refused is not None else ""
+    check("R7: the controller REFUSES before any rental, naming the file and both digests, "
+          "and records no verified gate",
+          refused is not None and "tokenizer_config.json" in text
+          and hashlib.sha256(root_files["tokenizer_config.json"]).hexdigest()[:16] in text
+          and hashlib.sha256(candidate_files["tokenizer_config.json"]).hexdigest()[:16] in text
+          and "$0.00 spent" in text
+          and "candidate-tokenizer-files" not in repr(plan_data),
+          text[:300])
+
     print()
     if failures:
         print("selftest_measure_cloud_candidate: %d FAILED" % len(failures))
