@@ -367,6 +367,7 @@ def cmd_compare(args):
         "allow_cross_lane": args.allow_cross_lane,
         "allow_partial": args.allow_partial,
         "disclose_head_substitution": args.disclose_head_substitution,
+        "own_heads": args.own_heads,
         "verify_tensors": args.verify_tensors,
         "reference_label": args.reference_label,
         "candidate_label": args.candidate_label,
@@ -1794,6 +1795,15 @@ def build_parser():
                         "The receipt records which of the two ran.")
     p.add_argument("--disclose-head-substitution", action="store_true",
                    help="HEAD-1b override: advisory, downward bias, BLOCKING disclosure")
+    p.add_argument("--own-heads", action="store_true",
+                   help="HEAD-1d: replay each hidden-form side through the head ITS OWN "
+                        "dataset sealed (head_policy=native_head, strict). Nothing is "
+                        "substituted, so the candidate's head error is inside the number "
+                        "exactly as under logit-form HEAD-2. Required when the two heads "
+                        "differ in content (an exllamav3 head_bits=16 head is the source "
+                        "head after an fp16 round trip); harmless and bitwise-identical "
+                        "when they are the same tensor. Both datasets must ship "
+                        "head/weight.safetensors; --head is refused alongside it.")
     p.add_argument("--emit-submission", action="store_true",
                    help="also write a registry submission; needs --submission-provenance")
     p.add_argument("--submission-provenance", metavar="FILE",

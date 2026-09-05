@@ -789,6 +789,94 @@ def section_head(tmp):
                        dscompare.load_dataset(h11b, verify=False), {}),
                    code="head_mismatch")
 
+    # H12-H16: HEAD-1d. Each hidden-form side replayed through the head ITS
+    # OWN dataset sealed. Motivated by every exllamav3 head_bits=16 release,
+    # whose lm_head is the source head after an fp16 round trip: content
+    # differs, HEAD-1b refused after two paid cold runs, and the only
+    # substitution-free answer is HEAD-2 computed offline from the shipped
+    # heads.
+    own = {"own_heads": True}
+    gates, findings = dscompare.run_gates(dscompare.load_dataset(same_a),
+                                          dscompare.load_dataset(other_head), own)
+    da = F.load_manifest(same_a)["head"]["tensor_content_sha256"]
+    db = F.load_manifest(other_head)["head"]["tensor_content_sha256"]
+    check("H12 hidden<->hidden, DIFFERENT heads + --own-heads -> native_head, strict (HEAD-1d)",
+          gates["head"]["passed"] and findings["head_policy"] == "native_head"
+          and findings["class"] == "strict" and findings.get("head_applied") is None
+          and findings["head_applied_reference"] == da
+          and findings["head_applied_candidate"] == db and da != db
+          and any(d["code"] == "native_head_replay" and d["severity"] == "info"
+                  for d in findings["disclosures"]),
+          repr((gates["head"], findings.get("head_policy"))))
+
+    base_options = {"device": "cpu", "replay_device": "numpy", "replay_dtype": "float32",
+                    "vocab_chunk": 8192, "verify_tensors": True}
+    own_dir = os.path.join(tmp, "h12-own")
+    receipt = dscompare.compare(same_a, other_head, own_dir, dict(base_options, own_heads=True))
+    tokenwise = np.load(os.path.join(own_dir, "tokenwise-kld.npy"))
+    # Independent per-side computation, straight from the sealed bytes: each
+    # side's hidden states through its OWN head, fp64 log-softmax, KL(a||b).
+    want = []
+    ref_ds, cand_ds = dscompare.load_dataset(same_a), dscompare.load_dataset(other_head)
+    head_a = dscompare.load_tensor(ref_ds.head_path(), "lm_head.weight").astype(np.float64)
+    head_b = dscompare.load_tensor(cand_ds.head_path(), "lm_head.weight").astype(np.float64)
+    for rec_a, rec_b in zip(ref_ds.records, cand_ds.records):
+        la = dscompare.load_tensor(ref_ds.record_path(rec_a), rec_a["key"]).astype(np.float64) @ head_a.T
+        lb = dscompare.load_tensor(cand_ds.record_path(rec_b), rec_b["key"]).astype(np.float64) @ head_b.T
+        lpa = la - np.log(np.exp(la - la.max(1, keepdims=True)).sum(1, keepdims=True)) - la.max(1, keepdims=True)
+        lpb = lb - np.log(np.exp(lb - lb.max(1, keepdims=True)).sum(1, keepdims=True)) - lb.max(1, keepdims=True)
+        want.append((np.exp(lpa) * (lpa - lpb)).sum(1))
+    want = np.concatenate(want)
+    comp = receipt["comparator"]
+    check("H13 HEAD-1d receipt: value matches an independent own-head computation, both heads named",
+          np.allclose(tokenwise, want, rtol=1e-6, atol=1e-9)
+          and abs(receipt["metric"]["value"] - float(want.mean())) < 1e-9
+          and receipt["estimator"]["head_policy"] == "native_head"
+          and comp["head_applied_tensor_content_sha256"] is None
+          and comp["head_applied_reference_tensor_content_sha256"] == da
+          and comp["head_applied_candidate_tensor_content_sha256"] == db
+          and receipt["comparability"]["class"] == "strict"
+          and receipt["comparability"]["key_inputs"]["head_policy"] == "native_head",
+          "max|diff| %r" % float(np.abs(tokenwise - want).max()))
+
+    shared_dir = os.path.join(tmp, "h14-shared")
+    own_same_dir = os.path.join(tmp, "h14-own")
+    shared = dscompare.compare(same_a, same_b, shared_dir, dict(base_options))
+    own_same = dscompare.compare(same_a, same_b, own_same_dir, dict(base_options, own_heads=True))
+    check("H14 --own-heads on identical heads is BITWISE the shared-head replay, labelled native_head",
+          np.array_equal(np.load(os.path.join(shared_dir, "tokenwise-kld.npy")),
+                         np.load(os.path.join(own_same_dir, "tokenwise-kld.npy")))
+          and shared["estimator"]["head_policy"] == "shared_reference_head"
+          and own_same["estimator"]["head_policy"] == "native_head"
+          and own_same["comparator"]["head_applied_reference_tensor_content_sha256"]
+          == own_same["comparator"]["head_applied_candidate_tensor_content_sha256"]
+          == shared["comparator"]["head_applied_tensor_content_sha256"])
+
+    # HEAD-1c is untouched by --own-heads: bitwise-equal hiddens under two
+    # heads would be classified a reproduction, which own-head replay cannot
+    # honour, so it still refuses with no override.
+    vac_a = os.path.join(tmp, "h15-a")
+    vac_b = os.path.join(tmp, "h15-b")
+    build_dataset(vac_a, seed=1, head_seed=7)
+    build_dataset(vac_b, seed=1, head_seed=99, role="quant", quantized=True)
+    expect_refusal("H15 HEAD-1c (equal hiddens, different heads) still refuses under --own-heads",
+                   lambda: dscompare.compare(vac_a, vac_b, os.path.join(tmp, "h15-out"),
+                                             dict(base_options, own_heads=True)),
+                   code="head_substitution_vacuous")
+
+    expect_refusal("H16 --own-heads with --head (one head for both sides) is refused",
+                   lambda: dscompare.compare(same_a, other_head, os.path.join(tmp, "h16-out"),
+                                             dict(base_options, own_heads=True,
+                                                  head_path=ref_ds.head_path())),
+                   code="head_mismatch")
+    no_head = os.path.join(tmp, "h16-nohead")
+    build_dataset(no_head, seed=2, head_seed=99, role="quant", quantized=True,
+                  head_present=False, head_content=db)
+    expect_refusal("H16b --own-heads against a dataset that ships no head payload is refused",
+                   lambda: dscompare.run_gates(dscompare.load_dataset(same_a),
+                                               dscompare.load_dataset(no_head, verify=False), own),
+                   code="head_missing", gate="head")
+
 
 # ---------------------------------------------------------------------------
 # L / C / X -- lane, stack, coverage, lossy

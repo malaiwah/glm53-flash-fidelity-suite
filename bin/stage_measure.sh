@@ -1539,7 +1539,19 @@ compare_reference)
   else
     COMPARE_DEVICE="$REPLAY_DEVICE"
   fi
-  log "scoring the qualified candidate against the reference (replay=$REPLAY_DEVICE/$REPLAY_DTYPE)"
+  # HEAD-1d: when the job says so, each side is replayed through the head its
+  # own dataset sealed (head_policy=native_head). An exllamav3 head_bits=16
+  # head is the source head after an fp16 round trip -- a different tensor by
+  # content, so the shared-head rule (HEAD-1a) cannot apply and HEAD-1b would
+  # refuse after two paid cold runs. Bitwise-identical to the shared replay
+  # whenever the two heads ARE the same tensor. Absent in an older job.json
+  # means the shared-head behaviour that job was planned with.
+  OWN_HEADS="$(jqget capture.own_heads false)"
+  COMPARE_HEAD_ARGS=()
+  case "$OWN_HEADS" in
+    True|true) COMPARE_HEAD_ARGS+=(--own-heads) ;;
+  esac
+  log "scoring the qualified candidate against the reference (replay=$REPLAY_DEVICE/$REPLAY_DTYPE, own_heads=$OWN_HEADS)"
   # The comparator exits 2 for a SEALED comparison that carries caveats
   # (advisory class, e.g. a cross-stack pair); that is a result, not a
   # failure -- the receipt says what the caveats are. Anything else refuses.
@@ -1550,6 +1562,7 @@ compare_reference)
       --device "$COMPARE_DEVICE" \
       --replay-device "$REPLAY_DEVICE" --replay-dtype "$REPLAY_DTYPE" \
       --vocab-chunk "$VOCAB_CHUNK" --out "$RCPT/reference-comparison" \
+      "${COMPARE_HEAD_ARGS[@]}" \
       2>&1 | tee -a "$LOGS/compare_reference.log"
   COMPARE_STATUS="${PIPESTATUS[0]}"
   set -e

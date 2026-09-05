@@ -922,6 +922,9 @@ def job_document(args, suite: Path, fs_root: Path, con) -> dict:
             "replay_device": args.replay_device,
             "replay_dtype": args.replay_dtype,
             "vocab_chunk": args.vocab_chunk,
+            # HEAD-1d, same contract as measure_cloud: each side is replayed
+            # through the head its own dataset sealed.
+            "own_heads": True,
         }
         if allowlist:
             capture["unexpected_tensor_allowlist"] = allowlist

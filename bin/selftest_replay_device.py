@@ -115,7 +115,7 @@ def body(tmp):
 
     devices = torch_devices()
     if not devices:
-        skip("R2-R5, R8", "torch not importable")
+        skip("R2-R5, R8, R10", "torch not importable")
     else:
         device = devices[0]
         # -- R2 -------------------------------------------------------------
@@ -201,6 +201,31 @@ def body(tmp):
               mixed_t["comparator"].get("replay_backend") == want and mrel < 1e-4,
               "numpy %.17g torch %.17g rel %.3e"
               % (mixed_np["metric"]["value"], mixed_t["metric"]["value"], mrel))
+
+        # -- R10 -- HEAD-1d on the device path --------------------------------
+        # Each hidden-form side through ITS OWN sealed head, replayed on the
+        # torch device: two resident heads, one per side, and the answer must
+        # be the numpy own-head answer to within the fp32-accumulation term.
+        other = os.path.join(tmp, "other-head")
+        fixtures.build_dataset(other, seed=2, head_seed=99, role="quant", quantized=True)
+        own_np = dscompare.compare(a, other, os.path.join(tmp, "own-np"), {"own_heads": True})
+        own_t = dscompare.compare(a, other, os.path.join(tmp, "own-torch"),
+                                  {"own_heads": True, "device": device, "replay_device": device})
+        orel = (abs(own_t["metric"]["value"] - own_np["metric"]["value"])
+                / abs(own_np["metric"]["value"]))
+        ca, ct = own_np["comparator"], own_t["comparator"]
+        check("R10 --own-heads on the device path replays each side through its own head",
+              ct.get("replay_backend") == want and orel < 1e-4
+              and own_t["estimator"]["head_policy"] == "native_head"
+              and ct["head_applied_tensor_content_sha256"] is None
+              and ct["head_applied_reference_tensor_content_sha256"]
+              == ca["head_applied_reference_tensor_content_sha256"]
+              and ct["head_applied_candidate_tensor_content_sha256"]
+              == ca["head_applied_candidate_tensor_content_sha256"]
+              and ct["head_applied_reference_tensor_content_sha256"]
+              != ct["head_applied_candidate_tensor_content_sha256"],
+              "numpy %.17g torch %.17g rel %.3e"
+              % (own_np["metric"]["value"], own_t["metric"]["value"], orel))
 
     # -- R6 -----------------------------------------------------------------
     try:

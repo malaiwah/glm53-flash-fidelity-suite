@@ -214,7 +214,7 @@ t "fidelity card annotation, 3 axes (T7)" \
 # move the floor, and that the backend is named on every receipt rather than
 # swapped silently. Runs on any interpreter with numpy; the torch rungs SKIP
 # loudly without torch.
-t "replay backend: floor is backend-independent, backend is named (T12: R1-R9)" \
+t "replay backend: floor is backend-independent, backend is named (T12: R1-R10)" \
                                            0 "$PY" bin/selftest_replay_device.py
 # The portable capture engine's own battery (CAPTURE-03's four ways a load can
 # hand back a model that is not the artifact's, the --device-map path, the

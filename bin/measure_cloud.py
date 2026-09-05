@@ -4939,6 +4939,14 @@ def _plan_runpod_anonymous(
             "vocab_chunk": args.replay_vocab_chunk,
             "replay": {"device": args.replay_device, "dtype": args.replay_dtype,
                        "vocab_chunk": args.replay_vocab_chunk},
+            # HEAD-1d: compare_reference replays each side through the head its
+            # own dataset sealed. Bitwise-identical to the shared-head replay
+            # when the candidate's head IS the source tensor (official FP8
+            # releases), and the only strict path when it is not (every
+            # exllamav3 head_bits=16 head is the source head after an fp16
+            # round trip). Recorded on the job so the pod's stage and this
+            # plan agree on what head policy the receipt will carry.
+            "own_heads": True,
             "root_protocol": {
                 "schedule": "two-fresh-process-qualification",
                 "fresh_processes": 2, "run_count_per_process": 1,

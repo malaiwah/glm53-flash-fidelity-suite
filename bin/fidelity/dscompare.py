@@ -556,6 +556,38 @@ def _head_gate(reference: Dataset, candidate: Dataset, options: Dict[str, Any],
         return out
 
     # hidden <-> hidden
+    if options.get("own_heads"):
+        # HEAD-1d: each side is replayed through ITS OWN sealed head, which is
+        # HEAD-2 (logit form, native heads) computed offline from the shipped
+        # head payloads instead of in the capture. Nothing is substituted, so
+        # the candidate's head error is INSIDE the number, exactly as under
+        # HEAD-2; and nothing is erased when the heads happen to be equal, so
+        # the rule is the same procedure whether da == db or not. HEAD-1c is
+        # checked in compare(): bitwise-equal hiddens under differing heads
+        # would make classify() call this a reproduction, which own-head
+        # replay cannot honour, so it still refuses there.
+        for label, dataset in (("reference", reference), ("candidate", candidate)):
+            if dataset.form == "hidden" and not dataset.head_path():
+                gates["head"] = _gate(False, "%s ships no head payload to replay" % label)
+                raise Refusal("head", "head_missing",
+                              "HEAD-1d: --own-heads replays each side through its own head, "
+                              "but the %s dataset ships no head/weight.safetensors" % label)
+        out["head_policy"] = "native_head"
+        out["head_applied"] = None
+        out["head_applied_reference"] = da
+        out["head_applied_candidate"] = db
+        findings["disclosures"].append({
+            "code": "native_head_replay", "severity": "info", "affects_comparability": False,
+            "detail": "HEAD-1d: each side replayed through its own sealed head (reference %s, "
+                      "candidate %s); head error is inside the measurement, as under HEAD-2, "
+                      "and nothing is substituted. The heads %s."
+                      % (da[:12], db[:12],
+                         "are content-identical" if da == db else "differ in content"),
+        })
+        gates["head"] = _gate(True, "HEAD-1d: own heads on both sides (%s vs %s)"
+                              % (da[:12], db[:12]))
+        return out
+
     if da == db:
         # HEAD-1a: ALLOW, and `class` may remain strict.
         out["head_policy"] = "shared_reference_head"
@@ -568,7 +600,6 @@ def _head_gate(reference: Dataset, candidate: Dataset, options: Dict[str, Any],
         })
         gates["head"] = _gate(True, "HEAD-1a: identical head content digest on both sides")
         return out
-
     # HEAD-1b: REFUSE.
     if not options.get("disclose_head_substitution"):
         gates["head"] = _gate(False, "head content digests differ: %s vs %s"
@@ -577,8 +608,10 @@ def _head_gate(reference: Dataset, candidate: Dataset, options: Dict[str, Any],
             "head", "head_mismatch",
             "HEAD-1b: head content digests differ (%s vs %s). Replaying one artifact's hidden "
             "states through the other's head erases its head-quantization error and flatters "
-            "it." % (da[:12], db[:12]),
-            override="--disclose-head-substitution")
+            "it. Both datasets ship their own head: --own-heads replays each side through its "
+            "own (HEAD-1d, native_head, strict)." % (da[:12], db[:12]),
+            override="--own-heads (each side through its own sealed head) or "
+                     "--disclose-head-substitution (one head, BLOCKING disclosure)")
     applied = options.get("head_content_sha256") or da
     out["head_policy"] = "shared_reference_head"
     out["head_applied"] = applied
@@ -953,9 +986,48 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
                       "the device the estimator consumes, or the logits cross the bus "
                       "twice per block" % (replay_device, device))
 
+    def _load_head(head_path: str, want: Optional[str], tensor_key_hint: Optional[str]):
+        head_key = None
+        _, header = F.read_safetensors_header(head_path)
+        for candidate_key in (tensor_key_hint, "lm_head.weight", "weight"):
+            if candidate_key and candidate_key in header:
+                head_key = candidate_key
+                break
+        if head_key is None:
+            raise Refusal("compute", "head_missing", "no known head tensor key in %s" % head_path)
+        got = F.tensor_content_sha256(head_path, head_key)
+        if want and got != want:
+            raise Refusal("compute", "head_mismatch",
+                          "the head payload hashes to %s but the gate resolved %s"
+                          % (got[:12], want[:12]))
+        return np.ascontiguousarray(load_tensor(head_path, head_key).T), got
+
+    # One head per SIDE. Under every rule but HEAD-1d both names point at the
+    # same array; under HEAD-1d each hidden-form side is replayed through the
+    # head its own dataset sealed, loaded once when the two digests coincide.
     head32_t = None
+    head32_t_a = head32_t_b = None
     head_applied = findings.get("head_applied")
-    if "hidden" in (reference.form, candidate.form):
+    if findings.get("head_policy") == "native_head" and "hidden" in (reference.form, candidate.form) \
+            and findings.get("head_applied_reference") is not None:
+        if options.get("head_path"):
+            raise Refusal("compute", "head_mismatch",
+                          "--head names one head to apply to both sides; --own-heads replays "
+                          "each side through its own sealed head. Pass one or the other.")
+        loaded: Dict[str, Any] = {}
+        for label, dataset, want in (("reference", reference, findings["head_applied_reference"]),
+                                     ("candidate", candidate, findings["head_applied_candidate"])):
+            if dataset.form != "hidden":
+                continue
+            if want not in loaded:
+                loaded[want] = _load_head(dataset.head_path(), want,
+                                          dataset.head.get("tensor_key"))[0]
+            if label == "reference":
+                head32_t_a = loaded[want]
+            else:
+                head32_t_b = loaded[want]
+        head32_t = head32_t_a if head32_t_a is not None else head32_t_b
+    elif "hidden" in (reference.form, candidate.form):
         head_path = options.get("head_path")
         if head_path is None:
             for dataset in (reference, candidate):
@@ -966,20 +1038,8 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
             raise Refusal("compute", "head_missing",
                           "no head payload available to replay; ship head/weight.safetensors or "
                           "pass --head")
-        head_key = None
-        _, header = F.read_safetensors_header(head_path)
-        for candidate_key in (reference.head.get("tensor_key"), "lm_head.weight", "weight"):
-            if candidate_key and candidate_key in header:
-                head_key = candidate_key
-                break
-        if head_key is None:
-            raise Refusal("compute", "head_missing", "no known head tensor key in %s" % head_path)
-        got = F.tensor_content_sha256(head_path, head_key)
-        if head_applied and got != head_applied:
-            raise Refusal("compute", "head_mismatch",
-                          "the head payload hashes to %s but the gate resolved %s"
-                          % (got[:12], head_applied[:12]))
-        head32_t = np.ascontiguousarray(load_tensor(head_path, head_key).T)
+        head32_t, got = _load_head(head_path, head_applied, reference.head.get("tensor_key"))
+        head32_t_a = head32_t_b = head32_t
         findings["head_applied"] = got
 
     ra = {int(r["index"]): r for r in reference.records}
@@ -995,9 +1055,16 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
     depth: Dict[str, List[float]] = {}
     backend = None
 
-    replayer = None
+    replayer = replayer_a = replayer_b = None
     if head32_t is not None and replay_device != "numpy":
-        replayer = _TorchReplay(head32_t, replay_device, replay_dtype, vocab_chunk)
+        replayer_a = _TorchReplay(head32_t_a, replay_device, replay_dtype, vocab_chunk) \
+            if head32_t_a is not None else None
+        # The same array is the same resident head: never upload it twice.
+        if head32_t_b is head32_t_a:
+            replayer_b = replayer_a
+        elif head32_t_b is not None:
+            replayer_b = _TorchReplay(head32_t_b, replay_device, replay_dtype, vocab_chunk)
+        replayer = replayer_a if replayer_a is not None else replayer_b
         replayer.reset_peak()
 
     for index in findings["shared_indices"]:
@@ -1006,9 +1073,9 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
         right = load_tensor(candidate.record_path(rec_b), rec_b["key"])
         if replayer is None:
             if reference.form == "hidden":
-                left = _replay(left, head32_t, vocab_chunk)
+                left = _replay(left, head32_t_a, vocab_chunk)
             if candidate.form == "hidden":
-                right = _replay(right, head32_t, vocab_chunk)
+                right = _replay(right, head32_t_b, vocab_chunk)
         rows_a = left.shape[0]
         rows_b = right.shape[0]
         width_a = vocab if reference.form == "hidden" and replayer is not None else left.shape[1]
@@ -1029,9 +1096,9 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
                 # fp64 estimator, so the replay happens THERE, one position
                 # block at a time, and the full [positions x vocab] fp32 logit
                 # array is never materialised on the host at all.
-                block_a = (replayer.replay(left[start:stop]) if reference.form == "hidden"
+                block_a = (replayer_a.replay(left[start:stop]) if reference.form == "hidden"
                            else replayer.to_device(left[start:stop]))
-                block_b = (replayer.replay(right[start:stop]) if candidate.form == "hidden"
+                block_b = (replayer_b.replay(right[start:stop]) if candidate.form == "hidden"
                            else replayer.to_device(right[start:stop]))
             piece, matched, backend = token_kld(block_a, block_b, device)
             values[start:stop] = piece
@@ -1081,6 +1148,10 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
         "position_block": position_block,
         "device": device,
         "head_applied": findings.get("head_applied"),
+        "head_applied_reference": findings.get("head_applied_reference",
+                                               findings.get("head_applied")),
+        "head_applied_candidate": findings.get("head_applied_candidate",
+                                               findings.get("head_applied")),
         # Named on EVERY receipt, including the numpy default. Two rows are
         # only rankable against each other if their replay ran on the same
         # backend, and a field that appears only when the non-default path ran
@@ -1270,6 +1341,14 @@ def build_receipt(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
                 result.get("replay_env") or {}).get("bf16_reduced_precision_reduction", False),
             "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
             "head_applied_tensor_content_sha256": result.get("head_applied"),
+            # Additive (2026-09-05): under HEAD-1d each hidden-form side is
+            # replayed through its OWN sealed head, so the single field above is
+            # null and these two name what each side actually saw. Under every
+            # other rule they both equal the single field.
+            "head_applied_reference_tensor_content_sha256": result.get(
+                "head_applied_reference", result.get("head_applied")),
+            "head_applied_candidate_tensor_content_sha256": result.get(
+                "head_applied_candidate", result.get("head_applied")),
             # What was ACTUALLY recomputed, never a constant.  The seal covers the
             # manifest and checksums.txt on every run; the per-tensor
             # `tensor_content_sha256` values are only re-derived when the caller
