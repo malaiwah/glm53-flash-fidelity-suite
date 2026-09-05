@@ -1214,14 +1214,14 @@ PYPANEL
   # for the equivalence check. Fetch only the pinned tokenizer files that
   # are NOT already byte-identical in the target (skip tokenizer.json and
   # tokenizer_config.json when they match, to avoid a 20 MB re-fetch).
-  TOK_REPO="$(python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print(j['panel']['resolved_binding']['tokenizer'].get('repository',''))" "$CONF")"
-  TOK_REV="$(python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print(j['panel']['resolved_binding']['tokenizer'].get('revision',''))" "$CONF")"
+  TOK_REPO="$(python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print((j['panel']['resolved_binding'].get('tokenizer') or {}).get('repository',''))" "$CONF")"
+  TOK_REV="$(python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print((j['panel']['resolved_binding'].get('tokenizer') or {}).get('revision',''))" "$CONF")"
   if [ -n "$TOK_REPO" ] && [ -n "$TOK_REV" ] && [ "$TOK_REPO/$TOK_REV" != "$REPO/$REV" ]; then
     mkdir -p "$TOKENIZER_ROOT/.reference"
     TOK_FILES="$(python3 -c "
 import json,sys,hashlib,pathlib
 j=json.load(open(sys.argv[1]))
-files=j['panel']['resolved_binding']['tokenizer'].get('files',[])
+files=(j['panel']['resolved_binding'].get('tokenizer') or {}).get('files',[])
 base=pathlib.Path(sys.argv[2])
 for f in files:
     name=f['name']; expected=f['sha256']

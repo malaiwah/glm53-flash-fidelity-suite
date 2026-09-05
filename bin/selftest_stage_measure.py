@@ -939,6 +939,142 @@ def main():
               (proc.stdout + proc.stderr)[-500:])
 
         # ---------------------------------------------------------------
+        print("\n== capture (--role root, GGUF candidate: the build dir gets the "
+              "reference root's config + tokenizer files) ==")
+        # The GGUF lane's paid attempt 3 (2026-09-05) built the whole streamed
+        # model and then died in hf_capture's fail-closed generation probe,
+        # which loads the tokenizer from --model itself: a GGUF ships no
+        # tokenizer and no config.json. The capture stage therefore COPIES the
+        # reference root's model-class files beside the build (regular files,
+        # config byte-checked against target.config_sha256) and links the
+        # tokenizer files into the tokenizer root. This rung drives the REAL
+        # stage over a GGUF-shaped target and asserts exactly that arrangement.
+        gguf_build = "UD-Q4_K_XL"
+        gguf_shards = [{"path": "%s/mini-00001-of-00001.gguf" % gguf_build, "bytes": 17}]
+        gguf_manifest = sorted(gguf_shards + [{"path": "LICENSE", "bytes": 3}],
+                               key=lambda row: row["path"])
+        gguf_config = b'{"num_hidden_layers": 78, "indexer_types": ["full"]}\n'
+        gguf_scope = json.dumps({"policy": "mixed", "head_policy": "quantized",
+                                 "assignments": []}).encode("utf-8")
+        gguf_binding = {"schema": "fidelity.resolved-panel.v1", "panel_id": "panel--x.y.z",
+                        "panel": {"id": "panel--x.y.z"}}
+        gguf_binding_bytes = canonical(gguf_binding)
+        gguf_job = job_root()
+        gguf_job["panel"] = dict(gguf_job["panel"], resolved_binding=gguf_binding,
+                                 binding_file_sha256=hashlib.sha256(gguf_binding_bytes).hexdigest())
+        gguf_job["target"] = {
+            "repo_id": "unsloth/GLM-5.3-GGUF", "revision": REV_A, "path": gguf_build,
+            "surface": "gguf", "codec": "gguf-k-quant", "bits": 4.0,
+            "config_sha256": hashlib.sha256(gguf_config).hexdigest(),
+            "index_sha256": "9" * 64, "index_source": "sha256 of the canonical GGUF tensor table",
+            "shard_manifest_sha256": hashlib.sha256(canonical(gguf_shards)).hexdigest(),
+            "model_bytes": 17, "shards": gguf_shards,
+            "download_manifest": gguf_manifest,
+            "download_bytes_total": sum(r["bytes"] for r in gguf_manifest),
+            "download_manifest_sha256": hashlib.sha256(canonical(gguf_manifest)).hexdigest(),
+        }
+        gguf_job["profile"] = dict(gguf_job["profile"], surface="gguf")
+        gguf_job["capture"] = dict(gguf_job["capture"], own_heads=True, candidate={
+            "scope": {"path": "candidate/scope.json",
+                      "sha256": hashlib.sha256(gguf_scope).hexdigest(),
+                      "scope_digest": "lm_head=quantized:gguf-k-quant@8.5"},
+            "codec": "gguf-k-quant", "declared_bits": 4.0,
+            "weights_decode": {"method": "gguf-dequant-to-bf16",
+                               "quantization_config": {"container": "gguf", "build": gguf_build}},
+            "reference": {"repository": "malaiwah/root-v1", "revision": REV_B,
+                          "dataset_sha256": "1" * 64, "capture_content_digest": "2" * 64,
+                          "dataset_id": "fidelity--root", "panel_id": "panel--x.y.z",
+                          "suite_token_hash_sha256": "3" * 64}})
+        gguf_job.pop("job_id", None)
+        gguf_job.pop("job_id_full", None)
+        gguf_job = jobcontract.finalize_job(gguf_job)
+        gsb = Sandbox(td / "cap-gguf", gguf_job, finalize_job_doc=False)
+        (gsb.fs / "panel-binding.json").write_bytes(gguf_binding_bytes)
+        (gsb.fs / "panel-src").mkdir()
+        for stale in ("config.json", "model.safetensors.index.json", SELFTEST_SHARDS[0]["path"]):
+            (gsb.fs / "models" / "target" / stale).unlink()
+        (gsb.fs / "models" / "target" / gguf_build).mkdir()
+        (gsb.fs / "models" / "target" / gguf_build / "mini-00001-of-00001.gguf").write_bytes(b"GGUF" + b"\0" * 13)
+        (gsb.fs / "models" / "target" / "LICENSE").write_bytes(b"MIT")
+        (gsb.fs / "candidate").mkdir()
+        (gsb.fs / "candidate" / "scope.json").write_bytes(gguf_scope)
+        ref_model = gsb.fs / "reference-model"
+        ref_model.mkdir()
+        # a REAL (tiny) tokenizers-format tokenizer, so the probe's loader can be
+        # exercised on the arranged build dir under a torch interpreter
+        tiny_tokenizer = json.dumps({
+            "version": "1.0", "truncation": None, "padding": None, "added_tokens": [],
+            "normalizer": None, "pre_tokenizer": {"type": "Whitespace"}, "post_processor": None,
+            "decoder": None,
+            "model": {"type": "WordLevel", "vocab": {"[UNK]": 0, "The": 1, "capital": 2,
+                                                     "of": 3, "France": 4, "is": 5, "Paris": 6},
+                      "unk_token": "[UNK]"}}).encode("utf-8")
+        ref_files = {"config.json": gguf_config, "tokenizer.json": tiny_tokenizer,
+                     "tokenizer_config.json": b'{"tokenizer_class": "PreTrainedTokenizerFast", "unk_token": "[UNK]"}\n',
+                     "generation_config.json": b'{"do_sample": false}\n',
+                     "LICENSE": b"MIT", "chat_template.jinja": b"{{ messages }}"}
+        for name, body in ref_files.items():
+            (ref_model / name).write_bytes(body)
+        gsb.write_bound_marker("fetch_reference")
+        proc, calls = gsb.run("capture", bash)
+        out = proc.stdout + proc.stderr
+        target_dir = gsb.fs / "models" / "target"
+        copied = {name: (target_dir / name).is_file() and not (target_dir / name).is_symlink()
+                  and (target_dir / name).read_bytes() == ref_files[name]
+                  for name in ("config.json", "tokenizer.json", "tokenizer_config.json",
+                               "generation_config.json")}
+        tok_root = gsb.fs / "inputs" / "tokenizer-root"
+        check("gguf candidate: the capture stage copies the reference root's config.json, "
+              "tokenizer.json, tokenizer_config.json and generation_config.json beside the "
+              "build as REGULAR files, byte-identical, and the stage runs the writer",
+              proc.returncode == 0 and all(copied.values())
+              and any(c[0] == "PY" and any("fidelity_dataset.py" in a for a in c[1]) for c in calls),
+              "%s\n%s" % (copied, out[-1200:]))
+        check("gguf candidate: the tokenizer root links tokenizer.json and tokenizer_config.json "
+              "from the reference root (the panel's byte gate) and the build itself is untouched",
+              (tok_root / "tokenizer.json").is_symlink() and (tok_root / "tokenizer_config.json").is_symlink()
+              and (tok_root / "tokenizer.json").resolve() == (ref_model / "tokenizer.json").resolve()
+              and (target_dir / gguf_build / "mini-00001-of-00001.gguf").read_bytes() == b"GGUF" + b"\0" * 13,
+              out[-600:])
+        gguf_cap = [c for c in calls if c[0] == "PY" and any("fidelity_dataset.py" in a for a in c[1])]
+        if gguf_cap:
+            argv = gguf_cap[0][1]
+            check("gguf candidate: the capture is invoked as role quant with the bound scope, "
+                  "codec gguf-k-quant, 4.0 bits and --model = the build's parent tree",
+                  argv[argv.index("--codec") + 1] == "gguf-k-quant"
+                  and argv[argv.index("--declared-bits") + 1] == "4.0"
+                  and argv[argv.index("--scope-file") + 1] == str(gsb.fs / "candidate" / "scope.json")
+                  and argv[argv.index("--model") + 1] == str(target_dir), argv)
+        try:
+            sys.path.insert(0, str(ROOT / "engines" / "tools"))
+            import generation_probe
+            import transformers  # noqa: F401
+            tok, why = generation_probe.load_tokenizer(str(target_dir))
+            check("gguf candidate: hf_capture's generation-probe tokenizer load SUCCEEDS on the "
+                  "arranged build dir (the exact call paid attempt 3 died in)",
+                  tok is not None and tok.encode("The capital of France is", add_special_tokens=True),
+                  str(why))
+        except ImportError as exc:
+            skip("gguf candidate: generation-probe tokenizer load on the arranged build dir",
+                 "transformers not importable here (%s); runs under the torch interpreter" % exc)
+        # ...and a mismatching reference config refuses before any capture
+        bad = Sandbox(td / "cap-gguf-badcfg", gguf_job, finalize_job_doc=False)
+        (bad.fs / "panel-binding.json").write_bytes(gguf_binding_bytes)
+        (bad.fs / "panel-src").mkdir()
+        (bad.fs / "candidate").mkdir()
+        (bad.fs / "candidate" / "scope.json").write_bytes(gguf_scope)
+        (bad.fs / "reference-model").mkdir()
+        for name, body in ref_files.items():
+            (bad.fs / "reference-model" / name).write_bytes(body if name != "config.json" else b'{"other": 1}\n')
+        bad.write_bound_marker("fetch_reference")
+        proc, calls = bad.run("capture", bash)
+        check("gguf candidate: a reference config.json that does not carry target.config_sha256 "
+              "is REFUSED before the writer runs",
+              proc.returncode != 0 and "target.config_sha256" in (proc.stdout + proc.stderr)
+              and not [c for c in calls if any("fidelity_dataset.py" in a for a in c[1])],
+              (proc.stdout + proc.stderr)[-600:])
+
+        # ---------------------------------------------------------------
         print("\n== capture / verify (--role root) ==")
         sb = Sandbox(td / "cap", job_root())
         (sb.fs / "panel-src").mkdir()
