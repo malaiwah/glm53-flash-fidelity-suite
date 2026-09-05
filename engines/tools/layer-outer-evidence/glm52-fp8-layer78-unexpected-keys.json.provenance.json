@@ -1,0 +1,15 @@
+{
+ "architecture": "GlmMoeDsaForCausalLM",
+ "artifact_sha256": "7de471fa705b1be0d05ced24f2c1f6735e5d947b4114c7b9fcf6f27ce87ba425",
+ "canonical_sorted_names_sha256": "806861c3e936e4eeb46fa519c1eedec4fa004dbcb53f6e432e6fa2b793bc4261",
+ "config_sha256": "22e49334abf8562fecf70ca3292ba3f5b33f5602fb2bf10b52dd64a66cfe65ff",
+ "count": 1569,
+ "decoder_layers": 78,
+ "derived_at_utc": "2026-09-05T13:31:40Z",
+ "derived_by": "index census: every key of model.layers.78 (the block GlmMoeDsaForCausalLM never builds; num_hidden_layers is 78); engines/tools/index_census_allowlist.py",
+ "derived_from": "zai-org/GLM-5.2-FP8@f33c6dc501ee5a2c7e35155653b1b1abbc320951 model.safetensors.index.json",
+ "index_sha256": "e0fe7f28c1f853d4824e4d796374e3dacf1fe470988773952c79b063768134bf",
+ "per_layer_unexpected_counts": {
+  "78": 1569
+ }
+}
