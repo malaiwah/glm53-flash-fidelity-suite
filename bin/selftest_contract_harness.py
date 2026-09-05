@@ -52,6 +52,10 @@ from fidelity import resultsink as RS  # noqa: E402
 PASS, FAIL = [], []
 
 
+def has_code(receipt, code):
+    return receipt is not None and any(d.get("code") == code for d in receipt.get("disclosures") or [])
+
+
 def check(name, condition, detail=""):
     (PASS if condition else FAIL).append(name)
     print("  %s  %s" % ("PASS" if condition else "FAIL", name))
@@ -387,10 +391,14 @@ def main() -> int:
         check("C1b verify_repeat likewise", p.returncode == 0 and sb.marker("verify_repeat").is_file(), out)
         p, calls, out = stage(sb, "compare_root", bash)
         rc = receipts_of(sb)["root-comparison/comparison-receipt.json"]
-        check("C2  compare_root is a forced, exact-zero SC-1 between the two cold captures",
+        check("C2  compare_root is a forced, exact-zero SC-1 between the two cold captures, "
+              "strict and free of weights-decode caveats (the same artifact on both sides)",
               p.returncode == 0 and rc is not None
               and rc["comparison_kind"] == "reproduction_confirmation"
-              and rc["metric"]["value"] == 0.0 and rc["self_compare"]["force_compute_agreed"] is True,
+              and rc["metric"]["value"] == 0.0 and rc["self_compare"]["force_compute_agreed"] is True
+              and rc["comparability"]["class"] == "strict"
+              and not has_code(rc, "activation_quantization_not_captured")
+              and not has_code(rc, "weights_reconstructed"),
               out)
         p, calls, out = stage(sb, "qualify_root", bash)
         q = receipts_of(sb)["root-qualification.json"]
@@ -405,11 +413,15 @@ def main() -> int:
         ref = receipts_of(sb)["reference-comparison/comparison-receipt.json"]
         argv = next((c[1] for c in calls if any("fidelity_dataset.py" in a for a in c[1])), [])
         check("C4  compare_reference scores the candidate against the reference with the "
-              "job's replay contract and --own-heads, and seals a strict measurement",
-              p.returncode == 0 and ref is not None
+              "job's replay contract and --own-heads, and seals an ADVISORY measurement "
+              "carrying activation_quantization_not_captured (activation_scheme dynamic)",
+              p.returncode in (0, 2) and ref is not None
               and ref["comparison_kind"] == "measurement"
               and ref["estimator"]["head_policy"] == "native_head"
-              and ref["comparability"]["class"] == "strict"
+              and ref["comparability"]["class"] == "advisory"
+              and has_code(ref, "activation_quantization_not_captured")
+              and sum(1 for d in ref["disclosures"]
+                      if d["code"] == "activation_quantization_not_captured") == 1
               and "--own-heads" in argv
               and argv[argv.index("--replay-device") + 1] == "numpy"
               and ref["reference"]["dataset_sha256"] == root_manifest["dataset_sha256"]
@@ -467,12 +479,14 @@ def main() -> int:
             q2 = receipts_of(sb2)["root-qualification.json"]
             ref2 = receipts_of(sb2)["reference-comparison/comparison-receipt.json"]
             check("C6  %s: qualify_root maps the decode to the exl3hf target and "
-                  "compare_reference seals a strict own-head measurement" % surface,
+                  "compare_reference seals an ADVISORY own-head measurement carrying "
+                  "weights_reconstructed (once)" % surface,
                   ok and q2 is not None and ref2 is not None
                   and q2["job_contract"]["target"]["surface"] == "exl3hf"
                   and q2["captures"]["canonical"]["candidate"]["weights_decode"]["method"] == method
                   and ref2["estimator"]["head_policy"] == "native_head"
-                  and ref2["comparability"]["class"] == "strict",
+                  and ref2["comparability"]["class"] == "advisory"
+                  and sum(1 for d in ref2["disclosures"] if d["code"] == "weights_reconstructed") == 1,
                   "\n".join(outs))
             post2 = Path(tmp) / ("%s-post.md" % surface)
             rendered = subprocess.run(
@@ -497,9 +511,10 @@ def main() -> int:
             ok = ok and p.returncode == 0
         ref3 = receipts_of(sb3)["reference-comparison/comparison-receipt.json"]
         check("C8  differing heads: the whole path still qualifies and scores under HEAD-1d, "
-              "each side through its own sealed head, strict",
+              "each side through its own sealed head (advisory: the trellis decode caveat)",
               ok and ref3 is not None and ref3["estimator"]["head_policy"] == "native_head"
-              and ref3["comparability"]["class"] == "strict"
+              and ref3["comparability"]["class"] == "advisory"
+              and has_code(ref3, "weights_reconstructed")
               and ref3["comparator"]["head_applied_reference_tensor_content_sha256"]
               != ref3["comparator"]["head_applied_candidate_tensor_content_sha256"]
               and any(d["code"] == "native_head_replay" for d in ref3["disclosures"]),
@@ -588,7 +603,8 @@ def main() -> int:
             built7.returncode, (built7.stdout + built7.stderr)[-600:], verified7))
         check("C11 nvfp4: qualify_root binds the modelopt decode to the nvfp4 target "
               "(codec nvfp4 @ 4 bits, activation_scheme static-nvfp4-not-applied), "
-              "compare_reference seals a strict own-head measurement and the archive builds",
+              "compare_reference seals an ADVISORY own-head measurement carrying "
+              "activation_quantization_not_captured (input scales not applied) and the archive builds",
               ok and q7 is not None and ref7 is not None
               and q7["job_contract"]["target"]["surface"] == "nvfp4"
               and q7["job_contract"]["candidate"]["codec"] == "nvfp4"
@@ -598,7 +614,8 @@ def main() -> int:
               and q7["captures"]["canonical"]["candidate"]["weights_decode"]
               ["quantization_config"]["activation_scheme"] == "static-nvfp4-not-applied"
               and ref7["estimator"]["head_policy"] == "native_head"
-              and ref7["comparability"]["class"] == "strict"
+              and ref7["comparability"]["class"] == "advisory"
+              and has_code(ref7, "activation_quantization_not_captured")
               and built7.returncode == 0 and isinstance(verified7, dict)
               and (verified7.get("manifest") or {}).get("status") == "qualified-unpublished",
               "\n".join(outs))

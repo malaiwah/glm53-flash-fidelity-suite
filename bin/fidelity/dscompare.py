@@ -515,7 +515,7 @@ def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
     # receipts said `class: strict` with only a head disclosure while the
     # registry filed the same numbers as advisory (review-science S1-2); the
     # receipt is the more visible statement and it was the weaker one.
-    _decode_gate(reference, candidate, gates, findings)
+    _decode_gate(reference, candidate, gates, findings, options)
     return gates, findings
 
 
@@ -544,19 +544,35 @@ def _decoder_parity() -> Optional[Dict[str, Any]]:
 
 
 def _decode_gate(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
-                 findings: Dict[str, Any]) -> None:
+                 findings: Dict[str, Any], options: Dict[str, Any]) -> None:
     """Weights-only reconstruction is a comparability caveat, never strict.
 
     Either way the number is advisory: a weights-only reconstruction under a
     transformers bf16 forward exercises the STORED WEIGHTS, and the served
     kernel's own numerics (exllamav3's fp16 activations and on-the-fly dequant,
-    an FP8 stack's per-token activation quantization) are not in it.  Decoder
-    parity evidence against exllamav3 changes what the caveat can SAY about
-    the decoder (bitwise vs. transcribed), not the class: the activation term
-    is unmeasured with or without it.
+    an FP8 stack's per-token activation quantization, NVFP4's static input
+    scales) are not in it.  Decoder parity evidence against exllamav3 changes
+    what the caveat can SAY about the decoder (bitwise vs. transcribed), not
+    the class: the activation term is unmeasured with or without it.
+
+    A SELF-COMPARE is exempt: both sides are the same artifact's two cold
+    captures, and SC-1 asks whether the capture reproduced, not whether the
+    weights were reconstructed.  The first version of this gate caveated the
+    self-compare too, the comparator exited 2, and `stage_measure.sh
+    compare_root` -- which had no exit-2 branch -- died before its marker, so
+    qualify_root refused every FP8 and trellis candidate at $0 in the contract
+    harness (and would have on a pod).  One disclosure per code: two sides
+    carrying the same method are named in one detail, not twice.
     """
+    if options.get("self_compare"):
+        gates["decode"] = _gate(
+            True, "self-compare: both sides are the same artifact; the weights-decode "
+                  "caveats apply to a measurement against a reference, not to SC-1")
+        return
     summary = []
     parity = _decoder_parity()
+    reconstructed = []
+    activation = []
     for side, dataset in (("reference", reference), ("candidate", candidate)):
         decode = dataset.weights_decode
         if not decode:
@@ -565,30 +581,48 @@ def _decode_gate(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
         method = str(decode.get("method") or "")
         summary.append("%s %s" % (side, method or "unnamed"))
         if method.startswith("exl3-trellis-"):
-            findings["class"] = "advisory"
-            findings["disclosures"].append({
-                "code": "weights_reconstructed", "severity": "caveat",
-                "affects_comparability": True,
-                "detail": _reconstruction_detail(side, decode, parity),
-            })
+            reconstructed.append((side, decode))
         schemes = {
             (block.get("quantization_config") or {}).get("activation_scheme")
             for block in (decode, decode.get("mixed_fp8") or {})
             if isinstance(block, dict)}
-        if method == "fp8-block-dequant-to-bf16" and "dynamic" in schemes:
-            findings["class"] = "advisory"
-            findings["disclosures"].append({
-                "code": "activation_quantization_not_captured", "severity": "caveat",
-                "affects_comparability": True,
-                "detail": "%s was captured from a bf16 materialisation of its block-scaled "
-                          "FP8 weights (%s); the checkpoint declares activation_scheme: "
-                          "dynamic, so a served W8A8 deployment also quantizes activations "
-                          "per token at runtime. That term is not in this number, which is "
-                          "expected to understate the served divergence; it is not a "
-                          "mathematical bound. The comparison is advisory."
-                          % (side, method),
-            })
+        declared = sorted(str(s) for s in schemes if s not in (None, "", "none"))
+        if declared:
+            activation.append((side, method, declared))
+    if reconstructed:
+        findings["class"] = "advisory"
+        findings["disclosures"].append({
+            "code": "weights_reconstructed", "severity": "caveat",
+            "affects_comparability": True,
+            "detail": " ".join(_reconstruction_detail(side, decode, parity)
+                               for side, decode in reconstructed),
+        })
+    if activation:
+        findings["class"] = "advisory"
+        findings["disclosures"].append({
+            "code": "activation_quantization_not_captured", "severity": "caveat",
+            "affects_comparability": True,
+            "detail": " ".join(_activation_detail(side, method, declared)
+                               for side, method, declared in activation),
+        })
     gates["decode"] = _gate(True, "weights_decode %s" % "; ".join(summary))
+
+
+def _activation_detail(side: str, method: str, declared: List[str]) -> str:
+    if method == "fp8-block-dequant-to-bf16" and "dynamic" in declared:
+        return ("%s was captured from a bf16 materialisation of its block-scaled "
+                "FP8 weights (%s); the checkpoint declares activation_scheme: "
+                "dynamic, so a served W8A8 deployment also quantizes activations "
+                "per token at runtime. That term is not in this number, which is "
+                "expected to understate the served divergence; it is not a "
+                "mathematical bound. The comparison is advisory." % (side, method))
+    return ("%s was captured from a bf16 materialisation of its weights (%s); the "
+            "checkpoint declares activation quantization (%s) that a weights-only "
+            "capture does not apply, so a served deployment also quantizes "
+            "activations at runtime. That term is not in this number, which is "
+            "expected to understate the served divergence; it is not a "
+            "mathematical bound. The comparison is advisory."
+            % (side, method, ", ".join(declared)))
 
 
 def _reconstruction_detail(side: str, decode: Dict[str, Any],

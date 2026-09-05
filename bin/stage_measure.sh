@@ -1423,6 +1423,12 @@ compare_root)
     COMPARE_DEVICE="$REPLAY_DEVICE"
   fi
   log "running forced SC-1 between distinct cold captures (replay=$REPLAY_DEVICE/$REPLAY_DTYPE)"
+  # The comparator exits 2 for a SEALED comparison that carries caveats; on a
+  # self-compare that is a result (the receipt says what the caveats are),
+  # and the exact-zero SC-1 itself is what qualify_root reads. Under pipefail
+  # a bare pipeline died before write_marker on exit 2, so qualify_root then
+  # refused a candidate whose two cold runs HAD reproduced. Anything else refuses.
+  set +e
   "$PY" "$FS/bin/fidelity_dataset.py" compare \
       --reference "$FS/dataset" --candidate "$FS/dataset-repeat" \
       --reference-label root-cold-1 --candidate-label root-cold-2 \
@@ -1430,6 +1436,12 @@ compare_root)
       --replay-device "$REPLAY_DEVICE" --replay-dtype "$REPLAY_DTYPE" \
       --vocab-chunk "$VOCAB_CHUNK" --out "$RCPT/root-comparison" \
       2>&1 | tee -a "$LOGS/compare_root.log"
+  COMPARE_STATUS="${PIPESTATUS[0]}"
+  set -e
+  case "$COMPARE_STATUS" in
+    0|2) ;;
+    *) echo "compare_root REFUSES: comparator exited $COMPARE_STATUS" >&2; exit "$COMPARE_STATUS" ;;
+  esac
   write_marker
   log "done"
   ;;
