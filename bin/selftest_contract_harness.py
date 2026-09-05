@@ -127,6 +127,23 @@ SURFACES = {
                 "decode": "every tensor block-dequantized to fp32 by the gguf-py-proven "
                           "kernels on the capture device, then ONE rounding to bfloat16"}},
     },
+    # The GLM-5.2 shared_h_v1 layout as jpsequeira's contract binds it: the
+    # rotation layout, the shared-vector and non-routed digests, an exl3 lm_head
+    # (the candidate's own dequantized head -> HEAD-1d) and the declared online
+    # mxfp8 activation overlay, which the comparator must caveat.
+    "exl3-shared-h": {
+        "codec": "exl3-mcg", "declared_bits": 3.4, "target_surface": "exl3hf",
+        "weights_decode": {
+            "method": "exl3-trellis-tp-compose-to-bf16",
+            "quantization_config": {
+                "quant_method": "exl3", "bits": 3.4, "codebook": "mcg",
+                "head_bits": None, "modules_to_not_convert": [],
+                "rotation_layout": "shared_h_v1",
+                "shared_vectors": {"count": 912, "names_sha256": "a" * 64},
+                "nonrouted_exl3": {"count": 22, "names_sha256": "b" * 64,
+                                   "declared_bits": {"6": 21, "8": 1}},
+                "activation_scheme": "dynamic_mxfp8"}},
+    },
 }
 
 
@@ -739,6 +756,70 @@ def main() -> int:
         check("C14b gguf: a job whose target.path names another build than the decode contract "
               "is refused at qualify_root by name",
               p.returncode != 0 and "target contract differs" in out, out[-800:])
+
+        # -- the GLM-5.2 shared_h_v1 exl3 layout through the same path ---------
+        print("\n== C15-C16: the exl3 shared_h_v1 layout (job -> qualify -> compare -> post) ==")
+        sb11, job11, root11, rm11, cm11 = drive(tmp, bash, "exl3-shared-h")
+        outs = []
+        ok = True
+        for name in ("verify", "verify_repeat", "compare_root", "qualify_root",
+                     "compare_reference"):
+            p, calls, out = stage(sb11, name, bash)
+            outs.append(out[-400:])
+            ok = ok and p.returncode in ((0, 2) if name == "compare_reference" else (0,))
+        q11 = receipts_of(sb11)["root-qualification.json"]
+        ref11 = receipts_of(sb11)["reference-comparison/comparison-receipt.json"]
+        qcfg11 = ((q11 or {}).get("captures", {}).get("canonical", {}).get("candidate", {})
+                  .get("weights_decode", {}) or {}).get("quantization_config") or {}
+        codes11 = [d["code"] for d in (ref11 or {}).get("disclosures", [])]
+        check("C15 shared_h_v1: qualify_root binds the layout contract (rotation_layout, shared "
+              "vectors, non-routed digest, activation overlay) to the exl3hf target; "
+              "compare_reference seals an ADVISORY own-head (HEAD-1d) measurement carrying "
+              "weights_reconstructed AND activation_quantization_not_captured",
+              ok and q11 is not None and ref11 is not None
+              and q11["job_contract"]["target"]["surface"] == "exl3hf"
+              and qcfg11.get("rotation_layout") == "shared_h_v1"
+              and qcfg11.get("shared_vectors", {}).get("count") == 912
+              and qcfg11.get("nonrouted_exl3", {}).get("declared_bits") == {"6": 21, "8": 1}
+              and qcfg11.get("activation_scheme") == "dynamic_mxfp8"
+              and ref11["estimator"]["head_policy"] == "native_head"
+              and ref11["comparability"]["class"] == "advisory"
+              and codes11.count("weights_reconstructed") == 1
+              and codes11.count("activation_quantization_not_captured") == 1,
+              "\n".join(outs) + repr(codes11))
+        post11 = Path(tmp) / "shared-h-post.md"
+        rendered = subprocess.run(
+            [sys.executable, str(ROOT / "bin" / "fidelity_post.py"), "render",
+             "--result", str(sb11.fs), "--out", str(post11)], capture_output=True, text=True)
+        body11 = post11.read_text(encoding="utf-8") if post11.is_file() else ""
+        check("C16 shared_h_v1: the post names the rotation layout, the shared vectors, the "
+              "non-routed exl3 modules with their declared bits and the activation caveat",
+              rendered.returncode == 0 and "rotation layout `shared_h_v1`" in body11
+              and "912 shared vector(s)" in body11
+              and "22 non-routed exl3 module(s)" in body11 and "6 x21, 8 x1" in body11
+              and "dynamic_mxfp8" in body11
+              and "decode recorded in the sealed runtime receipt" not in body11,
+              (rendered.stdout + rendered.stderr + body11)[-900:])
+        # ... a job whose bound layout is not the one the capture sealed is refused
+        sb12, job12, root12, rm12, cm12 = drive(tmp, bash, "exl3-shared-h",
+                                                label="exl3-shared-h-wrong-layout")
+        wrong = json.loads((sb12.fs / "job.json").read_text(encoding="utf-8"))
+        wrong["capture"]["candidate"]["weights_decode"] = dict(
+            wrong["capture"]["candidate"]["weights_decode"],
+            quantization_config=dict(
+                wrong["capture"]["candidate"]["weights_decode"]["quantization_config"],
+                rotation_layout="r7_shared"))
+        (sb12.fs / "job.json").write_text(json.dumps(jobcontract.finalize_job(
+            {k: v for k, v in wrong.items() if k not in ("job_id", "job_id_full")}),
+            indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        for done in ("setup", "fetch_target", "fetch_reference", "capture", "capture_repeat"):
+            sb12.write_bound_marker(done)
+        for name in ("verify", "verify_repeat", "compare_root"):
+            stage(sb12, name, bash)
+        p, calls, out = stage(sb12, "qualify_root", bash)
+        check("C16b shared_h_v1: a job whose bound rotation_layout differs from the one the "
+              "capture sealed is refused at qualify_root by name",
+              p.returncode != 0 and "candidate identity differs" in out, out[-800:])
 
     print("\nselftest_contract_harness: %d passed, %d failed" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0

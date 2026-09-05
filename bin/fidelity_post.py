@@ -76,6 +76,32 @@ def load_result(result_dir: str) -> dict:
             "comparison": comparison, "publication": publication}
 
 
+def _exl3_layout_clause(qc: dict) -> str:
+    """The rotation layout an exl3 decode resolved, when the contract names one.
+
+    Stock per-module vectors say nothing; a layer-shared layout (willfalco /
+    jpsequeira `shared_h_v1`, brandonmusic `r7_shared`) names itself and its
+    shared-vector count, and non-routed exl3 modules (o_proj, q_b_proj,
+    indexer.wq_b, an exl3 lm_head) are named with their declared bits.
+    """
+    layout = qc.get("rotation_layout")
+    parts = []
+    if layout and layout != "per_module":
+        shared = qc.get("shared_vectors") or {}
+        parts.append("rotation layout `%s`: each routed expert's hidden-side rotation vector "
+                     "resolved by name from its layer's shared tensor (%s shared vector(s))"
+                     % (layout, shared.get("count")))
+    nonrouted = qc.get("nonrouted_exl3") or {}
+    if nonrouted.get("count"):
+        parts.append("except %s non-routed exl3 module(s) decoded to bf16 by the same "
+                     "function (declared bits %s)"
+                     % (nonrouted["count"],
+                        ", ".join("%s x%d" % kv for kv in sorted(
+                            (nonrouted.get("declared_bits") or {}).items()))
+                        or "undeclared"))
+    return ("; " + "; ".join(parts)) if parts else ""
+
+
 def _method_line(decode: dict) -> str:
     """The decode the capture applied, said in that surface's own terms.
 
@@ -98,8 +124,8 @@ def _method_line(decode: dict) -> str:
                 "(`trellis`/`suh`/`svh`/codebook marker) decoded to bf16 per module on "
                 "the capture device via exllamav3's transcribed codebooks (codebook %s as "
                 "declared -- the capture reads each module's own marker -- at %s declared "
-                "bits), %s; same engine, schedule and device as the reference capture"
-                % (method, codebook, qc.get("bits"), rest))
+                "bits), %s%s; same engine, schedule and device as the reference capture"
+                % (method, codebook, qc.get("bits"), rest, _exl3_layout_clause(qc)))
     if method == "exl3-trellis-tp-compose-to-bf16":
         codebook = qc.get("codebook") or "per-module (read from each payload's own marker)"
         return ("decode-and-run, weights only: `%s` -- each routed-expert module stored as "
@@ -107,8 +133,8 @@ def _method_line(decode: dict) -> str:
                 "the slicing axis) decoded to bf16 per rank on the capture device via "
                 "exllamav3's transcribed codebooks (codebook %s, declared %s bits average) and "
                 "composed into the whole weight in ascending rank order; non-routed tensors "
-                "carried as shipped; same engine, schedule and device as the reference capture"
-                % (method, codebook, qc.get("bits")))
+                "carried as shipped%s; same engine, schedule and device as the reference capture"
+                % (method, codebook, qc.get("bits"), _exl3_layout_clause(qc)))
     if method == "nvfp4-modelopt-dequant-to-bf16":
         producer = qc.get("producer") or {}
         return ("dequantize-and-run, weights only: `%s` -- the ModelOpt NVFP4 dialect "
@@ -161,12 +187,18 @@ def _caveat_line(decode: dict):
     schemes = {(block.get("quantization_config") or {}).get("activation_scheme")
                for block in (decode, decode.get("mixed_fp8") or {}) if isinstance(block, dict)}
     if method.startswith("exl3-trellis-"):
+        declared = sorted(str(s) for s in schemes if s not in (None, "", "none"))
+        overlay = ((" The checkpoint also declares activation quantization "
+                    "(`activation_scheme: %s`) that a weights-only capture does not apply, "
+                    "so a served deployment quantizes activations at runtime and that term "
+                    "is not in this number either." % ", ".join(declared))
+                   if declared else "")
         return ("weights-only reconstruction on the HF `transformers` stack (the trellis "
                 "payloads decoded to bf16 weights by this suite's transcription of exllamav3's "
                 "codebooks, not by exllamav3 itself); the served kernel's fp16 activations and "
                 "on-the-fly dequant are not in this number; a different panel and teacher than "
-                "the author's own figure, so the two are not comparable. The registry files "
-                "this row as advisory")
+                "the author's own figure, so the two are not comparable.%s The registry files "
+                "this row as advisory" % overlay)
     if method == "fp8-block-dequant-to-bf16" and "dynamic" in schemes:
         return ("weights-only dequantization on the HF `transformers` stack; the checkpoint "
                 "declares `activation_scheme: dynamic`, so a served W8A8 deployment also "

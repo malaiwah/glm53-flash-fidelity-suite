@@ -23,6 +23,19 @@ unrecognised payload rather than loading trellis bytes as weights.
   [8] mixed trellis + block-FP8 in one subset: both hooks run, FP8 tensors
       arrive dequantized, trellis modules arrive decoded (wrldsuksgo2mars).
   [9] non-payload tensors pass through untouched, by identity.
+  [19] the rotation-layout census is the SAME TEXT in hfmeta (controller)
+       and layer_outer (pod), not merely agreeing on fixtures.
+  [20] shared_h_v1 (willfalco / jpsequeira): the H-side vector resolved by
+       name from `experts.shared_h.{proj}.rank{r}`, bitwise the stock decode;
+       undeclared, missing, duplicated and orphaned vectors all refuse.
+  [21] r7_shared (brandonmusic TR3v4): unsharded experts pass through with
+       `r7_shared.gate_up_suh` / `down_svh`; K against r7 k_values.
+  [22] non-routed exl3 modules (lm_head, o_proj, ...) decode by the same
+       function, are named with K, checked against their declared bits; a
+       decoded head is sealed as the candidate's own dequantized head.
+  [23] a declared online mxfp8 overlay is the contract's activation_scheme.
+  [24] the controller mirror reads the same layout contract from the index
+       names and refuses without them.
 """
 from __future__ import annotations
 
@@ -121,7 +134,8 @@ def main() -> int:
     import importlib.util
     spec = importlib.util.spec_from_file_location("mc", "bin/measure_cloud.py")
     contract_keys = {"quant_method", "codebook", "bits", "head_bits",
-                     "modules_to_not_convert"}
+                     "modules_to_not_convert", "rotation_layout", "shared_vectors",
+                     "nonrouted_exl3", "activation_scheme"}
     check("[2] the plan's contract keys mirror measure_cloud's candidate block",
           set(plan) - {"_observed"} == contract_keys,
           repr(sorted(set(plan) - {"_observed"})))
@@ -408,7 +422,7 @@ def main() -> int:
         cfg = {"quantization_config": qc}
         if tail is not None:
             cfg["hybrid_tr3_tail"] = tail
-        ctrl = mc._candidate_decode_plan(qc, cfg)
+        ctrl = mc._candidate_decode_plan(qc, cfg, index_keys=keys)
         pod_cfg = _TailConfig(qc, tail) if tail is not None else _Config(qc)
         pod = lo.trellis_checkpoint_plan(pod_cfg, keys)
         observed = pod.pop("_observed")
@@ -527,6 +541,353 @@ def main() -> int:
         native = lo.checkpoint_decode_plans(_Config(None), td, lambda **kw: events.append(kw))
         check("[18] a native tree plans nothing and never opens the index",
               native[:3] == (None, None, None) and len(events) == 1, repr(native))
+
+    # ---- rotation layouts (GLM-5.2 candidates) ----------------------------
+    # [19] The layout census is ONE rule in two files: the pod's copy in
+    # layer_outer must be the SAME TEXT as bin/fidelity/hfmeta's (the
+    # controller's), not merely agree on today's fixtures.
+    import inspect
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bin"))
+    from fidelity import hfmeta as hm19
+    for fn in ("exl3_rotation_groups", "exl3_declared_module_bits", "exl3_layout_contract"):
+        check("[19] %s is byte-identical in hfmeta and layer_outer" % fn,
+              inspect.getsource(getattr(hm19, fn)) == inspect.getsource(getattr(lo, fn)))
+    check("[19] the layout constants agree",
+          hm19.EXL3_ROTATION_LAYOUTS == lo.EXL3_ROTATION_LAYOUTS
+          and hm19.EXL3_SHARED_H_TENSOR_SCHEMA == lo.EXL3_SHARED_H_TENSOR_SCHEMA
+          and hm19._EXL3_EXPERT_RE.pattern == lo._EXL3_EXPERT_RE.pattern
+          and hm19._EXL3_SHARED_H_RE.pattern == lo._EXL3_SHARED_H_RE.pattern
+          and hm19._EXL3_R7_SHARED_RE.pattern == lo._EXL3_R7_SHARED_RE.pattern)
+
+    # [20] shared_h_v1 (willfalco / jpsequeira): the rank groups carry only
+    # the I-side vector; the H-side one (svh for down, suh for gate/up) is
+    # the layer's `experts.shared_h.{proj}.rank{r}.{field}`. Resolved by
+    # name, the decode is BITWISE the stock-layout decode of the same bytes.
+    shared_tail = dict(tail, rotation_layout="shared_h_v1",
+                       shared_h_tensor_schema=lo.EXL3_SHARED_H_TENSOR_SCHEMA)
+    shared_keys = {k: v for k, v in rank_keys.items() if not k.endswith(".svh")}
+    for r, pay in enumerate((pay_a, pay_b)):
+        shared_keys["model.layers.3.mlp.experts.shared_h.down_proj.rank%d.svh" % r] = pay["svh"]
+    ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(tcfg, list(shared_keys)),
+                         "requires 'shared_h_v1'")
+    check("[20] shared_h vectors without the tail's rotation_layout declaration are refused",
+          ok, detail)
+    scfg = _TailConfig({"quant_method": "modelopt"}, shared_tail)
+    splan = lo.trellis_checkpoint_plan(scfg, list(shared_keys))
+    sobs = splan.pop("_observed")
+    check("[20] the plan names the layout, the shared vectors and their digest",
+          splan["rotation_layout"] == "shared_h_v1"
+          and splan["shared_vectors"]["count"] == 2
+          and len(splan["shared_vectors"]["names_sha256"]) == 64
+          and sobs["rotation_layout"] == "shared_h_v1"
+          and sobs["modules_per_layout"] == {"shared_h_v1": 2}
+          and sobs["composition"]["tp"] == 2, repr((splan, sobs)))
+    sstats = {"decoded_modules": 0, "trellis_bits": 0,
+              "module_bits_policy": sobs["module_bits_policy"]}
+    offered20 = []
+    out20 = lo.materialize_trellis_subset(
+        shared_keys, splan, torch.bfloat16, sstats, composition=sobs["composition"],
+        expected_shape=tail_shapes.get, sink=lambda k, t: offered20.append(k) or True)
+    check("[20] shared_h_v1 decodes bitwise equal to the stock layout of the same bytes "
+          "and hands the composed module to the sink",
+          offered20 == ["model.layers.3.mlp.experts.0.down_proj.weight"] and out20 == {}
+          and sstats["shared_vectors_applied"] == 2
+          and sstats["modules_per_layout"] == {"shared_h_v1": 2}, repr((offered20, sstats)))
+    held20 = lo.materialize_trellis_subset(
+        shared_keys, splan, torch.bfloat16, dict(sstats), composition=sobs["composition"],
+        expected_shape=tail_shapes.get)
+    check("[20] ... bitwise", torch.equal(
+        held20["model.layers.3.mlp.experts.0.down_proj.weight"], want6))
+    check("[20] the shared vector never reaches the converter as a stray key",
+          not any("shared_h" in k for k in held20), repr(sorted(held20)))
+    missing20 = {k: v for k, v in shared_keys.items() if not k.endswith("rank1.svh")}
+    ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(scfg, list(missing20)),
+                         "incomplete trellis payload group")
+    check("[20] a rank whose shared vector is missing is refused by name", ok, detail
+          if "rank1 (missing ['svh']" in detail else "refusal does not name the module: " + detail)
+    both20 = dict(shared_keys)
+    both20["model.layers.3.mlp.experts.0.down_proj.rank0.svh"] = pay_a["svh"]
+    ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(scfg, list(both20)),
+                         "two candidates for one rotation vector")
+    check("[20] a module carrying its own H-side vector beside the shared one is refused",
+          ok, detail)
+    orphan20 = dict(shared_keys)
+    orphan20["model.layers.3.mlp.experts.shared_h.up_proj.rank0.suh"] = pay_a["suh"]
+    ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(scfg, list(orphan20)),
+                         "resolve no module")
+    check("[20] a shared vector no module resolves is refused", ok, detail)
+    ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(scfg, list(rank_keys)),
+                         "carries no experts.shared_h vector")
+    check("[20] a shared_h_v1 declaration over stock groups is refused", ok, detail)
+    # [20b] the GLM-5.2 tails declare the slicing as "TP4 K-slice: rank r owns
+    # input columns [512r,512r+512)" (davidsyoung: "K-sliced: ..."); the axis
+    # TOKEN is what is read, and a declaration contradicting the shapes refuses.
+    for slicing, expect in (("TP4 K-slice: rank r owns input columns [512r,512r+512)", True),
+                            ("K-sliced: rank r = input cols", True),
+                            ("TP4 N-slice: rank r owns output rows [512r,512r+512)", False),
+                            ("rank r owns something", False)):
+        gtail = dict(shared_tail, slicing={"down_proj": slicing})
+        gplan = lo.trellis_checkpoint_plan(_TailConfig({"quant_method": "modelopt"}, gtail),
+                                           list(shared_keys))
+        gobs = gplan.pop("_observed")
+
+        def compose20b(gplan=gplan, gobs=gobs):
+            return lo.materialize_trellis_subset(
+                shared_keys, gplan, torch.bfloat16,
+                {"decoded_modules": 0, "trellis_bits": 0,
+                 "module_bits_policy": gobs["module_bits_policy"]},
+                composition=gobs["composition"], expected_shape=tail_shapes.get)
+        if expect:
+            out20b = compose20b()
+            check("[20b] slicing %r composes along the admissible axis" % slicing,
+                  torch.equal(out20b["model.layers.3.mlp.experts.0.down_proj.weight"], want6))
+        else:
+            ok, detail = refuses(compose20b, "the artifact declares")
+            check("[20b] slicing %r contradicts the shapes and refuses" % slicing, ok, detail)
+
+    # [21] r7_shared (brandonmusic 3.5 MTP78): UNSHARDED routed experts carry
+    # only their I-side vector; `experts.r7_shared.gate_up_suh` serves gate
+    # AND up, `experts.r7_shared.down_svh` serves down. Pass-through, no
+    # composition; K checked against r7_routed_experts.k_values.
+    gate_pay, up_pay, down_pay = _payload(seed=21), _payload(seed=22), _payload(seed=23, bits=4)
+    r7_keys = {}
+    for proj, pay in (("gate_proj", gate_pay), ("up_proj", up_pay), ("down_proj", down_pay)):
+        own = "svh" if proj != "down_proj" else "suh"
+        r7_keys["model.layers.10.mlp.experts.0.%s.trellis" % proj] = pay["trellis"]
+        r7_keys["model.layers.10.mlp.experts.0.%s.%s" % (proj, own)] = pay[own]
+        r7_keys["model.layers.10.mlp.experts.0.%s.mcg" % proj] = torch.tensor(
+            xs.CODEBOOK_OBJECTS["mcg"], dtype=torch.int32)
+    r7_keys["model.layers.10.mlp.experts.r7_shared.gate_up_suh"] = gate_pay["suh"]
+    r7_keys["model.layers.10.mlp.experts.r7_shared.down_svh"] = down_pay["svh"]
+    r7_qc = {"quant_method": "modelopt", "config_groups": {},
+             "r7_routed_experts": {"schema": "r7-complete-v2-checkpoint-v1",
+                                   "feature": "r7-asymmetric-two-stack",
+                                   "moe_layers": [3, 77], "k_values": [3, 4, 5]}}
+    r7_tail = {"format": "exl3-trellis", "codebook": "mcg", "tp": 4, "bits": 3.0}
+    ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(
+        _TailConfig({"quant_method": "modelopt"}, r7_tail), list(r7_keys)),
+        "declares no r7_routed_experts block")
+    check("[21] r7_shared vectors without the r7_routed_experts declaration are refused",
+          ok, detail)
+    r7cfg = _TailConfig(r7_qc, r7_tail)
+    r7plan = lo.trellis_checkpoint_plan(r7cfg, list(r7_keys))
+    r7obs = r7plan.pop("_observed")
+    check("[21] the plan names r7_shared, 2 shared vectors, no composition, the r7 k_values",
+          r7plan["rotation_layout"] == "r7_shared" and r7plan["shared_vectors"]["count"] == 2
+          and r7obs["composition"] is None and r7obs["modules_per_layout"] == {"r7_shared": 3}
+          and r7obs["module_bits_policy"]["r7_k_values"] == [3, 4, 5]
+          and r7obs["r7_declaration"]["schema"] == "r7-complete-v2-checkpoint-v1",
+          repr((r7plan, r7obs)))
+    # brandonmusic's r7 encoder stores every expert with its intermediate
+    # channels PERMUTED (gate/up rows, down columns, one permutation per
+    # expert) and writes `permutations[E].new_to_old` into the layer manifest;
+    # the decoder inverts it from that manifest, and refuses without it.
+    import json as _json
+    import tempfile as _tempfile
+    r7_dir = _tempfile.mkdtemp(prefix="r7-manifests-")
+    new_to_old = torch.randperm(128, generator=torch.Generator().manual_seed(21)).tolist()
+    manifest21 = {
+        "layer": 10, "schema_version": 2,
+        "permutations": {"0": {"new_to_old": new_to_old, "policy": "energy_balanced"}},
+        "vector_refs": {
+            "model.layers.10.mlp.experts.0.gate_proj": {
+                "suh": "model.layers.10.mlp.experts.r7_shared.gate_up_suh",
+                "svh": "model.layers.10.mlp.experts.0.gate_proj.svh"},
+            "model.layers.10.mlp.experts.0.up_proj": {
+                "suh": "model.layers.10.mlp.experts.r7_shared.gate_up_suh",
+                "svh": "model.layers.10.mlp.experts.0.up_proj.svh"},
+            "model.layers.10.mlp.experts.0.down_proj": {
+                "suh": "model.layers.10.mlp.experts.0.down_proj.suh",
+                "svh": "model.layers.10.mlp.experts.r7_shared.down_svh"}},
+    }
+    Path(r7_dir, "r7-experts-layer-010.json").write_text(_json.dumps(manifest21))
+    r7_qc["r7_routed_experts"]["bit_map_manifests"] = ["r7-experts-layer-010.json"]
+    r7cfg = _TailConfig(r7_qc, r7_tail)
+    r7cfg.moe_intermediate_size = 128
+    r7plan = lo.trellis_checkpoint_plan(r7cfg, list(r7_keys))
+    r7obs = r7plan.pop("_observed")
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        r7_keys, r7plan, torch.bfloat16,
+        {"decoded_modules": 0, "trellis_bits": 0,
+         "module_bits_policy": r7obs["module_bits_policy"]}),
+        "carries no permutation source")
+    check("[21] r7 experts without the layer-manifest permutation source are refused", ok, detail)
+    ok, detail = refuses(lambda: lo.r7_permutation_source(
+        r7cfg, _tempfile.mkdtemp(prefix="r7-empty-"), r7obs["r7_declaration"]),
+        "absent from the checkpoint")
+    check("[21] a listed manifest absent from the checkpoint is refused at plan time", ok, detail)
+    r7source = lo.r7_permutation_source(r7cfg, r7_dir, r7obs["r7_declaration"])
+    r7stats = {"decoded_modules": 0, "trellis_bits": 0,
+               "module_bits_policy": r7obs["module_bits_policy"], "r7_permutations": r7source}
+    out21 = lo.materialize_trellis_subset(r7_keys, r7plan, torch.bfloat16, r7stats)
+    inverse21 = torch.argsort(torch.tensor(new_to_old))
+    want21 = {}
+    for proj, pay in (("gate_proj", gate_pay), ("up_proj", up_pay), ("down_proj", down_pay)):
+        stored = xs.decode_payload_hf(
+            pay["trellis"], gate_pay["suh"] if proj != "down_proj" else pay["suh"],
+            pay["svh"] if proj != "down_proj" else down_pay["svh"],
+            codebook="mcg").to(torch.bfloat16)
+        want21["model.layers.10.mlp.experts.0.%s.weight" % proj] = stored.index_select(
+            1 if proj == "down_proj" else 0, inverse21)
+    check("[21] unsharded r7 experts pass through decoded bitwise, gate and up sharing one suh, "
+          "the intermediate axis put back in source order by the manifest's inverse permutation",
+          set(out21) == set(want21)
+          and all(torch.equal(out21[k], want21[k]) for k in want21)
+          and r7stats["shared_vectors_applied"] == 3 and r7stats["k_histogram"] == {"3": 2, "4": 1}
+          and r7source.stats["experts_unpermuted"] == 3
+          and r7source.stats["policies"] == {"energy_balanced": 3}
+          and len(r7source.stats["manifest_sha256"]) == 1,
+          repr((sorted(out21), r7stats, r7source.stats)))
+    bad_refs = _json.loads(_json.dumps(manifest21))
+    bad_refs["vector_refs"]["model.layers.10.mlp.experts.0.up_proj"]["suh"] = \
+        "model.layers.10.mlp.experts.0.up_proj.suh"
+    bad_dir = _tempfile.mkdtemp(prefix="r7-badrefs-")
+    Path(bad_dir, "r7-experts-layer-010.json").write_text(_json.dumps(bad_refs))
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        r7_keys, r7plan, torch.bfloat16,
+        {"decoded_modules": 0, "trellis_bits": 0, "module_bits_policy": r7obs["module_bits_policy"],
+         "r7_permutations": lo.r7_permutation_source(r7cfg, bad_dir, r7obs["r7_declaration"])}),
+        "vector_refs name")
+    check("[21] a manifest whose vector_refs disagree with the name resolution is refused",
+          ok, detail)
+    bad_perm = _json.loads(_json.dumps(manifest21))
+    bad_perm["permutations"]["0"]["new_to_old"][0] = bad_perm["permutations"]["0"]["new_to_old"][1]
+    bad_dir2 = _tempfile.mkdtemp(prefix="r7-badperm-")
+    Path(bad_dir2, "r7-experts-layer-010.json").write_text(_json.dumps(bad_perm))
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        r7_keys, r7plan, torch.bfloat16,
+        {"decoded_modules": 0, "trellis_bits": 0, "module_bits_policy": r7obs["module_bits_policy"],
+         "r7_permutations": lo.r7_permutation_source(r7cfg, bad_dir2, r7obs["r7_declaration"])}),
+        "no valid 128-element permutation")
+    check("[21] a manifest entry that is not a permutation is refused", ok, detail)
+    r7_k2 = dict(r7_qc, r7_routed_experts=dict(r7_qc["r7_routed_experts"], k_values=[3]))
+    p21 = lo.trellis_checkpoint_plan(_TailConfig(r7_k2, r7_tail), list(r7_keys))
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        r7_keys, p21, torch.bfloat16,
+        {"decoded_modules": 0, "trellis_bits": 0,
+         "module_bits_policy": p21["_observed"]["module_bits_policy"],
+         "r7_permutations": r7source}),
+        "r7_routed_experts declares k_values [3]")
+    check("[21] a K outside r7_routed_experts.k_values is refused", ok, detail)
+    no_down = {k: v for k, v in r7_keys.items() if not k.endswith("r7_shared.down_svh")}
+    ok, detail = refuses(lambda: lo.trellis_checkpoint_plan(r7cfg, list(no_down)),
+                         "incomplete trellis payload group")
+    check("[21] an unsharded expert whose shared vector is missing is refused by name",
+          ok and "down_proj (missing ['svh']" in detail, detail)
+
+    # [22] NON-ROUTED exl3 modules (o_proj / q_b_proj / indexer.wq_b / lm_head):
+    # decoded by the same function wherever they sit, named with their K,
+    # checked against the bits the artifact declares for them, and an exl3
+    # head becomes the candidate's own dequantized head.
+    head_pay, o_pay = _payload(seed=24, bits=8), _payload(seed=25, bits=6)
+    nr_keys = dict(r7_keys)
+    nr_keys.update(_subset("lm_head", head_pay, "mcg"))
+    nr_keys.update(_subset("model.layers.10.self_attn.o_proj", o_pay, "mcg"))
+    nr_tail = dict(r7_tail, protected_tensor_policy={
+        "format": "exl3-protected-v1", "tensors": {"lm_head": {"bits": 8, "codebook": "mcg"}}})
+    nr_qc = dict(r7_qc, tensor_storage={
+        "model.layers.10.self_attn.o_proj": {"bits_per_weight": 6, "quant_format": "exl3"}})
+    nrcfg = _TailConfig(nr_qc, nr_tail)
+    nrplan = lo.trellis_checkpoint_plan(nrcfg, list(nr_keys))
+    nrobs = nrplan.pop("_observed")
+    check("[22] the contract counts and digests the non-routed modules with their declared bits",
+          nrplan["nonrouted_exl3"] == {
+              "count": 2, "names_sha256": lo._exl3_names_sha256(
+                  ["lm_head", "model.layers.10.self_attn.o_proj"]),
+              "declared_bits": {"6": 1, "8": 1}}
+          and nrobs["module_bits_policy"]["nonrouted"] == {
+              "lm_head": 8, "model.layers.10.self_attn.o_proj": 6}, repr(nrplan))
+    nrstats = {"decoded_modules": 0, "trellis_bits": 0,
+               "module_bits_policy": nrobs["module_bits_policy"], "r7_permutations": r7source}
+    out22 = lo.materialize_trellis_subset(nr_keys, nrplan, torch.bfloat16, nrstats)
+    check("[22] lm_head and o_proj decode exactly like decode_payload_hf and are named with K",
+          torch.equal(out22["lm_head.weight"], xs.decode_payload_hf(
+              head_pay["trellis"], head_pay["suh"], head_pay["svh"], codebook="mcg").to(torch.bfloat16))
+          and torch.equal(out22["model.layers.10.self_attn.o_proj.weight"], xs.decode_payload_hf(
+              o_pay["trellis"], o_pay["suh"], o_pay["svh"], codebook="mcg").to(torch.bfloat16))
+          and nrstats["nonrouted_exl3_decoded"] == {"lm_head": 8,
+                                                    "model.layers.10.self_attn.o_proj": 6}
+          and nrstats["modules_per_layout"] == {"per_module": 2, "r7_shared": 3},
+          repr(nrstats))
+
+    class _Streamer:
+        pass
+    streamer22 = _Streamer()
+    streamer22.trellis_plan = nrplan
+    streamer22.trellis_stats = dict(nrstats, rotation_layout="r7_shared")
+    identity = lo.head_decode_identity(streamer22)
+    check("[22] a decoded exl3 head is the candidate's own dequantized head (HEAD-1d)",
+          identity == {"quantized": True, "bits": 8, "source": "artifact_dequantized",
+                       "method": lo.TRELLIS_DECODE_METHOD, "reference": lo.TRELLIS_DECODE_REFERENCE},
+          repr(identity))
+    streamer22.trellis_stats = dict(r7stats)
+    check("[22] a head loaded as shipped stays native",
+          lo.head_decode_identity(streamer22) is None)
+    streamer22.trellis_stats = dict(nrstats, rotation_layout="r7_shared")
+    evidence22 = lo.weights_decode_evidence(streamer22)
+    check("[22] weights_decode evidence names the layout, its reader, the shared vectors and "
+          "the non-routed modules with K",
+          evidence22["quantization_config"]["rotation_layout"] == "r7_shared"
+          and evidence22["rotation_layout"]["layout"] == "r7_shared"
+          and "exl3_overlay.py" in evidence22["rotation_layout"]["reader"]
+          and evidence22["rotation_layout"]["shared_vectors_applied"] == 3
+          and evidence22["rotation_layout"]["nonrouted_exl3_modules"] == [
+              {"name": "lm_head", "K": 8}, {"name": "model.layers.10.self_attn.o_proj", "K": 6}]
+          and evidence22["rotation_layout"]["evidence"] == lo.TRELLIS_LAYOUT_EVIDENCE,
+          repr(evidence22.get("rotation_layout")))
+    wrong_bits = dict(nr_qc, tensor_storage={
+        "model.layers.10.self_attn.o_proj": {"bits_per_weight": 4, "quant_format": "exl3"}})
+    p22 = lo.trellis_checkpoint_plan(_TailConfig(wrong_bits, nr_tail), list(nr_keys))
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        nr_keys, p22, torch.bfloat16,
+        {"decoded_modules": 0, "trellis_bits": 0,
+         "module_bits_policy": p22["_observed"]["module_bits_policy"],
+         "r7_permutations": r7source}),
+        "declares 4 bits for it")
+    check("[22] a non-routed module whose K differs from its declared bits is refused", ok, detail)
+
+    # [23] jpsequeira's online mxfp8 activation overlay lands as activation_scheme.
+    ov_tail = dict(shared_tail, online_mxfp8_overlay={
+        "activation": "dynamic_mxfp8", "format": "online-mxfp8-v1", "group_size": 32})
+    ovplan = lo.trellis_checkpoint_plan(_TailConfig({"quant_method": "exl3", "bits": 3.0},
+                                                    ov_tail), list(shared_keys))
+    check("[23] a declared online mxfp8 overlay is the contract's activation_scheme",
+          ovplan["activation_scheme"] == "dynamic_mxfp8" and splan["activation_scheme"] is None,
+          repr(ovplan["activation_scheme"]))
+
+    # [24] the controller mirror reads the SAME layout from the index names.
+    for label, (qc, tail24, keys24) in {
+        "willfalco/jpsequeira shared_h_v1": ({"quant_method": "modelopt"}, shared_tail,
+                                             list(shared_keys)),
+        "jpsequeira mxfp8 overlay": ({"quant_method": "exl3", "bits": 3.0}, ov_tail,
+                                     list(shared_keys)),
+        "brandonmusic r7_shared + dense6": (nr_qc, nr_tail, list(nr_keys)),
+    }.items():
+        cfg24 = {"quantization_config": qc, "hybrid_tr3_tail": tail24}
+        ctrl = mc._candidate_decode_plan(qc, cfg24, index_keys=keys24)
+        pod = lo.trellis_checkpoint_plan(_TailConfig(qc, tail24), keys24)
+        pod.pop("_observed")
+        check("[24] %s: controller and pod agree on the layout contract" % label,
+              ctrl["quantization_config"] == pod,
+              "ctrl %r pod %r" % (ctrl["quantization_config"], pod))
+    try:
+        mc._candidate_decode_plan({"quant_method": "modelopt"},
+                                  {"quantization_config": {"quant_method": "modelopt"},
+                                   "hybrid_tr3_tail": shared_tail})
+        ok, detail = False, "no refusal"
+    except mc.Refusal as exc:
+        ok, detail = "index was not available" in str(exc), str(exc)[:160]
+    check("[24] the controller refuses to bind an exl3 candidate without the index names",
+          ok, detail)
+    try:
+        mc._candidate_decode_plan({"quant_method": "modelopt"},
+                                  {"quantization_config": {"quant_method": "modelopt"},
+                                   "hybrid_tr3_tail": tail}, index_keys=list(shared_keys))
+        ok, detail = False, "no refusal"
+    except mc.Refusal as exc:
+        ok, detail = "requires 'shared_h_v1'" in str(exc), str(exc)[:160]
+    check("[24] the controller refuses an undeclared shared_h layout at $0, as the pod would",
+          ok, detail)
 
     passed = sum(1 for _, ok, _ in RESULTS if ok)
     print("\nselftest_trellis_decode_offline: %d passed, %d failed"

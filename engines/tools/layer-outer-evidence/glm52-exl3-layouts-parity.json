@@ -1,0 +1,1593 @@
+{
+ "all_controls_near_zero": true,
+ "all_in_band": true,
+ "artifacts": {
+  "brandonmusic": {
+   "repo": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78",
+   "revision": "7c73450f05a151439d0f184f216b1eefcc394a31"
+  },
+  "jpsequeira": {
+   "repo": "jpsequeira/GLM-5.2-EXL3-TR3-3.40bpw-KVarN-K4V2",
+   "revision": "b92479840ef92fbeb7d774187f91cf5a2a659ade"
+  },
+  "willfalco": {
+   "repo": "willfalco/GLM-5.2-EXL3-TR3-3.42bpw",
+   "revision": "700c99dfa75d61cba4dda1ce9a36478bc217728d"
+  }
+ },
+ "bytes_fetched": "range requests over the exact tensor spans (cached between passes; see inputs[*].bytes)",
+ "created_utc": "2026-09-05T14:18:13Z",
+ "decoder": {
+  "code_sha256": "e4293d74bbaa5d8305fe9b081dd4635855280ca003ee3d4bc3605daebc8cf852",
+  "function": "decode_payload_hf",
+  "mcg_lut_sha256": "95383563929baa9d1ae5de0be22490284382673620bdd85929feea7bdbef04a9",
+  "module": "engines/tools/exl3hf_surface.py",
+  "pod_path": "layer_outer.trellis_checkpoint_plan + materialize_trellis_subset on the artifact's own config.json and index names"
+ },
+ "elapsed_seconds": 44.7,
+ "in_band_rel_l2": {
+  "2": 0.45,
+  "3": 0.22,
+  "4": 0.12,
+  "5": 0.07,
+  "6": 0.035,
+  "8": 0.01
+ },
+ "layout_readers": {
+  "per_module": "exllamav3 1.4.2 exllamav3/modules/linear.py:391-407 (load_exl3: key+'.suh', key+'.svh', key+'.trellis' per module)",
+  "r7_shared": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f runtime/r17-g64-q-only/exl3_overlay.py:1655-1664,2575-2583,2668-2673 (r7_shared.gate_up_suh -> experts.0.gate_proj.suh aliased to up_proj; r7_shared.down_svh -> experts.0.down_proj.svh) and patches/patch_r7_broadcast_rotations.py:7-15",
+  "shared_h_v1": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f runtime/r17-g64-q-only/exl3_overlay.py:353-357,1228-1239,1667-1703 (experts.shared_h.{proj}.rank{r}.{suh|svh} -> experts.0.{proj}.{field}, broadcast to every expert; a per-expert H-side vector refuses)"
+ },
+ "modules": [
+  {
+   "K": [
+    3
+   ],
+   "artifact": "willfalco",
+   "codebook_histogram": {
+    "mcg": 233472
+   },
+   "composition": {
+    "axes": {
+     "down_proj": 1
+    },
+    "tp": 4
+   },
+   "control": {
+    "kind": "wrong-layer-shared-vector",
+    "shared_vectors_replaced": {
+     "model.layers.10.mlp.experts.shared_h.down_proj.rank0.svh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.down_proj.rank0.svh",
+      "sha256": "d2aa0e1c9340176ea2bdb39201fa72be9e3ee13fb5fb33a905718e1f0c00cae8"
+     },
+     "model.layers.10.mlp.experts.shared_h.down_proj.rank1.svh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.down_proj.rank1.svh",
+      "sha256": "b6258aa93700d75b861443c1e3036a1da92ff510ef3f0231ff36539ac8e04687"
+     },
+     "model.layers.10.mlp.experts.shared_h.down_proj.rank2.svh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.down_proj.rank2.svh",
+      "sha256": "6d9a868a9d719779ceb37706d9a5c563e92ddbf2e4e8152e7363ad16fa52c190"
+     },
+     "model.layers.10.mlp.experts.shared_h.down_proj.rank3.svh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.down_proj.rank3.svh",
+      "sha256": "2ac10971fa90b02e4fba7e8e898592211a356453b8257337f1a20a6b6bc9532e"
+     }
+    },
+    "vs_reference": {
+     "cosine": 0.0015409568880071405,
+     "elements": 12582912,
+     "rel_l2": 1.4096106255587075,
+     "rel_mse": 1.9870021156880506
+    }
+   },
+   "decoded_bf16_sha256": "bdf618101d3bbcf57d905699c66ef633c62139b87d95e5ebfcc41d5e67e869f6",
+   "decoded_shape": [
+    6144,
+    2048
+   ],
+   "inputs": {
+    "model.layers.10.mlp.experts.0.down_proj.rank0.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank0.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "ad6e2d1392f26c23653a143713f4b4ee7aa73428b2830d6a398ab024cbc22433",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank0.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "ff3e990a3921f58ca356b73d1d34e4135b280f2c03e721c941850b2a51aeb9be",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank1.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank1.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "c8b7a3d2e368c9149e15b2a11e5835f4d37fdf11fe6f042491bb35e650aa10d6",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank1.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "b68eaf0210e833a6397f33ca8270bfe2c71064047098953dff1e628aada55b37",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank2.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank2.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "a4f1786a4a5d6f917b52d7cc302019b71b86a835b00f5b9940a466abbb4c78ae",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank2.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "0ddde5950d10ab7cfc267cd72220e8f148c9087f9f460dd4b65aa3e06532d357",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank3.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank3.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "2b36559802228d1843ea91a1b5c98e8877123dcadf0fa3e8463865588c1b0e3e",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank3.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "bd51589adba34e8a54d3483b7f789ef38f0fd26c9e5d78ea455fe226c2ef285f",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.down_proj.rank0.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "b01847f73fdcc06b8f845f52a10454d58f3f9ef6d0061e5e80893d72f7750be9",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.down_proj.rank1.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "df8f1e12c0a4c09bbcbe12ecadbaecb8d195fee1f671b78a7417b9c288e507f6",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.down_proj.rank2.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "f82bae6522dbc2643f14fb9681a9f3d85c45049a92df4f409df07e8d6b699d05",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.down_proj.rank3.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "6929374a100e3b1a39efe94123a50943cc3e8b4a80120f11c68e0977d8b640c2",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    }
+   },
+   "layout_of_checkpoint": "shared_h_v1",
+   "layout_of_module": "shared_h_v1",
+   "module": "model.layers.10.mlp.experts.0.down_proj",
+   "reference": {
+    "bytes": 25165824,
+    "repo": "zai-org/GLM-5.2",
+    "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+    "rows_compared": [
+     6144,
+     2048
+    ],
+    "sha256_of_rows": "601b9d1f05494ee7be6ac29631a1cc63ad2bfb797f502b0343a6d04b5c61129e",
+    "shape": [
+     6144,
+     2048
+    ],
+    "shard": "model-00002-of-00282.safetensors",
+    "tensor": "model.layers.10.mlp.experts.0.down_proj.weight"
+   },
+   "repo": "willfalco/GLM-5.2-EXL3-TR3-3.42bpw",
+   "revision": "700c99dfa75d61cba4dda1ce9a36478bc217728d",
+   "shared_vectors_applied": 4,
+   "vs_reference": {
+    "cosine": 0.987471432197232,
+    "elements": 12582912,
+    "rel_l2": 0.15797919623163056,
+    "rel_mse": 0.02495742644199101
+   },
+   "window_rows": null
+  },
+  {
+   "K": [
+    3
+   ],
+   "artifact": "willfalco",
+   "codebook_histogram": {
+    "mcg": 233472
+   },
+   "composition": {
+    "axes": {
+     "gate_proj": 0
+    },
+    "tp": 4
+   },
+   "control": {
+    "kind": "wrong-layer-shared-vector",
+    "shared_vectors_replaced": {
+     "model.layers.10.mlp.experts.shared_h.gate_proj.rank0.suh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.gate_proj.rank0.suh",
+      "sha256": "e26ff601c378c14711b0e72c28df79b4eddda5654c5fdeee7c402df7429a8d25"
+     },
+     "model.layers.10.mlp.experts.shared_h.gate_proj.rank1.suh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.gate_proj.rank1.suh",
+      "sha256": "f39e504bd82c0ad45e6432f5973f5227972a49cf466850ceb60bdba316f3a769"
+     },
+     "model.layers.10.mlp.experts.shared_h.gate_proj.rank2.suh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.gate_proj.rank2.suh",
+      "sha256": "6560bb4989dd00caac7a2efba151af1478ed71a3ed6ef367a42315e83eae17df"
+     },
+     "model.layers.10.mlp.experts.shared_h.gate_proj.rank3.suh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.gate_proj.rank3.suh",
+      "sha256": "fe29d011d22ac1d084bdb59923baa995464f06f566286ef2bc248808e5a472d7"
+     }
+    },
+    "vs_reference": {
+     "cosine": -0.0003847726372398307,
+     "elements": 12582912,
+     "rel_l2": 1.408960842634818,
+     "rel_mse": 1.9851706560782594
+    }
+   },
+   "decoded_bf16_sha256": "73aa4d088eac7dcca5057216d081acb5771341ea962f01738bb99049008a8d94",
+   "decoded_shape": [
+    2048,
+    6144
+   ],
+   "inputs": {
+    "model.layers.10.mlp.experts.0.gate_proj.rank0.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank0.svh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "2a68973f2e15a10ca3d3b0f70b45b2bd32caec793e267937b64dbe2c119cb5b4",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank0.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "f12d221f46026a07d125285e03bd6ffe3a9615799ae2cc58e6f4b321eae6ee20",
+     "shape": [
+      384,
+      32,
+      48
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank1.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank1.svh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "226ced66120e4e473db3033cdb8b6e17069c9b2709a72c5dfa888ec1a799014d",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank1.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "ca89a283d2f2daa1d0d6605dcf5a02cea7507fb6cf311dcc34dc540490d4b747",
+     "shape": [
+      384,
+      32,
+      48
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank2.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank2.svh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "5d365643d1af9bbf0a02259935802ec8e602e21b4822bdb418ed48502626c16d",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank2.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "97d66e51c956b1840cbeae307c0f4344fc9cdc89ecaa9a332e87d80492417493",
+     "shape": [
+      384,
+      32,
+      48
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank3.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank3.svh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "93fc23ed0864913ee9761ea8d39983c341953967b64d700ad5602ae3313cb890",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.rank3.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "c11d56ca4156eb53ad38fca49ab27ad0c7d8ee489a2d2a0d5f770e80c4117099",
+     "shape": [
+      384,
+      32,
+      48
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.gate_proj.rank0.suh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "63fec259e0e837850d2d10fd2a4f41b664d320e759b080847714365dd3875955",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.gate_proj.rank1.suh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "777c499fed3ee871053d6536674042bb99ed4ccfbe3d4d585029ae18904b76e7",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.gate_proj.rank2.suh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "93a1b48e00f99a29ce997576191ff29e2090192bf107e0c3e8e84168261cda2e",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.gate_proj.rank3.suh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "b274112dce2c92586e7565f47eb7d4a12cae570000bf2a6454e10e4ff466643c",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    }
+   },
+   "layout_of_checkpoint": "shared_h_v1",
+   "layout_of_module": "shared_h_v1",
+   "module": "model.layers.10.mlp.experts.0.gate_proj",
+   "reference": {
+    "bytes": 25165824,
+    "repo": "zai-org/GLM-5.2",
+    "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+    "rows_compared": [
+     2048,
+     6144
+    ],
+    "sha256_of_rows": "d2e72bbff8742e81fed93c58ddb2baf9b387f4e0fa4537518dc2e25d80d3a53d",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00002-of-00282.safetensors",
+    "tensor": "model.layers.10.mlp.experts.0.gate_proj.weight"
+   },
+   "repo": "willfalco/GLM-5.2-EXL3-TR3-3.42bpw",
+   "revision": "700c99dfa75d61cba4dda1ce9a36478bc217728d",
+   "shared_vectors_applied": 4,
+   "vs_reference": {
+    "cosine": 0.9882556511234177,
+    "elements": 12582912,
+    "rel_l2": 0.15295890949411073,
+    "rel_mse": 0.023396427993626654
+   },
+   "window_rows": null
+  },
+  {
+   "K": [
+    3
+   ],
+   "artifact": "jpsequeira",
+   "codebook_histogram": {
+    "mcg": 233494
+   },
+   "composition": {
+    "axes": {
+     "down_proj": 1
+    },
+    "tp": 4
+   },
+   "control": {
+    "kind": "wrong-layer-shared-vector",
+    "shared_vectors_replaced": {
+     "model.layers.10.mlp.experts.shared_h.down_proj.rank0.svh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.down_proj.rank0.svh",
+      "sha256": "8ee59290fcfed3e114d40cf632832f2162e04b5e18ff3348dadcac29936c1814"
+     },
+     "model.layers.10.mlp.experts.shared_h.down_proj.rank1.svh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.down_proj.rank1.svh",
+      "sha256": "e6e46bf6bbafe77dc9187bbfd1d455b3687241c22ca969d216e48311fe342795"
+     },
+     "model.layers.10.mlp.experts.shared_h.down_proj.rank2.svh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.down_proj.rank2.svh",
+      "sha256": "d0eaea34b56b980f70a6b460e4f798db42ce51fb5415954a7337c17f3307c4e3"
+     },
+     "model.layers.10.mlp.experts.shared_h.down_proj.rank3.svh": {
+      "replaced_by": "model.layers.11.mlp.experts.shared_h.down_proj.rank3.svh",
+      "sha256": "2d80ba9f856724653e5468b47c99b6b82ad121eeb6b835b268a6236587eedd39"
+     }
+    },
+    "vs_reference": {
+     "cosine": 0.0014473524854417938,
+     "elements": 12582912,
+     "rel_l2": 1.4085988254836028,
+     "rel_mse": 1.9841506511538285
+    }
+   },
+   "decoded_bf16_sha256": "2949c92d69605c91dc88715d93d7ed96dcc34c09caf8eecf2b3c2fac065ce354",
+   "decoded_shape": [
+    6144,
+    2048
+   ],
+   "inputs": {
+    "model.layers.10.mlp.experts.0.down_proj.rank0.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank0.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "1e5ddbe5f5f07301cf42db161bd4f1e8b32bbbcfc8c888546803354a23150737",
+     "shape": [
+      512
+     ],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank0.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "5087fe975ac465f1cc2139a4a09215b1d4a4183cf07510db7c4109a610f50b22",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank1.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank1.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "afb650239c73e6156705bb0150a6a46d73cedfc3886f112e1ed5503b2d7cb630",
+     "shape": [
+      512
+     ],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank1.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "163c5d2a6166d291f23c26903fb6c2d2d2d82783e27225d369cf73bec4814589",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank2.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank2.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "aa7b4f939e73e8563bb41c0141d91741eb429cbc1fa4f3816890288da729644e",
+     "shape": [
+      512
+     ],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank2.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "b484d98abd2513f20eac8f819e27d2d88258215b101dde3f939b282deae79a8d",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank3.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank3.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "2b36559802228d1843ea91a1b5c98e8877123dcadf0fa3e8463865588c1b0e3e",
+     "shape": [
+      512
+     ],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.rank3.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "f5264051e39b02c2be8fa87adb40bb74920ceecbb397b28f780985e79d287390",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "projection-mixed-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.down_proj.rank0.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "c34e6954ba06486e49ffbd3111d77a3fc6f4677beb9c5e40f444d7faed9ce57e",
+     "shape": [
+      6144
+     ],
+     "shard": "shared-h-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.down_proj.rank1.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "4e9fb67f0da33629ac01a8265cc0f68bdc281dc4fce9617c2effc98fafddb0d6",
+     "shape": [
+      6144
+     ],
+     "shard": "shared-h-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.down_proj.rank2.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "1d41e8525ee2c1c0d625839bc852440bb07d05289b6eae4436e42ba0b8695735",
+     "shape": [
+      6144
+     ],
+     "shard": "shared-h-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.shared_h.down_proj.rank3.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "6929374a100e3b1a39efe94123a50943cc3e8b4a80120f11c68e0977d8b640c2",
+     "shape": [
+      6144
+     ],
+     "shard": "shared-h-layer-010.safetensors",
+     "window": null
+    }
+   },
+   "layout_of_checkpoint": "shared_h_v1",
+   "layout_of_module": "shared_h_v1",
+   "module": "model.layers.10.mlp.experts.0.down_proj",
+   "reference": {
+    "bytes": 25165824,
+    "repo": "zai-org/GLM-5.2",
+    "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+    "rows_compared": [
+     6144,
+     2048
+    ],
+    "sha256_of_rows": "601b9d1f05494ee7be6ac29631a1cc63ad2bfb797f502b0343a6d04b5c61129e",
+    "shape": [
+     6144,
+     2048
+    ],
+    "shard": "model-00002-of-00282.safetensors",
+    "tensor": "model.layers.10.mlp.experts.0.down_proj.weight"
+   },
+   "repo": "jpsequeira/GLM-5.2-EXL3-TR3-3.40bpw-KVarN-K4V2",
+   "revision": "b92479840ef92fbeb7d774187f91cf5a2a659ade",
+   "shared_vectors_applied": 4,
+   "vs_reference": {
+    "cosine": 0.9888422301419542,
+    "elements": 12582912,
+    "rel_l2": 0.1490397579011353,
+    "rel_mse": 0.022212849435228135
+   },
+   "window_rows": null
+  },
+  {
+   "K": [
+    6
+   ],
+   "artifact": "jpsequeira",
+   "codebook_histogram": {
+    "mcg": 233494
+   },
+   "composition": {
+    "axes": null,
+    "tp": 4
+   },
+   "decoded_bf16_sha256": "a1879eb7833fb40cd0cb3d36eb512648cd0250c405eb5f11ca3126e75de32ab6",
+   "decoded_shape": [
+    4096,
+    2048
+   ],
+   "inputs": {
+    "model.layers.10.self_attn.indexer.wq_b.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "exl3-exemption-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.self_attn.indexer.wq_b.suh": {
+     "bytes": 4096,
+     "dtype": "F16",
+     "sha256": "db50ae3983ca9dc746ed9550669f571270768d3c3b5238b6805d43e68227987d",
+     "shape": [
+      2048
+     ],
+     "shard": "exl3-exemption-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.self_attn.indexer.wq_b.svh": {
+     "bytes": 8192,
+     "dtype": "F16",
+     "sha256": "cb09d67863e8ab39e1b2745622eb841149b3358f044d113d43c8a5f3a01cb4cf",
+     "shape": [
+      4096
+     ],
+     "shard": "exl3-exemption-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.self_attn.indexer.wq_b.trellis": {
+     "bytes": 6291456,
+     "dtype": "I16",
+     "sha256": "5f4153bee3bc4ebe1c9dec41e92b22101082b6c9c84f578a47b37df9588c2389",
+     "shape": [
+      128,
+      256,
+      96
+     ],
+     "shard": "exl3-exemption-layer-010.safetensors",
+     "window": null
+    }
+   },
+   "layout_of_checkpoint": "shared_h_v1",
+   "layout_of_module": "per_module",
+   "module": "model.layers.10.self_attn.indexer.wq_b",
+   "reference": {
+    "bytes": 16777216,
+    "repo": "zai-org/GLM-5.2",
+    "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+    "rows_compared": [
+     4096,
+     2048
+    ],
+    "sha256_of_rows": "67b9b3b0f66b2c2242fb28b4633b9e17fd5372305324d811feedfbbdae19587e",
+    "shape": [
+     4096,
+     2048
+    ],
+    "shard": "model-00005-of-00282.safetensors",
+    "tensor": "model.layers.10.self_attn.indexer.wq_b.weight"
+   },
+   "repo": "jpsequeira/GLM-5.2-EXL3-TR3-3.40bpw-KVarN-K4V2",
+   "revision": "b92479840ef92fbeb7d774187f91cf5a2a659ade",
+   "shared_vectors_applied": 0,
+   "vs_reference": {
+    "cosine": 0.9997778126839805,
+    "elements": 8388608,
+    "rel_l2": 0.021082234117874837,
+    "rel_mse": 0.00044446059540087095
+   },
+   "window_rows": null
+  },
+  {
+   "K": [
+    8
+   ],
+   "artifact": "jpsequeira",
+   "codebook_histogram": {
+    "mcg": 233494
+   },
+   "composition": {
+    "axes": null,
+    "tp": 4
+   },
+   "decoded_bf16_sha256": "2aa0c3e73056306579283c2f463c7ea6530a1a95ad06c48179d3a95bcd9f071c",
+   "decoded_shape": [
+    2048,
+    6144
+   ],
+   "inputs": {
+    "lm_head.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "exl3-exemption-lm-head.safetensors",
+     "window": null
+    },
+    "lm_head.suh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "1fb53116092b520c200ffc81fde574d98fbc01af299051c3858e558972d6699f",
+     "shape": [
+      6144
+     ],
+     "shard": "exl3-exemption-lm-head.safetensors",
+     "window": null
+    },
+    "lm_head.svh": {
+     "bytes": 309760,
+     "dtype": "F16",
+     "sha256": "50ef0ee711b9d56e3aec25fbaab63316a7980570e258f02792bd88f3e14a293e",
+     "shape": [
+      154880
+     ],
+     "shard": "exl3-exemption-lm-head.safetensors",
+     "window": "first 2048 values"
+    },
+    "lm_head.trellis": {
+     "bytes": 12582912,
+     "dtype": "I16",
+     "sha256": "9389a892cd015b61c7c059d0b930b1f8713b1e31023043e3a64e225e57af97c8",
+     "shape": [
+      384,
+      9680,
+      128
+     ],
+     "shard": "exl3-exemption-lm-head.safetensors",
+     "window": "first 128 n-tiles"
+    }
+   },
+   "layout_of_checkpoint": "shared_h_v1",
+   "layout_of_module": "per_module",
+   "module": "lm_head",
+   "reference": {
+    "bytes": 25165824,
+    "repo": "zai-org/GLM-5.2",
+    "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+    "rows_compared": [
+     2048,
+     6144
+    ],
+    "sha256_of_rows": "c1ed1080c9ff4fc38dcbd983423c63e9260472075db019c9dcf001ded6218887",
+    "shape": [
+     154880,
+     6144
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "tensor": "lm_head.weight"
+   },
+   "repo": "jpsequeira/GLM-5.2-EXL3-TR3-3.40bpw-KVarN-K4V2",
+   "revision": "b92479840ef92fbeb7d774187f91cf5a2a659ade",
+   "shared_vectors_applied": 0,
+   "vs_reference": {
+    "cosine": 0.9999837382807248,
+    "elements": 12582912,
+    "rel_l2": 0.005702923261112834,
+    "rel_mse": 3.2523333722140566e-05
+   },
+   "window_rows": 2048
+  },
+  {
+   "K": [
+    4
+   ],
+   "artifact": "brandonmusic",
+   "codebook_histogram": {
+    "mcg": 60822
+   },
+   "composition": {
+    "axes": null,
+    "tp": 4
+   },
+   "control": {
+    "kind": "wrong-layer-shared-vector",
+    "shared_vectors_replaced": {
+     "model.layers.10.mlp.experts.r7_shared.down_svh": {
+      "replaced_by": "model.layers.11.mlp.experts.r7_shared.down_svh",
+      "sha256": "2b8b6b2a5c72c2c36eecf1e4f29260e035d930965f4d2592b9c40cd70c65f6e4"
+     }
+    },
+    "vs_reference": {
+     "cosine": 0.008230162870869829,
+     "elements": 12582912,
+     "rel_l2": 1.4078582227022365,
+     "rel_mse": 1.9820647752303362
+    }
+   },
+   "decoded_bf16_sha256": "b7a1f55183d05595dfd5d8fd7d35fdf6a2538ebaed2698dca71ba2a5e6595263",
+   "decoded_shape": [
+    6144,
+    2048
+   ],
+   "inputs": {
+    "model.layers.10.mlp.experts.0.down_proj.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.suh": {
+     "bytes": 4096,
+     "dtype": "F16",
+     "sha256": "a24b565e2a3b193950ecbb66182fff9245046da0c12485d62828db6a7d5a284a",
+     "shape": [
+      2048
+     ],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.down_proj.trellis": {
+     "bytes": 6291456,
+     "dtype": "I16",
+     "sha256": "424342f6fb59bb2e719e7907337fc29d02918642a66e995e8adc593d2798d00d",
+     "shape": [
+      128,
+      384,
+      64
+     ],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.r7_shared.down_svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "b08e3d71f23c90725468626de74a86a44297c5a3d8627708b9910645bb31981a",
+     "shape": [
+      6144
+     ],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    }
+   },
+   "layout_of_checkpoint": "r7_shared",
+   "layout_of_module": "r7_shared",
+   "module": "model.layers.10.mlp.experts.0.down_proj",
+   "r7_intermediate_permutation": {
+    "as_stored_without_unpermute_vs_reference": {
+     "cosine": 0.0003505596100452985,
+     "elements": 12582912,
+     "rel_l2": 1.4134519993542265,
+     "rel_mse": 1.997846554478501
+    },
+    "manifest": "r7-experts-layer-010.json",
+    "manifest_sha256": "aac44cf31859b34c3ac50703cb8170724bceb4082d795f8c86971680b1f25e62",
+    "policy": "energy_balanced_contiguous",
+    "reference": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f r7_encoder/permutation.py:99-114 (permute_expert_hf: gate/up rows and down columns index_select'ed by the expert's permutation before encoding), :91-96 (inverse_permutation) and r7_encoder/schema.py:268-272 (the layer manifest's permutations[E].new_to_old is that permutation)"
+   },
+   "reference": {
+    "bytes": 25165824,
+    "repo": "zai-org/GLM-5.2",
+    "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+    "rows_compared": [
+     6144,
+     2048
+    ],
+    "sha256_of_rows": "601b9d1f05494ee7be6ac29631a1cc63ad2bfb797f502b0343a6d04b5c61129e",
+    "shape": [
+     6144,
+     2048
+    ],
+    "shard": "model-00002-of-00282.safetensors",
+    "tensor": "model.layers.10.mlp.experts.0.down_proj.weight"
+   },
+   "repo": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78",
+   "revision": "7c73450f05a151439d0f184f216b1eefcc394a31",
+   "shared_vectors_applied": 1,
+   "vs_reference": {
+    "cosine": 0.9961429834419916,
+    "elements": 12582912,
+    "rel_l2": 0.08780065793759288,
+    "rel_mse": 0.007708955534273832
+   },
+   "window_rows": null
+  },
+  {
+   "K": [
+    3
+   ],
+   "artifact": "brandonmusic",
+   "codebook_histogram": {
+    "mcg": 60822
+   },
+   "composition": {
+    "axes": null,
+    "tp": 4
+   },
+   "control": {
+    "kind": "wrong-layer-shared-vector",
+    "shared_vectors_replaced": {
+     "model.layers.10.mlp.experts.r7_shared.gate_up_suh": {
+      "replaced_by": "model.layers.11.mlp.experts.r7_shared.gate_up_suh",
+      "sha256": "1a19c897f306669dd3930047fe301cfefea9f49d63865d54f11fdb6abe995a69"
+     }
+    },
+    "vs_reference": {
+     "cosine": -0.00963058400794797,
+     "elements": 12582912,
+     "rel_l2": 1.4186554838960332,
+     "rel_mse": 2.0125833819883394
+    }
+   },
+   "decoded_bf16_sha256": "888c95b9d3abcebb76a30d4fbbc76a51608be94e98f76a8b2dccb0c466507840",
+   "decoded_shape": [
+    2048,
+    6144
+   ],
+   "inputs": {
+    "model.layers.10.mlp.experts.0.gate_proj.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.svh": {
+     "bytes": 4096,
+     "dtype": "F16",
+     "sha256": "f66c36478a0902917dc352751aacb475d1431b648d4f0a3c88068e02da35d209",
+     "shape": [
+      2048
+     ],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.gate_proj.trellis": {
+     "bytes": 4718592,
+     "dtype": "I16",
+     "sha256": "cecc9111445828beab51e0304f4403812acaf220eebec651717694d0b1a3ad05",
+     "shape": [
+      384,
+      128,
+      48
+     ],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.r7_shared.gate_up_suh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "515cb19391bfe232a0a0e5ceb88bb646a5e027d938402257479626d612720fe1",
+     "shape": [
+      6144
+     ],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    }
+   },
+   "layout_of_checkpoint": "r7_shared",
+   "layout_of_module": "r7_shared",
+   "module": "model.layers.10.mlp.experts.0.gate_proj",
+   "r7_intermediate_permutation": {
+    "as_stored_without_unpermute_vs_reference": {
+     "cosine": -0.0005761177510887978,
+     "elements": 12582912,
+     "rel_l2": 1.4140619560243544,
+     "rel_mse": 1.9995712154754586
+    },
+    "manifest": "r7-experts-layer-010.json",
+    "manifest_sha256": "aac44cf31859b34c3ac50703cb8170724bceb4082d795f8c86971680b1f25e62",
+    "policy": "energy_balanced_contiguous",
+    "reference": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f r7_encoder/permutation.py:99-114 (permute_expert_hf: gate/up rows and down columns index_select'ed by the expert's permutation before encoding), :91-96 (inverse_permutation) and r7_encoder/schema.py:268-272 (the layer manifest's permutations[E].new_to_old is that permutation)"
+   },
+   "reference": {
+    "bytes": 25165824,
+    "repo": "zai-org/GLM-5.2",
+    "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+    "rows_compared": [
+     2048,
+     6144
+    ],
+    "sha256_of_rows": "d2e72bbff8742e81fed93c58ddb2baf9b387f4e0fa4537518dc2e25d80d3a53d",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00002-of-00282.safetensors",
+    "tensor": "model.layers.10.mlp.experts.0.gate_proj.weight"
+   },
+   "repo": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78",
+   "revision": "7c73450f05a151439d0f184f216b1eefcc394a31",
+   "shared_vectors_applied": 1,
+   "vs_reference": {
+    "cosine": 0.9851567516771199,
+    "elements": 12582912,
+    "rel_l2": 0.1722314085708769,
+    "rel_mse": 0.02966365809830714
+   },
+   "window_rows": null
+  },
+  {
+   "K": [
+    3
+   ],
+   "artifact": "brandonmusic",
+   "codebook_histogram": {
+    "mcg": 60822
+   },
+   "composition": {
+    "axes": null,
+    "tp": 4
+   },
+   "control": {
+    "kind": "wrong-layer-shared-vector",
+    "shared_vectors_replaced": {
+     "model.layers.10.mlp.experts.r7_shared.gate_up_suh": {
+      "replaced_by": "model.layers.11.mlp.experts.r7_shared.gate_up_suh",
+      "sha256": "1a19c897f306669dd3930047fe301cfefea9f49d63865d54f11fdb6abe995a69"
+     }
+    },
+    "vs_reference": {
+     "cosine": -0.009450691300507382,
+     "elements": 12582912,
+     "rel_l2": 1.4185691235325575,
+     "rel_mse": 2.012338358239978
+    }
+   },
+   "decoded_bf16_sha256": "ec7bcc2b9adac05d1815d44c8dd78f71885260cf964c884192c07a872871b163",
+   "decoded_shape": [
+    2048,
+    6144
+   ],
+   "inputs": {
+    "model.layers.10.mlp.experts.0.up_proj.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.up_proj.svh": {
+     "bytes": 4096,
+     "dtype": "F16",
+     "sha256": "6859ad9a92128ac91f5e19cb87bc0587d3cccfa76285396422b268f40f64676f",
+     "shape": [
+      2048
+     ],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.0.up_proj.trellis": {
+     "bytes": 4718592,
+     "dtype": "I16",
+     "sha256": "0c0212877c75be5b4d6358e0c07e94ee471f67ae0b56bb2433e96e5a144ec2f5",
+     "shape": [
+      384,
+      128,
+      48
+     ],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.mlp.experts.r7_shared.gate_up_suh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "515cb19391bfe232a0a0e5ceb88bb646a5e027d938402257479626d612720fe1",
+     "shape": [
+      6144
+     ],
+     "shard": "r7-experts-layer-010.safetensors",
+     "window": null
+    }
+   },
+   "layout_of_checkpoint": "r7_shared",
+   "layout_of_module": "r7_shared",
+   "module": "model.layers.10.mlp.experts.0.up_proj",
+   "r7_intermediate_permutation": {
+    "as_stored_without_unpermute_vs_reference": {
+     "cosine": -6.511586890208071e-05,
+     "elements": 12582912,
+     "rel_l2": 1.4137315312898175,
+     "rel_mse": 1.9986368425630971
+    },
+    "manifest": "r7-experts-layer-010.json",
+    "manifest_sha256": "aac44cf31859b34c3ac50703cb8170724bceb4082d795f8c86971680b1f25e62",
+    "policy": "energy_balanced_contiguous",
+    "reference": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f r7_encoder/permutation.py:99-114 (permute_expert_hf: gate/up rows and down columns index_select'ed by the expert's permutation before encoding), :91-96 (inverse_permutation) and r7_encoder/schema.py:268-272 (the layer manifest's permutations[E].new_to_old is that permutation)"
+   },
+   "reference": {
+    "bytes": 25165824,
+    "repo": "zai-org/GLM-5.2",
+    "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+    "rows_compared": [
+     2048,
+     6144
+    ],
+    "sha256_of_rows": "39ebf198b843ac6f47679fd48a32866dcdffee998ee06da7af609a83c080fc91",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00002-of-00282.safetensors",
+    "tensor": "model.layers.10.mlp.experts.0.up_proj.weight"
+   },
+   "repo": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78",
+   "revision": "7c73450f05a151439d0f184f216b1eefcc394a31",
+   "shared_vectors_applied": 1,
+   "vs_reference": {
+    "cosine": 0.9851676402909777,
+    "elements": 12582912,
+    "rel_l2": 0.17217177468269576,
+    "rel_mse": 0.029643119997387838
+   },
+   "window_rows": null
+  },
+  {
+   "K": [
+    6
+   ],
+   "artifact": "brandonmusic",
+   "codebook_histogram": {
+    "mcg": 60822
+   },
+   "composition": {
+    "axes": null,
+    "tp": 4
+   },
+   "decoded_bf16_sha256": "3a481def05dcd3570c672757b20ad0686048787be23deb976803ed4eb5dd92f4",
+   "decoded_shape": [
+    1024,
+    16384
+   ],
+   "inputs": {
+    "model.layers.10.self_attn.o_proj.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.self_attn.o_proj.suh": {
+     "bytes": 32768,
+     "dtype": "F16",
+     "sha256": "d171306946ab462acc042025d0381b68e1e7a37d77865d20265b486742c5d401",
+     "shape": [
+      16384
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": null
+    },
+    "model.layers.10.self_attn.o_proj.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "051aba8e0848b687418054337d15fb01ec11e6a3b3331d333fa7ba459307912d",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": "first 1024 values"
+    },
+    "model.layers.10.self_attn.o_proj.trellis": {
+     "bytes": 12582912,
+     "dtype": "I16",
+     "sha256": "ec502f3ff9bf9e67fc8c1075a575a7bd5e0c57640ec19393a5129523638440c6",
+     "shape": [
+      1024,
+      384,
+      96
+     ],
+     "shard": "model-layer-010.safetensors",
+     "window": "first 64 n-tiles"
+    }
+   },
+   "layout_of_checkpoint": "r7_shared",
+   "layout_of_module": "per_module",
+   "module": "model.layers.10.self_attn.o_proj",
+   "reference": {
+    "bytes": 33554432,
+    "repo": "zai-org/GLM-5.2",
+    "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+    "rows_compared": [
+     1024,
+     16384
+    ],
+    "sha256_of_rows": "f8ce18f94ee7e31ad1c1c87e0e1da98de0311698ce7c4c7a07ee6fa096ca535a",
+    "shape": [
+     6144,
+     16384
+    ],
+    "shard": "model-00005-of-00282.safetensors",
+    "tensor": "model.layers.10.self_attn.o_proj.weight"
+   },
+   "repo": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78",
+   "revision": "7c73450f05a151439d0f184f216b1eefcc394a31",
+   "shared_vectors_applied": 0,
+   "vs_reference": {
+    "cosine": 0.9997336795936279,
+    "elements": 16777216,
+    "rel_l2": 0.023079251298913205,
+    "rel_mse": 0.0005326518405183421
+   },
+   "window_rows": 1024
+  },
+  {
+   "K": [
+    3
+   ],
+   "artifact": "brandonmusic",
+   "codebook_histogram": {
+    "mcg": 60822
+   },
+   "composition": {
+    "axes": {
+     "down_proj": 1
+    },
+    "tp": 4
+   },
+   "decoded_bf16_sha256": "a7dedcf290eaa3c29746ce0442230489ace371b7f8b2d67af9803dbcf966ed6f",
+   "decoded_shape": [
+    6144,
+    2048
+   ],
+   "inputs": {
+    "model.layers.78.mlp.experts.0.down_proj.rank0.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank0.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "393243ccb584b363bc39deb0db4538bd2b560e93386ebe57ccf34f1f97cc171b",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank0.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "4cae791ab8cf09ebc5d8bc75a64fb20b6bd810a7137e47b23f64cdcb09083703",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank0.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "3077ede9cba0b35ea9fdbb0803c25c73833ebe642b1b1496d277dbe8a5d79b57",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank1.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank1.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "fe006cbc2f9801c3d41f137416b8d38d5db1e8db56ddb10118410f0e3ced1a47",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank1.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "2d3c160896af342cd0a71676b8e8769e2f718072ee2ad09eade61c287eb76bbf",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank1.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "d499126b83fdf7d9e61b2acd080e37aae9dd5a4c440f12bfae984b8acf5ce08d",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank2.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank2.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "c46e6c6349f0652c841c21a83e82c5036ad8b16fcc97d82658c858ca12c9a399",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank2.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "b59c6f27435ff3b48d302b47dfcca50ca044fc98fc191e550c0c623f0776081c",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank2.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "ce96a318a35869e067b2b8524a3c1be5d33cf4ed9141e8ccc462e173870ef5f0",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank3.mcg": {
+     "bytes": 4,
+     "dtype": "I32",
+     "sha256": "ade4fb124dda0f3537386cdd4a3cdcea3a223d386e506a4be89394bb33ee13fe",
+     "shape": [],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank3.suh": {
+     "bytes": 1024,
+     "dtype": "F16",
+     "sha256": "192d0f2da511124ea1202bcf8fbea4e21e565025aed1e681626a5905f49fefcd",
+     "shape": [
+      512
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank3.svh": {
+     "bytes": 12288,
+     "dtype": "F16",
+     "sha256": "aa8b184a3030b0d2e879b1707614a04933823cb108c83f88893c8289f2b3a01f",
+     "shape": [
+      6144
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    },
+    "model.layers.78.mlp.experts.0.down_proj.rank3.trellis": {
+     "bytes": 1179648,
+     "dtype": "I16",
+     "sha256": "098146c9032c8c104d571faf6d0e2012199897e46db1f89ef0c67c8d282013f6",
+     "shape": [
+      32,
+      384,
+      48
+     ],
+     "shard": "model-layer-078.safetensors",
+     "window": null
+    }
+   },
+   "layout_of_checkpoint": "r7_shared",
+   "layout_of_module": "per_module",
+   "module": "model.layers.78.mlp.experts.0.down_proj",
+   "reference": {
+    "bytes": 25165824,
+    "repo": "zai-org/GLM-5.2",
+    "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+    "rows_compared": [
+     6144,
+     2048
+    ],
+    "sha256_of_rows": "ef1ba7fc8c2b1400f311255dc78903489e519ba128694b1907cfb23eb275e5ad",
+    "shape": [
+     6144,
+     2048
+    ],
+    "shard": "model-00271-of-00282.safetensors",
+    "tensor": "model.layers.78.mlp.experts.0.down_proj.weight"
+   },
+   "repo": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78",
+   "revision": "7c73450f05a151439d0f184f216b1eefcc394a31",
+   "shared_vectors_applied": 0,
+   "vs_reference": {
+    "cosine": 0.9897180860992951,
+    "elements": 12582912,
+    "rel_l2": 0.1430549110533074,
+    "rel_mse": 0.020464707576468958
+   },
+   "window_rows": null
+  }
+ ],
+ "modules_compared": 10,
+ "reading": "A CORRECT decode sits at its K's trellis reconstruction error, halving per bit: K3 rel_l2 ~0.15, K4 ~0.07-0.09 (fruit-siq-trellis-reconstruction.json 0.0674, glm53-exl3-tp-rank-and-zero-pad-parity.json 0.067), K6 ~0.02, K8 ~0.006; in_band_rel_l2 is that ceiling per K. Each shared-layout control decodes the same bytes with the NEXT layer's shared vector of the same projection and falls to cosine ~0: the vector's NAME resolution is what the decode rests on, not its shape. The r7 modules additionally show the bytes AS STORED (the manifest's permutations[E] not undone) at cosine ~0: the layer manifest's new_to_old is part of the layout, and the decoder inverts it.",
+ "reference": {
+  "index_sha256": "5fd47a926aefce0f2c917f42523e5e0f3c87e23e389e767c3681536a62f5cf5e",
+  "note": "every artifact's hybrid_tr3_tail names this index as source_index_sha256 / bf16_source_index_sha256",
+  "repo": "zai-org/GLM-5.2",
+  "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc"
+ },
+ "schema": "malaiwah.exl3-rotation-layout-parity.v1",
+ "tool": "engines/tools/exl3_layout_parity.py"
+}

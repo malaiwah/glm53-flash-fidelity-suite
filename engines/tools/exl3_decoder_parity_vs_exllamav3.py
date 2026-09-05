@@ -90,11 +90,16 @@ RECONSTRUCT_ENTRYPOINT = (
 
 WINDOW_TILES = 8  # 8 x 8 tiles = one 128 x 128 Hadamard block, the smallest self-contained window
 
-# (label, repo, revision, shard, module, codebook). One module per (release, K)
+# (label, repo, revision, shard, module, codebook[, objects]). One module per (release, K)
 # for davidsyoung, the two Fruit expert-0 modules the reconstruction receipt
 # already names, and one drowzeys module per codebook. K is read from the
-# header and recorded; it is not an input.
-MODULE_PLAN: Tuple[Tuple[str, str, str, str, str, str], ...] = (
+# header and recorded; it is not an input. The optional 7th element names
+# where an object lives when it is NOT `<module>.<object>` in the same shard:
+# {"suh"|"svh": (shard, tensor name)} -- the layer-shared rotation vectors of
+# the GLM-5.2 layouts (`layer_outer.exl3_rotation_groups`; evidence in
+# layer-outer-evidence/glm52-exl3-layouts-parity.json), which exllamav3's
+# LinearEXL3 takes as plain suh/svh tensors once resolved by name.
+MODULE_PLAN: Tuple[Tuple[Any, ...], ...] = (
     ("fruit", "malaiwah/GLM-5.2-SIQ-Fruit", "c1798e3676fa16b4a874381171adab1e3033fbd5",
      "model-layer-003.safetensors", "model.layers.3.mlp.experts.0.down_proj.rank0", "mcg"),
     ("fruit", "malaiwah/GLM-5.2-SIQ-Fruit", "c1798e3676fa16b4a874381171adab1e3033fbd5",
@@ -115,6 +120,33 @@ MODULE_PLAN: Tuple[Tuple[str, str, str, str, str, str], ...] = (
      "model-00001-of-00041.safetensors", "model.layers.3.mlp.experts.0.gate_proj", "mcg"),
     ("drowzeys", "drowzeys/keys-GLM-5.3-EXL3", "ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5",
      "model-00002-of-00041.safetensors", "model.layers.4.mlp.experts.0.gate_proj", "mul1"),
+    # GLM-5.2 shared_h_v1: the down_proj rank's svh is the layer's shared vector.
+    ("willfalco", "willfalco/GLM-5.2-EXL3-TR3-3.42bpw", "700c99dfa75d61cba4dda1ce9a36478bc217728d",
+     "model-layer-010.safetensors", "model.layers.10.mlp.experts.0.down_proj.rank0", "mcg",
+     {"svh": ("model-layer-010.safetensors",
+              "model.layers.10.mlp.experts.shared_h.down_proj.rank0.svh")}),
+    # jpsequeira keeps the shared vectors in their own shard; plus its exl3 wq_b (K6).
+    ("jpsequeira", "jpsequeira/GLM-5.2-EXL3-TR3-3.40bpw-KVarN-K4V2",
+     "b92479840ef92fbeb7d774187f91cf5a2a659ade",
+     "projection-mixed-layer-010.safetensors", "model.layers.10.mlp.experts.0.down_proj.rank0", "mcg",
+     {"svh": ("shared-h-layer-010.safetensors",
+              "model.layers.10.mlp.experts.shared_h.down_proj.rank0.svh")}),
+    ("jpsequeira", "jpsequeira/GLM-5.2-EXL3-TR3-3.40bpw-KVarN-K4V2",
+     "b92479840ef92fbeb7d774187f91cf5a2a659ade",
+     "exl3-exemption-layer-010.safetensors", "model.layers.10.self_attn.indexer.wq_b", "mcg"),
+    # brandonmusic r7_shared: unsharded experts; gate_up_suh serves gate AND up, down_svh down.
+    ("brandonmusic", "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78",
+     "7c73450f05a151439d0f184f216b1eefcc394a31",
+     "r7-experts-layer-010.safetensors", "model.layers.10.mlp.experts.0.down_proj", "mcg",
+     {"svh": ("r7-experts-layer-010.safetensors", "model.layers.10.mlp.experts.r7_shared.down_svh")}),
+    ("brandonmusic", "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78",
+     "7c73450f05a151439d0f184f216b1eefcc394a31",
+     "r7-experts-layer-010.safetensors", "model.layers.10.mlp.experts.0.up_proj", "mcg",
+     {"suh": ("r7-experts-layer-010.safetensors", "model.layers.10.mlp.experts.r7_shared.gate_up_suh")}),
+    # brandonmusic's dense-6 non-routed module (K6), stock layout.
+    ("brandonmusic", "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78",
+     "7c73450f05a151439d0f184f216b1eefcc394a31",
+     "model-layer-010.safetensors", "model.layers.10.self_attn.q_b_proj", "mcg"),
 )
 
 _NP_DTYPE = {"I16": "<i2", "I32": "<i4", "F16": "<f2"}
@@ -178,15 +210,19 @@ def shard_header(cache: Path, repo: str, revision: str, shard: str) -> Dict[str,
     return header
 
 
-def fetch_tensor(cache: Path, repo: str, revision: str, shard: str, header: Dict[str, Any], name: str):
-    """One tensor's exact bytes by range -> (torch tensor, sha256, byte count)."""
+def fetch_tensor(cache: Path, repo: str, revision: str, shard: str, header: Dict[str, Any], name: str,
+                 obj: Optional[str] = None):
+    """One tensor's exact bytes by range -> (torch tensor, sha256, byte count).
+
+    `obj` names the payload object the tensor stands for when the tensor's own
+    suffix does not (a layer-shared `down_svh` / `gate_up_suh` / `rank0.svh`)."""
     import numpy as np
     import torch
 
     entry = header.get(name)
     if entry is None:
         raise _fail(f"{repo}@{revision[:8]} {shard} has no tensor {name}")
-    expected = _EXPECTED_DTYPE[name.rsplit(".", 1)[1]]
+    expected = _EXPECTED_DTYPE[obj or name.rsplit(".", 1)[1]]
     if entry["dtype"] != expected:
         raise _fail(f"{name} is {entry['dtype']}, expected {expected}")
     start, end = entry["data_offsets"]
@@ -347,11 +383,15 @@ def module_record(cache: Path, plan_row, log) -> Tuple[Dict[str, Any], Dict[str,
     """Fetch one module, decode it with our decoder; return (record, tensors)."""
     import torch
 
-    label, repo, revision, shard, module, codebook = plan_row
+    label, repo, revision, shard, module, codebook = plan_row[:6]
+    objects = dict(plan_row[6]) if len(plan_row) > 6 else {}
     header = shard_header(cache, repo, revision, shard)
     tensors, digests, fetched = {}, {}, 0
     for obj in ("trellis", "suh", "svh", codebook):
-        tensors[obj], digests[obj], n = fetch_tensor(cache, repo, revision, shard, header, f"{module}.{obj}")
+        obj_shard, obj_name = objects.get(obj, (shard, f"{module}.{obj}"))
+        obj_header = header if obj_shard == shard else shard_header(cache, repo, revision, obj_shard)
+        tensors[obj], digests[obj], n = fetch_tensor(cache, repo, revision, obj_shard, obj_header,
+                                                     obj_name, obj=obj)
         fetched += n
     marker = int(tensors[codebook].reshape(-1)[0])
     if marker != xs.CODEBOOK_OBJECTS[codebook]:
@@ -370,6 +410,7 @@ def module_record(cache: Path, plan_row, log) -> Tuple[Dict[str, Any], Dict[str,
         "codebook": codebook, "K": bits, "marker": marker,
         "shape_in_out": [in_features, out_features], "elements": int(in_features * out_features),
         "input_sha256": digests, "input_bytes": fetched,
+        "objects": {obj: {"shard": s, "name": n} for obj, (s, n) in objects.items()},
         "ours": {"pre_hadamard_sha256": sha256_tensor(pre),
                  "weight_fp16_sha256": sha256_tensor(weight.to(torch.float16))},
         "window": {
