@@ -1,0 +1,15 @@
+{
+ "architecture": "GlmMoeDsaForCausalLM",
+ "artifact_sha256": "fe5e97f2cf1b86af87c9c7fedb86fbcb854ec4f43bf112a2ca81b1cbf77a5ebb",
+ "canonical_sorted_names_sha256": "9b7b44bc5a49c24a795ab31411c869f9f3a24372415c0233de0d3f805511ec45",
+ "config_sha256": "7d42e3a21873412b39c3741e5b9166362d25b05f40c0e66a968e79d422c7dea1",
+ "count": 9251,
+ "decoder_layers": 78,
+ "derived_at_utc": "2026-09-05T18:45:10Z",
+ "derived_by": "index census: every key of model.layers.78 (the block GlmMoeDsaForCausalLM never builds; num_hidden_layers is 78); engines/tools/index_census_allowlist.py",
+ "derived_from": "willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json",
+ "index_sha256": "b34398df3830a13d23e25a9582112d38f7da982a48d50b95bc7e0867c94e9fdc",
+ "per_layer_unexpected_counts": {
+  "78": 9251
+ }
+}
