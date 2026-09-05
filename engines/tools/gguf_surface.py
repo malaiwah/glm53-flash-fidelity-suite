@@ -1448,7 +1448,12 @@ def verify_shared_indexer_copies(container: GgufContainer, census: GgufCensus,
             )
         compared += 1
         by_parent[parent] = by_parent.get(parent, 0) + 1
-    return {"copies_compared": compared, "copies_by_parent_layer": by_parent,
+    # STRING keys: this dict is sealed into the runtime receipt, and an int-keyed
+    # dict sorts numerically in memory but lexically after the JSON round trip
+    # ("10" < "2"), so receipt_sha256 would never recompute (SEAL-1(g); the
+    # UD-Q4_K_XL attempt of 2026-09-05 lost a full 78-layer capture to it).
+    return {"copies_compared": compared,
+            "copies_by_parent_layer": {str(k): v for k, v in sorted(by_parent.items())},
             "all_value_identical": True}
 
 

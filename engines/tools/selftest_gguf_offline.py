@@ -797,6 +797,16 @@ def _sha256_file(path: Path) -> str:
 # rungs 8-8e: the GLM-5.3 FLAGSHIP (general.architecture glm-dsa), the surface
 # the layer-outer `gguf-dequant-to-bf16` lane decodes.
 # ---------------------------------------------------------------------------
+def _walk_keys(value):
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield k
+            yield from _walk_keys(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _walk_keys(v)
+
+
 def build_mini_glmdsa(out_dir: Path):
     """A synthetic two-layer glm-dsa GGUF with REAL container bytes over a
     shrunken GgufArch (4 experts, 2 MLA heads, hidden 256): layers 5 and 78
@@ -1131,10 +1141,38 @@ def _glmdsa_rungs(scratch: Path, torch) -> "list":
     mini_kv = {k: v for k, v in kv.items() if k.startswith("glm-dsa.") or k == "general.architecture"}
     twin = gs.GgufContainer([gs.GgufFile(str(write_gguf(twin_dir / "twin.gguf", mini_kv, rows_t, data=data_t)))])
     proof = gs.verify_shared_indexer_copies(twin, copy_census)
-    assert proof == {"copies_compared": 1, "copies_by_parent_layer": {78: 1}, "all_value_identical": True}
+    assert proof == {"copies_compared": 1, "copies_by_parent_layer": {"78": 1}, "all_value_identical": True}
+    # every block the lane seals into the runtime receipt must survive the JSON
+    # round trip with its seal intact: an int-keyed dict sorts numerically in
+    # memory and lexically on disk, and SEAL-1(g) then refuses the dataset
+    # AFTER a paid capture (UD-Q4_K_XL, 2026-09-05: 78 layers, 51,175 rows lost)
+    sys.path.insert(0, str(TOOLS.parent.parent / "bin"))
+    from fidelity import common as _common
+    from fidelity import dsformat as _dsformat
+    many = gs.GgufCensus(direct_map=direct_map, routed=routed, mla=mla, mla_layers=(5, 78),
+                         arch=mini_arch, shared_indexer_copies={
+                             "blk.5.indexer.k_norm.bias": 78, "blk.5.indexer.k_norm.weight": 78})
+    twin_tensors2 = dict(twin_tensors)
+    twin_tensors2["blk.5.indexer.k_norm.weight"] = twin_tensors2["blk.78.indexer.k_norm.weight"]
+    rows_t2, data_t2, offset = [], b"", 0
+    for name in sorted(twin_tensors2):
+        ttype, dims, raw = twin_tensors2[name]
+        rows_t2.append({"name": name, "dims": dims, "type": ttype, "offset": offset})
+        data_t2 += raw + b"\0" * ((-len(raw)) % 32)
+        offset += len(raw) + (-len(raw)) % 32
+    twin2 = gs.GgufContainer([gs.GgufFile(str(write_gguf(twin_dir / "twin2.gguf", mini_kv, rows_t2, data=data_t2)))])
+    for block in (gs.verify_shared_indexer_copies(twin2, many), gs.materialize_plan(mini_surface),
+                  gs.decode_contract(mini_container, "mini"), gs.audit_container(mini_container)):
+        sealed = _common.seal({"schema": "selftest", "block": block, "receipt_sha256": ""})
+        reread = json.loads(json.dumps(sealed, sort_keys=True))
+        assert _dsformat.recompute_seal(reread, "receipt_sha256") == sealed["receipt_sha256"], (
+            "a receipt block does not survive the JSON round trip: %s" % list(block)[:3])
+        assert all(isinstance(k, str) for k in _walk_keys(block)), "non-string dict key in a receipt block"
     _refuses(lambda: gs.verify_shared_indexer_copies(mini_container, copy_census),
              "blk.5.indexer.k_norm.bias", "not a value-identical copy")
-    passed.append("8d shared-indexer proof: value-identical copies pass, a differing copy refuses by name")
+    passed.append("8d shared-indexer proof: value-identical copies pass, a differing copy refuses by name; "
+                  "every receipt block the lane seals (copies proof, materialize plan, decode contract, "
+                  "container audit) recomputes its seal after the JSON round trip (string keys only)")
 
     # ---- 8e. the scope tool over the real header table ---------------------------
     import gguf_scope
