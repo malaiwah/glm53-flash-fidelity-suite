@@ -1220,15 +1220,15 @@ PYPANEL
     mkdir -p "$TOKENIZER_ROOT/.reference"
     TOK_FILES="$(python3 -c "
 import json,sys,hashlib,pathlib
- j=json.load(open(sys.argv[1]))
- files=j['panel']['resolved_binding']['tokenizer'].get('files',[])
- base=pathlib.Path(sys.argv[2])
- for f in files:
-     name=f['name']; expected=f['sha256']
-     p=base/name
-     if p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==expected:
-         continue  # already byte-identical, no need for .reference/
-     print(name)
+j=json.load(open(sys.argv[1]))
+files=j['panel']['resolved_binding']['tokenizer'].get('files',[])
+base=pathlib.Path(sys.argv[2])
+for f in files:
+    name=f['name']; expected=f['sha256']
+    p=base/name
+    if p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==expected:
+        continue
+    print(name)
 " "$CONF" "$MODELS/target")"
     for name in $TOK_FILES; do
       HF_HUB_ENABLE_HF_TRANSFER=1 HF_HOME="$FS/hf" \
