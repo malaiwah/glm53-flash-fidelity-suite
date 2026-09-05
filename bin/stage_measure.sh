@@ -1206,6 +1206,39 @@ print(target)
 PYPANEL
 )"
   TOKENIZER_ROOT="$MODELS/target"
+  # The panel's tokenizer pin names zai-org/GLM-5.3-BF16@<rev> as the
+  # identity source. For a root role on a DIFFERENT model with byte-identical
+  # tokenizer.json + tokenizer_config.json (e.g. GLM-5.2), the per-model
+  # provenance files (LICENSE, chat_template.jinja) and loader-key files
+  # (config.json) differ and need the panel root's copies in .reference/
+  # for the equivalence check. Fetch only the pinned tokenizer files that
+  # are NOT already byte-identical in the target (skip tokenizer.json and
+  # tokenizer_config.json when they match, to avoid a 20 MB re-fetch).
+  TOK_REPO="$(python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print(j['panel']['resolved_binding']['tokenizer'].get('repository',''))" "$CONF")"
+  TOK_REV="$(python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print(j['panel']['resolved_binding']['tokenizer'].get('revision',''))" "$CONF")"
+  if [ -n "$TOK_REPO" ] && [ -n "$TOK_REV" ] && [ "$TOK_REPO/$TOK_REV" != "$REPO/$REV" ]; then
+    mkdir -p "$TOKENIZER_ROOT/.reference"
+    TOK_FILES="$(python3 -c "
+import json,sys,hashlib,pathlib
+ j=json.load(open(sys.argv[1]))
+ files=j['panel']['resolved_binding']['tokenizer'].get('files',[])
+ base=pathlib.Path(sys.argv[2])
+ for f in files:
+     name=f['name']; expected=f['sha256']
+     p=base/name
+     if p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==expected:
+         continue  # already byte-identical, no need for .reference/
+     print(name)
+" "$CONF" "$MODELS/target")"
+    for name in $TOK_FILES; do
+      HF_HUB_ENABLE_HF_TRANSFER=1 HF_HOME="$FS/hf" \
+        "$VENV/bin/hf" download "$TOK_REPO" --revision "$TOK_REV" \
+        --include "$name" --local-dir "$FS/reference-tokenizer" \
+        >>"$LOGS/fetch_target.log" 2>&1
+      ln -sf "$FS/reference-tokenizer/$name" "$TOKENIZER_ROOT/.reference/$name"
+    done
+    log "root tokenizer: fetched $TOK_REPO @ $TOK_REV reference files into .reference/ for per-model provenance equivalence"
+  fi
   EXTRA=(--sanity-expect "$EXPECT"
          --panel-binding "$PANEL_BINDING"
          --panel-binding-sha256 "$PANEL_BINDING_SHA"
