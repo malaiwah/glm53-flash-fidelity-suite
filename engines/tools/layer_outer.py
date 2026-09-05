@@ -733,6 +733,15 @@ def trellis_tail_declaration(config) -> Optional[Dict[str, Any]]:
     return tail
 
 
+def _tail_declared_bits(tail) -> Any:
+    """Mirror of `fidelity.hfmeta.tr3_tail_declared_bits` (no bin/ import on the pod)."""
+    for key in ("bits_avg", "bits", "expert_bpw_mean"):
+        value = tail.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+    return tail.get("bits_avg", tail.get("bits"))
+
+
 def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Dict[str, Any]]:
     """The exact EXL3 trellis form this schedule decodes, or None.
 
@@ -804,7 +813,11 @@ def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Di
         contract = {
             "quant_method": "exl3",
             "codebook": str(tail["codebook"]) if tail.get("codebook") is not None else None,
-            "bits": tail.get("bits_avg", tail.get("bits")),
+            # The first NUMERIC of bits_avg / bits / expert_bpw_mean -- willfalco's
+            # GLM-5.2 tails declare `bits: "mixed"` beside `expert_bpw_mean`;
+            # byte-identical to bin/fidelity/hfmeta.tr3_tail_declared_bits, which
+            # the controller mirror uses, so the contract's `bits` agrees.
+            "bits": _tail_declared_bits(tail),
             "head_bits": None,
             "modules_to_not_convert": [],
         }

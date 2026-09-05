@@ -398,6 +398,11 @@ def main() -> int:
                         {"format": "exl3-trellis", "codebook": "mcg", "tp": 2, "bits_avg": 3.25,
                          "slicing": {"down_proj": "K-sliced: rank r = input cols"}},
                         list(rank_keys), lo.TRELLIS_TP_COMPOSE_METHOD),
+        "willfalco": ({"quant_method": "modelopt", "config_groups": {}},
+                      {"format": "exl3-trellis", "codebook": "mcg", "tp": 2, "bits": "mixed",
+                       "expert_bpw_mean": 3.25, "k_values": [3, 4], "k4_experts_total": 4800,
+                       "slicing": {"down_proj": "K-sliced: rank r = input cols"}},
+                      list(rank_keys), lo.TRELLIS_TP_COMPOSE_METHOD),
     }
     for label, (qc, tail, keys, method) in shapes.items():
         cfg = {"quantization_config": qc}
@@ -412,6 +417,18 @@ def main() -> int:
               ctrl["quantization_config"] == pod, "ctrl %r pod %r" % (ctrl["quantization_config"], pod))
         check("[13] %s: controller and pod agree on the method (%s)" % (label, method),
               ctrl["method"] == pod_method == method, "ctrl %r pod %r" % (ctrl["method"], pod_method))
+        if label == "willfalco":
+            # bits: "mixed" beside expert_bpw_mean: 3.25 -- the contract's bits
+            # is the NUMERIC declaration on both sides, and the sniffer reads
+            # the same number (it refused this shape as "no numeric bits_avg").
+            sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bin"))
+            from fidelity import hfmeta as hm
+            check("[13] willfalco: bits: \"mixed\" + expert_bpw_mean 3.25 -> bits 3.25 on the "
+                  "controller, the pod and hfmeta.tr3_tail_declared_bits",
+                  ctrl["quantization_config"]["bits"] == 3.25 and pod["bits"] == 3.25
+                  and hm.tr3_tail_declared_bits(tail) == 3.25
+                  and hm.tr3_tail_declared_bits({"bits": "mixed"}) == "mixed",
+                  repr((ctrl["quantization_config"]["bits"], pod["bits"])))
 
     # [14] declared bits are bound to the payload bytes (review S2).
     uniform = lo.trellis_checkpoint_plan(_Config({"quant_method": "exl3", "codebook": "mcg",

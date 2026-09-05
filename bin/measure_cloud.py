@@ -74,6 +74,7 @@ from fidelity.engines import (EngineProfileRefused, EngineUnpinned,
 from fidelity.hfmeta import (                          # noqa: E402
     HF_ENDPOINT, HFError, RepoMeta, fetch_file, fetch_json, hf_token,
     load_panel_descriptor, repo_meta, safetensors_header, sniff_surface,
+    tr3_tail_declared_bits,
 )
 from fidelity.jlapi import JL, JLError, JLNotInstalled, select_offer  # noqa: E402
 from fidelity.jobcontract import (JobContractError, build_imported_capture_receipt,
@@ -1694,7 +1695,8 @@ def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
             "quantization_config": {
                 "quant_method": "exl3",
                 "codebook": str(codebook) if codebook is not None else None,
-                "bits": tail.get("bits_avg", tail.get("bits")),
+                # first numeric of bits_avg / bits / expert_bpw_mean (hfmeta rule)
+                "bits": tr3_tail_declared_bits(tail),
                 "head_bits": None,
                 "modules_to_not_convert": [],
             },

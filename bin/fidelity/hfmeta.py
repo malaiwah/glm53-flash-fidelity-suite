@@ -510,6 +510,19 @@ _CODEC_VOCABULARY = {
 }
 
 
+def tr3_tail_declared_bits(tail):
+    """The declared bits of a hybrid_tr3_tail block: the first NUMERIC of
+    bits_avg, bits, expert_bpw_mean, else whatever bits_avg/bits says (so a
+    refusal can name it). Byte-identical logic in
+    engines/tools/layer_outer.trellis_checkpoint_plan and
+    measure_cloud._candidate_decode_plan."""
+    for key in ("bits_avg", "bits", "expert_bpw_mean"):
+        value = tail.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+    return tail.get("bits_avg", tail.get("bits"))
+
+
 def normalize_codec(quant_method: Optional[str],
                     codebook: Optional[str] = None) -> str:
     raw = (quant_method or "").strip().lower()
@@ -730,12 +743,18 @@ def sniff_surface(meta: RepoMeta, path: Optional[str] = None) -> SurfaceInfo:
         info.surface = "exl3hf"
         info.codebook = tail.get("codebook")
         info.codec_family = normalize_codec("exl3", info.codebook)
-        bits_avg = tail.get("bits_avg", tail.get("bits"))
+        # The FIRST numeric of bits_avg / bits / expert_bpw_mean (willfalco's
+        # GLM-5.2 TR3 tails declare `bits: "mixed"` with `expert_bpw_mean:
+        # 3.25` and no bits_avg); mirrored by layer_outer.trellis_checkpoint_plan
+        # and measure_cloud._candidate_decode_plan so the contract's `bits`
+        # agrees between pod and controller.
+        bits_avg = tr3_tail_declared_bits(tail)
         try:
             info.bits = float(bits_avg)
         except (TypeError, ValueError):
             info.problems.append(
-                "hybrid_tr3_tail declares no numeric bits_avg (%r)" % (bits_avg,))
+                "hybrid_tr3_tail declares no numeric bits_avg/bits/expert_bpw_mean (%r)"
+                % (bits_avg,))
         info.evidence["quantization_config_source"] = "config.json (hybrid_tr3_tail)"
         info.evidence["hybrid_tr3_tail_tp"] = tail.get("tp")
         info.evidence["hybrid_tr3_tail_source_repo"] = tail.get("source_repo")
