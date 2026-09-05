@@ -128,6 +128,35 @@ def _method_line(decode: dict) -> str:
     return "`%s` (decode recorded in the sealed runtime receipt)" % method
 
 
+def _caveat_line(decode: dict):
+    """One fixed sentence for a decode that is not the served artifact.
+
+    The class row reads the receipt; this row says WHY a reconstructed row is
+    advisory in words a model-page reader can use.  Six posts went out saying
+    `strict` beside an author's own served-kernel figure on a different panel
+    and teacher, with nothing on the page to explain the gap (review-science
+    S1-2).  Same wording as the comparator's `weights_reconstructed` /
+    `activation_quantization_not_captured` disclosures, shortened.
+    """
+    method = str(decode.get("method"))
+    schemes = {(block.get("quantization_config") or {}).get("activation_scheme")
+               for block in (decode, decode.get("mixed_fp8") or {}) if isinstance(block, dict)}
+    if method.startswith("exl3-trellis-"):
+        return ("weights-only reconstruction on the HF `transformers` stack (the trellis "
+                "payloads decoded to bf16 weights by this suite's transcription of exllamav3's "
+                "codebooks, not by exllamav3 itself); the served kernel's fp16 activations and "
+                "on-the-fly dequant are not in this number; a different panel and teacher than "
+                "the author's own figure, so the two are not comparable. The registry files "
+                "this row as advisory")
+    if method == "fp8-block-dequant-to-bf16" and "dynamic" in schemes:
+        return ("weights-only dequantization on the HF `transformers` stack; the checkpoint "
+                "declares `activation_scheme: dynamic`, so a served W8A8 deployment also "
+                "quantizes activations per token and that term is not in this number, which "
+                "is expected to understate the served divergence (not a mathematical bound). "
+                "The registry files this row as advisory")
+    return None
+
+
 def render(loaded: dict) -> str:
     job, candidate = loaded["job"], loaded["candidate"]
     comparison, qualification = loaded["comparison"], loaded["qualification"]
@@ -142,6 +171,7 @@ def render(loaded: dict) -> str:
     measurer = (job.get("measurer") or {}).get("name") or (job.get("capture") or {}).get("author")
     scope = candidate["scope"]
     decode = candidate["weights_decode"]
+    caveat = _caveat_line(decode)
     lines = [
         "**What this is.** A third-party fidelity measurement of `%s` @ `%s` "
         "(%s, %g bits per weight as declared) against its unquantized reference, made "
@@ -168,6 +198,7 @@ def render(loaded: dict) -> str:
             metric.get("direction_label", metric.get("direction")),
             (comparison.get("estimator") or {}).get("accumulation_dtype")),
         "| method | %s |" % _method_line(decode),
+    ] + (["| caveat | %s |" % caveat] if caveat else []) + [
         "| determinism | two fresh processes captured the candidate; both sealed captures "
         "carry content digest `%s…` (self-comparison %r) |" % (
             canonical.get("capture_content_digest", "")[:16],

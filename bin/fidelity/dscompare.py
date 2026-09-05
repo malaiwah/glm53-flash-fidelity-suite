@@ -28,6 +28,7 @@ The A == B short-circuit (SC-1) answers by hash proof without a matmul;
 
 from __future__ import annotations
 
+import functools
 import os
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -145,6 +146,25 @@ class Dataset(object):
             weights.get("checkpoint_identity_sha256"),
             (self.manifest.get("scope") or {}).get("scope_digest"),
         )
+
+    @functools.cached_property
+    def weights_decode(self) -> Optional[Dict[str, Any]]:
+        """The decode the capture applied to the checkpoint's bytes before the
+        forward, from the sealed runtime receipt (`capture_tool.weights_decode`,
+        written by `layer_outer.weights_decode_evidence`).  None for a native
+        checkpoint, for a runtime receipt that predates the field, and for a
+        dataset whose runtime file is absent.  The runtime file is inside
+        checksums.txt, so after gate 1 its content is as trusted as the manifest.
+        """
+        rel = (self.manifest.get("runtime") or {}).get("file")
+        if not rel:
+            return None
+        full = os.path.join(self.root, rel)
+        if not os.path.isfile(full):
+            return None
+        tool = (F.read_json(full) or {}).get("capture_tool") or {}
+        decode = tool.get("weights_decode")
+        return decode if isinstance(decode, dict) else None
 
 
 def load_dataset(root: str, verify: bool = True, verify_tensors: bool = False,
@@ -484,7 +504,142 @@ def run_gates(reference: Dataset, candidate: Dataset, options: Dict[str, Any]
                 "detail": "%s stored its values in a dtype narrower than the forward's "
                           "(FORM-1)." % side,
             })
+
+    # --- 9b. decode ---------------------------------------------------------
+    #
+    # Gate 9 reads `capture.lossy_codec`, which describes the CAPTURE (a
+    # llama.cpp .kld's uint16 log-probs).  It says nothing about the WEIGHTS:
+    # a trellis or FP8 candidate is captured from a bf16 reconstruction of its
+    # payloads under the same transformers forward as the reference, and the
+    # sealed runtime receipt records that decode.  Six published GLM-5.3
+    # receipts said `class: strict` with only a head disclosure while the
+    # registry filed the same numbers as advisory (review-science S1-2); the
+    # receipt is the more visible statement and it was the weaker one.
+    _decode_gate(reference, candidate, gates, findings)
     return gates, findings
+
+
+#: Decoder parity evidence against exllamav3 itself
+#: (engines/tools/exl3_decoder_parity_vs_exllamav3.py writes it).  Absent, or
+#: neither `all_bitwise` nor `all_bitwise_pre_hadamard` exactly true, means
+#: "no parity": the caveat then says the decoder is this repository's
+#: transcription, proven only against in-house routes.
+DECODER_PARITY_EVIDENCE = os.path.join(
+    "engines", "tools", "layer-outer-evidence", "exl3-decoder-parity-vs-exllamav3.json")
+
+
+def _decoder_parity() -> Optional[Dict[str, Any]]:
+    path = os.path.join(_REPO, DECODER_PARITY_EVIDENCE)
+    if not os.path.isfile(path):
+        return None
+    try:
+        doc = F.read_json(path)
+    except Exception:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    if doc.get("all_bitwise") is True or doc.get("all_bitwise_pre_hadamard") is True:
+        return doc
+    return None
+
+
+def _decode_gate(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
+                 findings: Dict[str, Any]) -> None:
+    """Weights-only reconstruction is a comparability caveat, never strict.
+
+    Either way the number is advisory: a weights-only reconstruction under a
+    transformers bf16 forward exercises the STORED WEIGHTS, and the served
+    kernel's own numerics (exllamav3's fp16 activations and on-the-fly dequant,
+    an FP8 stack's per-token activation quantization) are not in it.  Decoder
+    parity evidence against exllamav3 changes what the caveat can SAY about
+    the decoder (bitwise vs. transcribed), not the class: the activation term
+    is unmeasured with or without it.
+    """
+    summary = []
+    parity = _decoder_parity()
+    for side, dataset in (("reference", reference), ("candidate", candidate)):
+        decode = dataset.weights_decode
+        if not decode:
+            summary.append("%s none" % side)
+            continue
+        method = str(decode.get("method") or "")
+        summary.append("%s %s" % (side, method or "unnamed"))
+        if method.startswith("exl3-trellis-"):
+            findings["class"] = "advisory"
+            findings["disclosures"].append({
+                "code": "weights_reconstructed", "severity": "caveat",
+                "affects_comparability": True,
+                "detail": _reconstruction_detail(side, decode, parity),
+            })
+        schemes = {
+            (block.get("quantization_config") or {}).get("activation_scheme")
+            for block in (decode, decode.get("mixed_fp8") or {})
+            if isinstance(block, dict)}
+        if method == "fp8-block-dequant-to-bf16" and "dynamic" in schemes:
+            findings["class"] = "advisory"
+            findings["disclosures"].append({
+                "code": "activation_quantization_not_captured", "severity": "caveat",
+                "affects_comparability": True,
+                "detail": "%s was captured from a bf16 materialisation of its block-scaled "
+                          "FP8 weights (%s); the checkpoint declares activation_scheme: "
+                          "dynamic, so a served W8A8 deployment also quantizes activations "
+                          "per token at runtime. That term is not in this number, which is "
+                          "expected to understate the served divergence; it is not a "
+                          "mathematical bound. The comparison is advisory."
+                          % (side, method),
+            })
+    gates["decode"] = _gate(True, "weights_decode %s" % "; ".join(summary))
+
+
+def _reconstruction_detail(side: str, decode: Dict[str, Any],
+                           parity: Optional[Dict[str, Any]]) -> str:
+    method = str(decode.get("method"))
+    modules = decode.get("modules_decoded")
+    histogram = decode.get("k_histogram") or {}
+    parts = ["%s was captured from a WEIGHTS-ONLY RECONSTRUCTION: %s trellis payload "
+             "group(s) were decoded to bf16 by engines/tools/exl3hf_surface.py:"
+             "decode_payload_hf, this repository's transcription of exllamav3's "
+             "mul1/mcg codebooks (exllamav3_ext/quant/codebook.cuh, pack.cu), before "
+             "the transformers forward (method %s%s)"
+             % (side, modules if modules is not None else "the artifact's", method,
+                ("; K histogram %s" % ", ".join("K%s x %s" % kv for kv in sorted(histogram.items())))
+                if histogram else "")]
+    compose = decode.get("tp_rank_composition") or {}
+    if compose:
+        parts.append("%s module(s) stored as tp=%s rank shards were composed in ascending "
+                     "rank order" % (compose.get("modules_composed"), compose.get("tp")))
+    padded = decode.get("zero_padded_rows_truncated") or {}
+    if padded:
+        parts.append("%s trailing zero row(s) were truncated on %s tensor(s) (%s)"
+                     % (padded.get("rows"), padded.get("count"), padded.get("method")))
+    if parity:
+        version = parity.get("exllamav3_version") or "unversioned"
+        count = parity.get("modules_compared") or len(parity.get("modules") or [])
+        if parity.get("all_bitwise") is True:
+            parts.append("decoder bitwise vs exllamav3 %s on %s real module(s) (%s); "
+                         "served-kernel activations unmeasured"
+                         % (version, count, DECODER_PARITY_EVIDENCE))
+        else:
+            # exllamav3's get_weight_tensor rounds to fp16 four times through
+            # its Hadamard path where this decoder rounds once; the stage the
+            # served GEMM consumes -- unpack, codebook, tile layout -- is the
+            # one proven bitwise, and the fp16 weight differs by at most the
+            # recorded max_abs_diff.
+            worst = max((float(m.get("max_abs_diff") or 0.0)
+                         for m in parity.get("modules") or []), default=None)
+            parts.append("trellis unpack + codebook + tile layout bitwise vs exllamav3 %s "
+                         "exllamav3_ext.reconstruct on %s real module(s) (%s); the fp16 weight "
+                         "after exllamav3's own four-rounding Hadamard path differs by "
+                         "max_abs_diff <= %s; served-kernel activations unmeasured"
+                         % (version, count, DECODER_PARITY_EVIDENCE,
+                            "%.3g" % worst if worst is not None else "unrecorded"))
+    else:
+        parts.append("the decoder has NOT been proven bitwise against exllamav3 itself "
+                     "(no %s evidence); it is proven against in-house fp64 routes and real "
+                     "payloads only" % DECODER_PARITY_EVIDENCE)
+    parts.append("the served exllamav3 kernel's fp16 activations and on-the-fly dequant are "
+                 "not in this number. The comparison is advisory")
+    return ". ".join(parts) + "."
 
 
 def _head_gate(reference: Dataset, candidate: Dataset, options: Dict[str, Any],
@@ -841,6 +996,101 @@ def _replay_backend_name(replay_device: Optional[str], replay_dtype: str) -> str
     return "torch:%s:%s" % (replay_device, replay_dtype)
 
 
+def _cpu_model() -> Optional[str]:
+    """The CPU the BLAS ran on.  `platform.processor()` is empty on Linux."""
+    import platform
+
+    try:
+        with open("/proc/cpuinfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.lower().startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    if platform.system() == "Darwin":
+        import subprocess
+
+        try:
+            return subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                                  capture_output=True, text=True, timeout=5,
+                                  check=False).stdout.strip() or None
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return platform.processor() or platform.machine() or None
+
+
+def _blas_thread_count(blas_name: Optional[str]) -> Tuple[Optional[int], str]:
+    """How many threads the BLAS used, and how that was learned.
+
+    threadpoolctl asks the loaded library; without it, the OpenBLAS entry point
+    is looked up on the libraries already mapped into this process (Linux);
+    failing both, the answer is null, never a guess from os.cpu_count().
+    """
+    try:
+        import threadpoolctl  # noqa: WPS433
+
+        for info in threadpoolctl.threadpool_info():
+            if info.get("user_api") == "blas":
+                return int(info["num_threads"]), "threadpoolctl:%s" % info.get("internal_api")
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    if blas_name and "openblas" in blas_name.lower():
+        import ctypes
+
+        try:
+            with open("/proc/self/maps", "r", encoding="utf-8") as handle:
+                mapped = sorted({line.split()[-1] for line in handle
+                                 if "openblas" in line.lower() and "/" in line})
+        except OSError:
+            mapped = []
+        for path in mapped:
+            try:
+                lib = ctypes.CDLL(path)
+            except OSError:
+                continue
+            for symbol in ("openblas_get_num_threads", "scipy_openblas_get_num_threads64_",
+                           "openblas_get_num_threads64_", "scipy_openblas_get_num_threads"):
+                fn = getattr(lib, symbol, None)
+                if fn is not None:
+                    fn.restype = ctypes.c_int
+                    return int(fn()), "ctypes:%s" % symbol
+    return None, "unresolved"
+
+
+def _numpy_replay_env() -> Dict[str, Any]:
+    """Name the BLAS and CPU behind `numpy:cpu:float32`, observed not asserted.
+
+    The host term between two numpy replays of the same sealed tensors
+    (1.8e-10 ... 3.8e-9 nats on the GLM-5.3 rows, workstation vs pod) is fp32
+    GEMM accumulation order, which is the BLAS's blocking on this CPU with this
+    many threads.  A receipt that says only `numpy:cpu:float32` leaves that
+    attributable through prose alone.
+    """
+    import numpy as np
+
+    blas: Dict[str, Any] = {}
+    try:
+        config = np.show_config(mode="dicts")
+        blas = dict((config.get("Build Dependencies") or {}).get("blas") or {})
+    except (TypeError, AttributeError, ValueError):
+        blas = {}
+    blas_name = blas.get("name")
+    threads, source = _blas_thread_count(blas_name)
+    return {
+        "library": "numpy",
+        "numpy_version": np.__version__,
+        "blas_name": blas_name,
+        "blas_version": blas.get("version"),
+        "blas_configuration": blas.get("openblas configuration"),
+        "blas_threads": threads,
+        "blas_threads_source": source,
+        "cpu_model": _cpu_model(),
+        "replay_dtype": "float32",
+    }
+
+
 def _torch_replay_env(replay_device: str) -> Dict[str, Any]:
     """Pin every knob the receipt CLAIMS, and report what was actually set.
 
@@ -1158,7 +1408,10 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
         # would make the default look like "unknown" instead of "numpy".
         "replay_backend": _replay_backend_name(replay_device, replay_dtype)
         if head32_t is not None else None,
-        "replay_env": replayer.env if replayer is not None else None,
+        # The numpy path names its BLAS, CPU and thread count for the same
+        # reason the torch path names its device: the host term lives there.
+        "replay_env": (replayer.env if replayer is not None
+                       else _numpy_replay_env() if head32_t is not None else None),
         "replay_head_bytes": replayer.head_bytes if replayer is not None else None,
         "replay_peak_device_bytes": replayer.peak_bytes() if replayer is not None else None,
     }
@@ -1169,7 +1422,9 @@ def compute(reference: Dataset, candidate: Dataset, findings: Dict[str, Any],
 # ---------------------------------------------------------------------------
 
 
-def classify(reference: Dataset, candidate: Dataset) -> str:
+def classify(reference: Dataset, candidate: Dataset,
+             options: Optional[Dict[str, Any]] = None,
+             findings: Optional[Dict[str, Any]] = None) -> str:
     """SC-1 / SC-2 / measurement.
 
     A == B by `capture_content_digest` is a REPRODUCTION CONFIRMATION.  Equal
@@ -1180,19 +1435,37 @@ def classify(reference: Dataset, candidate: Dataset) -> str:
 
     HEAD-1c is checked HERE and not in the head gate, because it is the one head
     condition that only exists once the capture digests are known to be equal.
+    Under HEAD-1d (`own_heads`) the same condition is a MEASUREMENT: each side
+    goes through its own head, so identical hiddens under different heads yield
+    exactly the head-quantization KL -- the quantity a head-only quant (stock
+    EXL3 head_bits 6-8) needs, and the one case own-head replay exists to
+    measure.  It is recorded on `findings` as `head_only_difference`.
     """
     if reference.content_digest == candidate.content_digest:
         da = reference.head.get("tensor_content_sha256")
         db = candidate.head.get("tensor_content_sha256")
         if "hidden" in (reference.form, candidate.form) and da != db:
+            if (options or {}).get("own_heads") and findings is not None:
+                findings["disclosures"].append({
+                    "code": "head_only_difference", "severity": "info",
+                    "affects_comparability": False,
+                    "detail": "the two captures share bitwise-identical hidden states "
+                              "(capture_content_digest %s); the whole of this number is the "
+                              "head difference (%s vs %s), each side replayed through its "
+                              "own sealed head (HEAD-1d)."
+                              % (reference.content_digest[:12], (da or "null")[:12],
+                                 (db or "null")[:12]),
+                })
+                return "measurement"
             # HEAD-1c: bitwise-equal hiddens under DIFFERENT heads.  A head-only
             # quant (stock EXL3 head_bits 6-8 is exactly this) changes nothing
             # before the final norm, so its post-norm hiddens are bitwise
             # identical to the reference's and the capture content digests
             # match.  Replaying both sides through ONE head then subtracts a
             # quantity from itself: the answer is exactly 0.0 and it measures
-            # nothing.  There is no override, because there is no reading of
-            # this comparison under which the number means anything.
+            # nothing.  There is no override on the shared-head path, because
+            # there is no reading of that comparison under which the number
+            # means anything; --own-heads is the other procedure, not an override.
             raise Refusal(
                 "head", "head_substitution_vacuous",
                 "HEAD-1c: the two captures are bitwise identical "
@@ -1200,8 +1473,9 @@ def classify(reference: Dataset, candidate: Dataset) -> str:
                 "The head is therefore the whole of the difference between these two "
                 "artifacts, and hidden replay through a single head erases exactly that "
                 "-- the result would be 0.0 nats and would read as an exact reproduction. "
-                "A head-only quantization cannot be measured by hidden replay: publish "
-                "logit-form captures, where each side applies its own head (HEAD-2)."
+                "A head-only quantization is measured with --own-heads (HEAD-1d: each side "
+                "replayed through its own sealed head), or from logit-form captures, where "
+                "each side applies its own head (HEAD-2)."
                 % (reference.content_digest[:12], (da or "null")[:12], (db or "null")[:12]))
         return "reproduction_confirmation"
     if reference.weights_identity() == candidate.weights_identity() \
@@ -1290,6 +1564,12 @@ def build_receipt(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
     same_lane = findings.get("same_lane", reference.lane == candidate.lane)
     usable_as_floor = bool(findings.get("usable_as_floor", True)) and same_lane
     klass = findings.get("class", "strict")
+    capture_dtype = reference.manifest["capture"]["dtype"].lower()
+    replay_backend = result.get("replay_backend")
+    replayed = bool(replay_backend) and replay_backend != "none"
+    logits_dtype = replay_backend.rsplit(":", 1)[-1] if replayed else capture_dtype
+    hidden_dtype = next((ds.manifest["capture"]["dtype"].lower()
+                         for ds in (reference, candidate) if ds.form == "hidden"), None)
 
     receipt: Dict[str, Any] = {
         "schema": F.RECEIPT_SCHEMA,
@@ -1318,7 +1598,7 @@ def build_receipt(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
         },
         "gates": {name: gates[name] for name in
                   ("seal", "form", "panel", "head", "lane", "stack",
-                   "geometry", "coverage", "lossy")},
+                   "geometry", "coverage", "lossy", "decode") if name in gates},
         "comparator": {
             "device": result.get("device") or "cpu",
             "accumulation_dtype": "float64",
@@ -1392,7 +1672,15 @@ def build_receipt(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
                         "clusters": None, "samples": None, "cluster_unit": None, "seed": None},
         "estimator": {
             "accumulation_dtype": "float64",
-            "logits_dtype": reference.manifest["capture"]["dtype"].lower(),
+            # The dtype the estimator CONSUMED.  A hidden-form side is replayed
+            # (`logits' = hidden @ head.T`) in the replay backend's dtype, so the
+            # logits are float32 on the published numpy path even though the
+            # sealed capture is bf16; seven published receipts said "bf16" here
+            # while their own `replay_backend` said numpy:cpu:float32 (S2-1).
+            # The capture dtype survives only where no replay happened: a
+            # logit-form capture, or a hash-proof short circuit.
+            "logits_dtype": logits_dtype,
+            "hidden_dtype": hidden_dtype,
             "two_pass": True,
             "vocab_chunk": result.get("vocab_chunk"),
             "stack_relation": findings.get("stack_relation", "same_stack"),
@@ -1481,8 +1769,14 @@ def build_receipt(reference: Dataset, candidate: Dataset, gates: Dict[str, Any],
             "stack_relation": findings.get("stack_relation", "same_stack"),
             "head_policy": head_policy,
         }
-        receipt["comparability"]["key_inputs"] = key_inputs
         receipt["comparability"]["key"] = registry_lib.comparability_key(key_inputs)
+        # The registry hashes its OWN reference record id (reference--...), not
+        # the dataset id this receipt knows, so the two keys never match and a
+        # reader cross-checking sees a silent mismatch. CMP-001 recomputes the
+        # key at ingest; this one is a preview and says so.
+        key_inputs["note"] = ("provisional; the registry recomputes with its reference "
+                              "record id (registry CMP-001)")
+        receipt["comparability"]["key_inputs"] = key_inputs
     return F.seal_receipt(receipt)
 
 
@@ -1521,7 +1815,7 @@ def compare(reference_root: str, candidate_root: str, out_dir: str,
                                 + ("; every tensor_content_sha256 recomputed"
                                    if options.get("verify_tensors") else ""))
 
-    kind = classify(reference, candidate)
+    kind = classify(reference, candidate, options, findings)
     if options.get("self_compare") and kind != "reproduction_confirmation":
         raise Refusal("self-compare", "not_a_self_compare",
                       "--self-compare was asked for but the two captures differ "
@@ -1631,6 +1925,21 @@ def _project(block: Optional[Dict[str, Any]], fields: Sequence[str]) -> Dict[str
     return {key: block[key] for key in fields if key in block}
 
 
+#: The receipt names dtypes the way numpy/torch do (`float32`, the replay
+#: dtype); the registry's `common.schema.json#/$defs/numeric_format` enum spells
+#: them `fp32`.  Mapped at the crossing, never inside the sealed receipt.
+_REGISTRY_NUMERIC_FORMAT = {"float32": "fp32", "float64": "fp64", "f32": "fp32",
+                            "f16": "fp16", "float16": "fp16", "bfloat16": "bf16"}
+
+
+def _submission_estimator(estimator: Dict[str, Any]) -> Dict[str, Any]:
+    block = _project(estimator, _SUBMISSION_ESTIMATOR_FIELDS)
+    dtype = block.get("logits_dtype")
+    if isinstance(dtype, str):
+        block["logits_dtype"] = _REGISTRY_NUMERIC_FORMAT.get(dtype.lower(), dtype)
+    return block
+
+
 def _evidence_source(side: Dict[str, Any], role: str) -> Dict[str, Any]:
     """A `common.schema.json#/$defs/source` pointing at one fidelity dataset.
 
@@ -1734,7 +2043,7 @@ def emit_submission(receipt: Dict[str, Any], out_path: str, *,
             "units": receipt["metric"]["units"],
             "direction": receipt["metric"]["direction"],
         },
-        estimator=_project(receipt["estimator"], _SUBMISSION_ESTIMATOR_FIELDS),
+        estimator=_submission_estimator(receipt["estimator"]),
         determinism=_project(receipt["determinism"], _SUBMISSION_DETERMINISM_FIELDS),
         measurement_scope=_project(receipt["measurement_scope"], _SUBMISSION_SCOPE_FIELDS),
         produced_by=receipt_mod.produced_by_block(

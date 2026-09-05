@@ -78,7 +78,11 @@
         "stack": { "$ref": "#/$defs/gate" },
         "geometry": { "$ref": "#/$defs/gate" },
         "coverage": { "$ref": "#/$defs/gate" },
-        "lossy": { "$ref": "#/$defs/gate" }
+        "lossy": { "$ref": "#/$defs/gate" },
+        "decode": {
+          "$ref": "#/$defs/gate",
+          "description": "Additive (2026-09-05). Gate 9b: each side's sealed runtime receipt `capture_tool.weights_decode`. An exl3-trellis-* method appends `weights_reconstructed` (caveat, affects_comparability) and an fp8-block-dequant-to-bf16 method with activation_scheme dynamic appends `activation_quantization_not_captured`; either makes the receipt advisory. Absent on receipts sealed before the gate existed."
+        }
       }
     },
 
@@ -103,7 +107,7 @@
         },
         "replay_env": {
           "type": ["object", "null"],
-          "description": "OBSERVED torch matmul settings when a torch device did the replay (tf32, float32_matmul_precision, device name and capability), not asserted constants."
+          "description": "OBSERVED replay settings, not asserted constants. Torch backends: tf32, float32_matmul_precision, device name and capability. numpy:cpu:float32 (additive 2026-09-05): numpy_version, blas_name/blas_version/blas_configuration from numpy.show_config, blas_threads (+ blas_threads_source), cpu_model -- the host term between two numpy replays of the same sealed tensors is fp32 GEMM accumulation order, which is these. Null only when no replay ran."
         },
         "replay_peak_device_bytes": { "type": ["integer", "null"], "minimum": 0 },
         "tf32": { "type": ["boolean", "null"] },
@@ -184,7 +188,14 @@
       "additionalProperties": true,
       "properties": {
         "accumulation_dtype": { "enum": ["float64", "float32", "mixed", "unknown"] },
-        "logits_dtype": { "type": ["string", "null"] },
+        "logits_dtype": {
+          "type": ["string", "null"],
+          "description": "The dtype the estimator consumed. When a hidden-form side was replayed this is the replay backend's dtype (float32 on the published numpy path, or --replay-dtype on a torch backend), NOT the capture dtype; receipts sealed before 2026-09-05 wrote the capture dtype (bf16) here while replaying in float32. A logit-form capture, or a hash-proof short circuit, keeps the capture dtype."
+        },
+        "hidden_dtype": {
+          "type": ["string", "null"],
+          "description": "Additive (2026-09-05). The sealed capture dtype of the hidden-form side(s) the replay read (bf16 for every hf_capture dataset); null when neither side is hidden-form. The pair (hidden_dtype bf16, logits_dtype float32) names the estimand: fp32 logits recomputed from bf16 hidden states, without the bf16 rounding of every logit a bf16 serving stack applies (WHAT-WE-MEASURE section 2c)."
+        },
         "two_pass": { "type": ["boolean", "null"] },
         "vocab_chunk": { "type": ["integer", "null"], "minimum": 1 },
         "stack_relation": {
@@ -251,7 +262,10 @@
         },
         "same_lane": { "type": ["boolean", "null"] },
         "key": { "type": ["string", "null"], "pattern": "^cmp--[0-9a-f]{16}$" },
-        "key_inputs": { "type": ["object", "null"] },
+        "key_inputs": {
+          "type": ["object", "null"],
+          "description": "The seven registry_lib.COMPARABILITY_KEY_FIELDS this receipt hashed, plus (additive 2026-09-05) `note`: the receipt's reference_id is the DATASET id, the registry hashes its own reference record id, so the two keys differ by construction and the registry recomputes (CMP-001)."
+        },
         "bias": {
           "oneOf": [
             {

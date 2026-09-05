@@ -135,6 +135,27 @@ def main():
     check("shared-head receipt: the reproduce line keeps --force-compute",
           "--force-compute`" in shared_body and "--own-heads" not in shared_body)
 
+    # The caveat row (review-science S1-2): a reconstructed decode says, under
+    # the method row, that the served kernel is not in the number and that the
+    # author's own figure is a different panel and teacher; a plain fp8 decode
+    # without a dynamic activation scheme gets no such row.
+    own_lines = own_body.splitlines()
+    own_caveat = next((l for l in own_lines if l.startswith("| caveat |")), "")
+    check("trellis row: a caveat row follows the method row and names the served kernel",
+          own_caveat and "weights-only reconstruction" in own_caveat
+          and "served kernel" in own_caveat and "different panel and teacher" in own_caveat
+          and own_lines.index(own_caveat) == own_lines.index(
+              next(l for l in own_lines if l.startswith("| method |"))) + 1,
+          own_caveat[:120])
+    fp8_dyn = _synthetic_loaded()
+    fp8_dyn["candidate"]["weights_decode"]["quantization_config"]["activation_scheme"] = "dynamic"
+    fp8_dyn_body = FP.render(fp8_dyn)
+    check("fp8 dynamic row: the caveat row names the uncaptured activation term",
+          "| caveat |" in fp8_dyn_body and "activation_scheme: dynamic" in fp8_dyn_body
+          and "not a mathematical bound" in fp8_dyn_body)
+    check("fp8 row without a dynamic activation scheme: no caveat row",
+          "| caveat |" not in shared_body)
+
     check("at least one real sealed result dir was exercised",
           exercised_real or not real_dirs,
           "no real result dirs under ~/fidelity-runs/*/result found; "

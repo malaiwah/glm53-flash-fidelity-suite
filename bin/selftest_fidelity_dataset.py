@@ -873,17 +873,73 @@ def section_head(tmp):
           == own_same["comparator"]["head_applied_candidate_tensor_content_sha256"]
           == shared["comparator"]["head_applied_tensor_content_sha256"])
 
-    # HEAD-1c is untouched by --own-heads: bitwise-equal hiddens under two
-    # heads would be classified a reproduction, which own-head replay cannot
-    # honour, so it still refuses with no override.
+    # HEAD-1c on the shared-head path: bitwise-equal hiddens under two heads
+    # replayed through ONE head subtract a quantity from itself, 0.0 by
+    # construction, so it refuses with no override.  Under --own-heads the same
+    # pair is the one case own-head replay exists to measure (H17).
     vac_a = os.path.join(tmp, "h15-a")
     vac_b = os.path.join(tmp, "h15-b")
     build_dataset(vac_a, seed=1, head_seed=7)
     build_dataset(vac_b, seed=1, head_seed=99, role="quant", quantized=True)
-    expect_refusal("H15 HEAD-1c (equal hiddens, different heads) still refuses under --own-heads",
+    expect_refusal("H15 equal hiddens, different heads, no flag: HEAD-1b refuses first (head_mismatch)",
                    lambda: dscompare.compare(vac_a, vac_b, os.path.join(tmp, "h15-out"),
-                                             dict(base_options, own_heads=True)),
+                                             dict(base_options)),
+                   code="head_mismatch")
+    expect_refusal("H15b HEAD-1c refuses the --disclose-head-substitution override too",
+                   lambda: dscompare.compare(vac_a, vac_b, os.path.join(tmp, "h15b-out"),
+                                             dict(base_options, disclose_head_substitution=True)),
                    code="head_substitution_vacuous")
+
+    # H17: HEAD-1c under HEAD-1d is a MEASUREMENT of the head alone.  Identical
+    # hiddens through two different heads is exactly the head-quantization KL
+    # (stock EXL3 head_bits 6-8), non-zero, class strict, and the receipt says
+    # the whole number is the head difference.
+    h17_dir = os.path.join(tmp, "h17-out")
+    try:
+        receipt = dscompare.compare(vac_a, vac_b, h17_dir, dict(base_options, own_heads=True))
+    except dscompare.Refusal as exc:
+        receipt = {"comparison_kind": "refused:%s" % exc.code, "metric": {"value": None},
+                   "estimator": {}, "comparability": {"key_inputs": {}}, "comparator": {},
+                   "disclosures": []}
+    vac_ref, vac_cand = dscompare.load_dataset(vac_a), dscompare.load_dataset(vac_b)
+    head_a = dscompare.load_tensor(vac_ref.head_path(), "lm_head.weight").astype(np.float64)
+    head_b = dscompare.load_tensor(vac_cand.head_path(), "lm_head.weight").astype(np.float64)
+    want = []
+    for rec_a, rec_b in zip(vac_ref.records, vac_cand.records):
+        la = dscompare.load_tensor(vac_ref.record_path(rec_a), rec_a["key"]).astype(np.float64) @ head_a.T
+        lb = dscompare.load_tensor(vac_cand.record_path(rec_b), rec_b["key"]).astype(np.float64) @ head_b.T
+        lpa = la - np.log(np.exp(la - la.max(1, keepdims=True)).sum(1, keepdims=True)) - la.max(1, keepdims=True)
+        lpb = lb - np.log(np.exp(lb - lb.max(1, keepdims=True)).sum(1, keepdims=True)) - lb.max(1, keepdims=True)
+        want.append((np.exp(lpa) * (lpa - lpb)).sum(1))
+    want = np.concatenate(want)
+    tokenwise = (np.load(os.path.join(h17_dir, "tokenwise-kld.npy"))
+                 if os.path.isfile(os.path.join(h17_dir, "tokenwise-kld.npy")) else None)
+    check("H17 HEAD-1c under --own-heads is a non-zero MEASUREMENT of the head alone (head_only_difference)",
+          receipt["comparison_kind"] == "measurement" and tokenwise is not None
+          and vac_ref.content_digest == vac_cand.content_digest
+          and receipt["metric"]["value"] > 1e-3
+          and np.allclose(tokenwise, want, rtol=1e-6, atol=1e-9)
+          and receipt["estimator"]["head_policy"] == "native_head"
+          and receipt["comparability"]["class"] == "strict"
+          and receipt["comparability"]["key"] is not None
+          and any(d["code"] == "head_only_difference" and d["severity"] == "info"
+                  and d["affects_comparability"] is False
+                  and "bitwise-identical hidden states" in d["detail"]
+                  for d in receipt["disclosures"]),
+          "kind %r value %r codes %r" % (receipt["comparison_kind"], receipt["metric"]["value"],
+                                         [d["code"] for d in receipt["disclosures"]]))
+    est, comp = receipt["estimator"], receipt["comparator"]
+    env = comp.get("replay_env") if isinstance(comp.get("replay_env"), dict) else {}
+    check("H17b the receipt's dtypes name the estimand: fp32 logits replayed from bf16 hiddens, BLAS named",
+          est.get("logits_dtype") == "float32"
+          and est.get("hidden_dtype") == "bf16"
+          and comp.get("replay_backend") == "numpy:cpu:float32"
+          and env.get("library") == "numpy"
+          and env.get("numpy_version") == np.__version__
+          and "blas_name" in env and "cpu_model" in env and "blas_threads" in env
+          and "provisional" in ((receipt["comparability"].get("key_inputs") or {}).get("note") or ""),
+          json.dumps({"estimator": est, "replay_env": env,
+                      "key_inputs": receipt["comparability"].get("key_inputs")})[:300])
 
     expect_refusal("H16 --own-heads with --head (one head for both sides) is refused",
                    lambda: dscompare.compare(same_a, other_head, os.path.join(tmp, "h16-out"),
@@ -991,6 +1047,95 @@ def section_lane(tmp):
     gates, findings = dscompare.run_gates(dscompare.load_dataset(a),
                                           dscompare.load_dataset(x2), {})
     check("X2  dtype_lossless false -> advisory (FORM-1)", findings["class"] == "advisory")
+
+    # D1-D4 -- gate 9b, the WEIGHTS decode. `capture.lossy_codec` describes the
+    # capture; the runtime receipt's `capture_tool.weights_decode` describes
+    # what happened to the weights before the forward. Six published GLM-5.3
+    # receipts sealed `strict` on trellis reconstructions the registry filed
+    # as advisory (review-science S1-2).
+    gates, findings = dscompare.run_gates(dscompare.load_dataset(a),
+                                          dscompare.load_dataset(b), {})
+    check("D1  native root vs native quant: decode gate passes, class stays strict",
+          (gates.get("decode") or {}).get("passed") is True and findings["class"] == "strict"
+          and getattr(dscompare.load_dataset(b), "weights_decode", "absent") is None
+          and not any(d["code"] in ("weights_reconstructed",
+                                    "activation_quantization_not_captured")
+                      for d in findings["disclosures"]),
+          repr(gates.get("decode")))
+
+    x3 = os.path.join(tmp, "x3-trellis")
+    build_dataset(x3, seed=2, role="quant", quantized=True, codec="exl3-trellis",
+                  declared_bits=4.0,
+                  weights_decode={"method": "exl3-trellis-decode-to-bf16",
+                                  "reference": "engines/tools/exl3hf_surface.py::decode_payload_hf",
+                                  "output_dtype": "bfloat16",
+                                  "quantization_config": {"quant_method": "exl3", "bits": 4,
+                                                          "codebook": None, "head_bits": None},
+                                  "modules_decoded": 57600,
+                                  "k_histogram": {"3": 100, "4": 57500},
+                                  "zero_padded_rows_truncated": {
+                                      "count": 4, "rows": 64,
+                                      "method": "trailing-zero-rows-truncated"}})
+    gates, findings = dscompare.run_gates(dscompare.load_dataset(a),
+                                          dscompare.load_dataset(x3), {})
+    recon = [d for d in findings["disclosures"] if d["code"] == "weights_reconstructed"]
+    check("D2  exl3-trellis-* weights_decode -> advisory + weights_reconstructed (caveat, affects)",
+          findings["class"] == "advisory" and len(recon) == 1
+          and recon[0]["severity"] == "caveat" and recon[0]["affects_comparability"] is True
+          and "decode_payload_hf" in recon[0]["detail"]
+          and "transcription of exllamav3" in recon[0]["detail"]
+          and "activations" in recon[0]["detail"]
+          and "K3 x 100" in recon[0]["detail"]
+          and "64 trailing zero row(s)" in recon[0]["detail"]
+          and "candidate" in (gates.get("decode") or {}).get("detail", ""),
+          json.dumps(recon)[:200])
+    x4_dir = os.path.join(tmp, "x4-out")
+    receipt = dscompare.compare(a, x3, x4_dir, {"device": "cpu", "replay_device": "numpy",
+                                                 "replay_dtype": "float32", "vocab_chunk": 8192,
+                                                 "verify_tensors": True})
+    check("D2b the sealed receipt carries the decode gate, class advisory, and validates",
+          receipt["comparability"]["class"] == "advisory"
+          and (receipt["gates"].get("decode") or {}).get("passed") is True
+          and any(d["code"] == "weights_reconstructed" for d in receipt["disclosures"])
+          and not dsvalidate.validate_receipt(receipt, x4_dir).errors,
+          json.dumps(receipt["gates"].get("decode")))
+
+    x5 = os.path.join(tmp, "x5-fp8")
+    build_dataset(x5, seed=2, role="quant", quantized=True, codec="fp8_e4m3",
+                  declared_bits=8,
+                  weights_decode={"method": "fp8-block-dequant-to-bf16",
+                                  "reference": "transformers.integrations.finegrained_fp8."
+                                               "Fp8Dequantize._dequantize_one",
+                                  "output_dtype": "bfloat16",
+                                  "quantization_config": {"quant_method": "fp8", "fmt": "e4m3",
+                                                          "weight_block_size": [128, 128],
+                                                          "activation_scheme": "dynamic"},
+                                  "tensors_dequantized": 58266})
+    gates, findings = dscompare.run_gates(dscompare.load_dataset(a),
+                                          dscompare.load_dataset(x5), {})
+    act = [d for d in findings["disclosures"]
+           if d["code"] == "activation_quantization_not_captured"]
+    check("D3  fp8-block-dequant with activation_scheme dynamic -> activation_quantization_not_captured",
+          findings["class"] == "advisory" and len(act) == 1
+          and act[0]["severity"] == "caveat" and act[0]["affects_comparability"] is True
+          and "not a mathematical bound" in act[0]["detail"]
+          and not any(d["code"] == "weights_reconstructed" for d in findings["disclosures"]),
+          json.dumps(act)[:200])
+
+    x6 = os.path.join(tmp, "x6-fp8-static")
+    build_dataset(x6, seed=2, role="quant", quantized=True, codec="fp8_e4m3",
+                  declared_bits=8,
+                  weights_decode={"method": "fp8-block-dequant-to-bf16",
+                                  "output_dtype": "bfloat16",
+                                  "quantization_config": {"quant_method": "fp8", "fmt": "e4m3",
+                                                          "weight_block_size": [128, 128],
+                                                          "activation_scheme": None}})
+    gates, findings = dscompare.run_gates(dscompare.load_dataset(a),
+                                          dscompare.load_dataset(x6), {})
+    check("D4  fp8-block-dequant WITHOUT a dynamic activation scheme gets no activation caveat",
+          findings["class"] == "strict"
+          and not any(d["code"] == "activation_quantization_not_captured"
+                      for d in findings["disclosures"]))
 
     # SV1/SV2 -- SCOPE-VOCAB. A scope the registry's schema will reject must be
     # caught while the dataset is being written, not at submission time after
