@@ -32,18 +32,19 @@ _HF_REPO = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 _REVISION40 = re.compile(r"^[0-9a-f]{40}$")
 
-#: The ONE tokenizer artifact a loader-only difference is admitted on, and the
-#: exact keys admitted (a `transformers` save writes `local_files_only` into
-#: tokenizer_config.json on some producers' machines; RadixArk/GLM-5.3-NVFP4
-#: @ 11af4cba differs from the root by that key alone). The panel is
-#: transported TOKEN IDS and is never re-tokenized, so these files are
-#: identity evidence, not computation: an admitted key changes nothing the
-#: capture computes. Any other difference -- another key, a changed value --
-#: refuses BY KEY NAME. The root's bytes are read from `<tokenizer_root>/
-#: .reference/<name>` (the pod links the reference release's copy there);
-#: without that copy the digest check is the whole gate, as before.
+#: Extended equivalence set (2026-09-05, GLM-5.2 root on the corpus5x5 panel):
+#: config.json differs from GLM-5.3-BF16's only in `transformers_version`
+#: (the saver's version, not a model property); the architecture fields that
+#: determine the token-id path are compared exactly after the loader key is
+#: dropped. LICENSE and chat_template.jinja are per-model provenance: the
+#: panel is transported token ids and never re-tokenizes, never applies the
+#: chat template, and a target ships its own license. Their equivalence
+#: record carries both digests; the panel's identity stays the root's.
 TOKENIZER_CONFIG_EQUIVALENCE_FILE = "tokenizer_config.json"
 TOKENIZER_CONFIG_LOADER_KEYS = ("local_files_only",)
+CONFIG_EQUIVALENCE_FILE = "config.json"
+CONFIG_LOADER_KEYS = ("transformers_version",)
+PER_MODEL_PROVENANCE_FILES = ("LICENSE", "chat_template.jinja")
 TOKENIZER_REFERENCE_SUBDIR = ".reference"
 
 BRANDON_REFERENCE_REPO = "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits"
@@ -469,6 +470,74 @@ def tokenizer_config_equivalent(root_raw: bytes, candidate_raw: bytes) -> Dict[s
     }
 
 
+def config_equivalent(root_raw: bytes, candidate_raw: bytes) -> Dict[str, Any]:
+    """Loader-key equivalence of two config.json documents, or a refusal.
+
+    Same rule as tokenizer_config_equivalent, but the loader-only key is
+    ``transformers_version``: the version that *saved* the config, not a
+    property of the model.  All architecture fields (model_type, vocab_size,
+    num_hidden_layers, hidden_size, etc.) are compared exactly.
+    """
+    try:
+        root_doc = json.loads(root_raw.decode("utf-8"))
+        cand_doc = json.loads(candidate_raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise PanelError("%s equivalence: not both strict JSON: %s"
+                         % (CONFIG_EQUIVALENCE_FILE, exc))
+    if not isinstance(root_doc, dict) or not isinstance(cand_doc, dict):
+        raise PanelError("%s equivalence: both documents must be JSON objects"
+                         % (CONFIG_EQUIVALENCE_FILE))
+    dropped_root = sorted(k for k in CONFIG_LOADER_KEYS if k in root_doc)
+    dropped_cand = sorted(k for k in CONFIG_LOADER_KEYS if k in cand_doc)
+    root_rest = {k: v for k, v in root_doc.items() if k not in CONFIG_LOADER_KEYS}
+    cand_rest = {k: v for k, v in cand_doc.items() if k not in CONFIG_LOADER_KEYS}
+    if _canonical(root_rest) != _canonical(cand_rest):
+        differing = sorted(
+            k for k in set(root_rest) | set(cand_rest)
+            if k not in root_rest or k not in cand_rest
+            or _canonical(root_rest[k]) != _canonical(cand_rest[k]))
+        raise PanelError(
+            "tokenizer artifact %s fails its SHA-256 and is not loader-key equivalent to "
+            "the root's: keys differ beyond %s: %s"
+            % (CONFIG_EQUIVALENCE_FILE, list(CONFIG_LOADER_KEYS), differing))
+    if not dropped_root and not dropped_cand:
+        raise PanelError(
+            "tokenizer artifact %s fails its SHA-256 and differs from the root's only in "
+            "serialization; loader-key equivalence admits %s, not a re-serialization"
+            % (CONFIG_EQUIVALENCE_FILE, list(CONFIG_LOADER_KEYS)))
+    return {
+        "name": CONFIG_EQUIVALENCE_FILE,
+        "rule": "canonical JSON equal after dropping loader-only keys",
+        "loader_keys_allowlist": list(CONFIG_LOADER_KEYS),
+        "root_sha256": _sha(root_raw), "root_bytes": len(root_raw),
+        "candidate_sha256": _sha(candidate_raw), "candidate_bytes": len(candidate_raw),
+        "keys_dropped_from_root": dropped_root,
+        "keys_dropped_from_candidate": dropped_cand,
+        "reason": "transformers_version is the saver's version, not a model property; "
+                  "the panel is transported token ids and is never re-tokenized",
+    }
+
+
+def _per_model_provenance_equivalent(name: str, root_raw: bytes,
+                                     candidate_raw: bytes) -> Dict[str, Any]:
+    """Record that a per-model provenance file differs and is admitted.
+
+    LICENSE and chat_template.jinja are the target's own, not the panel's
+    identity: the panel carries transported token ids and never applies the
+    chat template or the license.  The record carries both digests so the
+    receipt names what the target's file is.
+    """
+    return {
+        "name": name,
+        "rule": "per-model provenance: the panel's identity is tokenizer.json + "
+                "tokenizer_config.json; this file is the target's own",
+        "root_sha256": _sha(root_raw), "root_bytes": len(root_raw),
+        "candidate_sha256": _sha(candidate_raw), "candidate_bytes": len(candidate_raw),
+        "reason": "the panel is transported token ids and is never re-tokenized; "
+                  "this file is identity evidence for the target, not the panel",
+    }
+
+
 def _verify_tokenizer_artifact(base: Path, name: str, size: int, digest: str):
     """(root_size_for_binding, equivalence_record | None) for one bound artifact.
 
@@ -486,6 +555,28 @@ def _verify_tokenizer_artifact(base: Path, name: str, size: int, digest: str):
         raise PanelError("cannot read tokenizer artifact %s: %s" % (path, exc))
     if _sha(raw) == digest and (size < 0 or len(raw) == size):
         return len(raw), None
+    if name in PER_MODEL_PROVENANCE_FILES:
+        reference = base / TOKENIZER_REFERENCE_SUBDIR / name
+        if not reference.is_file():
+            raise PanelError("tokenizer artifact %s fails its SHA-256 (no %s/%s copy of the "
+                             "root's file to record provenance against)"
+                             % (name, TOKENIZER_REFERENCE_SUBDIR, name))
+        root_raw = reference.read_bytes()
+        if _sha(root_raw) != digest or (size >= 0 and len(root_raw) != size):
+            raise PanelError("%s/%s does not carry the root's bound %s (its own SHA-256 fails)"
+                             % (TOKENIZER_REFERENCE_SUBDIR, name, name))
+        return len(root_raw), _per_model_provenance_equivalent(name, root_raw, raw)
+    if name == CONFIG_EQUIVALENCE_FILE:
+        reference = base / TOKENIZER_REFERENCE_SUBDIR / name
+        if not reference.is_file():
+            raise PanelError("tokenizer artifact %s fails its SHA-256 (no %s/%s copy of the "
+                             "root's file to test loader-key equivalence against)"
+                             % (name, TOKENIZER_REFERENCE_SUBDIR, name))
+        root_raw = reference.read_bytes()
+        if _sha(root_raw) != digest or (size >= 0 and len(root_raw) != size):
+            raise PanelError("%s/%s does not carry the root's bound %s (its own SHA-256 fails)"
+                             % (TOKENIZER_REFERENCE_SUBDIR, name, name))
+        return len(root_raw), config_equivalent(root_raw, raw)
     if name != TOKENIZER_CONFIG_EQUIVALENCE_FILE:
         raise PanelError("tokenizer artifact %s fails its listed size/SHA-256" % name
                          if size >= 0 else "tokenizer artifact %s fails its SHA-256" % name)
