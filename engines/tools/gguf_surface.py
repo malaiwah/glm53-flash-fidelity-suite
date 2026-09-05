@@ -116,8 +116,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-import numpy as np
-
 GGUF_FORMAT = "glm53-gguf-llamacpp-v1"
 GGUF_SURFACE_SCHEMA = "malaiwah.glm53-gguf-surface.v1"
 GGUF_IDENTITY_SCHEMA = "malaiwah.glm53-gguf-student-identity.v1"
@@ -583,6 +581,8 @@ def _iq_grid(kind: str, device) -> Any:
     """
     import torch
 
+    import numpy as np
+
     key = (kind, str(device))
     grid = _IQ_GRID_CACHE.get(key)
     if grid is None:
@@ -963,6 +963,143 @@ class GgufContainer:
         if row["bytes"] is None:
             raise _fail(f"{tensor_name}: byte size underivable for type {row['type']}")
         return self.read_tensor_range(tensor_name, 0, row["bytes"])
+
+
+# ---------------------------------------------------------------------------
+# header-level identity + contract (STDLIB ONLY: the controller imports these)
+# ---------------------------------------------------------------------------
+
+GGUF_DECODE_METHOD = "gguf-dequant-to-bf16"
+#: What the layer-outer `gguf-dequant-to-bf16` lane binds into
+#: `weights_decode.quantization_config`: everything a GGUF declares about its
+#: own quantization, read from the header bytes.  The controller (range
+#: requests) and the pod (local files) MUST compute the identical block from
+#: the same headers -- `qualify-root` compares them field for field.
+GGUF_CONTRACT_KV = ("general.architecture", "general.file_type",
+                    "general.quantization_version", "general.quantized_by",
+                    "quantize.imatrix.file", "quantize.imatrix.dataset",
+                    "quantize.imatrix.entries_count", "quantize.imatrix.chunks_count")
+
+
+def tensor_table_sha256(container: GgufContainer) -> str:
+    """sha256 over the canonical JSON of every tensor's (name, dims, type, offset,
+    file): the GGUF analogue of a safetensors index digest.  Header CONTENT, never
+    container bytes, so it is the same on the controller and on the pod."""
+    rows = [{"name": n, "dims": [int(d) for d in r["dims"]], "type": r["type"],
+             "offset": int(r["offset"]), "file": r["file"]}
+            for n, r in sorted(container.tensors.items())]
+    return _sha256_bytes(_canonical_json(rows))
+
+
+def decode_contract(container: GgufContainer, build: str) -> Dict[str, Any]:
+    """The `weights_decode` block of the gguf lane, from headers alone.
+
+    ``build`` is the repo-relative directory of the variant (e.g. ``UD-Q4_K_XL``,
+    the ``--path`` of the plan), so two builds of one repo revision never share
+    a contract.
+    """
+    type_census: Dict[str, int] = {}
+    for row in container.tensors.values():
+        type_census[row["type"]] = type_census.get(row["type"], 0) + 1
+    kv = {key: container.kv[key] for key in GGUF_CONTRACT_KV if key in container.kv}
+    return {
+        "method": GGUF_DECODE_METHOD,
+        "quantization_config": {
+            "container": "gguf",
+            "build": build,
+            "files": sorted(f.name for f in container.files),
+            "general": kv,
+            "type_census": dict(sorted(type_census.items())),
+            "tensor_count": len(container.tensors),
+            "tensor_table_sha256": tensor_table_sha256(container),
+            "decode": "every tensor block-dequantized to fp32 by the gguf-py-proven "
+                      "kernels on the capture device, then ONE rounding to bfloat16 "
+                      "(official-float32 tensors kept fp32); attn_k_b/attn_v_b composed "
+                      "into kv_b_proj; fused experts sliced per expert",
+        },
+    }
+
+
+def audit_container(container: GgufContainer) -> Dict[str, Any]:
+    """Every tensor's bytes lie inside its file, and no two overlap.
+
+    The GGUF analogue of `layer_outer.audit_checkpoint_tree`: a truncated part
+    would otherwise read as a short read (refused at read time) or, worse, a
+    row whose offset points past the data would decode garbage.  Local files
+    only (sizes are stat'ed); remote containers are audited by range failures.
+    """
+    by_file: Dict[str, List[Tuple[int, int, str]]] = {}
+    for name, row in container.tensors.items():
+        if row["bytes"] is None:
+            raise _fail(f"{name}: byte size underivable for type {row['type']}")
+        by_file.setdefault(row["file"], []).append((int(row["offset"]), int(row["bytes"]), name))
+    total = 0
+    for f in container.files:
+        extents = sorted(by_file.get(f.name, []))
+        end = f.info["data_start"]
+        for offset, nbytes, name in extents:
+            start = f.info["data_start"] + offset
+            if start < end:
+                raise _fail(f"{f.name}: {name} overlaps the previous tensor's bytes")
+            end = start + nbytes
+            total += nbytes
+        # a metadata-only part (llama.cpp's split 1) ends at its header, which
+        # may sit BEFORE the aligned data_start; only tensor bytes are bounded
+        if extents and end > f.size:
+            raise _fail(
+                f"{f.name}: tensor extents run to byte {end} but the file has {f.size} "
+                "(truncated part?)"
+            )
+    return {"files": len(container.files), "tensors": len(container.tensors),
+            "tensor_bytes": total, "file_bytes": sum(f.size for f in container.files),
+            "extents_ok": True}
+
+
+def tokenizer_matches(kv: Mapping[str, Any], tokenizer_json: bytes) -> Dict[str, Any]:
+    """Does the GGUF's embedded vocabulary equal an HF tokenizer.json's, by ID?
+
+    A GGUF ships no tokenizer files: the token strings live in
+    ``tokenizer.ggml.tokens`` (index = id) and the BPE merges in
+    ``tokenizer.ggml.merges``.  The lane runs the reference root's tokenizer
+    files (the panel is already tokenized), so it must be SHOWN that the
+    artifact's own vocabulary is the same one: every id the HF vocab (model +
+    added tokens) defines must carry the same string, the merges must be the
+    same list in the same order, and ids beyond the HF vocab may only be
+    llama.cpp's ``[PAD<id>]`` fillers up to the declared vocab_size.  Refuses
+    on any other difference, naming the first.
+    """
+    doc = json.loads(tokenizer_json.decode("utf-8"))
+    vocab = dict((doc.get("model") or {}).get("vocab") or {})
+    by_id: Dict[int, str] = {int(i): s for s, i in vocab.items()}
+    for added in doc.get("added_tokens") or []:
+        by_id.setdefault(int(added["id"]), added["content"])
+    tokens = list(kv.get("tokenizer.ggml.tokens") or [])
+    if not tokens:
+        raise _fail("the GGUF carries no tokenizer.ggml.tokens array")
+    mismatched = [i for i in range(len(tokens)) if i in by_id and by_id[i] != tokens[i]]
+    if mismatched:
+        i = mismatched[0]
+        raise _fail(
+            f"REFUSED: GGUF token id {i} is {tokens[i]!r} but the HF tokenizer says "
+            f"{by_id[i]!r} ({len(mismatched)} ids differ)"
+        )
+    missing = [i for i in by_id if i >= len(tokens)]
+    if missing:
+        raise _fail(f"REFUSED: HF tokenizer defines id {min(missing)} beyond the GGUF's "
+                    f"{len(tokens)} tokens")
+    pads = [i for i in range(len(tokens)) if i not in by_id]
+    bad_pads = [i for i in pads if tokens[i] != "[PAD%d]" % i]
+    if bad_pads:
+        raise _fail(f"REFUSED: GGUF token id {bad_pads[0]} = {tokens[bad_pads[0]]!r} is "
+                    "absent from the HF tokenizer and is not a [PAD<id>] filler")
+    hf_merges = [(m if isinstance(m, str) else " ".join(m))
+                 for m in (doc.get("model") or {}).get("merges") or []]
+    gg_merges = list(kv.get("tokenizer.ggml.merges") or [])
+    if hf_merges != gg_merges:
+        raise _fail(f"REFUSED: BPE merges differ (HF {len(hf_merges)}, GGUF {len(gg_merges)})")
+    return {"tokens": len(tokens), "hf_ids": len(by_id), "pad_fillers": len(pads),
+            "merges": len(gg_merges), "pre": kv.get("tokenizer.ggml.pre"),
+            "model": kv.get("tokenizer.ggml.model"), "equal": True}
 
 
 # ---------------------------------------------------------------------------
@@ -2418,6 +2555,8 @@ def verify_view_nonrouted_values(
     index = _read_json(Path(view) / "model.safetensors.index.json", "view index")
     weight_map = index["weight_map"]
     names = sorted(surface.census.direct_map.items())
+    import numpy as np
+
     rng = np.random.default_rng(0x66F)
     picks = [names[int(i)] for i in rng.choice(len(names), size=min(sample, len(names)),
                                                replace=False)]

@@ -1070,16 +1070,18 @@ def validate_root_qualification_contract(contract: dict) -> None:
     else:
         # The surface follows the decode the candidate block declares, rather
         # than being assumed FP8: the streaming loader decodes block-scaled
-        # FP8, stock-exllamav3 trellis and modelopt NVFP4; a trellis
-        # artifact's sniffed surface is `exl3hf`, a modelopt NVFP4 one's is
-        # `nvfp4`. Anything else is a decode this contract has never seen and
-        # refuses by name rather than defaulting.
+        # FP8, stock-exllamav3 trellis, modelopt NVFP4 and llama.cpp GGUF
+        # builds; a trellis artifact's sniffed surface is `exl3hf`, a modelopt
+        # NVFP4 one's is `nvfp4`, a GGUF's is `gguf`. Anything else is a decode
+        # this contract has never seen and refuses by name rather than
+        # defaulting.
         decode = candidate.get("weights_decode") or {}
         surfaces = {
             "fp8-block-dequant-to-bf16": "fp8-block",
             "exl3-trellis-decode-to-bf16": "exl3hf",
             "exl3-trellis-tp-compose-to-bf16": "exl3hf",
             "nvfp4-modelopt-dequant-to-bf16": "nvfp4",
+            "gguf-dequant-to-bf16": "gguf",
         }
         surface = surfaces.get(str(decode.get("method")))
         if surface is None:
@@ -1088,6 +1090,16 @@ def validate_root_qualification_contract(contract: dict) -> None:
                 "maps to no known target surface (known: %s)"
                 % (decode.get("method"), ", ".join(sorted(surfaces))))
         expected_target = (surface, candidate["codec"], candidate["declared_bits"])
+    # A GGUF repo is a shelf of builds; the target names the ONE build directory
+    # in `path` (the same string the decode contract's `build` carries). Every
+    # other surface is a whole repository and `path` must be null.
+    gguf_build = (expected_target[0] == "gguf")
+    path_ok = (
+        (isinstance(target.get("path"), str) and target["path"]
+         and "/" not in target["path"].strip("/") and target["path"] not in (".", "..")
+         and target["path"] == (((candidate or {}).get("weights_decode") or {})
+                                .get("quantization_config") or {}).get("build"))
+        if gguf_build else target.get("path") is None) if isinstance(target, dict) else False
     if (not isinstance(target, dict)
             or set(target) != {
                 "repo_id", "revision", "surface", "codec", "bits", "path"}
@@ -1099,7 +1111,7 @@ def validate_root_qualification_contract(contract: dict) -> None:
             or target.get("surface") != expected_target[0]
             or target.get("codec") != expected_target[1]
             or target.get("bits") != expected_target[2]
-            or target.get("path") is not None):
+            or not path_ok):
         raise JobContractError(
             "root qualification target contract differs")
     for name in (

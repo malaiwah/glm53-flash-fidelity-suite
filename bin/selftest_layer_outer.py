@@ -1160,6 +1160,88 @@ def _body(work):
           all(r[0] for r in (r1, r2, r3, r4)),
           " | ".join(r[1][-140:] for r in (r1, r2, r3, r4)))
 
+    # ---- FlagshipGgufLane: L19 the GGUF lane's plan detection --------------
+    # The reader itself is proven in engines/tools/selftest_gguf_offline.py
+    # (rungs 8-8e); this is the streamer's seam: no .gguf -> no plan (the FP8 /
+    # trellis / nvfp4 gates decide), two build directories refuse, and a build
+    # whose parts are header-only (the REAL 1,809-tensor flagship table with no
+    # data behind it) is refused by the container extent audit AFTER the census
+    # closed -- i.e. the plan reads the same headers the controller mirror
+    # reads, and stops where a truncated fetch would have handed back zeros.
+    from pathlib import Path
+    import gguf_surface as GS
+    from selftest_gguf_offline import write_gguf, _real_rows, _rows_for_writer
+    gg_evidence = Path(REPO) / "engines" / "tools" / "gguf-evidence"
+    official_cfg = json.loads((gg_evidence / "glm53-official-config.json").read_text(encoding="utf-8"))
+    check("L19a a tree with no .gguf plans no GGUF decode (None, before any header is read)",
+          LO.gguf_checkpoint_plan(_Config(official_cfg), nv_dir) is None
+          and LO.gguf_files_in(nv_dir) == [])
+    gg_two = os.path.join(work, "gguf-two-builds")
+    for build in ("UD-Q4_K_XL", "UD-Q3_K_XL"):
+        os.makedirs(os.path.join(gg_two, build))
+        open(os.path.join(gg_two, build, "x.gguf"), "wb").write(b"GGUF")
+    try:
+        LO.gguf_files_in(gg_two)
+        two_ok, two_detail = False, "accepted"
+    except LO.LayerOuterError as exc:
+        two_ok, two_detail = "2 GGUF build directories" in str(exc), str(exc)
+    check("L19b two build directories under one target are REFUSED by name", two_ok, two_detail)
+    gg_dir = os.path.join(work, "gguf-flagship", "UD-Q4_K_XL")
+    os.makedirs(gg_dir)
+    gg_kv = json.loads((gg_evidence / "unsloth-glm53-udq4kxl-kv.json").read_text(encoding="utf-8"))
+    for key in ("split.no", "split.count", "split.tensors.count"):
+        gg_kv.pop(key, None)
+    gg_path = write_gguf(Path(gg_dir) / "GLM-5.3-UD-Q4_K_XL-00001-of-00001.gguf", gg_kv,
+                         _rows_for_writer(_real_rows("unsloth-glm53-udq4kxl-tensors.json")))
+    gg_root = os.path.dirname(gg_dir)
+    try:
+        LO.gguf_checkpoint_plan(_Config(official_cfg), gg_root)
+        marker_ok, marker_detail = False, "accepted without the sha256 marker"
+    except LO.LayerOuterError as exc:
+        marker_ok, marker_detail = "whole-file sha256 marker absent" in str(exc), str(exc)
+    check("L19c a build without gguf-files-verified.json is REFUSED (the identity the "
+          "receipt claims must be hashed, by the fetch stage, before the plan)",
+          marker_ok, marker_detail[-300:])
+    GS.verify_file_hashes([str(gg_path)])
+    try:
+        LO.gguf_checkpoint_plan(_Config(official_cfg), gg_root)
+        extent_ok, extent_detail = False, "accepted a header-only part"
+    except LO.LayerOuterError as exc:
+        # the 11 parts' rows collapsed into one header-only file: the audit
+        # sees offsets that overlap (and would see a truncated part the same way)
+        extent_ok, extent_detail = ("overlaps the previous tensor" in str(exc)
+                                    or "tensor extents run to byte" in str(exc)), str(exc)
+    check("L19d the REAL flagship table over a header-only part closes its census and is then "
+          "REFUSED by the container extent audit (overlapping/truncated bytes read as zeros nowhere)",
+          extent_ok, extent_detail[-300:])
+    no_types = json.loads(json.dumps(official_cfg)); no_types.pop("indexer_types")
+    try:
+        LO.gguf_checkpoint_plan(_Config(no_types), gg_root)
+        types_ok, types_detail = False, "accepted without indexer_types"
+    except LO.LayerOuterError as exc:
+        types_ok, types_detail = "indexer_types" in str(exc), str(exc)
+    check("L19e a config without indexer_types is REFUSED: the glm-dsa census will not guess "
+          "which indexer tensors are copies", types_ok, types_detail[-300:])
+    # the controller mirror and the pod contract are ONE function over the same
+    # headers: decode_contract on this local container equals the block the
+    # controller writes from the https headers (same rows, same digest)
+    gg_container = GS.GgufContainer([GS.GgufFile(str(gg_path))])
+    contract = GS.decode_contract(gg_container, "UD-Q4_K_XL")
+    check("L19f the header-derived decode contract is the controller's mirror: method "
+          "gguf-dequant-to-bf16, build, 1,809 tensors, the real type census, a 64-hex "
+          "tensor-table digest and the imatrix KVs",
+          contract["method"] == LO.GGUF_DECODE_METHOD == GS.GGUF_DECODE_METHOD
+          and contract["quantization_config"]["build"] == "UD-Q4_K_XL"
+          and contract["quantization_config"]["tensor_count"] == 1809
+          and contract["quantization_config"]["type_census"] == {
+              "F32": 709, "Q4_K": 150, "Q5_K": 74, "Q6_K": 4, "Q8_0": 872}
+          and len(contract["quantization_config"]["tensor_table_sha256"]) == 64
+          and contract["quantization_config"]["general"]["general.quantized_by"] == "Unsloth"
+          and contract["quantization_config"]["general"]["quantize.imatrix.dataset"]
+          == "unsloth_calibration_GLM-5.3.txt",
+          json.dumps(contract)[:400])
+    # ---- end FlagshipGgufLane ---------------------------------------------
+
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, detail in FAIL:
         print("  FAILED %s: %s" % (name, detail))

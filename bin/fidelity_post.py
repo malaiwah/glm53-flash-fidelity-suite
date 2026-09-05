@@ -125,6 +125,25 @@ def _method_line(decode: dict) -> str:
                    ("%s %s" % (producer.get("name"), producer.get("version"))
                     if producer else "undeclared"),
                    qc.get("group_size"), qc.get("activation_scheme")))
+    if method == "gguf-dequant-to-bf16":
+        census = qc.get("type_census") or {}
+        types = ", ".join("%s x%d" % (t, census[t]) for t in sorted(census))
+        general = qc.get("general") or {}
+        return ("dequantize-and-run, weights only: `%s` -- the llama.cpp GGUF build `%s` "
+                "(%d tensors; ggml types %s; quantized_by %s, quantization_version %s%s): "
+                "EVERY tensor is block-dequantized to fp32 on the capture device by kernels "
+                "proven bitwise against gguf-py's reference `dequantize` on real fetched blocks, "
+                "then cast once to bf16 under the official tensor name (attn_k_b/attn_v_b "
+                "composed into kv_b_proj, fused experts sliced per expert, both proven exact "
+                "against the official BF16 release); the Q8_0 token embeddings and the "
+                "artifact's OWN output head are decoded the same way, so this row runs "
+                "own-heads (HEAD-1d) rather than the reference's head; same engine, schedule "
+                "and device as the reference capture"
+                % (method, qc.get("build"), qc.get("tensor_count") or 0, types or "none",
+                   general.get("general.quantized_by") or "undeclared",
+                   general.get("general.quantization_version"),
+                   ("; imatrix-calibrated on %s" % general["quantize.imatrix.dataset"]
+                    if general.get("quantize.imatrix.dataset") else "")))
     return "`%s` (decode recorded in the sealed runtime receipt)" % method
 
 

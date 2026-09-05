@@ -2278,8 +2278,16 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
                               "decode_seconds": 0.0, "fill_seconds": 0.0,
                               "checkpoint_bytes_read": 0, "converter_bytes": 0}
 
+    # A GGUF slot has no stored bytes the fill could read; what the decoder
+    # hands it is a `torch_dtype` tensor of the slice shape, and saying so here
+    # is what lets `plan_expert_fill` admit the routed experts to the direct fill.
+    gguf_slot_keys: Set[str] = set()
+    gguf_decoded_dtype = {"bfloat16": "BF16", "float16": "F16", "float32": "F32"}[dtype_name]
+
     def _stored_dtype(key: str) -> Optional[str]:
         located = locator.get(key)
+        if located is None and key in gguf_slot_keys:
+            return gguf_decoded_dtype
         return located[3] if located is not None else None
 
     def _stored_shape(key: str) -> Optional[Tuple[int, ...]]:
@@ -2406,7 +2414,9 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
         bucket(_open_shards(ungated_shard_names))
         if gguf_plan is not None:
             # the container's official names stand where the shard keys stand
-            bucket(gguf_subsets(gguf_plan))
+            slots = gguf_subsets(gguf_plan)
+            gguf_slot_keys.update(slots)
+            bucket(slots)
         resident_shards: List[str] = []
     else:
         # THE RESIDENT SET, computed rather than guessed. `gate.plan` decides the

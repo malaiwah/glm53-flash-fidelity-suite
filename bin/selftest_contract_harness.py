@@ -106,6 +106,27 @@ SURFACES = {
                 "producer": {"name": "modelopt", "version": "0.47.0"},
                 "ignore_count": 231, "ignore_sha256": "5" * 64}},
     },
+    # The llama.cpp GGUF lane: the contract block is header-derived (the same
+    # `gguf_surface.decode_contract` runs on the controller and the pod), the
+    # target names the ONE build directory in `path`, and the head is the
+    # artifact's own Q8_0 output.weight -- so the comparison is HEAD-1d.
+    "gguf": {
+        "codec": "gguf-k-quant", "declared_bits": 4.0, "target_surface": "gguf",
+        "target_path": "UD-Q4_K_XL",
+        "weights_decode": {
+            "method": "gguf-dequant-to-bf16",
+            "quantization_config": {
+                "container": "gguf", "build": "UD-Q4_K_XL",
+                "files": ["GLM-5.3-UD-Q4_K_XL-00001-of-00002.gguf",
+                          "GLM-5.3-UD-Q4_K_XL-00002-of-00002.gguf"],
+                "general": {"general.architecture": "glm-dsa", "general.file_type": 15,
+                            "general.quantization_version": 2,
+                            "general.quantized_by": "Unsloth"},
+                "type_census": {"F32": 709, "Q4_K": 150, "Q5_K": 74, "Q6_K": 4, "Q8_0": 872},
+                "tensor_count": 1809, "tensor_table_sha256": "9" * 64,
+                "decode": "every tensor block-dequantized to fp32 by the gguf-py-proven "
+                          "kernels on the capture device, then ONE rounding to bfloat16"}},
+    },
 }
 
 
@@ -266,7 +287,7 @@ def candidate_job(surface, root_manifest, candidate_manifest, binding, *, own_he
                     "device": "cuda", "schedule": "two-fresh-process-qualification"},
         "timing": {"kind": "contract-harness"},
         "scope": {"kind": "contract-harness"},
-        "target": {"repo_id": weights, "revision": revision, "path": None,
+        "target": {"repo_id": weights, "revision": revision, "path": spec.get("target_path"),
                    "surface": spec["target_surface"], "codec": spec["codec"],
                    "bits": spec["declared_bits"],
                    "config_sha256": "a" * 64, "index_sha256": "b" * 64,
@@ -654,6 +675,60 @@ def main() -> int:
         check("C12b nvfp4: a job whose contract block differs from the sealed decode by one "
               "field (ignore_sha256) is refused at qualify_root by name",
               p.returncode != 0 and "candidate identity differs" in out, out[-800:])
+
+        # -- the llama.cpp GGUF surface through the same path -----------------
+        print("\n== C13-C14: the GGUF surface (job -> qualify -> compare -> archive -> post) ==")
+        sb9, job9, root9, rm9, cm9 = drive(tmp, bash, "gguf")
+        outs = []
+        ok = True
+        for name in ("verify", "verify_repeat", "compare_root", "qualify_root",
+                     "compare_reference"):
+            p, calls, out = stage(sb9, name, bash)
+            outs.append(out[-400:])
+            ok = ok and p.returncode == 0
+        q9 = receipts_of(sb9)["root-qualification.json"]
+        ref9 = receipts_of(sb9)["reference-comparison/comparison-receipt.json"]
+        check("C13 gguf: qualify_root binds the gguf-dequant-to-bf16 decode to a gguf target "
+              "whose path names the build, compare_reference seals an OWN-HEAD (HEAD-1d) "
+              "measurement",
+              ok and q9 is not None and ref9 is not None
+              and q9["job_contract"]["target"]["surface"] == "gguf"
+              and q9["job_contract"]["target"]["path"] == "UD-Q4_K_XL"
+              and q9["job_contract"]["candidate"]["codec"] == "gguf-k-quant"
+              and q9["captures"]["canonical"]["candidate"]["weights_decode"]["method"]
+              == "gguf-dequant-to-bf16"
+              and q9["captures"]["canonical"]["candidate"]["weights_decode"]
+              ["quantization_config"]["build"] == "UD-Q4_K_XL"
+              and ref9["estimator"]["head_policy"] == "native_head"
+              and ref9["comparability"]["class"] == "strict",
+              "\n".join(outs))
+        post9 = Path(tmp) / "gguf-post.md"
+        rendered = subprocess.run(
+            [sys.executable, str(ROOT / "bin" / "fidelity_post.py"), "render",
+             "--result", str(sb9.fs), "--out", str(post9)], capture_output=True, text=True)
+        body9 = post9.read_text(encoding="utf-8") if post9.is_file() else ""
+        check("C14 gguf: the post names the build, the ggml type census, quantized_by, the "
+              "gguf-py proof and the own-head (HEAD-1d) policy -- never the generic fallback",
+              rendered.returncode == 0 and "UD-Q4_K_XL" in body9 and "Q4_K x150" in body9
+              and "Unsloth" in body9 and "gguf-py" in body9 and "HEAD-1d" in body9
+              and "decode recorded in the sealed runtime receipt" not in body9,
+              (rendered.stdout + rendered.stderr + body9)[-900:])
+        # ... a gguf job whose target.path is not the contract's build is refused
+        sb10, job10, root10, rm10, cm10 = drive(tmp, bash, "gguf", label="gguf-wrong-path")
+        wrong = json.loads((sb10.fs / "job.json").read_text(encoding="utf-8"))
+        wrong["target"]["path"] = "UD-Q3_K_XL"
+        wrong = jobcontract.finalize_job(
+            {k: v for k, v in wrong.items() if k not in ("job_id", "job_id_full")})
+        (sb10.fs / "job.json").write_text(
+            json.dumps(wrong, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        for done in ("setup", "fetch_target", "fetch_reference", "capture", "capture_repeat"):
+            sb10.write_bound_marker(done)
+        for name in ("verify", "verify_repeat", "compare_root"):
+            stage(sb10, name, bash)
+        p, calls, out = stage(sb10, "qualify_root", bash)
+        check("C14b gguf: a job whose target.path names another build than the decode contract "
+              "is refused at qualify_root by name",
+              p.returncode != 0 and "target contract differs" in out, out[-800:])
 
     print("\nselftest_contract_harness: %d passed, %d failed" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0

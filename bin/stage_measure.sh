@@ -791,11 +791,18 @@ PY
     # twice: it records `unknown` for embeddings/attention/lm_head, which this
     # artifact quantizes and DECLARES it quantizes, and it would record the
     # dense MLPs at the build's nominal rate when they are Q8_0.
-    "$VENV/bin/python" "$FS/engines/tools/gguf_surface.py" scope \
-        "${GGUF_PARTS[@]}" --repo "$REPO" --revision "$REV" \
-        --out "$RCPT/artifact-scope.json" \
-        >/dev/null 2>>"$LOGS/fetch_target.log"
-    log "scope written to $RCPT/artifact-scope.json"
+    #
+    # A CANDIDATE (root protocol on a GGUF) binds an authored scope by digest
+    # instead (capture.candidate.scope), and the flagship census needs the
+    # official config's indexer_types, which lands with fetch_reference, after
+    # this stage -- so the measured scope is the quant lane's only.
+    if [ "$(jqget role quant)" != "root" ]; then
+      "$VENV/bin/python" "$FS/engines/tools/gguf_surface.py" scope \
+          "${GGUF_PARTS[@]}" --repo "$REPO" --revision "$REV" \
+          --out "$RCPT/artifact-scope.json" \
+          >/dev/null 2>>"$LOGS/fetch_target.log"
+      log "scope written to $RCPT/artifact-scope.json"
+    fi
   fi
   df -h "$FS" | tee -a "$LOGS/fetch_target.log"
   write_marker
@@ -1301,6 +1308,29 @@ PYSCOPE
         *) [ -f "$path" ] && [ ! -e "$TOKENIZER_ROOT/$name" ] && ln -s "$path" "$TOKENIZER_ROOT/$name" ;;
       esac
     done
+    if [ "$(jqget target.surface)" = "gguf" ]; then
+      # A GGUF candidate carries neither a config.json nor tokenizer files.
+      # The model class is built from the reference root's release config,
+      # COPIED beside the build as a regular file (hf_capture hashes it into
+      # the checkpoint identity, the same bytes the job's target.config_sha256
+      # names); the tokenizer files are the root's, whose vocabulary the
+      # controller proved equal to the build's embedded token table by id.
+      require_stage_marker fetch_reference
+      [ -f "$FS/reference-model/config.json" ] || {
+        echo "$STAGE REFUSES: gguf candidate needs the reference root's config.json (fetch_reference)" >&2
+        exit 3
+      }
+      cp -f "$FS/reference-model/config.json" "$MODELS/target/config.json"
+      chmod 644 "$MODELS/target/config.json"
+      for name in tokenizer.json tokenizer_config.json; do
+        [ -f "$FS/reference-model/$name" ] || {
+          echo "$STAGE REFUSES: gguf candidate needs the reference root's $name (fetch_reference)" >&2
+          exit 3
+        }
+        [ -e "$TOKENIZER_ROOT/$name" ] || ln -s "$FS/reference-model/$name" "$TOKENIZER_ROOT/$name"
+      done
+      log "gguf candidate: reference config.json copied beside the build; tokenizer files linked from the reference root"
+    fi
     # The ROOT's tokenizer_config.json, under the sidecar name fidelity.panel
     # reads (TOKENIZER_REFERENCE_SUBDIR): when the candidate's copy fails its
     # digest, panel.py tests loader-key equivalence against these bytes and
@@ -1527,10 +1557,17 @@ PYW
   set -- $REF_WEIGHTS
   log "fetching the reference root's model-class files: $1 @ $2"
   mkdir -p "$REF_MODEL_DIR"
+  REF_FILES=(config.json generation_config.json LICENSE chat_template.jinja tokenizer_config.json)
+  if [ "$(jqget target.surface)" = "gguf" ]; then
+    # A GGUF ships no tokenizer files: the pod runs the reference root's, and
+    # the controller proved (candidate-tokenizer-files gate, gguf rule) that
+    # the build's embedded tokenizer.ggml.tokens/merges ARE that vocabulary.
+    REF_FILES+=(tokenizer.json)
+  fi
   env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN -u HUGGINGFACE_HUB_TOKEN -u HF_TOKEN_PATH \
       HF_HUB_DISABLE_IMPLICIT_TOKEN=1 HF_HOME="$FS/hf-anonymous" \
       "$VENV/bin/hf" download "$1" --revision "$2" --local-dir "$REF_MODEL_DIR" \
-      config.json generation_config.json LICENSE chat_template.jinja tokenizer_config.json \
+      "${REF_FILES[@]}" \
       >>"$LOGS/fetch_reference.log" 2>&1
   write_marker
   log "done"

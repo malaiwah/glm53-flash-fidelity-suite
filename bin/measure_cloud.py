@@ -1513,6 +1513,147 @@ def _nvfp4_candidate_decode_plan(qc: Dict[str, Any]) -> Dict[str, Any]:
                          "ignore_count": len(ignore)},
     }
 
+#: `engines/tools/gguf_surface.GGUF_DECODE_METHOD`, kept in step with it.
+CANDIDATE_DECODE_METHOD_GGUF = "gguf-dequant-to-bf16"
+
+
+def _gguf_surface_module():
+    """`engines/tools/gguf_surface` is stdlib at import (numpy/torch lazy), so the
+    controller can read a build's headers with the SAME parser the pod uses."""
+    tools = SUITE_ROOT / "engines" / "tools"
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    import gguf_surface  # noqa: E402
+
+    return gguf_surface
+
+
+def _gguf_candidate_plan(con: Console, target: RepoMeta, surface, plan: Dict[str, Any],
+                         official_config: Dict[str, Any]) -> Dict[str, Any]:
+    """The GGUF candidate's decode contract + identity, from header bytes at $0.
+
+    Mirrors `engines/tools/layer_outer.gguf_checkpoint_plan` field for field:
+    both call `gguf_surface.decode_contract` over the same tensor tables (the
+    pod on local files, this on https range requests), so `qualify_root`'s
+    equality check is a check of the same function on the same bytes. The
+    census that decides decodability -- architecture in the arch table,
+    geometry gate, every tensor nameable and of a kernel-backed type, the
+    indexer copies recognised from the OFFICIAL config's indexer_types -- runs
+    here too, so an undecodable build is refused before a rental, not after
+    a 467 GB fetch.
+    """
+    ggs = _gguf_surface_module()
+    if not surface.path or not surface.artifact_files:
+        raise Refusal("a GGUF candidate needs --path <build>; the repo is a shelf of builds",
+                      ["builds: %s" % ", ".join(sorted(surface.evidence.get("gguf_builds") or {}))])
+    urls = ["%s/%s/resolve/%s/%s" % (HF_ENDPOINT, target.repo_id, target.revision, name)
+            for name, _ in surface.artifact_files]
+    try:
+        container = ggs.GgufContainer([ggs.GgufFile(u) for u in urls])
+        arch = ggs.arch_for(container.architecture)
+        full = ggs.indexer_full_layers_from_config(official_config, arch)
+        loaded = ggs.load_gguf_surface(urls, repo=target.repo_id, revision=target.revision,
+                                       require_file_hashes=False, indexer_full_layers=full)
+    except ValueError as exc:
+        raise Refusal(
+            "this GGUF build cannot be decoded by the layer-outer gguf lane: %s" % redact(str(exc)),
+            ["Read from the build's OWN headers at the pinned revision, not from its name.",
+             "Adding a type or an architecture means adding it to engines/tools/gguf_surface.py "
+             "WITH the bitwise proof (selftest_gguf_offline.py), not skipping tensors.",
+             "Nothing was created. $0.00 spent."])
+    if official_config.get("num_hidden_layers") != arch.mtp_layer:
+        raise Refusal(
+            "the reference release's config declares %r decoder layers but the %s GGUF "
+            "carries %d before its MTP block" % (official_config.get("num_hidden_layers"),
+                                                  arch.key, arch.mtp_layer), [])
+    build = surface.path.rstrip("/").rpartition("/")[2]
+    decode = ggs.decode_contract(loaded.container, build)
+    census = decode["quantization_config"]["type_census"]
+    codec = "gguf-i-quant" if any(t.startswith("IQ") for t in census) else "gguf-k-quant"
+    plan.setdefault("target", {})["gguf_verification"] = {
+        "verified": True,
+        "architecture": arch.key,
+        "family": arch.family,
+        "build": build,
+        "tensor_count": len(loaded.container.tensors),
+        "type_census": census,
+        "tensor_table_sha256": decode["quantization_config"]["tensor_table_sha256"],
+        "shared_indexer_copies_not_loaded": len(loaded.census.shared_indexer_copies),
+        "mla_layers": len(loaded.census.mla_layers),
+        "checkpoint_identity_sha256": loaded.checkpoint_identity_sha256(),
+        "codec_from_census": codec,
+        "read_from": "https range requests over the build's own headers",
+    }
+    plan["_gguf_loaded"] = loaded
+    con.ok("candidate is a llama.cpp GGUF build",
+           "%s/%s: arch %s, %d tensors, types %s; every tensor decoded to bf16 on the "
+           "capture device (%s), kv_b composed, experts sliced; codec by census %s"
+           % (target.repo_id, build, arch.key, len(loaded.container.tensors),
+              ", ".join("%s x%d" % (t, census[t]) for t in sorted(census)),
+              decode["method"], codec))
+    return decode
+
+
+def _gguf_model_file_identity(target: RepoMeta, surface, loaded, official_config_raw: bytes,
+                              official_ref: Tuple[str, str]) -> Dict[str, Any]:
+    """`_model_file_identity` for a GGUF build: no config.json, no index.
+
+    The config is the OFFICIAL release's (the reference root's weights repo,
+    fetched anonymously; the candidate stage copies it beside the build so the
+    HF model class can be built), and the tensor table digest stands where the
+    safetensors index digest stands. The shards are the build's own .gguf
+    files; the download manifest is exactly those plus the repo's LICENSE.
+    """
+    ggs = _gguf_surface_module()
+    if re.fullmatch(r"[0-9a-f]{40}", target.revision) is None:
+        raise Refusal("RunPod target revision is not an exact 40-hex pin", [])
+    sizes = dict(target.files)
+    shards = []
+    for name, size in sorted(surface.artifact_files):
+        pure = PurePosixPath(name)
+        if (("\\" in name) or pure.is_absolute() or pure.as_posix() != name
+                or any(part in ("", ".", "..") for part in pure.parts)):
+            raise Refusal("GGUF build contains an unsafe file path", [])
+        if sizes.get(name) != size or not isinstance(size, int) or size <= 0:
+            raise Refusal("GGUF build file %s is missing or size-unknown in the repo listing" % name, [])
+        shards.append({"path": name, "bytes": size})
+    table_json = ggs._canonical_json([
+        {"name": n, "dims": [int(d) for d in r["dims"]], "type": r["type"],
+         "offset": int(r["offset"]), "file": r["file"]}
+        for n, r in sorted(loaded.container.tensors.items())])
+    manifest = list(shards)
+    if "LICENSE" in sizes:
+        manifest.append({"path": "LICENSE", "bytes": sizes["LICENSE"]})
+    manifest.sort(key=lambda row: row["path"])
+    config = json.loads(official_config_raw.decode("utf-8"))
+    vocab_size = loaded.container.geometry_value("vocab_size")
+    hidden_size = loaded.container.geometry_value("embedding_length")
+    if (int(vocab_size) != config.get("vocab_size")
+            or int(hidden_size) != config.get("hidden_size")):
+        raise Refusal(
+            "the GGUF's geometry (vocab %s, hidden %s) differs from the reference release's "
+            "config (%s, %s)" % (vocab_size, hidden_size, config.get("vocab_size"),
+                                 config.get("hidden_size")), [])
+    return {
+        "config_sha256": hashlib.sha256(official_config_raw).hexdigest(),
+        "config_bytes": len(official_config_raw),
+        "config_source": "%s@%s config.json (the reference root's release; the GGUF ships "
+                         "none and the candidate stage copies this one beside the build)"
+                         % official_ref,
+        "index_sha256": hashlib.sha256(table_json).hexdigest(),
+        "index_bytes": len(table_json),
+        "index_source": "sha256 of the canonical JSON GGUF tensor table (name, dims, type, "
+                        "offset, file); a GGUF ships no safetensors index",
+        "model_bytes": sum(row["bytes"] for row in shards),
+        "shards": shards,
+        "download_bytes_total": sum(row["bytes"] for row in manifest),
+        "download_manifest": manifest,
+        "download_manifest_sha256": hashlib.sha256(_canonical_bytes(manifest)).hexdigest(),
+        "vocab_size": int(vocab_size),
+        "hidden_size": int(hidden_size),
+        "shard_manifest_sha256": hashlib.sha256(_canonical_bytes(shards)).hexdigest(),
+    }
+
 
 def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
     """The decode the streaming loader will apply, from the config alone.
@@ -1623,6 +1764,34 @@ def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
 CANDIDATE_SCOPE_REMOTE = "candidate/scope.json"
 
 
+def _candidate_reference_config(args, plan_data: Dict[str, Any]) -> Tuple[bytes, Tuple[str, str]]:
+    """The reference root's WEIGHTS release config.json, anonymously, as bytes.
+
+    The root dataset's manifest names the release it was captured from
+    (`weights.repository` @ `weights.model_revision`); that release's
+    config.json is what the pod copies beside a GGUF build so the HF model
+    class can be constructed (stage_measure.sh fetch_reference/capture).
+    """
+    cached = plan_data.get("_candidate_reference_config")
+    if cached is not None:
+        return cached
+    manifest = _candidate_reference_manifest(args, plan_data)
+    weights = manifest.get("weights") or {}
+    repo = weights.get("repository")
+    rev = weights.get("model_revision") or weights.get("revision")
+    if not isinstance(repo, str) or not repo or not isinstance(rev, str) \
+            or re.fullmatch(r"[0-9a-f]{40}", rev) is None:
+        raise Refusal("the reference dataset names no pinned weights release (weights."
+                      "repository/model_revision)", [])
+    try:
+        raw = fetch_file(repo, "config.json", revision=rev)
+    except HFError as exc:
+        raise Refusal("the reference release's config.json could not be read from %s@%s: %s"
+                      % (repo, rev[:12], redact(str(exc))), [])
+    plan_data["_candidate_reference_config"] = (raw, (repo, rev))
+    return raw, (repo, rev)
+
+
 def _candidate_reference_manifest(args, plan_data: Dict[str, Any]) -> Dict[str, Any]:
     """The reference root's top manifest, fetched ANONYMOUSLY once per plan."""
     cached = plan_data.get("_candidate_reference_manifest")
@@ -1730,6 +1899,13 @@ def _candidate_block(args, plan_data: Dict[str, Any], con: Console,
             declared = 8
         elif qcfg.get("quant_method") == "modelopt":
             declared = 4
+        elif qcfg.get("container") == "gguf":
+            # a GGUF declares no bit width; the NOMINAL rate is the build
+            # name's (the same number `sniff_surface` puts on target.bits, so
+            # the root qualification contract closes) and the MEASURED rate
+            # rides on bits_per_weight_effective and in every scope row
+            from fidelity.hfmeta import gguf_nominal_rate
+            declared = gguf_nominal_rate(str(qcfg.get("build")))[0]
     if isinstance(declared, (int, float)) and not isinstance(declared, bool):
         if abs(float(declared) - args.candidate_bits) > 1e-9:
             raise Refusal(
@@ -1832,6 +2008,18 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
 
     Decided from the release's own config, before anything is rented.
     """
+    if getattr(args, "candidate_scope", None) and surface.surface == "gguf":
+        # A GGUF repo ships no config.json at all: what it declares about its
+        # quantization is in its own headers, and the model-class config is
+        # the reference root's release (read anonymously through the reference
+        # dataset's manifest, exactly as the pod's fetch_reference stage does).
+        official_raw, official_ref = _candidate_reference_config(args, plan)
+        official = json.loads(official_raw.decode("utf-8"))
+        decode = _gguf_candidate_plan(con, target, surface, plan, official)
+        plan["_gguf_official_config"] = (official_raw, official_ref)
+        plan.setdefault("target", {})["root_unquantized"] = False
+        plan["_candidate_decode"] = decode
+        return
     # Decide from the checkpoint's OWN config, not from surface classification.
     # `sniff_surface` returns "unknown" for plenty of perfectly unquantized
     # roots -- zai-org/GLM-5.3-BF16 and zai-org/GLM-5.2 both do -- and refusing
@@ -4493,6 +4681,66 @@ def _refuse_candidate_tokenizer_mismatch(con: Console, target, binding: Dict[str
                "loader-key equivalent to (%s)" % ", ".join(e["name"] for e in equivalences))))
 
 
+def _refuse_gguf_tokenizer_mismatch(con: Console, target, binding: Dict[str, Any],
+                                    reference_repo: str, reference_revision: str,
+                                    plan_data: Dict[str, Any]) -> None:
+    """The GGUF candidate's EMBEDDED vocabulary against the reference root's files.
+
+    A GGUF ships no tokenizer.json: its vocabulary is the `tokenizer.ggml.tokens`
+    array (index = id) and its BPE merges. The pod runs the reference root's
+    tokenizer files (the candidate stage links them; the panel is already
+    tokenized), so the gate here is that the artifact's own vocabulary IS that
+    vocabulary: every id the root's tokenizer.json defines carries the same
+    string, the merges are identical, and the only extra ids are llama.cpp's
+    [PAD<id>] fillers up to the declared vocab_size. The root's files are read
+    at the revision the binding names and their digests must be the binding's.
+    Read from bytes at $0 -- a build converted from another vocabulary refuses
+    here, not after a 467 GB fetch.
+    """
+    ggs = _gguf_surface_module()
+    loaded = plan_data["_gguf_loaded"]
+    files = {str(e.get("name")): e for e in ((binding.get("tokenizer") or {}).get("files") or [])}
+    need = [n for n in ("tokenizer.json", "tokenizer_config.json") if n in files]
+    if "tokenizer.json" not in files:
+        raise Refusal("the reference root's panel binding names no tokenizer.json to check the "
+                      "GGUF vocabulary against", [])
+    digests = {}
+    for name in need:
+        try:
+            raw = fetch_file(reference_repo, name, revision=reference_revision)
+        except HFError as exc:
+            raise Refusal("reference root's %s could not be read from %s@%s: %s"
+                          % (name, reference_repo, str(reference_revision)[:12], redact(str(exc))),
+                          ["Nothing was created. $0.00 spent."])
+        got = hashlib.sha256(raw).hexdigest()
+        if got != str(files[name].get("sha256")):
+            raise Refusal("reference root's %s at %s@%s does not carry the panel binding's digest"
+                          % (name, reference_repo, str(reference_revision)[:12]), [])
+        digests[name] = got
+        if name == "tokenizer.json":
+            try:
+                proof = ggs.tokenizer_matches(loaded.container.kv, raw)
+            except ValueError as exc:
+                raise Refusal(
+                    "the GGUF build's embedded vocabulary is not the reference root's: %s"
+                    % redact(str(exc)),
+                    ["The lane runs the root's tokenizer files over an already-tokenized panel; "
+                     "that is only honest when the artifact's own token table is the same "
+                     "vocabulary, id for id, with the same merges.",
+                     "Nothing was created. $0.00 spent."])
+    gate_verified(plan_data, "candidate-tokenizer-files",
+                  candidate=target.repo_id, candidate_revision=target.revision,
+                  reference=reference_repo, reference_revision=reference_revision,
+                  files_checked=need, gguf_vocabulary=proof, reference_digests=digests,
+                  rule="gguf embedded vocabulary equals the root's tokenizer.json by id; "
+                       "the pod links the root's tokenizer files beside the build")
+    con.ok("candidate tokenizer (gguf)",
+           "tokenizer.ggml.tokens (%d ids, %d [PAD] fillers) and %d merges equal the reference "
+           "root's tokenizer.json (%s) by id; the pod runs the root's tokenizer files"
+           % (proof["tokens"], proof["pad_fillers"], proof["merges"],
+              digests["tokenizer.json"][:16]))
+
+
 def _plan_runpod_anonymous(
         args, con: Console, provider,
         anonymous_access: Dict[str, Any]) -> Dict[str, Any]:
@@ -4634,13 +4882,24 @@ def _plan_runpod_anonymous(
            if key != "source_drift"})
 
     surface = sniff_surface(target, getattr(args, "path", None))
-    identity = _model_file_identity(target)
+    gguf_candidate = (surface.surface == "gguf" and args.role == "root"
+                      and bool(getattr(args, "candidate_scope", None)))
+    if surface.problems:
+        raise Refusal("target surface metadata is not usable", list(surface.problems))
+    if gguf_candidate:
+        # A GGUF build has no config.json and no safetensors index: its
+        # identity is its own tensor table plus the reference release's
+        # config, both read by `_refuse_quantized_root`'s gguf branch first.
+        _refuse_quantized_root(con, target, surface, plan_data, args=args)
+        official_raw, official_ref = plan_data["_gguf_official_config"]
+        identity = _gguf_model_file_identity(target, surface, plan_data["_gguf_loaded"],
+                                             official_raw, official_ref)
+    else:
+        identity = _model_file_identity(target)
     license_contract = (
         _root_dataset_license_contract(target)
         if args.role == "root" else None)
-    if surface.problems:
-        raise Refusal("target surface metadata is not usable", list(surface.problems))
-    if args.role == "root":
+    if args.role == "root" and not gguf_candidate:
         _refuse_quantized_root(con, target, surface, plan_data, args=args)
     _refuse_scope_contradicted_by_release(
         con, target.repo_id, target.revision, surface,
@@ -4712,6 +4971,30 @@ def _plan_runpod_anonymous(
     }
     if license_contract is not None:
         target_doc["weights_license"] = license_contract["weights_license"]
+    if gguf_candidate:
+        ggs = _gguf_surface_module()
+        loaded = plan_data["_gguf_loaded"]
+        verification = (plan_data.get("target") or {}).get("gguf_verification") or {}
+        meta = loaded.quant_metadata
+        # codec by CENSUS, not by the build name: UD-Q3_K_XL carries IQ3_XXS /
+        # IQ4_XS experts and is an i-quant artifact whatever its name says.
+        target_doc["codec"] = verification.get("codec_from_census", surface.codec_family)
+        target_doc["quantizer_tool"] = ("llama.cpp (quantized_by: %s)" % meta["general.quantized_by"]
+                                        if meta.get("general.quantized_by") else "llama.cpp")
+        target_doc["quantizer_version"] = (
+            "gguf quantization_version %s" % meta["general.quantization_version"]
+            if meta.get("general.quantization_version") is not None else None)
+        target_doc["bits_per_weight_effective"] = ggs.measured_bits_per_weight(loaded)
+        target_doc["config_source"] = identity["config_source"]
+        target_doc["index_source"] = identity["index_source"]
+        target_doc["gguf_verification"] = verification
+        if args.candidate_codec != target_doc["codec"]:
+            raise Refusal(
+                "--candidate-codec %s disagrees with the build's own type census (%s)"
+                % (args.candidate_codec, target_doc["codec"]),
+                ["ggml types present: %s" % ", ".join(sorted(verification.get("type_census") or {})),
+                 "an IQ-bearing build is gguf-i-quant; a K-quant/Q8_0-only build is gguf-k-quant",
+                 "Nothing was created. $0.00 spent."])
     for evidence_key in (
             "seal_verification", "nonrouted_completeness",
             "public_profile_evidence"):
@@ -4971,8 +5254,12 @@ def _plan_runpod_anonymous(
             if validated_root_binding != relabelled:
                 raise PanelError(
                     "root panel validator changed the resolved binding")
-            _refuse_candidate_tokenizer_mismatch(
-                con, target, relabelled, reference_repo, reference_revision, plan_data)
+            if plan_data.get("_gguf_loaded") is not None:
+                _refuse_gguf_tokenizer_mismatch(
+                    con, target, relabelled, reference_repo, reference_revision, plan_data)
+            else:
+                _refuse_candidate_tokenizer_mismatch(
+                    con, target, relabelled, reference_repo, reference_revision, plan_data)
             con.ok("candidate panel",
                    "exact for reference root %s@%s"
                    % (reference_repo, str(reference_revision)[:12]))
