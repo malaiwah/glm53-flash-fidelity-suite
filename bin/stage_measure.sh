@@ -317,6 +317,46 @@ PYTOKEN
   export HF_HUB_DISABLE_IMPLICIT_TOKEN=0
 }
 
+# stage_panel_reference_files <tokenizer_root> <compared_repo> <compared_rev>
+#   The panel's tokenizer pin names one release (zai-org/GLM-5.3-BF16@<rev>)
+#   as the identity source. When the capture's tokenizer root is built from a
+#   DIFFERENT release with byte-identical tokenizer.json + tokenizer_config.json
+#   (GLM-5.2 as a root; any GLM-5.2 candidate, whose publisher-metadata files
+#   come from the GLM-5.2 reference root), the per-model provenance files
+#   (LICENSE, chat_template.jinja) and loader-key files (config.json) differ
+#   and need the panel release's copies under <tokenizer_root>/.reference/ for
+#   fidelity.panel's equivalence rules. Fetches only the pinned files that are
+#   NOT already byte-identical in the tokenizer root (tokenizer.json alone is
+#   20 MB). A no-op when the compared release IS the panel's pin.
+stage_panel_reference_files() {
+  local tok_root="$1" cmp_repo="$2" cmp_rev="$3" tok_repo tok_rev tok_files name
+  tok_repo="$(python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print((j['panel']['resolved_binding'].get('tokenizer') or {}).get('repository',''))" "$CONF")"
+  tok_rev="$(python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print((j['panel']['resolved_binding'].get('tokenizer') or {}).get('revision',''))" "$CONF")"
+  [ -n "$tok_repo" ] && [ -n "$tok_rev" ] || return 0
+  [ "$tok_repo/$tok_rev" != "$cmp_repo/$cmp_rev" ] || return 0
+  mkdir -p "$tok_root/.reference"
+  tok_files="$(python3 -c "
+import json,sys,hashlib,pathlib
+j=json.load(open(sys.argv[1]))
+files=(j['panel']['resolved_binding'].get('tokenizer') or {}).get('files',[])
+base=pathlib.Path(sys.argv[2])
+for f in files:
+    name=f['name']; expected=f['sha256']
+    p=base/name
+    if p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==expected:
+        continue
+    print(name)
+" "$CONF" "$tok_root")"
+  for name in $tok_files; do
+    HF_HUB_ENABLE_HF_TRANSFER=1 HF_HOME="$FS/hf" \
+      "$VENV/bin/hf" download "$tok_repo" --revision "$tok_rev" \
+      --include "$name" --local-dir "$FS/reference-tokenizer" \
+      >>"$LOGS/fetch_target.log" 2>&1
+    ln -sf "$FS/reference-tokenizer/$name" "$tok_root/.reference/$name"
+  done
+  [ -z "$tok_files" ] || log "panel reference files: fetched $tok_repo @ $tok_rev copies of $(echo $tok_files | tr ' ' ',') into .reference/ for per-model provenance equivalence"
+}
+
 require_stage_marker() {  # prerequisite stage, bound to this exact job attempt
   local required="$1"
   local path="$DONE/$required.done"
@@ -1221,39 +1261,7 @@ print(target)
 PYPANEL
 )"
   TOKENIZER_ROOT="$MODELS/target"
-  # The panel's tokenizer pin names zai-org/GLM-5.3-BF16@<rev> as the
-  # identity source. For a root role on a DIFFERENT model with byte-identical
-  # tokenizer.json + tokenizer_config.json (e.g. GLM-5.2), the per-model
-  # provenance files (LICENSE, chat_template.jinja) and loader-key files
-  # (config.json) differ and need the panel root's copies in .reference/
-  # for the equivalence check. Fetch only the pinned tokenizer files that
-  # are NOT already byte-identical in the target (skip tokenizer.json and
-  # tokenizer_config.json when they match, to avoid a 20 MB re-fetch).
-  TOK_REPO="$(python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print((j['panel']['resolved_binding'].get('tokenizer') or {}).get('repository',''))" "$CONF")"
-  TOK_REV="$(python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print((j['panel']['resolved_binding'].get('tokenizer') or {}).get('revision',''))" "$CONF")"
-  if [ -n "$TOK_REPO" ] && [ -n "$TOK_REV" ] && [ "$TOK_REPO/$TOK_REV" != "$REPO/$REV" ]; then
-    mkdir -p "$TOKENIZER_ROOT/.reference"
-    TOK_FILES="$(python3 -c "
-import json,sys,hashlib,pathlib
-j=json.load(open(sys.argv[1]))
-files=(j['panel']['resolved_binding'].get('tokenizer') or {}).get('files',[])
-base=pathlib.Path(sys.argv[2])
-for f in files:
-    name=f['name']; expected=f['sha256']
-    p=base/name
-    if p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==expected:
-        continue
-    print(name)
-" "$CONF" "$MODELS/target")"
-    for name in $TOK_FILES; do
-      HF_HUB_ENABLE_HF_TRANSFER=1 HF_HOME="$FS/hf" \
-        "$VENV/bin/hf" download "$TOK_REPO" --revision "$TOK_REV" \
-        --include "$name" --local-dir "$FS/reference-tokenizer" \
-        >>"$LOGS/fetch_target.log" 2>&1
-      ln -sf "$FS/reference-tokenizer/$name" "$TOKENIZER_ROOT/.reference/$name"
-    done
-    log "root tokenizer: fetched $TOK_REPO @ $TOK_REV reference files into .reference/ for per-model provenance equivalence"
-  fi
+  stage_panel_reference_files "$TOKENIZER_ROOT" "$REPO" "$REV"
   EXTRA=(--sanity-expect "$EXPECT"
          --panel-binding "$PANEL_BINDING"
          --panel-binding-sha256 "$PANEL_BINDING_SHA"
@@ -1430,6 +1438,25 @@ PYSCOPE
       mkdir -p "$TOKENIZER_ROOT/.reference"
       ln -s "$FS/reference-model/tokenizer_config.json" "$TOKENIZER_ROOT/.reference/tokenizer_config.json"
     fi
+    # A candidate's publisher-metadata files come from the REFERENCE root's
+    # release; when that root is not the panel's pinned release (a GLM-5.2
+    # candidate against the GLM-5.2 root), the panel release's copies are
+    # needed for the equivalence rules exactly as for a GLM-5.2 root itself.
+    # (compared against the reference root's WEIGHTS release, read from the
+    # verified reference dataset fetch_reference left at $FS/reference --
+    # capture.candidate.reference.repository is the DATASET repo.)
+    REF_WEIGHTS_PAIR="$(python3 - "$FS/reference" <<'PYRW'
+import json, sys
+try:
+    m = json.load(open(sys.argv[1] + "/fidelity-dataset.json"))
+except OSError:
+    raise SystemExit(0)
+w = m.get("weights") or {}
+print("%s %s" % (w.get("repository") or "", w.get("model_revision") or w.get("revision") or ""))
+PYRW
+)"
+    read -r REF_WEIGHTS_REPO REF_WEIGHTS_REV <<<"$REF_WEIGHTS_PAIR"
+    stage_panel_reference_files "$TOKENIZER_ROOT" "${REF_WEIGHTS_REPO:-}" "${REF_WEIGHTS_REV:-}"
     require_stage_marker fetch_reference
     log "candidate capture: role quant, scope $CANDIDATE_SCOPE_REL ($CANDIDATE_SCOPE_SHA), codec $CANDIDATE_CODEC, $CANDIDATE_BITS bits"
   fi

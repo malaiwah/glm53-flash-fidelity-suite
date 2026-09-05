@@ -4764,12 +4764,76 @@ def _refuse_candidate_tokenizer_mismatch(con: Console, target, binding: Dict[str
                "Publisher-metadata files (%s) come from the reference root and are "
                "not checked here." % ", ".join(sorted(CANDIDATE_TOKENIZER_FILES_FROM_REFERENCE)),
                "Nothing was created. $0.00 spent."])
+    # The publisher-metadata files the pod links from the REFERENCE root's
+    # release (config.json, generation_config.json, LICENSE, chat_template)
+    # must ALSO pass the panel's file gate: byte-identical to the panel pin,
+    # or -- since 56980d7 -- admitted by fidelity.panel's own equivalence
+    # rules against the pin's copy the pod stages under .reference/. When the
+    # reference root IS the panel's pinned release the files are identical by
+    # construction; when it is another release with the same tokenizer (the
+    # GLM-5.2 root) they differ, and three paid pods (2026-09-05: two roots,
+    # one candidate) refused on LICENSE after the whole fetch because this
+    # gate said "not checked here". The same rule now runs at $0.
+    pin = binding.get("tokenizer") or {}
+    pin_repo, pin_rev = pin.get("repository"), pin.get("revision")
+    provenance_admitted: List[Dict[str, Any]] = []
+    if pin_repo and pin_rev and (pin_repo, pin_rev) != (reference_repo, reference_revision):
+        for entry in files:
+            name = str(entry.get("name"))
+            if name not in CANDIDATE_TOKENIZER_FILES_FROM_REFERENCE:
+                continue
+            expected = str(entry.get("sha256") or "")
+            try:
+                ref_raw = fetch_file(reference_repo, name, revision=reference_revision)
+            except HFError as exc:
+                raise Refusal(
+                    "reference root's %s could not be read from %s@%s: %s"
+                    % (name, reference_repo, str(reference_revision)[:12], redact(str(exc))),
+                    ["Nothing was created. $0.00 spent."])
+            if hashlib.sha256(ref_raw).hexdigest() == expected:
+                continue
+            try:
+                pin_raw = fetch_file(pin_repo, name, revision=pin_rev)
+            except HFError as exc:
+                raise Refusal(
+                    "panel-pinned %s could not be read from %s@%s for the provenance "
+                    "equivalence test: %s" % (name, pin_repo, str(pin_rev)[:12], redact(str(exc))),
+                    ["Nothing was created. $0.00 spent."])
+            if hashlib.sha256(pin_raw).hexdigest() != expected:
+                raise Refusal(
+                    "panel-pinned %s at %s@%s does not carry the binding's digest"
+                    % (name, pin_repo, str(pin_rev)[:12]),
+                    ["Nothing was created. $0.00 spent."])
+            try:
+                if name in panel_contract.PER_MODEL_PROVENANCE_FILES:
+                    record = panel_contract._per_model_provenance_equivalent(name, pin_raw, ref_raw)
+                elif name == panel_contract.CONFIG_EQUIVALENCE_FILE:
+                    record = panel_contract.config_equivalent(pin_raw, ref_raw)
+                else:
+                    raise panel_contract.PanelError(
+                        "tokenizer artifact %s fails its SHA-256 (no equivalence rule admits it)" % name)
+            except panel_contract.PanelError as exc:
+                raise Refusal(
+                    "reference root's %s differs from the panel binding and is not admitted: %s"
+                    % (name, exc),
+                    ["Nothing was created. $0.00 spent.",
+                     "The pod's panel gate (fidelity.panel) would refuse this after the whole fetch."])
+            provenance_admitted.append(record)
+        if provenance_admitted:
+            plan_data["warnings"].append(
+                "reference root %s@%s is not the panel's pinned release %s@%s: %s differ and are "
+                "admitted by fidelity.panel's per-model provenance / loader-key rules (the pod "
+                "stages the pin's copies under .reference/ and records both digests)"
+                % (reference_repo, str(reference_revision)[:12], pin_repo, str(pin_rev)[:12],
+                   ", ".join(r["name"] for r in provenance_admitted)))
     gate_verified(plan_data, "candidate-tokenizer-files",
                   candidate=target.repo_id, candidate_revision=target.revision,
                   reference=reference_repo, reference_revision=reference_revision,
                   files_checked=checked,
                   loader_key_equivalences=[
-                      {k: v for k, v in e.items() if k != "reason"} for e in equivalences])
+                      {k: v for k, v in e.items() if k != "reason"} for e in equivalences],
+                  reference_provenance_admitted=[
+                      {k: v for k, v in r.items() if k != "reason"} for r in provenance_admitted])
     if equivalences:
         plan_data["warnings"].append(
             "candidate %s differs from the reference root's by loader-only keys "
