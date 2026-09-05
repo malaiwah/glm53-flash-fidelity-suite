@@ -36,14 +36,21 @@ when provider inventory proves exact absence; `EXITED` is not absence.
 Retrieval exhaustion still deletes the pod.
 
 **Autonomous reaper.** `measure-cloud reaper --provider runpod --install` puts
-a user-systemd timer on this machine that reads the leases and destroys any
-pod past its deadline, even if the controller process is dead. Every paid run
-refuses unless that timer is installed, active and its user manager survives
-logout (`loginctl enable-linger`). The timer executes a sealed snapshot; a
-checkout that has since moved on is a `source_drift` warning in the dry-run
-plan, not a refusal — the installed reaper still guards the run. Reinstall to
-pick up the newer checkout. An install sealed under the older v2 control
-schema is refused with the same reinstall command.
+a user-systemd **template** timer on this machine — `fidelity-cloud-reaper@.timer`
+instantiated as `fidelity-cloud-reaper@runpod.timer` — that reads the leases
+and destroys any pod past its deadline, even if the controller process is dead.
+Exactly one sweeper per provider account: the reaper's authority is one complete
+listing of the account against all leases of that provider, so a second instance
+for the same provider would treat the other's leases as foreign. A second
+provider (jarvislabs, vast, lambda) gets its own instance
+(`fidelity-cloud-reaper@<provider>.timer`) with its own credentials, lease
+scope and health stamp, without hand-writing units. Every paid run refuses
+unless the timer is installed, active and its user manager survives logout
+(`loginctl enable-linger`). The timer executes a sealed snapshot; a checkout
+that has since moved on is a `source_drift` warning in the dry-run plan, not
+a refusal — the installed reaper still guards the run. Reinstall to pick up
+the newer checkout. An install sealed under an older control schema (v2 or v3)
+is refused with the same reinstall command.
 
 ## The recipe
 

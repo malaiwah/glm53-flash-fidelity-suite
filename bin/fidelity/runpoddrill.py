@@ -2287,7 +2287,7 @@ def execute_drill(plan: DrillPlan, args: Any, provider: Any, *,
         autonomous_destroy_proven = [
             row for row in history
             if row.get("event") == "DESTROY_REQUESTED"]
-        health_source = plan.reaper_state_dir / "reaper-health.json"
+        health_source = plan.reaper_state_dir / "reaper-health-runpod.json"
         health_stamp, _health_raw = _read_json_regular(
             health_source, "autonomous post-loss reaper health")
         if health_stamp != health.get("stamp"):

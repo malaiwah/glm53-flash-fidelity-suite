@@ -41,7 +41,12 @@ HEALTH_SCHEMA = "fidelity-suite/reaper-health.v2"
 # v3: control seals the runtime snapshot only; the checkout it was copied
 # from is an advisory drift probe.  A v2 manifest is refused with a reinstall
 # remedy rather than silently re-verified under the new rule.
-CONTROL_SCHEMA = "fidelity-suite/reaper-control.v3"
+# v4: template unit (`fidelity-cloud-reaper@<provider>.service`) replaces
+# the singleton; control and health stamps are per-provider files; the
+# public control gains `service_dropin_sha256` sealing the per-instance
+# ExecStart drop-in.  Exactly one sweeper per provider account — the
+# invariant the template enforces (one instance per provider).
+CONTROL_SCHEMA = "fidelity-suite/reaper-control.v4"
 CONTROL_CLOSURE_PATHS = frozenset({
     "bin/reap_cloud_leases.py",
     "bin/fidelity/__init__.py",
@@ -54,6 +59,16 @@ CONTROL_CLOSURE_PATHS = frozenset({
 })
 DEFAULT_STATE_DIR = Path.home() / ".fidelity-cloud"
 DEFAULT_LEASE_DIR = DEFAULT_STATE_DIR / "leases-v2"
+
+
+def _control_path(state: Path, provider: str) -> Path:
+    """Per-provider sealed control manifest path."""
+    return state / ("reaper-control-%s.json" % provider)
+
+
+def _health_path(state: Path, provider: str) -> Path:
+    """Per-provider sealed health stamp path."""
+    return state / ("reaper-health-%s.json" % provider)
 ATTEMPT_BYTES = 12                    # 96 bits
 # A lost create response with nothing attributable across complete listings
 # for this long after its create window closed is expired to TERMINAL by the
@@ -1202,8 +1217,7 @@ def _validate_event_evidence(event: str, evidence: Any,
         required = (
             "complete_listing", "listed_resource_count",
             "target_provider_ids", "still_present_ids")
-        optional = ("listed_statuses", "authoritative_inventory",
-                    "wrong_name_blockers_resolved_by_sibling_leases")
+        optional = ("listed_statuses", "authoritative_inventory")
         if event == "ABSENCE_PROOF_REVOKED":
             required += ("revoked_absence_sha256",)
         evidence = _exact_keys(
@@ -2231,35 +2245,10 @@ class LeaseStore:
             (document.get("terminal_proof") or {})
             .get("ambiguous_create", {})
             .get("new_network_volume_ids") or [])
-        wrong_name_blockers = list(
+        wrong_name_blockers = (
             (document.get("terminal_proof") or {})
             .get("ambiguous_create", {})
             .get("unattributable_wrong_name_pod_ids") or [])
-        # A wrong-name pod seen in this lease's post-create delta is frozen in
-        # its terminal proof at the moment of the ambiguity. Two controllers
-        # creating within seconds of each other each see the other's fresh
-        # pod as "unattributable" because the sibling had not bound its id
-        # yet (2026-09-05: Glm52Root's create saw FlagshipGgufLane's pod nine
-        # seconds after that lease bound it; every later sweep then exited 90
-        # and the reaper-health gate refused every launch on the account).
-        # The blocker is resolved by evidence, never by time: a sibling lease
-        # in this store now names that pod as ITS exact provider id, and the
-        # provider lists it under that lease's exact name (or no longer lists
-        # it at all). Anything else stays a blocker.
-        parsed_for_siblings = [_resource(item) for item in resources]
-        listed_names = {rid: name for rid, name, _ in parsed_for_siblings}
-        resolved_by_sibling: Dict[str, str] = {}
-        if wrong_name_blockers:
-            for sibling_ref, sibling in self.list(include_terminal=True):
-                if sibling_ref.path == ref.path:
-                    continue
-                exact_name = str((sibling.get("create") or {}).get("exact_name") or "")
-                bound = {str(x) for x in (sibling.get("provider_resource_ids") or [])}
-                for rid in list(wrong_name_blockers):
-                    if rid in bound and exact_name and (
-                            rid not in listed_names or listed_names[rid] == exact_name):
-                        resolved_by_sibling[rid] = sibling_ref.path.name
-                        wrong_name_blockers.remove(rid)
         if wrong_name_blockers:
             raise LeaseError(
                 "unattributable pod delta remains an unresolved blocker: "
@@ -2280,9 +2269,6 @@ class LeaseStore:
             "target_provider_ids": sorted(targets),
             "still_present_ids": present,
         }
-        if resolved_by_sibling:
-            evidence["wrong_name_blockers_resolved_by_sibling_leases"] = dict(
-                sorted(resolved_by_sibling.items()))
         if authoritative_inventory is not None:
             evidence["authoritative_inventory"] = json.loads(
                 _canonical_bytes(dict(authoritative_inventory)).decode("utf-8"))
@@ -3527,22 +3513,32 @@ def _systemd_path(value: str) -> str:
             "only letters, digits, '/', '.', '_' or '-'")
     return text
 
-def _service_text(command: Sequence[str], state: Path) -> str:
+def _template_service_text() -> str:
+    """Generic template unit; %i is the systemd instance specifier (provider).
+
+    No ExecStart — the per-instance drop-in supplies it so the template
+    stays provider-agnostic and carries no key-file path or secret.
+    """
+    return (
+        "[Unit]\nDescription=Fidelity cloud lease reaper (%%i)\n\n"
+        "[Service]\nType=oneshot\nUMask=0077\n"
+        "Environment=PYTHONPATH=\nEnvironment=PYTHONNOUSERSITE=1\n"
+        "Environment=PYTHONSAFEPATH=1\nUnsetEnvironment=PYTHONHOME\n")
+
+def _template_timer_text(interval: int) -> str:
+    return (
+        "[Unit]\nDescription=Run Fidelity cloud lease reaper (%%i)\n\n"
+        "[Timer]\nOnBootSec=1min\nOnUnitActiveSec=%ds\nPersistent=true\n"
+        "AccuracySec=15s\nUnit=fidelity-cloud-reaper@%%i.service\n\n"
+        "[Install]\nWantedBy=timers.target\n" % interval)
+
+def _service_dropin_text(command: Sequence[str], state: Path) -> str:
+    """Per-instance ExecStart override (0600 drop-in beside the template)."""
     exec_start = " ".join(_systemd_arg(str(item)) for item in command)
     return (
-        "[Unit]\nDescription=Fidelity cloud lease reaper\n\n"
-        "[Service]\nType=oneshot\nExecStart=%s\n"
-        "WorkingDirectory=%s\nUMask=0077\n"
-        "Environment=PYTHONPATH=\nEnvironment=PYTHONNOUSERSITE=1\n"
-        "Environment=PYTHONSAFEPATH=1\nUnsetEnvironment=PYTHONHOME\n"
+        "[Service]\nExecStart=\nExecStart=%s\n"
+        "WorkingDirectory=%s\n"
         % (exec_start, _systemd_path(str(state))))
-
-def _timer_text(interval: int) -> str:
-    return (
-        "[Unit]\nDescription=Run Fidelity cloud lease reaper\n\n"
-        "[Timer]\nOnBootSec=1min\nOnUnitActiveSec=%ds\nPersistent=true\n"
-        "AccuracySec=15s\nUnit=fidelity-cloud-reaper.service\n\n"
-        "[Install]\nWantedBy=timers.target\n" % interval)
 
 
 def _logical_control_name(path: Path) -> str:
@@ -3754,7 +3750,8 @@ def _control_documents(
         command: Sequence[str], source_command: Sequence[str],
         state_dir: Path, lease_dir: Path,
         provider: str, provider_account_id: str, service: Path,
-        timer: Path, interval: int, source_paths: Iterable[Path],
+        timer: Path, dropin: Path, interval: int,
+        source_paths: Iterable[Path],
         runtime_paths: Iterable[Path],
         interpreter: Mapping[str, str]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     sources = tuple(source_paths)
@@ -3775,8 +3772,9 @@ def _control_documents(
     if (not isinstance(provider, str) or not provider
             or provider != provider.strip()):
         raise LeaseError("reaper control requires exact provider")
-    service_raw = _service_text(argv, state).encode("utf-8")
-    timer_raw = _timer_text(interval).encode("utf-8")
+    template_service_raw = _template_service_text().encode("utf-8")
+    template_timer_raw = _template_timer_text(interval).encode("utf-8")
+    dropin_raw = _service_dropin_text(argv, state).encode("utf-8")
     verified_interpreter = _control_file_rows([Path(interpreter["path"])])[0]
     if verified_interpreter["sha256"] != interpreter["sha256"]:
         raise LeaseError("trusted system Python changed during installation")
@@ -3792,10 +3790,11 @@ def _control_documents(
     public = {
         "command_sha256": _sha256(argv),
         "source_command_sha256": _sha256(original_argv),
-        "service_unit": service.name,
-        "service_unit_sha256": hashlib.sha256(service_raw).hexdigest(),
-        "timer_unit": timer.name,
-        "timer_unit_sha256": hashlib.sha256(timer_raw).hexdigest(),
+        "service_unit": "fidelity-cloud-reaper@%s.service" % provider,
+        "service_unit_sha256": hashlib.sha256(template_service_raw).hexdigest(),
+        "timer_unit": "fidelity-cloud-reaper@%s.timer" % provider,
+        "timer_unit_sha256": hashlib.sha256(template_timer_raw).hexdigest(),
+        "service_dropin_sha256": hashlib.sha256(dropin_raw).hexdigest(),
         "runtime_files": runtime_rows,
         "interpreter": {
             "executable_path_sha256": hashlib.sha256(
@@ -3823,6 +3822,7 @@ def _control_documents(
         "provider_account_id": provider_account_id,
         "service_unit_path": str(service),
         "timer_unit_path": str(timer),
+        "service_dropin_path": str(dropin),
         "timer_interval_seconds": interval,
         "source_paths": sorted(str(Path(os.path.abspath(str(path))))
                                for path in sources),
@@ -3859,12 +3859,14 @@ def _read_sealed_document(path: Path, schema: str) -> Dict[str, Any]:
     unsealed = dict(document)
     unsealed.pop("record_sha256", None)
     observed_schema = document.get("schema")
-    if (observed_schema == "fidelity-suite/reaper-control.v2"
+    if (observed_schema in (
+            "fidelity-suite/reaper-control.v2",
+            "fidelity-suite/reaper-control.v3")
             and schema == CONTROL_SCHEMA):
         raise LeaseError(
-            "installed reaper control is the older v2 schema; run "
+            "installed reaper control is an older schema (%s); run "
             "`measure-cloud reaper --provider runpod --install` once to "
-            "re-snapshot it")
+            "re-snapshot it" % observed_schema)
     if (observed_schema != schema or not isinstance(seal, str)
             or not secrets.compare_digest(seal, _sha256(unsealed))):
         raise LeaseError("sealed state file is invalid: %s" % path.name)
@@ -3876,8 +3878,10 @@ def _verified_control(
         provider: Optional[str] = None,
         provider_account_id: Optional[str] = None) -> Dict[str, Any]:
     state = Path(os.path.abspath(str(state_dir)))
+    if provider is None:
+        raise LeaseError("provider is required to locate reaper control")
     manifest = _read_sealed_document(
-        state / "reaper-control.json", CONTROL_SCHEMA)
+        _control_path(state, provider), CONTROL_SCHEMA)
     if str(state) != manifest.get("state_dir"):
         raise LeaseError("reaper control state directory mismatch")
     if (lease_dir is not None
@@ -3893,11 +3897,12 @@ def _verified_control(
         raise LeaseError("reaper control provider account mismatch")
     service = Path(manifest["service_unit_path"])
     timer = Path(manifest["timer_unit_path"])
+    dropin = Path(manifest["service_dropin_path"])
     rebuilt, public = _control_documents(
         manifest["command_argv"], manifest["source_command_argv"],
         state, Path(manifest["lease_dir"]),
         manifest["provider"], manifest["provider_account_id"], service,
-        timer, manifest["timer_interval_seconds"],
+        timer, dropin, manifest["timer_interval_seconds"],
         [Path(value) for value in manifest["source_paths"]],
         [Path(value) for value in manifest["runtime_paths"]],
         manifest["interpreter"])
@@ -3905,7 +3910,8 @@ def _verified_control(
         raise LeaseError("reaper control files or command changed")
     for unit, digest_key in (
             (service, "service_unit_sha256"),
-            (timer, "timer_unit_sha256")):
+            (timer, "timer_unit_sha256"),
+            (dropin, "service_dropin_sha256")):
         fd = os.open(
             str(unit), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         try:
@@ -3934,7 +3940,7 @@ def verify_reaper_runtime_invocation(
     control = _verified_control(
         state, lease_dir=lease_dir, provider=provider)
     manifest = _read_sealed_document(
-        state / "reaper-control.json", CONTROL_SCHEMA)
+        _control_path(state, provider), CONTROL_SCHEMA)
     command = manifest.get("command_argv")
     if (not isinstance(command, list) or len(command) < 4
             or command[1:3] != ["-I", "-S"]):
@@ -4006,7 +4012,7 @@ def write_reaper_health(
         "unresolved_count": len(result.unresolved),
         "result_sha256": _sha256(result.to_dict()),
     }
-    path = state / "reaper-health.json"
+    path = _health_path(state, provider)
     _atomic_replace(path, document)
     return path
 
@@ -4069,8 +4075,13 @@ def install_systemd_user_timer(
     unit_dir = Path(os.path.abspath(str(
         Path.home() / ".config" / "systemd" / "user"
         if unit_dir is None else unit_dir)))
-    service = unit_dir / "fidelity-cloud-reaper.service"
-    timer = unit_dir / "fidelity-cloud-reaper.timer"
+    template_service = unit_dir / "fidelity-cloud-reaper@.service"
+    template_timer = unit_dir / "fidelity-cloud-reaper@.timer"
+    dropin_dir = unit_dir / (
+        "fidelity-cloud-reaper@%s.service.d" % provider)
+    _safe_directory_fd(unit_dir, create=True)
+    _safe_directory_fd(dropin_dir, create=True)
+    dropin = dropin_dir / "override.conf"
     if len(command) < 2:
         raise LeaseError("reaper source command is incomplete")
     source_command = [str(item) for item in command]
@@ -4084,15 +4095,21 @@ def install_systemd_user_timer(
     ] + source_command[2:]
     internal, unused_public = _control_documents(
         runtime_command, source_command, state, lease_dir,
-        provider, provider_account_id, service, timer, interval,
-        source_paths, runtime_paths, interpreter)
-    _atomic_replace_text(service, _service_text(runtime_command, state))
-    _atomic_replace_text(timer, _timer_text(interval))
-    _atomic_replace(state / "reaper-control.json", internal)
+        provider, provider_account_id, template_service, template_timer,
+        dropin, interval, source_paths, runtime_paths, interpreter)
+    _atomic_replace_text(
+        template_service, _template_service_text())
+    _atomic_replace_text(
+        template_timer, _template_timer_text(interval))
+    _atomic_replace_text(
+        dropin, _service_dropin_text(runtime_command, state))
+    _atomic_replace(_control_path(state, provider), internal)
+    timer_instance = "fidelity-cloud-reaper@%s.timer" % provider
+    service_instance = "fidelity-cloud-reaper@%s.service" % provider
     for argv in (
             [systemctl, "--user", "daemon-reload"],
-            [systemctl, "--user", "enable", "--now", timer.name],
-            [systemctl, "--user", "start", service.name]):
+            [systemctl, "--user", "enable", "--now", timer_instance],
+            [systemctl, "--user", "start", service_instance]):
         try:
             completed = subprocess.run(
                 argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -4102,15 +4119,16 @@ def install_systemd_user_timer(
         if completed.returncode != 0:
             raise LeaseError("%s failed: %s"
                              % (" ".join(argv), completed.stderr.strip()))
-    return {"service": str(service), "timer": str(timer),
-            "control": str(state / "reaper-control.json"),
-            "health_stamp": str(state / "reaper-health.json")}
+    return {"service": str(template_service), "timer": str(template_timer),
+            "dropin": str(dropin),
+            "control": str(_control_path(state, provider)),
+            "health_stamp": str(_health_path(state, provider))}
 
 
 def _systemd_reaper_service_result(
-        systemctl: str) -> Dict[str, Any]:
+        systemctl: str, service_name: str) -> Dict[str, Any]:
     argv = [
-        systemctl, "--user", "show", "fidelity-cloud-reaper.service",
+        systemctl, "--user", "show", service_name,
         "--property=Result", "--property=ExecMainStatus",
     ]
     try:
@@ -4147,7 +4165,8 @@ def _systemd_reaper_service_result(
     }
 
 
-def reaper_source_drift(state_dir: Path) -> Dict[str, Any]:
+def reaper_source_drift(
+        state_dir: Path, provider: str) -> Dict[str, Any]:
     """Report whether the checkout differs from the installed snapshot.
 
     Advisory only.  The timer executes the snapshot, which is what control
@@ -4159,7 +4178,7 @@ def reaper_source_drift(state_dir: Path) -> Dict[str, Any]:
     state = Path(os.path.abspath(str(state_dir)))
     try:
         manifest = _read_sealed_document(
-            state / "reaper-control.json", CONTROL_SCHEMA)
+            _control_path(state, provider), CONTROL_SCHEMA)
         installed = {
             row["path"]: row["sha256"]
             for row in manifest["public_control"]["runtime_files"]}
@@ -4181,12 +4200,14 @@ def systemd_reaper_health(
         provider_account_id: str, max_age_seconds: int = 900,
         systemctl: str = "systemctl", loginctl: str = "loginctl",
         now: Optional[float] = None) -> Dict[str, Any]:
+    timer_instance = "fidelity-cloud-reaper@%s.timer" % provider
+    service_instance = "fidelity-cloud-reaper@%s.service" % provider
     checks = {}
     for operation in ("is-enabled", "is-active"):
         try:
             completed = subprocess.run(
                 [systemctl, "--user", operation,
-                 "fidelity-cloud-reaper.timer"],
+                 timer_instance],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 timeout=30)
             wanted = "enabled" if operation == "is-enabled" else "active"
@@ -4195,14 +4216,16 @@ def systemd_reaper_health(
                 and completed.stdout.strip() == wanted)
         except (OSError, subprocess.TimeoutExpired):
             checks[operation] = False
-    service_result = _systemd_reaper_service_result(systemctl)
+    service_result = _systemd_reaper_service_result(
+        systemctl, service_instance)
     linger = _login_linger_status(loginctl)
     try:
         control = _verified_control(
             state_dir, lease_dir=lease_dir, provider=provider,
             provider_account_id=provider_account_id)
         stamp = _read_sealed_document(
-            Path(os.path.abspath(str(state_dir))) / "reaper-health.json",
+            _health_path(
+                Path(os.path.abspath(str(state_dir))), provider),
             HEALTH_SCHEMA)
         age = ((time.time() if now is None else float(now))
                - float(stamp["completed_at_epoch"]))
@@ -4230,5 +4253,5 @@ def systemd_reaper_health(
         "stamp_age_seconds": age,
         "stamp": stamp,
     }
-    result["source_drift"] = reaper_source_drift(state_dir)
+    result["source_drift"] = reaper_source_drift(state_dir, provider)
     return result

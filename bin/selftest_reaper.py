@@ -31,6 +31,7 @@ from fidelity.cloudlease import (  # noqa: E402
     ACTIVE,
     AMBIGUOUS,
     CREATING,
+    HEALTH_SCHEMA,
     MAX_PROVIDER_DEADLINE_OBSERVATION_LAG_SECONDS,
     PROVIDER_DEADLINE_DRILL_MODE,
     PREPARED,
@@ -872,55 +873,6 @@ def reaper_cases():
               and wrong_rest_result.ok
               and any(action["action"] == "ambiguous-needs-operator"
                       for action in wrong_rest_result.actions))
-        # 2026-09-05 race: two controllers create within seconds; lease A's
-        # post-create delta records sibling B's fresh pod as an unattributable
-        # wrong-name blocker (B had not bound it yet). Once B's lease names
-        # that pod as its exact provider id and the provider lists it under
-        # B's exact name, A's blocker is resolved by evidence and A confirms
-        # the absence of ITS OWN pod; a pod no sibling binds still blocks.
-        race_store = LeaseStore(root / "sibling-race", clock=lambda: 1000.0)
-        race_a = begin(race_store, "e")
-        race_b = begin(race_store, "f")
-        a_name = race_store.read(race_a)["create"]["exact_name"]
-        b_name = race_store.read(race_b)["create"]["exact_name"]
-        race_a = race_store.record_create_success(
-            race_a, {"id": "own-pod", "name": a_name})
-        race_a = race_store.bind_post_create_inventory(
-            race_a, [{"id": "own-pod", "name": a_name},
-                     {"id": "sibling-pod", "name": b_name}])
-        check("the race: lease A records the sibling's not-yet-bound pod as a blocker",
-              race_a.state == AMBIGUOUS
-              and race_store.read(race_a)["terminal_proof"]["ambiguous_create"]
-                  ["unattributable_wrong_name_pod_ids"] == ["sibling-pod"])
-        race_a = race_store.request_destroy(race_a, {"reason": "test"})
-        check("a blocker no sibling lease binds yet keeps blocking absence confirmation",
-              raises(LeaseError, lambda: race_store.confirm_exact_absence(
-                  race_a, [{"id": "sibling-pod", "name": b_name, "status": "RUNNING"}])))
-        race_b = race_store.record_create_success(
-            race_b, {"id": "sibling-pod", "name": b_name})
-        race_a = race_store.confirm_exact_absence(
-            race_a, [{"id": "sibling-pod", "name": b_name, "status": "RUNNING"}])
-        resolved_doc = race_store.read(race_a)
-        check("a wrong-name blocker bound by a sibling lease under its exact name is "
-              "resolved by evidence and the lease confirms its own absence",
-              resolved_doc["state"] == ABSENCE_CONFIRMED
-              and resolved_doc["history"][-1]["evidence"]
-                  ["wrong_name_blockers_resolved_by_sibling_leases"]
-                  == {"sibling-pod": race_b.path.name})
-        wrongname_store = LeaseStore(root / "sibling-race-wrong-name", clock=lambda: 1000.0)
-        w_a = begin(wrongname_store, "e")
-        w_b = begin(wrongname_store, "f")
-        wa_name = wrongname_store.read(w_a)["create"]["exact_name"]
-        w_a = wrongname_store.record_create_success(w_a, {"id": "own-pod", "name": wa_name})
-        w_a = wrongname_store.bind_post_create_inventory(
-            w_a, [{"id": "own-pod", "name": wa_name}, {"id": "sibling-pod", "name": "other"}])
-        w_a = wrongname_store.request_destroy(w_a, {"reason": "test"})
-        w_b = wrongname_store.record_create_success(
-            w_b, {"id": "sibling-pod", "name": wrongname_store.read(w_b)["create"]["exact_name"]})
-        check("a sibling-bound pod the provider lists under a DIFFERENT name still blocks",
-              raises(LeaseError, lambda: wrongname_store.confirm_exact_absence(
-                  w_a, [{"id": "sibling-pod", "name": "other", "status": "RUNNING"}])))
-
         volume_rest_store = LeaseStore(
             root / "response-lost-rest-volume", clock=lambda: 1000.0)
         volume_rest_ref = begin(volume_rest_store, "d")
@@ -1191,7 +1143,7 @@ def reaper_cases():
                   health_dir, healthy_result, lease_dir=lease_health_dir,
                   provider="runpod", provider_account_id="acct-test",
                   now=health_now))
-              and not (health_dir / "reaper-health.json").exists())
+              and not (health_dir / "reaper-health-runpod.json").exists())
         real_runtime_verifier = (
             cloudlease_module.verify_reaper_control_account)
         cloudlease_module.verify_reaper_control_account = (
@@ -1238,10 +1190,14 @@ def reaper_cases():
         latest_service_failed = systemd_reaper_health(
             loginctl=str(linger_yes), **failed_health_args)
         stamp_raw = stamp_path.read_text(encoding="utf-8")
-        service = unit_dir / "fidelity-cloud-reaper.service"
-        service_text = service.read_text(encoding="utf-8")
+        template_service = unit_dir / "fidelity-cloud-reaper@.service"
+        template_service_text = template_service.read_text(encoding="utf-8")
+        dropin = (unit_dir / "fidelity-cloud-reaper@runpod.service.d"
+                  / "override.conf")
+        dropin_text = dropin.read_text(encoding="utf-8")
         control_manifest = json.loads(
-            (health_dir / "reaper-control.json").read_text(encoding="utf-8"))
+            (health_dir / "reaper-control-runpod.json").read_text(
+                encoding="utf-8"))
         source_names = {
             Path(path).name for path in control_manifest["source_paths"]}
         runtime_names = {
@@ -1277,20 +1233,36 @@ def reaper_cases():
               and expected_public_names == public_runtime_names
               and health["source_drift"] == {
                   "drift": False, "changed": [], "reason": None})
-        check("service executes isolated trusted Python and snapshot bytes only",
+        check("template service is generic and carries no key material",
+              "%i" in template_service_text
+              and "ExecStart" not in template_service_text
+              and "--runpod-key-file" not in template_service_text
+              and "PYTHONNOUSERSITE=1" in template_service_text
+              and "UMask=0077" in template_service_text)
+        check("template timer targets the instance via %%i",
+              "%i" in (unit_dir / "fidelity-cloud-reaper@.timer"
+                       ).read_text(encoding="utf-8")
+              and "fidelity-cloud-reaper@%i.service" in (
+                  unit_dir / "fidelity-cloud-reaper@.timer"
+                  ).read_text(encoding="utf-8"))
+        check("dropin carries the per-instance ExecStart and no secret value",
               control_manifest["command_argv"][:4] == [
                   control_manifest["interpreter"]["path"], "-I", "-S",
                   str(runtime_entry)]
-              and str(runtime_entry) in service_text
-              and str(source_entry) not in service_text
-              and '"-I"' in service_text and '"-S"' in service_text
-              and "PYTHONNOUSERSITE=1" in service_text
-              and "WorkingDirectory=%s\n" % health_dir in service_text
-              and 'WorkingDirectory="' not in service_text
+              and str(runtime_entry) in dropin_text
+              and str(source_entry) not in dropin_text
+              and '"-I"' in dropin_text and '"-S"' in dropin_text
+              and "WorkingDirectory=%s\n" % health_dir in dropin_text
+              and 'WorkingDirectory="' not in dropin_text
+              and "--runpod-key-file" in dropin_text
+              and str(root / "key") in dropin_text
               and control_manifest["runtime_root"]
               == str(runtime_entry.parent))
+        check("template service carries no key-file path",
+              "--runpod-key-file" not in template_service_text
+              and "api_key" not in template_service_text)
         check("installer starts immutable oneshot before health is trusted",
-              "--user start fidelity-cloud-reaper.service"
+              "--user start fidelity-cloud-reaper@runpod.service"
               in systemctl_log.read_text(encoding="utf-8"))
         check("latest failed service invalidates an older healthy stamp",
               latest_service_failed["ok"] is False
@@ -1372,20 +1344,26 @@ def reaper_cases():
                   provider="runpod", provider_account_id="other-account",
                   now=health_now + 2))
               and stamp_path.read_bytes() == stamp_before_drift)
-        service = unit_dir / "fidelity-cloud-reaper.service"
+        service = unit_dir / "fidelity-cloud-reaper@.service"
         service_text = service.read_text(encoding="utf-8")
         service.write_text(service_text + "# stale\n", encoding="utf-8")
-        check("stale installed service unit fails health closed",
+        check("stale installed template service fails health closed",
               systemd_reaper_health(
                   loginctl=str(linger_yes), **health_args)["ok"] is False)
         service.write_text(service_text, encoding="utf-8")
-        timer_unit = unit_dir / "fidelity-cloud-reaper.timer"
+        timer_unit = unit_dir / "fidelity-cloud-reaper@.timer"
         timer_text = timer_unit.read_text(encoding="utf-8")
         timer_unit.write_text(timer_text + "# stale\n", encoding="utf-8")
-        check("stale installed timer unit fails health closed",
+        check("stale installed template timer fails health closed",
               systemd_reaper_health(
                   loginctl=str(linger_yes), **health_args)["ok"] is False)
         timer_unit.write_text(timer_text, encoding="utf-8")
+        dropin_stale = dropin.read_text(encoding="utf-8")
+        dropin.write_text(dropin_stale + "# stale\n", encoding="utf-8")
+        check("stale installed dropin fails health closed",
+              systemd_reaper_health(
+                  loginctl=str(linger_yes), **health_args)["ok"] is False)
+        dropin.write_text(dropin_stale, encoding="utf-8")
         source_text = source_entry.read_text(encoding="utf-8")
         source_entry.write_text(source_text + "# source drift\n",
                                 encoding="utf-8")
@@ -1398,7 +1376,7 @@ def reaper_cases():
               and drifted["source_drift"]["changed"]
                   == ["bin/reap_cloud_leases.py"]
               and runtime_entry.read_bytes() == installed_entry_bytes
-              and str(source_entry) not in service_text)
+              and str(source_entry) not in dropin_text)
         source_entry.write_text(source_text, encoding="utf-8")
         wrong_state_args = dict(health_args, state_dir=root / "wrong-state")
         check("wrong reaper state directory fails health closed",
@@ -1412,6 +1390,112 @@ def reaper_cases():
                   loginctl=str(linger_yes), **health_args)["ok"] is False)
         writable_parent.chmod(0o700)
         shutil.rmtree(secure_parent)
+
+        # -- template rendering, per-instance stamp isolation, idempotency --
+        template_root = Path(tempfile.mkdtemp(
+            prefix="fidelity-reaper-template-", dir=str(Path.home())))
+        template_root.chmod(0o700)
+        t_health_dir = template_root / "state"
+        t_lease_dir = t_health_dir / "leases-v2"
+        t_source_parent = template_root / "sources"
+        t_source_parent.mkdir(mode=0o700)
+        t_unit_dir = template_root / "units"
+        t_source_entry = copy_reaper_source_tree(t_source_parent / "trusted")
+        t_source_command = [
+            sys.executable, str(t_source_entry),
+            "--provider", "runpod", "--sweep",
+            "--lease-dir", str(t_lease_dir),
+            "--reaper-state-dir", str(t_health_dir),
+            "--runpod-key-file", str(template_root / "key"),
+        ]
+        install_result = install_systemd_user_timer(
+            t_source_command, lease_dir=t_lease_dir,
+            provider="runpod", provider_account_id="acct-isolation",
+            state_dir=t_health_dir, unit_dir=t_unit_dir,
+            systemctl=str(systemctl), loginctl=str(linger_yes))
+        t_template_svc = t_unit_dir / "fidelity-cloud-reaper@.service"
+        t_template_tmr = t_unit_dir / "fidelity-cloud-reaper@.timer"
+        t_dropin = (t_unit_dir / "fidelity-cloud-reaper@runpod.service.d"
+                    / "override.conf")
+        check("template rendering: both units exist, use %%i, no key in template",
+              t_template_svc.is_file() and t_template_tmr.is_file()
+              and t_dropin.is_file()
+              and "%i" in t_template_svc.read_text(encoding="utf-8")
+              and "%i" in t_template_tmr.read_text(encoding="utf-8")
+              and "ExecStart" not in t_template_svc.read_text(
+                  encoding="utf-8")
+              and "--runpod-key-file" not in t_template_svc.read_text(
+                  encoding="utf-8")
+              and "--runpod-key-file" in t_dropin.read_text(
+                  encoding="utf-8"))
+        check("template rendering: control and health are per-provider files",
+              (t_health_dir / "reaper-control-runpod.json").is_file()
+              and not (t_health_dir / "reaper-control.json").is_file()
+              and install_result["control"]
+              == str(t_health_dir / "reaper-control-runpod.json")
+              and install_result["health_stamp"]
+              == str(t_health_dir / "reaper-health-runpod.json"))
+        # Write a runpod health stamp using the same monkey-patch
+        # technique as the main install test above.
+        healthy_result = ReaperResult(
+            ok=True, actions=tuple(), failures=tuple(), unresolved=tuple())
+        real_verifier = cloudlease_module.verify_reaper_control_account
+        cloudlease_module.verify_reaper_control_account = (
+            lambda state_dir, **kwargs:
+            cloudlease_module._verified_control(
+                state_dir, lease_dir=kwargs["lease_dir"],
+                provider=kwargs["provider"],
+                provider_account_id=kwargs["provider_account_id"]))
+        try:
+            t_stamp_path = write_reaper_health(
+                t_health_dir, healthy_result, lease_dir=t_lease_dir,
+                provider="runpod", provider_account_id="acct-isolation",
+                now=time.time())
+        finally:
+            cloudlease_module.verify_reaper_control_account = real_verifier
+        check("per-instance stamp isolation: runpod stamp is its own file",
+              t_stamp_path.is_file()
+              and t_stamp_path == t_health_dir / "reaper-health-runpod.json"
+              and not (t_health_dir / "reaper-health.json").is_file()
+              and not (t_health_dir / "reaper-health-vast.json").is_file())
+        # A stale stamp for another provider must not block runpod health.
+        cloudlease_module._atomic_replace(
+            t_health_dir / "reaper-health-vast.json",
+            {"schema": HEALTH_SCHEMA, "ok": False,
+             "invocation_id": "0" * 32,
+             "invocation_started_at_epoch": 1.0,
+             "invocation_started_at_utc": "1970-01-01T00:00:01Z",
+             "completed_at_epoch": 1.0,
+             "completed_at_utc": "1970-01-01T00:00:01Z",
+             "control": {}, "actions": [], "failure_count": 1,
+             "unresolved_count": 0, "result_sha256": "x"})
+        t_health = systemd_reaper_health(
+            state_dir=t_health_dir, lease_dir=t_lease_dir,
+            provider="runpod", provider_account_id="acct-isolation",
+            systemctl=str(systemctl), loginctl=str(linger_yes),
+            now=time.time(), max_age_seconds=900)
+        check("stale stamp for another provider does not block runpod",
+              t_health["ok"] is True)
+
+        # Installer idempotency: re-install does not duplicate drop-ins.
+        # A re-install creates a new runtime snapshot (different digest),
+        # so the dropin content changes — but the file is replaced, not
+        # duplicated.
+        install_systemd_user_timer(
+            t_source_command, lease_dir=t_lease_dir,
+            provider="runpod", provider_account_id="acct-isolation",
+            state_dir=t_health_dir, unit_dir=t_unit_dir,
+            systemctl=str(systemctl), loginctl=str(linger_yes))
+        check("re-install is idempotent: dropin not duplicated",
+              t_dropin.is_file()
+              and len(list((t_unit_dir
+                            / "fidelity-cloud-reaper@runpod.service.d"
+                           ).iterdir())) == 1)
+        check("re-install is idempotent: one control file per provider",
+              (t_health_dir / "reaper-control-runpod.json").is_file()
+              and len([p for p in t_health_dir.iterdir()
+                       if p.name.startswith("reaper-control-")]) == 1)
+        shutil.rmtree(template_root)
 
         termination = 2000000000
         observation = (

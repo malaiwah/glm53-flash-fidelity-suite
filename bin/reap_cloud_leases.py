@@ -38,12 +38,12 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _invalidate_prior_health(state: Path) -> None:
+def _invalidate_prior_health(state: Path, provider: str) -> None:
     """Durably remove an older success before this invocation can fail."""
     directory_fd = _safe_directory_fd(state, create=False)
     try:
         try:
-            os.unlink("reaper-health.json", dir_fd=directory_fd)
+            os.unlink("reaper-health-%s.json" % provider, dir_fd=directory_fd)
         except FileNotFoundError:
             pass
         os.fsync(directory_fd)
@@ -58,11 +58,11 @@ def main(argv=None) -> int:
     # A mutable checkout invocation cannot invalidate installed health or touch
     # provider state. Only the exact isolated snapshot command may proceed.
     verify_reaper_runtime_invocation(
-        state, lease_dir=store.root, provider="runpod")
+        state, lease_dir=store.root, provider=args.provider)
     from fidelity.runpodapi import RunPod
     # Fail closed across provider outages, credential drift, process death, and
     # every exception below: an older success can never survive a newer sweep.
-    _invalidate_prior_health(state)
+    _invalidate_prior_health(state, args.provider)
     provider = RunPod(dry=False, key_file=args.runpod_key_file)
     status = provider.status()
     account = str(status.get("id") or "").strip()
@@ -70,7 +70,7 @@ def main(argv=None) -> int:
         raise RuntimeError("RunPod status lacks exact myself.id")
     # This check is unconditional, including an empty/terminal-only sweep.
     verify_reaper_control_account(
-        state, lease_dir=store.root, provider="runpod",
+        state, lease_dir=store.root, provider=args.provider,
         provider_account_id=account)
     result = reap_once(store, {"runpod": provider}, dry_run=False)
     if not result.ok:
@@ -80,7 +80,7 @@ def main(argv=None) -> int:
     # Health is the final durable side effect and is never written for an
     # account mismatch or any failed cleanup/projection step.
     write_reaper_health(
-        state, result, lease_dir=store.root, provider="runpod",
+        state, result, lease_dir=store.root, provider=args.provider,
         provider_account_id=account)
     return 0
 

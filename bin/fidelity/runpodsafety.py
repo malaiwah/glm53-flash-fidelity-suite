@@ -169,15 +169,6 @@ _ALLOWLISTS = {
         "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
         "count": 791,
     },
-    ("zai-org/GLM-5.2",
-     "cf457fa734ab149ffef225f80893eb38c6ff5cdc"): {
-        # index census of model.layers.78 (Glm52Root, see the .provenance.json
-        # beside it): the same 791 bf16 names as the 5.3 BF16 list.
-        "path": "engines/tools/layer-outer-evidence/glm52-layer78-unexpected-keys.json",
-        "artifact_sha256": "969cee605deba10dd82afbaa9b1b7a35d2339fdb122efece14530c9030aa1436",
-        "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
-        "count": 791,
-    },
     ("zai-org/GLM-5.3-BF16",
      "304b8051cfb2b260b61ce0cbe330e02a98e73639"): {
         "path": "engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json",
@@ -960,13 +951,14 @@ def validate_safety_proof(path, bundle_manifest_sha256,
     actions = health.get("actions")
     expected_account_hash = hashlib.sha256(
         provider_account_id.encode("utf-8")).hexdigest()
-    control_keys = {
+    control_keys_v3 = {
         "command_sha256", "source_command_sha256",
         "service_unit", "service_unit_sha256",
         "timer_unit", "timer_unit_sha256",
         "source_files", "runtime_files", "interpreter",
         "state_dir_sha256", "lease_dir_sha256", "provider",
         "provider_account_id_sha256", "control_sha256"}
+    control_keys_v4 = control_keys_v3 | {"service_dropin_sha256"}
     interpreter = control.get("interpreter") if isinstance(control, dict) else None
     interpreter_version = (
         re.fullmatch(r"([0-9]+)\.([0-9]+)", str(
@@ -979,7 +971,7 @@ def validate_safety_proof(path, bundle_manifest_sha256,
             or health.get("failure_count") != 0
             or _HEX32.fullmatch(str(health.get("invocation_id", ""))) is None
             or not isinstance(control, dict)
-            or set(control) != control_keys
+            or set(control) not in (control_keys_v3, control_keys_v4)
             or control.get("provider") != "runpod"
             or control.get("provider_account_id_sha256")
                 != expected_account_hash
@@ -988,10 +980,15 @@ def validate_safety_proof(path, bundle_manifest_sha256,
                        "command_sha256", "source_command_sha256",
                        "service_unit_sha256", "timer_unit_sha256",
                        "state_dir_sha256", "lease_dir_sha256"))
-            or control.get("service_unit")
-                != "fidelity-cloud-reaper.service"
-            or control.get("timer_unit")
-                != "fidelity-cloud-reaper.timer"
+            or ("service_dropin_sha256" in control
+                and _HEX64.fullmatch(str(
+                    control.get("service_dropin_sha256", ""))) is None)
+            or control.get("service_unit") not in (
+                "fidelity-cloud-reaper.service",
+                "fidelity-cloud-reaper@runpod.service")
+            or control.get("timer_unit") not in (
+                "fidelity-cloud-reaper.timer",
+                "fidelity-cloud-reaper@runpod.timer")
             or not isinstance(interpreter, dict)
             or set(interpreter) != {
                 "executable_path_sha256", "executable_file_sha256",

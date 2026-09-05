@@ -143,8 +143,8 @@ def main():
 
     # -- account-bound systemd reaper and paid drill state -----------------
     state = Path.home() / ".fidelity-cloud"
-    control = state / "reaper-control.json"
-    health = state / "reaper-health.json"
+    control = state / "reaper-control-runpod.json"
+    health = state / "reaper-health-runpod.json"
     if control.is_file() and health.is_file():
         ok("runpod reaper state", "control and health artifacts present; "
                                   "measure-cloud revalidates timer, account, "

@@ -72,8 +72,8 @@ from fidelity.engines import (EngineProfileRefused, EngineUnpinned,
                               require_supported_profile, resolve_profile_timing,
                               resolve_root_timing)                    # noqa: E402
 from fidelity.hfmeta import (                          # noqa: E402
-    HF_ENDPOINT, HFError, RepoMeta, fetch_file, fetch_json, hf_token,
-    load_panel_descriptor, repo_meta, safetensors_header, sniff_surface,
+    HF_ENDPOINT, HFError, RepoMeta, exl3_layout_contract, fetch_file, fetch_json,
+    hf_token, load_panel_descriptor, repo_meta, safetensors_header, sniff_surface,
     tr3_tail_declared_bits,
 )
 from fidelity.jlapi import JL, JLError, JLNotInstalled, select_offer  # noqa: E402
@@ -1656,12 +1656,44 @@ def _gguf_model_file_identity(target: RepoMeta, surface, loaded, official_config
     }
 
 
-def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
-    """The decode the streaming loader will apply, from the config alone.
+def _exl3_layout_block(index_keys, qc, tail) -> Dict[str, Any]:
+    """The rotation-layout keys of an exl3 candidate's contract, from the index.
+
+    `hfmeta.exl3_layout_contract` is byte-identical to the pod's copy in
+    layer_outer: the layout is READ FROM THE INDEX NAMES (stock per-module
+    vectors, willfalco/jpsequeira's `experts.shared_h`, brandonmusic's
+    `experts.r7_shared`), cross-checked against the declaration, and refused
+    -- at $0, before a rental -- when a module's vectors cannot be resolved
+    by name, exactly as the pod would refuse it after the fetch.
+    """
+    if index_keys is None:
+        raise Refusal(
+            "an exl3 candidate's rotation layout is read from model.safetensors.index.json, "
+            "and the index was not available", [])
+    try:
+        layout, detail = exl3_layout_contract(list(index_keys), qc, tail)
+    except ValueError as exc:
+        raise Refusal(
+            "exl3 candidate: %s" % exc,
+            ["The pod's trellis decoder (layer_outer.trellis_checkpoint_plan) applies "
+             "the same rule and would refuse after the fetch; nothing was created."])
+    layout["_layout_detail"] = {
+        "modules_per_layout": detail["census"]["per_layout"],
+        "nonrouted_bits": detail["nonrouted_bits"],
+        "r7_declaration": detail["r7_declaration"],
+    }
+    return layout
+
+
+def _candidate_decode_plan(qc, cfg=None, index_keys=None) -> Dict[str, Any]:
+    """The decode the streaming loader will apply, from the config and the index names.
 
     Mirrors `engines/tools/layer_outer.fp8_checkpoint_plan` /
     `trellis_checkpoint_plan` field for field (the pod compares its runtime
     receipt against this block), without importing torch on the controller.
+    `index_keys` (the index's weight_map names) is REQUIRED for an exl3
+    candidate: its rotation layout, shared-vector and non-routed-module
+    digests are contract, read from the names on both sides.
     """
     tail = (cfg or {}).get("hybrid_tr3_tail") if isinstance(cfg, dict) else None
     tail = tail if isinstance(tail, dict) and tail.get("format") == "exl3-trellis" else None
@@ -1685,32 +1717,36 @@ def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
                 % (codebook,), [])
         tp = tail.get("tp")
         composed = isinstance(tp, int) and not isinstance(tp, bool) and tp >= 2
+        layout = _exl3_layout_block(index_keys, qc, tail)
         # The weights_decode block has an EXACT key set (jobcontract);
         # what the artifact declared by is console/plan evidence, not
         # contract, so it rides beside the block under a private key the
         # caller pops before binding.
+        contract = {
+            "quant_method": "exl3",
+            "codebook": str(codebook) if codebook is not None else None,
+            # first numeric of bits_avg / bits / expert_bpw_mean (hfmeta rule)
+            "bits": tr3_tail_declared_bits(tail),
+            "head_bits": None,
+            "modules_to_not_convert": [],
+        }
+        contract.update({k: v for k, v in layout.items() if not k.startswith("_")})
         return {
             "method": (CANDIDATE_DECODE_METHOD_TRELLIS_TP if composed
                        else CANDIDATE_DECODE_METHOD_TRELLIS),
-            "quantization_config": {
-                "quant_method": "exl3",
-                "codebook": str(codebook) if codebook is not None else None,
-                # first numeric of bits_avg / bits / expert_bpw_mean (hfmeta rule)
-                "bits": tr3_tail_declared_bits(tail),
-                "head_bits": None,
-                "modules_to_not_convert": [],
-            },
+            "quantization_config": contract,
             "_declaration": {"declared_by": "hybrid_tr3_tail",
                              "quant_method_declared": method,
-                             "tp": tp if composed else None},
+                             "tp": tp if composed else None,
+                             "layout": layout["_layout_detail"]},
         }
     if method == "exl3":
         # The trellis surface `engines/tools/layer_outer.materialize_trellis_subset`
         # decodes: stock-exllamav3 payload groups, per-module codebook, bits
         # from the payload's own trellis shape. The rank-split TR3 layout is
         # refused on the pod by name (its composition is unpublished); the
-        # controller cannot see payload keys from the config alone, so that
-        # refusal stays where the index is readable.
+        # controller cannot see payload SHAPES from the index alone, so that
+        # refusal stays where the bytes are readable.
         codebook = qc.get("codebook")
         if codebook is not None and str(codebook) not in ("mul1", "mcg"):
             raise Refusal(
@@ -1718,16 +1754,22 @@ def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
                 "speaks (mul1/mcg)" % (codebook,),
                 ["exl3hf_surface transcribes exllamav3's mul1 and mcg codebooks; "
                  "another codebook needs its LUT authored and proven first."])
+        layout = _exl3_layout_block(index_keys, qc, None)
+        contract = {
+            "quant_method": method,
+            "codebook": str(codebook) if codebook is not None else None,
+            "bits": qc.get("bits"),
+            "head_bits": qc.get("head_bits"),
+            "modules_to_not_convert": sorted(
+                str(m) for m in (qc.get("modules_to_not_convert") or [])),
+        }
+        contract.update({k: v for k, v in layout.items() if not k.startswith("_")})
         return {
             "method": CANDIDATE_DECODE_METHOD_TRELLIS,
-            "quantization_config": {
-                "quant_method": method,
-                "codebook": str(codebook) if codebook is not None else None,
-                "bits": qc.get("bits"),
-                "head_bits": qc.get("head_bits"),
-                "modules_to_not_convert": sorted(
-                    str(m) for m in (qc.get("modules_to_not_convert") or [])),
-            },
+            "quantization_config": contract,
+            "_declaration": {"declared_by": "quantization_config",
+                             "quant_method_declared": method, "tp": None,
+                             "layout": layout["_layout_detail"]},
         }
     if method == "modelopt":
         # The modelopt NVFP4 surface `engines/tools/layer_outer.materialize_nvfp4_subset`
@@ -2045,10 +2087,27 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
         # MUST declare the one form the streaming loader decodes, and what it
         # declares is bound into the job so the pod's runtime receipt has to
         # record exactly that decode.
-        decode = _candidate_decode_plan(qc, cfg)
+        index_keys = None
+        tail = cfg.get("hybrid_tr3_tail")
+        if ((isinstance(qc, dict) and qc.get("quant_method") == "exl3")
+                or (isinstance(tail, dict) and tail.get("format") == "exl3-trellis")):
+            # An exl3 candidate's rotation layout is contract and is read from
+            # the index NAMES (stock, experts.shared_h, experts.r7_shared) --
+            # the same rule the pod applies after the fetch, applied here at $0.
+            try:
+                index_keys = list(fetch_json(
+                    target.repo_id, "model.safetensors.index.json",
+                    revision=target.revision)["weight_map"])
+            except (HFError, KeyError, TypeError, ValueError) as exc:
+                raise Refusal(
+                    "exl3 candidate: model.safetensors.index.json could not be read (%s); "
+                    "the rotation layout is decided from its names" % redact(str(exc)),
+                    ["Nothing was created. $0.00 spent."])
+        decode = _candidate_decode_plan(qc, cfg, index_keys=index_keys)
         declaration = decode.pop("_declaration", None)
         qcfg = decode["quantization_config"]
         if qcfg["quant_method"] == "exl3":
+            layout = (declaration or {}).get("layout") or {}
             con.ok("candidate is exl3 trellis",
                    "quant_method %s codebook %s declared bits %s; decoded to bf16 per "
                    "module (%s). Per-module codebook and the payload's own bit width are "
@@ -2059,7 +2118,29 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
                       ("; declared by hybrid_tr3_tail (quantization_config says %r), "
                        "tp=%s rank shards composed per module"
                        % (declaration.get("quant_method_declared"), declaration.get("tp")))
-                      if declaration else ""))
+                      if declaration and declaration.get("declared_by") == "hybrid_tr3_tail"
+                      else ""))
+            con.ok("exl3 rotation layout %s" % qcfg["rotation_layout"],
+                   "read from the index names: %s; %d layer-shared rotation vector(s) "
+                   "(sha256 %s); %d non-routed exl3 module(s) decoded by the same function "
+                   "(declared bits %s); activation overlay %s"
+                   % (", ".join("%s x%d" % kv for kv in sorted(
+                          (layout.get("modules_per_layout") or {}).items())) or "none",
+                      qcfg["shared_vectors"]["count"],
+                      (qcfg["shared_vectors"]["names_sha256"] or "none")[:12],
+                      qcfg["nonrouted_exl3"]["count"],
+                      qcfg["nonrouted_exl3"]["declared_bits"] or "{}",
+                      qcfg["activation_scheme"] or "none declared"))
+            if qcfg["nonrouted_exl3"].get("declared_bits", {}).get("undeclared"):
+                con.warn("%d non-routed exl3 module(s) carry no declared bits; the pod "
+                         "records each payload's own K and the row's label rests on "
+                         "the K histogram"
+                         % qcfg["nonrouted_exl3"]["declared_bits"]["undeclared"])
+            if "lm_head" in (layout.get("nonrouted_bits") or {}):
+                con.ok("exl3 lm_head",
+                       "the head is an exl3 payload: the capture ships the candidate's OWN "
+                       "dequantized head (quantized, artifact_dequantized) and the "
+                       "comparison runs under HEAD-1d, own heads")
         elif qcfg["quant_method"] == "modelopt":
             con.ok("candidate is modelopt NVFP4",
                    "quant_algo %s, %d-bit group-%d weights declared by %s, producer %s; "
@@ -4415,12 +4496,11 @@ def _reaper_health_remedy(health: Dict[str, Any], args) -> List[str]:
     if not service.get("ok"):
         advice.append(
             "the last reaper sweep failed (%s); inspect: journalctl --user "
-            "-u fidelity-cloud-reaper.service -n 50"
+            "-u fidelity-cloud-reaper@runpod.service -n 50"
             % (service.get("error") or service.get("result") or "unknown"))
     if not health.get("control_ok"):
         advice.append(
-            "the installed snapshot no longer matches its sealed control "
-            "(or it predates control v3); reinstall: %s" % install)
+            "(or it predates control v4); reinstall: %s" % install)
     age = health.get("stamp_age_seconds")
     if health.get("stamp") is None:
         advice.append(
@@ -10304,8 +10384,9 @@ def build_parser() -> argparse.ArgumentParser:
              "(the reaper destroys it at its deadline regardless). Without "
              "this the run refuses and names the lease.")
     o.add_argument("--install", action="store_true",
-                   help="with `reaper`: install the user-systemd timer from "
-                        "this checkout")
+                   help="with `reaper`: install the user-systemd template "
+                        "timer fidelity-cloud-reaper@<provider>.timer from "
+                        "this checkout (one instance per provider account)")
     o.add_argument("--sweep", action="store_true",
                    help="with `reaper`: run one sweep now")
     o.add_argument("--list", action="store_true",
