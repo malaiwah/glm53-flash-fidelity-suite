@@ -870,6 +870,12 @@ LAYER_OUTER_WORKSPACE_BYTES = 3.0 * GB
 GLM53_LAYER_OUTER_MEASURED = {
     "geometry": "glm_moe_dsa 78L / hidden 6144 / 256 experts (GLM-5.3)",
     "device": "NVIDIA H200 SXM 141 GB",
+    # The loader these peaks belong to.  A changed loader (direct expert fill,
+    # chunked materialisation) needs a NEW measured peak here; the floor below
+    # moves on evidence, never on a code change.
+    "measured_on": "2026-09-04/05",
+    "loader": "transformers converter stack/concatenate materialisation + "
+              "trellis decoded dict held on device (pre direct-fill)",
     "peak_resident_weight_bytes": 23_561_229_056,     # 3.81 GB + one 19.76 GB layer
     "native-bf16": {"allocated_bytes": 37.530 * GB, "reserved_bytes": 57.078 * GB,
                     "run": "glm53-resume4 cold run 2, zai-org/GLM-5.3-BF16"},
@@ -1179,17 +1185,20 @@ def layer_outer_plan(
     if g.is_glm53_class:
         measured = dict(GLM53_LAYER_OUTER_MEASURED[surface],
                         device=GLM53_LAYER_OUTER_MEASURED["device"],
+                        measured_on=GLM53_LAYER_OUTER_MEASURED["measured_on"],
+                        loader=GLM53_LAYER_OUTER_MEASURED["loader"],
                         peak_resident_weight_bytes=(
                             GLM53_LAYER_OUTER_MEASURED["peak_resident_weight_bytes"]))
         required = GLM53_CLASS_MIN_DEVICE_BYTES
         fits = device.memory_bytes >= required
         reason = (
-            "GLM-5.3-class layer-outer capture needs a >= %d GB device today: "
-            "measured on %s, %s allocated / %s reserved (%s); the transformers "
+            "GLM-5.3-class layer-outer capture needs a >= %d GB device as of the "
+            "%s pod runs: measured on %s, %s allocated / %s reserved (%s); the transformers "
             "converter materialises one layer's %s of routed experts before "
             "fusing them%s, and the chunked loader that would take the peak to "
             "~28 GB (docs/LAYER-OUTER.md 8.1) is not built"
-            % (int(gb(required)), measured["device"],
+            % (int(gb(required)), GLM53_LAYER_OUTER_MEASURED["measured_on"],
+               measured["device"],
                "%.2f GB" % gb(measured["allocated_bytes"]),
                "%.2f GB" % gb(measured["reserved_bytes"]), measured["run"],
                "%.2f GB" % gb(g.routed_layer_bytes),

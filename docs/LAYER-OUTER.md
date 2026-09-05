@@ -429,6 +429,21 @@ only `embed_tokens + lm_head + model.norm`:
 | **expert-fusion transient during a layer load** | **19.3–22.3** | Stage A §9.5, upper-bounded |
 | **peak** | **47.0–50.9** | |
 
+**Measured since (additive; the projection above is left as written).** The
+GLM-5.3 pod runs of 2026-09-04/05 (`{"stage": "peak_memory"}` lines of the
+sealed capture logs, H200 SXM 141 GB, quoted in `review-efficiency.md` §2):
+`peak_resident_weight_bytes` = 23,561,229,056 in every run — the 3.81 + 19.76
+GB above, exactly. Peak CUDA allocated / reserved: bf16 root **37.53 / 57.08
+GB**, official FP8 **37.53 / 57.09 GB**, the wrldsuksgo2mars K4 trellis
+candidate **56.86 / 58.14 GB** — the trellis path additionally holds the
+decoded routed set (19.33 GB) on the device until the layer is fused. These
+figures belong to the loader as it stood on those dates (the transformers
+converter's stack/concatenate materialisation, no direct expert fill);
+`bin/fidelity/census.py` `GLM53_LAYER_OUTER_MEASURED` carries them as the
+planner's anchor and `measure-local` refuses a GLM-5.3-class capture below
+64 GB on their strength until a measured peak from a changed loader replaces
+them.
+
 The fusion transient is the least-measured term and the one that dominates the
 range. Stage A measured 48.2 GB RSS against 25.95 GB resident while loading the
 truncated GLM-5.3 tree — a 22.3 GB excess, 1.15× one sparse layer's 19.33 GB of
