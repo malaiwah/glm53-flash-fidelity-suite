@@ -1361,8 +1361,17 @@ PYSCOPE
           exit 3
         }
         [ -e "$TOKENIZER_ROOT/$name" ] || ln -s "$FS/reference-model/$name" "$TOKENIZER_ROOT/$name"
+        # hf_capture's fail-closed generation probe loads the tokenizer from
+        # --model itself (paid attempt 3, 2026-09-05, died exactly there):
+        # the same files, as regular copies beside the build
+        cp -f "$FS/reference-model/$name" "$MODELS/target/$name"
+        chmod 644 "$MODELS/target/$name"
       done
-      log "gguf candidate: reference config.json copied beside the build; tokenizer files linked from the reference root"
+      if [ -f "$FS/reference-model/generation_config.json" ] && [ ! -e "$MODELS/target/generation_config.json" ]; then
+        cp -f "$FS/reference-model/generation_config.json" "$MODELS/target/generation_config.json"
+        chmod 644 "$MODELS/target/generation_config.json"
+      fi
+      log "gguf candidate: reference config.json + tokenizer files copied beside the build; tokenizer files linked into the tokenizer root"
     fi
     # The ROOT's tokenizer_config.json, under the sidecar name fidelity.panel
     # reads (TOKENIZER_REFERENCE_SUBDIR): when the candidate's copy fails its
