@@ -112,6 +112,29 @@ def main():
         if label.startswith("real result dir"):
             exercised_real = True
 
+    # HEAD-1d and the TP-compose surface, synthetic: the reproduce line must
+    # ask for the rule the receipt used, and a rank-sharded row must not fall
+    # through to the generic "decode recorded in the runtime receipt" sentence.
+    own = _synthetic_loaded()
+    own["comparison"]["estimator"]["head_policy"] = "native_head"
+    own["comparison"]["comparator"] = {
+        "head_applied_tensor_content_sha256": None,
+        "head_applied_reference_tensor_content_sha256": "1" * 64,
+        "head_applied_candidate_tensor_content_sha256": "2" * 64}
+    own["candidate"]["weights_decode"] = {
+        "method": "exl3-trellis-tp-compose-to-bf16",
+        "quantization_config": {"codebook": "mcg", "bits": 3.25}}
+    own_body = FP.render(own)
+    check("own-heads receipt: the reproduce line asks for --own-heads, not --force-compute",
+          "--candidate <this> --own-heads`" in own_body and "--force-compute" not in own_body)
+    own_method = next((l for l in own_body.splitlines() if l.startswith("| method |")), "")
+    check("TP-compose row: the method line names the rank composition and the codebook",
+          "rank shards" in own_method and "codebook mcg" in own_method
+          and "decode recorded in the sealed runtime receipt" not in own_method, own_method)
+    shared_body = FP.render(_synthetic_loaded())
+    check("shared-head receipt: the reproduce line keeps --force-compute",
+          "--force-compute`" in shared_body and "--own-heads" not in shared_body)
+
     check("at least one real sealed result dir was exercised",
           exercised_real or not real_dirs,
           "no real result dirs under ~/fidelity-runs/*/result found; "

@@ -99,6 +99,15 @@ def _method_line(decode: dict) -> str:
                 "the capture device via exllamav3's transcribed codebooks (codebook %s, "
                 "declared %s bits), %s; same engine, schedule and device as the reference "
                 "capture" % (method, codebook, qc.get("bits"), rest))
+    if method == "exl3-trellis-tp-compose-to-bf16":
+        codebook = qc.get("codebook") or "per-module (read from each payload's own marker)"
+        return ("decode-and-run, weights only: `%s` -- each routed-expert module stored as "
+                "tensor-parallel rank shards (the artifact's own hybrid_tr3_tail declares tp and "
+                "the slicing axis) decoded to bf16 per rank on the capture device via "
+                "exllamav3's transcribed codebooks (codebook %s, declared %s bits average) and "
+                "composed into the whole weight in ascending rank order; non-routed tensors "
+                "carried as shipped; same engine, schedule and device as the reference capture"
+                % (method, codebook, qc.get("bits")))
     return "`%s` (decode recorded in the sealed runtime receipt)" % method
 
 
@@ -152,6 +161,12 @@ def render(loaded: dict) -> str:
         "**Scope** (`scope_digest`): `%s`" % scope["scope_digest"],
         "",
     ]
+    # HEAD-1d: the receipt names a head per side and the reproduction must ask
+    # for the same rule, or the comparator refuses (HEAD-1b) when the heads
+    # differ and reports shared_reference_head when they do not.
+    own_heads = ((comparison.get("estimator") or {}).get("head_policy") == "native_head"
+                 and (comparison.get("comparator") or {}).get(
+                     "head_applied_reference_tensor_content_sha256") is not None)
     disclosures = comparison.get("disclosures") or []
     if disclosures:
         lines.append("**Disclosures on the comparison receipt:**")
@@ -182,10 +197,11 @@ def render(loaded: dict) -> str:
     lines += [
         "",
         "Reproduce: fetch the two datasets named above and run "
-        "`fidelity-dataset compare --reference <root> --candidate <this> --force-compute`; "
+        "`fidelity-dataset compare --reference <root> --candidate <this>%s`; "
         "the receipt's estimator block is the exact recipe. Questions and corrections are "
         "welcome here; the registry files this as a third-party row (`measured_by` "
-        "enumerated, never conflated with author-reported numbers).",
+        "enumerated, never conflated with author-reported numbers)."
+        % (" --own-heads" if own_heads else " --force-compute"),
     ]
     return "\n".join(lines) + "\n"
 
