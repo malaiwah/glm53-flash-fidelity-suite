@@ -2204,15 +2204,28 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
         vocab_size=vocab_size, context_length=context_length, records=capture_records,
         hidden_width=hidden_size, coverage=coverage)
 
+    # A head the trellis decoder produced from an exl3 payload (jpsequeira's
+    # 8-bit lm_head) is the candidate's OWN dequantized head: sealed as such
+    # (spec head-source table: artifact_dequantized) and replayed under
+    # HEAD-1d, own heads. Every other head is shipped as loaded.
+    head_decoded = (layer_outer.head_decode_identity(args._weights_decode_streamer)
+                    if getattr(args, "_weights_decode_streamer", None) is not None else None)
     head_doc = dsmanifest.head_identity(
         present=True, tensor_key="lm_head.weight", shape=head_shape, dtype="BF16",
         file_sha256=head_digests["file_sha256"], tensor_content_sha256=head_content,
-        quantized=False, source="native", applied_in_capture=False, file=head_rel, bits=16,
+        quantized=bool(head_decoded), source=(head_decoded or {}).get("source", "native"),
+        applied_in_capture=False, file=head_rel,
+        bits=int(head_decoded["bits"]) if head_decoded else 16,
         final_norm={"file": None, "tensor_key": None, "shape": None, "dtype": None,
                     "file_sha256": None, "tensor_content_sha256": None,
                     "applied_in_capture": True, "applied_at_replay": False},
-        note="the head is shipped verbatim from the checkpoint so a third party can "
-             "replay logits = hidden @ head^T without the weights")
+        note=(("the head is the artifact's exl3 K%d payload decoded to bf16 by %s (%s) "
+               "before the forward -- the candidate's own head, quantization error "
+               "included -- shipped so a third party can replay logits = hidden @ head^T"
+               % (head_decoded["bits"], head_decoded["reference"], head_decoded["method"]))
+              if head_decoded else
+              "the head is shipped verbatim from the checkpoint so a third party can "
+              "replay logits = hidden @ head^T without the weights"))
 
     fingerprint = _stack_fingerprint(args.device)
     canonical = json.dumps(fingerprint, sort_keys=True, separators=(",", ":"))
@@ -2327,19 +2340,30 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
     # exact rule in panel.py, and said here with both digests and the keys.
     for equivalence in ((getattr(args, "panel_binding_evidence", None) or {})
                         .get("tokenizer_equivalences") or []):
-        disclosures.append({
-            "code": "tokenizer_config_loader_keys_ignored", "severity": "info",
-            "affects_comparability": False,
-            "detail": "%s differs from the reference root's bound file (root sha256 %s, "
-                      "%d bytes; candidate sha256 %s, %d bytes) only by loader-only keys "
-                      "(dropped from root: %s; from candidate: %s; allowlist %s); canonical "
-                      "JSON is otherwise identical. Reason: %s."
-                      % (equivalence["name"], equivalence["root_sha256"],
-                         equivalence["root_bytes"], equivalence["candidate_sha256"],
-                         equivalence["candidate_bytes"],
-                         equivalence["keys_dropped_from_root"] or "none",
-                         equivalence["keys_dropped_from_candidate"] or "none",
-                         equivalence["loader_keys_allowlist"], equivalence["reason"])})
+        if "keys_dropped_from_root" in equivalence:
+            disclosures.append({
+                "code": "tokenizer_config_loader_keys_ignored", "severity": "info",
+                "affects_comparability": False,
+                "detail": "%s differs from the reference root's bound file (root sha256 %s, "
+                          "%d bytes; candidate sha256 %s, %d bytes) only by loader-only keys "
+                          "(dropped from root: %s; from candidate: %s; allowlist %s); canonical "
+                          "JSON is otherwise identical. Reason: %s."
+                          % (equivalence["name"], equivalence["root_sha256"],
+                             equivalence["root_bytes"], equivalence["candidate_sha256"],
+                             equivalence["candidate_bytes"],
+                             equivalence["keys_dropped_from_root"] or "none",
+                             equivalence["keys_dropped_from_candidate"] or "none",
+                             equivalence["loader_keys_allowlist"], equivalence["reason"])})
+        else:
+            disclosures.append({
+                "code": "tokenizer_file_provenance_admitted", "severity": "info",
+                "affects_comparability": False,
+                "detail": "%s differs from the reference root's bound file (root sha256 %s, "
+                          "%d bytes; candidate sha256 %s, %d bytes) and is admitted as "
+                          "per-model provenance. Reason: %s."
+                          % (equivalence["name"], equivalence["root_sha256"],
+                             equivalence["root_bytes"], equivalence["candidate_sha256"],
+                             equivalence["candidate_bytes"], equivalence["reason"])})
 
     # The weight-source transformations a trellis artifact needed, said on the
     # dataset itself so the registry session reads them from the seal and not
@@ -2489,8 +2513,8 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
               "tensor_key": "lm_head.weight", "compat_tensor_key": "weight",
               "shape": head_shape, "dtype": "BF16", "bias": None,
               "file_sha256": head_doc["file_sha256"], "raw_tensor_sha256": head_content,
-              "tensor_content_sha256": head_content, "quantized": False, "bits": 16,
-              "source": "native", "applied_in_capture": False,
+              "tensor_content_sha256": head_content, "quantized": head_doc["quantized"],
+              "bits": head_doc["bits"], "source": head_doc["source"], "applied_in_capture": False,
               "final_norm": head_doc["final_norm"], "equality_receipt": None},
         runtime={"file": "runtime/capture-runtime.json", "file_sha256": "0" * 64,
                  "lane": args.lane, "lane_inferred": False,
