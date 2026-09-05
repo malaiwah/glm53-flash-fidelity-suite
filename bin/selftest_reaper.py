@@ -872,6 +872,55 @@ def reaper_cases():
               and wrong_rest_result.ok
               and any(action["action"] == "ambiguous-needs-operator"
                       for action in wrong_rest_result.actions))
+        # 2026-09-05 race: two controllers create within seconds; lease A's
+        # post-create delta records sibling B's fresh pod as an unattributable
+        # wrong-name blocker (B had not bound it yet). Once B's lease names
+        # that pod as its exact provider id and the provider lists it under
+        # B's exact name, A's blocker is resolved by evidence and A confirms
+        # the absence of ITS OWN pod; a pod no sibling binds still blocks.
+        race_store = LeaseStore(root / "sibling-race", clock=lambda: 1000.0)
+        race_a = begin(race_store, "e")
+        race_b = begin(race_store, "f")
+        a_name = race_store.read(race_a)["create"]["exact_name"]
+        b_name = race_store.read(race_b)["create"]["exact_name"]
+        race_a = race_store.record_create_success(
+            race_a, {"id": "own-pod", "name": a_name})
+        race_a = race_store.bind_post_create_inventory(
+            race_a, [{"id": "own-pod", "name": a_name},
+                     {"id": "sibling-pod", "name": b_name}])
+        check("the race: lease A records the sibling's not-yet-bound pod as a blocker",
+              race_a.state == AMBIGUOUS
+              and race_store.read(race_a)["terminal_proof"]["ambiguous_create"]
+                  ["unattributable_wrong_name_pod_ids"] == ["sibling-pod"])
+        race_a = race_store.request_destroy(race_a, {"reason": "test"})
+        check("a blocker no sibling lease binds yet keeps blocking absence confirmation",
+              raises(LeaseError, lambda: race_store.confirm_exact_absence(
+                  race_a, [{"id": "sibling-pod", "name": b_name, "status": "RUNNING"}])))
+        race_b = race_store.record_create_success(
+            race_b, {"id": "sibling-pod", "name": b_name})
+        race_a = race_store.confirm_exact_absence(
+            race_a, [{"id": "sibling-pod", "name": b_name, "status": "RUNNING"}])
+        resolved_doc = race_store.read(race_a)
+        check("a wrong-name blocker bound by a sibling lease under its exact name is "
+              "resolved by evidence and the lease confirms its own absence",
+              resolved_doc["state"] == ABSENCE_CONFIRMED
+              and resolved_doc["history"][-1]["evidence"]
+                  ["wrong_name_blockers_resolved_by_sibling_leases"]
+                  == {"sibling-pod": race_b.path.name})
+        wrongname_store = LeaseStore(root / "sibling-race-wrong-name", clock=lambda: 1000.0)
+        w_a = begin(wrongname_store, "e")
+        w_b = begin(wrongname_store, "f")
+        wa_name = wrongname_store.read(w_a)["create"]["exact_name"]
+        w_a = wrongname_store.record_create_success(w_a, {"id": "own-pod", "name": wa_name})
+        w_a = wrongname_store.bind_post_create_inventory(
+            w_a, [{"id": "own-pod", "name": wa_name}, {"id": "sibling-pod", "name": "other"}])
+        w_a = wrongname_store.request_destroy(w_a, {"reason": "test"})
+        w_b = wrongname_store.record_create_success(
+            w_b, {"id": "sibling-pod", "name": wrongname_store.read(w_b)["create"]["exact_name"]})
+        check("a sibling-bound pod the provider lists under a DIFFERENT name still blocks",
+              raises(LeaseError, lambda: wrongname_store.confirm_exact_absence(
+                  w_a, [{"id": "sibling-pod", "name": "other", "status": "RUNNING"}])))
+
         volume_rest_store = LeaseStore(
             root / "response-lost-rest-volume", clock=lambda: 1000.0)
         volume_rest_ref = begin(volume_rest_store, "d")

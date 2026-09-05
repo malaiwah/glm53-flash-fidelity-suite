@@ -1202,7 +1202,8 @@ def _validate_event_evidence(event: str, evidence: Any,
         required = (
             "complete_listing", "listed_resource_count",
             "target_provider_ids", "still_present_ids")
-        optional = ("listed_statuses", "authoritative_inventory")
+        optional = ("listed_statuses", "authoritative_inventory",
+                    "wrong_name_blockers_resolved_by_sibling_leases")
         if event == "ABSENCE_PROOF_REVOKED":
             required += ("revoked_absence_sha256",)
         evidence = _exact_keys(
@@ -2230,10 +2231,35 @@ class LeaseStore:
             (document.get("terminal_proof") or {})
             .get("ambiguous_create", {})
             .get("new_network_volume_ids") or [])
-        wrong_name_blockers = (
+        wrong_name_blockers = list(
             (document.get("terminal_proof") or {})
             .get("ambiguous_create", {})
             .get("unattributable_wrong_name_pod_ids") or [])
+        # A wrong-name pod seen in this lease's post-create delta is frozen in
+        # its terminal proof at the moment of the ambiguity. Two controllers
+        # creating within seconds of each other each see the other's fresh
+        # pod as "unattributable" because the sibling had not bound its id
+        # yet (2026-09-05: Glm52Root's create saw FlagshipGgufLane's pod nine
+        # seconds after that lease bound it; every later sweep then exited 90
+        # and the reaper-health gate refused every launch on the account).
+        # The blocker is resolved by evidence, never by time: a sibling lease
+        # in this store now names that pod as ITS exact provider id, and the
+        # provider lists it under that lease's exact name (or no longer lists
+        # it at all). Anything else stays a blocker.
+        parsed_for_siblings = [_resource(item) for item in resources]
+        listed_names = {rid: name for rid, name, _ in parsed_for_siblings}
+        resolved_by_sibling: Dict[str, str] = {}
+        if wrong_name_blockers:
+            for sibling_ref, sibling in self.list(include_terminal=True):
+                if sibling_ref.path == ref.path:
+                    continue
+                exact_name = str((sibling.get("create") or {}).get("exact_name") or "")
+                bound = {str(x) for x in (sibling.get("provider_resource_ids") or [])}
+                for rid in list(wrong_name_blockers):
+                    if rid in bound and exact_name and (
+                            rid not in listed_names or listed_names[rid] == exact_name):
+                        resolved_by_sibling[rid] = sibling_ref.path.name
+                        wrong_name_blockers.remove(rid)
         if wrong_name_blockers:
             raise LeaseError(
                 "unattributable pod delta remains an unresolved blocker: "
@@ -2254,6 +2280,9 @@ class LeaseStore:
             "target_provider_ids": sorted(targets),
             "still_present_ids": present,
         }
+        if resolved_by_sibling:
+            evidence["wrong_name_blockers_resolved_by_sibling_leases"] = dict(
+                sorted(resolved_by_sibling.items()))
         if authoritative_inventory is not None:
             evidence["authoritative_inventory"] = json.loads(
                 _canonical_bytes(dict(authoritative_inventory)).decode("utf-8"))
