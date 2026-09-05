@@ -6740,15 +6740,18 @@ def _cleanup_ambiguous_runpod_create(
     return lease_ref
 
 
-def _runpod_stage(
-        provider, pod_id, fs_root, engine_root, stage, deadline,
-        image_reference, progress=None):
-    image_match = re.fullmatch(
-        r".+@(sha256:[0-9a-f]{64})", str(image_reference))
-    if image_match is None:
-        raise RuntimeError("stage image reference is not immutable")
-    image_digest = image_match.group(1)
-    command = (
+def _runpod_stage_command(fs_root, engine_root, stage, image_digest,
+                          image_reference, secrets_dir):
+    """The on-pod shell command that launches a setsid stage leader and waits
+    for its self-recorded process-group id (or the leader's exit), bounded.
+
+    The leader (stage_measure.sh) self-records its process group as its first
+    act under setsid; this wrapper waits for that record so a stage that
+    finishes faster than the SSH round-trip is a success, not a spurious
+    exit 70.  A live leader with no record after the bound is a genuine
+    record failure (TERM the group, exit 70).  A dead leader with no record
+    propagates its own exit code (it failed before it could record)."""
+    return (
         "set -eu; "
         "setsid env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN "
         "-u HUGGINGFACE_HUB_TOKEN -u HF_HUB_OFFLINE "
@@ -6769,17 +6772,46 @@ def _runpod_stage(
         "bash {fs}/bin/stage_measure.sh {stage} "
         ">>{fs}/logs/stage-{stage}.log 2>&1 </dev/null & "
         "leader=$!; "
-        "if ! bash {fs}/bin/watchdog.sh --record-stage-pgid "
-        "{fs} \"$leader\"; then "
+        "record={fs}/runtime/stage.pgid; "
+        # The leader self-records its process group as its first act (see
+        # stage_measure.sh).  Wait for that record to appear -- or for the
+        # leader to exit -- so a stage that finishes faster than the SSH
+        # round-trip is a success, not a spurious exit 70.  A live leader
+        # with no record after the bound is a genuine record failure: TERM
+        # the group and refuse.  A dead leader with no record propagates its
+        # own exit code (it failed before it could record).
+        "_wait_secs=${{STAGE_PGID_WAIT_SECS:-30}}; "
+        "_i=0; "
+        "while [ \"$_i\" -lt \"$((_wait_secs * 5))\" ]; do "
+        "if [ -f \"$record\" ] || ! kill -0 \"$leader\" 2>/dev/null; then "
+        "break; fi; sleep 0.2; _i=$((_i + 1)); done; "
+        "if [ -f \"$record\" ]; then "
+        "_code=0; wait \"$leader\" || _code=$?; exit \"$_code\"; "
+        "elif kill -0 \"$leader\" 2>/dev/null; then "
         "kill -TERM -- \"-$leader\" 2>/dev/null || true; "
-        "wait \"$leader\" 2>/dev/null || true; exit 70; fi; "
-        "wait \"$leader\""
+        "_code=0; wait \"$leader\" 2>/dev/null || _code=$?; exit 70; "
+        "else "
+        "_code=0; wait \"$leader\" 2>/dev/null || _code=$?; "
+        "exit \"$_code\"; fi"
     ).format(
         fs=shlex.quote(fs_root), engine=shlex.quote(engine_root),
-        secrets=shlex.quote(_runpod_secrets_dir(fs_root)),
+        secrets=shlex.quote(secrets_dir),
         stage=shlex.quote(stage),
         image_digest=shlex.quote(image_digest),
         image_reference=shlex.quote(str(image_reference)))
+
+
+def _runpod_stage(
+        provider, pod_id, fs_root, engine_root, stage, deadline,
+        image_reference, progress=None):
+    image_match = re.fullmatch(
+        r".+@(sha256:[0-9a-f]{64})", str(image_reference))
+    if image_match is None:
+        raise RuntimeError("stage image reference is not immutable")
+    image_digest = image_match.group(1)
+    command = _runpod_stage_command(
+        fs_root, engine_root, stage, image_digest, str(image_reference),
+        _runpod_secrets_dir(fs_root))
     run = provider.run_job(pod_id, command)
     run_id = (run or {}).get("run_id") or (run or {}).get("id")
     if not run_id:

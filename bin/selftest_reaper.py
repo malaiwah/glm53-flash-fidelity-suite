@@ -2683,11 +2683,107 @@ def watchdog_case():
                 leader.wait(timeout=10)
 
 
+def stage_pgid_race_case():
+    print("\n== stage pgid self-record race ==")
+    import measure_cloud as mc
+    watchdog = ROOT / "bin" / "watchdog.sh"
+    image_ref = "test@sha256:" + "a" * 64
+    image_digest = "sha256:" + "a" * 64
+
+    def wrapper_command(fs_dir, stage_name, secrets_dir):
+        return mc._runpod_stage_command(
+            str(fs_dir), "/tmp/nonexistent-engine", stage_name,
+            image_digest, image_ref, str(secrets_dir))
+
+    # (a) A stage that exits 0 immediately after self-recording must return 0
+    #     and leave the record + receipt -- not a spurious exit 70.
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td)
+        (fs / "bin").mkdir(parents=True)
+        (fs / "logs").mkdir()
+        shutil.copy(str(watchdog), str(fs / "bin" / "watchdog.sh"))
+        stub = fs / "bin" / "stage_measure.sh"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            'FS="$(readlink -f -- "$(dirname "$0")/..")"\n'
+            'bash "$FS/bin/watchdog.sh" --record-stage-pgid "$FS" "$$"\n'
+            "exit 0\n", encoding="utf-8")
+        stub.chmod(0o755)
+        secrets = fs / ".secrets"
+        secrets.mkdir()
+        cmd = wrapper_command(fs, "setup", secrets)
+        proc = subprocess.run(
+            ["bash", "-c", cmd], capture_output=True, text=True,
+            env=dict(os.environ, STAGE_PGID_WAIT_SECS="5"), timeout=30)
+        record = fs / "runtime" / "stage.pgid"
+        receipt = fs / "receipts" / "watchdog-stage-pgid.json"
+        check("fast exit-0 stage returns 0 (not spurious 70)",
+              proc.returncode == 0
+              and record.is_file() and not record.is_symlink()
+              and receipt.is_file() and not receipt.is_symlink(),
+              "rc=%d record=%s receipt=%s stderr=%s"
+              % (proc.returncode, record.exists(), receipt.exists(),
+                 proc.stderr[:300]))
+
+    # (c) A stage that exits non-zero after self-recording must propagate that
+    #     code -- not 70, not 0.
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td)
+        (fs / "bin").mkdir(parents=True)
+        (fs / "logs").mkdir()
+        shutil.copy(str(watchdog), str(fs / "bin" / "watchdog.sh"))
+        stub = fs / "bin" / "stage_measure.sh"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            'FS="$(readlink -f -- "$(dirname "$0")/..")"\n'
+            'bash "$FS/bin/watchdog.sh" --record-stage-pgid "$FS" "$$"\n'
+            "exit 42\n", encoding="utf-8")
+        stub.chmod(0o755)
+        secrets = fs / ".secrets"
+        secrets.mkdir()
+        cmd = wrapper_command(fs, "measure", secrets)
+        proc = subprocess.run(
+            ["bash", "-c", cmd], capture_output=True, text=True,
+            env=dict(os.environ, STAGE_PGID_WAIT_SECS="5"), timeout=30)
+        check("fast non-zero exit propagates its own code (42, not 70)",
+              proc.returncode == 42,
+              "rc=%d stderr=%s" % (proc.returncode, proc.stderr[:300]))
+
+    # (b) A live leader that never records (unrecordable) is TERMed and
+    #     yields 70.
+    with tempfile.TemporaryDirectory() as td:
+        fs = Path(td)
+        (fs / "bin").mkdir(parents=True)
+        (fs / "logs").mkdir()
+        shutil.copy(str(watchdog), str(fs / "bin" / "watchdog.sh"))
+        stub = fs / "bin" / "stage_measure.sh"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            'FS="$(readlink -f -- "$(dirname "$0")/..")"\n'
+            "sleep 300\n", encoding="utf-8")
+        stub.chmod(0o755)
+        secrets = fs / ".secrets"
+        secrets.mkdir()
+        cmd = wrapper_command(fs, "setup", secrets)
+        proc = subprocess.run(
+            ["bash", "-c", cmd], capture_output=True, text=True,
+            env=dict(os.environ, STAGE_PGID_WAIT_SECS="2"), timeout=30)
+        record = fs / "runtime" / "stage.pgid"
+        check("live unrecordable leader is TERMed and yields 70",
+              proc.returncode == 70 and not record.exists(),
+              "rc=%d record=%s stderr=%s"
+              % (proc.returncode, record.exists(), proc.stderr[:300]))
+
+
 def main():
     lease_core_cases()
     reaper_cases()
     runpod_cases()
     watchdog_case()
+    stage_pgid_race_case()
     print()
     if FAILED:
         print("selftest_reaper: %d FAILED" % len(FAILED))

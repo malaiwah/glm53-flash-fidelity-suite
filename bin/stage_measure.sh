@@ -26,6 +26,21 @@ unset HF_TOKEN HUGGING_FACE_HUB_TOKEN HUGGINGFACE_HUB_TOKEN HF_TOKEN_PATH
 STAGE="${1:?usage: stage_measure.sh <stage>}"
 SCRIPT_PATH="$(readlink -f -- "$0")"
 FS="$(readlink -f -- "$(dirname "$SCRIPT_PATH")/..")"
+# Self-record the stage process group so the cloud wrapper cannot race the
+# leader's exit.  Under setsid (the cloud wrapper) $$ is its own process-group
+# and session leader, so the record is written before any stage work begins
+# and cannot be lost to a fast exit.  Outside setsid (container entrypoint,
+# local selftests) $$ shares its parent's group; the record is skipped because
+# the watchdog is not armed in those contexts.
+if _line="$(cat /proc/$$/stat 2>/dev/null)"; then
+  _rest="${_line##*) }"
+  read -r _state _ppid _pgrp _session _junk <<<"$_rest"
+  if [ "$_pgrp" = "$$" ] && [ "$_session" = "$$" ]; then
+    bash "$FS/bin/watchdog.sh" --record-stage-pgid "$FS" "$$" || {
+      echo "stage_measure: self-record of process group failed (exit $?)" >&2
+      exit 71; }
+  fi
+fi
 # The engine checkout is controller-provisioned outside the staged suite.  Resolve
 # it once, then overwrite every ambient compatibility spelling passed to children.
 # GNU `readlink -f` exits 1 and prints NOTHING when the parent of the last
