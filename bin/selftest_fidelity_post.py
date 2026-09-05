@@ -101,6 +101,14 @@ def main():
                   .get("scored_positions"))
         check("%s: exact scored-position count appears verbatim" % label,
               str(scored) in body, "expected %r in body" % scored)
+        method_line = next((l for l in body.splitlines() if l.startswith("| method |")), "")
+        check("%s: the method line never renders a None placeholder" % label,
+              "None block" not in method_line and "(None" not in method_line, method_line)
+        decode = loaded["candidate"]["weights_decode"]
+        if decode.get("method") == "exl3-trellis-decode-to-bf16":
+            check("%s: a trellis row is described as a trellis decode" % label,
+                  "exl3 payload group" in method_line and "codebook" in method_line,
+                  method_line)
         if label.startswith("real result dir"):
             exercised_real = True
 

@@ -76,6 +76,30 @@ def load_result(result_dir: str) -> dict:
             "comparison": comparison, "publication": publication}
 
 
+def _method_line(decode: dict) -> str:
+    """The decode the capture applied, said in that surface's own terms.
+
+    A trellis row rendered through the FP8 sentence read "(None block None)"
+    on a public post; each decodable surface gets its own sentence and an
+    unknown method is rendered by name rather than through the wrong one.
+    """
+    method = str(decode.get("method"))
+    qc = decode.get("quantization_config") or {}
+    if method == "fp8-block-dequant-to-bf16":
+        return ("dequantize-and-run, weights only: `%s` per tensor from the checkpoint's "
+                "`quantization_config` (%s block %s), same engine, schedule and device as "
+                "the reference capture" % (method, qc.get("fmt"), qc.get("weight_block_size")))
+    if method == "exl3-trellis-decode-to-bf16":
+        codebook = qc.get("codebook") or "per-module (read from each payload's own marker)"
+        return ("decode-and-run, weights only: `%s` -- each exl3 payload group "
+                "(`trellis`/`suh`/`svh`/codebook marker) decoded to bf16 per module on "
+                "the capture device via exllamav3's transcribed codebooks (codebook %s, "
+                "declared %s bits), non-routed tensors carried as shipped; same engine, "
+                "schedule and device as the reference capture"
+                % (method, codebook, qc.get("bits")))
+    return "`%s` (decode recorded in the sealed runtime receipt)" % method
+
+
 def render(loaded: dict) -> str:
     job, candidate = loaded["job"], loaded["candidate"]
     comparison, qualification = loaded["comparison"], loaded["qualification"]
@@ -115,11 +139,7 @@ def render(loaded: dict) -> str:
         "| direction / vocabulary / accumulation | %s / full / %s |" % (
             metric.get("direction_label", metric.get("direction")),
             (comparison.get("estimator") or {}).get("accumulation_dtype")),
-        "| method | dequantize-and-run, weights only: `%s` per tensor from the checkpoint's "
-        "`quantization_config` (%s block %s), same engine, schedule and device as the "
-        "reference capture |" % (
-            decode["method"], decode["quantization_config"].get("fmt"),
-            decode["quantization_config"].get("weight_block_size")),
+        "| method | %s |" % _method_line(decode),
         "| determinism | two fresh processes captured the candidate; both sealed captures "
         "carry content digest `%s…` (exact self-comparison 0.0) |" % (
             canonical.get("capture_content_digest", "")[:16]),
