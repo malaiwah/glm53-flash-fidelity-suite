@@ -3692,3 +3692,55 @@ run with the reduced_run_count caveat; the bound tokenizer block is sealed
 verbatim into panel.tokenizer; the binding file is named by the job) -- each a
 place the fixture disagreed with hf_capture, now aligned. Of the seven pods
 lost this lane, five would not have been rented.
+
+## 2026-09-05 - the published CLAIMS were wrong where the numbers were right: five scopes, one provenance, six intervals
+
+**What the science review found and what the bytes said.** Every GLM-5.3 number
+reproduces its receipt bit for bit; five `scope` records around them did not
+describe the checkpoints. `exl3_scope.py` before `56ff020` wrote any class that
+mixes storage formats as `quantized`, so a router census of 75 bf16 weights
+beside 75 fp32 biases went out as `moe.router=quantized:mixed` on all five
+trellis artifacts (drowzeys: `attn.other` and `mtp` too), into `scope_digest`,
+the README, and six Hub posts. Worse, two committed records contradicted each
+other about drowzeys: the artifact prose said its fp16 attention/MLP tensors
+were "the BF16 release's values after an fp16 round trip"; the zero-pad
+evidence and the `ZERO_PAD_METHOD` comment said the same rows were the FP8
+release dequantized. Three HTTP Range reads per tensor settled it in 36 s at $0
+(`engines/tools/nonrouted_provenance.py`): ten tensors across every non-routed
+class, 576 leading rows each, are BITWISE `fp16(dequantize_block_fp8(zai-org/
+GLM-5.3@187fb9ff))` -- 0 differing elements -- and 98-99 % different from
+`fp16(BF16 root)`. The evidence file and the code comment were right; the prose
+was wrong; drowzeys' whole non-routed path carries the FP8 release's 8-bit
+quantization at 16-bit storage. The 0.0185-nat gap to davidsyoung's 3.0bpw
+(25/25 windows) is therefore not codec quality alone.
+
+**Landed** (`2ffb1cb9fa36`; mirror `5304f3e8f635`; corrections §11).
+Scopes re-authored from bytes by the fixed tool; drowzeys' six covered classes
+rewritten by the new `scope_apply_provenance.py` from the committed evidence
+(refuses any class it does not cover; 43 checks, 10 fail on the parent tree).
+Each artifact discloses `scope_record_corrected` with both digests, provenance-
+asserting, sha256-pinned. `SCOPE-011` refuses a quantized assignment whose
+census is all native -- the OLD strings are its selftest fixture (7 findings
+before, 0 after). `joint_enrich.py` learned a second source: the six GLM-5.3
+rows read `per_context` from their own receipts and carry window-block BCa
+intervals (+/-22-25 % of the mean; the 24-df t-intervals match the review's
+table to every digit) plus the paired adjacent-row ordering, and nothing of the
+Flash panel25 enrichment. `estimator.logits_dtype` is read off
+`comparator.replay_backend` instead of asserted. Four wordings corrected. Six
+additive Hub comments carry the corrected Scope line, the interval, the
+provenance sentence and the comparator's `advisory` caveat in one comment
+(coordinated with the comparator fix, `553d0c1`).
+
+**Lessons.** (1) A scope tool that labels by STORED dtype answers "how is it
+stored", never "what was done to it"; the two coincide only for a checkpoint
+built from an unquantized source, and the registry's `treatment` field is the
+second question. Byte comparison against every plausible source is the only
+test, and it is cheap. (2) When two committed records disagree, the one that
+was computed from bytes wins over the one that was written; publish the
+reconciliation, not a third opinion. (3) A 16-digit value with `uncertainty:
+none` beside rows that carry intervals reads as precision it does not have;
+the interval was derivable from the committed receipts all along.
+
+**Concurrency note.** A sibling's tree operation reverted an uncommitted edit
+of `seed_registry.py` mid-task (mtime moved, `git status` clean); the edit was
+re-applied from an idempotent patch script. Stage by name, commit early.

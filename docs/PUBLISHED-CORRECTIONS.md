@@ -729,6 +729,139 @@ cards to the Hub remains a separate, permissioned action.
 
 ---
 
+## 11. Five GLM-5.3 trellis scopes, drowzeys' non-routed provenance, and intervals on the six GLM-5.3 rows (science review S1-1, S1-3, S2-3, S3)
+
+**Published 2026-09-05.** Suite commit `2ffb1cb9fa367de2b5cd854636df8a4a9acc7c1c`; registry mirror
+`malaiwah/quant-fidelity-registry` @ `5304f3e8f6358a6b7a99ccc58a1871e9a6e0e3f0` (previous `b58bca8293bb`);
+one additive comment on each of the six Hub discussions (URLs below). **No measured
+value moved**: every `metric.value`, top-1, percentile, strata mean and receipt digest is
+byte-identical before and after. What changed is five `scope` blocks (and therefore
+five `scope_digest` strings), six `uncertainty` blocks that were `none`, one
+artifact's provenance prose, `estimator.logits_dtype` provenance and four caveat wordings.
+
+### What was wrong
+
+**Scope strings (S1-1).** `engines/tools/exl3_scope.py` / `fp8_scope.py` wrote
+`treatment: quantized` for any tensor class that mixes storage formats on shared layers.
+For the router that census is `75 x native:bf16@16 (mlp.gate.weight); 75 x native:fp32@32
+(e_score_correction_bias)` -- every group native -- so all five trellis artifacts were
+published as `moe.router=quantized:mixed`, and drowzeys additionally as
+`attn.other=quantized:mixed` and `mtp=quantized:mixed` (its MTP experts are stored fp16
+and are not trellis-quantized). The tool was fixed in `56ff020` (an all-native census is
+`treatment native`); the rows were seeded and the discussion posts rendered before that.
+
+**drowzeys provenance (S1-3).** Two committed records contradicted each other. The
+artifact record said the fp16 attention/MLP/shared-expert tensors were "native,
+unquantized, the BF16 release's values after an fp16 round trip"; the zero-pad evidence
+(`glm53-exl3-tp-rank-and-zero-pad-parity.json`) and the `ZERO_PAD_METHOD` comment said the
+same rows were `dequantize_block_fp8(zai-org/GLM-5.3@187fb9ff)` cast to fp16 -- the FP8
+release. Settled from bytes, spend-free (`engines/tools/nonrouted_provenance.py`, evidence
+`engines/tools/layer-outer-evidence/drowzeys-nonrouted-provenance.json`): the leading 576
+rows of ten tensors -- `layers.0.self_attn.{q_a_proj,kv_a_proj_with_mqa,q_b_proj}`,
+`layers.40.self_attn.{kv_b_proj,o_proj}`, `layers.{0,2,1}.mlp.{gate,up,down}_proj`,
+`layers.{3,77}.mlp.shared_experts.{gate,down}_proj` -- range-read from
+`drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb`, `zai-org/GLM-5.3-BF16@304b8051` and
+`zai-org/GLM-5.3@187fb9ff` (+ `_scale_inv`), are **bitwise equal to
+`fp16(dequantize_block_fp8(fp8, scale, float32))` on every tensor (0 differing elements)
+and not equal to `fp16(bf16_root)` (98-99 % of elements differ)**. The evidence and the
+code comment were right; the artifact prose and the scope were wrong. The whole non-routed
+path carries the FP8 release's 8-bit block quantization stored at 16 bits.
+
+**Intervals (S2-3).** The six GLM-5.3 rows published 16-digit point values with
+`uncertainty.method: none`, while the per-window means in their own receipts spread 17-26x
+between the easiest and hardest window; `joint_enrich.py` could only enrich the Flash
+panel25 series.
+
+**Wording (S3).** "WEIGHT-ONLY, THEREFORE A LOWER BOUND" (FP8 and K4 rows) states a
+bound a mean KL does not have; the pod receipt was cited as "same value" while differing by
+up to 3.8e-9; `decode_payload_hf` was attributed to exllamav3 (it is
+`engines/tools/exl3hf_surface.py`); the macro-mean note claimed exact equality where the
+last bit differs by 2.8e-17; `estimator.logits_dtype` was a hard-set constant rather than a
+value read from the receipt.
+
+### What changed
+
+| artifact | old `scope_digest` | new `scope_digest` |
+|---|---|---|
+| `wrldsuksgo2mars.glm-5.3-exl3-k4-v1` | `attn.o=quantized:fp8_e4m3@8|attn.other=quantized:mixed|attn.qkv=quantized:fp8_e4m3@8|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=quantized:fp8_e4m3@8|mlp.gate=quantized:fp8_e4m3@8|mlp.up=quantized:fp8_e4m3@8|moe.experts=quantized:exl3-mcg@4|moe.router=quantized:mixed|moe.shared_expert=quantized:fp8_e4m3@8|mtp=quantized:mixed|norm=native:bf16@16|head=native|kv=bf16` | `attn.o=quantized:fp8_e4m3@8|attn.other=quantized:mixed|attn.qkv=quantized:fp8_e4m3@8|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=quantized:fp8_e4m3@8|mlp.gate=quantized:fp8_e4m3@8|mlp.up=quantized:fp8_e4m3@8|moe.experts=quantized:exl3-mcg@4|moe.router=native:mixed|moe.shared_expert=quantized:fp8_e4m3@8|mtp=quantized:mixed|norm=native:bf16@16|head=native|kv=bf16` |
+| `davidsyoung.glm-5.3-exl3-tr3-3.0bpw` | `attn.o=native:bf16@16|attn.other=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3|moe.router=quantized:mixed|moe.shared_expert=native:bf16@16|mtp=quantized:mixed|norm=native:bf16@16|head=native|kv=bf16` | `attn.o=native:bf16@16|attn.other=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3|moe.router=native:mixed|moe.shared_expert=native:bf16@16|mtp=quantized:mixed|norm=native:bf16@16|head=native|kv=bf16` |
+| `davidsyoung.glm-5.3-exl3-tr3-3.25bpw` | `attn.o=native:bf16@16|attn.other=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3.25|moe.router=quantized:mixed|moe.shared_expert=native:bf16@16|mtp=quantized:mixed|norm=native:bf16@16|head=native|kv=bf16` | `attn.o=native:bf16@16|attn.other=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3.25|moe.router=native:mixed|moe.shared_expert=native:bf16@16|mtp=quantized:mixed|norm=native:bf16@16|head=native|kv=bf16` |
+| `davidsyoung.glm-5.3-exl3-tr3-3.42bpw` | `attn.o=native:bf16@16|attn.other=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3.421875|moe.router=quantized:mixed|moe.shared_expert=native:bf16@16|mtp=quantized:mixed|norm=native:bf16@16|head=native|kv=bf16` | `attn.o=native:bf16@16|attn.other=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3.421875|moe.router=native:mixed|moe.shared_expert=native:bf16@16|mtp=quantized:mixed|norm=native:bf16@16|head=native|kv=bf16` |
+| `drowzeys.keys-glm-5.3-exl3` | `attn.o=native:fp16@16|attn.other=quantized:mixed|attn.qkv=native:fp16@16|embed_tokens=native:bf16@16|lm_head=native:fp16@16|mlp.down=native:fp16@16|mlp.gate=native:fp16@16|mlp.up=native:fp16@16|moe.experts=quantized:exl3-mcg@3|moe.experts=quantized:exl3-mul1@3|moe.router=quantized:mixed|moe.shared_expert=native:fp16@16|mtp=quantized:mixed|norm=native:bf16@16|head=native|kv=bf16` | `attn.o=quantized:fp8_e4m3@8|attn.other=native:mixed|attn.qkv=quantized:fp8_e4m3@8|embed_tokens=native:bf16@16|lm_head=native:fp16@16|mlp.down=quantized:fp8_e4m3@8|mlp.gate=quantized:fp8_e4m3@8|mlp.up=quantized:fp8_e4m3@8|moe.experts=quantized:exl3-mcg@3|moe.experts=quantized:exl3-mul1@3|moe.router=native:mixed|moe.shared_expert=quantized:fp8_e4m3@8|mtp=native:mixed|norm=native:bf16@16|head=native|kv=bf16` |
+
+* The five scope files were re-authored from bytes by `exl3_scope.py --dtypes-from-hub`
+  at HEAD; drowzeys' six non-routed classes were then rewritten by the new
+  `engines/tools/scope_apply_provenance.py` from the evidence file (it refuses any class
+  the evidence does not cover, and any non-16-bit-native row). Each corrected artifact
+  carries a `scope_record_corrected` disclosure (asserts provenance; cites the scope file
+  and the evidence by sha256 and the tool fix by commit) naming both digests.
+* New invariant **SCOPE-011** (`registry/tools/registry_validate.py`,
+  `registry/schema/invariants.json`): a `treatment=quantized` assignment whose note census
+  is all `native:*` groups is an error. Its selftest fixtures are the OLD published
+  strings: 7 findings on the pre-fix data, 0 after.
+* `registry/tools/joint_enrich.py`: `SERIES` entries now declare a source
+  (`per-window` file or a comparison receipt's `per_context`) and whether the Flash
+  panel25 enrichment applies. The six GLM-5.3 rows get exactly the `uncertainty` block --
+  window-block bootstrap, percentile + BCa, B=5000, seed 20260829, cluster-robust SE,
+  25 clusters, 51,175 samples, sigma_run 0.0 from two bitwise-identical cold runs -- with
+  coverage stated as nominal (no coverage simulation exists for corpus5x5-v1), plus the
+  24-df t-interval and the paired adjacent-row ordering in the note. `make reseed-check`
+  proves the rows are a function of the receipts.
+
+| row | value | 95 % BCa (window-block) | 95 % t (24 df) | SE (clustered) | half-width / mean |
+|---|---:|---|---|---:|---:|
+| `fp8-dequantized.corpus5x5-v1` | 0.022305 | [0.01890, 0.02892] | [0.01739, 0.02722] | 0.00238 | 22 % |
+| `exl3-k4-wrldsuksgo2mars.corpus5x5-v1` | 0.044804 | [0.03709, 0.05970] | [0.03376, 0.05585] | 0.00535 | 25 % |
+| `exl3-tr3-3.42bpw-davidsyoung.corpus5x5-v1` | 0.062842 | [0.05101, 0.08207] | [0.04711, 0.07857] | 0.00762 | 25 % |
+| `exl3-tr3-3.25bpw-davidsyoung.corpus5x5-v1` | 0.073059 | [0.05976, 0.09392] | [0.05558, 0.09054] | 0.00847 | 24 % |
+| `exl3-tr3-3.0bpw-davidsyoung.corpus5x5-v1` | 0.083833 | [0.06846, 0.10931] | [0.06316, 0.10450] | 0.01002 | 25 % |
+| `exl3-keys-drowzeys.corpus5x5-v1` | 0.102333 | [0.08395, 0.13351] | [0.07725, 0.12742] | 0.01215 | 25 % |
+
+The t-intervals reproduce the review's §5 table to every printed digit; the BCa endpoints
+sit above them by 0.0015-0.0067 on both ends (right-skewed window means).
+
+| adjacent pair (higher − lower) | mean Δ | sd Δ | higher on | sign-test p |
+|---|---:|---:|---:|---:|
+| exl3-k4-wrldsuksgo2mars − fp8-dequantized | +0.022499 | 0.016845 | 24/25 | 1.55e-06 |
+| exl3-tr3-3.42bpw-davidsyoung − exl3-k4-wrldsuksgo2mars | +0.018038 | 0.012639 | 25/25 | 5.96e-08 |
+| exl3-tr3-3.25bpw-davidsyoung − exl3-tr3-3.42bpw-davidsyoung | +0.010218 | 0.006363 | 25/25 | 5.96e-08 |
+| exl3-tr3-3.0bpw-davidsyoung − exl3-tr3-3.25bpw-davidsyoung | +0.010774 | 0.011687 | 22/25 | 0.000157 |
+| exl3-keys-drowzeys − exl3-tr3-3.0bpw-davidsyoung | +0.018499 | 0.013137 | 25/25 | 5.96e-08 |
+
+Every published adjacent ordering is supported by the paired windows; the one to hold
+loosely is 3.25 vs 3.0 bpw (22/25). The drowzeys-vs-davidsyoung-3.0 gap (0.0185 nats,
+25/25) now carries a caveat on the drowzeys row: it includes the FP8 release's non-expert
+error (0.0223 nats on the FP8 row itself) and is not a codec-vs-codec comparison.
+
+* `estimator.logits_dtype` on the seven GLM-5.3 rows is derived from the receipt's
+  `comparator.replay_backend` (`numpy:cpu:float32` → `fp32`); the receipts' own
+  `logits_dtype: bf16` (the capture dtype) is corrected forward by the comparator fix
+  (`553d0c1`), sealed receipts untouched.
+* Wordings: "expected to understate a served W8A8 deployment; the activation term is not
+  measured"; "same value to 8 significant digits; see local_device_reduction_order";
+  `engines/tools/exl3hf_surface.py:decode_payload_hf`; "equal to 1e-16; the token mean is
+  the published value".
+
+### Posted
+
+Additive comments, each with the corrected Scope line, the interval, the paired ordering,
+and the comparator's class caveat (the post header's `strict` is filed as `advisory`):
+
+* https://huggingface.co/wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1/discussions/1#6a9c022a39b4b7083c4d4475
+* https://huggingface.co/davidsyoung/GLM-5.3-EXL3-TR3-3.0bpw/discussions/1#6a9c022b64a4fd14bc1fd7da
+* https://huggingface.co/davidsyoung/GLM-5.3-EXL3-TR3-3.25bpw/discussions/1#6a9c022b58ecc7a2bb5c4e43
+* https://huggingface.co/davidsyoung/GLM-5.3-EXL3-TR3-3.42bpw/discussions/3#6a9c022bddfa6e75bafced4e
+* https://huggingface.co/drowzeys/keys-GLM-5.3-EXL3/discussions/1#6a9c022b80dd4dc0564bf708
+* https://huggingface.co/zai-org/GLM-5.3/discussions/18#6a9c022b64a4fd14bc1fd7f7 (scope unchanged; interval and wording only)
+
+Verification: `cd registry && make check` 0 errors (77 pre-existing warnings), 93
+selftests, joint 501/0; `make reseed-check` clean; `bin/check_doc_numbers.py` 211/0;
+`engines/tools/selftest_scope_provenance.py` 43 checks (10 fail on the parent tree);
+`registry_selftest.py` section S fails on the parent tree; `selftest_stat01_reseed.py` T8
+fails on the parent tree. Mirror verified byte-for-byte on every changed file.
+
+---
+
 ## Not published, deliberately
 
 Nothing from `docs/REVIEW-DEFERRED.md` is now held back for an operator decision on

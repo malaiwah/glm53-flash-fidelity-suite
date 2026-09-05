@@ -4818,7 +4818,7 @@ G53_GH_BLOB = "https://github.com/malaiwah/quant-fidelity-suite/blob/"
 
 
 def _g53_scope_corrected(aid, sc, scope_rel, what_was_wrong):
-    """The scope_record_corrected disclosure, naming both digests (docs/PUBLISHED-CORRECTIONS.md §7).
+    """The scope_record_corrected disclosure, naming both digests (docs/PUBLISHED-CORRECTIONS.md §11).
 
     It reasons from source code, so it asserts provenance (PROV-016) and cites the
     re-authored scope file by sha256, the tool at the commit that fixed it, and --
