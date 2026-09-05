@@ -21,6 +21,9 @@ docs/*
 engines/*
 !engines/tools
 !engines/patches-v2
+!engines/scopes
+engines/scopes/*
+!engines/scopes/scope--glm53-gguf-unsloth-udq4kxl.json
 engines/tools/dione-evidence/*
 !engines/tools/dione-evidence/bf16-config.json
 !engines/tools/dione-evidence/bf16-index.json
