@@ -2,8 +2,8 @@
 
 > Tools, published measurements, and a schema-enforced registry for measuring how far a
 > quantized model's output distribution has moved from its unquantized reference, using
-> KL divergence over the full vocabulary. Three model families (GLM-5.3-Flash,
-> Qwen3.8-27B, and a 5B MoE CI fixture), six storage formats, 76 published rows. Every
+> KL divergence over the full vocabulary. Four model families (GLM-5.3, GLM-5.3-Flash,
+> Qwen3.8-27B, and a 5B MoE CI fixture), six storage formats, 83 published rows. Every
 > number links to a JSON receipt with pinned revisions and sha256 digests. MIT licensed.
 > The registry is a public HF dataset.
 >

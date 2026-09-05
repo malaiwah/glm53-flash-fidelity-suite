@@ -2,39 +2,39 @@
   "collections": {
     "artifacts": {
       "file": "data/artifacts.jsonl",
-      "record_count": 40,
+      "record_count": 47,
       "schema": "schema/artifact.schema.json",
-      "sha256": "d60c0901b3e84697598ac8ebdf14cc4e7f55c2868c234a9dd8668534fdc23f02"
+      "sha256": "ddf35af88e42d1a3150faea8968825c4a3277400cff30d632493ceeede26b941"
     },
     "measurements": {
       "file": "data/measurements.jsonl",
-      "record_count": 76,
+      "record_count": 83,
       "schema": "schema/measurement.schema.json",
-      "sha256": "b79f3da71ddf7ffc9636e0f1171f825c99f8274a3f6e7dc1de3b1748e172a4ed"
+      "sha256": "f14424e98220b6e169207957c2297ea2a22c808003bb0c641eab7c25b3c86c8e"
     },
     "models": {
       "file": "data/models.jsonl",
-      "record_count": 3,
+      "record_count": 4,
       "schema": "schema/model.schema.json",
-      "sha256": "5ad19a1055adb9e9f210310c019d0f6b580f59d5672113c551b19bf4b3e60ee9"
+      "sha256": "00aa0ae5eadedb16768768fa398960517ef75c6d2a18f3dbb9f79342ccbbc944"
     },
     "panels": {
       "file": "data/panels.jsonl",
-      "record_count": 12,
+      "record_count": 13,
       "schema": "schema/panel.schema.json",
-      "sha256": "c01ab44df32e5836e4c408e44716d9e48aeb6cd094105b961edeaf36dd78f8b4"
+      "sha256": "28a435ab7d623547ccf1628d30ab7fba32c17875d5e6c99d69db923d60759d95"
     },
     "pipelines": {
       "file": "data/pipelines.jsonl",
-      "record_count": 15,
+      "record_count": 16,
       "schema": "schema/pipeline.schema.json",
-      "sha256": "a016bbff583036e50215161f1fc9093cc21f91262c67f1a03813201b5a0e45ab"
+      "sha256": "c46ef96f9ed4d37add26c6edae94a56a58a4737d6ac679113126503794c3648b"
     },
     "references": {
       "file": "data/references.jsonl",
-      "record_count": 13,
+      "record_count": 14,
       "schema": "schema/reference.schema.json",
-      "sha256": "781bfd507719670d4f7256fa57cd229c49d97d374a7fbede863ad2d4fcb49b1c"
+      "sha256": "08e3349cce7ff0fe1494e98d74714ce392d23950ab037baa0133a61c50141e39"
     }
   },
   "comparability_keys": [
@@ -850,23 +850,72 @@
       "panel_id": "panel--glm53.brandonmusic.final25-clean17",
       "reference_id": "reference--brandonmusic.glm53-bf16-fp32-logits.final25-clean17",
       "stack_relation": "cross_stack"
+    },
+    {
+      "accumulation_dtype": "float64",
+      "comparability": {
+        "comparable": "false",
+        "live_member_count": 7,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [
+          "scope: members span {attn.o+attn.other+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.router+moe.shared_expert+mtp|head=native|kv=bf16, attn.o+attn.other+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.shared_expert+mtp|head=native|kv=bf16, attn.other+moe.experts+moe.router+mtp|head=native|kv=bf16, moe.experts+moe.router+mtp|head=native|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
+        ],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "1x NVIDIA H200"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.fidelity-dataset-hf.h200-layer-outer"
+            ]
+          },
+          "scope": {
+            "status": "fail",
+            "values": [
+              "attn.o+attn.other+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.router+moe.shared_expert+mtp|head=native|kv=bf16",
+              "attn.o+attn.other+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.shared_expert+mtp|head=native|kv=bf16",
+              "attn.other+moe.experts+moe.router+mtp|head=native|kv=bf16",
+              "moe.experts+moe.router+mtp|head=native|kv=bf16"
+            ]
+          }
+        }
+      },
+      "direction": "reference_to_candidate",
+      "head_policy": "native_head",
+      "key": "cmp--fdbd312a2551db89",
+      "label": "mean_tokenwise_kld on panel--glm53.malaiwah.corpus5x5-v1 (same_stack, native_head)",
+      "member_count": 7,
+      "metric_name": "mean_tokenwise_kld",
+      "panel_id": "panel--glm53.malaiwah.corpus5x5-v1",
+      "reference_id": "reference--malaiwah.glm-5.3-bf16-hf.corpus5x5-v1",
+      "stack_relation": "same_stack"
     }
   ],
   "comparability_predicate_rule": "Per group: comparable='true' means lane, pipeline, scope coverage and hardware are recorded and homogeneous across live members; 'false' means a recorded dimension differs (ranking across it attributes a lane/pipeline/hardware/scope effect to quantization quality); 'unknown' means no recorded difference but at least one dimension is unrecorded. Recomputed by the validator (CMP-007); a hand-edited predicate is rejected.",
   "comparability_rule": "The seven-field comparability.key is a NECESSARY partition key, not a sufficient certificate: two measurement values with different keys are NEVER comparable, and a table that mixes keys is malformed. Equal keys make two rows candidates for comparison ONLY -- the key deliberately omits measurement lane, candidate pipeline, hardware and artifact scope, all of which this project has MEASURED moving results by more than the gaps it publishes between quantizers. Before ranking rows as like-for-like, a consumer must also check each group's comparability_keys[].comparability predicate: comparable=true/false/unknown with machine-readable reasons.",
   "counts": {
-    "artifacts": 40,
-    "measurements": 76,
-    "measurements_advisory": 71,
+    "artifacts": 47,
+    "measurements": 83,
+    "measurements_advisory": 77,
     "measurements_author_reported": 15,
     "measurements_independently_verified": 0,
-    "measurements_self_measured": 61,
-    "measurements_strict": 5,
+    "measurements_self_measured": 68,
+    "measurements_strict": 6,
     "measurements_third_party_reported": 0,
-    "models": 3,
-    "panels": 12,
-    "pipelines": 15,
-    "references": 13
+    "models": 4,
+    "panels": 13,
+    "pipelines": 16,
+    "references": 14
   },
   "cross_refs": {
     "local_ai_registry": {
@@ -876,13 +925,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-09-01T01:10:34+00:00",
+  "generated_at": "2026-09-05T07:54:11+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-09-01T01:10:34+00:00",
+    "last_run_at": "2026-09-05T07:54:11+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }

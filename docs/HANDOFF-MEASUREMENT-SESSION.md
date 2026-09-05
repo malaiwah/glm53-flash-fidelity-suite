@@ -187,7 +187,7 @@ before rung M2.
 | M2 | **GLM-5.3-Flash re-capture** | 642.7 GB | **next** |
 | M3a | MiniMax-M3 root | — | capture proven, dataset lost to teardown |
 | M3b | **GLM-5.2** | 1,506.7 GB | best value on the board |
-| M3c | **GLM-5.3** | 1,506.7 GB | the lineage question |
+| M3c | **GLM-5.3** | 1,506.7 GB | **root done** 2026-09-04 (two pods, bitwise); FP8, K4, drowzeys 3.0, davidsyoung TR3 3.0/3.25/3.42 measured and published; registry rows under `glm-5.3`, see §M3c below |
 | M4 | Qwen3.5-397B | 806.8 GB | backfill |
 | M5 | `Tencent Hy4-preview`, `DeepSeek-V4-Flash-Vision-Exp` | — | trending; feasibility unassessed |
 | M6 | Kimi-K3 / Qwen 2.4T | — | GH200-economics question, not yet a plan |
@@ -255,6 +255,59 @@ unrelated model?** GLM-5.3 is understood to be post-training only on top of
 GLM-5.2. Architecture and tokenizer identity are already verified. Capture both
 against the same panel and hand both over; the analysis is the registry
 session's.
+
+**M3c state (2026-09-05).** The GLM-5.3 root is captured, qualified across two
+pods and published (`malaiwah/glm53-fidelity-root-v1@9c4a29ee`, capture
+`9eba97dd…`), and six candidates are measured on it, all on
+`panel--glm53.malaiwah.corpus5x5-v1` (51,175 positions), all published as
+datasets with a discussion on each artifact's page, all ingested into the
+registry under the slug `glm-5.3` (`glm53` in registry ids means FLASH; the
+panel id is the one sealed exception). Comparability class is `strict` on
+every receipt; the registry rows are `advisory` because the trellis and FP8
+decoders are reconstructions, not the vendor kernels.
+
+| artifact | bits | KL(root‖cand) nats | top-1 |
+|---|---:|---:|---:|
+| official FP8 (`zai-org/GLM-5.3`) | 8 | 0.02231 | 0.9564 |
+| `wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1` | 4 (routed experts; rest FP8) | 0.04480 | 0.9400 |
+| `davidsyoung/GLM-5.3-EXL3-TR3-3.42bpw` | 3.42 (K3/K4 mix, TP4 shards) | 0.06284 | 0.9306 |
+| `davidsyoung/GLM-5.3-EXL3-TR3-3.25bpw` | 3.25 | 0.07306 | 0.9256 |
+| `davidsyoung/GLM-5.3-EXL3-TR3-3.0bpw` | 3.0 | 0.08383 | 0.9205 |
+| `drowzeys/keys-GLM-5.3-EXL3` | 3.0 (mcg layer 3, mul1 4–77) | 0.10233 | 0.9113 |
+
+Exact values, percentiles and per-domain means are in
+`registry/protocol/glm-5.3/comparison.*.json`; the registry rows cite those.
+
+Three rules this rung paid for, now in the code:
+
+* **`--own-heads` (HEAD-1d).** Every exllamav3 `head_bits=16` release ships
+  the source head after an fp16 round trip — the same values to 3e-8, a
+  different tensor by content — so the shared-head rule (HEAD-1a) can never
+  apply to one and HEAD-1b refuses after both paid cold runs (drowzeys did
+  exactly that). `compare --own-heads` replays each side through the head its
+  own dataset sealed; `measure-cloud` writes `capture.own_heads: true` and the
+  stage passes the flag. On equal heads the array is bitwise the shared-head
+  array. Under registry REFC-003 one reference carries ONE head policy, so the
+  whole GLM-5.3 group is `native_head` on an `own_head` reference.
+* **The FP8 gate and the trellis gate consult one predicate.** Three
+  davidsyoung pods died after their fetch because the FP8 gate saw the
+  checkpoint's leftover `quant_method: modelopt` before the trellis gate read
+  its `hybrid_tr3_tail`. `layer_outer.is_trellis_checkpoint()` is the one
+  answer; `checkpoint_decode_plans()` runs the pod's decision at $0.
+* **SCOPE-004 is a warning on a sealed dataset.** The rule was added as an
+  error and the first thing it refused was the published FP8 dataset. Refusals
+  belong at the pre-spend gate on a scope FILE (`strict=True`), never on a
+  dataset the validator verified yesterday.
+
+**The replay host is a term.** The registry rows cite comparisons re-run on
+the maintainer's workstation (Intel X5570, SSE4.2 OpenBLAS) under
+`--own-heads`; the pods' own comparisons of the same sealed datasets differ by
+1.8e-10 … 3.8e-9 nats at identical top-1, because `numpy:cpu:float32` names
+a backend class and not a GEMM accumulation order. Every row states its delta.
+Also measured: torch 2.11's bundled MKL VML `dExp` kernel executes a VEX
+`vstmxcsr` on a non-AVX CPU (SIGILL, `mkl_vml_kernel_dExp_Z0HAynn`) in about
+half of the runs, alone or concurrent, and `MKL_ENABLE_INSTRUCTIONS` does not
+govern it; retry — it dies at the first estimator call or not at all.
 
 ---
 

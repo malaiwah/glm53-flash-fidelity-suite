@@ -4536,6 +4536,1148 @@ def build_measurements_qwen38_hf(artifacts_map):
     return rows
 
 
+# ===========================================================================
+# 7. GLM-5.3 -- the 78-layer flagship, measured on the layer-outer streaming
+#    lane against its OWN root capture.
+#
+# Registry slug: `glm-5.3`. NOT `glm53`: in this registry `glm53` is the
+# historical slug of GLM-5.3-FLASH (34 measurement rows, five panels, six
+# references), and a new family cannot borrow it. One exception is sealed and
+# stays: the panel id `panel--glm53.malaiwah.corpus5x5-v1` was minted before
+# the collision was noticed, is inside every fidelity dataset of this family
+# and inside every comparability key, and NAMING-SWEEP forbids renaming an
+# identity. Its model_scope says which model it belongs to.
+#
+# Every number below is READ from a committed receipt in
+# registry/protocol/glm-5.3/ at seed time; nothing is transcribed by hand.
+# The root capture, both candidate captures and every comparison receipt were
+# produced by this repository's own code, at commits named per row.
+# ===========================================================================
+G53 = "model--zai-org.glm-5.3"
+G53_BF16 = "artifact--zai-org.glm-5.3-bf16"
+G53_FP8 = "artifact--zai-org.glm-5.3-fp8"
+G53_WRLD_K4 = "artifact--wrldsuksgo2mars.glm-5.3-exl3-k4-v1"
+P_G53_C55 = "panel--glm53.malaiwah.corpus5x5-v1"
+R_G53_HF = "reference--malaiwah.glm-5.3-bf16-hf.corpus5x5-v1"
+PL_FIDDS_G53 = "pipeline--malaiwah.fidelity-dataset-hf.h200-layer-outer"
+
+G53_PROTOCOL = "protocol/glm-5.3/"
+G53_ROOT_DS = "https://huggingface.co/datasets/malaiwah/glm53-fidelity-root-v1"
+G53_ROOT_DS_REV = "9c4a29ee10f393ed2fdbdb9262c1192ddb1507b4"
+G53_FP8_DS = "https://huggingface.co/datasets/malaiwah/glm53-fidelity-fp8-v1"
+G53_FP8_DS_REV = "44eb57a8852d745e3ac9c026e65fcd214f948de3"
+G53_K4_DS = "https://huggingface.co/datasets/malaiwah/glm53-fidelity-exl3-wrld-k4-v1"
+G53_K4_DS_REV = "9ef6de77ca2a534739ae314f498fa1019d74e235"
+G53_GH = "https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/glm-5.3/"
+G53_ROOT_REV = "304b8051cfb2b260b61ce0cbe330e02a98e73639"
+G53_FP8_REV = "187fb9fff6319062325ff825627ef6db084d9bc6"
+G53_K4_REV = "47af23347db743b4666d952e2eb48f2b01c3fede"
+G53_DROWZEYS = "artifact--drowzeys.keys-glm-5.3-exl3"
+G53_DY30 = "artifact--davidsyoung.glm-5.3-exl3-tr3-3.0bpw"
+G53_DY325 = "artifact--davidsyoung.glm-5.3-exl3-tr3-3.25bpw"
+G53_DY342 = "artifact--davidsyoung.glm-5.3-exl3-tr3-3.42bpw"
+G53_DROWZEYS_REV = "ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5"
+G53_DY30_REV = "eeab94eb6e95b4e4d13d94af55ab3c420d6f52d3"
+G53_DY325_REV = "6d6bd738c0c1635513e0bd0fdf0302049bd820a9"
+G53_DY342_REV = "99c6f951333d2b38f1efefa533c7afadf0d376e3"
+G53_DROWZEYS_DS = "https://huggingface.co/datasets/malaiwah/glm53-fidelity-exl3-drowzeys-v1"
+G53_DY30_DS = "https://huggingface.co/datasets/malaiwah/glm53-fidelity-exl3-tr3-3.0bpw-v1"
+G53_DY325_DS = "https://huggingface.co/datasets/malaiwah/glm53-fidelity-exl3-tr3-3.25bpw-v1"
+G53_DY342_DS = "https://huggingface.co/datasets/malaiwah/glm53-fidelity-exl3-tr3-3.42bpw-v1"
+G53_DROWZEYS_DS_REV = "6d9256e5b0798a0115e0f1e164f0cd3deaf90a15"
+G53_DY30_DS_REV = "7db8509f316bbb44e4b1c5efdadbc5422b465ccd"
+G53_DY325_DS_REV = "9a5562a3f2593f41ffc7fbf1ab21538f6e4e723c"
+G53_DY342_DS_REV = "f741c869bc61eb78696a8adc31896fe634ad1e68"
+
+# The commits whose bytes ran, identified BY THE RECEIPTS: each sealed
+# dataset's runtime/capture-runtime.json names the sha256 of hf_capture.py,
+# layer_outer.py and panel.py that captured it, and `git show <pin>:<path> |
+# sha256sum` reproduces every one of them (verified 2026-09-05 before these
+# constants were written). The root's canonical capture ran at dd0f4f57 on one
+# pod; its repeat ran at 5e36ffcd on a second pod, with DIFFERENT hf_capture.py
+# bytes, and produced the identical capture_content_digest -- the change
+# between the two commits touched no arithmetic, and the digest says so.
+G53_PIN_ROOT_CAPTURE = "dd0f4f5763343bde9fb237377338ba4894861e76"
+G53_PIN_ROOT_REPEAT = "5e36ffcd6b98075d2e1be56d704c3f765a269725"
+G53_PIN_FP8 = "f95f879b85da581f4e6b5851db85265d594b06c9"
+G53_PIN_K4 = "381e6aa89dd92f2a25ddfd64829fa27cfc752d2c"
+G53_PIN_DROWZEYS = "e68f01b0931395ec040a06fb6a02e4ac53fc3830"
+G53_PIN_DY = "f2b151e5ce6911b8b54394d3f7387016759329a8"
+# The comparisons cited as metric sources ran on the maintainer's workstation
+# from this commit, after HEAD-1d (each side through its own sealed head)
+# landed; the pod-side comparisons (HEAD-1a, shared head) are cited beside
+# them and carry the same tokenwise digest wherever the heads are one tensor.
+G53_PIN_COMPARE = "79c52b242de03365ff1b95df299ccf301d836a4c"
+
+G53_CAPTURE_TOOL_VERSIONS = {
+    "capture_python": "3.12.3", "capture_torch": "2.11.0+cu130",
+    "capture_transformers": "5.16.1", "capture_numpy": "2.5.2",
+    "capture_safetensors": "0.8.0", "capture_cuda": "13.0",
+}
+G53_COMPARE_TOOL_VERSIONS = {
+    "python": "3.14.4", "torch": "2.11.0+cpu",
+    "numpy": "2.5.2", "safetensors": "0.8.0",
+}
+
+
+def _g53_protocol_path(name):
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        G53_PROTOCOL, name)
+
+
+def _g53_json(name):
+    with open(_g53_protocol_path(name), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _g53_sha(name):
+    return _receipt_sha(G53_PROTOCOL + name)
+
+
+def _g53_git_sha(pin, path):
+    """sha256 of `git show <pin>:<path>`; the seed runs in the suite checkout."""
+    import hashlib
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        blob = subprocess.run(["git", "-C", root, "show", "%s:%s" % (pin, path)],
+                              capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise SystemExit("seed_registry: cannot read %s at %s from git: %s" % (path, pin[:12], exc))
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _g53_dataset_scope(descriptor):
+    """The scope block a sealed dataset carries, in the registry's own shape."""
+    sc = descriptor["scope"]
+    # A dataset says `native` for an unquantized root; the registry's enum
+    # spells that `none` (uniform | mixed | none).
+    policy = "none" if sc["policy"] == "native" else sc["policy"]
+    return scope(policy,
+                 [asg(a["tensor_class"], a["treatment"], a["format"], a.get("bits_per_weight"),
+                      a.get("layer_range") or "all", a.get("note"))
+                  for a in sc["assignments"]],
+                 sc["head_policy"], kv=sc.get("kv_cache_dtype", "bf16"),
+                 act=sc.get("activation_quantization"), mtp=sc.get("mtp_included"))
+
+
+def _g53_comparison(name, *, want_kind, want_head_policy, reference_ds, candidate_ds):
+    """Read a committed comparison receipt and refuse any drift from what the row asserts."""
+    c = _g53_json(name)
+    if c.get("schema") != "malaiwah.fidelity-comparison-receipt.v1":
+        raise SystemExit("seed_registry: %s is not a comparison receipt" % name)
+    if c["comparison_kind"] != want_kind:
+        raise SystemExit("seed_registry: %s is a %s, the row wants %s"
+                         % (name, c["comparison_kind"], want_kind))
+    if c["estimator"]["head_policy"] != want_head_policy:
+        raise SystemExit("seed_registry: %s has head_policy %s, the row wants %s"
+                         % (name, c["estimator"]["head_policy"], want_head_policy))
+    if c["reference"]["dataset_sha256"] != reference_ds["dataset_sha256"]:
+        raise SystemExit("seed_registry: %s compares a different reference dataset" % name)
+    if c["candidate"]["dataset_sha256"] != candidate_ds["dataset_sha256"]:
+        raise SystemExit("seed_registry: %s compares a different candidate dataset" % name)
+    # A reproduction confirmation carries no comparability key (it is not a
+    # measurement); a measurement's key inputs must name this panel.
+    key_inputs = c["comparability"].get("key_inputs") or {}
+    if c["panel"]["panel_id"] != P_G53_C55 \
+            or (want_kind == "measurement" and key_inputs.get("panel_id") != P_G53_C55):
+        raise SystemExit("seed_registry: %s was scored on panel %s" % (name, c["panel"]["panel_id"]))
+    if c["measurement_scope"]["scored_positions"] != 51175 \
+            or c["measurement_scope"]["contexts"] != 25 \
+            or not c["measurement_scope"]["covers_full_panel"]:
+        raise SystemExit("seed_registry: %s does not cover the full 25-window panel" % name)
+    if c["metric"]["name"] != "mean_tokenwise_kld" \
+            or c["metric"]["direction"] != "reference_to_candidate" \
+            or c["estimator"]["accumulation_dtype"] != "float64":
+        raise SystemExit("seed_registry: %s is not a full-vocabulary fp64 KL(ref||cand)" % name)
+    if c["comparability"]["class"] != "strict" or not c["comparability"]["same_lane"]:
+        raise SystemExit("seed_registry: %s is not a strict same-lane comparison" % name)
+    if any(d.get("severity") == "blocking" for d in c.get("disclosures") or []):
+        raise SystemExit("seed_registry: %s carries a blocking disclosure" % name)
+    return c
+
+
+def _g53_dataset(name, *, want_role, want_repository):
+    d = _g53_json(name)
+    if d.get("schema") != "malaiwah.fidelity-dataset.v1":
+        raise SystemExit("seed_registry: %s is not a fidelity dataset descriptor" % name)
+    if d["dataset"]["repository"] != want_repository:
+        raise SystemExit("seed_registry: %s is %s, the row wants %s"
+                         % (name, d["dataset"]["repository"], want_repository))
+    if d["capture"]["form"] != "hidden" or d["panel"]["panel_id"] != P_G53_C55:
+        raise SystemExit("seed_registry: %s is not a hidden-form capture on the corpus5x5 panel" % name)
+    if d["generation_sanity_probe"]["status"] != "pass" \
+            or not d["generation_sanity_probe"]["enforced"]:
+        raise SystemExit("seed_registry: %s did not pass the enforced generation probe" % name)
+    if (d["dataset"]["role"] if "role" in d["dataset"] else d.get("dataset", {}).get("role")) not in (want_role, None):
+        raise SystemExit("seed_registry: %s has role %r" % (name, d["dataset"].get("role")))
+    return d
+
+
+G53_ROOT_DESC = _g53_dataset("dataset.glm-5.3-bf16-root.json", want_role="root",
+                             want_repository="malaiwah/glm53-fidelity-root-v1")
+G53_FP8_DESC = _g53_dataset("dataset.glm-5.3-fp8-dequantized.json", want_role="quant",
+                            want_repository="malaiwah/glm53-fidelity-fp8-v1")
+G53_K4_DESC = _g53_dataset("dataset.glm-5.3-exl3-k4-wrldsuksgo2mars.json", want_role="quant",
+                           want_repository="malaiwah/glm53-fidelity-exl3-wrld-k4-v1")
+G53_ROOT_DS_SHA = G53_ROOT_DESC["dataset_sha256"]
+G53_ROOT_CAPTURE_SHA = G53_ROOT_DESC["capture"]["capture_content_digest"]
+G53_HEAD_SHA = G53_ROOT_DESC["head"]["tensor_content_sha256"]
+G53_PANEL_TOKEN_SHA = G53_ROOT_DESC["panel"]["suite_token_hash_sha256"]
+G53_PANEL_RECEIPT_SHA = G53_ROOT_DESC["panel"]["panel_receipt_sha256"]
+G53_STACK_FINGERPRINT_SHA = G53_ROOT_DESC["runtime"]["stack_fingerprint_sha256"]
+for _desc in (G53_FP8_DESC, G53_K4_DESC):
+    if _desc["head"]["tensor_content_sha256"] != G53_HEAD_SHA:
+        raise SystemExit("seed_registry: a GLM-5.3 candidate head differs from the root's")
+    if _desc["runtime"]["stack_fingerprint_sha256"] != G53_STACK_FINGERPRINT_SHA:
+        raise SystemExit("seed_registry: a GLM-5.3 candidate ran on a different stack")
+    if _desc["weights"]["revision"] not in (G53_FP8_REV, G53_K4_REV):
+        raise SystemExit("seed_registry: a GLM-5.3 candidate captured an unpinned revision")
+if G53_ROOT_DESC["weights"]["revision"] != G53_ROOT_REV:
+    raise SystemExit("seed_registry: the GLM-5.3 root capture is not %s" % G53_ROOT_REV[:12])
+
+G53_DROWZEYS_DESC = _g53_dataset("dataset.glm-5.3-exl3-keys-drowzeys.json", want_role="quant",
+                                 want_repository="malaiwah/glm53-fidelity-exl3-drowzeys-v1")
+G53_DY30_DESC = _g53_dataset("dataset.glm-5.3-exl3-tr3-3.0bpw-davidsyoung.json", want_role="quant",
+                             want_repository="malaiwah/glm53-fidelity-exl3-tr3-3.0bpw-v1")
+G53_DY325_DESC = _g53_dataset("dataset.glm-5.3-exl3-tr3-3.25bpw-davidsyoung.json", want_role="quant",
+                              want_repository="malaiwah/glm53-fidelity-exl3-tr3-3.25bpw-v1")
+G53_DY342_DESC = _g53_dataset("dataset.glm-5.3-exl3-tr3-3.42bpw-davidsyoung.json", want_role="quant",
+                              want_repository="malaiwah/glm53-fidelity-exl3-tr3-3.42bpw-v1")
+for _desc, _rev in ((G53_DROWZEYS_DESC, G53_DROWZEYS_REV), (G53_DY30_DESC, G53_DY30_REV),
+                    (G53_DY325_DESC, G53_DY325_REV), (G53_DY342_DESC, G53_DY342_REV)):
+    if _desc["weights"]["revision"] != _rev:
+        raise SystemExit("seed_registry: a GLM-5.3 exl3 candidate captured an unpinned revision")
+    if _desc["runtime"]["stack_fingerprint_sha256"] != G53_STACK_FINGERPRINT_SHA:
+        raise SystemExit("seed_registry: a GLM-5.3 exl3 candidate ran on a different stack")
+for _desc in (G53_DY30_DESC, G53_DY325_DESC, G53_DY342_DESC):
+    if _desc["head"]["tensor_content_sha256"] != G53_HEAD_SHA:
+        raise SystemExit("seed_registry: a davidsyoung head differs from the root's; the row says otherwise")
+G53_DROWZEYS_HEAD_SHA = G53_DROWZEYS_DESC["head"]["tensor_content_sha256"]
+if G53_DROWZEYS_HEAD_SHA == G53_HEAD_SHA:
+    raise SystemExit("seed_registry: drowzeys' head equals the root's; the row says otherwise")
+G53_ROOT_SCOPE = _g53_dataset_scope(G53_ROOT_DESC)
+G53_DROWZEYS_SCOPE = scope_from_evidence("engines/scopes/scope--drowzeys-exl3.json")
+G53_DY30_SCOPE = scope_from_evidence("engines/scopes/scope--dy30-exl3.json")
+G53_DY325_SCOPE = scope_from_evidence("engines/scopes/scope--dy325-exl3.json")
+G53_DY342_SCOPE = scope_from_evidence("engines/scopes/scope--dy342-exl3.json")
+G53_FP8_SCOPE = scope_from_evidence("engines/scopes/scope--glm53-fp8.json")
+G53_K4_SCOPE = scope_from_evidence("engines/scopes/scope--wrld-exl3.json")
+
+MODELS += [
+    {"schema_version": V, "id": G53, "name": "GLM-5.3", "family": "glm-5.3",
+     "publisher": ZAI("model-publisher"),
+     "huggingface": hf("zai-org/GLM-5.3-BF16", G53_ROOT_REV, "hf_api"),
+     "architecture": {
+         "kind": "moe-decoder", "hidden_size": 6144, "num_layers": 78, "vocab_size": 154880,
+         "has_mtp": True, "total_parameters": None, "active_parameters": None,
+         "note": "GlmMoeDsaForCausalLM (model_type glm_moe_dsa), read from config.json "
+                 "ca8f2f47... at the pinned revision: 78 decoder layers (first_k_dense_replace "
+                 "3, so 3 dense + 75 sparse), 256 routed experts at top-8 plus 1 shared, "
+                 "moe_intermediate_size 2048, hidden 6144, 64 heads, MLA (q_lora_rank 2048, "
+                 "kv_lora_rank 512) with a DSA indexer (index_topk 2048), and "
+                 "num_nextn_predict_layers 1: one MTP block at layer index 78 whose 791 "
+                 "tensors transformers never builds. Parameter counts are not asserted: the "
+                 "bf16 checkpoint is 1,506,667,387,408 bytes over 282 shards and no receipt "
+                 "here counts parameters."},
+     "tokenizer": {"id": "glm-5.3", "repository": "zai-org/GLM-5.3-BF16", "revision": G53_ROOT_REV,
+                   "vocab_size": 154880,
+                   "files_sha256": {
+                       "tokenizer.json": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+                       "tokenizer_config.json": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc",
+                       "chat_template.jinja": "69bb3ab52067898e2466b855407636de559568947f367945842aabcb7fcc1705"}},
+     "canonical_weights": {"artifact_ref": G53_BF16, "precision": "bf16"},
+     "license": "mit",
+     "cross_refs": lair(),
+     "sources": [src("model_card", "https://huggingface.co/zai-org/GLM-5.3-BF16", None,
+                     "revision %s; config.json sha256 ca8f2f47..., weight index sha256 "
+                     "5fd47a92..., tokenizer file digests from the panel build receipt"
+                     % G53_ROOT_REV[:12]),
+                 src("hf_file", "https://huggingface.co/datasets/malaiwah/glm53-fidelity-root-v1/"
+                                "resolve/%s/panel/panel-receipt.json" % G53_ROOT_DS_REV, None,
+                     "tokenizer identity (files_sha256) as sealed into the root dataset")],
+     "disclosures": [
+         disc("record_note", "info",
+              "REGISTRY SLUG. This model's rows use the slug `glm-5.3`; the slug `glm53` in "
+              "this registry means GLM-5.3-FLASH (an accident of the campaign's history, "
+              "frozen by docs/NAMING-SWEEP.md). One sealed exception: the panel "
+              "panel--glm53.malaiwah.corpus5x5-v1 belongs to THIS model -- its id was minted "
+              "before the collision was seen and is inside every dataset and comparability "
+              "key of this family, so it keeps its name and its model_scope says the rest."),
+         disc("estimator_unknown", "info",
+              "tokenizer.json declares vocab_size 154820 (the panel build receipt records it) "
+              "while lm_head is [154880, 6144] and every comparison here scores all 154880 "
+              "columns. 154880 is recorded because it is the width the numbers cover. The "
+              "tokenizer files are byte-identical to GLM-5.3-Flash's (same tokenizer.json "
+              "19e77364..., same tokenizer_config.json 98b12715...)."),
+         disc("record_note", "info",
+              "The root, every candidate capture, the panel, the reference and every "
+              "measurement in this family have the same author. No third party has "
+              "reproduced any of these rows yet; the sealed datasets are public precisely so "
+              "that one can.")]},
+]
+
+PANELS += [
+    {"schema_version": V, "id": P_G53_C55,
+     "name": "GLM-5.3 corpus 5-stratum x 5-window panel -- 25 windows x 2048",
+     "author": MAL("panel-author"), "model_scope": [G53],
+     "tokenizer": {"id": "glm-5.3", "repository": "zai-org/GLM-5.3-BF16", "revision": G53_ROOT_REV,
+                   "vocab_size": 154880},
+     "structure": {"contexts": 25, "context_length": 2048, "positions_per_context": 2047,
+                   "positions_per_context_min": 2047, "positions_per_context_max": 2047,
+                   "scored_positions_total": 51175,
+                   "scoring_window": {"score_from": 0, "windowed": False,
+                                      "min_left_context_tokens": 1,
+                                      "dropped_positions_total": 0,
+                                      "policy": "no window: every causal prediction position "
+                                                "of every context is included"},
+                   "strata": {s: {"contexts": 5} for s in
+                              ("code", "encyclopedic", "literary", "multilingual", "scientific")}},
+     "identity": {"hash_covers": "token_ids", "panel_token_sha256": G53_PANEL_TOKEN_SHA,
+                  "panel_receipt_sha256": G53_PANEL_RECEIPT_SHA,
+                  "manifest_sha256": None, "shard_token_sha256": {}},
+     "corpus": {"public": True, "version": "qwen38-kld5-corpus-text/1", "build_tool_ref": None,
+                "lineage": "engines/tools/build_token_panel.py over the published corpus tree "
+                           "malaiwah/qwen38-27b-fidelity-suite-v5 @ 7797fcce, corpus/text/, "
+                           "tokenized with zai-org/GLM-5.3-BF16 @ %s. Strata sorted ascending; "
+                           "within each, documents sorted by file name; each tokenized whole "
+                           "with add_special_tokens=False; eligible at >= 4096 tokens; window = "
+                           "tokens[2048:4096]; the first 5 eligible documents per stratum (33 "
+                           "considered, 25 selected). No RNG anywhere. panel/panel-receipt.json "
+                           "inside the root dataset carries every source document's sha256 and "
+                           "the exact token slice." % G53_ROOT_REV[:12],
+                "license_note": "code = CPython source (PSF licence); encyclopedic = Wikipedia "
+                                "(CC BY-SA); literary = Project Gutenberg text, public domain "
+                                "in the US; multilingual = Wikipedia in other languages; "
+                                "scientific = arXiv titles and abstracts under the arXiv API "
+                                "terms of use. The panel redistributes token ids, not text.",
+                "sources": [src("dataset_card",
+                                "https://huggingface.co/datasets/malaiwah/qwen38-27b-fidelity-suite-v5")]},
+     "contamination": {"checked": False, "hits": None, "benchmarks_scanned": [],
+                       "method": "not established: no scan of GLM-5.3's (undisclosed) "
+                                 "pretraining corpus is possible. The strata are public web "
+                                 "text and any of them may be in it.",
+                       "receipt": None},
+     "sealed": True,
+     "availability": {"status": "public", "uri": G53_ROOT_DS},
+     "derived_from": None, "derivation": None, "cross_refs": lair(),
+     "sources": [src("dataset_card", G53_ROOT_DS, None,
+                     "the panel ships inside the root fidelity dataset: panel/panel.json, "
+                     "panel/tokens/, and the byte-verbatim build receipt panel/panel-receipt.json "
+                     "(receipt_sha256 %s...)" % G53_PANEL_RECEIPT_SHA[:8]),
+                 src("github_file", "https://github.com/malaiwah/quant-fidelity-suite/blob/main/"
+                                    "engines/panels/panel--glm53.malaiwah.corpus5x5-v1/panel.json",
+                     _receipt_sha("../engines/panels/panel--glm53.malaiwah.corpus5x5-v1/panel.json"),
+                     "the committed panel descriptor measure-cloud binds into every job")],
+     "disclosures": [
+         disc("contamination_unchecked", "caveat",
+              "No overlap scan against GLM-5.3's pretraining data is possible; the five "
+              "strata are public web text. This affects what the KLD means about the model, "
+              "not the comparison between two artifacts of it."),
+         disc("small_panel", "caveat",
+              "25 windows / 51,175 scored positions. On the two 4-bit-class artifacts measured "
+              "so far the per-window means spread over an order of magnitude (K4: median 0.0030, "
+              "p95 0.20). Rank artifacts on this panel by the paired per-window difference, "
+              "never by a single window.", True)]},
+]
+
+ARTIFACTS += [
+    artifact(G53_BF16, G53, "GLM-5.3 BF16 (the official full-precision release)", "base",
+             hf("zai-org/GLM-5.3-BF16", G53_ROOT_REV, "hf_api"),
+             "safetensors", "BF16", 1506667387408,
+             codec("bf16", None),
+             G53_ROOT_SCOPE,
+             ZAI("model-publisher"),
+             [src("model_card", "https://huggingface.co/zai-org/GLM-5.3-BF16", None,
+                  "revision %s; 282 shards; config.json sha256 ca8f2f47..., index sha256 "
+                  "5fd47a92..., every shard's sha256 in the root dataset's "
+                  "runtime/capture-runtime.json" % G53_ROOT_REV[:12]),
+              src("dataset_card", G53_ROOT_DS, None,
+                  "the reference capture of these weights: dataset_sha256 %s..., "
+                  "capture_content_digest %s..." % (G53_ROOT_DS_SHA[:8], G53_ROOT_CAPTURE_SHA[:8]))],
+             [disc("record_note", "info",
+                   "Scope is the sealed root dataset's own scope block: every tensor bf16, "
+                   "lm_head [154880, 6144] bf16 with tensor content sha256 %s... The MTP block "
+                   "(layer index 78, 791 tensors) is present in the checkpoint and intentionally "
+                   "unused by the architecture transformers builds; its complete name set "
+                   "matched the pinned allowlist 714d95ee... exactly." % G53_HEAD_SHA[:12])],
+             weights_extra={"size_basis": "repo_weight_files", "shard_count": 282,
+                            "config_sha256": G53_ROOT_DESC["weights"]["config_sha256"],
+                            "index_sha256": "5fd47a926aefce0f2c917f42523e5e0f3c87e23e389e767c3681536a62f5cf5e"},
+             availability={"status": "public", "uri": "https://huggingface.co/zai-org/GLM-5.3-BF16"},
+             cross_refs=lair(), seal={"sealed": False}),
+    artifact(G53_FP8, G53, "GLM-5.3 FP8 (the official block-scaled release)", "quant",
+             hf("zai-org/GLM-5.3", G53_FP8_REV, "hf_api"),
+             "safetensors", "FP8", 755632050320,
+             codec("fp8_e4m3", 8.0, 8.0, tool="unknown (publisher's own pipeline)"),
+             G53_FP8_SCOPE,
+             ZAI("quantizer"),
+             [src("model_card", "https://huggingface.co/zai-org/GLM-5.3", None,
+                  "revision %s; 141 shards; config.json sha256 3ac72612... declares "
+                  "quantization_config quant_method fp8, fmt e4m3, weight_block_size [128, 128], "
+                  "activation_scheme dynamic; index sha256 e0fe7f28..." % G53_FP8_REV[:12]),
+              src("github_file", "https://github.com/malaiwah/quant-fidelity-suite/blob/main/"
+                                 "engines/scopes/scope--glm53-fp8.json",
+                  _receipt_sha("../engines/scopes/scope--glm53-fp8.json"),
+                  "scope authored from the checkpoint's own index bytes by engines/tools/fp8_scope.py "
+                  "and cross-checked by measure-cloud before the run")],
+             [disc("record_note", "info",
+                   "Scope read from the weight index, not the README: every 2-D projection with a "
+                   "weight_scale_inv sibling is fp8_e4m3 (attention, dense MLP, all 57,600 routed "
+                   "expert matrices, the shared experts), while embed_tokens, lm_head, norms and "
+                   "the router stay bf16. attn.other and mtp are `mixed` because the DSA indexer "
+                   "and the MTP block hold both kinds on the same layers (SCOPE-004). The sealed "
+                   "dataset spells the same allocation in the earlier two-rows-per-class form, "
+                   "so its scope_digest string differs from this row's; the bytes described "
+                   "are the same."),
+              disc("estimator_scope_narrower_than_artifact", "caveat",
+                   "activation_scheme: dynamic -- the served model also quantizes activations "
+                   "per token at runtime. Every measurement of this artifact here is "
+                   "weights-only (dequantize-and-run), so it is a LOWER BOUND on the served "
+                   "model's divergence.", True)],
+             weights_extra={"size_basis": "repo_weight_files", "shard_count": 141,
+                            "config_sha256": G53_FP8_DESC["weights"]["config_sha256"],
+                            "index_sha256": "e0fe7f28c1f853d4824e4d796374e3dacf1fe470988773952c79b063768134bf"},
+             derived_from_artifact_ref=None,
+             availability={"status": "public", "uri": "https://huggingface.co/zai-org/GLM-5.3"},
+             cross_refs=lair(), seal={"sealed": False}),
+    artifact(G53_WRLD_K4, G53, "wrldsuksgo2mars GLM-5.3 EXL3 K4 v1 (routed experts trellis K4, rest FP8)",
+             "quant",
+             hf("wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1", G53_K4_REV, "hf_api"),
+             "exl3", "K4", 394023913872,
+             codec("exl3-mcg", 4.0, None, tool="exllamav3"),
+             G53_K4_SCOPE,
+             attr("wrldsuksgo2mars", "quantizer", handle="wrldsuksgo2mars",
+                  url="https://huggingface.co/wrldsuksgo2mars"),
+             [src("model_card", "https://huggingface.co/wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1", None,
+                  "revision %s; 46 shards; config.json sha256 14b5c7ab... declares "
+                  "quantization_config {quant_method exl3, bits 4}; index sha256 6c0a0d5a..."
+                  % G53_K4_REV[:12]),
+              src("github_file", "https://github.com/malaiwah/quant-fidelity-suite/blob/main/"
+                                 "engines/scopes/scope--wrld-exl3.json",
+                  _receipt_sha("../engines/scopes/scope--wrld-exl3.json"),
+                  "scope authored from the checkpoint's own index bytes by engines/tools/exl3_scope.py; "
+                  "the codebook (mcg) is read from the payload objects each module carries")],
+             [disc("record_note", "info",
+                   "Read from bytes: the 57,600 routed-expert matrices (layers 3-77, 256 experts x "
+                   "3 projections) are stock exllamav3 trellis payload groups {trellis, suh, svh, "
+                   "mcg} at K=4; every other 2-D projection -- attention, the three dense MLPs, "
+                   "the shared experts, the MTP block -- is kept in the SOURCE release's "
+                   "block-scaled fp8_e4m3 with its weight_scale_inv; embed_tokens, lm_head, norms "
+                   "and the router are bf16. So this artifact is the official FP8 release with "
+                   "its routed experts re-quantized to 4-bit trellis, not a full-scope EXL3 "
+                   "quant. The lm_head is content-identical to the BF16 root's (%s...)."
+                   % G53_HEAD_SHA[:12]),
+              disc("native_head_retained", "info",
+                   "lm_head.weight is a plain bf16 tensor in the index, byte-identical to the "
+                   "official head; stock exllamav3 would have quantized it."),
+              disc("third_party_artifact_self_measured", "info",
+                   "wrldsuksgo2mars's weights, our measurement."),
+              disc("revision_unpinned", "caveat",
+                   "The release names no source revision for the FP8 tensors it keeps, so "
+                   "derived_from_artifact_ref is left empty rather than guessed; the fp8 shards "
+                   "are consistent with zai-org/GLM-5.3 @ %s by block geometry, not by digest."
+                   % G53_FP8_REV[:12])],
+             weights_extra={"size_basis": "repo_weight_files", "shard_count": 46,
+                            "config_sha256": G53_K4_DESC["weights"]["config_sha256"],
+                            "index_sha256": "6c0a0d5ade9cb8758b6cc412a570a954852d133ef89540bbeee88dc9bd1b565b"},
+             derived_from_artifact_ref=None,
+             availability={"status": "public",
+                           "uri": "https://huggingface.co/wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1"},
+             cross_refs=lair(), seal={"sealed": False}),
+]
+
+
+def _g53_davidsyoung_artifact(aid, rev, label, size_bytes, index_sha, config_sha, sc, bits, k_values,
+                              producer_note):
+    """davidsyoung's TR3 releases share one shape; the per-release facts are arguments."""
+    return artifact(
+        aid, G53, "davidsyoung GLM-5.3 EXL3 TR3 %s (routed experts trellis, TP4 rank-sharded)" % label,
+        "quant",
+        hf("davidsyoung/GLM-5.3-EXL3-TR3-%s" % label, rev, "hf_api"),
+        "exl3", label, size_bytes,
+        codec("exl3-mcg", bits, None, tool="exllamav3", version="0.0.43",
+              calibration={"used": False, "corpus": None, "tokens": None,
+                           "overlaps_any_panel": False, "overlapping_panel_refs": []}),
+        sc,
+        attr("davidsyoung", "quantizer", handle="davidsyoung",
+             url="https://huggingface.co/davidsyoung"),
+        [src("model_card", "https://huggingface.co/davidsyoung/GLM-5.3-EXL3-TR3-%s" % label, None,
+             "revision %s; 81 shards; config.json sha256 %s... carries a leftover ModelOpt "
+             "quantization_config (quant_method modelopt) and the artifact's real declaration "
+             "in hybrid_tr3_tail: format exl3-trellis, codebook mcg, tp 4, bits_avg %s, "
+             "k_values %s, exllamav3_version 0.0.43, source_repo zai-org/GLM-5.3-BF16, "
+             "calibration mode data-free with an identity Hessian; index sha256 %s..."
+             % (rev[:12], config_sha[:8], bits, k_values, index_sha[:8])),
+         src("github_file", "https://github.com/malaiwah/quant-fidelity-suite/blob/main/"
+                            "engines/scopes/scope--dy%s-exl3.json" % label.replace(".", "").replace("bpw", ""),
+             _receipt_sha("../engines/scopes/scope--dy%s-exl3.json" % label.replace(".", "").replace("bpw", "")),
+             "scope authored from the checkpoint's own index bytes by engines/tools/exl3_scope.py")],
+        [disc("tp_sliced_artifact", "info",
+              "Read from bytes: the 57,600 routed-expert matrices are stored as FOUR "
+              "tensor-parallel rank shards each (model.layers.N.mlp.experts.E.<proj>.rank{0..3}."
+              "{trellis,suh,svh,mcg}), the artifact's own hybrid_tr3_tail declares tp=4 and the "
+              "slicing axis per projection, and the capture composed them into whole weights in "
+              "ascending rank order along the one axis the shapes admit. Everything else -- "
+              "attention, the dense MLPs, the shared experts, embed_tokens, lm_head, norms, the "
+              "router, the MTP block -- is native bf16 from the source. %s" % producer_note),
+         disc("declared_scheme_mismatch", "caveat",
+              "config.json's quantization_config says quant_method modelopt (NVFP4-style "
+              "config_groups); nothing in the checkpoint is ModelOpt. The registry describes "
+              "the bytes: trellis payload groups with the mcg codebook, K per module in "
+              "k_values, and the capture refused any module whose K fell outside them."),
+         disc("native_head_retained", "info",
+              "lm_head.weight is a plain bf16 tensor in the index, content-identical to the "
+              "official head (%s...)." % G53_HEAD_SHA[:12]),
+         disc("third_party_artifact_self_measured", "info",
+              "davidsyoung's weights, our measurement."),
+         disc("revision_unpinned", "caveat",
+              "hybrid_tr3_tail names the source as zai-org/GLM-5.3-BF16 but publishes no "
+              "source revision; derived_from_artifact_ref names the registry's pinned BF16 "
+              "artifact on the strength of that declaration plus the bitwise-identical head, "
+              "not on a digest of the whole tree.")],
+        weights_extra={"size_basis": "repo_weight_files", "shard_count": 81,
+                       "config_sha256": config_sha, "index_sha256": index_sha},
+        derived_from_artifact_ref=G53_BF16,
+        availability={"status": "public",
+                      "uri": "https://huggingface.co/davidsyoung/GLM-5.3-EXL3-TR3-%s" % label},
+        cross_refs=lair(), seal={"sealed": False})
+
+
+ARTIFACTS += [
+    artifact(G53_DROWZEYS, G53, "drowzeys keys-GLM-5.3-EXL3 (routed experts trellis 3.0 bpw, mcg/mul1)",
+             "quant",
+             hf("drowzeys/keys-GLM-5.3-EXL3", G53_DROWZEYS_REV, "hf_api"),
+             "exl3", "3bpw", 330083954256,
+             codec("exl3-trellis", 3.0, None, tool="exllamav3", version="1.4.5",
+                   calibration={"used": True, "corpus": None, "tokens": None,
+                                "overlaps_any_panel": None, "overlapping_panel_refs": []}),
+             G53_DROWZEYS_SCOPE,
+             attr("drowzeys", "quantizer", handle="drowzeys", url="https://huggingface.co/drowzeys"),
+             [src("model_card", "https://huggingface.co/drowzeys/keys-GLM-5.3-EXL3", None,
+                  "revision %s; 41 shards; config.json sha256 %s... declares quantization_config "
+                  "{quant_method exl3, bits 3, codebook mul1, head_bits 16, version 1.4.5, "
+                  "calibration rows 250 x cols 2048}; index sha256 af2c20bd..."
+                  % (G53_DROWZEYS_REV[:12], G53_DROWZEYS_DESC["weights"]["config_sha256"][:8])),
+              src("github_file", "https://github.com/malaiwah/quant-fidelity-suite/blob/main/"
+                                 "engines/scopes/scope--drowzeys-exl3.json",
+                  _receipt_sha("../engines/scopes/scope--drowzeys-exl3.json"),
+                  "scope authored from the checkpoint's own index bytes; the codebook is read per "
+                  "module from the payload object it carries")],
+             [disc("record_note", "info",
+                   "Read from bytes: the config names ONE codebook (mul1) but the checkpoint "
+                   "carries two -- layer 3's 768 routed-expert modules are mcg-coded and layers "
+                   "4-77's 56,832 are mul1-coded, all at K=3 -- so scope.assignments carries one "
+                   "moe.experts row per layer range and codec.family is the generic exl3-trellis. "
+                   "Attention, the dense MLPs and the shared experts are stored fp16 (native, "
+                   "unquantized); embed_tokens and norms bf16."),
+              disc("record_note", "info",
+                   "HEAD. lm_head is stored as a plain 16-bit tensor but is NOT content-identical "
+                   "to the official head: measured element by element it is exactly the BF16 "
+                   "head after a bf16->fp16->bf16 round trip (exllamav3 head_bits 16 stores the "
+                   "head in fp16): 210,841 of 951,582,720 elements differ, max |diff| 2.98e-8, "
+                   "rel_l2 2.2e-8. A different tensor by content (%s... vs %s...), the same "
+                   "head to 3e-8. Every measurement of this artifact replays it through THIS "
+                   "head (HEAD-1d), so whatever that round trip costs is inside the number."
+                   % (G53_DROWZEYS_HEAD_SHA[:12], G53_HEAD_SHA[:12])),
+              disc("record_note", "info",
+                   "78 kv_a_proj_with_mqa tensors are stored [640, 6144] against the "
+                   "architecture's [576, 6144] (kv_lora_rank 512 + qk_rope_head_dim 64), the "
+                   "extra 64 rows all zero: serving-kernel alignment padding. The capture "
+                   "truncated exactly those rows after checking every one was zero, and "
+                   "recorded it (zero_padded_rows_truncated in the sealed dataset)."),
+              disc("third_party_artifact_self_measured", "info",
+                   "drowzeys's weights, our measurement."),
+              disc("revision_unpinned", "caveat",
+                   "The release names no source revision; derived_from_artifact_ref is left "
+                   "empty rather than guessed. Its attention/MLP fp16 tensors are the BF16 "
+                   "release's values after an fp16 round trip, not a digest match.")],
+             weights_extra={"size_basis": "repo_weight_files", "shard_count": 41,
+                            "config_sha256": G53_DROWZEYS_DESC["weights"]["config_sha256"],
+                            "index_sha256": "af2c20bd55835c09e869b6020a6d5ba452e4f06cedde98470981e64444a84ea2"},
+             derived_from_artifact_ref=None,
+             availability={"status": "public", "uri": "https://huggingface.co/drowzeys/keys-GLM-5.3-EXL3"},
+             cross_refs=lair(), seal={"sealed": False}),
+    _g53_davidsyoung_artifact(
+        G53_DY30, G53_DY30_REV, "3.0bpw", 316420269320,
+        "80b1bd429403516791107763a7043d896e1dc03e7e848fed3331bdf734741f91",
+        G53_DY30_DESC["weights"]["config_sha256"], G53_DY30_SCOPE, 3.0, [3],
+        "Producer note in the tail: 'downward remix from the mix ledger, zero re-encode' -- "
+        "every routed expert at K=3."),
+    _g53_davidsyoung_artifact(
+        G53_DY325, G53_DY325_REV, "3.25bpw", 339371523592,
+        "ae6a9fac0679c875a5b3d4a9524b4204a6d97f0375daf40e7ebd5cd10c184753",
+        G53_DY325_DESC["weights"]["config_sha256"], G53_DY325_SCOPE, 3.25, [3, 4],
+        "Mixed K3/K4 per expert to an average of 3.25 bits over the routed experts."),
+    _g53_davidsyoung_artifact(
+        G53_DY342, G53_DY342_REV, "3.42bpw", 355150499456,
+        "787b45ebd8a771097cee0d594b868f51c79336570d6cb76e13275d4691cd3131",
+        G53_DY342_DESC["weights"]["config_sha256"], G53_DY342_SCOPE, 3.421875, [3, 4],
+        "Mixed K3/K4 per expert to an average of 3.421875 bits over the routed experts "
+        "(the producer describes it as a delta over the 3.25 mix)."),
+]
+
+REFERENCES += [
+    {"schema_version": V, "id": R_G53_HF,
+     "name": "malaiwah GLM-5.3 BF16 hidden-state capture, hf-transformers layer-outer streaming "
+             "lane, corpus5x5-v1 panel",
+     "artifact_ref": G53_BF16, "panel_ref": P_G53_C55, "reference_kind": "native_bf16",
+     "capture": {"stack": "transformers", "stack_version": "5.16.1",
+                 "pipeline_ref": PL_FIDDS_G53,
+                 "compute_dtype": "bf16", "logits_dtype": "fp32", "kv_cache_dtype": "bf16",
+                 "head_source": "own_head", "head_sha256": G53_HEAD_SHA,
+                 "batch_invariant": None,
+                 "capture_receipt_sha256": G53_ROOT_DS_SHA},
+     "author": MAL("measurer"), "logits_available": True,
+     "self_consistency": {
+         "floor_measurement_ref": "measurement--glm-5.3.bf16-selfcompare-floor.corpus5x5-v1",
+         "note": "Reference and candidates are captured by the SAME engine on the SAME lane and "
+                 "compared offline in fp64, so there is no cross-stack floor term to subtract. "
+                 "Measured, not assumed: two cold captures of these weights on two different "
+                 "H200 pods, at two different commits of the capture code, agree bitwise "
+                 "(capture_content_digest %s...), and comparing them with --force-compute over "
+                 "all 51,175 x 154,880 logits returns exactly 0.0 nats at top-1 agreement 1.0."
+                 % G53_ROOT_CAPTURE_SHA[:8]},
+     "sources": [src("dataset_card", G53_ROOT_DS, None,
+                     "malaiwah.fidelity-dataset.v1 at revision %s; dataset_sha256 %s..., "
+                     "capture_content_digest %s..., model revision %s..."
+                     % (G53_ROOT_DS_REV[:12], G53_ROOT_DS_SHA[:8], G53_ROOT_CAPTURE_SHA[:8],
+                        G53_ROOT_REV[:8])),
+                 src("github_file", G53_GH + "dataset.glm-5.3-bf16-root.json",
+                     _g53_sha("dataset.glm-5.3-bf16-root.json"),
+                     "the sealed dataset descriptor, byte-verbatim")],
+     "disclosures": [
+         disc("record_note", "info",
+              "OWN HEADS. The capture is hidden-form (after the final RMSNorm, before lm_head) "
+              "and ships the root's own lm_head; every comparison against it replays EACH side "
+              "through the head its own dataset sealed (HEAD-1d, head_policy native_head). "
+              "Nothing is substituted: a candidate whose head is content-identical to the "
+              "root's (the FP8 release, the K4 release) gets an array bitwise equal to the "
+              "shared-head replay, and a candidate whose head differs (every exllamav3 "
+              "head_bits=16 head is the source head after an fp16 round trip) keeps its own "
+              "head error inside the number."),
+         disc("architecture_subset_loaded", "info",
+              "The checkpoint's MTP block (layer index 78, 791 tensors) is present and "
+              "intentionally unused: GlmMoeDsaForCausalLM builds 78 decoder layers and no draft "
+              "head. The unused set matched the pinned allowlist exactly; every other tensor "
+              "loaded with 0 missing, 0 unexpected and 0 mismatched."),
+         disc("record_note", "info",
+              "LANE IDENTITY. transformers 5.16.1 eager attention, bf16 weights streamed one "
+              "decoder layer at a time (layer-outer / window-inner schedule: each layer's "
+              "weights are materialised once for the whole panel, windows pushed through "
+              "sequentially, never batched), torch 2.11.0+cu130 on one NVIDIA H200, "
+              "cuda 13.0, default matmul precision with no TF32 override. "
+              "stack_fingerprint_sha256 %s... is identical on the root and on every candidate "
+              "capture." % G53_STACK_FINGERPRINT_SHA[:12])]},
+]
+
+PIPELINES += [
+    pipeline(PL_FIDDS_G53,
+             "malaiwah three-step fidelity dataset (capture / capture / compare), "
+             "hf-transformers layer-outer streaming engine, RunPod H200",
+             ["capture", "scorer", "aggregator"],
+             "https://github.com/malaiwah/quant-fidelity-suite", G53_PIN_ROOT_REPEAT,
+             "bin/fidelity_dataset.py + engines/tools/hf_capture.py --schedule layer-outer",
+             MAL("toolchain-author"),
+             [disc("record_note", "info",
+                   "Same toolchain as pipeline--malaiwah.fidelity-dataset-hf.rtxpro6000 with the "
+                   "layer-outer schedule (engines/tools/layer_outer.py): the 1.5 TB bf16 tree "
+                   "is never resident -- each decoder layer is loaded once, run over all 25 "
+                   "windows with the layers below replaying their memoised output, then "
+                   "dropped. A block-scaled FP8 candidate is decoded per tensor on the host "
+                   "(fp8-block-dequant-to-bf16, weights-only) and an EXL3 trellis candidate per "
+                   "module on the device (exl3-trellis-decode-to-bf16, two fp32 Hadamard GEMMs "
+                   "with TF32 pinned off) BEFORE the tensors reach the converter, so the "
+                   "loader never sees a scale it could silently drop. Both sides are captured "
+                   "by this engine on this lane; the floor is structurally zero and measured "
+                   "at exactly 0.0 with --force-compute."),
+              disc("record_note", "info",
+                   "ROOT PROTOCOL. Every capture is sealed twice: two fresh processes, each a "
+                   "cold run of the full panel, must produce the identical "
+                   "capture_content_digest before a candidate is scored (qualify_root); the "
+                   "generation sanity probe ('The capital of France is' -> ' Paris') is "
+                   "enforced on every capture, including trellis-decoded ones. The comparisons "
+                   "cited as metric sources replayed each side through its own sealed head "
+                   "(HEAD-1d) with the fp32 numpy replay and the fp64 torch estimator on the "
+                   "maintainer's workstation; the pod-side comparisons are cited beside them."),
+              disc("record_note", "info",
+                   "The controller commit differs per row (the family was measured over "
+                   "2026-09-03..05 while the engine grew a trellis weight source); each row's "
+                   "harness block names the exact capture and comparator bytes and the commit "
+                   "they came from.")],
+             numerics=FP64,
+             hardware={"gpu": "NVIDIA H200", "gpu_count": 1, "tensor_parallel": 1,
+                       "note": "RunPod on-demand pods in US-NC-1, 141 GB HBM3e, python 3.12.3, "
+                               "torch 2.11.0+cu130, transformers 5.16.1, 1.8 TB container disk; "
+                               "one pod per capture, torn down after retrieval"},
+             cost={"usd_per_measurement": None,
+                   "basis": "one H200 pod per candidate served the fetch, two cold captures, "
+                            "qualification and the pod-side comparison; the root cost two pods"},
+             sources=[src("dataset_card", G53_ROOT_DS)],
+             cross_refs=lair()),
+]
+
+
+def _g53_harness(*, pin_compare, capture_pins, note):
+    """A recorded harness whose closure spans the captures and the comparison.
+
+    `capture_pins` maps a role prefix to (commit, descriptor): the capture-side
+    digests are the ones the sealed dataset's runtime receipt RECORDED, checked
+    here against `git show <commit>:<path>`, so a wrong pin refuses instead of
+    stamping a plausible digest. The comparator closure is read at `pin_compare`.
+    """
+    digests = []
+    for prefix, (pin, desc_runtime_files) in capture_pins.items():
+        for path, role in (("engines/tools/hf_capture.py", "capture"),
+                           ("engines/tools/layer_outer.py", "schedule")):
+            recorded = desc_runtime_files[path]
+            if _g53_git_sha(pin, path) != recorded:
+                raise SystemExit("seed_registry: %s at %s does not hash to the digest the %s "
+                                 "capture recorded" % (path, pin[:12], prefix))
+            digests.append({"role": "%s_%s" % (role, prefix), "path": path, "sha256": recorded})
+    panel_sha = None
+    for pin, files in capture_pins.values():
+        if panel_sha is None:
+            panel_sha = files["bin/fidelity/panel.py"]
+        elif files["bin/fidelity/panel.py"] != panel_sha:
+            raise SystemExit("seed_registry: the two captures bound the panel with different code")
+    digests.append({"role": "panel", "path": "bin/fidelity/panel.py", "sha256": panel_sha})
+    for role, path in (("front_end", "bin/fidelity_dataset.py"),
+                       ("comparator", "bin/fidelity/dscompare.py"),
+                       ("format", "bin/fidelity/dsformat.py"),
+                       ("manifest", "bin/fidelity/dsmanifest.py"),
+                       ("estimator", "engines/tools/kld_report.py")):
+        digests.append({"role": role, "path": path, "sha256": _g53_git_sha(pin_compare, path)})
+    tool_versions = dict(G53_CAPTURE_TOOL_VERSIONS)
+    tool_versions.update(G53_COMPARE_TOOL_VERSIONS)
+    return {
+        "harness_id": H.compute_id(digests, tool_versions),
+        "recorded": True,
+        "boundary": H.BOUNDARY,
+        "covers": ["auxiliary_metrics", "determinism", "metric.value"],
+        "repository": {"url": HARNESS_REPOSITORY["url"], "commit": pin_compare,
+                       "commit_role": "parent", "dirty": True},
+        "code_digests": digests,
+        "tool_versions": dict(sorted(tool_versions.items())),
+        "note": note,
+    }
+
+
+G53_HARNESS_SPAN_NOTE = (
+    "Covers metric.value: the closure spans the two captures the number is a function of "
+    "and the comparison that produced it, and those are THREE different clean commits "
+    "(%s), so no single tree holds every file -- `commit` names the comparison's commit, "
+    "commit_role=parent / dirty=true is the schema's only shape for 'the closure files "
+    "are not all in this tree', and the digests are the identity, not the commit. "
+    "Capture-side digests are the ones the sealed datasets' runtime receipts recorded, "
+    "re-verified against `git show <pin>:<path>` at seed time; re-derive any entry the "
+    "same way.")
+
+
+def build_measurements_glm53(artifacts_map):
+    """The GLM-5.3 rows: a MEASURED 0.0 floor and every candidate scored against it."""
+    M = lambda *a, **k: measurement(*a, artifacts_map=artifacts_map, **k)
+    est = dict(accumulation="float64", head_policy="native_head",
+               vocab_chunk=8192, two_pass=True, stack_relation="same_stack")
+    ds_root = src("dataset_card", G53_ROOT_DS, None,
+                  "reference capture at revision %s: dataset_sha256 %s..., "
+                  "capture_content_digest %s..."
+                  % (G53_ROOT_DS_REV[:12], G53_ROOT_DS_SHA[:8], G53_ROOT_CAPTURE_SHA[:8]))
+    root_runtime = {
+        "engines/tools/hf_capture.py": "e008fa66cc002b9798bc03e8200f84e6f456458c00dc368491d502550c5dcc7d",
+        "engines/tools/layer_outer.py": "6a763b7a9c5bdc6716b08fff2369023284adaabd73eb9daca00e8ce5d64b3e05",
+        "bin/fidelity/panel.py": "84e02b78781663293c24f5da94e50fecdcf34ad1c72202155792dc54e33f4324",
+    }
+    root_repeat_runtime = {
+        "engines/tools/hf_capture.py": "1be8a425a8d3bcf3cc2f528175174c6de900bbaaca49fae47cf29aaf6b1a6cf9",
+        "engines/tools/layer_outer.py": "22cd64432a34cdf005677419f7c8920702caafa91e970492ac75a77c898a7535",
+        "bin/fidelity/panel.py": "84e02b78781663293c24f5da94e50fecdcf34ad1c72202155792dc54e33f4324",
+    }
+
+    def aux_of(c):
+        kl = c["kl"]
+        domains = dict(c["per_domain"] or {})
+        if sorted(domains) != ["code", "encyclopedic", "literary", "multilingual", "scientific"]:
+            raise SystemExit("seed_registry: a GLM-5.3 receipt lacks the five per-domain means")
+        return {"median_kld": kl["median"], "p95_kld": kl["p95"], "p99_kld": kl["p99"],
+                "p999_kld": kl["p99_9"], "max_kld": kl["max"],
+                "context_macro_mean_kld": sum(domains.values()) / len(domains),
+                "strata": domains}
+
+    def notes_of(c):
+        pc = c["per_context"] or []
+        means = [w["mean"] for w in pc]
+        lo = min(pc, key=lambda w: w["mean"])
+        hi = max(pc, key=lambda w: w["mean"])
+        return ("Per-window mean %.17g, population sd %.17g, min %.17g (%s, %s), max %.17g "
+                "(%s, %s) over %d windows. The macro mean over strata equals the token mean "
+                "because every window contributes the same 2,047 positions."
+                % (sum(means) / len(means), L.population_stddev(means), lo["mean"],
+                   lo["window_id"], lo["domain"], hi["mean"], hi["window_id"], hi["domain"],
+                   len(pc)))
+
+    rows = []
+
+    # -- the floor -----------------------------------------------------------
+    floor_name = "comparison.glm-5.3-bf16-selfcompare-floor.corpus5x5-v1.json"
+    floor_pod = "comparison.glm-5.3-bf16-selfcompare-floor.corpus5x5-v1.pod-shared-head.json"
+    repeat_desc = _g53_json("dataset.glm-5.3-bf16-root-repeat.json")
+    floor = _g53_comparison(floor_name, want_kind="reproduction_confirmation",
+                            want_head_policy="native_head",
+                            reference_ds=G53_ROOT_DESC, candidate_ds=repeat_desc)
+    if floor["metric"]["value"] != 0.0 or floor["top1_agreement"] != 1.0 \
+            or not floor["self_compare"]["force_compute_agreed"] \
+            or not floor["self_compare"]["capture_content_digest_equal"]:
+        raise SystemExit("seed_registry: the GLM-5.3 floor receipt is not an exact, force-computed 0.0")
+    rows.append(M(
+        "measurement--glm-5.3.bf16-selfcompare-floor.corpus5x5-v1",
+        G53, G53_BF16, P_G53_C55, R_G53_HF, PL_FIDDS_G53, 0.0,
+        top1=1.0, scored_positions=51175, contexts=25,
+        runs=2, cold=True, identical=True,
+        evidence_kind="hidden_state_tensor_sha256",
+        evidence_hashes=[G53_ROOT_CAPTURE_SHA],
+        det_note="TWO cold captures of the same bf16 weights, in two fresh processes on two "
+                 "different H200 pods, at two different commits of the capture code "
+                 "(dd0f4f57 and 5e36ffcd), produced the same capture_content_digest %s... "
+                 "Their dataset_sha256 values differ (%s... vs %s...) because a manifest "
+                 "embeds timestamps and a cold-run label, which is exactly why determinism "
+                 "evidence is taken over tensor CONTENT."
+                 % (G53_ROOT_CAPTURE_SHA[:8], G53_ROOT_DS_SHA[:8], repeat_desc["dataset_sha256"][:8]),
+        sources=[ds_root,
+                 src("github_file", G53_GH + floor_name, _g53_sha(floor_name),
+                     "malaiwah.fidelity-comparison-receipt.v1 for the --self-compare "
+                     "--force-compute --own-heads comparison of the two cold root captures "
+                     "(receipt_sha256 %s...)" % floor["receipt_sha256"][:8]),
+                 src("github_file", G53_GH + floor_pod, _g53_sha(floor_pod),
+                     "the same self-compare as the pod's qualify_root ran it (HEAD-1a, shared "
+                     "head, --force-compute): tokenwise-kld digest %s..., identical"
+                     % _g53_json(floor_pod)["self_compare"]["expected_tokenwise_sha256"][:8]),
+                 src("github_file", G53_GH + "dataset.glm-5.3-bf16-root-repeat.json",
+                     _g53_sha("dataset.glm-5.3-bf16-root-repeat.json"),
+                     "the repeat capture's sealed descriptor (root-cold-2)")],
+        disclosures=[
+            disc("record_note", "info",
+                 "THE FLOOR, MEASURED. `fidelity-dataset compare --self-compare --force-compute "
+                 "--own-heads` over all 51,175 x 154,880 logits in fp64 returns mean tokenwise "
+                 "KLD exactly 0.0 nats at top-1 agreement 1.0, with every percentile also 0.0. "
+                 "The forced computation reproduced the hash proof's tokenwise-kld digest "
+                 "%s... byte for byte. Every candidate row on this reference therefore reports "
+                 "an excess over control EQUAL to its raw KLD."
+                 % floor["self_compare"]["expected_tokenwise_sha256"][:8]),
+            disc("record_note", "info",
+                 "Bitwise identity across two commits: the canonical capture ran "
+                 "hf_capture.py e008fa66... / layer_outer.py 6a763b7a... (dd0f4f57) and the "
+                 "repeat ran 1be8a425... / 22cd6443... (5e36ffcd); the change between them "
+                 "(controller and driver work, no arithmetic) moved nothing, and the digest "
+                 "is the proof rather than the changelog."),
+            disc("reduced_run_count", "info",
+                 "TWO cold captures, not the campaign's usual five: the evidence is a CONTENT "
+                 "digest rather than a spread over run means, so a third run would restate a "
+                 "bitwise identity rather than tighten an estimate."),
+            disc("architecture_subset_loaded", "info",
+                 "The MTP block's 791 tensors are present and unused; the set matched the "
+                 "pinned allowlist exactly on both captures.")],
+        **est))
+    rows[-1]["harness"] = _g53_harness(
+        pin_compare=G53_PIN_COMPARE,
+        capture_pins={"reference": (G53_PIN_ROOT_CAPTURE, root_runtime),
+                      "repeat": (G53_PIN_ROOT_REPEAT, root_repeat_runtime)},
+        note=G53_HARNESS_SPAN_NOTE % "dd0f4f57, 5e36ffcd, %s" % G53_PIN_COMPARE[:8])
+
+    # -- the candidates --------------------------------------------------------
+    candidates = [
+        dict(mid="measurement--glm-5.3.fp8-dequantized.corpus5x5-v1", art=G53_FP8,
+             desc=G53_FP8_DESC, ds_url=G53_FP8_DS, ds_rev=G53_FP8_DS_REV,
+             name="comparison.glm-5.3-fp8-dequantized.corpus5x5-v1.json",
+             pod="comparison.glm-5.3-fp8-dequantized.corpus5x5-v1.pod-shared-head.json",
+             repro="reproduction.glm-5.3-fp8-dequantized.json", pin=G53_PIN_FP8,
+             runtime={"engines/tools/hf_capture.py": "bee238bcd0498a11dbb09a9b6c5330c65b0a888666f8451c5dc1dc6e87c846d9",
+                      "engines/tools/layer_outer.py": "22cd64432a34cdf005677419f7c8920702caafa91e970492ac75a77c898a7535",
+                      "bin/fidelity/panel.py": "84e02b78781663293c24f5da94e50fecdcf34ad1c72202155792dc54e33f4324"},
+             card="https://huggingface.co/zai-org/GLM-5.3", card_rev=G53_FP8_REV,
+             discussion="https://huggingface.co/zai-org/GLM-5.3/discussions/18",
+             disclosures=[
+                 disc("lossy_capture_codec", "caveat",
+                      "RECONSTRUCTED, NOT EXECUTED. The candidate was captured from a bf16 "
+                      "materialisation of the stored fp8 weights: every fp8_e4m3 tensor is "
+                      "decoded on the host with its 128x128 weight_scale_inv block scale "
+                      "(engines/tools/layer_outer.py fp8-block-dequant-to-bf16, accumulated "
+                      "fp32, stored bf16) BEFORE it reaches the loader, so no scale can be "
+                      "silently dropped (transformers' plain-cast path would drop all of "
+                      "them). This is the dequantize-and-run methodology: it measures the error "
+                      "of the STORED weights, not of a vendor kernel.", True),
+                 disc("estimator_scope_narrower_than_artifact", "caveat",
+                      "WEIGHT-ONLY, THEREFORE A LOWER BOUND. The checkpoint declares "
+                      "activation_scheme: dynamic; the served model also quantizes activations "
+                      "per token at runtime, and that term is absent here.", True),
+                 disc("record_note", "info",
+                      "Head identity: the FP8 release's lm_head is content-identical to the "
+                      "BF16 root's (%s...), so own-head replay and shared-head replay are the "
+                      "same arithmetic; the pod-side HEAD-1a receipt and this HEAD-1d receipt "
+                      "carry the same tokenwise digest." % G53_HEAD_SHA[:12])]),
+        dict(mid="measurement--glm-5.3.exl3-k4-wrldsuksgo2mars.corpus5x5-v1", art=G53_WRLD_K4,
+             desc=G53_K4_DESC, ds_url=G53_K4_DS, ds_rev=G53_K4_DS_REV,
+             name="comparison.glm-5.3-exl3-k4-wrldsuksgo2mars.corpus5x5-v1.json",
+             pod="comparison.glm-5.3-exl3-k4-wrldsuksgo2mars.corpus5x5-v1.pod-shared-head.json",
+             repro="reproduction.glm-5.3-exl3-k4-wrldsuksgo2mars.json", pin=G53_PIN_K4,
+             runtime={"engines/tools/hf_capture.py": "bee238bcd0498a11dbb09a9b6c5330c65b0a888666f8451c5dc1dc6e87c846d9",
+                      "engines/tools/layer_outer.py": "7d07c26c28b577b76b21c11a968235184102f53d088a284d51529514ba1a212f",
+                      "bin/fidelity/panel.py": "84e02b78781663293c24f5da94e50fecdcf34ad1c72202155792dc54e33f4324"},
+             card="https://huggingface.co/wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1", card_rev=G53_K4_REV,
+             discussion="https://huggingface.co/wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1/discussions/1",
+             disclosures=[
+                 disc("lossy_capture_codec", "caveat",
+                      "RECONSTRUCTED, NOT EXECUTED. The 57,600 routed-expert trellis payload "
+                      "groups are decoded to bf16 per module on the capture device "
+                      "(exl3-trellis-decode-to-bf16: exllamav3's unpack, tile permutation, "
+                      "two Hadamard GEMMs and su/sv scaling, mcg codebook read from each "
+                      "module's own payload, TF32 pinned off and recorded) and the fp8 tensors "
+                      "the release kept are decoded on the host as for the FP8 row -- all "
+                      "before the loader. Decode evidence: the decoder reproduces "
+                      "exllamav3's decode_payload_hf bitwise on real payloads and the same "
+                      "path reconstructs a real trellis quant against its bf16 source at the "
+                      "expected K4 error (cosine 0.99773, rel_l2 6.74%). The decode has NOT "
+                      "been proven bitwise against a running exllamav3 kernel, which is why "
+                      "this row is advisory.", True),
+                 disc("estimator_scope_narrower_than_artifact", "caveat",
+                      "The fp8 tensors this release kept carry the source's activation_scheme: "
+                      "dynamic; that runtime term is absent, so this is a lower bound on a "
+                      "served fp8-activation deployment of it.", True),
+                 disc("third_party_artifact_self_measured", "info",
+                      "wrldsuksgo2mars's weights, our measurement."),
+                 disc("record_note", "info",
+                      "Head identity: this release's lm_head is content-identical to the BF16 "
+                      "root's (%s...), so own-head and shared-head replay are the same "
+                      "arithmetic; the pod-side HEAD-1a receipt is cited beside this one."
+                      % G53_HEAD_SHA[:12])]),
+        dict(mid="measurement--glm-5.3.exl3-keys-drowzeys.corpus5x5-v1", art=G53_DROWZEYS,
+             desc=G53_DROWZEYS_DESC, ds_url=G53_DROWZEYS_DS, ds_rev=G53_DROWZEYS_DS_REV,
+             name="comparison.glm-5.3-exl3-keys-drowzeys.corpus5x5-v1.json", pod=None,
+             repro="reproduction.glm-5.3-exl3-keys-drowzeys.json", pin=G53_PIN_DROWZEYS,
+             runtime={"engines/tools/hf_capture.py": "ae5f1a7c89d66c09d3596200e7ff2ba8b065f4af7f26a1b88062a009cfe84bab",
+                      "engines/tools/layer_outer.py": "dcd816394570f1b88e0336bacc8aa4a445d2a1ec756bd9614ada71d25bbe50f2",
+                      "bin/fidelity/panel.py": "84e02b78781663293c24f5da94e50fecdcf34ad1c72202155792dc54e33f4324"},
+             card="https://huggingface.co/drowzeys/keys-GLM-5.3-EXL3", card_rev=G53_DROWZEYS_REV,
+             discussion=None,
+             disclosures=[
+                 disc("lossy_capture_codec", "caveat",
+                      "RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is "
+                      "decoded to bf16 per module on the capture device "
+                      "(exl3-trellis-decode-to-bf16, mcg on layer 3 and mul1 on layers 4-77, each read from the module's own payload) before the loader; the decoder reproduces "
+                      "exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a "
+                      "real trellis quant against its bf16 source at the expected error. It has "
+                      "NOT been proven bitwise against a running exllamav3 kernel, which is why "
+                      "this row is advisory.", True),
+                 disc("record_note", "info",
+                      "HEAD-1d: the candidate's head is a DIFFERENT tensor from the root's "
+                      "(the bf16->fp16->bf16 round trip, 3e-8), so this comparison replayed the "
+                      "root's hidden states through the root's head and the candidate's through "
+                      "its own. The pod's shared-head comparison correctly REFUSED (HEAD-1b) "
+                      "after both cold captures had sealed; this receipt was computed from the "
+                      "retrieved sealed datasets. Nothing was substituted."),
+                 disc("third_party_artifact_self_measured", "info",
+                      "drowzeys's weights, our measurement.")]),
+        dict(mid="measurement--glm-5.3.exl3-tr3-3.0bpw-davidsyoung.corpus5x5-v1", art=G53_DY30,
+             desc=G53_DY30_DESC, ds_url=G53_DY30_DS, ds_rev=G53_DY30_DS_REV,
+             name="comparison.glm-5.3-exl3-tr3-3.0bpw-davidsyoung.corpus5x5-v1.json",
+             pod="comparison.glm-5.3-exl3-tr3-3.0bpw-davidsyoung.corpus5x5-v1.pod-shared-head.json",
+             repro="reproduction.glm-5.3-exl3-tr3-3.0bpw-davidsyoung.json", pin=G53_PIN_DY,
+             runtime={"engines/tools/hf_capture.py": "ae5f1a7c89d66c09d3596200e7ff2ba8b065f4af7f26a1b88062a009cfe84bab",
+                      "engines/tools/layer_outer.py": "0209098bbf52578cb05a77815627bb15b01acdc1c754d17264247f4ba0863c09",
+                      "bin/fidelity/panel.py": "84e02b78781663293c24f5da94e50fecdcf34ad1c72202155792dc54e33f4324"},
+             card="https://huggingface.co/davidsyoung/GLM-5.3-EXL3-TR3-3.0bpw", card_rev=G53_DY30_REV,
+             discussion=None,
+             disclosures=[
+                 disc("lossy_capture_codec", "caveat",
+                      "RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is "
+                      "decoded to bf16 per module on the capture device "
+                      "(exl3-trellis-decode-to-bf16, TP4 rank shards composed per module) before the loader; the decoder reproduces "
+                      "exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a "
+                      "real trellis quant against its bf16 source at the expected error. It has "
+                      "NOT been proven bitwise against a running exllamav3 kernel, which is why "
+                      "this row is advisory.", True),
+                 disc("tp_sliced_artifact", "info",
+                      "The 57,600 routed-expert modules were stored as four tensor-parallel rank "
+                      "shards each and composed into whole weights in ascending rank order along "
+                      "the axis the artifact's hybrid_tr3_tail declares (tp_rank_payloads_composed "
+                      "in the sealed dataset); every expert at K=3."),
+                 disc("record_note", "info",
+                      "Head identity: this release's lm_head is content-identical to the BF16 "
+                      "root's (%s...), so own-head and shared-head replay are the same "
+                      "arithmetic; the pod-side HEAD-1a receipt is cited beside this one."
+                      % G53_HEAD_SHA[:12]),
+                 disc("third_party_artifact_self_measured", "info",
+                      "davidsyoung's weights, our measurement.")]),
+        dict(mid="measurement--glm-5.3.exl3-tr3-3.25bpw-davidsyoung.corpus5x5-v1", art=G53_DY325,
+             desc=G53_DY325_DESC, ds_url=G53_DY325_DS, ds_rev=G53_DY325_DS_REV,
+             name="comparison.glm-5.3-exl3-tr3-3.25bpw-davidsyoung.corpus5x5-v1.json",
+             pod="comparison.glm-5.3-exl3-tr3-3.25bpw-davidsyoung.corpus5x5-v1.pod-shared-head.json",
+             repro="reproduction.glm-5.3-exl3-tr3-3.25bpw-davidsyoung.json", pin=G53_PIN_DY,
+             runtime={"engines/tools/hf_capture.py": "ae5f1a7c89d66c09d3596200e7ff2ba8b065f4af7f26a1b88062a009cfe84bab",
+                      "engines/tools/layer_outer.py": "0209098bbf52578cb05a77815627bb15b01acdc1c754d17264247f4ba0863c09",
+                      "bin/fidelity/panel.py": "84e02b78781663293c24f5da94e50fecdcf34ad1c72202155792dc54e33f4324"},
+             card="https://huggingface.co/davidsyoung/GLM-5.3-EXL3-TR3-3.25bpw", card_rev=G53_DY325_REV,
+             discussion=None,
+             disclosures=[
+                 disc("lossy_capture_codec", "caveat",
+                      "RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is "
+                      "decoded to bf16 per module on the capture device "
+                      "(exl3-trellis-decode-to-bf16, TP4 rank shards composed per module) before the loader; the decoder reproduces "
+                      "exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a "
+                      "real trellis quant against its bf16 source at the expected error. It has "
+                      "NOT been proven bitwise against a running exllamav3 kernel, which is why "
+                      "this row is advisory.", True),
+                 disc("tp_sliced_artifact", "info",
+                      "The 57,600 routed-expert modules were stored as four tensor-parallel rank "
+                      "shards each and composed into whole weights in ascending rank order along "
+                      "the axis the artifact's hybrid_tr3_tail declares (tp_rank_payloads_composed "
+                      "in the sealed dataset); K3/K4 per expert, average 3.25."),
+                 disc("record_note", "info",
+                      "Head identity: this release's lm_head is content-identical to the BF16 "
+                      "root's (%s...), so own-head and shared-head replay are the same "
+                      "arithmetic; the pod-side HEAD-1a receipt is cited beside this one."
+                      % G53_HEAD_SHA[:12]),
+                 disc("third_party_artifact_self_measured", "info",
+                      "davidsyoung's weights, our measurement.")]),
+        dict(mid="measurement--glm-5.3.exl3-tr3-3.42bpw-davidsyoung.corpus5x5-v1", art=G53_DY342,
+             desc=G53_DY342_DESC, ds_url=G53_DY342_DS, ds_rev=G53_DY342_DS_REV,
+             name="comparison.glm-5.3-exl3-tr3-3.42bpw-davidsyoung.corpus5x5-v1.json",
+             pod="comparison.glm-5.3-exl3-tr3-3.42bpw-davidsyoung.corpus5x5-v1.pod-shared-head.json",
+             repro="reproduction.glm-5.3-exl3-tr3-3.42bpw-davidsyoung.json", pin=G53_PIN_DY,
+             runtime={"engines/tools/hf_capture.py": "ae5f1a7c89d66c09d3596200e7ff2ba8b065f4af7f26a1b88062a009cfe84bab",
+                      "engines/tools/layer_outer.py": "0209098bbf52578cb05a77815627bb15b01acdc1c754d17264247f4ba0863c09",
+                      "bin/fidelity/panel.py": "84e02b78781663293c24f5da94e50fecdcf34ad1c72202155792dc54e33f4324"},
+             card="https://huggingface.co/davidsyoung/GLM-5.3-EXL3-TR3-3.42bpw", card_rev=G53_DY342_REV,
+             discussion=None,
+             disclosures=[
+                 disc("lossy_capture_codec", "caveat",
+                      "RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is "
+                      "decoded to bf16 per module on the capture device "
+                      "(exl3-trellis-decode-to-bf16, TP4 rank shards composed per module) before the loader; the decoder reproduces "
+                      "exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a "
+                      "real trellis quant against its bf16 source at the expected error. It has "
+                      "NOT been proven bitwise against a running exllamav3 kernel, which is why "
+                      "this row is advisory.", True),
+                 disc("tp_sliced_artifact", "info",
+                      "The 57,600 routed-expert modules were stored as four tensor-parallel rank "
+                      "shards each and composed into whole weights in ascending rank order along "
+                      "the axis the artifact's hybrid_tr3_tail declares (tp_rank_payloads_composed "
+                      "in the sealed dataset); K3/K4 per expert, average 3.421875."),
+                 disc("record_note", "info",
+                      "Head identity: this release's lm_head is content-identical to the BF16 "
+                      "root's (%s...), so own-head and shared-head replay are the same "
+                      "arithmetic; the pod-side HEAD-1a receipt is cited beside this one."
+                      % G53_HEAD_SHA[:12]),
+                 disc("third_party_artifact_self_measured", "info",
+                      "davidsyoung's weights, our measurement.")]),
+    ]
+    for cand in candidates:
+        c = _g53_comparison(cand["name"], want_kind="measurement", want_head_policy="native_head",
+                            reference_ds=G53_ROOT_DESC, candidate_ds=cand["desc"])
+        pod = _g53_json(cand["pod"]) if cand["pod"] else None
+        repro = _g53_json(cand["repro"])
+        # The pod replayed on its own host CPU (AVX-512 OpenBLAS kernels); the
+        # own-head receipt replayed on the maintainer's Intel X5570 (SSE4.2
+        # kernels). Same fp32 numpy backend by NAME, a different accumulation
+        # order in fact: measured 3.0e-10 nats on the FP8 row and 1.8e-9 on the
+        # K4 row. Anything larger than the fp32-GEMM term is a real disagreement
+        # and refuses.
+        host_delta = None
+        if pod is not None:
+            host_delta = c["metric"]["value"] - pod["metric"]["value"]
+            if abs(host_delta) > 1e-8 or pod["top1_agreement"] != c["top1_agreement"]:
+                raise SystemExit("seed_registry: %s: the pod-side and own-head receipts disagree on "
+                                 "the value beyond the replay-host term (%r vs %r, top-1 %r vs %r)"
+                                 % (cand["mid"], pod["metric"]["value"], c["metric"]["value"],
+                                    pod["top1_agreement"], c["top1_agreement"]))
+        slug = cand["name"].split("comparison.glm-5.3-")[1].split(".corpus5x5")[0]
+        if repro["comparison_kind"] != "reproduction_confirmation" \
+                or repro["metric"]["value"] != 0.0 \
+                or not repro["self_compare"]["capture_content_digest_equal"] \
+                or cand["desc"]["capture"]["capture_content_digest"] not in (
+                    repro["reference"]["capture_content_digest"],
+                    repro["candidate"]["capture_content_digest"]):
+            raise SystemExit("seed_registry: %s: the reproduction receipt does not confirm the "
+                             "canonical candidate capture" % cand["mid"])
+        art = artifacts_map[cand["art"]]
+        rows.append(M(
+            cand["mid"], G53, cand["art"], P_G53_C55, R_G53_HF, PL_FIDDS_G53,
+            c["metric"]["value"], top1=c["top1_agreement"], aux=aux_of(c), notes=notes_of(c),
+            scored_positions=51175, contexts=25,
+            runs=2, cold=True, identical=True,
+            evidence_kind="hidden_state_tensor_sha256",
+            evidence_hashes=[cand["desc"]["capture"]["capture_content_digest"]],
+            det_note="TWO cold captures of the candidate in two fresh processes on one H200 "
+                     "produced the same capture_content_digest %s...; the pod's qualify_root "
+                     "stage compared them with --self-compare --force-compute and got exactly "
+                     "0.0 (reproduction receipt %s...). The reference side is the two-pod-verified "
+                     "root capture the floor row uses."
+                     % (cand["desc"]["capture"]["capture_content_digest"][:8],
+                        repro["receipt_sha256"][:8]),
+            cls="advisory",
+            sources=[ds_root,
+                     src("dataset_card", cand["ds_url"], None,
+                         "candidate capture at revision %s: dataset_sha256 %s..., "
+                         "capture_content_digest %s..."
+                         % (cand["ds_rev"][:12], cand["desc"]["dataset_sha256"][:8],
+                            cand["desc"]["capture"]["capture_content_digest"][:8])),
+                     src("model_card", cand["card"], None, "revision %s..." % cand["card_rev"][:8]),
+                     src("github_file", G53_GH + cand["name"], _g53_sha(cand["name"]),
+                         "malaiwah.fidelity-comparison-receipt.v1, HEAD-1d own-head replay "
+                         "(receipt_sha256 %s...)" % c["receipt_sha256"][:8]),
+                     src("github_file", G53_GH + cand["repro"], _g53_sha(cand["repro"]),
+                         "the pod's two-cold-run reproduction confirmation for the candidate"),
+                     src("github_file", G53_GH + "dataset.glm-5.3-%s.json" % slug,
+                         _g53_sha("dataset.glm-5.3-%s.json" % slug),
+                         "the candidate's sealed dataset descriptor, byte-verbatim")]
+                    + ([src("github_file", G53_GH + cand["pod"], _g53_sha(cand["pod"]),
+                            "the pod-side comparison (HEAD-1a shared head, receipt_sha256 %s...), "
+                            "same value" % pod["receipt_sha256"][:8])] if pod is not None else [])
+                    + ([src("discussion", cand["discussion"], None,
+                            "the measurement as posted on the artifact's Hub page")]
+                       if cand["discussion"] else []),
+            disclosures=cand["disclosures"] + [
+                disc("record_note", "info",
+                     "Attributable error EQUALS this value: the floor on this reference is a "
+                     "measured 0.0, so nothing is subtracted."),
+                disc("reduced_run_count", "info",
+                     "TWO cold captures of the candidate, not the campaign's usual five: the "
+                     "evidence is a CONTENT digest (both captures bitwise identical) rather "
+                     "than a spread over run means, so further runs would restate an identity "
+                     "rather than tighten an estimate. The comparison itself is deterministic "
+                     "offline arithmetic over the two sealed datasets."),
+                disc("architecture_subset_loaded", "info",
+                     "The checkpoint's MTP block (layer index 78) is present and unused; the "
+                     "unused set matched the pinned allowlist exactly on both captures."),
+                disc("local_device_reduction_order", "info",
+                     "REPLAY HOST. This value was computed on the maintainer's workstation "
+                     "(Intel Xeon X5570, SSE4.2 OpenBLAS kernels, python 3.14.4, torch "
+                     "2.11.0+cpu) from the two sealed datasets; %s. comparator.replay_backend "
+                     "names only the backend class (numpy:cpu:float32), so the fp32 GEMM "
+                     "accumulation order is a per-host term below 1e-8 nats on this panel "
+                     "(1.8e-10 to 3.8e-9 in magnitude across the five rows that have a "
+                     "pod-side receipt) -- five orders below "
+                     "anything the panel can resolve, and stated here so nobody mistakes the "
+                     "ninth decimal for a signal."
+                     % ("the pod's own comparison of the same two datasets on its host CPU "
+                        "gives %r, a difference of %.3e nats at identical top-1"
+                        % (pod["metric"]["value"], host_delta) if pod is not None else
+                        "no pod-side comparison exists for this candidate (the pod refused "
+                        "HEAD-1b before the own-head rule existed)")),
+                disc("record_note", "info",
+                     "The sealed dataset's scope block spells the same allocation as this "
+                     "artifact's scope in the earlier two-rows-per-class form; the registry "
+                     "scope_digest (%s...) therefore differs from the receipt's string while "
+                     "describing the same bytes." % art["scope_digest"][:24])],
+            **est))
+        rows[-1]["harness"] = _g53_harness(
+            pin_compare=G53_PIN_COMPARE,
+            capture_pins={"reference": (G53_PIN_ROOT_CAPTURE, root_runtime),
+                          "candidate": (cand["pin"], cand["runtime"])},
+            note=G53_HARNESS_SPAN_NOTE % "dd0f4f57, %s, %s" % (cand["pin"][:8], G53_PIN_COMPARE[:8]))
+    return rows
+
+
 def stamp_harness(measurements):
     """Attach the harness block, and mark what predates it.
 
@@ -4620,7 +5762,7 @@ def main():
     amap = {a["id"]: a for a in ARTIFACTS}
     measurements = (build_measurements(amap) + build_measurements_runtime(amap)
                     + build_measurements_qwen(amap) + build_measurements_fruit(amap)
-                    + build_measurements_qwen38_hf(amap))
+                    + build_measurements_qwen38_hf(amap) + build_measurements_glm53(amap))
     # Joint fidelity standard (2026-08-29): window-clustered BCa intervals, the
     # per-domain table, sigma_run in quadrature, the protocol stamp, and the
     # calibration-clean scope siblings. Implemented in tools/joint_enrich.py so

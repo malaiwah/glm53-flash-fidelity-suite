@@ -3621,3 +3621,62 @@ missing, and is worth more than any of the individual fixes: a local
 end-to-end harness that drives the CONTRACT path -- job contract, qualify,
 archive, publish -- over a fake sealed dataset. Five of the seven pods would
 not have been rented.
+
+## 2026-09-05 - the GLM-5.3 lineup: six candidates on one root, and the head rule the lane needed
+
+**Measured and published**, all against `malaiwah/glm53-fidelity-root-v1@9c4a29ee`
+(capture `9eba97dd…`) on `panel--glm53.malaiwah.corpus5x5-v1`, 51,175 scored
+positions, same lane, floor measured exactly 0.0, every receipt `strict`:
+
+| artifact | declared bits | KL(root ‖ cand) nats | top-1 | dataset |
+|---|---:|---:|---:|---|
+| `zai-org/GLM-5.3` FP8 @ `187fb9ff` | 8 | 0.022305139008145507 | 0.9564435759648265 | `glm53-fidelity-fp8-v1@44eb57a8` |
+| `wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1` @ `47af2334` | 4 (routed experts) | 0.044803849964949564 | 0.939990229604299 | `glm53-fidelity-exl3-wrld-k4-v1@9ef6de77` |
+| `davidsyoung/GLM-5.3-EXL3-TR3-3.42bpw` @ `99c6f951` | 3.421875 | 0.06284189154898936 | 0.930552027357108 | `glm53-fidelity-exl3-tr3-3.42bpw-v1@f741c869` |
+| `davidsyoung/GLM-5.3-EXL3-TR3-3.25bpw` @ `6d6bd738` | 3.25 | 0.07305947749606471 | 0.9256277479237909 | `glm53-fidelity-exl3-tr3-3.25bpw-v1@9a5562a3` |
+| `davidsyoung/GLM-5.3-EXL3-TR3-3.0bpw` @ `eeab94eb` | 3.0 | 0.0838333949380458 | 0.9205080605764534 | `glm53-fidelity-exl3-tr3-3.0bpw-v1@7db8509f` |
+| `drowzeys/keys-GLM-5.3-EXL3` @ `ebf3c8bb` | 3.0 | 0.10233258694757999 | 0.9112652662432829 | `glm53-fidelity-exl3-drowzeys-v1@6d9256e5` |
+
+Monotone in bit rate across three producers and two decoders. Every candidate
+was captured twice in fresh processes on an H200 (US-NC-1), the two cold runs
+bitwise identical, the generation probe enforced and passing on decoded weights.
+A discussion was posted on each artifact's page. Registry rows under
+`measurement--glm-5.3.*` with recorded harnesses; the slug `glm53` in this
+registry is GLM-5.3-Flash, and the panel id is the one sealed exception.
+
+**Three paid lessons.**
+
+1. *The FP8 gate and the trellis gate consulted two predicates.* davidsyoung's
+   three releases carry a leftover `quant_method: modelopt` beside their real
+   `hybrid_tr3_tail` declaration; `build_streamed_model` asked the FP8 gate
+   first and three pods died after their fetch (~$3). `is_trellis_checkpoint()`
+   is now the one answer, `checkpoint_decode_plans()` runs the pod's decision
+   in the selftest at $0, and the relaunched three ran end to end.
+2. *An exllamav3 `head_bits=16` head is not the source head.* drowzeys sealed two
+   bitwise-identical cold captures and then HEAD-1b refused: its `lm_head` is
+   exactly the BF16 head after a bf16→fp16→bf16 round trip (210,841 of
+   951,582,720 elements differ, max |diff| 2.98e-8). `--own-heads` (HEAD-1d,
+   additive in the spec) replays each side through the head its own dataset
+   sealed — HEAD-2 computed offline from the shipped payloads — reports
+   `native_head`, keeps `strict`, and is bitwise the shared-head array on equal
+   heads. Registry REFC-003 binds one head policy per reference, so the whole
+   family was re-scored under `--own-heads` from the sealed datasets, at $0.
+3. *SCOPE-004 as an error refused a published dataset.* The rule added yesterday
+   turned the comparator's seal gate against the FP8 dataset sealed the day
+   before. It is a warning on a sealed dataset now and a refusal only at the
+   pre-spend gate on a scope file.
+
+**The replay host is a term.** Re-scoring on the workstation (Intel X5570,
+SSE4.2 OpenBLAS) reproduced every pod value at identical top-1 and within
+1.8e-10 … 3.8e-9 nats: `comparator.replay_backend` says `numpy:cpu:float32`
+on both, which names a backend class and not a GEMM accumulation order. Each
+registry row states its own delta. torch 2.11's bundled MKL VML `dExp`
+(`mkl_vml_kernel_dExp_Z0HAynn`) executes a VEX `vstmxcsr` on this non-AVX
+CPU in roughly half of the runs, alone or concurrent (SIGILL at the first
+estimator call, never later); `MKL_ENABLE_INSTRUCTIONS=SSE4_2` does not govern
+it. Retry; a run that survives its first estimator call finishes.
+
+**Operational.** Local disk filled during the third retrieval (three 5 GB sink
+bundles plus scratch); dy325b's science completed and published on the pod,
+and only the local published-archive rebuild failed. Spend today $15.67
+(balance $167.71 → $152.04); no pods live; reaper healthy.

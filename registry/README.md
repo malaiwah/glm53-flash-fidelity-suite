@@ -300,7 +300,7 @@ the validator warns whenever a `strict` row rests on a panel whose `contaminatio
 
 ## How to read the tables below
 
-17 tables follow, one per comparability group, across 3 models. Three things are true of all of them, and each is a mistake somebody has already made with numbers like these:
+18 tables follow, one per comparability group, across 4 models. Three things are true of all of them, and each is a mistake somebody has already made with numbers like these:
 
 1. **A number means nothing outside its own table.** Every table states the seven-part key its rows share. Two numbers under different keys are different quantities that happen to print in the same units.
 2. **The smallest number on this page is not the best quant.** Today it is GLM-5.2-SIQ-Fruit BF16 (the reference export) at 0 nats -- and it is not a quant at all -- those are unquantized weights, read by a second engine, measuring what two engines disagree by. Sorting this file by value and reading off the top is the single easiest way to be wrong with it.
@@ -854,6 +854,63 @@ Derived from `panel--qwen38.malaiwah.suite-v5-shard0-1m` by **scoring_window_cha
 - `qwen38.k4.suite-v5-shard0-1m.scorefrom1024` **revision_unpinned**: No measurement receipt for this artifact records a Hub revision. Every kld5 receipt records model_revision=null / model_revision_source='none'. Identity rests on index_sha256 and the per-shard sha256 map the receipt carries.
 - `qwen38.k4.suite-v5-shard0-1m.scorefrom1024` **single_run**: One pass. Repeatability was not established for this row.
 - `qwen38.k4.suite-v5-shard0-1m.scorefrom1024` **fp32_vocab_reduction**: ESTIMATOR DEFECT, disclosed 2026-08-31 (P1-06). The scorer computed the vocabulary reduction in float32 and cast the finished sum to float64; this row previously declared accumulation_dtype float64. Relabeled float32_reduce_legacy -- the value is unchanged, the comparability key moved, and the row ranks only against rows from the same float32-reducing scorer. Synthetic worst case for the defect class: negative per-token 'KL' near -1e-6 against a true value of ~2e-8 on near-equal distributions; this ladder's published means sit at 1e-3..1e-1, three to five orders above that error scale. See docs/PUBLISHED-CORRECTIONS.md.
+
+</details>
+
+
+## GLM-5.3
+
+`model--zai-org.glm-5.3` -- published by Z.ai. Tokenizer `glm-5.3`, vocabulary 154880.
+
+### Panel: GLM-5.3 corpus 5-stratum x 5-window panel -- 25 windows x 2048
+
+> **Panel disclosure -- `contamination_unchecked`:** No overlap scan against GLM-5.3's pretraining data is possible; the five strata are public web text. This affects what the KLD means about the model, not the comparison between two artifacts of it.
+
+> **Panel disclosure -- `small_panel`:** 25 windows / 51,175 scored positions. On the two 4-bit-class artifacts measured so far the per-window means spread over an order of magnitude (K4: median 0.0030, p95 0.20). Rank artifacts on this panel by the paired per-window difference, never by a single window.
+
+#### Group `cmp--fdbd312a2551db89` -- 7 rows
+
+**Panel** `panel--glm53.malaiwah.corpus5x5-v1` -- GLM-5.3 corpus 5-stratum x 5-window panel -- 25 windows x 2048
+  25 contexts x 2047 scored positions = **51,175 scored positions**, score_from 0
+  sealed: **yes** (token digest `f09ee395f635225a...`) -- contamination scan: **NOT RUN**
+**Reference (teacher)** `reference--malaiwah.glm-5.3-bf16-hf.corpus5x5-v1` -- native_bf16, artifact `artifact--zai-org.glm-5.3-bf16` @304b8051cfb2b260b61ce0cbe330e02a98e73639
+**Metric** mean_tokenwise_kld, direction reference_to_candidate, accumulation float64
+**Estimation surface** stack_relation `same_stack`, head_policy `native_head`
+**Comparability key** `cmp--fdbd312a2551db89`
+**Like-for-like predicate** `comparable: false` -- a RECORDED secondary dimension differs across members: scope. Equal keys make these rows candidates for comparison, not certified like-for-like; ranking across the differing dimension attributes a lane/pipeline/hardware/scope effect to quantization quality. Machine-readable form with per-dimension values: this key's `comparability` block in `index.json`.
+
+> **What this table is.** Every row here shares the comparability key above: the same tokens, the same teacher capture, the same metric and direction, the same estimator precision, the same stack relation and the same head policy. That makes them CANDIDATES for ranking -- the key is a necessary partition, not a certificate. Whether they are also like-for-like on the dimensions the key omits (lane, pipeline, scope coverage, hardware) is what the predicate line above answers.
+>
+> **Rank is not a verdict.** The table is sorted by fidelity alone, and fidelity buys bits: a larger, higher-bitrate quant will usually sit above a smaller one, which is not news. Read the Size and Codec columns before reading the order, and compare like against like.
+>
+> **What it is NOT comparable to.** Every other table in this file: no other group shares this key. That includes every table for a different model -- a KL number is a divergence over one model's own vocabulary against that model's own teacher, never a score that can be carried between models.
+
+| Artifact | Codec | Size | mean_tokenwise_kld (nats) | CI95 | Top-1 | Runs | Attribution | Receipt |
+|---|---|---:|---:|---|---:|---|---|---|
+| **GLM-5.3 BF16 (the official full-precision release)** _(measurement floor)_ | `bf16` | 1506.7 GB | **0** | -- | 100.00 % | 2 runs, bitwise identical | measured by us (their artifact) | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/glm-5.3/comparison.glm-5.3-bf16-selfcompare-floor.corpus5x5-v1.json) |
+| GLM-5.3 FP8 (the official block-scaled release) | `fp8_e4m3 @8` | 755.6 GB | **0.0223051** | -- | 95.64 % | 2 runs, bitwise identical | measured by us (their artifact) | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/glm-5.3/comparison.glm-5.3-fp8-dequantized.corpus5x5-v1.json) |
+| wrldsuksgo2mars GLM-5.3 EXL3 K4 v1 (routed experts trellis K4, rest FP8) | `exl3-mcg @4` | 394.0 GB | **0.0448038** | -- | 94.00 % | 2 runs, bitwise identical | measured by us (their artifact) | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/glm-5.3/comparison.glm-5.3-exl3-k4-wrldsuksgo2mars.corpus5x5-v1.json) |
+| davidsyoung GLM-5.3 EXL3 TR3 3.42bpw (routed experts trellis, TP4 rank-sharded) | `exl3-mcg @3.42188` | 355.2 GB | **0.0628419** | -- | 93.06 % | 2 runs, bitwise identical | measured by us (their artifact) | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/glm-5.3/comparison.glm-5.3-exl3-tr3-3.42bpw-davidsyoung.corpus5x5-v1.json) |
+| davidsyoung GLM-5.3 EXL3 TR3 3.25bpw (routed experts trellis, TP4 rank-sharded) | `exl3-mcg @3.25` | 339.4 GB | **0.0730595** | -- | 92.56 % | 2 runs, bitwise identical | measured by us (their artifact) | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/glm-5.3/comparison.glm-5.3-exl3-tr3-3.25bpw-davidsyoung.corpus5x5-v1.json) |
+| davidsyoung GLM-5.3 EXL3 TR3 3.0bpw (routed experts trellis, TP4 rank-sharded) | `exl3-mcg @3` | 316.4 GB | **0.0838334** | -- | 92.05 % | 2 runs, bitwise identical | measured by us (their artifact) | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/glm-5.3/comparison.glm-5.3-exl3-tr3-3.0bpw-davidsyoung.corpus5x5-v1.json) |
+| drowzeys keys-GLM-5.3-EXL3 (routed experts trellis 3.0 bpw, mcg/mul1) | `exl3-trellis @3` | 330.1 GB | **0.102333** | -- | 91.13 % | 2 runs, bitwise identical | measured by us (their artifact) | [receipt](https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/glm-5.3/comparison.glm-5.3-exl3-keys-drowzeys.corpus5x5-v1.json) |
+
+<details><summary>Disclosures for the rows above (14)</summary>
+
+- `glm-5.3.fp8-dequantized.corpus5x5-v1` **lossy_capture_codec**: RECONSTRUCTED, NOT EXECUTED. The candidate was captured from a bf16 materialisation of the stored fp8 weights: every fp8_e4m3 tensor is decoded on the host with its 128x128 weight_scale_inv block scale (engines/tools/layer_outer.py fp8-block-dequant-to-bf16, accumulated fp32, stored bf16) BEFORE it reaches the loader, so no scale can be silently dropped (transformers' plain-cast path would drop all of them). This is the dequantize-and-run methodology: it measures the error of the STORED weights, not of a vendor kernel.
+- `glm-5.3.fp8-dequantized.corpus5x5-v1` **estimator_scope_narrower_than_artifact**: WEIGHT-ONLY, THEREFORE A LOWER BOUND. The checkpoint declares activation_scheme: dynamic; the served model also quantizes activations per token at runtime, and that term is absent here.
+- `glm-5.3.fp8-dequantized.corpus5x5-v1` note: Per-window mean 0.022305139008145507, population sd 0.011658841108250139, min 0.0031859275260282391 (final-0012, literary), max 0.066921711801724015 (final-0014, literary) over 25 windows. The macro mean over strata equals the token mean because every window contributes the same 2,047 positions.
+- `glm-5.3.exl3-k4-wrldsuksgo2mars.corpus5x5-v1` **lossy_capture_codec**: RECONSTRUCTED, NOT EXECUTED. The 57,600 routed-expert trellis payload groups are decoded to bf16 per module on the capture device (exl3-trellis-decode-to-bf16: exllamav3's unpack, tile permutation, two Hadamard GEMMs and su/sv scaling, mcg codebook read from each module's own payload, TF32 pinned off and recorded) and the fp8 tensors the release kept are decoded on the host as for the FP8 row -- all before the loader. Decode evidence: the decoder reproduces exllamav3's decode_payload_hf bitwise on real payloads and the same path reconstructs a real trellis quant against its bf16 source at the expected K4 error (cosine 0.99773, rel_l2 6.74%). The decode has NOT been proven bitwise against a running exllamav3 kernel, which is why this row is advisory.
+- `glm-5.3.exl3-k4-wrldsuksgo2mars.corpus5x5-v1` **estimator_scope_narrower_than_artifact**: The fp8 tensors this release kept carry the source's activation_scheme: dynamic; that runtime term is absent, so this is a lower bound on a served fp8-activation deployment of it.
+- `glm-5.3.exl3-k4-wrldsuksgo2mars.corpus5x5-v1` note: Per-window mean 0.044803849964949564, population sd 0.026215181142102181, min 0.0072157360961422135 (final-0012, literary), max 0.14520838316901405 (final-0014, literary) over 25 windows. The macro mean over strata equals the token mean because every window contributes the same 2,047 positions.
+- `glm-5.3.exl3-tr3-3.42bpw-davidsyoung.corpus5x5-v1` **lossy_capture_codec**: RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is decoded to bf16 per module on the capture device (exl3-trellis-decode-to-bf16, TP4 rank shards composed per module) before the loader; the decoder reproduces exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a real trellis quant against its bf16 source at the expected error. It has NOT been proven bitwise against a running exllamav3 kernel, which is why this row is advisory.
+- `glm-5.3.exl3-tr3-3.42bpw-davidsyoung.corpus5x5-v1` note: Per-window mean 0.062841891548989365, population sd 0.037338302064760603, min 0.007424164748414566 (final-0012, literary), max 0.19156791191512221 (final-0014, literary) over 25 windows. The macro mean over strata equals the token mean because every window contributes the same 2,047 positions.
+- `glm-5.3.exl3-tr3-3.25bpw-davidsyoung.corpus5x5-v1` **lossy_capture_codec**: RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is decoded to bf16 per module on the capture device (exl3-trellis-decode-to-bf16, TP4 rank shards composed per module) before the loader; the decoder reproduces exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a real trellis quant against its bf16 source at the expected error. It has NOT been proven bitwise against a running exllamav3 kernel, which is why this row is advisory.
+- `glm-5.3.exl3-tr3-3.25bpw-davidsyoung.corpus5x5-v1` note: Per-window mean 0.073059477496064701, population sd 0.04149044465864947, min 0.01180684193920154 (final-0012, literary), max 0.20926743181562468 (final-0014, literary) over 25 windows. The macro mean over strata equals the token mean because every window contributes the same 2,047 positions.
+- `glm-5.3.exl3-tr3-3.0bpw-davidsyoung.corpus5x5-v1` **lossy_capture_codec**: RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is decoded to bf16 per module on the capture device (exl3-trellis-decode-to-bf16, TP4 rank shards composed per module) before the loader; the decoder reproduces exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a real trellis quant against its bf16 source at the expected error. It has NOT been proven bitwise against a running exllamav3 kernel, which is why this row is advisory.
+- `glm-5.3.exl3-tr3-3.0bpw-davidsyoung.corpus5x5-v1` note: Per-window mean 0.083833394938045827, population sd 0.0490654872424078, min 0.011591449983713651 (final-0012, literary), max 0.25238779656109533 (final-0014, literary) over 25 windows. The macro mean over strata equals the token mean because every window contributes the same 2,047 positions.
+- `glm-5.3.exl3-keys-drowzeys.corpus5x5-v1` **lossy_capture_codec**: RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is decoded to bf16 per module on the capture device (exl3-trellis-decode-to-bf16, mcg on layer 3 and mul1 on layers 4-77, each read from the module's own payload) before the loader; the decoder reproduces exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a real trellis quant against its bf16 source at the expected error. It has NOT been proven bitwise against a running exllamav3 kernel, which is why this row is advisory.
+- `glm-5.3.exl3-keys-drowzeys.corpus5x5-v1` note: Per-window mean 0.10233258694757998, population sd 0.059543079503892628, min 0.01697183535100235 (final-0012, literary), max 0.30580890039836339 (final-0014, literary) over 25 windows. The macro mean over strata equals the token mean because every window contributes the same 2,047 positions.
 
 </details>
 

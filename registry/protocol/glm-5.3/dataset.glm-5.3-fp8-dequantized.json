@@ -1,0 +1,468 @@
+{
+  "capture": {
+    "capture_content_digest": "e0102a154bebba73de98643941e043d36c948735ae804d65e87786b59e42b379",
+    "dtype": "BF16",
+    "dtype_lossless": true,
+    "form": "hidden",
+    "head_not_separable_reason": null,
+    "head_separable": true,
+    "hidden_width": 6144,
+    "lossy_codec": null,
+    "manifest_file": "capture/manifest.json",
+    "manifest_file_sha256": "965eaba3366a3efe33b224fabeb70755d9ac36b37f530d0d90e997c102b56a66",
+    "records_count": 25,
+    "scored_rows_total": 51175,
+    "semantic_point": "after_final_rmsnorm_before_lm_head",
+    "tensor_key": "hidden_states",
+    "total_size_bytes": 628845100,
+    "vocab_size": 154880
+  },
+  "coverage": {
+    "complete": true,
+    "declared_records": 25,
+    "index_range": [
+      0,
+      24
+    ],
+    "missing_indices_sample": [],
+    "present_records": 25,
+    "shard_of": null,
+    "subset_detail": null
+  },
+  "created_utc": "2026-09-04T16:06:10Z",
+  "dataset": {
+    "author": {
+      "handle": null,
+      "is_registry_maintainer": false,
+      "name": "malaiwah",
+      "role": "capture-author",
+      "url": null
+    },
+    "base_capture": null,
+    "id": "fidelity--glm53.malaiwah.quant.fp8",
+    "license": "mit",
+    "name": "fidelity--glm53.malaiwah.quant.fp8",
+    "qualification": null,
+    "repository": "malaiwah/glm53-fidelity-fp8-v1",
+    "revision": null,
+    "role": "quant",
+    "structural_status": "sealed"
+  },
+  "dataset_sha256": "ce1c873497d8f935d62d317d42c29bdabcaf3a88b816b3ec95ef34cf222d9b43",
+  "determinism": {
+    "cold_start_per_run": true,
+    "distinct_evidence_hash_count": 1,
+    "evidence_hashes": [
+      "e0102a154bebba73de98643941e043d36c948735ae804d65e87786b59e42b379"
+    ],
+    "evidence_kind": "hidden_state_tensor_sha256",
+    "identical_across_runs": null,
+    "note": "a single cold capture; cross-run determinism is NOT asserted here. Capture a second cold run and run `fidelity-dataset compare --self-compare` -- an exactly 0.0 result is the SC-1 reproduction confirmation.",
+    "repeat_noise": null,
+    "repeats": [],
+    "run_count": 1
+  },
+  "disclosures": [
+    {
+      "affects_comparability": false,
+      "code": "no_known_deviations",
+      "detail": "captured by engines/tools/hf_capture.py",
+      "severity": "info"
+    },
+    {
+      "affects_comparability": false,
+      "code": "checkpoint_tensors_intentionally_unused",
+      "detail": "1569 checkpoint tensor(s) were present but intentionally unused by this architecture. Their complete set exactly matched pinned allowlist 7de471fa705b1be0d05ced24f2c1f6735e5d947b4114c7b9fcf6f27ce87ba425 (canonical sorted-name SHA-256 806861c3e936e4eeb46fa519c1eedec4fa004dbcb53f6e432e6fa2b793bc4261).",
+      "severity": "caveat"
+    },
+    {
+      "affects_comparability": false,
+      "code": "reduced_run_count",
+      "detail": "this dataset is ONE cold capture (run_count 1, the DET-D4 floor is 5). Cross-run determinism is not asserted by the dataset; it is established by a second cold capture plus `fidelity-dataset compare --self-compare`, whose exactly-0.0 result is the SC-1 reproduction confirmation.",
+      "severity": "caveat"
+    }
+  ],
+  "format_version": 1,
+  "generation_sanity_probe": {
+    "degenerate": false,
+    "enforced": true,
+    "entropy_nats": 3.8370483356753526,
+    "expect": "Paris",
+    "expected_first_ids": [
+      1732,
+      12089,
+      40631,
+      59190
+    ],
+    "logit_spread": 25.59375,
+    "note": "one extra window through the same schedule; its hidden state is discarded and never enters the dataset.",
+    "prompt": "The capital of France is",
+    "schema": "malaiwah.generation-sanity-probe.v1",
+    "status": "pass",
+    "top1_id": 12089,
+    "top1_probability": 0.21527311409012706,
+    "top1_text": " Paris",
+    "top_k": [
+      {
+        "id": 12089,
+        "probability": 0.21527311409012706,
+        "text": " Paris"
+      },
+      {
+        "id": 264,
+        "probability": 0.11522739456961298,
+        "text": " a"
+      },
+      {
+        "id": 825,
+        "probability": 0.10168781880057648,
+        "text": " one"
+      },
+      {
+        "id": 279,
+        "probability": 0.06167677982185238,
+        "text": " the"
+      },
+      {
+        "id": 2114,
+        "probability": 0.04803392442258125,
+        "text": " home"
+      }
+    ],
+    "uniform_entropy_nats": 11.950405902510404,
+    "vocab_size": 154880
+  },
+  "head": {
+    "applied_in_capture": false,
+    "bias": null,
+    "bits": 16,
+    "compat_tensor_key": "weight",
+    "dtype": "BF16",
+    "equality_receipt": null,
+    "file": "head/weight.safetensors",
+    "file_sha256": "f722d591417749cee9de8ceb977b5f11cf5a1254e2dbf6409df9d170ac3be9b5",
+    "final_norm": {
+      "applied_at_replay": false,
+      "applied_in_capture": true,
+      "dtype": null,
+      "file": null,
+      "file_sha256": null,
+      "shape": null,
+      "tensor_content_sha256": null,
+      "tensor_key": null
+    },
+    "head_json": "head/head.json",
+    "present": true,
+    "quantized": false,
+    "raw_tensor_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd",
+    "shape": [
+      154880,
+      6144
+    ],
+    "source": "native",
+    "tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd",
+    "tensor_key": "lm_head.weight"
+  },
+  "interop": {
+    "adapted_from": null,
+    "compatible_with": [
+      "kimi-k3-distribution-fidelity/1"
+    ],
+    "divergences": [
+      {
+        "field": "head",
+        "id": "D-1",
+        "reason": "every capture declares its OWN head identity by tensor content digest; the comparator refuses a hidden-form comparison across differing heads."
+      },
+      {
+        "field": "runtime.lane",
+        "id": "D-2",
+        "reason": "lane is required and gated at compare time so registry BIAS-006 is checked before a number exists, not at submission."
+      },
+      {
+        "field": "panel.scoring_window",
+        "id": "D-3",
+        "reason": "scoring_window is part of panel identity, not a comparator flag: a score_from=1024 number is a different panel, not a variant."
+      },
+      {
+        "field": "comparison_kind",
+        "id": "D-4",
+        "reason": "self-compare is a first-class mode asserting exactly 0.0."
+      },
+      {
+        "field": "estimator.accumulation_dtype",
+        "id": "D-5",
+        "reason": "required, fp64 default; an fp32 estimator lands in a different comparability class on the same data and that must be visible."
+      },
+      {
+        "field": "coverage",
+        "id": "D-6",
+        "reason": "declared vs present record counts with shard_of; fixes our own manifest that claimed 5,120 captures in a 512-file repository."
+      },
+      {
+        "field": "panel",
+        "id": "D-7",
+        "reason": "the panel is a separately referenceable object, which is what makes a candidate capture publishable standalone."
+      },
+      {
+        "field": "capture.lossy_codec",
+        "id": "D-8",
+        "reason": "lets a llama.cpp .kld be ingested without laundering a lossy capture as exact."
+      },
+      {
+        "field": "capture.records[].attention_mask_sha256",
+        "id": "D-9",
+        "reason": "our packed and streaming lanes vary mask construction; a single-request capture path makes it invariant and has no equivalent field."
+      },
+      {
+        "field": "capture.head_separable",
+        "id": "D-10",
+        "reason": "hidden form is the default; logit form must declare head_separable:false with a reason."
+      }
+    ],
+    "k3_compat_emitted": false,
+    "note": null
+  },
+  "panel": {
+    "contamination": {
+      "checked": false,
+      "hits": null,
+      "method": "not established",
+      "receipt": null
+    },
+    "context_length": 2048,
+    "contexts": 25,
+    "panel_file": "panel/panel.json",
+    "panel_file_sha256": "a71d495140a7fc53387547d4cc87d610232c57303a059b57a62fd4f9333f4a4f",
+    "panel_id": "panel--glm53.malaiwah.corpus5x5-v1",
+    "panel_receipt_file": "panel/panel-receipt.json",
+    "panel_receipt_sha256": "9c3bc4f59e8825ac78b366ca0e2988a48ecdbcaf26fdaeaedd3251edb6f9a828",
+    "panel_token_sha256_legacy": "d177a85308683012b4289e35770ef08e4bdc8e17adf59c5d26de3e5da9479734",
+    "remap_file": null,
+    "repository": null,
+    "revision": null,
+    "scored_positions_total": 51175,
+    "scoring_window": {
+      "dropped_positions_total": 0,
+      "min_left_context_tokens": 1,
+      "policy": "every causal prediction position of every window is scored; nothing is dropped",
+      "score_from": 0,
+      "windowed": false
+    },
+    "suite_token_hash_sha256": "f09ee395f635225a077695ed193d61f7d1e70650cebe1b68f82b16f59d399f86",
+    "tokenizer": {
+      "files": [
+        {
+          "bytes": 4263,
+          "name": "LICENSE",
+          "sha256": "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c"
+        },
+        {
+          "bytes": 10465,
+          "name": "chat_template.jinja",
+          "sha256": "69bb3ab52067898e2466b855407636de559568947f367945842aabcb7fcc1705"
+        },
+        {
+          "bytes": 3732,
+          "name": "config.json",
+          "sha256": "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca"
+        },
+        {
+          "bytes": 194,
+          "name": "generation_config.json",
+          "sha256": "ac76b43d8683d3b930126870fc8be73d8679308fe752fa1f381096d8354f6a55"
+        },
+        {
+          "bytes": 20217442,
+          "name": "tokenizer.json",
+          "sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d"
+        },
+        {
+          "bytes": 761,
+          "name": "tokenizer_config.json",
+          "sha256": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"
+        }
+      ],
+      "files_verified": true,
+      "id": "zai-org/GLM-5.3-BF16",
+      "identity_sha256": "b18e4d378be7e75fd2b323f7c81cc65640f6a08e1842d3bf4e025d88a9d78bf9",
+      "maximum_token_id_exclusive": 154820,
+      "receipt": null,
+      "repository": "zai-org/GLM-5.3-BF16",
+      "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+      "vocab_size": 154820
+    }
+  },
+  "runtime": {
+    "backend_identity_sha256": null,
+    "file": "runtime/capture-runtime.json",
+    "file_sha256": "63e9e12802211749310bec2074b8500053aa83d7a940b09b5379ea2b79f4acfc",
+    "lane": "streaming",
+    "lane_identity_sha256": "025ae83c1cb0e2c518baa8bd0c46965f0c17b6aaca5b1b875ca5fcea71f565d5",
+    "lane_inferred": false,
+    "runtime_reader_sha256": null,
+    "source": "native",
+    "stack_fingerprint_sha256": "e7ddf6b280474c1709836e227b55dda1247b32148313bc87fd88a2ada704f0e0"
+  },
+  "schema": "malaiwah.fidelity-dataset.v1",
+  "scope": {
+    "assignments": [
+      {
+        "bits_per_weight": 8,
+        "format": "fp8_e4m3",
+        "layer_range": "all",
+        "note": "78 tensors: model.layers.N.self_attn.o_proj.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "attn.o",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8,
+        "format": "fp8_e4m3",
+        "layer_range": "all",
+        "note": "42 tensors: model.layers.N.self_attn.indexer.wk.weight, model.layers.N.self_attn.indexer.wq_b.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "attn.other",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "219 tensors: model.layers.N.self_attn.indexer.k_norm.bias, model.layers.N.self_attn.indexer.k_norm.weight, model.layers.N.self_attn.indexer.weights_proj.weight, model.layers.N.self_attn.kv_a_layernorm.weight, model.layers.N.self_attn.q_a_layernorm.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "attn.other",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 8,
+        "format": "fp8_e4m3",
+        "layer_range": "all",
+        "note": "312 tensors: model.layers.N.self_attn.kv_a_proj_with_mqa.weight, model.layers.N.self_attn.kv_b_proj.weight, model.layers.N.self_attn.q_a_proj.weight, model.layers.N.self_attn.q_b_proj.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "attn.qkv",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "1 tensors: model.embed_tokens.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "embed_tokens",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "1 tensors: lm_head.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "lm_head",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 8,
+        "format": "fp8_e4m3",
+        "layer_range": "all",
+        "note": "3 tensors: model.layers.N.mlp.down_proj.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "mlp.down",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8,
+        "format": "fp8_e4m3",
+        "layer_range": "all",
+        "note": "3 tensors: model.layers.N.mlp.gate_proj.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "mlp.gate",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8,
+        "format": "fp8_e4m3",
+        "layer_range": "all",
+        "note": "3 tensors: model.layers.N.mlp.up_proj.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "mlp.up",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8,
+        "format": "fp8_e4m3",
+        "layer_range": "all",
+        "note": "57600 tensors: model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "moe.experts",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "150 tensors: model.layers.N.mlp.gate.e_score_correction_bias, model.layers.N.mlp.gate.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "moe.router",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 8,
+        "format": "fp8_e4m3",
+        "layer_range": "all",
+        "note": "225 tensors: model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "moe.shared_expert",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 8,
+        "format": "fp8_e4m3",
+        "layer_range": "all",
+        "note": "778 tensors: model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight, model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "mtp",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "13 tensors: model.layers.N.eh_proj.weight, model.layers.N.enorm.weight, model.layers.N.hnorm.weight, model.layers.N.input_layernorm.weight, model.layers.N.mlp.gate.e_score_correction_bias, model.layers.N.mlp.gate.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "mtp",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "157 tensors: model.layers.N.input_layernorm.weight, model.layers.N.post_attention_layernorm.weight, model.norm.weight. read from zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+        "tensor_class": "norm",
+        "treatment": "native"
+      }
+    ],
+    "head_policy": "native",
+    "kv_cache_dtype": "bf16",
+    "policy": "mixed",
+    "scope_digest": "attn.o=quantized:fp8_e4m3@8|attn.other=native:bf16@16|attn.other=quantized:fp8_e4m3@8|attn.qkv=quantized:fp8_e4m3@8|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=quantized:fp8_e4m3@8|mlp.gate=quantized:fp8_e4m3@8|mlp.up=quantized:fp8_e4m3@8|moe.experts=quantized:fp8_e4m3@8|moe.router=native:bf16@16|moe.shared_expert=quantized:fp8_e4m3@8|mtp=native:bf16@16|mtp=quantized:fp8_e4m3@8|norm=native:bf16@16|head=native|kv=bf16"
+  },
+  "seal": {
+    "checksums_file": "checksums.txt",
+    "checksums_format": "sha256sum",
+    "checksums_sha256": "ffb95074b9cb93eeb383591df397fa13e34a17cd734c350b6f13730a91337f26",
+    "covers": [
+      "every published file except checksums.txt and fidelity-dataset.json, via checksums.txt",
+      "fidelity-dataset.json itself, via the self-blanked seal",
+      "every capture tensor a second time by CONTENT, via capture.capture_content_digest"
+    ],
+    "excludes": [
+      "checksums.txt",
+      "fidelity-dataset.json"
+    ],
+    "external_anchor": null,
+    "method": "self_blanked_canonical_json_sha256",
+    "seal_field": "dataset_sha256"
+  },
+  "upstream_receipts": [],
+  "weights": {
+    "artifact_ref": null,
+    "checkpoint_identity_sha256": "1ff88afc68dec2aa00f984553639907303f8e27f3ce8e99a881d9315ff44178c",
+    "codec": "fp8_e4m3",
+    "config_sha256": "3ac72612095574542f7fff847ada8e59d9199dd8af44bdf625d7e02615572e69",
+    "declared_bits": 8.0,
+    "declared_head_bits": 16,
+    "index_sha256": null,
+    "model_ref": null,
+    "model_revision": "187fb9fff6319062325ff825627ef6db084d9bc6",
+    "quantized": true,
+    "repository": "zai-org/GLM-5.3",
+    "revision": "187fb9fff6319062325ff825627ef6db084d9bc6"
+  }
+}

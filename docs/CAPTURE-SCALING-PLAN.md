@@ -298,7 +298,7 @@ right choice for reproducing an existing group.
 | Family | Reference | Size | Geometry | Quant children | Note |
 |---|---|---:|---|---:|---|
 | **GLM-5.2** | `zai-org/GLM-5.2` | 1,506.7 GB | 78L/6144/256e | **100** | natively unquantized; no `-BF16` sibling |
-| **GLM-5.3** | `zai-org/GLM-5.3-BF16` | 1,506.7 GB | 78L/6144/256e | 37 | same geometry as 5.2 — one engine serves both |
+| **GLM-5.3** | `zai-org/GLM-5.3-BF16` | 1,506.7 GB | 78L/6144/256e | 37 | **DONE (M3c, 2026-09-04/05)**: root on two H200 pods bitwise, six candidates measured (FP8, K4, three TR3, one stock EXL3), ≈ $80 including every failed attempt (RunPod balance $191.78 on 09-04 → $152.04 on 09-05 plus the root attempts before it; each figure is in the journal); see docs/HANDOFF-MEASUREMENT-SESSION.md §M3c |
 | **GLM-5.3-Flash** | `-Flash-BF16` | 642.7 GB | 45L/4096/288e | 67 | **re-capture**: a NEW group with a 0.0 floor beside the existing eight rows, which it does not upgrade |
 | **Qwen3.8-27B** | `Qwen/Qwen3.8-27B` | 55.6 GB | 64L/5120 dense, **hybrid attn + vision + MTP** | — | **DONE (M1, $5.12)**: new same-lane group, 37 old rows NOT upgraded — see below |
 | Qwen3.5-397B | `Qwen3.5-397B-A17B` | 806.8 GB | — | GGUF/MLX/REAP | backfill; 1,553 likes on the root |
