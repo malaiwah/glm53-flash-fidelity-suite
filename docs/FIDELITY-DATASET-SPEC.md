@@ -509,6 +509,16 @@ A capture carries a copy of the tokens so it is self-verifying, and names the pa
 `panel_id` + `suite_token_hash_sha256` + `repository@revision` so two captures can be proven to be on
 the same panel without either owning it.
 
+`panel_id` is the registry id (`panel--…`) when the panel declares one. A panel transported
+byte-exact from a producer that never minted an id (brandonmusic's `calibration/panel-v1/`,
+whose `panel.json` carries no `panel_id` and whose bytes are pinned by the M2 root-panel gate)
+is named `panel-artifact-sha256:<sha256 of the shipped panel.json>` — the content identity
+`bin/fidelity/panel.resolve_panel` mints for an id-less panel — and the schemas admit both
+spellings. The registry maps the second form to its panel row through
+`identity.panel_token_sha256`, which for `panel--glm53.brandonmusic.final25` is that same
+digest (`6bafe3283c54…`). Added 2026-09-05, additively, after a paid capture sealed and then
+refused on the pattern.
+
 This is the hinge on which "dataset B is publishable standalone" turns. Festr embeds the panel inside
 the *reference* artifact, which is exactly why his candidate captures cannot be published: a
 candidate has no artifact to live in, so only the compare receipt survives. (His

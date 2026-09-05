@@ -242,8 +242,11 @@ def main():
                   mutated_glm53, P.GLM53_TARGET_REPO,
                   P.GLM53_TARGET_REVISION))
 
+        # The committed byte-exact transport (engines/tools/transport_token_panel.py)
+        # is the default; QFS_BRANDON_PANEL_ROOT still points at a raw download.
         brandon_root = Path(os.environ.get(
-            "QFS_BRANDON_PANEL_ROOT", "/tmp/qfs-brandon-panel/calibration/panel-v1"))
+            "QFS_BRANDON_PANEL_ROOT",
+            str(BIN.parent / "engines" / "panels" / "panel--glm53.brandonmusic.final25")))
         if brandon_root.is_dir():
             brandon_closure = work / "brandon-closure"
             brandon_receipt = json.loads((brandon_root / "panel.receipt.json").read_text())
@@ -276,6 +279,29 @@ def main():
                   target_refused(
                       mutated_brandon, P.M2_TARGET_REPO,
                       P.M2_TARGET_REVISION))
+            # The producer minted no panel_id, so the binding names the panel by
+            # the sha256 of its panel.json. That id is what the M2 gate pins and
+            # what a capture writes into fidelity-dataset.json -- and on 2026-09-05
+            # a sealed paid capture then REFUSED on the schema's `^panel--`
+            # pattern. Both id spellings must be admitted by every wire schema.
+            from fidelity import dsvalidate
+            artifact_id = brandon_binding["panel"]["id"]
+            check("id-less Brandon panel binds as panel-artifact-sha256:<panel.json sha256>",
+                  artifact_id == "panel-artifact-sha256:%s" % P.M2_PANEL_FILE_SHA256)
+            schema_hits = []
+            for schema_file, instance in (
+                    ("fidelity-dataset.schema.json", {"panel": {"panel_id": artifact_id}}),
+                    ("fidelity-comparison-receipt.schema.json", {"panel": {"panel_id": artifact_id}}),
+                    ("fidelity-card-annotation.schema.json",
+                     {"measurement": {"panel_id": artifact_id}})):
+                schema_hits += [m for m in dsvalidate.schema_errors(instance, schema_file)
+                                if "panel_id" in m]
+            check("every wire schema admits the artifact-digest panel_id",
+                  not schema_hits, "; ".join(schema_hits)[:300])
+            check("...and still refuses an id that is neither form",
+                  any("panel_id" in m for m in dsvalidate.schema_errors(
+                      {"panel": {"panel_id": "brandon-final25"}},
+                      "fidelity-dataset.schema.json")))
         else:
             check("real Brandon sealed closure resolves shifted next-token mask geometry",
                   True, "SKIPPED: set QFS_BRANDON_PANEL_ROOT to the downloaded panel")

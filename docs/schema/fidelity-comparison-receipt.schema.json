@@ -43,7 +43,7 @@
       "required": ["suite_token_hash_sha256", "contexts", "scored_positions", "scoring_window"],
       "additionalProperties": true,
       "properties": {
-        "panel_id": { "type": ["string", "null"], "pattern": "^panel--" },
+        "panel_id": { "type": ["string", "null"], "pattern": "^(panel--|panel-artifact-sha256:[0-9a-f]{64}$)" },
         "suite_token_hash_sha256": { "$ref": "#/$defs/sha256" },
         "panel_token_sha256_legacy": { "$ref": "#/$defs/sha256_or_null" },
         "contexts": { "type": "integer", "minimum": 1 },

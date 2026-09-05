@@ -159,7 +159,7 @@
       ],
       "additionalProperties": true,
       "properties": {
-        "panel_id": { "type": ["string", "null"], "pattern": "^panel--" },
+        "panel_id": { "type": ["string", "null"], "pattern": "^(panel--|panel-artifact-sha256:[0-9a-f]{64}$)" },
         "panel_file": { "$ref": "#/$defs/relpath" },
         "panel_file_sha256": { "$ref": "#/$defs/sha256" },
         "suite_token_hash_sha256": {

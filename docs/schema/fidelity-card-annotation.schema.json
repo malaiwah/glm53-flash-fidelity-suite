@@ -93,7 +93,7 @@
           "lane": { "enum": ["sealed-ep8", "streaming", "local-mps", "local-cuda-budget", "other"] },
           "status": { "enum": ["published", "pending", "superseded", "retracted"] },
           "comparability_key": { "type": ["string", "null"], "pattern": "^cmp--[0-9a-f]{16}$" },
-          "panel_id": { "type": ["string", "null"], "pattern": "^panel--" },
+          "panel_id": { "type": ["string", "null"], "pattern": "^(panel--|panel-artifact-sha256:[0-9a-f]{64}$)" },
           "reference_id": { "type": ["string", "null"], "pattern": "^reference--" },
           "pipeline_id": { "type": ["string", "null"], "pattern": "^pipeline--" },
           "metric_name": { "type": "string", "minLength": 1 },
