@@ -1275,8 +1275,9 @@ def _validate_dataset_tree(prefix, identity, bodies, digests=None,
             or panel_identity.get("panel_receipt_sha256")
                 != bound_receipt.get("declared_receipt_sha256")
             or panel_identity.get("tokenizer") != bound_tokenizer
-            or panel_identity.get("resolved_binding_evidence")
-                != expected_binding_evidence):
+            or not panel.binding_evidence_matches(
+                panel_identity.get("resolved_binding_evidence"),
+                expected_binding_evidence)):
         raise ArchiveError(
             "%s capture identity differs from the exact root job" % prefix)
     expected_license = contract.get("weights_license")
@@ -1500,8 +1501,9 @@ def _validate_dataset_tree(prefix, identity, bodies, digests=None,
             or not isinstance(capture_tool, dict)
             or capture_tool.get("file") != "engines/tools/hf_capture.py"
             or capture_tool.get("schedule") != contract.get("schedule")
-            or capture_tool.get("resolved_panel_binding")
-                != expected_binding_evidence
+            or not panel.binding_evidence_matches(
+                capture_tool.get("resolved_panel_binding"),
+                expected_binding_evidence)
             or capture_tool.get("unexpected_tensor_allowlist")
                 != observed_allowlist
             or capture_tool.get("weights_license")

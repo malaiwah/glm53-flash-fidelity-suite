@@ -138,7 +138,14 @@ def main(argv=None) -> int:
 
     modules = payload_modules(keys, tp=tp)
     scaled = {k[: -len(SCALE_SUFFIX)] for k in keys if k.endswith(SCALE_SUFFIX)}
-    declared_bits = tail.get("bits_avg", tail.get("bits")) if tail else qc.get("bits")
+    # A TR3 tail says bits_avg, or bits, or (willfalco's GLM-5.2 tails) bits:"mixed"
+    # beside expert_bpw_mean; the first NUMERIC wins, mirroring
+    # hfmeta.tr3_tail_declared_bits.
+    declared_bits = (next((v for k in ("bits_avg", "bits", "expert_bpw_mean")
+                           for v in [tail.get(k)]
+                           if isinstance(v, (int, float)) and not isinstance(v, bool)),
+                          tail.get("bits_avg", tail.get("bits")))
+                     if tail else qc.get("bits"))
     dtypes = shard_dtypes(args.repo, args.revision, weight_map) if args.dtypes_from_hub else {}
     codebooks = defaultdict(int)
     for codebook in modules.values():

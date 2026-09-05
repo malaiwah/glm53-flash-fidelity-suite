@@ -142,7 +142,7 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                   panel_receipt_sha256=None,
                   resolved_panel_binding=None,
                   panel_binding_file_sha256="2" * 64,
-                  panel_binding_file="selftest.binding.json",
+                  panel_binding_file="panel-binding.json",
                   codec=None, declared_bits=None, weights_decode=None,
                   resources=None):
     """Build a complete, sealed, conformant dataset.  Every knob is a test axis.
@@ -326,6 +326,9 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                 "binding_file": panel_binding_file,
                 "binding_file_sha256": panel_binding_file_sha256,
                 "binding": resolved_panel_binding,
+                # The shape hf_capture seals since PANEL-D7 (9bd8823): the
+                # fourth key is what the pod archive refused on 2026-09-05.
+                "tokenizer_equivalences": [],
             },
         })
         allow_names = ["model.unused"]

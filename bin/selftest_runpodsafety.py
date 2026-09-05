@@ -90,7 +90,7 @@ class FakeResponse:
         return 200
 
 
-def public_refetch_fixture():
+def public_refetch_fixture(binding_extra=None):
     repository = "example/root-proof"
     weights_repository = "example/root-weights"
     weights_revision = "b" * 40
@@ -324,11 +324,11 @@ def public_refetch_fixture():
             "suite_token_hash_sha256": suite_sha,
             "panel_receipt_sha256": receipt_sha,
             "tokenizer": {"identity_sha256": tokenizer_sha},
-            "resolved_binding_evidence": {
+            "resolved_binding_evidence": dict({
                 "binding_file": "panel-binding.json",
                 "binding_file_sha256": binding_file_sha,
                 "binding": binding,
-            },
+            }, **(binding_extra or {})),
         },
         "unexpected_tensor_allowlist": {
             "artifact_sha256": allowlist_sha,
@@ -426,6 +426,42 @@ def check_public_refetch():
         urllib.request.urlopen = real_urlopen
 
 
+def check_binding_evidence_since_panel_d7():
+    """hf_capture seals `tokenizer_equivalences` beside the three-key binding
+    evidence since 9bd8823; the width-two archive check compared the block for
+    exact equality and would have refused every root captured after it."""
+    real_urlopen = urllib.request.urlopen
+    for label, extra, want in (("an empty list", {"tokenizer_equivalences": []}, True),
+                               ("one equivalence", {"tokenizer_equivalences": [
+                                   {"name": "tokenizer_config.json", "reason": "loader flag"}]}, True),
+                               ("a non-list", {"tokenizer_equivalences": "x"}, False),
+                               ("another extra key", {"tokenizer_equivalences": [], "k": 1}, False)):
+        (publication, manifest_raw, qualification_raw, panel_receipt_raw,
+         license_raw) = public_refetch_fixture(binding_extra=extra)
+
+        def fake_urlopen(request, timeout, _q=qualification_raw, _p=panel_receipt_raw,
+                         _l=license_raw, _m=manifest_raw):
+            if request.full_url.endswith("receipts/root-qualification.json"):
+                return FakeResponse(_q)
+            if request.full_url.endswith("panel/panel-receipt.json"):
+                return FakeResponse(_p)
+            if request.full_url.endswith("/LICENSE"):
+                return FakeResponse(_l)
+            return FakeResponse(_m)
+
+        try:
+            urllib.request.urlopen = fake_urlopen
+            try:
+                safety.validate_current_public_root(publication)
+                accepted = True
+            except safety.SafetyProofError:
+                accepted = False
+        finally:
+            urllib.request.urlopen = real_urlopen
+        check("binding evidence with tokenizer_equivalences (%s) is %s"
+              % (label, "accepted" if want else "refused"), accepted == want)
+
+
 def check_bundle_extraction_on_fresh_root():
     """The pod-side extractor must create the run root's parent itself.
 
@@ -498,6 +534,7 @@ def main():
         else:
             raise AssertionError("%s safety JSON was accepted" % label)
     check_public_refetch()
+    check_binding_evidence_since_panel_d7()
     check_bundle_extraction_on_fresh_root()
     check("canonical Fruit contexts", canonical["panel"]["contexts"] == 16)
     print("PASS: exact Fruit width-two binding and strict nested safety JSON")

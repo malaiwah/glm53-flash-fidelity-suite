@@ -159,6 +159,16 @@ _ALLOWLISTS = {
         "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
         "count": 791,
     },
+    ("unsloth/GLM-5.2-GGUF",
+     "abc55e72527792c6e77069c99b4cb7de16fa9f23"): {
+        # GGUF header census of blk.78 mapped to official names (gguf_scope.py
+        # --allowlist-out, Glm52Formats): the 791 names of
+        # glm53-layer78-unexpected-keys.json, byte-identical to the 5.3 GGUF list.
+        "path": "engines/tools/layer-outer-evidence/glm52-gguf-unsloth-udq4kxl-layer78-unexpected-keys.json",
+        "artifact_sha256": "969cee605deba10dd82afbaa9b1b7a35d2339fdb122efece14530c9030aa1436",
+        "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
+        "count": 791,
+    },
     ("zai-org/GLM-5.3-BF16",
      "304b8051cfb2b260b61ce0cbe330e02a98e73639"): {
         "path": "engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json",
@@ -189,6 +199,11 @@ _ALLOWLISTS = {
         "count": 1569,
     },
 }
+
+def _binding_evidence_matches(observed, expected):
+    from .panel import binding_evidence_matches
+    return binding_evidence_matches(observed, expected)
+
 
 class SafetyProofError(ValueError):
     pass
@@ -1850,8 +1865,9 @@ def validate_current_public_root(publication: Mapping[str, Any]) -> Dict[str, An
             or not isinstance(canonical_panel.get("tokenizer"), dict)
             or canonical_panel["tokenizer"].get("identity_sha256")
                 != contract.get("tokenizer_identity_sha256")
-            or canonical_panel.get("resolved_binding_evidence")
-                != expected_binding_evidence
+            or not _binding_evidence_matches(
+                canonical_panel.get("resolved_binding_evidence"),
+                expected_binding_evidence)
             or not isinstance(canonical_allowlist, dict)
             or canonical_allowlist.get("artifact_sha256")
                 != contract_allowlist.get("artifact_sha256")

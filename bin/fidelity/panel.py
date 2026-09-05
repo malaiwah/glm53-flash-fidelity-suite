@@ -248,6 +248,26 @@ def verify_third_party_sealed_receipt(raw: bytes, expected_declared: str) -> str
     return mode
 
 
+def binding_evidence_matches(observed: Any, expected: Mapping[str, Any]) -> bool:
+    """hf_capture's sealed `panel_binding_evidence` against a consumer's expectation.
+
+    The expectation is the three-key block a controller can compute
+    (binding_file, binding_file_sha256, binding). Since PANEL-D7 (9bd8823) the
+    capture also seals `tokenizer_equivalences`, the loader-key equivalences
+    panel.py admitted on tokenizer_config.json, which no controller can know in
+    advance; it is admitted as an additive LIST and nothing else is. Every
+    consumer (qualify, the pod archive, the width-two archive check) compares
+    through this one function so they can never disagree again: on 2026-09-05
+    qualify compared two keys, the archive compared the whole block, and a
+    candidate's science was thrown away after it had passed.
+    """
+    if not isinstance(observed, dict):
+        return False
+    rest = dict(observed)
+    equivalences = rest.pop("tokenizer_equivalences", [])
+    return isinstance(equivalences, list) and rest == dict(expected)
+
+
 def _pinned_tokenizer_identity(repository: Any, revision: Any,
                                label: str) -> Tuple[str, str]:
     if not isinstance(repository, str) or _HF_REPO.fullmatch(repository) is None:

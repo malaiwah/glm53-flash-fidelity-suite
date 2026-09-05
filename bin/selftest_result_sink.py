@@ -56,7 +56,8 @@ def _sealed(schema, **fields):
 
 def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
               publish=False, abandoned=False, weights_license_body=None,
-              resumed=False, resealed=False, candidate=False):
+              resumed=False, resealed=False, candidate=False,
+              binding_extra=None):
     root = Path(tmp) / "run"
     (root / "receipts" / "done").mkdir(parents=True)
     (root / "reports").mkdir(parents=True)
@@ -500,6 +501,8 @@ def _run_root(tmp, *, receipt_bytes=200, failed=False, role="quant",
                     job["panel"]["binding_file_sha256"],
                 "binding": resolved_panel_binding,
             }
+            if binding_extra:
+                binding_evidence.update(binding_extra)
             allowlist_evidence = {
                 "schema":
                     "malaiwah.unexpected-tensor-allowlist-binding.v1",
@@ -1130,6 +1133,46 @@ def rung_candidate():
                  "names is refused", lambda: RS.verify_archive(tampered))
         (root / member).unlink()
         _refused("R63 a candidate archive without its reference comparison is refused",
+                 lambda: RS.build_archive(root, summary))
+
+
+def rung_binding_evidence():
+    print("[T26.2d] the capture's binding evidence since PANEL-D7 carries tokenizer_equivalences")
+    # 2026-09-05: hf_capture (9bd8823) added a fourth key to
+    # panel_binding_evidence; the pod archive compared the block for exact
+    # equality against the controller's three keys, so a K3 candidate whose
+    # science had passed was thrown away at the archive step ($2.3). The
+    # additive LIST is admitted; anything else in that slot still refuses.
+    equivalence = {"name": "tokenizer_config.json", "root_sha256": "1" * 64, "root_bytes": 761,
+                   "candidate_sha256": "2" * 64, "candidate_bytes": 790,
+                   "keys_dropped_from_root": [], "keys_dropped_from_candidate": ["local_files_only"],
+                   "loader_keys_allowlist": ["local_files_only"], "reason": "loader flag"}
+    stages = ["setup", "fetch_target", "fetch_reference", "capture", "verify",
+              "capture_repeat", "verify_repeat", "compare_root", "qualify_root",
+              "compare_reference"]
+    for label, extra in (("an empty list", []), ("one admitted equivalence", [equivalence])):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _run_root(tmp, role="root", candidate=True,
+                             weights_license_body=b"upstream license\n",
+                             binding_extra={"tokenizer_equivalences": extra})
+            summary = RS.build_summary(root, "capture", "qualified-unpublished", stages)
+            verified = RS.verify_archive(RS.build_archive(root, summary))
+            check("R64 a candidate whose binding evidence carries tokenizer_equivalences "
+                  "(%s) archives and verifies" % label,
+                  verified["manifest"]["status"] == "qualified-unpublished")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _run_root(tmp, role="root", candidate=True,
+                         weights_license_body=b"upstream license\n",
+                         binding_extra={"tokenizer_equivalences": "not-a-list"})
+        summary = RS.build_summary(root, "capture", "qualified-unpublished", stages)
+        _refused("R65 a non-list in that slot is still refused",
+                 lambda: RS.build_archive(root, summary))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _run_root(tmp, role="root", candidate=True,
+                         weights_license_body=b"upstream license\n",
+                         binding_extra={"tokenizer_equivalences": [], "extra_key": 1})
+        summary = RS.build_summary(root, "capture", "qualified-unpublished", stages)
+        _refused("R66 any other extra key in the binding evidence is still refused",
                  lambda: RS.build_archive(root, summary))
 
 
@@ -2130,7 +2173,8 @@ def rung_wired():
 
 def main():
     print("== T26 result sinks: getting the answer off the box ==")
-    for rung in (rung_parse, rung_content, rung_logs, rung_candidate, rung_http, rung_cap,
+    for rung in (rung_parse, rung_content, rung_logs, rung_candidate, rung_binding_evidence,
+                 rung_http, rung_cap,
                  rung_archive, rung_wired):
         rung()
     print("\nT26: %d passed, %d failed" % (PASS, FAIL))

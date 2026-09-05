@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import stat
+from pathlib import PurePosixPath
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -980,9 +981,14 @@ def _check_capture_job_contract(job, identity, label):
             % (label, capture.get("engine")))
 
     panel_identity = identity["panel"]
-    evidence = panel_identity.get("resolved_binding_evidence") or {}
-    if evidence.get("binding_file_sha256") != panel_job.get("binding_file_sha256") \
-            or evidence.get("binding") != binding:
+    # The WHOLE block, through the one comparator the archive uses, so qualify
+    # can never pass what the archive refuses (2026-09-05: qualify checked two
+    # keys, the archive the block, and a candidate's science was lost).
+    if not panel.binding_evidence_matches(
+            panel_identity.get("resolved_binding_evidence"),
+            {"binding_file": PurePosixPath(panel_job.get("binding_path") or "").name,
+             "binding_file_sha256": panel_job.get("binding_file_sha256"),
+             "binding": binding}):
         raise RootQualificationError(
             "%s capture lacks the exact job panel binding evidence" % label)
     if panel_identity.get("panel_id") != panel_binding.get("id") \
