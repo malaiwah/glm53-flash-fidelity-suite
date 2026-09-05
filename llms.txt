@@ -54,10 +54,17 @@ excess together and name the floor; never quote a RATIO of two residuals without
 (the once-published "2.52×" is withdrawn for exactly that reason).
 
 **Rule 5 — measure the artifact or the serving stack, and say which.** The *checkpoint lane*
-runs a reference `transformers` forward and characterizes the weights (it is bitwise
-deterministic; five cold runs give population stddev exactly 0.0). The *serving lane* runs the
-real engine and characterizes weights + kernels + activation quantization together. Neither is
-wrong; mixing them silently is.
+runs a reference `transformers` forward and characterizes the weights. It is bitwise
+deterministic, and the receipts prove it two ways: the GLM-5.3-Flash rows carry five cold
+runs with population stddev exactly 0.0; the GLM-5.3 rows (root and every candidate) carry
+**two fresh-process cold runs** whose captures are bitwise equal (`capture_content_digest`
+identical, `reduced_run_count` disclosed, the self-comparison exactly 0.0) — a same-GPU-model
+statement, not a cross-device one. A trellis or FP8 candidate on this lane is a *weights-only
+reconstruction*: the served kernel's activations are not in the number, the receipt is
+`advisory` (`weights_reconstructed` / `activation_quantization_not_captured`), and the
+hidden-form rows are scored on fp32 logits replayed from bf16 hidden states
+(`WHAT-WE-MEASURE.md` §2c). The *serving lane* runs the real engine and characterizes weights
+\+ kernels + activation quantization together. Neither is wrong; mixing them silently is.
 
 **The one safe claim shape** (adopted from independent peer review, 2026-08-31): "On panel X,
 under pipeline/lane/hardware configuration Y, this exact candidate's teacher-forced next-token

@@ -390,8 +390,16 @@ Stated plainly, because a list of limits is part of the deliverable.
    construction, and `minimax_m3_vl` now reproduces the window-outer capture
    bit-for-bit (same `capture_content_digest`, `--force-compute` self-compare
    exactly 0.0).
-10. **It has not been run on GLM-5.3.** That is Stage B, and it is a separate,
-   budgeted decision. Nothing in this document is a GLM-5.3 measurement.
+10. **On GLM-5.3 itself the schedule-equivalence claim is structural, never
+   measured — and it cannot be.** Every GLM-5.3 row (the root and the six
+   candidates, 2026-09-04/05) was captured layer-outer; the bit-identity gate
+   against a window-outer forward was proven on Qwen3.8 and on the Fruit
+   `glm_moe_dsa` model (`layer-outer-evidence/bit-identity.json`, gate 2), and
+   GLM-5.3 is the same `glm_moe_dsa` architecture at 78 layers. A window-outer
+   GLM-5.3 forward would need the whole ~1.5 TB checkpoint resident, which no
+   single box on this project has, so the equivalence on GLM-5.3 is inherited
+   from the architecture proof plus the two-fresh-process bitwise reproduction
+   of each capture, not from a GLM-5.3 window-outer run.
 
 ---
 
