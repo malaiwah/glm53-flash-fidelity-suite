@@ -290,12 +290,21 @@ def validate_job(document: dict) -> None:
     if document.get("recipe") != "runpod-controller-loss-drill":
         download_by_path = {
             row["path"]: row["bytes"] for row in download_manifest}
-        for required_path in (
-                "config.json", "model.safetensors.index.json"):
-            if download_by_path.get(required_path, 0) <= 0:
-                raise JobContractError(
-                    "job target download manifest lacks positive %s"
-                    % required_path)
+        # A GGUF build ships neither file: its model-class config is the
+        # reference release's (copied beside the build on the pod) and its
+        # tensor table stands where the index stands (target.index_sha256 is
+        # the table digest, target.index_source says so).
+        if target.get("surface") != "gguf":
+            for required_path in (
+                    "config.json", "model.safetensors.index.json"):
+                if download_by_path.get(required_path, 0) <= 0:
+                    raise JobContractError(
+                        "job target download manifest lacks positive %s"
+                        % required_path)
+        elif not all(str(shard["path"]).endswith(".gguf") for shard in shards) \
+                or not isinstance(target.get("index_source"), str):
+            raise JobContractError(
+                "job target of surface gguf must list .gguf shards and name its index_source")
         for shard in shards:
             if download_by_path.get(shard["path"]) != shard["bytes"]:
                 raise JobContractError(
