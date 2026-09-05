@@ -23,10 +23,12 @@ import measure_cloud as mc                                # noqa: E402
 FAILED = []
 
 
-def check(label, ok):
+def check(label, ok, detail=""):
     print("  %s  %s" % ("PASS" if ok else "FAIL", label))
     if not ok:
         FAILED.append(label)
+        if detail:
+            print("        %s" % str(detail)[:400])
 
 
 class Con:
@@ -336,6 +338,120 @@ check("an all-native class at two widths is treatment native, format mixed",
 check("a class mixing quantized and native stays treatment quantized, format mixed",
       by_class["moe.experts"]["treatment"] == "quantized"
       and by_class["moe.experts"]["format"] == "mixed")
+
+
+# The GLM-5.2 rotation layouts in miniature. willfalco/jpsequeira store each
+# rank group's H-side vector once per layer at experts.shared_h.{proj}.rank{r};
+# brandonmusic stores unsharded experts with experts.r7_shared.{gate_up_suh,
+# down_svh} and dense-6 o_proj/q_b_proj as stock groups. The scope tool
+# groups through layer_outer.exl3_rotation_groups, so the expert class comes
+# out quantized, the shared vectors never surface as native tensors, and a
+# missing shared vector still refuses at $0.
+def layout_mini_index(layout):
+    keys = ["lm_head.weight", "model.embed_tokens.weight", "model.norm.weight"]
+    for layer in range(5):
+        keys += ["model.layers.%d.input_layernorm.weight" % layer,
+                 "model.layers.%d.self_attn.q_a_proj.weight" % layer]
+        if layout == "r7_shared":
+            keys += ["model.layers.%d.self_attn.o_proj.%s" % (layer, obj)
+                     for obj in ("trellis", "suh", "svh", "mcg")]
+        else:
+            keys += ["model.layers.%d.self_attn.o_proj.weight" % layer]
+        if layer < 3:
+            keys += ["model.layers.%d.mlp.%s.weight" % (layer, p)
+                     for p in ("gate_proj", "up_proj", "down_proj")]
+            continue
+        keys += ["model.layers.%d.mlp.gate.weight" % layer]
+        experts = "model.layers.%d.mlp.experts" % layer
+        if layout == "shared_h_v1":
+            for rank in range(2):
+                keys += [experts + ".shared_h.%s.rank%d.%s" % (p, rank, f)
+                         for p, f in (("gate_proj", "suh"), ("up_proj", "suh"), ("down_proj", "svh"))]
+            for expert in range(2):
+                for proj, own in (("gate_proj", "svh"), ("up_proj", "svh"), ("down_proj", "suh")):
+                    for rank in range(2):
+                        stem = "%s.%d.%s.rank%d" % (experts, expert, proj, rank)
+                        keys += [stem + "." + obj for obj in ("trellis", own, "mcg")]
+        else:
+            keys += [experts + ".r7_shared.gate_up_suh", experts + ".r7_shared.down_svh"]
+            for expert in range(2):
+                for proj, own in (("gate_proj", "svh"), ("up_proj", "svh"), ("down_proj", "suh")):
+                    stem = "%s.%d.%s" % (experts, expert, proj)
+                    keys += [stem + "." + obj for obj in ("trellis", own, "mcg")]
+    return {"metadata": {"total_size": 1},
+            "weight_map": {k: "model-00001-of-00001.safetensors" for k in keys}}
+
+
+def author_layout_scope(layout, config, drop=None):
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _P(tmp)
+        index = layout_mini_index(layout)
+        if drop:
+            index["weight_map"].pop(drop)
+        (root / "index.json").write_text(json.dumps(index))
+        (root / "config.json").write_text(json.dumps(config))
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = exl3_scope.main(["--index", str(root / "index.json"),
+                                      "--config", str(root / "config.json"),
+                                      "--repo", "example/%s" % layout, "--revision", "0" * 40,
+                                      "--out", str(root / "scope.json")])
+        except SystemExit as exc:
+            return str(exc), None
+        return rc, json.loads((root / "scope.json").read_text())
+
+
+shared_config = {
+    "architectures": ["GlmMoeDsaForCausalLM"], "num_hidden_layers": 5, "n_routed_experts": 2,
+    "quantization_config": {"quant_method": "modelopt", "config_groups": {}},
+    "hybrid_tr3_tail": {"format": "exl3-trellis", "codebook": "mcg", "tp": 2, "bits": "mixed",
+                        "expert_bpw_mean": 3.418854, "k_values": [3, 4],
+                        "rotation_layout": "shared_h_v1",
+                        "shared_h_tensor_schema":
+                            "model.layers.{L}.mlp.experts.shared_h.{proj}.rank{r}.{suh|svh}"}}
+rc, shared_scope = author_layout_scope("shared_h_v1", shared_config)
+srows = {(r["tensor_class"], r["layer_range"]): r for r in (shared_scope or {}).get("assignments", [])}
+check("exl3_scope authors a shared_h_v1 (willfalco/jpsequeira) index: routed experts quantized "
+      "exl3-mcg at the declared 3.418854",
+      rc == 0 and srows.get(("moe.experts", "all"), {}).get("format") == "exl3-mcg"
+      and srows[("moe.experts", "all")]["bits_per_weight"] == 3.418854
+      and srows[("moe.experts", "all")]["note"].startswith("12 tensors:"), rc)
+check("the layer-shared rotation vectors are consumed by the groups, never censused as native",
+      rc == 0 and not any("experts.shared_h." in r["note"] for r in shared_scope["assignments"])
+      and "rotation layout shared_h_v1" in srows[("moe.experts", "all")]["note"]
+      and shared_scope["head_policy"] == "native" and schema_check(shared_scope) is None)
+rc, _ = author_layout_scope("shared_h_v1", shared_config,
+                            drop="model.layers.4.mlp.experts.shared_h.down_proj.rank1.svh")
+check("a shared_h_v1 index missing one layer's shared vector refuses by module name at $0",
+      isinstance(rc, str) and "REFUSED" in rc and "down_proj.rank1 (missing ['svh']" in rc, rc)
+rc, _ = author_layout_scope("shared_h_v1", dict(shared_config, hybrid_tr3_tail=dict(
+    shared_config["hybrid_tr3_tail"], bits="mixed", expert_bpw_mean=None)))
+check("a tail with no numeric bits_avg/bits/expert_bpw_mean (jpsequeira's) refuses by name "
+      "instead of writing 'mixed' into bits_per_weight",
+      isinstance(rc, str) and "declares no numeric bits" in rc and "bits='mixed'" in rc, rc)
+
+r7_config = {
+    "architectures": ["GlmMoeDsaForCausalLM"], "num_hidden_layers": 5, "n_routed_experts": 2,
+    "quantization_config": {"quant_method": "modelopt", "config_groups": {},
+                            "r7_routed_experts": {"schema": "r7-complete-v2-checkpoint-v1",
+                                                  "moe_layers": [3, 4], "k_values": [3, 4, 5]},
+                            "tensor_storage": {}},
+    "hybrid_tr3_tail": {"format": "exl3-trellis", "codebook": "mcg", "tp": 4, "bits": 3.0}}
+rc, r7_scope = author_layout_scope("r7_shared", r7_config)
+rrows = {(r["tensor_class"], r["layer_range"]): r for r in (r7_scope or {}).get("assignments", [])}
+check("exl3_scope authors an r7_shared (brandonmusic) index: unsharded experts quantized "
+      "exl3-mcg and the dense-6 o_proj class quantized exl3-mcg on every layer",
+      rc == 0 and rrows.get(("moe.experts", "all"), {}).get("format") == "exl3-mcg"
+      and rrows[("moe.experts", "all")]["note"].startswith("12 tensors:")
+      and rrows.get(("attn.o", "all"), {}).get("treatment") == "quantized"
+      and rrows[("attn.o", "all")]["format"] == "exl3-mcg"
+      and "rotation layout r7_shared" in rrows[("moe.experts", "all")]["note"]
+      and not any("experts.r7_shared." in r["note"] for r in r7_scope["assignments"])
+      and schema_check(r7_scope) is None, rc)
+rc, _ = author_layout_scope("r7_shared", dict(r7_config, quantization_config={
+    "quant_method": "modelopt", "config_groups": {}}))
+check("r7_shared vectors without the r7_routed_experts declaration refuse",
+      isinstance(rc, str) and "declares no r7_routed_experts" in rc, rc)
 
 print()
 if FAILED:

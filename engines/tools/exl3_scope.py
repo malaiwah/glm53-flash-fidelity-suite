@@ -33,6 +33,13 @@ import re
 from collections import defaultdict
 
 from fp8_scope import CLASS_RULES, assignments_from_census, classify, decoder_layers  # noqa: F401
+# The engine's own payload census (same directory): stock per-module groups
+# and the two layer-shared rotation layouts (willfalco/jpsequeira
+# `experts.shared_h.{proj}.rank{r}.{suh|svh}`, brandonmusic
+# `experts.r7_shared.{gate_up_suh,down_svh}`), resolved BY NAME exactly as the
+# pod's `layer_outer.trellis_checkpoint_plan` resolves them, so a scope
+# authored here describes the groups the capture will decode.
+from layer_outer import exl3_layout_contract  # noqa: E402
 
 PAYLOAD_OBJECTS = ("trellis", "suh", "svh")
 CODEBOOKS = ("mul1", "mcg")
@@ -42,33 +49,25 @@ SCALE_SUFFIX = "_scale_inv"
 RANK_RE = re.compile(r"^(?P<module>.+)\.rank(?P<rank>\d+)$")
 
 
-def payload_modules(keys, tp=None):
-    """module -> codebook, for every complete stock-exllamav3 payload group.
+def payload_modules(keys, tp=None, qc=None, tail=None):
+    """module -> codebook, for every complete exl3 payload group.
 
-    With `tp`, rank-sharded groups (`M.rank{r}.{...}`, r in 0..tp-1) count as
-    ONE module and must be complete; without it a rank-sharded group refuses.
+    Grouping is `layer_outer.exl3_layout_contract` (the pod's own rule):
+    three objects plus one codebook marker per module, a routed expert's
+    missing H-side vector resolved by name from its layer's shared tensor
+    under `shared_h_v1` / `r7_shared`, the layout cross-checked against the
+    artifact's declaration (`qc`, `tail`), everything partial refused. With
+    `tp`, rank-sharded groups (`M.rank{r}.{...}`, r in 0..tp-1) count as ONE
+    module and must be complete; without it a rank-sharded group refuses.
+    Returns (modules, census): the census names the layout, the per-layout
+    module counts and the layer-shared vector keys.
     """
-    staged = defaultdict(dict)
-    for key in keys:
-        stem, _, last = key.rpartition(".")
-        if not stem:
-            continue
-        if last in PAYLOAD_OBJECTS:
-            staged[stem][last] = key
-        elif last in CODEBOOKS:
-            staged[stem].setdefault("codebooks", []).append(last)
-    groups, incomplete = {}, []
-    for stem, found in staged.items():
-        marks = found.get("codebooks") or []
-        if all(name in found for name in PAYLOAD_OBJECTS) and len(marks) == 1:
-            groups[stem] = marks[0]
-        else:
-            incomplete.append("%s (has %s, markers %s)" % (
-                stem, sorted(k for k in found if k in PAYLOAD_OBJECTS), sorted(marks)))
-    if incomplete:
-        raise SystemExit("REFUSED: %d incomplete payload group(s): %s%s"
-                         % (len(incomplete), "; ".join(sorted(incomplete)[:3]),
-                            " (+%d more)" % (len(incomplete) - 3) if len(incomplete) > 3 else ""))
+    try:
+        _, detail = exl3_layout_contract(list(keys), qc or {}, tail or {})
+    except ValueError as exc:
+        raise SystemExit("REFUSED: %s" % exc)
+    census = detail["census"]
+    groups = {stem: objects["codebook"] for stem, objects in detail["groups"].items()}
     modules, ranked = {}, defaultdict(dict)
     for stem, codebook in groups.items():
         match = RANK_RE.match(stem)
@@ -86,7 +85,7 @@ def payload_modules(keys, tp=None):
             raise SystemExit("REFUSED: %s carries ranks %s / codebooks %s, not 0..%d of one codebook"
                              % (module, sorted(by_rank), sorted(set(by_rank.values())), tp - 1))
         modules[module] = by_rank[0]
-    return modules
+    return modules, census
 
 
 def shard_dtypes(repo, revision, weight_map):
@@ -136,16 +135,31 @@ def main(argv=None) -> int:
     keys = list(weight_map)
     tp = tail.get("tp") if isinstance(tail.get("tp"), int) and tail.get("tp") >= 2 else None
 
-    modules = payload_modules(keys, tp=tp)
+    modules, layout_census = payload_modules(keys, tp=tp, qc=qc, tail=tail)
     scaled = {k[: -len(SCALE_SUFFIX)] for k in keys if k.endswith(SCALE_SUFFIX)}
     # A TR3 tail says bits_avg, or bits, or (willfalco's GLM-5.2 tails) bits:"mixed"
     # beside expert_bpw_mean; the first NUMERIC wins, mirroring
-    # hfmeta.tr3_tail_declared_bits.
+    # hfmeta.tr3_tail_declared_bits. A tail with NO numeric field (jpsequeira
+    # declares bits:"mixed" and nothing else) cannot label the rows: refuse by
+    # name rather than write "mixed" into bits_per_weight.
     declared_bits = (next((v for k in ("bits_avg", "bits", "expert_bpw_mean")
                            for v in [tail.get(k)]
                            if isinstance(v, (int, float)) and not isinstance(v, bool)),
-                          tail.get("bits_avg", tail.get("bits")))
+                          None)
                      if tail else qc.get("bits"))
+    if declared_bits is None or isinstance(declared_bits, bool) \
+            or not isinstance(declared_bits, (int, float)):
+        block = "hybrid_tr3_tail" if tail else "quantization_config"
+        raise SystemExit(
+            "REFUSED: %s declares no numeric bits (%s: bits_avg=%r bits=%r expert_bpw_mean=%r); "
+            "the scope rows' bits_per_weight cannot be authored from %r. Author the rows "
+            "from a numeric declaration the artifact publishes elsewhere, by hand, and cite it."
+            % (args.config, block, tail.get("bits_avg") if tail else None,
+               (tail or qc).get("bits"), tail.get("expert_bpw_mean") if tail else None,
+               (tail or qc).get("bits")))
+    # The layer-shared rotation vectors are payload objects of the modules
+    # that resolve to them, never native tensors of their own.
+    shared_vector_keys = set(layout_census["shared_vectors"])
     dtypes = shard_dtypes(args.repo, args.revision, weight_map) if args.dtypes_from_hub else {}
     codebooks = defaultdict(int)
     for codebook in modules.values():
@@ -154,7 +168,7 @@ def main(argv=None) -> int:
     census = defaultdict(list)
     seen_modules = set()
     for key in keys:
-        if key.endswith(SCALE_SUFFIX):
+        if key.endswith(SCALE_SUFFIX) or key in shared_vector_keys:
             continue
         stem, _, last = key.rpartition(".")
         if last in PAYLOAD_OBJECTS or last in CODEBOOKS:
@@ -175,7 +189,7 @@ def main(argv=None) -> int:
             census[cls].append((key, "native", fmt, bits))
     source = ("read from %s@%s model.safetensors.index.json%s: a class is exl3 trellis "
               "when its weights are stored as %s payload groups (codebook from the object each "
-              "module carries: %s; declared bits %r by %s%s), fp8_e4m3 when a %s sibling exists, "
+              "module carries: %s; declared bits %r by %s%s%s), fp8_e4m3 when a %s sibling exists, "
               "native otherwise%s."
               % (args.repo, args.revision, " + shard headers" if dtypes else "",
                  "/".join(PAYLOAD_OBJECTS),
@@ -183,6 +197,10 @@ def main(argv=None) -> int:
                  declared_bits, "hybrid_tr3_tail" if tail else "quantization_config",
                  ("; tp=%d rank shards per module, k_values %s, %s"
                   % (tp, tail.get("k_values"), tail.get("bits_scheme"))) if tp else "",
+                 ("; rotation layout %s, %d layer-shared rotation vector(s) resolved by name "
+                  "(%s)" % (layout_census["layout"], len(layout_census["shared_vectors"]),
+                            ", ".join("%s:%d" % kv for kv in sorted(layout_census["per_layout"].items()))))
+                 if layout_census["layout"] != "per_module" else "",
                  SCALE_SUFFIX,
                  " (stored dtype from the shard headers)" if dtypes else " (labelled bf16, headers not read)"))
     assignments = assignments_from_census(census, source)
