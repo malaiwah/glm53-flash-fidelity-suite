@@ -120,6 +120,7 @@ def fixture():
             "prepared_create": None,
             "remote_root": None,
             "provider_terminate_after": None,
+            "storage_layout": "container-disk",
             "workload_deadline_utc": None,
         },
     }

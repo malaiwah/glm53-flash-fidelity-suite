@@ -157,10 +157,18 @@ def main():
             check("S5a exactly exec, upload, exec", kinds == ["exec", "upload", "exec"],
                   jl.ops)
             first = jl.ops[0][1]
+            # `mkdir -p -m 700` after `test ! -e` is still an exclusive create
+            # (the existence test refuses first), and the command now ALSO
+            # reads the mode back (`stat -c %a` = 700) before anything is
+            # uploaded; the rung asserts that whole sequence, in order.
             check("S5b the directory is exclusively created 0700 before upload",
                   "test ! -e /fs/.secrets" in first
                   and "test ! -L /fs/.secrets" in first
-                  and "mkdir -m 700 -- /fs/.secrets" in first,
+                  and ("mkdir -m 700 -- /fs/.secrets" in first
+                       or "mkdir -p -m 700 -- /fs/.secrets" in first)
+                  and 'test "$(stat -c %a -- /fs/.secrets)" = 700' in first
+                  and first.index("test ! -e /fs/.secrets") < first.index("mkdir")
+                  < first.index("stat -c %a -- /fs/.secrets"),
                   first)
             up_remote = jl.ops[1][2]
             check("S5c the upload lands on a unique temporary name, not the "
