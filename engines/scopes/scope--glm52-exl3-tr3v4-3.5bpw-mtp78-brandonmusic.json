@@ -1,0 +1,121 @@
+{
+  "activation_quantization": null,
+  "assignments": [
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "0-2",
+      "note": "3 tensors: model.layers.N.self_attn.o_proj.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "attn.o",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 3.0,
+      "format": "exl3-mcg",
+      "layer_range": "3-77",
+      "note": "75 tensors: model.layers.N.self_attn.o_proj.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "attn.o",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "261 tensors: model.layers.N.self_attn.indexer.k_norm.bias, model.layers.N.self_attn.indexer.k_norm.weight, model.layers.N.self_attn.indexer.weights_proj.weight, model.layers.N.self_attn.indexer.wk.weight, model.layers.N.self_attn.indexer.wq_b.weight, model.layers.N.self_attn.kv_a_layernorm.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "attn.other",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "0-77",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 237 x native:bf16@16 (model.layers.N.self_attn.kv_a_proj_with_mqa.weight, model.layers.N.self_attn.kv_b_proj.weight, model.layers.N.self_attn.q_a_proj.weight); 75 x quantized:exl3-mcg@3.0 (model.layers.N.self_attn.q_b_proj.weight). read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "attn.qkv",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "1 tensors: model.embed_tokens.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "embed_tokens",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "1 tensors: lm_head.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "lm_head",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "3 tensors: model.layers.N.mlp.down_proj.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mlp.down",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "3 tensors: model.layers.N.mlp.gate_proj.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mlp.gate",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "3 tensors: model.layers.N.mlp.up_proj.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mlp.up",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 3.0,
+      "format": "exl3-mcg",
+      "layer_range": "all",
+      "note": "57600 tensors: model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "moe.experts",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "3-77",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 75 x native:bf16@16 (model.layers.N.mlp.gate.weight); 75 x native:fp32@32 (model.layers.N.mlp.gate.e_score_correction_bias). read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "moe.router",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "225 tensors: model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "moe.shared_expert",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "78",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 22 x native:bf16@16 (model.layers.N.eh_proj.weight, model.layers.N.enorm.weight, model.layers.N.hnorm.weight); 1 x native:fp32@32 (model.layers.N.mlp.gate.e_score_correction_bias); 768 x quantized:exl3-mcg@3.0 (model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight). read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mtp",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "157 tensors: model.layers.N.input_layernorm.weight, model.layers.N.post_attention_layernorm.weight, model.norm.weight. read from brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f05a151439d0f184f216b1eefcc394a31 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58518; declared bits 3.0 by hybrid_tr3_tail; tp=4 rank shards per module, k_values None, None; rotation layout r7_shared, 150 layer-shared rotation vector(s) resolved by name (per_module:3222, r7_shared:57600)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "norm",
+      "treatment": "native"
+    }
+  ],
+  "head_policy": "native",
+  "kv_cache_dtype": "bf16",
+  "mtp_included": true,
+  "policy": "mixed"
+}

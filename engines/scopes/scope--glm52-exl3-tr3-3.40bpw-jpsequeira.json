@@ -1,0 +1,118 @@
+{
+  "activation_quantization": {
+    "format": "online-mxfp8-v1",
+    "group_size": 32,
+    "note": "hybrid_tr3_tail.online_mxfp8_overlay declares a dynamic mxfp8 activation quantization overlay; recorded as a comparator caveat, not applied in the dequantize-and-run capture path.",
+    "scheme": "dynamic_mxfp8"
+  },
+  "assignments": [
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "78 tensors: model.layers.N.self_attn.o_proj.weight. read from willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.418854 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], None; rotation layout shared_h_v1, 912 layer-shared rotation vector(s) resolved by name (shared_h_v1:233472)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "attn.o",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 6.0,
+      "format": "exl3-mcg",
+      "layer_range": "0-20",
+      "note": "21 modules x 4 payload objects = 84 tensors: model.layers.N.self_attn.indexer.wq_b (layers 0-20). read from jpsequeira/GLM-5.2-EXL3-TR3-3.40bpw-KVarN-K4V2@b92479840ef92fbeb7d774187f91cf5a2a659ade model.safetensors.index.json + shard headers: exl3 trellis payload group {trellis,suh,svh,mcg}; quantization_config.json tensor_storage declares bits_per_weight 6 for wq_b; codebook mcg; the remaining 261 attn.other tensors (k_norm, weights_proj, wk on all layers, kv_a_layernorm) are native bf16.",
+      "tensor_class": "attn.other",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "312 tensors: model.layers.N.self_attn.kv_a_proj_with_mqa.weight, model.layers.N.self_attn.kv_b_proj.weight, model.layers.N.self_attn.q_a_proj.weight, model.layers.N.self_attn.q_b_proj.weight. read from willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.418854 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], None; rotation layout shared_h_v1, 912 layer-shared rotation vector(s) resolved by name (shared_h_v1:233472)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "attn.qkv",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "1 tensors: model.embed_tokens.weight. read from willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.418854 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], None; rotation layout shared_h_v1, 912 layer-shared rotation vector(s) resolved by name (shared_h_v1:233472)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "embed_tokens",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 8.0,
+      "format": "exl3-mcg",
+      "layer_range": "all",
+      "note": "1 module: lm_head. read from jpsequeira/GLM-5.2-EXL3-TR3-3.40bpw-KVarN-K4V2@b92479840ef92fbeb7d774187f91cf5a2a659ade model.safetensors.index.json + shard headers: exl3 trellis payload group {trellis,suh,svh,mcg} on lm_head; quantization_config.json declares head_bits 8.0, codebook mcg; decoded to bf16 per module as the candidate's own dequantized head (HEAD-1d).",
+      "tensor_class": "lm_head",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "3 tensors: model.layers.N.mlp.down_proj.weight. read from willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.418854 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], None; rotation layout shared_h_v1, 912 layer-shared rotation vector(s) resolved by name (shared_h_v1:233472)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mlp.down",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "3 tensors: model.layers.N.mlp.gate_proj.weight. read from willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.418854 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], None; rotation layout shared_h_v1, 912 layer-shared rotation vector(s) resolved by name (shared_h_v1:233472)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mlp.gate",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "3 tensors: model.layers.N.mlp.up_proj.weight. read from willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.418854 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], None; rotation layout shared_h_v1, 912 layer-shared rotation vector(s) resolved by name (shared_h_v1:233472)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mlp.up",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 3.4,
+      "format": "exl3-mcg",
+      "layer_range": "all",
+      "note": "57600 tensors: model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight. read from jpsequeira/GLM-5.2-EXL3-TR3-3.40bpw-KVarN-K4V2@b92479840ef92fbeb7d774187f91cf5a2a659ade model.safetensors.index.json + shard headers: shared_h_v1 rotation layout (per-expert rank groups carry {trellis,mcg,suh} for down_proj / {trellis,mcg,svh} for gate,up; the other rotation vector is per layer at model.layers.L.mlp.experts.shared_h.{proj}.rank{r}.{svh|suh}); codebook mcg; declared bits 3.40 by the artifact's card title and expert_precision_map.json:bitrates (mean 3.3948 over 19456 expert entries, 76 layers 3-78, k_values [3,4]); tp=4 rank shards composed per module.",
+      "tensor_class": "moe.experts",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "3-77",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 75 x native:bf16@16 (model.layers.N.mlp.gate.weight); 75 x native:fp32@32 (model.layers.N.mlp.gate.e_score_correction_bias). read from willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.418854 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], None; rotation layout shared_h_v1, 912 layer-shared rotation vector(s) resolved by name (shared_h_v1:233472)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "moe.router",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "225 tensors: model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.418854 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], None; rotation layout shared_h_v1, 912 layer-shared rotation vector(s) resolved by name (shared_h_v1:233472)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "moe.shared_expert",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "78",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 22 x native:bf16@16 (model.layers.N.eh_proj.weight, model.layers.N.enorm.weight, model.layers.N.hnorm.weight); 1 x native:fp32@32 (model.layers.N.mlp.gate.e_score_correction_bias); 768 x quantized:exl3-mcg@3.418854 (model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight). read from willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.418854 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], None; rotation layout shared_h_v1, 912 layer-shared rotation vector(s) resolved by name (shared_h_v1:233472)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mtp",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "157 tensors: model.layers.N.input_layernorm.weight, model.layers.N.post_attention_layernorm.weight, model.norm.weight. read from willfalco/GLM-5.2-EXL3-TR3-3.42bpw@700c99dfa75d61cba4dda1ce9a36478bc217728d model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.418854 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], None; rotation layout shared_h_v1, 912 layer-shared rotation vector(s) resolved by name (shared_h_v1:233472)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "norm",
+      "treatment": "native"
+    }
+  ],
+  "head_policy": "quantized",
+  "kv_cache_dtype": "bf16",
+  "mtp_included": true,
+  "policy": "mixed"
+}
