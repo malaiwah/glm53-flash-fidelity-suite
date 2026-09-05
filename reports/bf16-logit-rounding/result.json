@@ -1,0 +1,101 @@
+{
+  "candidates": {
+    "fp8": {
+      "capture_content_digest": "e0102a154bebba73de98643941e043d36c948735ae804d65e87786b59e42b379",
+      "dataset_id": "fidelity--glm53.malaiwah.quant.fp8",
+      "dataset_sha256": "ce1c873497d8f935d62d317d42c29bdabcaf3a88b816b3ec95ef34cf222d9b43",
+      "head_tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd"
+    },
+    "k4": {
+      "capture_content_digest": "ba0e9beacbf0aaf351a8f13cbb226db9d5df4c54bf30a57f43cc554e4e9a0f94",
+      "dataset_id": "fidelity--glm53.malaiwah.quant.exl3-wrld-k4",
+      "dataset_sha256": "8d3b458e01a62c18578e037ca742b09943d7cefa079f5a6ae07225f859c6da14",
+      "head_tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd"
+    }
+  },
+  "elapsed_seconds": 282.1,
+  "method": {
+    "estimator": "dscompare.token_kld (kld_report._token_kld when torch is importable, else the identical numpy fp64 formula), full vocabulary, fp64",
+    "replay": "dscompare._replay: float32(h_bf16) @ float32(W_bf16)^T, numpy, vocab_chunk 8192",
+    "replay_env": {
+      "blas_configuration": "OpenBLAS 0.3.34.0.0  USE64BITINT DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=64",
+      "blas_name": "scipy-openblas",
+      "blas_threads": 16,
+      "blas_threads_source": "ctypes:scipy_openblas_get_num_threads64_",
+      "blas_version": "0.3.34.0.0",
+      "cpu_model": "Intel(R) Xeon(R) CPU           X5570  @ 2.93GHz",
+      "library": "numpy",
+      "numpy_version": "2.5.2",
+      "replay_dtype": "float32"
+    },
+    "rounding": "round-to-nearest-even fp32 -> bf16 -> fp32 (reports/bf16-logit-rounding/measure.py::round_to_bf16), applied to every logit"
+  },
+  "per_window": [
+    {
+      "allocation_stratum": null,
+      "estimator_backend": "numpy_fp64",
+      "index": 0,
+      "logit_abs_max": 46.36359786987305,
+      "logit_rounding_abs_max": 0.1247100830078125,
+      "logit_rounding_abs_mean": 0.002527725957059692,
+      "one_sided": {
+        "kl_bf16_vs_fp32_mean": 1.728951366097547e-05,
+        "kl_fp32_vs_bf16_max": 0.0019322375180830852,
+        "kl_fp32_vs_bf16_mean": 1.7305349087551114e-05,
+        "top1_agreement": 0.9995114802149487
+      },
+      "positions": 2047,
+      "two_sided": {
+        "fp8": {
+          "delta_abs_max_per_token": 0.053251564421289865,
+          "delta_mean": -2.69049554019931e-05,
+          "delta_relative": -0.002156243169451838,
+          "kl_bf16_both_sides_mean": 0.012450795047623595,
+          "kl_fp32_mean": 0.012477700003025588,
+          "top1_agreement_bf16": 0.9872984855886663,
+          "top1_agreement_fp32": 0.9877870053737177
+        },
+        "k4": {
+          "delta_abs_max_per_token": 0.07766172363595025,
+          "delta_mean": -0.000126466190550064,
+          "delta_relative": -0.004204008305507007,
+          "kl_bf16_both_sides_mean": 0.02995582227315269,
+          "kl_fp32_mean": 0.030082288463702755,
+          "top1_agreement_bf16": 0.9814362481680508,
+          "top1_agreement_fp32": 0.9824132877381534
+        }
+      },
+      "window_id": "final-0000"
+    }
+  ],
+  "reference": {
+    "capture_content_digest": "9eba97dddb4ff2e2a1d1fad8fdac1a57ec22963f1f85345451fcadcfc42682b8",
+    "dataset_id": "fidelity--glm53.malaiwah.root.bf16",
+    "dataset_sha256": "6b8d3a7bdf934f18fc819cc72d85c5385c3351fa50a8c9c2612dd9a29172a4a4",
+    "head_tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd",
+    "repository": "malaiwah/glm53-fidelity-root-v1"
+  },
+  "schema": "malaiwah.bf16-logit-rounding-term.v1",
+  "summary": {
+    "logit_abs_max": 46.36359786987305,
+    "logit_rounding_abs_max": 0.1247100830078125,
+    "one_sided_kl_fp32_vs_bf16_mean": 1.7305349087551114e-05,
+    "one_sided_kl_fp32_vs_bf16_window_max": 1.7305349087551114e-05,
+    "one_sided_kl_fp32_vs_bf16_window_min": 1.7305349087551114e-05,
+    "two_sided": {
+      "fp8": {
+        "delta_mean": -2.69049554019931e-05,
+        "delta_relative": -0.002156243169451838,
+        "kl_bf16_both_sides_mean": 0.012450795047623595,
+        "kl_fp32_mean": 0.012477700003025588
+      },
+      "k4": {
+        "delta_mean": -0.000126466190550064,
+        "delta_relative": -0.004204008305507007,
+        "kl_bf16_both_sides_mean": 0.02995582227315269,
+        "kl_fp32_mean": 0.030082288463702755
+      }
+    },
+    "windows": 1
+  }
+}

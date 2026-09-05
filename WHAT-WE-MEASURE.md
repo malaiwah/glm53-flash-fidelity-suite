@@ -54,6 +54,56 @@ of the computation. But distinguish the **computation** from the
   hidden states in fp32 ("shared-head replay"), so head arithmetic can
   never contribute a *differential* error between the two sides.
 
+### 2c. The dataset route's estimand — bf16 hiddens, fp32 replay, own heads
+
+Every GLM-5.3 row (2026-09-04/05) was produced by the capture/compare split of
+§8, not by the fused Flash pipeline above, and its number is a slightly
+different object:
+
+- **What is captured.** The post-final-norm hidden state of every scored
+  position, exactly as the model's own bf16 forward produced it (`hf_capture`
+  refuses anything that is not the bf16 bytes), plus the artifact's own
+  `lm_head` by tensor-content digest. No logits are stored.
+- **What is scored.** `fidelity-dataset compare` recomputes
+  `logits = float32(h_bf16) @ float32(W_bf16)^T` for each side through **its
+  own sealed head** (`--own-heads`, HEAD-1d: `head_policy: native_head`, the
+  head error is inside the number as under HEAD-2) on the numpy fp32 path, and
+  applies the fp64 estimator. The receipt now says so:
+  `estimator.logits_dtype: float32`, `estimator.hidden_dtype: bf16`,
+  `comparator.replay_backend: numpy:cpu:float32`, and `comparator.replay_env`
+  names the BLAS, its thread count and the CPU, because the last digits of an
+  fp32 GEMM are the BLAS's accumulation order (the workstation-vs-pod term on
+  the six rows is 1.8e-10 … 3.8e-9 nats).
+- **What a serving stack adds that these rows do not contain.** A bf16 stack
+  computes the same product and then **rounds every logit to bf16** before its
+  softmax — up to ±0.0625 at |logit| in [16, 32) and ±0.125 in [32, 64)
+  (GLM-5.3's logits reach |46|). Measured on the real root
+  ([`reports/bf16-logit-rounding/`](reports/bf16-logit-rounding/README.md),
+  window `final-0000`, 2,047 positions, the comparator's own replay and
+  estimator): KL(fp32 ‖ bf16-rounded) of the root alone is **1.7e-5 nats**, and
+  rounding **both** sides of a real comparison moves the published quantity by
+  **−1.3e-4 nats (−0.42 %) on the K4 row and −2.7e-5 nats (−0.22 %) on the FP8
+  row**. So: hidden-form rows are scored on fp32 logits recomputed from sealed
+  bf16 hidden states; logit-form rows from a bf16 stack additionally carry a
+  term of the 1e-5–1e-4 nats class (well under 1 % of any GLM-5.3 row). The two
+  are the same `head_policy` but not the same estimand to the last percent —
+  compare them as such.
+- **What "weights-only" means here.** A trellis or FP8 candidate is captured
+  from a bf16 reconstruction of its stored weights under the same `transformers`
+  forward as the root (`runtime.capture_tool.weights_decode` on the sealed
+  runtime receipt). The served kernel's own numerics — exllamav3's fp16
+  activations and on-the-fly dequant, an FP8 stack's per-token activation
+  quantization — are **not in the number**. The comparator files every such
+  receipt as `advisory` with `weights_reconstructed` or
+  `activation_quantization_not_captured` (gate 9b, 2026-09-05); the six receipts
+  sealed before that gate existed say `strict` and are corrected additively, not
+  re-sealed.
+- **Head-only artifacts.** Under `--own-heads`, two captures with bitwise-equal
+  hidden states and different heads (stock EXL3 `head_bits` 6–8) are a
+  measurement of exactly the head-quantization KL (`head_only_difference`);
+  through one shared head the same pair is 0.0 by construction and is still
+  refused (HEAD-1c).
+
 ## 3. Weights, or weights + serving stack? Both exist — as two disclosed lanes
 
 This is the single most important disclosure on any row.
@@ -318,8 +368,10 @@ largely stops existing.
   hiddens bitwise identical to the reference's, so its capture digest matches
   and replaying both sides through one head subtracts a quantity from itself —
   0.0 nats, top-1 1.0, labelled a reproduction. The comparator refuses that
-  outright (HEAD-1c, no override): a head-only quantization cannot be measured
-  by hidden replay and must publish logit form.
+  outright on the shared-head path (HEAD-1c, no override); `--own-heads`
+  (HEAD-1d) replays each side through its own sealed head, so the same pair is
+  exactly the head-quantization KL and is filed as a measurement with a
+  `head_only_difference` disclosure (§2c).
 * **Self-compare.** Comparing a capture against itself is a *reproduction
   confirmation* and must yield exactly `0.0`, top-1 exactly `1.0`, and a
   tokenwise array of literal zeros. For our 51,175-position panel that array is

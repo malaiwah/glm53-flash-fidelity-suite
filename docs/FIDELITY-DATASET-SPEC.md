@@ -990,6 +990,7 @@ manifest.
 | 7 | vocab/width: `vocab_size` equal; `hidden_width` equal (hidden form) | `geometry_mismatch` | none |
 | 8 | coverage: index sets equal, else intersect | `coverage_mismatch` | `--allow-partial` ⇒ `covers_full_panel: false` + `subset_of_panel` |
 | 9 | lossy: either `lossy_codec` non-null ⇒ advisory + `lossy_capture_codec` disclosure | — | — |
+| 9b | decode (additive 2026-09-05): either side's sealed runtime receipt `capture_tool.weights_decode` names an `exl3-trellis-*` method ⇒ advisory + `weights_reconstructed`; `fp8-block-dequant-to-bf16` with `activation_scheme: dynamic` ⇒ advisory + `activation_quantization_not_captured` | — | — |
 | 10 | self-compare short-circuit (§10.4) | — | — |
 | 11 | compute (§10.2) | — | — |
 
@@ -1098,6 +1099,24 @@ Fixed, not configurable except where noted:
   `kld_report.py` already emits and to Festr's, so the numbers line up field-for-field.
 * Aggregation: `kl_micro_token_mean` (the headline), plus `kl_macro_*_mean` per declared stratum, per
   domain, and per context-depth bucket.
+* **The estimand of a hidden-form comparison (additive 2026-09-05).** A hidden-form
+  side is replayed as `logits = float32(h_bf16) @ float32(W_bf16)^T` (bf16 products are
+  exact in fp32; only the accumulation order is the BLAS's), and the receipt records it:
+  `estimator.logits_dtype` is the **replay** dtype (`float32` on the default numpy path,
+  `--replay-dtype` on a torch backend), `estimator.hidden_dtype` the sealed capture dtype
+  (`bf16`), and `comparator.replay_env` the numpy version, BLAS name/version, thread count
+  and CPU model on the numpy path. Receipts sealed before this date wrote the capture dtype
+  (`bf16`) into `logits_dtype` while replaying in float32; the registry derives `fp32` from
+  `replay_backend`. Consequence for readers: hidden-form rows are scored on fp32 logits
+  recomputed from sealed bf16 hidden states; a bf16 serving stack additionally rounds every
+  logit to bf16 (±0.0625 at |logit| in [16, 32)), a term measured on the real GLM-5.3 root at
+  1.7e-5 nats one-sided and −1.3e-4 / −2.7e-5 nats (−0.42 % / −0.22 %) on the two-sided K4 and
+  FP8 comparisons (`reports/bf16-logit-rounding/`). Logit-form rows from a bf16 stack contain
+  that term; hidden-form rows do not. Same `head_policy`, not the same estimand to the last
+  percent.
+* `comparability.key_inputs.note` (additive 2026-09-05) says the receipt's key is provisional:
+  it hashes the reference **dataset** id, the registry hashes its own reference record id and
+  recomputes (CMP-001), so the two keys differ by construction.
 
 ### 10.3 `context_depth_buckets` (adopted)
 
