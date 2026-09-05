@@ -1451,6 +1451,10 @@ def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
                 % (codebook,), [])
         tp = tail.get("tp")
         composed = isinstance(tp, int) and not isinstance(tp, bool) and tp >= 2
+        # The weights_decode block has an EXACT key set (jobcontract);
+        # what the artifact declared by is console/plan evidence, not
+        # contract, so it rides beside the block under a private key the
+        # caller pops before binding.
         return {
             "method": (CANDIDATE_DECODE_METHOD_TRELLIS_TP if composed
                        else CANDIDATE_DECODE_METHOD_TRELLIS),
@@ -1461,9 +1465,9 @@ def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
                 "head_bits": None,
                 "modules_to_not_convert": [],
             },
-            "declared_by": "hybrid_tr3_tail",
-            "quant_method_declared": method,
-            "tp": tp if composed else None,
+            "_declaration": {"declared_by": "hybrid_tr3_tail",
+                             "quant_method_declared": method,
+                             "tp": tp if composed else None},
         }
     if method == "exl3":
         # The trellis surface `engines/tools/layer_outer.materialize_trellis_subset`
@@ -1715,6 +1719,7 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
         # declares is bound into the job so the pod's runtime receipt has to
         # record exactly that decode.
         decode = _candidate_decode_plan(qc, cfg)
+        declaration = decode.pop("_declaration", None)
         qcfg = decode["quantization_config"]
         if qcfg["quant_method"] == "exl3":
             con.ok("candidate is exl3 trellis",
@@ -1726,8 +1731,8 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
                       decode["method"],
                       ("; declared by hybrid_tr3_tail (quantization_config says %r), "
                        "tp=%s rank shards composed per module"
-                       % (decode.get("quant_method_declared"), decode.get("tp")))
-                      if decode.get("declared_by") == "hybrid_tr3_tail" else ""))
+                       % (declaration.get("quant_method_declared"), declaration.get("tp")))
+                      if declaration else ""))
         else:
             con.ok("candidate is block-scaled FP8",
                    "quant_method %s fmt %s block %s; decoded to bf16 per tensor "
