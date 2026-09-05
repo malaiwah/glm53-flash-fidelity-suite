@@ -244,6 +244,19 @@ def main():
                                  "0" * 40)
               and target_refused(glm53_binding, P.GLM52_TARGET_REPO,
                                  P.GLM52_TARGET_REVISION))
+        # The controller used to overwrite the panel's tokenizer pin with the
+        # REFERENCE root's repo before validating (measure_cloud candidate
+        # path): exact for a 5.3-BF16 root, a refusal for the 5.2 root, whose
+        # binding legitimately pins 5.3-BF16's byte-identical tokenizer. The
+        # validator must keep refusing such a relabelled block -- the fix is
+        # to stop relabelling, not to admit the wrong pin.
+        relabelled_glm52 = json.loads(json.dumps(verified_glm53))
+        relabelled_glm52["tokenizer"]["repository"] = P.GLM52_TARGET_REPO
+        relabelled_glm52["tokenizer"]["revision"] = P.GLM52_TARGET_REVISION
+        check("a binding whose tokenizer pin was relabelled to the 5.2 reference repo "
+              "refuses: the pin is the panel's identity, not the reference's",
+              target_refused(relabelled_glm52, P.GLM52_TARGET_REPO,
+                             P.GLM52_TARGET_REVISION))
         mutated_glm53 = json.loads(json.dumps(verified_glm53))
         mutated_glm53["content"]["manifest"][0]["bytes"] += 1
         check("mutated full GLM53 panel content refuses before spend",

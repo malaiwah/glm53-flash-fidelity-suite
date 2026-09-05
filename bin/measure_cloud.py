@@ -5327,10 +5327,17 @@ def _plan_runpod_anonymous(
             reference_repo = reference_weights.get("repository")
             reference_revision = (reference_weights.get("model_revision")
                                   or reference_weights.get("revision"))
+            # The binding's tokenizer block is the PANEL's identity pin (which
+            # repo's tokenizer files the panel was sealed with); the reference
+            # root is a different fact (which model produced the reference
+            # logits).  Overwriting the pin with the reference repo conflated
+            # them: exact for a GLM-5.3-BF16 root (same repo), wrong for the
+            # GLM-5.2 root, which legitimately pins 5.3-BF16's byte-identical
+            # tokenizer and was refused with "tokenizer pin ... differ"
+            # (2026-09-05, every 5.2 candidate at $0).  The validator
+            # dispatches on (reference repo, revision) and checks the pin
+            # against the panel's own constants; nothing is relabelled.
             relabelled = json.loads(_canonical_bytes(archive["binding"]).decode("utf-8"))
-            tokenizer_block = relabelled.get("tokenizer") or {}
-            tokenizer_block["repository"] = reference_repo
-            tokenizer_block["revision"] = reference_revision
             validated_root_binding = validate_root_panel_binding(
                 relabelled, reference_repo, reference_revision)
             if validated_root_binding != relabelled:
