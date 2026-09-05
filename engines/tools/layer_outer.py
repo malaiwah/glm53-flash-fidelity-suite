@@ -1121,6 +1121,77 @@ def _pin_fp32_matmul_policy() -> Dict[str, Any]:
     }
 
 
+def is_trellis_checkpoint(config) -> bool:
+    """One answer to "is this an EXL3 trellis artifact?" for EVERY gate.
+
+    Two declarations count: an inline `quantization_config.quant_method: exl3`
+    (turboderp layout; drowzeys, wrldsuksgo2mars) and a top-level
+    `hybrid_tr3_tail` (davidsyoung, whose `quantization_config` is a leftover
+    ModelOpt block). The FP8 gate and the trellis gate MUST consult the same
+    predicate: on 2026-09-05 they did not, the FP8 gate saw only
+    `quant_method: modelopt` and refused three davidsyoung pods after their
+    fetch, while the trellis gate one line below would have accepted them.
+    """
+    return _quant_method(config) == "exl3" or trellis_tail_declaration(config) is not None
+
+
+def checkpoint_decode_plans(config, model_dir: str, log: Callable[..., None]):
+    """Resolve which host-side decoders this checkpoint needs, before anything is built.
+
+    Returns `(fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats)`. Exactly
+    one of three shapes is admitted: a native tree (all None), the block-scaled
+    FP8 e4m3 weights-only form (`fp8_plan`), or an EXL3 trellis artifact
+    (`trellis_plan`, with `trellis_fp8_plan` when the checkpoint ALSO keeps
+    tensors in block-scaled FP8 -- wrldsuksgo2mars keeps shared_experts and
+    self_attn that way). Any other `quantization_config` is refused here by
+    `fp8_checkpoint_plan`, which is only consulted when the artifact is NOT a
+    trellis one: a trellis artifact's `quantization_config` may be a leftover
+    that describes nothing in the checkpoint (see `trellis_tail_declaration`).
+
+    The index is read ONLY for a trellis artifact: a bf16 or FP8 checkpoint must
+    not acquire a dependency on an index file it may not have (a single-shard
+    tree has none, and under a race-mode gate it has not landed yet).
+    """
+    trellis = is_trellis_checkpoint(config)
+    fp8_plan = None if trellis else fp8_checkpoint_plan(config)
+    if fp8_plan is not None:
+        log(stage="fp8_decode_plan", method=FP8_DECODE_METHOD,
+            reference=FP8_DECODE_REFERENCE, **fp8_plan)
+    trellis_plan = None
+    trellis_stats: Dict[str, Any] = {"decoded_modules": 0, "trellis_bits": 0}
+    trellis_fp8_plan = None
+    if trellis:
+        # The trellis decode is two fp32 128x128 GEMMs per module and runs on
+        # the capture device: pin the matmul policy exactly as stream_score
+        # does and RECORD it, so the sealed receipt can show that TF32 was off
+        # rather than assume torch's default (which NVIDIA_TF32_OVERRIDE can
+        # flip from the environment without a trace).
+        trellis_stats["numeric_policy"] = _pin_fp32_matmul_policy()
+        if str(os.environ.get("NVIDIA_TF32_OVERRIDE", "")).strip() == "1":
+            raise LayerOuterError(
+                "REFUSED: NVIDIA_TF32_OVERRIDE=1 forces TF32 in cuBLAS regardless of the "
+                "torch flags; the trellis decode's fp32 GEMMs would not be fp32. Unset it.")
+        keys = list(_index_weight_map(model_dir))
+        trellis_plan = trellis_checkpoint_plan(config, keys)
+        if any(key.endswith(FP8_SCALE_SUFFIX) for key in keys):
+            trellis_fp8_plan = fp8_checkpoint_plan_for_mixed(config)
+    if trellis_plan is not None:
+        observed = trellis_plan.pop("_observed", {})
+        trellis_stats["composition"] = observed.get("composition")
+        trellis_stats["quant_method_declared"] = observed.get("quant_method_declared")
+        trellis_stats["declared_by"] = observed.get("declared_by")
+        log(stage="trellis_decode_plan",
+            method=(TRELLIS_TP_COMPOSE_METHOD if observed.get("composition")
+                    else TRELLIS_DECODE_METHOD),
+            reference=TRELLIS_DECODE_REFERENCE,
+            mixed_fp8=trellis_fp8_plan is not None, observed=observed,
+            **trellis_plan)
+        trellis_stats["quantized_module_count"] = observed.get(
+            "quantized_module_count", 0)
+        trellis_stats["codebook_histogram"] = observed.get("codebook_histogram", {})
+    return fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats
+
+
 def _exl3hf():
     """Import the decode ABI lazily: torch-heavy, and only a quant run needs it."""
     here = os.path.dirname(os.path.abspath(__file__))
@@ -1205,50 +1276,9 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     # reaches the loader. "Dequantize-and-run, weights-only", the M1 method,
     # under the streaming schedule. Any other quantization_config is refused
     # by `fp8_checkpoint_plan` before anything is instantiated.
-    fp8_plan = fp8_checkpoint_plan(config) if _quant_method(config) != "exl3" else None
+    fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats = checkpoint_decode_plans(
+        config, model_dir, log)
     fp8_stats = {"dequantized": 0, "scales_consumed": 0, "fp8_bytes": 0}
-    if fp8_plan is not None:
-        log(stage="fp8_decode_plan", method=FP8_DECODE_METHOD,
-            reference=FP8_DECODE_REFERENCE, **fp8_plan)
-    # An EXL3 trellis artifact may ALSO keep part of itself in block-scaled
-    # FP8 (wrldsuksgo2mars keeps shared_experts/self_attn that way), so the
-    # trellis plan is resolved from the checkpoint's own keys and the FP8 hook
-    # runs under it rather than beside it. The index is read ONLY for an exl3
-    # artifact: a bf16 or FP8 checkpoint must not acquire a dependency on an
-    # index file it may not have (a single-shard tree has none, and under a
-    # gate it has not landed yet).
-    trellis_plan = None
-    trellis_stats = {"decoded_modules": 0, "trellis_bits": 0}
-    trellis_fp8_plan = None
-    if _quant_method(config) == "exl3" or trellis_tail_declaration(config) is not None:
-        # The trellis decode is two fp32 128x128 GEMMs per module and now runs
-        # on the capture device: pin the matmul policy exactly as stream_score
-        # does and RECORD it, so the sealed receipt can show that TF32 was off
-        # rather than assume torch's default (which NVIDIA_TF32_OVERRIDE can
-        # flip from the environment without a trace).
-        trellis_stats["numeric_policy"] = _pin_fp32_matmul_policy()
-        if str(os.environ.get("NVIDIA_TF32_OVERRIDE", "")).strip() == "1":
-            raise LayerOuterError(
-                "REFUSED: NVIDIA_TF32_OVERRIDE=1 forces TF32 in cuBLAS regardless of the "
-                "torch flags; the trellis decode's fp32 GEMMs would not be fp32. Unset it.")
-        keys = list(_index_weight_map(model_dir))
-        trellis_plan = trellis_checkpoint_plan(config, keys)
-        if any(key.endswith(FP8_SCALE_SUFFIX) for key in keys):
-            trellis_fp8_plan = fp8_checkpoint_plan_for_mixed(config)
-    if trellis_plan is not None:
-        observed = trellis_plan.pop("_observed", {})
-        trellis_stats["composition"] = observed.get("composition")
-        trellis_stats["quant_method_declared"] = observed.get("quant_method_declared")
-        trellis_stats["declared_by"] = observed.get("declared_by")
-        log(stage="trellis_decode_plan",
-            method=(TRELLIS_TP_COMPOSE_METHOD if observed.get("composition")
-                    else TRELLIS_DECODE_METHOD),
-            reference=TRELLIS_DECODE_REFERENCE,
-            mixed_fp8=trellis_fp8_plan is not None, observed=observed,
-            **trellis_plan)
-        trellis_stats["quantized_module_count"] = observed.get(
-            "quantized_module_count", 0)
-        trellis_stats["codebook_histogram"] = observed.get("codebook_histogram", {})
 
     # Build with the SAME context managers `from_pretrained` uses, so the module
     # tree (kernel patches, dtype, tie-weight suppression) is the one the

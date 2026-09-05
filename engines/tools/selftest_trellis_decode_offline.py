@@ -436,6 +436,44 @@ def main() -> int:
           and policy["pinned"]["float32_matmul_precision"] == "highest"
           and "NVIDIA_TF32_OVERRIDE" in policy["before_pin"], repr(policy))
 
+    # [18] The FP8 gate and the trellis gate consult ONE predicate. Three
+    # davidsyoung pods died on 2026-09-05 after their fetch because
+    # build_streamed_model asked `fp8_checkpoint_plan` about a
+    # `quant_method: modelopt` leftover before the trellis gate one line
+    # below could read the `hybrid_tr3_tail` declaration. The resolver runs
+    # the exact pod decision on the exact config shape, at $0.
+    import json
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, "model.safetensors.index.json").write_text(json.dumps(
+            {"metadata": {}, "weight_map": {k: "model-00001-of-00001.safetensors"
+                                            for k in rank_keys}}))
+        events = []
+        dy_cfg = _TailConfig({"quant_method": "modelopt", "config_groups": {},
+                              "producer": {"name": "modelopt"}},
+                             {"format": "exl3-trellis", "codebook": "mcg", "tp": 2,
+                              "bits_avg": 3.25, "k_values": [3, 4],
+                              "slicing": {"down_proj": "K-sliced: rank r = input cols"}})
+        check("[18] the predicate reads the tail over the ModelOpt leftover",
+              lo.is_trellis_checkpoint(dy_cfg) and not lo.is_trellis_checkpoint(_Config(
+                  {"quant_method": "modelopt", "config_groups": {}})))
+        fp8_18, tr_18, trfp8_18, st_18 = lo.checkpoint_decode_plans(
+            dy_cfg, td, lambda **kw: events.append(kw))
+        check("[18] a hybrid_tr3_tail checkpoint passes the FP8 gate and plans a TP compose",
+              fp8_18 is None and trfp8_18 is None and tr_18 is not None
+              and tr_18["quant_method"] == "exl3" and st_18["declared_by"] == "hybrid_tr3_tail"
+              and st_18["composition"]["tp"] == 2
+              and [e["stage"] for e in events] == ["trellis_decode_plan"]
+              and events[0]["method"] == lo.TRELLIS_TP_COMPOSE_METHOD,
+              repr((fp8_18, tr_18, st_18, events)))
+        ok, detail = refuses(lambda: lo.checkpoint_decode_plans(
+            _Config({"quant_method": "modelopt", "config_groups": {}}), td, lambda **kw: None),
+            "is not the block-scaled FP8 e4m3 weights-only form")
+        check("[18] a ModelOpt block with NO tail declaration is still refused", ok, detail)
+        native = lo.checkpoint_decode_plans(_Config(None), td, lambda **kw: events.append(kw))
+        check("[18] a native tree plans nothing and never opens the index",
+              native[:3] == (None, None, None) and len(events) == 1, repr(native))
+
     passed = sum(1 for _, ok, _ in RESULTS if ok)
     print("\nselftest_trellis_decode_offline: %d passed, %d failed"
           % (passed, len(RESULTS) - passed))
