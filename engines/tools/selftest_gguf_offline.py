@@ -797,6 +797,114 @@ def _sha256_file(path: Path) -> str:
 # rungs 8-8e: the GLM-5.3 FLAGSHIP (general.architecture glm-dsa), the surface
 # the layer-outer `gguf-dequant-to-bf16` lane decodes.
 # ---------------------------------------------------------------------------
+def build_mini_glmdsa(out_dir: Path):
+    """A synthetic two-layer glm-dsa GGUF with REAL container bytes over a
+    shrunken GgufArch (4 experts, 2 MLA heads, hidden 256): layers 5 and 78
+    (the MTP block), every tensor family the flagship carries, Q8_0/Q4_K/
+    IQ3_XXS/F32 payloads. Returns (surface, mini_arch, tensors) where
+    `tensors` maps gguf name -> (type, dims, raw bytes). Shared by rung 8c and
+    bin/selftest_layer_outer.py L19g-i."""
+    arch = gs.GLM_DSA
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(0x6D5A)
+    HID, RANK, QR, INTER, HEADS, NOPE, VD, E = 256, 64, 64, 64, 2, 24, 32, 4
+    mini_arch = gs.GgufArch(**dict(
+        arch.__dict__, num_experts=E, mla_heads=HEADS, mla_k_nope=NOPE, mla_v_dim=VD,
+        mla_kv_lora_rank=RANK,
+        projection_shape={"gate_proj": (INTER, HID), "up_proj": (INTER, HID),
+                          "down_proj": (HID, INTER)}))
+    assert mini_arch.kv_b_rows == HEADS * (NOPE + VD) and mini_arch.mtp_layer == 78
+
+    def blocks(count, block_bytes, scale_fields=1, scale_at=0):
+        out = rng.integers(0, 256, size=(count, block_bytes), dtype=np.uint8)
+        scales = (rng.standard_normal((count, scale_fields)) * 0.01).astype(np.float16)
+        out[:, scale_at:scale_at + 2 * scale_fields] = scales.view(np.uint8)
+        return out.tobytes()
+
+    def q8(n):
+        return blocks(n // 32, 34)
+
+    def q4k(n):
+        return blocks(n // 256, 144, 2)
+
+    def iq3(n):
+        return blocks(n // 256, 98)
+
+    def f32(*shape):
+        return rng.standard_normal(shape).astype(np.float32).tobytes()
+
+    tensors = {  # name -> (type, dims fastest-first, bytes)
+        "token_embd.weight": ("Q8_0", [HID, 8], q8(8 * HID)),
+        "output.weight": ("Q8_0", [HID, 8], q8(8 * HID)),
+        "output_norm.weight": ("F32", [HID], f32(HID)),
+    }
+    for layer in (5, 78):
+        b = "blk.%d." % layer
+        tensors.update({
+            b + "attn_norm.weight": ("F32", [HID], f32(HID)),
+            b + "ffn_norm.weight": ("F32", [HID], f32(HID)),
+            b + "attn_q_a.weight": ("Q8_0", [HID, QR], q8(HID * QR)),
+            b + "attn_q_a_norm.weight": ("F32", [QR], f32(QR)),
+            b + "attn_q_b.weight": ("Q8_0", [QR, HEADS * 64], q8(QR * HEADS * 64)),
+            b + "attn_kv_a_mqa.weight": ("Q8_0", [HID, RANK + 64], q8(HID * (RANK + 64))),
+            b + "attn_kv_a_norm.weight": ("F32", [RANK], f32(RANK)),
+            b + "attn_k_b.weight": ("Q8_0", [NOPE, RANK, HEADS], q8(NOPE * RANK * HEADS)),
+            b + "attn_v_b.weight": ("Q8_0", [RANK, VD, HEADS], q8(RANK * VD * HEADS)),
+            b + "attn_output.weight": ("Q8_0", [HEADS * VD, HID], q8(HEADS * VD * HID)),
+            b + "ffn_gate_inp.weight": ("F32", [HID, E], f32(E, HID)),
+            b + "exp_probs_b.bias": ("F32", [E], f32(E)),
+            b + "ffn_gate_exps.weight": ("Q4_K", [HID, INTER, E], q4k(HID * INTER * E)),
+            b + "ffn_up_exps.weight": ("IQ3_XXS", [HID, INTER, E], iq3(HID * INTER * E)),
+            b + "ffn_down_exps.weight": ("Q4_K", [INTER, HID, E], q4k(HID * INTER * E)),
+            b + "ffn_gate_shexp.weight": ("Q8_0", [HID, INTER], q8(HID * INTER)),
+            b + "ffn_up_shexp.weight": ("Q8_0", [HID, INTER], q8(HID * INTER)),
+            b + "ffn_down_shexp.weight": ("Q8_0", [INTER, HID], q8(HID * INTER)),
+            b + "indexer.attn_k.weight": ("Q8_0", [HID, 32], q8(HID * 32)),
+            b + "indexer.attn_q_b.weight": ("Q8_0", [QR, 64], q8(QR * 64)),
+            b + "indexer.proj.weight": ("F32", [HID, 8], f32(8, HID)),
+            b + "indexer.k_norm.weight": ("F32", [32], f32(32)),
+            b + "indexer.k_norm.bias": ("F32", [32], f32(32)),
+        })
+    tensors["blk.78.nextn.eh_proj.weight"] = ("Q8_0", [2 * HID, HID], q8(2 * HID * HID))
+    for suffix in ("nextn.enorm.weight", "nextn.hnorm.weight", "nextn.shared_head_norm.weight"):
+        tensors["blk.78." + suffix] = ("F32", [HID], f32(HID))
+    rows_w, data, offset = [], b"", 0
+    for name in sorted(tensors):
+        ttype, dims, raw = tensors[name]
+        rows_w.append({"name": name, "dims": dims, "type": ttype, "offset": offset})
+        data += raw
+        pad = (-len(raw)) % 32
+        data += b"\0" * pad
+        offset += len(raw) + pad
+    kv = json.loads((EVIDENCE / "unsloth-glm53-udq4kxl-kv.json").read_text(encoding="utf-8"))
+    kv = json.loads((EVIDENCE / "unsloth-glm53-udq4kxl-kv.json").read_text(encoding="utf-8"))
+    mini_kv = {k: v for k, v in kv.items() if k.startswith("glm-dsa.") or k == "general.architecture"}
+    mini_path = write_gguf(Path(out_dir) / "mini-glmdsa.gguf", mini_kv, rows_w, data=data)
+    mini_container = gs.GgufContainer([gs.GgufFile(str(mini_path))])
+    # the census closure demands every routed layer; the synthetic file has two,
+    # so build the census by hand from the same classifier, as layer_outer's
+    # plan would on a truncated fixture tree
+    direct_map, routed, mla = {}, {}, {}
+    for name in mini_container.tensors:
+        role = gs.classify_tensor(name, arch)
+        assert role[0] != "unmapped", name
+        if role[0] == "top":
+            direct_map[name] = role[1]
+        elif role[0] == "direct":
+            direct_map[name] = role[2]
+        elif role[0] == "routed":
+            routed[(role[1], role[2])] = name
+        else:
+            mla[(role[1], role[2])] = name
+    mini_census = gs.GgufCensus(direct_map=direct_map, routed=routed, mla=mla,
+                                mla_layers=(5, 78), arch=mini_arch)
+    mini_surface = gs.GgufSurface(
+        container=mini_container, census=mini_census, repo="test", revision="0" * 40,
+        architecture="glm-dsa", file_records=({"name": "mini-glmdsa.gguf", "bytes": 1, "sha256": None},),
+        file_hash_verification="skipped", type_census={}, scope_policy={}, quant_metadata={})
+    return mini_surface, mini_arch, tensors
+
+
 def _glmdsa_rungs(scratch: Path, torch) -> "list":
     import gzip
     import hashlib
@@ -934,100 +1042,11 @@ def _glmdsa_rungs(scratch: Path, torch) -> "list":
     # LOGIC (name map, slot slicing, kv_b composition, dtype policy) does not
     # depend on the numbers, so the fixture runs the same code over a shrunken
     # GgufArch (4 experts, 2 MLA heads, hidden 256) whose dims the file carries.
-    rng = np.random.default_rng(0x6D5A)
+    mini_surface, mini_arch, tensors = build_mini_glmdsa(flag_dir / "mini")
     HID, RANK, QR, INTER, HEADS, NOPE, VD, E = 256, 64, 64, 64, 2, 24, 32, 4
-    mini_arch = gs.GgufArch(**dict(
-        arch.__dict__, num_experts=E, mla_heads=HEADS, mla_k_nope=NOPE, mla_v_dim=VD,
-        mla_kv_lora_rank=RANK,
-        projection_shape={"gate_proj": (INTER, HID), "up_proj": (INTER, HID),
-                          "down_proj": (HID, INTER)}))
-    assert mini_arch.kv_b_rows == HEADS * (NOPE + VD) and mini_arch.mtp_layer == 78
-
-    def blocks(count, block_bytes, scale_fields=1, scale_at=0):
-        out = rng.integers(0, 256, size=(count, block_bytes), dtype=np.uint8)
-        scales = (rng.standard_normal((count, scale_fields)) * 0.01).astype(np.float16)
-        out[:, scale_at:scale_at + 2 * scale_fields] = scales.view(np.uint8)
-        return out.tobytes()
-
-    def q8(n):
-        return blocks(n // 32, 34)
-
-    def q4k(n):
-        return blocks(n // 256, 144, 2)
-
-    def iq3(n):
-        return blocks(n // 256, 98)
-
-    def f32(*shape):
-        return rng.standard_normal(shape).astype(np.float32).tobytes()
-
-    tensors = {  # name -> (type, dims fastest-first, bytes)
-        "token_embd.weight": ("Q8_0", [HID, 8], q8(8 * HID)),
-        "output.weight": ("Q8_0", [HID, 8], q8(8 * HID)),
-        "output_norm.weight": ("F32", [HID], f32(HID)),
-    }
-    for layer in (5, 78):
-        b = "blk.%d." % layer
-        tensors.update({
-            b + "attn_norm.weight": ("F32", [HID], f32(HID)),
-            b + "ffn_norm.weight": ("F32", [HID], f32(HID)),
-            b + "attn_q_a.weight": ("Q8_0", [HID, QR], q8(HID * QR)),
-            b + "attn_q_a_norm.weight": ("F32", [QR], f32(QR)),
-            b + "attn_q_b.weight": ("Q8_0", [QR, HEADS * 64], q8(QR * HEADS * 64)),
-            b + "attn_kv_a_mqa.weight": ("Q8_0", [HID, RANK + 64], q8(HID * (RANK + 64))),
-            b + "attn_kv_a_norm.weight": ("F32", [RANK], f32(RANK)),
-            b + "attn_k_b.weight": ("Q8_0", [NOPE, RANK, HEADS], q8(NOPE * RANK * HEADS)),
-            b + "attn_v_b.weight": ("Q8_0", [RANK, VD, HEADS], q8(RANK * VD * HEADS)),
-            b + "attn_output.weight": ("Q8_0", [HEADS * VD, HID], q8(HEADS * VD * HID)),
-            b + "ffn_gate_inp.weight": ("F32", [HID, E], f32(E, HID)),
-            b + "exp_probs_b.bias": ("F32", [E], f32(E)),
-            b + "ffn_gate_exps.weight": ("Q4_K", [HID, INTER, E], q4k(HID * INTER * E)),
-            b + "ffn_up_exps.weight": ("IQ3_XXS", [HID, INTER, E], iq3(HID * INTER * E)),
-            b + "ffn_down_exps.weight": ("Q4_K", [INTER, HID, E], q4k(HID * INTER * E)),
-            b + "ffn_gate_shexp.weight": ("Q8_0", [HID, INTER], q8(HID * INTER)),
-            b + "ffn_up_shexp.weight": ("Q8_0", [HID, INTER], q8(HID * INTER)),
-            b + "ffn_down_shexp.weight": ("Q8_0", [INTER, HID], q8(HID * INTER)),
-            b + "indexer.attn_k.weight": ("Q8_0", [HID, 32], q8(HID * 32)),
-            b + "indexer.attn_q_b.weight": ("Q8_0", [QR, 64], q8(QR * 64)),
-            b + "indexer.proj.weight": ("F32", [HID, 8], f32(8, HID)),
-            b + "indexer.k_norm.weight": ("F32", [32], f32(32)),
-            b + "indexer.k_norm.bias": ("F32", [32], f32(32)),
-        })
-    tensors["blk.78.nextn.eh_proj.weight"] = ("Q8_0", [2 * HID, HID], q8(2 * HID * HID))
-    for suffix in ("nextn.enorm.weight", "nextn.hnorm.weight", "nextn.shared_head_norm.weight"):
-        tensors["blk.78." + suffix] = ("F32", [HID], f32(HID))
-    rows_w, data, offset = [], b"", 0
-    for name in sorted(tensors):
-        ttype, dims, raw = tensors[name]
-        rows_w.append({"name": name, "dims": dims, "type": ttype, "offset": offset})
-        data += raw
-        pad = (-len(raw)) % 32
-        data += b"\0" * pad
-        offset += len(raw) + pad
-    mini_kv = {k: v for k, v in kv.items() if k.startswith("glm-dsa.") or k == "general.architecture"}
-    mini_path = write_gguf(flag_dir / "mini-glmdsa.gguf", mini_kv, rows_w, data=data)
-    mini_container = gs.GgufContainer([gs.GgufFile(str(mini_path))])
-    # the census closure demands every routed layer; the synthetic file has two,
-    # so build the census by hand from the same classifier, as layer_outer's
-    # plan would on a truncated fixture tree
-    direct_map, routed, mla = {}, {}, {}
-    for name in mini_container.tensors:
-        role = gs.classify_tensor(name, arch)
-        assert role[0] != "unmapped", name
-        if role[0] == "top":
-            direct_map[name] = role[1]
-        elif role[0] == "direct":
-            direct_map[name] = role[2]
-        elif role[0] == "routed":
-            routed[(role[1], role[2])] = name
-        else:
-            mla[(role[1], role[2])] = name
-    mini_census = gs.GgufCensus(direct_map=direct_map, routed=routed, mla=mla,
-                                mla_layers=(5, 78), arch=mini_arch)
-    mini_surface = gs.GgufSurface(
-        container=mini_container, census=mini_census, repo="test", revision="0" * 40,
-        architecture="glm-dsa", file_records=({"name": "mini-glmdsa.gguf", "bytes": 1, "sha256": None},),
-        file_hash_verification="skipped", type_census={}, scope_policy={}, quant_metadata={})
+    mini_container = mini_surface.container
+    direct_map, routed, mla = (mini_surface.census.direct_map, mini_surface.census.routed,
+                               mini_surface.census.mla)
     stats: dict = {}
     out = gs.materialize_layer(mini_surface, 5, stats=stats)
     want_names = {arch.layer_name(5, s) for s in (
@@ -1071,6 +1090,18 @@ def _glmdsa_rungs(scratch: Path, torch) -> "list":
     assert arch.layer_name(78, "eh_proj.weight") in mtp and mtp[arch.layer_name(78, "eh_proj.weight")].shape == (HID, 2 * HID)
     assert len(mtp) == 19 + 4 + 3 * E
     _refuses(lambda: gs.materialize_layer(mini_surface, 6), "not a layer of this artifact")
+    # `only`: the streamer's resident load asks a layer for ONE buffer
+    bias_name = arch.layer_name(5, "mlp.gate.e_score_correction_bias")
+    part_stats: dict = {}
+    part = gs.materialize_layer(mini_surface, 5, only=[bias_name], stats=part_stats)
+    assert set(part) == {bias_name} and part_stats["tensors_decoded"] == 1
+    assert torch.equal(part[bias_name], out[bias_name])
+    one_expert = arch.expert_name(5, 1, "gate_proj")
+    part = gs.materialize_layer(mini_surface, 5, only=[one_expert, arch.kv_b_name(5)])
+    assert set(part) == {one_expert, arch.kv_b_name(5)}
+    assert torch.equal(part[one_expert], out[one_expert])
+    _refuses(lambda: gs.materialize_layer(mini_surface, 5, only=["model.layers.5.nope"]),
+             "does not carry the requested tensors")
     plan = gs.materialize_plan(mini_surface)
     assert plan["kv_b_shape"] == [HEADS * (NOPE + VD), RANK] and plan["mtp_layer"] == 78
     assert gs.materialize_plan(surface)["kv_b_shape"] == [28672, 512]
@@ -1097,6 +1128,7 @@ def _glmdsa_rungs(scratch: Path, torch) -> "list":
         rows_t.append({"name": name, "dims": dims, "type": ttype, "offset": offset})
         data_t += raw + b"\0" * ((-len(raw)) % 32)
         offset += len(raw) + (-len(raw)) % 32
+    mini_kv = {k: v for k, v in kv.items() if k.startswith("glm-dsa.") or k == "general.architecture"}
     twin = gs.GgufContainer([gs.GgufFile(str(write_gguf(twin_dir / "twin.gguf", mini_kv, rows_t, data=data_t)))])
     proof = gs.verify_shared_indexer_copies(twin, copy_census)
     assert proof == {"copies_compared": 1, "copies_by_parent_layer": {78: 1}, "all_value_identical": True}

@@ -2205,8 +2205,13 @@ def layer_partition(census: GgufCensus) -> Dict[int, List[str]]:
 
 
 def materialize_layer(surface: GgufSurface, layer: int, *, torch_dtype=None,
-                      device=None, stats: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                      device=None, stats: Optional[Dict[str, Any]] = None,
+                      only: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """Every tensor of one decoder layer (or RESIDENT_LAYER) under its OFFICIAL name.
+
+    ``only`` restricts the decode to the named official tensors (the streamer's
+    resident load asks one layer for just its router-correction BUFFER); a name
+    in ``only`` that the layer does not carry is a refusal.
 
     Decoded ON ``device`` (the quantized bytes cross the bus, not the fp32
     result): each GGUF tensor is dequantized once to fp32 by the proven kernels,
@@ -2249,20 +2254,30 @@ def materialize_layer(surface: GgufSurface, layer: int, *, torch_dtype=None,
         out[hf_name] = tensor.to(want).contiguous()
         counters["official_tensors_produced"] += 1
 
+    wanted = set(only) if only is not None else None
     mla_seen: Dict[int, Dict[str, Any]] = {}
     for gguf_name in partition[layer]:
         role = classify_tensor(gguf_name, arch)
         row = container.tensors[gguf_name]
         if role[0] in ("top", "direct"):
             hf_name = role[1] if role[0] == "top" else role[2]
+            if wanted is not None and hf_name not in wanted:
+                continue
             finish(hf_name, load_decoded_tensor(container, gguf_name, device=device))
             note(row)
         elif role[0] == "mla":
+            if wanted is not None and kv_b_hf_name(role[1], arch) not in wanted:
+                continue
             mla_seen.setdefault(role[1], {})[role[2]] = gguf_name
             note(row)
         elif role[0] == "routed":
             projection = role[2]
-            for expert in range(arch.num_experts):
+            experts = [e for e in range(arch.num_experts)
+                       if wanted is None
+                       or official_expert_name(layer, e, projection, arch) in wanted]
+            if not experts:
+                continue
+            for expert in experts:
                 tensor, _row = load_decoded_expert(container, census, layer=layer,
                                                    expert=expert, projection=projection,
                                                    device=device)
@@ -2275,6 +2290,9 @@ def materialize_layer(surface: GgufSurface, layer: int, *, torch_dtype=None,
             raise _fail(f"layer {mla_layer}: MLA halves incomplete ({sorted(halves)})")
         finish(kv_b_hf_name(mla_layer, arch),
                reconstruct_kv_b(container, census, mla_layer, device=device))
+    if wanted is not None and set(out) != wanted:
+        missing = sorted(wanted - set(out))[:5]
+        raise _fail(f"layer {layer} does not carry the requested tensors {missing}")
     return out
 
 

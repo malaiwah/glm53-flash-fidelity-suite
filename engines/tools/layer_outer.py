@@ -1520,19 +1520,28 @@ def materialize_gguf_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_
     """
     if not subset:
         return {}
-    layers = {value.layer for value in subset.values() if isinstance(value, _GgufSlot)}
     foreign = [key for key, value in subset.items() if not isinstance(value, _GgufSlot)]
-    if foreign or len(layers) != 1:
+    if foreign:
         raise LayerOuterError(
-            "REFUSED: a GGUF layer bucket must hold the slots of exactly one layer "
-            "(layers %s, %d foreign keys)" % (sorted(layers), len(foreign)))
+            "REFUSED: a GGUF bucket holds %d keys that are not GGUF slots (e.g. %s)"
+            % (len(foreign), foreign[0]))
+    # A layer's bucket is that layer; the RESIDENT bucket is the three top-level
+    # tensors plus one router-correction BUFFER per MoE layer (the ungated
+    # streamer loads buffers resident), so it asks each of those layers for
+    # exactly that name and nothing else.
+    by_layer: Dict[int, List[str]] = {}
+    for key, value in subset.items():
+        by_layer.setdefault(value.layer, []).append(key)
     surface_mod = _gguf()
-    layer = layers.pop()
+    out: Dict[str, Any] = {}
     try:
-        out = surface_mod.materialize_layer(plan["_surface"], layer, torch_dtype=torch_dtype,
-                                            device=device, stats=stats)
+        for layer, names in sorted(by_layer.items()):
+            out.update(surface_mod.materialize_layer(
+                plan["_surface"], layer, torch_dtype=torch_dtype, device=device,
+                stats=stats, only=names))
     except ValueError as exc:
         raise LayerOuterError("REFUSED: %s" % exc) from None
+    layer = max(by_layer) if len(by_layer) == 1 else -1
     if set(out) != set(subset):
         missing = sorted(set(subset) - set(out))[:5]
         stray = sorted(set(out) - set(subset))[:5]

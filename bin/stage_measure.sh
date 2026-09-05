@@ -617,14 +617,37 @@ def safe_read(rel_text, read_content=True):
     finally:
         os.close(fd)
 
-config_raw, _config_size = safe_read("config.json")
-index_raw, _index_size = safe_read("model.safetensors.index.json")
-config_sha = hashlib.sha256(config_raw).hexdigest()
-index_sha = hashlib.sha256(index_raw).hexdigest()
-if config_sha != target["config_sha256"]:
-    raise SystemExit("fetch_target census REFUSED: config SHA-256 differs from job")
-if index_sha != target["index_sha256"]:
-    raise SystemExit("fetch_target census REFUSED: index SHA-256 differs from job")
+gguf = target.get("surface") == "gguf"
+if gguf:
+    # A GGUF build ships no config.json and no safetensors index. Its
+    # "index" is the tensor table of its own headers (target.index_source):
+    # recompute the digest from the downloaded parts with the SAME stdlib
+    # parser the controller used over https, and compare. The reference
+    # release's config.json is verified against target.config_sha256 by the
+    # capture stage, which copies it beside the build.
+    sys.path.insert(0, os.path.join(os.path.dirname(bin_root), "engines", "tools"))
+    import gguf_surface as ggs
+    parts = [str(root / row["path"]) for row in target["shards"]]
+    container = ggs.GgufContainer([ggs.GgufFile(part) for part in parts])
+    table = ggs._canonical_json([
+        {"name": n, "dims": [int(d) for d in r["dims"]], "type": r["type"],
+         "offset": int(r["offset"]), "file": r["file"]}
+        for n, r in sorted(container.tensors.items())])
+    index_sha = hashlib.sha256(table).hexdigest()
+    config_sha = target["config_sha256"]
+    if index_sha != target["index_sha256"]:
+        raise SystemExit("fetch_target census REFUSED: GGUF tensor-table digest differs from job")
+    ggs.audit_container(container)
+    index_shards = sorted(row["path"] for row in target["shards"])
+else:
+    config_raw, _config_size = safe_read("config.json")
+    index_raw, _index_size = safe_read("model.safetensors.index.json")
+    config_sha = hashlib.sha256(config_raw).hexdigest()
+    index_sha = hashlib.sha256(index_raw).hexdigest()
+    if config_sha != target["config_sha256"]:
+        raise SystemExit("fetch_target census REFUSED: config SHA-256 differs from job")
+    if index_sha != target["index_sha256"]:
+        raise SystemExit("fetch_target census REFUSED: index SHA-256 differs from job")
 
 def unique_object(pairs):
     result = {}
@@ -635,17 +658,18 @@ def unique_object(pairs):
         result[key] = value
     return result
 
-try:
-    index = json.loads(index_raw.decode("utf-8"), object_pairs_hook=unique_object)
-except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-    raise SystemExit("fetch_target census REFUSED: index is not strict UTF-8 JSON: %s"
-                     % exc)
-weight_map = index.get("weight_map") if isinstance(index, dict) else None
-if not isinstance(weight_map, dict) or not weight_map:
-    raise SystemExit("fetch_target census REFUSED: index has no non-empty weight_map")
-if any(not isinstance(name, str) for name in weight_map.values()):
-    raise SystemExit("fetch_target census REFUSED: index shard names are not strings")
-index_shards = sorted(set(weight_map.values()))
+if not gguf:
+    try:
+        index = json.loads(index_raw.decode("utf-8"), object_pairs_hook=unique_object)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit("fetch_target census REFUSED: index is not strict UTF-8 JSON: %s"
+                         % exc)
+    weight_map = index.get("weight_map") if isinstance(index, dict) else None
+    if not isinstance(weight_map, dict) or not weight_map:
+        raise SystemExit("fetch_target census REFUSED: index has no non-empty weight_map")
+    if any(not isinstance(name, str) for name in weight_map.values()):
+        raise SystemExit("fetch_target census REFUSED: index shard names are not strings")
+    index_shards = sorted(set(weight_map.values()))
 
 expected_shards = target["shards"]
 expected_names = [row["path"] for row in expected_shards]
@@ -676,7 +700,7 @@ for base, dirs, files in os.walk(str(root), topdown=True, followlinks=False):
             raise SystemExit(
                 "fetch_target census REFUSED: symlink directory in target: %s" % full)
     for name in files:
-        if not name.endswith(".safetensors"):
+        if not name.endswith(".gguf" if gguf else ".safetensors"):
             continue
         full = os.path.join(base, name)
         if os.path.islink(full) or not os.path.isfile(full):
@@ -685,7 +709,8 @@ for base, dirs, files in os.walk(str(root), topdown=True, followlinks=False):
         discovered.append(pathlib.Path(full).relative_to(root).as_posix())
 if sorted(discovered) != index_shards:
     raise SystemExit(
-        "fetch_target census REFUSED: downloaded safetensors differ from index")
+        "fetch_target census REFUSED: downloaded %s differ from index"
+        % ("gguf parts" if gguf else "safetensors"))
 
 receipt = common.seal({
     "schema": "fidelity.fetch-target-census.v1",
@@ -775,8 +800,12 @@ PYCENSUS
 import json, sys
 doc = json.load(open(sys.argv[1]))
 root = sys.argv[2].rstrip("/")
-for row in (doc.get("target") or {}).get("artifact_files") or []:
-    name = row.get("name") if isinstance(row, dict) else row
+target = doc.get("target") or {}
+# the quant lane binds the build as artifact_files; the candidate (root
+# protocol) route binds the same parts as target.shards
+rows = target.get("artifact_files") or target.get("shards") or []
+for row in rows:
+    name = (row.get("name") or row.get("path")) if isinstance(row, dict) else row
     if name:
         sys.stdout.write("--file\0" + root + "/" + name + "\0")
 PY
@@ -1322,6 +1351,10 @@ PYSCOPE
       }
       cp -f "$FS/reference-model/config.json" "$MODELS/target/config.json"
       chmod 644 "$MODELS/target/config.json"
+      [ "$(sha256sum "$MODELS/target/config.json" | cut -d' ' -f1)" = "$(jqget target.config_sha256)" ] || {
+        echo "$STAGE REFUSES: the reference root's config.json does not carry the job's target.config_sha256" >&2
+        exit 3
+      }
       for name in tokenizer.json tokenizer_config.json; do
         [ -f "$FS/reference-model/$name" ] || {
           echo "$STAGE REFUSES: gguf candidate needs the reference root's $name (fetch_reference)" >&2

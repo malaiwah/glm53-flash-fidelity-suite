@@ -1240,6 +1240,44 @@ def _body(work):
           and contract["quantization_config"]["general"]["quantize.imatrix.dataset"]
           == "unsloth_calibration_GLM-5.3.txt",
           json.dumps(contract)[:400])
+    # the subset materializer: the RESIDENT bucket mixes the three top-level
+    # slots with one router buffer per MoE layer and must decode exactly those
+    # (never a whole layer); a layer bucket decodes its layer; a foreign value
+    # refuses. Driven over the offline selftest's shrunken two-layer fixture.
+    import selftest_gguf_offline as SGO
+    mini_surface, mini_arch, mini_tensors = SGO.build_mini_glmdsa(Path(work) / "gguf-mini")
+    resident = {"model.embed_tokens.weight": LO._GgufSlot(GS.RESIDENT_LAYER, "model.embed_tokens.weight"),
+                "lm_head.weight": LO._GgufSlot(GS.RESIDENT_LAYER, "lm_head.weight"),
+                "model.norm.weight": LO._GgufSlot(GS.RESIDENT_LAYER, "model.norm.weight"),
+                mini_arch.layer_name(5, "mlp.gate.e_score_correction_bias"):
+                    LO._GgufSlot(5, mini_arch.layer_name(5, "mlp.gate.e_score_correction_bias"))}
+    gstats = {}
+    decoded = LO.materialize_gguf_subset(resident, {"_surface": mini_surface}, torch.bfloat16,
+                                         gstats, device="cpu")
+    check("L19g the resident GGUF bucket (embed, head, norm + one layer's router buffer) "
+          "decodes exactly those four tensors -- 4 GGUF tensors read, not a whole layer",
+          set(decoded) == set(resident) and gstats["tensors_decoded"] == 4
+          and decoded["lm_head.weight"].dtype == torch.bfloat16
+          and decoded[mini_arch.layer_name(5, "mlp.gate.e_score_correction_bias")].dtype
+          == torch.float32, repr((sorted(decoded), gstats)))
+    layer_slots = {name: LO._GgufSlot(5, name) for name in LO.gguf_subsets(
+        {"_surface": mini_surface, "_partition": GS.layer_partition(mini_surface.census)})
+        if name.startswith("model.layers.5.") and "e_score_correction_bias" not in name}
+    gstats = {}
+    decoded = LO.materialize_gguf_subset(layer_slots, {"_surface": mini_surface}, torch.bfloat16,
+                                         gstats, device="cpu")
+    check("L19h a layer bucket decodes its layer under the official names (kv_b composed, "
+          "experts sliced) and the bucket's names equal the decode's",
+          set(decoded) == set(layer_slots) and gstats["layers_decoded"] == 1
+          and decoded[mini_arch.kv_b_name(5)].shape[1] == mini_arch.mla_kv_lora_rank,
+          repr(sorted(decoded)[:4]))
+    try:
+        LO.materialize_gguf_subset(dict(layer_slots, foreign=object()), {"_surface": mini_surface},
+                                   torch.bfloat16, {}, device="cpu")
+        fo_ok, fo_detail = False, "accepted"
+    except LO.LayerOuterError as exc:
+        fo_ok, fo_detail = "not GGUF slots" in str(exc), str(exc)
+    check("L19i a non-slot value in a GGUF bucket is REFUSED", fo_ok, fo_detail)
     # ---- end FlagshipGgufLane ---------------------------------------------
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
