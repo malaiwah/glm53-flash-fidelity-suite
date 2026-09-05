@@ -3680,3 +3680,15 @@ it. Retry; a run that survives its first estimator call finishes.
 bundles plus scratch); dy325b's science completed and published on the pod,
 and only the local published-archive rebuild failed. Spend today $15.67
 (balance $167.71 → $152.04); no pods live; reaper healthy.
+
+**Then the harness.** `bin/selftest_contract_harness.py` (T27) is the local
+end-to-end contract harness the 2026-09-04 entry asked for: real driver,
+comparator, qualifier and archiver over fake sealed datasets, three decoded
+surfaces, one differing head, two contract refusals, 16 rungs in ~30 s at $0.
+Against the pre-HEAD-1d tree it fails at exactly the HEAD-1b refusal the
+drowzeys pod died on. Building it exposed three fixture infidelities the paid
+runs had hidden (a quant capture under the two-process protocol is ONE cold
+run with the reduced_run_count caveat; the bound tokenizer block is sealed
+verbatim into panel.tokenizer; the binding file is named by the job) -- each a
+place the fixture disagreed with hf_capture, now aligned. Of the seven pods
+lost this lane, five would not have been rented.

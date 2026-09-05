@@ -190,6 +190,18 @@ t "shell guards (T10: SH-02/03/14/19/21/23 + SEC-01 fixtures)" \
 # environment did not supply. Verified by reintroducing all four bugs.
 t "stage driver: every stage executed (T16)" \
                                            0 python3 bin/selftest_stage_measure.py
+# The CONTRACT path the stage driver's stubs cannot see: the seven GLM-5.3
+# pods of 2026-09-04/05 died AFTER the science had passed -- a capture exit
+# code, a scope vocabulary, an unrecorded weights_decode, a hardcoded target
+# surface, a head rule -- and the decode-layer Fruit fixture caught none.
+# This drives verify -> compare_root -> qualify_root -> compare_reference ->
+# result archive -> post through the REAL driver, comparator, qualifier and
+# archiver over tiny datasets sealed by the real writer, for the three
+# decoded surfaces and a candidate whose head is not the root's. Offline,
+# stock python3, ~30 s. Verified failing on the pre-HEAD-1d tree exactly
+# where the drowzeys pod failed.
+t "contract harness: job -> qualify -> own-head compare -> archive -> post (T27: C1-C10)" \
+                                           0 python3 bin/selftest_contract_harness.py
 # The class that GUARANTEES a rented GPU is destroyed had no test at all, which
 # is how CLI-01 (an API outage read as "destroyed") and CLI-02(b) (a teardown
 # that marks itself done before doing anything) survived a full review cycle.

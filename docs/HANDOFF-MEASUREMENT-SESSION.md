@@ -299,6 +299,19 @@ Three rules this rung paid for, now in the code:
   belong at the pre-spend gate on a scope FILE (`strict=True`), never on a
   dataset the validator verified yesterday.
 
+**Before the next surface, run the contract harness.**
+`python3 bin/selftest_contract_harness.py` (in the battery as T27, ~30 s,
+offline, stock python3) drives job contract → `verify` → `compare_root` →
+`qualify_root` → `compare_reference --own-heads` → result archive → post
+through the REAL `stage_measure.sh`, comparator, qualifier and archiver over
+tiny datasets sealed by the real writer, for the three decoded surfaces
+(fp8-block, exl3 trellis, TP-composed trellis) and a candidate whose head is
+not the root's; C9/C10 are the two contract mismatches that cost pods on
+2026-09-04, refused at `qualify_root`. It does not run `publish` (the Hub is
+the one network act) and it does not exercise the decode arithmetic (that is
+the Fruit fixture and the offline decode selftests). A new surface earns a
+row in its `SURFACES` table before it earns a rental.
+
 **The replay host is a term.** The registry rows cite comparisons re-run on
 the maintainer's workstation (Intel X5570, SSE4.2 OpenBLAS) under
 `--own-heads`; the pods' own comparisons of the same sealed datasets differ by

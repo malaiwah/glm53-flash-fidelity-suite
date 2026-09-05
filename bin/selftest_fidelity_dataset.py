@@ -141,8 +141,17 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                   qualification_contract=False,
                   panel_receipt_sha256=None,
                   resolved_panel_binding=None,
-                  panel_binding_file_sha256="2" * 64):
-    """Build a complete, sealed, conformant dataset.  Every knob is a test axis."""
+                  panel_binding_file_sha256="2" * 64,
+                  panel_binding_file="selftest.binding.json",
+                  codec=None, declared_bits=None, weights_decode=None):
+    """Build a complete, sealed, conformant dataset.  Every knob is a test axis.
+
+    `codec`, `declared_bits` and `weights_decode` are the candidate identity a
+    quant job's candidate block is checked against at qualify_root: the sealed
+    weights block carries the first two and the runtime receipt's capture_tool
+    carries the decode the loader applied (`{method, quantization_config}`).
+    Defaults leave every existing fixture byte-identical.
+    """
     panel_receipt_raw = None
     panel_receipt_file_sha256 = None
     if qualification_contract:
@@ -290,6 +299,11 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                 "id": panel_doc["tokenizer"]["id"],
             },
         }
+    # hf_capture seals the BOUND tokenizer block into panel.tokenizer verbatim
+    # (the archive contract compares the two for equality); mirror that.
+    manifest_tokenizer = (resolved_panel_binding["tokenizer"]
+                          if qualification_contract and resolved_panel_binding
+                          else panel_doc["tokenizer"])
     runtime_engine = "transformers-eager" if qualification_contract else stack
     fingerprint = {
         "schema": "malaiwah.stack-fingerprint.v1",
@@ -308,7 +322,7 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
         capture_tool.update({
             "schedule": "layer-outer",
             "resolved_panel_binding": {
-                "binding_file": "selftest.binding.json",
+                "binding_file": panel_binding_file,
                 "binding_file_sha256": panel_binding_file_sha256,
                 "binding": resolved_panel_binding,
             },
@@ -329,6 +343,8 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
             "extra_keys": [],
             "exact_match": True,
         }
+    if weights_decode is not None:
+        capture_tool["weights_decode"] = dict(weights_decode)
     runtime_doc = dsmanifest.capture_runtime(
         lane=lane, stack_fingerprint=fingerprint,
         stack_fingerprint_sha256=F.sha256_hex(stack),
@@ -350,6 +366,7 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                         "mlp.down", "norm", "lm_head")],
         head_policy="native", kv_cache_dtype="bf16", policy="mixed"))
 
+    single_cold = role == "root" or qualification_contract
     manifest = dsmanifest.top_manifest(
         dataset={"id": "fidelity--selftest.%s.%s" % (role, form),
                  "name": "selftest %s %s" % (role, form), "role": role,
@@ -363,7 +380,7 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                  "model_revision": model_revision, "quantized": quantized,
                  "checkpoint_identity_sha256": checkpoint_identity,
                  "config_sha256": None, "index_sha256": None, "artifact_ref": None,
-                 "model_ref": None, "codec": None, "declared_bits": None,
+                 "model_ref": None, "codec": codec, "declared_bits": declared_bits,
                  "declared_head_bits": None},
         scope=scope,
         panel={"panel_id": "panel--selftest.tiny", "panel_file": "panel/panel.json",
@@ -378,7 +395,7 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                "contexts": len(panel_records), "context_length": rows + 1,
                "scored_positions_total": rows * len(panel_records),
                "scoring_window": panel_doc["scoring_window"],
-               "tokenizer": panel_doc["tokenizer"], "remap_file": None,
+               "tokenizer": manifest_tokenizer, "remap_file": None,
                "contamination": panel_doc["contamination"]},
         capture={"manifest_file": "capture/manifest.json",
                  "manifest_file_sha256": "0" * 64,
@@ -409,24 +426,28 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                  "stack_fingerprint_sha256": runtime_doc["stack_fingerprint_sha256"],
                  "backend_identity_sha256": None, "runtime_reader_sha256": None,
                  "source": "native"},
-        determinism={"run_count": 1 if role == "root" else 2,
+        # Under the two-fresh-process protocol EVERY capture -- root or quant
+        # candidate -- is one cold run with the reduced_run_count caveat;
+        # reproduction is the outer comparison's job. Outside it a quant
+        # fixture keeps its historical two-run shape.
+        determinism={"run_count": 1 if single_cold else 2,
                      "cold_start_per_run": True,
                      "evidence_kind": ("hidden_state_tensor_sha256" if form == "hidden"
                                        else "logits_tensor_sha256"),
                      "evidence_hashes": [capture_doc["capture_content_digest"]],
                      "distinct_evidence_hash_count": 1,
-                     "identical_across_runs": None if role == "root" else True,
+                     "identical_across_runs": None if single_cold else True,
                      "repeats": [], "repeat_noise": None,
-                     "note": ("one independent cold capture" if role == "root"
+                     "note": ("one independent cold capture" if single_cold
                               else "selftest fixture")},
         coverage=coverage,
         disclosures=([{"code": "no_known_deviations", "severity": "info",
                        "affects_comparability": False, "detail": "selftest fixture"}]
                      + ([{"code": "reduced_run_count", "severity": "caveat",
                           "affects_comparability": False,
-                          "detail": "one independent root capture; exact reproduction "
+                          "detail": "one independent cold capture; exact reproduction "
                                     "is established by the outer comparison"}]
-                        if role == "root" else [])))
+                        if single_cold else [])))
 
     if emit_k3_compat:
         from fidelity import k3compat                                # noqa: WPS433
