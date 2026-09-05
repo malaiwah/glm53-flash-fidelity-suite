@@ -711,6 +711,32 @@ def sniff_surface(meta: RepoMeta, path: Optional[str] = None) -> SurfaceInfo:
         if declared is not None and str(declared).lower() != "exl3":
             info.evidence["quant_method_mislabel"] = str(declared)
 
+    if info.surface == "exl3hf" and "model.safetensors.index.json" in names:
+        # The codec the ROW carries comes from the payload bytes, not from
+        # `quantization_config.codebook`: drowzeys declares mul1 and ships mcg
+        # on layer 3 / mul1 on 4-77 (exl3-trellis, mixed); wrldsuksgo2mars
+        # declares nothing and ships 57,600 mcg markers (exl3-mcg). One
+        # codebook in the index -> exl3-<that>; several -> exl3-trellis.
+        try:
+            index = fetch_json(meta.repo_id, "model.safetensors.index.json",
+                               revision=meta.revision)
+            census = {}
+            for key in (index.get("weight_map") or {}):
+                last = key.rsplit(".", 1)[-1]
+                if last in ("mcg", "mul1"):
+                    census[last] = census.get(last, 0) + 1
+            if census:
+                info.evidence["codebook_census"] = dict(sorted(census.items()))
+                if len(census) == 1:
+                    only = next(iter(census))
+                    info.codebook = only
+                    info.codec_family = "exl3-%s" % only
+                else:
+                    info.codebook = "mixed"
+                    info.codec_family = "exl3-trellis"
+        except HFError as exc:
+            info.problems.append("cannot census the exl3 index for codebook markers: %s" % exc)
+
     if "materialization-receipt.json" in names:
         try:
             mr = fetch_json(meta.repo_id, "materialization-receipt.json",
