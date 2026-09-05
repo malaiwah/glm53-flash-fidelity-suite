@@ -1,0 +1,48 @@
+{
+ "artifact": "davidsyoung/GLM-5.3-EXL3-TR3-3.25bpw@6d6bd738c0c1635513e0bd0fdf0302049bd820a9",
+ "controls": "reversed rank order gives cosine ~0 on every projection; the other concatenation axis is a shape mismatch",
+ "declared_by_artifact": {
+  "codebook": "mcg",
+  "down_proj": "K-sliced: rank r = input cols [512r, 512r+512) of [6144,2048]",
+  "gate_proj": "N-sliced: rank r = output rows [512r, 512r+512) of [2048,6144]",
+  "k_values": [
+   3,
+   4
+  ],
+  "mcg_multiplier": 3417055213,
+  "tensor_schema": "model.layers.{L}.mlp.experts.{E}.{proj}.rank{r}.{trellis|suh|svh|mcg}",
+  "tp": 4,
+  "up_proj": "N-sliced: rank r = output rows [512r, 512r+512) of [2048,6144]"
+ },
+ "decode": "engines/tools/exl3hf_surface.decode_payload_hf per rank, concatenated in rank order along the declared axis",
+ "derived_at_utc": "2026-09-05T01:37:23Z",
+ "module": "model.layers.3.mlp.experts.0",
+ "per_projection": {
+  "down_proj": {
+   "bits": 4,
+   "cosine_declared": 0.9992997050285339,
+   "cosine_reversed": -8.550043276045471e-05
+  },
+  "gate_proj": {
+   "bits": 4,
+   "cosine_declared": 0.999409556388855,
+   "cosine_reversed": -0.0005341983051039279
+  },
+  "up_proj": {
+   "bits": 4,
+   "cosine_declared": 0.9991883039474487,
+   "cosine_reversed": -0.0005263771745376289
+  }
+ },
+ "reading": "rel_l2 ~0.067 equals the K4 trellis reconstruction error measured on GLM-5.2-SIQ-Fruit vs its bf16 source (0.0674, fruit-siq-trellis-reconstruction.json): the composition is the artifact's declared one, not a guess",
+ "reference": "zai-org/GLM-5.3-BF16@304b8051cfb2b260b61ce0cbe330e02a98e73639 (the artifact's own config.hybrid_tr3_tail.source_repo)",
+ "schema": "malaiwah.exl3-tp-rank-composition-evidence.v1",
+ "zero_pad_evidence": {
+  "artifact": "drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5",
+  "control": "rows 64..639 vs root: cosine -0.002",
+  "reading": "128-alignment zero padding for the publisher's serving kernel; the config-implied [576, 6144] head IS the root tensor",
+  "rows_0_575": "bitwise equal (100.0000% of elements) to dequantize_block_fp8(zai-org/GLM-5.3@187fb9ff) cast to fp16, layers 0 and 40",
+  "rows_576_639": "exactly zero in every sampled layer (0/393216 nonzero)",
+  "tensor": "model.layers.{0,3,40,77}.self_attn.kv_a_proj_with_mqa.weight [640, 6144] F16"
+ }
+}
