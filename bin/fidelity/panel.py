@@ -209,6 +209,23 @@ def verify_bound_panel_receipt_bytes(
     return receipt
 
 
+def verify_third_party_sealed_receipt(raw: bytes, expected_declared: str) -> str:
+    """Prove `raw` is a producer-sealed upstream panel receipt with seal `expected_declared`.
+
+    Returns the seal mode. Only the upstream artifact receipt schema qualifies:
+    a receipt this suite built (`malaiwah.token-panel-build-receipt.v1`) is our
+    own document and gets no third-party treatment anywhere.
+    """
+    receipt = _json_bytes(raw, "third-party panel receipt")
+    if receipt.get("schema") != ARTIFACT_RECEIPT_SCHEMA:
+        raise PanelError("not an upstream artifact receipt: schema %r" % receipt.get("schema"))
+    declared, mode = _verify_seal(receipt, "third-party panel receipt")
+    if declared != _hex(expected_declared, "expected declared receipt seal"):
+        raise PanelError("third-party panel receipt seal %s is not the bound %s"
+                         % (declared[:12], expected_declared[:12]))
+    return mode
+
+
 def _pinned_tokenizer_identity(repository: Any, revision: Any,
                                label: str) -> Tuple[str, str]:
     if not isinstance(repository, str) or _HF_REPO.fullmatch(repository) is None:

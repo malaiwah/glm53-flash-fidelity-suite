@@ -742,6 +742,120 @@ def main():
             check("RP9h3 private absolute path in qualification refuses before mutation",
                   path_refused and not api.commits and not api.created)
 
+            # RP9h5: a producer-sealed UPSTREAM panel receipt copied verbatim
+            # (brandonmusic's lists 667 artifacts under /workspace/... on HIS
+            # machine; the seal covers those strings) is public third-party
+            # bytes, not our leak. The 2026-09-05 Flash root sealed two
+            # captures, qualified, and then refused publication on it. The
+            # exemption is by the seal the manifest binds: a mutated receipt,
+            # our own build receipt, or any other member still refuses.
+            qualification.write_bytes(b'{"note":"clean"}\n')
+            import hashlib as _hashlib
+            from fidelity import panel as _panel_contract
+
+            def _upstream_receipt(schema):
+                body = {"schema": schema, "roles": ["final"],
+                        "artifacts": [{"path": "/workspace/artifacts/dataset/calibration/"
+                                               "panel-v1/panel.json",
+                                       "bytes": 1, "sha256": "e" * 64}]}
+                seal = _hashlib.sha256(json.dumps(
+                    body, sort_keys=True, separators=(",", ":"),
+                    ensure_ascii=False).encode("utf-8") + b"\n").hexdigest()
+                doc = dict(body, receipt_sha256=seal)
+                return json.dumps(doc, sort_keys=True).encode("utf-8"), seal
+
+            receipt_raw, receipt_seal = _upstream_receipt(
+                _panel_contract.ARTIFACT_RECEIPT_SCHEMA)
+            (root / "panel").mkdir(exist_ok=True)
+            receipt_member = root / "panel" / "panel-receipt.json"
+            receipt_member.write_bytes(receipt_raw)
+            real_dshub.F.iter_dataset_files = lambda *a, **kw: [
+                real_dshub.F.MANIFEST_NAME, "panel/panel-receipt.json"]
+            real_dshub.F.load_manifest = lambda *a, **kw: {
+                real_dshub.F.SEAL_FIELD: "d" * 64,
+                "dataset": {"structural_status": "sealed"},
+                "panel": {"panel_receipt_file": "panel/panel-receipt.json",
+                          "panel_receipt_sha256": receipt_seal}}
+            api = Api()
+            sys.modules["huggingface_hub"] = _types.SimpleNamespace(
+                HfApi=lambda token=None, endpoint=None: api, CommitOperationAdd=Add)
+            published = real_dshub.publish_dataset(
+                str(root), "malaiwah/mm3-root-v1", str(qualification),
+                expected_head="a" * 40, token="different-secret")
+            check("RP9h5 a producer-sealed upstream panel receipt with the producer's "
+                  "/workspace paths publishes",
+                  published["revision"] == "b" * 40 and len(api.commits) == 1
+                  and "panel/panel-receipt.json" in [
+                      op.path_in_repo for op in api.commits[0]["operations"]])
+
+            receipt_member.write_bytes(receipt_raw.replace(b"panel-v1", b"panel-v2"))
+            api = Api()
+            sys.modules["huggingface_hub"] = _types.SimpleNamespace(
+                HfApi=lambda token=None, endpoint=None: api, CommitOperationAdd=Add)
+            mutated_refused = False
+            try:
+                real_dshub.publish_dataset(
+                    str(root), "malaiwah/mm3-root-v1", str(qualification),
+                    expected_head="a" * 40, token="different-secret")
+            except real_dshub.HubError as exc:
+                mutated_refused = "private absolute path" in str(exc)
+            check("RP9h6 the same receipt with one byte changed loses the exemption",
+                  mutated_refused and not api.commits and not api.created)
+
+            own_raw, own_seal = _upstream_receipt(_panel_contract.BUILD_RECEIPT_SCHEMA)
+            receipt_member.write_bytes(own_raw)
+            real_dshub.F.load_manifest = lambda *a, **kw: {
+                real_dshub.F.SEAL_FIELD: "d" * 64,
+                "dataset": {"structural_status": "sealed"},
+                "panel": {"panel_receipt_file": "panel/panel-receipt.json",
+                          "panel_receipt_sha256": own_seal}}
+            api = Api()
+            sys.modules["huggingface_hub"] = _types.SimpleNamespace(
+                HfApi=lambda token=None, endpoint=None: api, CommitOperationAdd=Add)
+            own_refused = False
+            try:
+                real_dshub.publish_dataset(
+                    str(root), "malaiwah/mm3-root-v1", str(qualification),
+                    expected_head="a" * 40, token="different-secret")
+            except real_dshub.HubError as exc:
+                own_refused = "private absolute path" in str(exc)
+            check("RP9h7 our own build receipt never gets the third-party exemption",
+                  own_refused and not api.commits and not api.created)
+
+            # The exemption is from the PATH scan only: a sealed upstream
+            # receipt that carries an apparent token still refuses.
+            token_body = {"schema": _panel_contract.ARTIFACT_RECEIPT_SCHEMA,
+                          "roles": ["final"], "artifacts": [],
+                          "note": "hf_apparentcredential1234567890"}
+            token_seal = _hashlib.sha256(json.dumps(
+                token_body, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False).encode("utf-8") + b"\n").hexdigest()
+            receipt_member.write_bytes(json.dumps(
+                dict(token_body, receipt_sha256=token_seal), sort_keys=True).encode("utf-8"))
+            real_dshub.F.load_manifest = lambda *a, **kw: {
+                real_dshub.F.SEAL_FIELD: "d" * 64,
+                "dataset": {"structural_status": "sealed"},
+                "panel": {"panel_receipt_file": "panel/panel-receipt.json",
+                          "panel_receipt_sha256": token_seal}}
+            api = Api()
+            sys.modules["huggingface_hub"] = _types.SimpleNamespace(
+                HfApi=lambda token=None, endpoint=None: api, CommitOperationAdd=Add)
+            token_refused = False
+            try:
+                real_dshub.publish_dataset(
+                    str(root), "malaiwah/mm3-root-v1", str(qualification),
+                    expected_head="a" * 40, token="different-secret")
+            except real_dshub.HubError as exc:
+                token_refused = "apparent Hugging Face token" in str(exc)
+            check("RP9h8 a sealed upstream receipt is still scanned for credentials",
+                  token_refused and not api.commits and not api.created)
+            real_dshub.F.iter_dataset_files = lambda *a, **kw: [
+                real_dshub.F.MANIFEST_NAME]
+            real_dshub.F.load_manifest = lambda *a, **kw: {
+                real_dshub.F.SEAL_FIELD: "d" * 64,
+                "dataset": {"structural_status": "sealed"}}
+            receipt_member.unlink()
+
             qualification.write_bytes(
                 b'{"note":"hf_apparentcredential1234567890"}\n')
             api = Api()

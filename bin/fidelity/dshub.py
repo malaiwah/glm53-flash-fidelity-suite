@@ -583,6 +583,26 @@ def publish_dataset(root: str, repo: str, qualification_path: str, *,
     if evidence_rel in files:
         raise HubError(
             "REFUSED to publish: sealed dataset already occupies qualification path")
+    # A panel receipt the dataset binds by its producer's own seal is public
+    # third-party bytes copied verbatim (brandonmusic's calibration/panel-v1
+    # receipt lists 667 artifacts under /workspace/... on HIS machine, and its
+    # seal covers those strings). Its paths are not ours to leak, and the M2
+    # gate refuses the panel if one byte of the receipt changes, so the member
+    # keeps its bytes and skips only the private-path scan; the credential
+    # scans still run over it. Anything our own code wrote gets no exemption.
+    third_party_receipts = set()
+    panel_block = manifest.get("panel") or {}
+    receipt_rel = panel_block.get("panel_receipt_file")
+    receipt_seal = panel_block.get("panel_receipt_sha256")
+    if isinstance(receipt_rel, str) and receipt_rel in files and isinstance(receipt_seal, str):
+        from . import panel as panel_contract
+        try:
+            with open(F.resolve_inside(root, receipt_rel, owner="publish_dataset"), "rb") as fh:
+                mode = panel_contract.verify_third_party_sealed_receipt(fh.read(), receipt_seal)
+        except (OSError, panel_contract.PanelError):
+            mode = None
+        if mode is not None:
+            third_party_receipts.add(receipt_rel)
     operations = []
     for relpath in files:
         if F.looks_like_a_credential(relpath):
@@ -599,7 +619,8 @@ def publish_dataset(root: str, repo: str, qualification_path: str, *,
                 "REFUSED to publish non-regular dataset member %r" % relpath)
         _scan_publish_member(
             source, relpath, token,
-            textual=_textual_publish_member(relpath))
+            textual=(_textual_publish_member(relpath)
+                     and relpath not in third_party_receipts))
         operations.append(CommitOperationAdd(
             path_in_repo=relpath, path_or_fileobj=source))
     qualification_absolute = os.path.realpath(qualification_path)
