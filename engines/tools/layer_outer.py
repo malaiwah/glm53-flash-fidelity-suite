@@ -761,6 +761,96 @@ def _tail_declared_bits(tail) -> Any:
     return tail.get("bits_avg", tail.get("bits"))
 
 
+def _sidecar_declared_bits(doc, key, file, sha256):
+    """Mirror of `fidelity.hfmeta._sidecar_declared_bits` (no bin/ import on the
+    pod).  The trellis selftest's [18c] rung asserts the two produce the same
+    block from the same sidecar bytes."""
+    import hashlib  # noqa: F401  -- stdlib
+    entries = []
+    histogram = {}
+    for entry in doc.values():
+        rates = entry.get(key) if isinstance(entry, dict) else None
+        if not isinstance(rates, list):
+            continue
+        for rate in rates:
+            if isinstance(rate, int) and not isinstance(rate, bool):
+                entries.append(rate)
+                srate = str(rate)
+                histogram[srate] = histogram.get(srate, 0) + 1
+    if not entries:
+        raise LayerOuterError(
+            "REFUSED: sidecar %r key %r carries no per-expert integer bitrates"
+            % (file, key))
+    mean = sum(entries) / len(entries)
+    source = {
+        "sidecar": file,
+        "key": key,
+        "entries": len(entries),
+        "histogram": dict(sorted(histogram.items())),
+        "sha256": sha256,
+    }
+    return mean, source
+
+
+def _read_sidecar_from_dir(model_dir, file, config, tail, skey):
+    """Read `<model_dir>/<file>`, validate it against the config's MoE layer
+    range and n_routed_experts, and return (doc, sha256).  Refuses by name if
+    the file is absent, not strict JSON, has a layer set different from the
+    config's moe_layers, or any layer's list under `skey` is not exactly
+    n_routed_experts long."""
+    import hashlib
+    path = os.path.join(model_dir, file)
+    if not os.path.isfile(path):
+        raise LayerOuterError(
+            "REFUSED: hybrid_tr3_tail.bits_per_expert names %r but it is absent "
+            "from the checkpoint directory %s" % (file, model_dir))
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read()
+        doc = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise LayerOuterError(
+            "REFUSED: sidecar %r is not strict JSON (%s)" % (file, exc)) from None
+    if not isinstance(doc, dict):
+        raise LayerOuterError(
+            "REFUSED: sidecar %r is not a JSON object" % (file,))
+    moe_layers = (tail or {}).get("moe_layers")
+    expected_layers = None
+    if isinstance(moe_layers, list) and len(moe_layers) == 2 and all(
+            isinstance(x, int) and not isinstance(x, bool) for x in moe_layers):
+        expected_layers = set(range(moe_layers[0], moe_layers[1] + 1))
+    n_experts = None
+    if isinstance(config, dict):
+        n_experts = config.get("n_routed_experts")
+    if n_experts is None:
+        n_experts = getattr(config, "n_routed_experts", None)
+    if n_experts is None:
+        n_experts = (tail or {}).get("experts_per_layer")
+    if not isinstance(n_experts, int) or isinstance(n_experts, bool):
+        n_experts = None
+    layers_seen = set()
+    for layer, entry in doc.items():
+        try:
+            layers_seen.add(int(layer))
+        except (TypeError, ValueError):
+            raise LayerOuterError(
+                "REFUSED: sidecar %r has a non-integer layer key %r" % (file, layer))
+        if not isinstance(entry, dict):
+            raise LayerOuterError(
+                "REFUSED: sidecar %r layer %r is not an object" % (file, layer))
+        rates = entry.get(skey)
+        if isinstance(rates, list) and n_experts is not None and len(rates) != n_experts:
+            raise LayerOuterError(
+                "REFUSED: sidecar %r layer %s key %r has %d entries but the config "
+                "declares n_routed_experts=%d"
+                % (file, layer, skey, len(rates), n_experts))
+    if expected_layers is not None and layers_seen != expected_layers:
+        raise LayerOuterError(
+            "REFUSED: sidecar %r covers layers %s but hybrid_tr3_tail.moe_layers "
+            "declares %s" % (file, sorted(layers_seen), sorted(expected_layers)))
+    return doc, hashlib.sha256(raw).hexdigest()
+
+
 #: The exl3 ROTATION LAYOUTS (per_module / shared_h_v1 / r7_shared): which
 #: tensor carries each module's suh and svh. Read from the index names and
 #: cross-checked against the declaration; the reader rules are cited in
@@ -982,7 +1072,8 @@ def exl3_layout_contract(keys, qc, tail):
     return contract, detail
 
 
-def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Dict[str, Any]]:
+def trellis_checkpoint_plan(config, declared_keys: Sequence[str],
+                                model_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """The exact EXL3 trellis form this schedule decodes, or None.
 
     Accepts `quant_method: exl3` whose payload groups are the stock
@@ -1068,6 +1159,23 @@ def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Di
             "head_bits": None,
             "modules_to_not_convert": [],
         }
+        # jpsequeira's GLM-5.2 TR3 declares `bits: "mixed"` with no numeric
+        # and a `bits_per_expert: "<file>:<key>" sidecar shipped in the repo
+        # root.  The pod reads `<model_dir>/<file>`, validates its layer set
+        # against moe_layers and each list against n_routed_experts, and the
+        # declared bits become the exact float mean of every entry.  The
+        # `declared_bits_source` block is byte-identical to the controller's
+        # mirror (same sha256).  Without model_dir (e.g. the layout-parity
+        # tool) the legacy string stays, as today.
+        ref = tail.get("bits_per_expert")
+        if model_dir is not None and isinstance(ref, str) and ":" in ref:
+            sfile, _, skey = ref.partition(":")
+            sfile, skey = sfile.strip(), skey.strip()
+            if sfile and skey:
+                doc, sha = _read_sidecar_from_dir(model_dir, sfile, config, tail, skey)
+                mean, source = _sidecar_declared_bits(doc, skey, sfile, sha)
+                contract["bits"] = mean
+                contract["declared_bits_source"] = source
     else:
         contract = {
             "quant_method": "exl3",
@@ -2528,7 +2636,7 @@ def checkpoint_decode_plans(config, model_dir: str, log: Callable[..., None]):
                 "REFUSED: NVIDIA_TF32_OVERRIDE=1 forces TF32 in cuBLAS regardless of the "
                 "torch flags; the trellis decode's fp32 GEMMs would not be fp32. Unset it.")
         keys = list(_index_weight_map(model_dir))
-        trellis_plan = trellis_checkpoint_plan(config, keys)
+        trellis_plan = trellis_checkpoint_plan(config, keys, model_dir=model_dir)
         if any(key.endswith(FP8_SCALE_SUFFIX) for key in keys):
             trellis_fp8_plan = fp8_checkpoint_plan_for_mixed(config)
     if trellis_plan is not None:

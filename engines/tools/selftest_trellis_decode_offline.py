@@ -542,6 +542,109 @@ def main() -> int:
         check("[18] a native tree plans nothing and never opens the index",
               native[:3] == (None, None, None) and len(events) == 1, repr(native))
 
+    # [18c] SIDECAR-declared bits: jpsequeira's GLM-5.2 TR3 declares
+    # `bits: "mixed"` with no numeric beside `bits_per_expert:
+    # "expert_precision_map.json:bitrates"` -- a per-layer per-expert map
+    # shipped in the repo root.  The pod reads `<model_dir>/<file>`, the
+    # controller fetches it by name from the target repo/revision, and BOTH
+    # must put the exact float mean of every entry into the contract's
+    # `bits` with a byte-identical `declared_bits_source` block (same sha256).
+    # The mean is exact (3.3947882401315788 for the real artifact) so two
+    # independent readers agree to full float repr.
+    import hashlib as _hl18c
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bin"))
+    from fidelity import hfmeta as hm18c
+    side_doc = {"3": {"bitrates": [3] * 200 + [4] * 56},
+                "4": {"bitrates": [3] * 100 + [4] * 156}}
+    side_raw = json.dumps(side_doc).encode("utf-8")
+    side_sha = _hl18c.sha256(side_raw).hexdigest()
+
+    def _pod_loader(sfile):
+        with open(os.path.join(td, sfile), "rb") as _h:
+            return json.loads(_h.read()), side_sha
+
+    def _ctrl_loader(sfile):
+        return side_doc, side_sha
+
+    # hfmeta pure function: the mean and the source block
+    mean18c, source18c = hm18c.tr3_tail_declared_bits(
+        {"bits": "mixed", "bits_per_expert": "expert_precision_map.json:bitrates"},
+        sidecar_loader=_ctrl_loader)
+    mean_expected = (200 * 3 + 56 * 4 + 100 * 3 + 156 * 4) / 512
+    check("[18c] hfmeta resolves the sidecar mean exactly and builds the source block",
+          mean18c == mean_expected
+          and source18c == {"sidecar": "expert_precision_map.json", "key": "bitrates",
+                            "entries": 512, "histogram": {"3": 300, "4": 212},
+                            "sha256": side_sha},
+          repr((mean18c, source18c)))
+    # Without a loader the legacy string is returned (so a refusal can name it)
+    check("[18c] hfmeta without a loader returns the legacy string for a refusal",
+          hm18c.tr3_tail_declared_bits({"bits": "mixed",
+                                        "bits_per_expert": "x:y"}) == "mixed")
+
+    # Pod side: write the sidecar into the checkpoint dir and plan
+    with open(os.path.join(td, "expert_precision_map.json"), "wb") as _h:
+        _h.write(side_raw)
+    side_tail = {"format": "exl3-trellis", "codebook": "mcg", "tp": 2, "bits": "mixed",
+                 "bits_per_expert": "expert_precision_map.json:bitrates",
+                 "k_values": [3, 4], "experts_per_layer": 256, "moe_layers": [3, 4],
+                 "rotation_layout": "shared_h_v1",
+                 "shared_h_tensor_schema": lo.EXL3_SHARED_H_TENSOR_SCHEMA}
+
+    class _SideConfig(_TailConfig):
+        def __init__(self, qc, tail):
+            super().__init__(qc, tail)
+            self.n_routed_experts = 256
+
+    side_cfg = _SideConfig({"quant_method": "modelopt"}, side_tail)
+    side_keys = list(rank_keys)
+    pod_plan = lo.trellis_checkpoint_plan(side_cfg, side_keys, model_dir=td)
+    pod_plan.pop("_observed", None)
+    check("[18c] the pod plan's bits is the exact sidecar mean and carries declared_bits_source",
+          pod_plan["bits"] == mean_expected
+          and pod_plan["declared_bits_source"] == source18c,
+          repr((pod_plan["bits"], pod_plan.get("declared_bits_source"))))
+
+    # Controller mirror: same sidecar through the injected loader, same block
+    ctrl_decode = mc._candidate_decode_plan(
+        side_cfg.quantization_config, {"quantization_config": side_cfg.quantization_config,
+                                       "hybrid_tr3_tail": side_tail},
+        index_keys=side_keys, sidecar_loader=_ctrl_loader)
+    ctrl_qcfg = ctrl_decode["quantization_config"]
+    check("[18c] the controller mirror's bits and declared_bits_source equal the pod's",
+          ctrl_qcfg["bits"] == pod_plan["bits"]
+          and ctrl_qcfg["declared_bits_source"] == pod_plan["declared_bits_source"],
+          "ctrl %r pod %r" % (ctrl_qcfg.get("bits"), pod_plan.get("bits")))
+
+    # [18d] SIDECAR refusals: the pod refuses by name when the sidecar is
+    # absent, not strict JSON, or its expert count disagrees with
+    # n_routed_experts.
+    os.remove(os.path.join(td, "expert_precision_map.json"))
+    ok, detail = refuses(
+        lambda: lo.trellis_checkpoint_plan(side_cfg, side_keys, model_dir=td),
+        "absent from the checkpoint directory")
+    check("[18d] an absent sidecar is refused by name", ok, detail)
+    with open(os.path.join(td, "expert_precision_map.json"), "wb") as _h:
+        _h.write(b"not json {")
+    ok, detail = refuses(
+        lambda: lo.trellis_checkpoint_plan(side_cfg, side_keys, model_dir=td),
+        "is not strict JSON")
+    check("[18d] a sidecar that is not strict JSON is refused by name", ok, detail)
+    with open(os.path.join(td, "expert_precision_map.json"), "wb") as _h:
+        _h.write(json.dumps({"3": {"bitrates": [3] * 100},
+                             "4": {"bitrates": [4] * 100}}).encode("utf-8"))
+    ok, detail = refuses(
+        lambda: lo.trellis_checkpoint_plan(side_cfg, side_keys, model_dir=td),
+        "n_routed_experts")
+    check("[18d] a sidecar whose expert count disagrees with n_routed_experts is refused", ok, detail)
+    with open(os.path.join(td, "expert_precision_map.json"), "wb") as _h:
+        _h.write(json.dumps({"3": {"bitrates": [3] * 256},
+                             "5": {"bitrates": [4] * 256}}).encode("utf-8"))
+    ok, detail = refuses(
+        lambda: lo.trellis_checkpoint_plan(side_cfg, side_keys, model_dir=td),
+        "moe_layers")
+    check("[18d] a sidecar whose layer set disagrees with moe_layers is refused", ok, detail)
+
     # ---- rotation layouts (GLM-5.2 candidates) ----------------------------
     # [19] The layout census is ONE rule in two files: the pod's copy in
     # layer_outer must be the SAME TEXT as bin/fidelity/hfmeta's (the

@@ -1685,7 +1685,8 @@ def _exl3_layout_block(index_keys, qc, tail) -> Dict[str, Any]:
     return layout
 
 
-def _candidate_decode_plan(qc, cfg=None, index_keys=None) -> Dict[str, Any]:
+def _candidate_decode_plan(qc, cfg=None, index_keys=None,
+                          sidecar_loader=None) -> Dict[str, Any]:
     """The decode the streaming loader will apply, from the config and the index names.
 
     Mirrors `engines/tools/layer_outer.fp8_checkpoint_plan` /
@@ -1722,14 +1723,26 @@ def _candidate_decode_plan(qc, cfg=None, index_keys=None) -> Dict[str, Any]:
         # what the artifact declared by is console/plan evidence, not
         # contract, so it rides beside the block under a private key the
         # caller pops before binding.
+        # jpsequeira's GLM-5.2 TR3 declares `bits: "mixed"` with no numeric
+        # and a `bits_per_expert: "<file>:<key>"` sidecar.  The controller
+        # resolves it here through the caller's sidecar_loader (the same
+        # anonymous fetch_file the pod uses against the checkpoint dir), so
+        # the contract's `bits` is the float mean and `declared_bits_source`
+        # is byte-identical to the pod's block (same sha256).
+        declared = tr3_tail_declared_bits(tail, sidecar_loader=sidecar_loader)
+        if isinstance(declared, tuple):
+            bits_value, declared_bits_source = declared
+        else:
+            bits_value, declared_bits_source = declared, None
         contract = {
             "quant_method": "exl3",
             "codebook": str(codebook) if codebook is not None else None,
-            # first numeric of bits_avg / bits / expert_bpw_mean (hfmeta rule)
-            "bits": tr3_tail_declared_bits(tail),
+            "bits": bits_value,
             "head_bits": None,
             "modules_to_not_convert": [],
         }
+        if declared_bits_source is not None:
+            contract["declared_bits_source"] = declared_bits_source
         contract.update({k: v for k, v in layout.items() if not k.startswith("_")})
         return {
             "method": (CANDIDATE_DECODE_METHOD_TRELLIS_TP if composed
@@ -2103,7 +2116,17 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
                     "exl3 candidate: model.safetensors.index.json could not be read (%s); "
                     "the rotation layout is decided from its names" % redact(str(exc)),
                     ["Nothing was created. $0.00 spent."])
-        decode = _candidate_decode_plan(qc, cfg, index_keys=index_keys)
+        # jpsequeira's GLM-5.2 TR3 declares bits: "mixed" beside
+        # bits_per_expert: "expert_precision_map.json:bitrates"; the sidecar
+        # is fetched by name from the target repo/revision through the same
+        # anonymous fetch_file the pod uses against the checkpoint dir, so
+        # the controller mirror's declared_bits_source is byte-identical to
+        # the pod's (same sha256).
+        def _controller_sidecar_loader(sfile):
+            sraw = fetch_file(target.repo_id, sfile, revision=target.revision)
+            return json.loads(sraw), hashlib.sha256(sraw).hexdigest()
+        decode = _candidate_decode_plan(
+            qc, cfg, index_keys=index_keys, sidecar_loader=_controller_sidecar_loader)
         declaration = decode.pop("_declaration", None)
         qcfg = decode["quantization_config"]
         if qcfg["quant_method"] == "exl3":

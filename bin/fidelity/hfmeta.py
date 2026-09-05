@@ -510,17 +510,79 @@ _CODEC_VOCABULARY = {
 }
 
 
-def tr3_tail_declared_bits(tail):
+def tr3_tail_declared_bits(tail, sidecar_loader=None):
     """The declared bits of a hybrid_tr3_tail block: the first NUMERIC of
     bits_avg, bits, expert_bpw_mean, else whatever bits_avg/bits says (so a
     refusal can name it). Byte-identical logic in
     engines/tools/layer_outer.trellis_checkpoint_plan and
-    measure_cloud._candidate_decode_plan."""
+    measure_cloud._candidate_decode_plan.
+
+    When no numeric key is present and bits_per_expert is a "<file>:<key>"
+    SIDECAR reference, a caller that passes sidecar_loader(file) -> (doc,
+    sha256) gets back (mean, declared_bits_source) instead of the legacy
+    string: mean is the float mean of every int in doc[layer][key] across
+    layers, and declared_bits_source names where the number came from.
+    Without a loader the legacy scalar/string return is unchanged (so a
+    refusal can still name it).  jpsequeira's GLM-5.2 TR3 declares bits:
+    "mixed" with no bits_avg/expert_bpw_mean beside bits_per_expert:
+    "expert_precision_map.json:bitrates"; the sidecar is the only place the
+    declared bit-width lives."""
     for key in ("bits_avg", "bits", "expert_bpw_mean"):
         value = tail.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return value
+    # No numeric declaration.  A sidecar reference bits_per_expert:
+    # "<file>:<key>" resolves the mean of every per-expert bitrate across
+    # every layer (jpsequeira's GLM-5.2 TR3).  The loader returns (parsed
+    # JSON dict, sha256 of the sidecar bytes); without one the legacy string
+    # fallback is returned so a refusal can name it.
+    ref = tail.get("bits_per_expert")
+    if sidecar_loader is not None and isinstance(ref, str) and ":" in ref:
+        file, _, skey = ref.partition(":")
+        file, skey = file.strip(), skey.strip()
+        if file and skey:
+            doc, sha = sidecar_loader(file)
+            return _sidecar_declared_bits(doc, skey, file, sha)
     return tail.get("bits_avg", tail.get("bits"))
+
+
+def _sidecar_declared_bits(doc, key, file, sha256):
+    """The float mean of every int in doc[layer][key] across layers, and the
+    declared_bits_source receipt block naming where the number came from.
+    Mirrored (byte-identical logic) in engines/tools/layer_outer
+    ._sidecar_declared_bits (no bin/ import on the pod); the trellis
+    selftest's [18c] rung asserts the two produce the same block from the
+    same sidecar bytes.
+
+    doc is {"<layer>": {"<key>": [int, ...]}} -- jpsequeira's
+    expert_precision_map.json is 76 MoE layers x 256 experts.  The mean is
+    exact (float, not rounded) so two independent readers agree to full
+    float repr; the histogram keys are strings so the block is canonical
+    JSON regardless of insertion order."""
+    import hashlib  # noqa: F401  -- stdlib, lazily like _exl3_names_sha256
+    entries = []
+    histogram = {}
+    for entry in doc.values():
+        rates = entry.get(key) if isinstance(entry, dict) else None
+        if not isinstance(rates, list):
+            continue
+        for rate in rates:
+            if isinstance(rate, int) and not isinstance(rate, bool):
+                entries.append(rate)
+                srate = str(rate)
+                histogram[srate] = histogram.get(srate, 0) + 1
+    if not entries:
+        raise ValueError(
+            "sidecar %r key %r carries no per-expert integer bitrates" % (file, key))
+    mean = sum(entries) / len(entries)
+    source = {
+        "sidecar": file,
+        "key": key,
+        "entries": len(entries),
+        "histogram": dict(sorted(histogram.items())),
+        "sha256": sha256,
+    }
+    return mean, source
 
 
 # --- exl3 rotation layouts ---------------------------------------------------
@@ -989,14 +1051,26 @@ def sniff_surface(meta: RepoMeta, path: Optional[str] = None) -> SurfaceInfo:
         # GLM-5.2 TR3 tails declare `bits: "mixed"` with `expert_bpw_mean:
         # 3.25` and no bits_avg); mirrored by layer_outer.trellis_checkpoint_plan
         # and measure_cloud._candidate_decode_plan so the contract's `bits`
-        # agrees between pod and controller.
-        bits_avg = tr3_tail_declared_bits(tail)
-        try:
-            info.bits = float(bits_avg)
-        except (TypeError, ValueError):
-            info.problems.append(
-                "hybrid_tr3_tail declares no numeric bits_avg/bits/expert_bpw_mean (%r)"
-                % (bits_avg,))
+        # agrees between pod and controller.  jpsequeira's GLM-5.2 TR3
+        # declares `bits: "mixed"` with NO numeric and a `bits_per_expert:
+        # "<file>:<key>" sidecar; the sidecar is fetched here so `info.bits`
+        # is the float mean of its per-expert bitrates (the same number the
+        # pod and the controller mirror compute), and the receipt records
+        # `declared_bits_source` naming where it came from.
+        def _load_sidecar(sfile):
+            sraw = fetch_file(meta.repo_id, sfile, revision=meta.revision)
+            return json.loads(sraw), hashlib.sha256(sraw).hexdigest()
+        bits_avg = tr3_tail_declared_bits(tail, sidecar_loader=_load_sidecar)
+        if isinstance(bits_avg, tuple):
+            info.bits = float(bits_avg[0])
+            info.evidence["declared_bits_source"] = bits_avg[1]
+        else:
+            try:
+                info.bits = float(bits_avg)
+            except (TypeError, ValueError):
+                info.problems.append(
+                    "hybrid_tr3_tail declares no numeric bits_avg/bits/expert_bpw_mean (%r)"
+                    % (bits_avg,))
         info.evidence["quantization_config_source"] = "config.json (hybrid_tr3_tail)"
         info.evidence["hybrid_tr3_tail_tp"] = tail.get("tp")
         info.evidence["hybrid_tr3_tail_source_repo"] = tail.get("source_repo")
