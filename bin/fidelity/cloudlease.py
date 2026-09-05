@@ -1217,7 +1217,8 @@ def _validate_event_evidence(event: str, evidence: Any,
         required = (
             "complete_listing", "listed_resource_count",
             "target_provider_ids", "still_present_ids")
-        optional = ("listed_statuses", "authoritative_inventory")
+        optional = ("listed_statuses", "authoritative_inventory",
+                    "wrong_name_blockers_resolved_by_sibling_leases")
         if event == "ABSENCE_PROOF_REVOKED":
             required += ("revoked_absence_sha256",)
         evidence = _exact_keys(
