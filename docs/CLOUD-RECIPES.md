@@ -288,3 +288,61 @@ when the hour closes, so a run whose pod vanished at :44 leaves the lease
 `ABSENCE_CONFIRMED` with `billing: settled: false` in `terminal-receipt.json`
 and the reaper closes it (`reconciled: true`) on a sweep after the hour plus
 300 s; a closure is never sealed over an unpublished bucket.
+
+## Vast + container: Fruit transport rehearsal (2026-09-05)
+
+Not an admitted paid measurement path — transport rehearsal only. The image
+(`ghcr.io/malaiwah/quant-fidelity-measure:main`, pin
+`sha256:9434d971ec8de52b73316f162461374b818057f9e6cd866bcef2282dafa1e0d5`)
+was launched on a Vast Tesla T4 (Nevada, cuda_max 13.0, driver 580.126.09,
+$0.1511/h) via `bin/fidelity/vastapi.py` `create(docker_cmd=[...])`.
+
+```bash
+# Search for T4 offers with cuda >= 13.0
+python3 -c "
+import sys, os; sys.path.insert(0, 'bin')
+os.environ['VAST_KEY_FILE'] = '~/.config/vastai/vast_api_key'
+from fidelity.vastapi import Vast
+v = Vast()
+for o in v._search(min_vram_gb=16, min_disk_gb=60, gpu_name='Tesla T4', limit=10):
+    print(o.raw['ask_id'], o.price, o.raw.get('cuda'))
+"
+
+# Launch (the capture command goes in onstart; secrets in env)
+python3 -c "
+from fidelity.vastapi import Vast
+v = Vast()
+v.create(ask_id=<offer>, storage=80,
+    image='ghcr.io/malaiwah/quant-fidelity-measure:main',
+    docker_cmd=['capture', '--model', 'malaiwah/GLM-5.2-SIQ-Fruit-bf16',
+                '--revision', 'ef68013aa6e16453cf52b5b77647f72fbe258c3c', ...],
+    env={'HF_TOKEN': 'hf_...', 'FIDELITY_RESULT_SINK': 'https://ntfy.sh/<topic>'},
+    onstart='<prep script>', name='vast-fruit')
+"
+```
+
+### Observed output
+
+```
+[2026-09-05T19:57:36Z] suite synced into the run root  175 file(s) changed
+[2026-09-05T19:57:36Z] panel staged under the run root: /workspace/fidelity/panel-src/panel--fruit.malaiwah.heldout-v1
+[2026-09-05T19:57:39Z] accelerator              ok  Tesla T4 (torch 2.11.0+cu130, built for CUDA 13.0)
+[2026-09-05T19:57:39Z] job.json written  2619 bytes
+[2026-09-05T19:57:39Z] HF token installed  0600 file, never argv, removed when this run ends
+[2026-09-05T19:57:39Z] stage setup starting
+[2026-09-05T19:57:39Z] stage_measure/setup: fetching BF16 metadata skeleton @ a6c167b62691b2bac901344b65cb651a70f53e43 …
+ssl.SSLEOFError: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol
+[2026-09-05T19:57:45Z] stage setup FAILED (1)  6s
+[2026-09-05T19:57:45Z] run failed at stage setup
+[2026-09-05T19:57:45Z] HF token shredded from the run root
+===== FIDELITY-RESULT BEGIN =====
+{ "schema": "malaiwah.fidelity-result-summary.v1", "verb": "capture",
+  "status": "failed", "failed_stage": "setup", ... }
+===== FIDELITY-RESULT END =====
+[2026-09-05T19:57:59Z] result sink https: 1513 bytes -> https://ntfy.sh/<topic> (HTTP 200)
+```
+
+The framed result (tar.gz: job.json + result-summary.json) was retrieved from
+ntfy via `https://ntfy.sh/<topic>/json?poll=1` and the attachment URL. The
+transport pipeline works; the blocking issue is the Vast Nevada host's broken
+SSL proxy to huggingface.co. Spend ~$0.08; all instances destroyed.

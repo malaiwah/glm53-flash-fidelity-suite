@@ -433,6 +433,27 @@ with `CapEff 0x00000000a80425fb` — the Docker default set, no `CAP_SYS_ADMIN` 
 `CAP_SYS_ADMIN`) are both out. Building the image *on* a RunPod pod is not a
 route; the image has to arrive from a registry.
 
+### Vast.ai (2026-09-05, transport rehearsal)
+
+`bin/fidelity/vastapi.py` `create(docker_cmd=[...])` launches the image on Vast
+via `PUT /api/v0/asks/{id}/` with `runtype: "ssh"` and the full command in
+`onstart` (prep + `exec python3.12 .../container_entry.py capture ...`).
+`env` is a **string in Docker flag format** (`-e KEY=VAL`), not a dict — the
+REST API confirms this in its OpenAPI schema. `onstart` is limited to 4048
+chars; gzip+base64 (Vast's own documented workaround) handles longer scripts.
+
+| observed | detail |
+|---|---|
+| Tesla T4, Nevada, cuda_max 13.0, driver 580.126.09 | image loaded, accelerator detected, panel staged, job.json written |
+| `--result-sink https://ntfy.sh/<topic>` | tar.gz delivered, HTTP 200, retrieved via `?poll=1` |
+| **blocked at `setup`** | the Nevada host's network has a broken SSL proxy to huggingface.co (cert hostname mismatch); `stage_measure.sh` uses `urllib` with strict SSL and fails before any model fetch |
+| spend | ~$0.08 across 6 attempts; balance $19.56 → $19.48; all instances destroyed |
+
+The transport pipeline works end-to-end (launch → image run → result frame →
+ntfy delivery → retrieval). The blocking issue is host-specific SSL, not the
+image or the transport. A host with working SSL to huggingface.co (or an
+`HF_ENDPOINT` mirror) would complete the capture.
+
 ---
 
 ## Two architectures, and why arm64 is not decoration
