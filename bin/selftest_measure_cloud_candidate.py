@@ -259,26 +259,60 @@ def main():
         def ok(self, *a, **k):
             self.lines.append(a)
 
-    plan_data = {"verified_gates": {}}
+    plan_data = {"verified_gates": {}, "warnings": []}
     refused = None
-    if hasattr(MC, "_refuse_candidate_tokenizer_mismatch"):
+
+    def by_repo(root_bytes, candidate_bytes):
+        def fetch(repo, name, **kw):
+            return (root_bytes if repo == "zai-org/GLM-5.3-BF16" else candidate_bytes)[name]
+        return fetch
+
+    def controller(candidate_bytes, plan):
         original_fetch = MC.fetch_file
-        MC.fetch_file = lambda repo, name, **kw: candidate_files[name]
+        MC.fetch_file = by_repo(root_files, candidate_bytes)
         try:
-            refused = refusal_of(lambda: MC._refuse_candidate_tokenizer_mismatch(
+            return refusal_of(lambda: MC._refuse_candidate_tokenizer_mismatch(
                 _Con(), _Target(), {"tokenizer": {"files": binding_files}},
-                "zai-org/GLM-5.3-BF16", "3" * 40, plan_data))
+                "zai-org/GLM-5.3-BF16", "3" * 40, plan))
         finally:
             MC.fetch_file = original_fetch
-    text = refusal_text(refused) if refused is not None else ""
-    check("R7: the controller REFUSES before any rental, naming the file and both digests, "
-          "and records no verified gate",
-          refused is not None and "tokenizer_config.json" in text
-          and hashlib.sha256(root_files["tokenizer_config.json"]).hexdigest()[:16] in text
-          and hashlib.sha256(candidate_files["tokenizer_config.json"]).hexdigest()[:16] in text
-          and "$0.00 spent" in text
-          and "candidate-tokenizer-files" not in repr(plan_data),
-          text[:300])
+
+    # The RadixArk shape: one loader-only key. Admitted by fidelity.panel's
+    # exact rule, recorded on the verified gate and warned about.
+    if hasattr(MC, "_refuse_candidate_tokenizer_mismatch"):
+        refused = controller(candidate_files, plan_data)
+    gate = (plan_data.get("gates") or {}).get("candidate-tokenizer-files") or {}
+    check("R7: a candidate whose tokenizer_config.json differs by local_files_only ONLY is "
+          "admitted before spend by the same panel.py rule the pod applies, with both "
+          "digests on the verified gate and a warning",
+          refused is None and gate
+          and [e["name"] for e in gate.get("loader_key_equivalences") or []] == ["tokenizer_config.json"]
+          and gate["loader_key_equivalences"][0]["keys_dropped_from_candidate"] == ["local_files_only"]
+          and any("loader-only keys" in w for w in plan_data["warnings"]),
+          repr((refused and refusal_text(refused), gate))[:400])
+    # Any other difference -- a changed value beside the loader key, or a
+    # differing tokenizer.json -- refuses for $0 naming the file and digests.
+    other_value = dict(candidate_files)
+    other_value["tokenizer_config.json"] = b'{"local_files_only": false, "model_max_length": 32}'
+    plan2 = {"verified_gates": {}, "warnings": []}
+    refused2 = controller(other_value, plan2) if hasattr(MC, "_refuse_candidate_tokenizer_mismatch") else None
+    text2 = refusal_text(refused2) if refused2 is not None else ""
+    other_json = dict(candidate_files)
+    other_json["tokenizer.json"] = b'{"model": {"type": "Unigram"}}'
+    plan3 = {"verified_gates": {}, "warnings": []}
+    refused3 = controller(other_json, plan3) if hasattr(MC, "_refuse_candidate_tokenizer_mismatch") else None
+    text3 = refusal_text(refused3) if refused3 is not None else ""
+    check("R7: the controller REFUSES before any rental on a changed value beside the loader "
+          "key (naming it) and on a differing tokenizer.json, with both digests, and records "
+          "no verified gate",
+          refused2 is not None and "tokenizer_config.json" in text2 and "model_max_length" in text2
+          and hashlib.sha256(root_files["tokenizer_config.json"]).hexdigest()[:16] in text2
+          and hashlib.sha256(other_value["tokenizer_config.json"]).hexdigest()[:16] in text2
+          and "$0.00 spent" in text2 and "candidate-tokenizer-files" not in repr(plan2)
+          and refused3 is not None and "tokenizer.json" in text3
+          and hashlib.sha256(other_json["tokenizer.json"]).hexdigest()[:16] in text3
+          and "candidate-tokenizer-files" not in repr(plan3),
+          (text2 + " || " + text3)[:500])
 
     print()
     if failures:

@@ -943,6 +943,92 @@ def _body(work):
     finally:
         HC._from_pretrained = original
 
+    # -- A33 -----------------------------------------------------------------
+    # A candidate whose tokenizer_config.json differs from the bound root's by
+    # the one admitted loader key captures under --panel-binding: the binding
+    # stays the root's, and the sealed dataset carries the
+    # `tokenizer_config_loader_keys_ignored` disclosure with both digests.
+    # Any other difference refuses the capture by name (the pod's gate).
+    from fidelity import panel as PC
+    bound_panel = os.path.join(work, "panel-bound")
+    shutil.copytree(panel, bound_panel)
+    root_tokens = os.path.join(work, "root-tokenizer")
+    os.makedirs(root_tokens)
+    root_config = b'{"model_max_length": 16, "tokenizer_class": "TokenizersBackend"}\n'
+    for name, raw in (("tokenizer.json", b'{"version": "1"}\n'),
+                      ("tokenizer_config.json", root_config)):
+        open(os.path.join(root_tokens, name), "wb").write(raw)
+    receipt_doc = json.load(open(os.path.join(bound_panel, "panel.receipt.json")))
+    receipt_doc["tokenizer"] = {
+        "repository": "selftest/root-weights", "revision": "a" * 40, "vocab_size": 64,
+        "files_sha256": {name: F.sha256_file(os.path.join(root_tokens, name))
+                         for name in ("tokenizer.json", "tokenizer_config.json")}}
+    receipt_doc["receipt_sha256"] = ""
+    receipt_doc["receipt_sha256"] = hashlib.sha256(json.dumps(
+        receipt_doc, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    json.dump(receipt_doc, open(os.path.join(bound_panel, "panel.receipt.json"), "w"),
+              indent=2, sort_keys=True)
+    binding_doc = PC.resolve_panel(bound_panel, tokenizer_root=root_tokens).to_dict()
+    binding_path = os.path.join(work, "panel.binding.json")
+    binding_raw = json.dumps(binding_doc, sort_keys=True, separators=(",", ":")).encode()
+    open(binding_path, "wb").write(binding_raw)
+    binding_sha = hashlib.sha256(binding_raw).hexdigest()
+
+    def candidate_tokens(label, config_bytes, with_reference=True):
+        path = os.path.join(work, "cand-tokens-" + label)
+        shutil.copytree(root_tokens, path)
+        open(os.path.join(path, "tokenizer_config.json"), "wb").write(config_bytes)
+        if with_reference:
+            os.makedirs(os.path.join(path, PC.TOKENIZER_REFERENCE_SUBDIR))
+            shutil.copy2(os.path.join(root_tokens, "tokenizer_config.json"),
+                         os.path.join(path, PC.TOKENIZER_REFERENCE_SUBDIR, "tokenizer_config.json"))
+        return path
+
+    loader_only = b'{"local_files_only": false, "model_max_length": 16, ' \
+                  b'"tokenizer_class": "TokenizersBackend"}\n'
+    bound_out = os.path.join(work, "ds-bound-loader-key")
+    proc = capture(quant_dir, bound_panel, bound_out, role="quant",
+                   dataset_id="fidelity--selftest.hf.quant", name="bound-loader-key",
+                   scope_file=scope_file,
+                   extra=["--panel-binding", binding_path, "--panel-binding-sha256", binding_sha,
+                          "--panel-tokenizer-root", candidate_tokens("loader", loader_only),
+                          "--no-sanity-check"])
+    manifest_path = os.path.join(bound_out, F.MANIFEST_NAME)
+    disclosures = []
+    sealed_binding = None
+    if os.path.isfile(manifest_path):
+        manifest_doc = json.load(open(manifest_path))
+        disclosures = manifest_doc.get("disclosures") or []
+        runtime_doc = F.read_json(os.path.join(bound_out, manifest_doc["runtime"]["file"]))
+        sealed_binding = (runtime_doc["capture_tool"].get("resolved_panel_binding") or {}).get("binding")
+    ignored = [d for d in disclosures if d.get("code") == "tokenizer_config_loader_keys_ignored"]
+    check("A33 a candidate tokenizer_config.json differing by local_files_only ONLY captures "
+          "under --panel-binding, the sealed binding is the root's, and the dataset carries "
+          "the tokenizer_config_loader_keys_ignored disclosure (info, non-comparability) "
+          "with both digests and the dropped key",
+          proc.returncode in (0, 2) and sealed_binding == binding_doc
+          and len(ignored) == 1 and ignored[0]["severity"] == "info"
+          and ignored[0]["affects_comparability"] is False
+          and hashlib.sha256(root_config).hexdigest() in ignored[0]["detail"]
+          and hashlib.sha256(loader_only).hexdigest() in ignored[0]["detail"]
+          and "['local_files_only']" in ignored[0]["detail"]
+          and "never re-tokenized" in ignored[0]["detail"],
+          "rc=%s stderr=%s disclosures=%r" % (proc.returncode, proc.stderr[-300:],
+                                              [d.get("code") for d in disclosures]))
+    other = capture(quant_dir, bound_panel, os.path.join(work, "ds-bound-other-key"), role="quant",
+                    dataset_id="fidelity--selftest.hf.quant", name="bound-other-key",
+                    scope_file=scope_file,
+                    extra=["--panel-binding", binding_path, "--panel-binding-sha256", binding_sha,
+                           "--panel-tokenizer-root", candidate_tokens(
+                               "other", b'{"local_files_only": false, "model_max_length": 32, '
+                                        b'"tokenizer_class": "TokenizersBackend"}\n'),
+                           "--no-sanity-check"])
+    check("A33b ... and a candidate that also changes model_max_length is REFUSED by key "
+          "name before any capture arithmetic",
+          other.returncode != 0 and "model_max_length" in (other.stderr or "")
+          and not os.path.isfile(os.path.join(work, "ds-bound-other-key", F.MANIFEST_NAME)),
+          "rc=%s stderr=%s" % (other.returncode, (other.stderr or "")[-300:]))
+
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, detail in FAIL:
         print("  FAILED %s: %s" % (name, detail))

@@ -4402,7 +4402,17 @@ def candidate_tokenizer_files_mismatch(binding_files, fetch) -> List[Dict[str, A
 def _refuse_candidate_tokenizer_mismatch(con: Console, target, binding: Dict[str, Any],
                                          reference_repo: str, reference_revision: str,
                                          plan_data: Dict[str, Any]) -> None:
-    """Read the candidate's tokenization files NOW and refuse before any rental."""
+    """Read the candidate's tokenization files NOW and refuse before any rental.
+
+    The pod's gate is `fidelity.panel`'s: byte identity, or -- for
+    tokenizer_config.json only -- loader-key equivalence against the ROOT's
+    bytes (`panel.tokenizer_config_equivalent`, allowlist
+    `panel.TOKENIZER_CONFIG_LOADER_KEYS`). The same rule runs here, on the
+    root's file read from the reference release, so what the pod would admit
+    is admitted here and what it would refuse is refused for $0.
+    """
+    from fidelity import panel as panel_contract
+
     files = (binding.get("tokenizer") or {}).get("files") or []
 
     def fetch(name: str):
@@ -4419,28 +4429,68 @@ def _refuse_candidate_tokenizer_mismatch(con: Console, target, binding: Dict[str
     mismatch = candidate_tokenizer_files_mismatch(files, fetch)
     checked = [str(e.get("name")) for e in files
                if str(e.get("name")) not in CANDIDATE_TOKENIZER_FILES_FROM_REFERENCE]
-    if mismatch:
+    equivalences: List[Dict[str, Any]] = []
+    refused: List[Dict[str, Any]] = []
+    for row in mismatch:
+        if (row["name"] != panel_contract.TOKENIZER_CONFIG_EQUIVALENCE_FILE
+                or row["observed_sha256"] is None):
+            refused.append(dict(row, why="byte identity required"))
+            continue
+        try:
+            root_raw = fetch_file(reference_repo, row["name"], revision=reference_revision)
+        except HFError as exc:
+            raise Refusal(
+                "reference root's %s could not be read from %s@%s for the loader-key "
+                "equivalence test: %s" % (row["name"], reference_repo,
+                                          str(reference_revision)[:12], redact(str(exc))),
+                ["Nothing was created. $0.00 spent."])
+        if hashlib.sha256(root_raw).hexdigest() != row["expected_sha256"]:
+            raise Refusal(
+                "reference root's %s at %s@%s does not carry the panel binding's digest"
+                % (row["name"], reference_repo, str(reference_revision)[:12]),
+                ["Nothing was created. $0.00 spent."])
+        try:
+            equivalences.append(panel_contract.tokenizer_config_equivalent(
+                root_raw, fetch(row["name"])))
+        except panel_contract.PanelError as exc:
+            refused.append(dict(row, why=str(exc)))
+    if refused:
         raise Refusal(
             "candidate tokenizer file(s) differ from the reference root's panel binding: %s"
-            % ", ".join(r["name"] for r in mismatch),
-            ["%s: root sha256 %s (%s bytes) vs candidate %s (%s bytes)"
+            % ", ".join(r["name"] for r in refused),
+            ["%s: root sha256 %s (%s bytes) vs candidate %s (%s bytes) -- %s"
              % (r["name"], r["expected_sha256"][:16], r["expected_bytes"],
-                (r["observed_sha256"] or "absent")[:16], r["observed_bytes"])
-             for r in mismatch]
+                (r["observed_sha256"] or "absent")[:16], r["observed_bytes"], r["why"])
+             for r in refused]
             + ["The candidate route takes tokenizer.json and tokenizer_config.json from "
                "the CANDIDATE and the capture byte-checks them against the root's "
-               "digests (bin/stage_measure.sh); the pod would refuse on the first "
-               "mismatch after fetching the whole checkpoint.",
+               "digests (bin/stage_measure.sh; tokenizer_config.json may differ by the "
+               "loader-only keys %s and nothing else); the pod would refuse on the first "
+               "mismatch after fetching the whole checkpoint."
+               % list(panel_contract.TOKENIZER_CONFIG_LOADER_KEYS),
                "Publisher-metadata files (%s) come from the reference root and are "
                "not checked here." % ", ".join(sorted(CANDIDATE_TOKENIZER_FILES_FROM_REFERENCE)),
                "Nothing was created. $0.00 spent."])
     gate_verified(plan_data, "candidate-tokenizer-files",
                   candidate=target.repo_id, candidate_revision=target.revision,
                   reference=reference_repo, reference_revision=reference_revision,
-                  files_checked=checked)
+                  files_checked=checked,
+                  loader_key_equivalences=[
+                      {k: v for k, v in e.items() if k != "reason"} for e in equivalences])
+    if equivalences:
+        plan_data["warnings"].append(
+            "candidate %s differs from the reference root's by loader-only keys "
+            "(root %s, candidate %s; dropped from candidate: %s); admitted by "
+            "fidelity.panel's exact rule and recorded on the dataset as the "
+            "tokenizer_config_loader_keys_ignored disclosure"
+            % (equivalences[0]["name"], equivalences[0]["root_sha256"][:16],
+               equivalences[0]["candidate_sha256"][:16],
+               equivalences[0]["keys_dropped_from_candidate"]))
     con.ok("candidate tokenizer files",
-           "%s read from %s@%s and byte-identical to the reference root's binding"
-           % (", ".join(checked), target.repo_id, target.revision[:12]))
+           "%s read from %s@%s and %s the reference root's binding"
+           % (", ".join(checked), target.repo_id, target.revision[:12],
+              ("byte-identical to" if not equivalences else
+               "loader-key equivalent to (%s)" % ", ".join(e["name"] for e in equivalences))))
 
 
 def _plan_runpod_anonymous(

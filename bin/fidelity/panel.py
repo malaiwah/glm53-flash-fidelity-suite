@@ -32,6 +32,20 @@ _HF_REPO = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 _REVISION40 = re.compile(r"^[0-9a-f]{40}$")
 
+#: The ONE tokenizer artifact a loader-only difference is admitted on, and the
+#: exact keys admitted (a `transformers` save writes `local_files_only` into
+#: tokenizer_config.json on some producers' machines; RadixArk/GLM-5.3-NVFP4
+#: @ 11af4cba differs from the root by that key alone). The panel is
+#: transported TOKEN IDS and is never re-tokenized, so these files are
+#: identity evidence, not computation: an admitted key changes nothing the
+#: capture computes. Any other difference -- another key, a changed value --
+#: refuses BY KEY NAME. The root's bytes are read from `<tokenizer_root>/
+#: .reference/<name>` (the pod links the reference release's copy there);
+#: without that copy the digest check is the whole gate, as before.
+TOKENIZER_CONFIG_EQUIVALENCE_FILE = "tokenizer_config.json"
+TOKENIZER_CONFIG_LOADER_KEYS = ("local_files_only",)
+TOKENIZER_REFERENCE_SUBDIR = ".reference"
+
 BRANDON_REFERENCE_REPO = "brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits"
 BRANDON_REFERENCE_REVISION = "95f4fdd94bf29989db2e0d1054e4931f55edb6aa"
 BRANDON_REFERENCE_REF = "reference--brandonmusic.glm53-bf16-fp32-logits.final25"
@@ -375,25 +389,107 @@ def _listed_tokenizer_files(rows: Any, label: str) -> Tuple[Tuple[str, int, str]
     return tuple(sorted(out))
 
 
-def _verify_tokenizer_files(rows: Sequence[Tuple[str, int, str]], root: Optional[os.PathLike]) -> bool:
+
+def tokenizer_config_equivalent(root_raw: bytes, candidate_raw: bytes) -> Dict[str, Any]:
+    """Loader-key equivalence of two tokenizer_config.json documents, or a refusal.
+
+    Both must parse as JSON objects. The keys in TOKENIZER_CONFIG_LOADER_KEYS
+    are dropped from BOTH before a canonical-JSON comparison; every other
+    difference is refused naming the offending keys. Returns the evidence
+    the capture records: both digests, both sizes, the keys actually dropped
+    on each side, and the reason.
+    """
+    try:
+        root_doc = json.loads(root_raw.decode("utf-8"))
+        cand_doc = json.loads(candidate_raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise PanelError("%s equivalence: not both strict JSON: %s"
+                         % (TOKENIZER_CONFIG_EQUIVALENCE_FILE, exc))
+    if not isinstance(root_doc, dict) or not isinstance(cand_doc, dict):
+        raise PanelError("%s equivalence: both documents must be JSON objects"
+                         % TOKENIZER_CONFIG_EQUIVALENCE_FILE)
+    dropped_root = sorted(k for k in TOKENIZER_CONFIG_LOADER_KEYS if k in root_doc)
+    dropped_cand = sorted(k for k in TOKENIZER_CONFIG_LOADER_KEYS if k in cand_doc)
+    root_rest = {k: v for k, v in root_doc.items() if k not in TOKENIZER_CONFIG_LOADER_KEYS}
+    cand_rest = {k: v for k, v in cand_doc.items() if k not in TOKENIZER_CONFIG_LOADER_KEYS}
+    if _canonical(root_rest) != _canonical(cand_rest):
+        differing = sorted(
+            k for k in set(root_rest) | set(cand_rest)
+            if k not in root_rest or k not in cand_rest
+            or _canonical(root_rest[k]) != _canonical(cand_rest[k]))
+        raise PanelError(
+            "tokenizer artifact %s fails its SHA-256 and is not loader-key equivalent to "
+            "the root's: keys differ beyond %s: %s"
+            % (TOKENIZER_CONFIG_EQUIVALENCE_FILE, list(TOKENIZER_CONFIG_LOADER_KEYS), differing))
+    if not dropped_root and not dropped_cand:
+        # Same canonical content, different bytes (whitespace/order): not a
+        # loader-key difference, and not a rule this admits.
+        raise PanelError(
+            "tokenizer artifact %s fails its SHA-256 and differs from the root's only in "
+            "serialization; loader-key equivalence admits %s, not a re-serialization"
+            % (TOKENIZER_CONFIG_EQUIVALENCE_FILE, list(TOKENIZER_CONFIG_LOADER_KEYS)))
+    return {
+        "name": TOKENIZER_CONFIG_EQUIVALENCE_FILE,
+        "rule": "canonical JSON equal after dropping loader-only keys",
+        "loader_keys_allowlist": list(TOKENIZER_CONFIG_LOADER_KEYS),
+        "root_sha256": _sha(root_raw), "root_bytes": len(root_raw),
+        "candidate_sha256": _sha(candidate_raw), "candidate_bytes": len(candidate_raw),
+        "keys_dropped_from_root": dropped_root,
+        "keys_dropped_from_candidate": dropped_cand,
+        "reason": "the panel is transported token ids and is never re-tokenized; the "
+                  "tokenizer files are identity evidence, not computation",
+    }
+
+
+def _verify_tokenizer_artifact(base: Path, name: str, size: int, digest: str):
+    """(root_size_for_binding, equivalence_record | None) for one bound artifact.
+
+    `size` may be -1 (the receipt.tokenizer path lists digests only). A
+    byte-identical file answers (len, None). A digest mismatch on
+    TOKENIZER_CONFIG_EQUIVALENCE_FILE with the root's copy present under
+    TOKENIZER_REFERENCE_SUBDIR answers with the ROOT's length and the
+    equivalence evidence -- the binding keeps the root's identity. Anything
+    else refuses.
+    """
+    path = base / name
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise PanelError("cannot read tokenizer artifact %s: %s" % (path, exc))
+    if _sha(raw) == digest and (size < 0 or len(raw) == size):
+        return len(raw), None
+    if name != TOKENIZER_CONFIG_EQUIVALENCE_FILE:
+        raise PanelError("tokenizer artifact %s fails its listed size/SHA-256" % name
+                         if size >= 0 else "tokenizer artifact %s fails its SHA-256" % name)
+    reference = base / TOKENIZER_REFERENCE_SUBDIR / name
+    if not reference.is_file():
+        raise PanelError("tokenizer artifact %s fails its SHA-256 (no %s/%s copy of the "
+                         "root's file to test loader-key equivalence against)"
+                         % (name, TOKENIZER_REFERENCE_SUBDIR, name))
+    root_raw = reference.read_bytes()
+    if _sha(root_raw) != digest or (size >= 0 and len(root_raw) != size):
+        raise PanelError("%s/%s does not carry the root's bound %s (its own SHA-256 fails)"
+                         % (TOKENIZER_REFERENCE_SUBDIR, name, name))
+    return len(root_raw), tokenizer_config_equivalent(root_raw, raw)
+
+
+def _verify_tokenizer_files(rows: Sequence[Tuple[str, int, str]], root: Optional[os.PathLike],
+                            equivalences: Optional[List[Dict[str, Any]]] = None) -> bool:
     if root is None:
         return False
     base = Path(root).resolve()
     if not base.is_dir():
         raise PanelError("tokenizer_root is not a directory: %s" % base)
     for name, size, digest in rows:
-        path = base / name
-        try:
-            raw = path.read_bytes()
-        except OSError as exc:
-            raise PanelError("cannot read tokenizer artifact %s: %s" % (path, exc))
-        if len(raw) != size or _sha(raw) != digest:
-            raise PanelError("tokenizer artifact %s fails its listed size/SHA-256" % name)
+        _, record = _verify_tokenizer_artifact(base, name, size, digest)
+        if record is not None and equivalences is not None:
+            equivalences.append(record)
     return True
 
 
 def _tokenizer_binding(panel_root: Path, receipt: Mapping[str, Any],
-                       tokenizer_root: Optional[os.PathLike]) -> Dict[str, Any]:
+                       tokenizer_root: Optional[os.PathLike],
+                       equivalences: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     token_receipt_path = panel_root / "tokenizer.receipt.json"
     if token_receipt_path.is_file():
         token_receipt, raw = _json_file(token_receipt_path, "tokenizer receipt")
@@ -420,7 +516,7 @@ def _tokenizer_binding(panel_root: Path, receipt: Mapping[str, Any],
             raise PanelError("tokenizer maximum_token_id_exclusive exceeds vocab_size")
         return {"repository": repository, "revision": revision, "vocab_size": vocab,
                 "maximum_token_id_exclusive": maximum, "files": files,
-                "files_verified": _verify_tokenizer_files(files, tokenizer_root),
+                "files_verified": _verify_tokenizer_files(files, tokenizer_root, equivalences),
                 "identity_sha256": identity_sha, "receipt": {
                     "declared_receipt_sha256": declared, "receipt_seal_mode": mode,
                     "receipt_file_sha256": _sha(raw), "receipt_file_bytes": len(raw)}}
@@ -447,10 +543,10 @@ def _tokenizer_binding(panel_root: Path, receipt: Mapping[str, Any],
         observed = []
         base = Path(tokenizer_root).resolve()
         for name, _size, digest in files:
-            raw = (base / name).read_bytes()
-            if _sha(raw) != digest:
-                raise PanelError("tokenizer artifact %s fails its SHA-256" % name)
-            observed.append((name, len(raw), digest))
+            length, record = _verify_tokenizer_artifact(base, name, -1, digest)
+            if record is not None and equivalences is not None:
+                equivalences.append(record)
+            observed.append((name, length, digest))
         files, verified = tuple(observed), True
     return {"repository": repository, "revision": revision,
             "vocab_size": _integer(source.get("vocab_size"), "tokenizer.vocab_size", 1),
@@ -518,10 +614,19 @@ def _archive(root: Path, manifest: Sequence[Tuple[str, int, str]]) -> Tuple[str,
 @dataclass(frozen=True)
 class ResolvedPanel:
     _serialized: str
+    #: Loader-key equivalences admitted while verifying the tokenizer files
+    #: (canonical JSON of `tokenizer_config_equivalent` records). Kept OUTSIDE
+    #: the binding: the binding names the ROOT's digests and must equal the
+    #: controller's expected contract byte for byte; this is the disclosure
+    #: evidence the capture records beside it.
+    _equivalences: str = "[]"
 
     def to_dict(self) -> Dict[str, Any]:
         """Return a fresh JSON tree; no mutable object is retained internally."""
         return json.loads(self._serialized)
+
+    def tokenizer_equivalences(self) -> List[Dict[str, Any]]:
+        return json.loads(self._equivalences)
 
 
 def resolve_panel(root: os.PathLike, role: str = "final",
@@ -567,7 +672,8 @@ def resolve_panel(root: os.PathLike, role: str = "final",
     all_digests = []
     seen = set()
     used_window_files = set()
-    tokenizer = _tokenizer_binding(panel_root, receipt, tokenizer_root)
+    equivalences: List[Dict[str, Any]] = []
+    tokenizer = _tokenizer_binding(panel_root, receipt, tokenizer_root, equivalences)
     token_limit = tokenizer["maximum_token_id_exclusive"]
     if receipt.get("tokenizer_receipt_sha256") is not None:
         token_receipt = tokenizer.get("receipt")
@@ -710,7 +816,8 @@ def resolve_panel(root: os.PathLike, role: str = "final",
                     "archive": {"format": "ustar", "compression": "none",
                                 "algorithm": ARCHIVE_ALGORITHM,
                                 "bytes": archive_bytes, "sha256": archive_sha}}}
-    return ResolvedPanel(_canonical(binding).decode("utf-8"))
+    return ResolvedPanel(_canonical(binding).decode("utf-8"),
+                         _canonical(equivalences).decode("utf-8"))
 
 
 def write_panel_archive(

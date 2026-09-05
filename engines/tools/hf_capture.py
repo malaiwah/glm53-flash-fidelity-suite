@@ -1224,11 +1224,12 @@ def run_capture(args: argparse.Namespace) -> int:
             raise fail("--panel-binding-sha256 mismatch: supplied %s, observed %s"
                        % (args.panel_binding_sha256, binding_file_sha))
         try:
-            resolved_binding = panel_contract.resolve_panel(
+            resolved_panel = panel_contract.resolve_panel(
                 args.panel, role=args.panel_role,
-                tokenizer_root=args.panel_tokenizer_root or model_dir).to_dict()
+                tokenizer_root=args.panel_tokenizer_root or model_dir)
         except panel_contract.PanelError as exc:
             raise fail("panel binding REFUSED: %s" % exc)
+        resolved_binding = resolved_panel.to_dict()
         if not resolved_binding["tokenizer"]["files_verified"]:
             raise fail("panel binding REFUSED: tokenizer files were not verified")
         if resolved_binding != expected_binding:
@@ -1238,6 +1239,10 @@ def run_capture(args: argparse.Namespace) -> int:
             "binding_file": os.path.basename(args.panel_binding),
             "binding_file_sha256": binding_file_sha,
             "binding": resolved_binding,
+            # Loader-key equivalences panel.py admitted on tokenizer_config.json
+            # (never inside the binding, which names the ROOT's digests):
+            # each becomes a `tokenizer_config_loader_keys_ignored` disclosure.
+            "tokenizer_equivalences": resolved_panel.tokenizer_equivalences(),
         }
     else:
         args.panel_binding_evidence = None
@@ -2099,6 +2104,25 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                       "allowlist %s (canonical sorted-name SHA-256 %s)."
                       % (len(unexpected), unexpected_evidence["artifact_sha256"],
                          unexpected_evidence["canonical_sorted_names_sha256"])})
+
+    # A tokenizer_config.json that differs from the root's by a loader-only
+    # key (fidelity.panel.TOKENIZER_CONFIG_LOADER_KEYS): admitted by the
+    # exact rule in panel.py, and said here with both digests and the keys.
+    for equivalence in ((getattr(args, "panel_binding_evidence", None) or {})
+                        .get("tokenizer_equivalences") or []):
+        disclosures.append({
+            "code": "tokenizer_config_loader_keys_ignored", "severity": "info",
+            "affects_comparability": False,
+            "detail": "%s differs from the reference root's bound file (root sha256 %s, "
+                      "%d bytes; candidate sha256 %s, %d bytes) only by loader-only keys "
+                      "(dropped from root: %s; from candidate: %s; allowlist %s); canonical "
+                      "JSON is otherwise identical. Reason: %s."
+                      % (equivalence["name"], equivalence["root_sha256"],
+                         equivalence["root_bytes"], equivalence["candidate_sha256"],
+                         equivalence["candidate_bytes"],
+                         equivalence["keys_dropped_from_root"] or "none",
+                         equivalence["keys_dropped_from_candidate"] or "none",
+                         equivalence["loader_keys_allowlist"], equivalence["reason"])})
 
     # The weight-source transformations a trellis artifact needed, said on the
     # dataset itself so the registry session reads them from the seal and not

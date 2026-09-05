@@ -1301,6 +1301,15 @@ PYSCOPE
         *) [ -f "$path" ] && [ ! -e "$TOKENIZER_ROOT/$name" ] && ln -s "$path" "$TOKENIZER_ROOT/$name" ;;
       esac
     done
+    # The ROOT's tokenizer_config.json, under the sidecar name fidelity.panel
+    # reads (TOKENIZER_REFERENCE_SUBDIR): when the candidate's copy fails its
+    # digest, panel.py tests loader-key equivalence against these bytes and
+    # refuses any other difference by key name. Absent (an older
+    # fetch_reference), the digest check stays the whole gate.
+    if [ -f "$FS/reference-model/tokenizer_config.json" ]; then
+      mkdir -p "$TOKENIZER_ROOT/.reference"
+      ln -s "$FS/reference-model/tokenizer_config.json" "$TOKENIZER_ROOT/.reference/tokenizer_config.json"
+    fi
     require_stage_marker fetch_reference
     log "candidate capture: role quant, scope $CANDIDATE_SCOPE_REL ($CANDIDATE_SCOPE_SHA), codec $CANDIDATE_CODEC, $CANDIDATE_BITS bits"
   fi
@@ -1509,7 +1518,7 @@ PYW
   env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN -u HUGGINGFACE_HUB_TOKEN -u HF_TOKEN_PATH \
       HF_HUB_DISABLE_IMPLICIT_TOKEN=1 HF_HOME="$FS/hf-anonymous" \
       "$VENV/bin/hf" download "$1" --revision "$2" --local-dir "$REF_MODEL_DIR" \
-      config.json generation_config.json LICENSE chat_template.jinja \
+      config.json generation_config.json LICENSE chat_template.jinja tokenizer_config.json \
       >>"$LOGS/fetch_reference.log" 2>&1
   write_marker
   log "done"

@@ -479,6 +479,86 @@ def main():
         check("fresh-process manifest/archive evidence is exactly equal", first == second
               and json.loads(first)["content"]["archive"]["sha256"]
               == legacy_binding["content"]["archive"]["sha256"])
+
+        # --- tokenizer_config.json loader-key equivalence (2026-09-05) ---------
+        # The binding names the ROOT's digests; a candidate whose
+        # tokenizer_config.json differs by exactly the allowlisted loader
+        # keys is admitted when the root's copy is present under
+        # .reference/, the binding stays byte-equal to the root's, and the
+        # evidence rides OUTSIDE the binding. Any other difference refuses
+        # naming the keys; no root copy means the digest check is the gate.
+        def candidate_root(source_tokens, config_bytes, with_reference=True):
+            cand = work / ("cand-%d" % len(list(work.iterdir())))
+            shutil.copytree(source_tokens, cand)
+            (cand / "tokenizer_config.json").write_bytes(config_bytes)
+            if with_reference:
+                (cand / P.TOKENIZER_REFERENCE_SUBDIR).mkdir()
+                (cand / P.TOKENIZER_REFERENCE_SUBDIR / "tokenizer_config.json").write_bytes(
+                    (source_tokens / "tokenizer_config.json").read_bytes())
+            return cand
+
+        def refusal_text(root, token_root):
+            try:
+                P.resolve_panel(root, tokenizer_root=token_root)
+            except P.PanelError as exc:
+                return str(exc)
+            return None
+
+        loader_only = b'{"local_files_only": false, "model_max_length": 16}\n'
+        for label, panel_root, tokens, reference_binding in (
+                ("modern", modern, modern_tokens, binding),
+                ("legacy", legacy, legacy_tokens, legacy_binding)):
+            admitted = P.resolve_panel(
+                panel_root, tokenizer_root=candidate_root(tokens, loader_only))
+            records = admitted.tokenizer_equivalences()
+            check("%s: a tokenizer_config.json differing by local_files_only only is admitted, "
+                  "the binding stays byte-equal to the root's, the evidence carries both "
+                  "digests and the dropped key" % label,
+                  admitted.to_dict() == reference_binding
+                  and len(records) == 1 and records[0]["name"] == "tokenizer_config.json"
+                  and records[0]["keys_dropped_from_candidate"] == ["local_files_only"]
+                  and records[0]["keys_dropped_from_root"] == []
+                  and records[0]["candidate_sha256"] == sha(loader_only)
+                  and records[0]["root_sha256"] == sha(
+                      (tokens / "tokenizer_config.json").read_bytes())
+                  and records[0]["loader_keys_allowlist"] == ["local_files_only"]
+                  and "never re-tokenized" in records[0]["reason"],
+                  repr(records)[:300])
+            check("%s: byte-identical files record no equivalence" % label,
+                  P.resolve_panel(panel_root, tokenizer_root=tokens).tokenizer_equivalences() == [])
+            other_key = refusal_text(panel_root, candidate_root(
+                tokens, b'{"local_files_only": false, "model_max_length": 32}\n'))
+            extra_key = refusal_text(panel_root, candidate_root(
+                tokens, b'{"local_files_only": false, "model_max_length": 16, "padding_side": "left"}\n'))
+            reserialized = refusal_text(panel_root, candidate_root(
+                tokens, b'{"model_max_length":16}'))
+            no_reference = refusal_text(panel_root, candidate_root(
+                tokens, loader_only, with_reference=False))
+            wrong_reference_dir = candidate_root(tokens, loader_only)
+            (wrong_reference_dir / P.TOKENIZER_REFERENCE_SUBDIR / "tokenizer_config.json").write_bytes(
+                b'{"model_max_length": 99}\n')
+            wrong_reference = refusal_text(panel_root, wrong_reference_dir)
+            other_file = refusal_text(panel_root, (lambda d: (
+                (d / "tokenizer.json").write_bytes(b'{"version":"2"}\n'), d)[1])(
+                candidate_root(tokens, (tokens / "tokenizer_config.json").read_bytes())))
+            check("%s: a changed value, an extra non-loader key, a re-serialization, a missing "
+                  "root copy, a root copy with the wrong digest, and any other file are each "
+                  "REFUSED by name" % label,
+                  other_key is not None and "model_max_length" in other_key
+                  and extra_key is not None and "padding_side" in extra_key
+                  and reserialized is not None and "re-serialization" in reserialized
+                  and no_reference is not None and ".reference/tokenizer_config.json" in no_reference
+                  and wrong_reference is not None and "does not carry the root's bound" in wrong_reference
+                  and other_file is not None and "tokenizer.json" in other_file,
+                  " | ".join(str(x)[-100:] for x in
+                             (other_key, extra_key, reserialized, no_reference,
+                              wrong_reference, other_file)))
+        both_sides = P.tokenizer_config_equivalent(
+            b'{"a": 1, "local_files_only": true}', b'{"local_files_only": false, "a": 1}')
+        check("tokenizer_config_equivalent drops the allowlisted key from BOTH sides and "
+              "records which side carried it",
+              both_sides["keys_dropped_from_root"] == ["local_files_only"]
+              and both_sides["keys_dropped_from_candidate"] == ["local_files_only"])
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))

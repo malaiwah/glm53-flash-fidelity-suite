@@ -927,6 +927,29 @@ A replay-qualification receipt without its comparator device is meaningless, so 
   commit. This is the single best idea in his format and we have no equivalent. `stream_score.py`
   and `hidden_replay.py` and the capture front-end are all pinned here.
 
+### 9.2b `resources` (OPTIONAL, additive, 2026-09-05)
+
+What the capture *cost*, as `engines/tools/hf_capture.py` measured it, beside
+`lane_identity_inputs` and never a member of it:
+
+```json
+"resources": {
+  "device_name": "NVIDIA H200", "peak_cuda_allocated_bytes": 37530421760,
+  "peak_cuda_reserved_bytes": 57078112256, "peak_resident_weight_bytes": 23561229056,
+  "peak_rss_bytes": 0, "checkpoint_bytes": 1506667387408, "checkpoint_files": 282,
+  "seconds": {"identity": 0, "resident_load": 0, "layer_load_sum": 0, "layer_load_max": 0,
+              "decode_sum": null, "fill_sum": null, "forward_sum": 0, "seal": 0, "elapsed": 0},
+  "bytes": {"checkpoint_read": 0, "weights_h2d": 0, "hidden_d2h": 0},
+  "forward_timing": "cuda-events"
+}
+```
+
+`forward_sum` is device time (CUDA events read at each layer boundary) when
+`forward_timing` is `cuda-events`, wall time otherwise. The block is provenance:
+`capture_content_digest` does not read it, a reader that does not know the key
+ignores it, and a dataset sealed before it validates unchanged
+(`bin/selftest_fidelity_dataset.py` section E).
+
 ### 9.3 `lane`
 
 `lane ∈ {sealed-ep8, streaming, local-mps, local-cuda-budget, other}` — the registry's own
@@ -990,6 +1013,43 @@ a BF16 capture and an FP8 capture of the same panel declared different
 tokenizers. The tokenizer belongs to the panel, not to the weights under test;
 it now comes from the suite manifest's own tokenizer-snapshot pin, identically
 on both sides.
+
+**PANEL-D7 (additive, 2026-09-05) — a candidate's `tokenizer_config.json`
+may differ from the root's by loader-only keys, and by nothing else.** The
+candidate route captures a quantized artifact against a root's panel binding:
+the binding pins the ROOT's digest for every tokenizer file, the pod takes
+`tokenizer.json` and `tokenizer_config.json` from the CANDIDATE, and the
+capture byte-checks them (`bin/stage_measure.sh`, `bin/fidelity/panel.py`).
+`RadixArk/GLM-5.3-NVFP4 @ 11af4cba` differs from `zai-org/GLM-5.3-BF16`'s
+`tokenizer_config.json` by exactly one added key, `"local_files_only": false`
+— a `transformers` loader flag some producers' saves write out, with no
+tokenization effect — and byte identity refused it after a 465 GB fetch. The
+panel is **transported token ids** and is never re-tokenized, so these files
+are identity evidence, not computation. The rule, implemented in
+`fidelity.panel.tokenizer_config_equivalent` and applied by the controller
+before spend and by the capture on the pod:
+
+* it applies to `tokenizer_config.json` only; every other bound file is byte
+  identity, as before;
+* the root's bytes are read from `<tokenizer_root>/.reference/tokenizer_config.json`
+  (the pod links the reference release's copy there; without it the digest
+  check is the whole gate) and must carry the binding's digest;
+* the keys in `TOKENIZER_CONFIG_LOADER_KEYS` — exactly `{"local_files_only"}`
+  today — are dropped from BOTH documents and the canonical JSON must then be
+  equal; any other difference (a changed value, an extra key) refuses **by key
+  name**, and a difference of serialization alone refuses too;
+* the sealed binding keeps the ROOT's digest and size (it must equal the
+  controller's expected contract byte for byte); the evidence lands on the
+  dataset as disclosure **`tokenizer_config_loader_keys_ignored`**, severity
+  `info`, `affects_comparability: false`, carrying both digests, both sizes,
+  the keys dropped on each side, the allowlist and the reason above;
+* the controller records the same evidence on its `candidate-tokenizer-files`
+  gate and warns; the comparison receipt is unaffected (PANEL-D6 compares the
+  panel's tokenizer identity, which is the root's on both sides).
+
+Selftests: `bin/selftest_panel.py` (accept and the six refusals),
+`bin/selftest_measure_cloud_candidate.py` R7 (controller, before spend),
+`bin/selftest_hf_capture.py` A33 (the disclosure on a sealed capture).
 
 **Panel refusals name a remedy, not an override.** There is deliberately no flag
 that lets two panels be compared, so the refusal says so rather than leaving a
