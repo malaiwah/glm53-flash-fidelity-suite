@@ -97,6 +97,7 @@ than its own header requires, and a header/index key-set disagreement.
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import os
 import re
@@ -695,6 +696,24 @@ TRELLIS_TP_COMPOSE_METHOD = "exl3-trellis-tp-compose-to-bf16"
 TRELLIS_RANK_RE = re.compile(r"^(?P<module>.+)\.rank(?P<rank>\d+)$")
 TRELLIS_RANK_SPLIT_RE = re.compile(r"\.rank\d+\.(?:%s)$" % "|".join(
     TRELLIS_PAYLOAD_OBJECTS + TRELLIS_CODEBOOKS))
+#: Where each rotation layout's resolution rule is grounded -- the reader
+#: that serves the artifact, cited file:line (see `exl3_rotation_groups`
+#: below and bin/fidelity/hfmeta.py) -- and the real-tensor parity that
+#: proves the decode against the BF16 source under each of them.
+TRELLIS_LAYOUT_READERS = {
+    "per_module": "exllamav3 1.4.2 exllamav3/modules/linear.py:391-407 (load_exl3: "
+                  "key+'.suh', key+'.svh', key+'.trellis' per module)",
+    "shared_h_v1": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f "
+                   "runtime/r17-g64-q-only/exl3_overlay.py:353-357,1228-1239,1667-1703 "
+                   "(experts.shared_h.{proj}.rank{r}.{suh|svh} -> experts.0.{proj}.{field}, "
+                   "broadcast to every expert; a per-expert H-side vector refuses)",
+    "r7_shared": "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f "
+                 "runtime/r17-g64-q-only/exl3_overlay.py:1655-1664,2575-2583,2668-2673 "
+                 "(r7_shared.gate_up_suh -> experts.0.gate_proj.suh aliased to up_proj; "
+                 "r7_shared.down_svh -> experts.0.down_proj.svh) and "
+                 "patches/patch_r7_broadcast_rotations.py:7-15",
+}
+TRELLIS_LAYOUT_EVIDENCE = "engines/tools/layer-outer-evidence/glm52-exl3-layouts-parity.json"
 #: Serving-kernel ZERO PADDING. drowzeys' `kv_a_proj_with_mqa` ships as
 #: [640, 6144] where its own config implies [576, 6144]; rows 0..575 are the
 #: root's tensor bitwise (after FP8 dequant) and rows 576..639 are exactly zero
@@ -742,6 +761,227 @@ def _tail_declared_bits(tail) -> Any:
     return tail.get("bits_avg", tail.get("bits"))
 
 
+#: The exl3 ROTATION LAYOUTS (per_module / shared_h_v1 / r7_shared): which
+#: tensor carries each module's suh and svh. Read from the index names and
+#: cross-checked against the declaration; the reader rules are cited in
+#: bin/fidelity/hfmeta.py above `exl3_rotation_groups`, and the evidence is
+#: engines/tools/layer-outer-evidence/glm52-exl3-layouts-parity.json. The
+#: block below is BYTE-IDENTICAL to bin/fidelity/hfmeta.py (no bin/ import on
+#: the pod; selftest_trellis_decode_offline rung [19] asserts the two texts).
+EXL3_ROTATION_LAYOUTS = ("per_module", "shared_h_v1", "r7_shared")
+EXL3_SHARED_H_TENSOR_SCHEMA = (
+    "model.layers.{L}.mlp.experts.shared_h.{proj}.rank{r}.{suh|svh}")
+_EXL3_OBJECTS = ("trellis", "suh", "svh")
+_EXL3_CODEBOOKS = ("mul1", "mcg")
+_EXL3_EXPERT_RE = re.compile(
+    r"^(?P<experts>.+\.experts)\.(?P<expert>\d+)\.(?P<proj>gate_proj|up_proj|down_proj)"
+    r"(?:\.rank(?P<rank>\d+))?$")
+_EXL3_SHARED_H_RE = re.compile(
+    r"^(?P<experts>.+\.experts)\.shared_h\.(?P<proj>gate_proj|up_proj|down_proj)"
+    r"\.rank(?P<rank>\d+)\.(?P<field>suh|svh)$")
+_EXL3_R7_SHARED_RE = re.compile(
+    r"^(?P<experts>.+\.experts)\.r7_shared\.(?P<field>gate_up_suh|down_svh)$")
+_EXL3_RANK_SUFFIX_RE = re.compile(r"\.rank\d+$")
+
+
+def exl3_rotation_groups(keys):
+    """Group `<module>.{trellis,suh,svh,<codebook>}` keys by module, resolving a
+    layer-shared H-side rotation vector BY NAME where a module's own group
+    omits it.
+
+    Returns (groups, census). `groups[stem]` = {trellis, suh, svh: key,
+    codebook, marker, shared: None | (field, key, layout)}. `census` =
+    {layout, shared_vectors: sorted shared keys, per_layout: {layout: modules}}.
+    A group is complete only when all three objects resolve AND exactly one
+    codebook marker is present; a partial group, a module carrying its own
+    H-side vector beside a shared one, a shared vector no module resolves, or
+    two shared layouts in one checkpoint all raise ValueError.
+    """
+    staged = {}
+    shared_h = {}
+    r7 = {}
+    for key in keys:
+        match = _EXL3_SHARED_H_RE.match(key)
+        if match is not None:
+            slot = (match.group("experts"), match.group("proj"), int(match.group("rank")))
+            shared_h.setdefault(slot, {})[match.group("field")] = key
+            continue
+        match = _EXL3_R7_SHARED_RE.match(key)
+        if match is not None:
+            r7.setdefault(match.group("experts"), {})[match.group("field")] = key
+            continue
+        stem, _, last = key.rpartition(".")
+        if not stem:
+            continue
+        if last in _EXL3_OBJECTS:
+            staged.setdefault(stem, {})[last] = key
+        elif last in _EXL3_CODEBOOKS:
+            staged.setdefault(stem, {}).setdefault("codebooks", []).append(last)
+    groups = {}
+    partial = []
+    consumers = {}
+    per_layout = {}
+    for stem, found in staged.items():
+        marks = found.get("codebooks") or []
+        missing = [name for name in _EXL3_OBJECTS if name not in found]
+        shared = None
+        expert = _EXL3_EXPERT_RE.match(stem)
+        if expert is not None:
+            proj = expert.group("proj")
+            h_side = "svh" if proj == "down_proj" else "suh"
+            if expert.group("rank") is not None:
+                slot = (expert.group("experts"), proj, int(expert.group("rank")))
+                vector = shared_h.get(slot, {}).get(h_side)
+                layout = "shared_h_v1"
+            else:
+                vector = r7.get(expert.group("experts"), {}).get(
+                    "down_svh" if proj == "down_proj" else "gate_up_suh")
+                layout = "r7_shared"
+            if vector is not None:
+                if h_side in found:
+                    raise ValueError(
+                        "%s carries its own %s beside the layer-shared %s; two "
+                        "candidates for one rotation vector" % (stem, h_side, vector))
+                found[h_side] = vector
+                missing = [name for name in missing if name != h_side]
+                shared = (h_side, vector, layout)
+                consumers[vector] = consumers.get(vector, 0) + 1
+        if missing or len(marks) != 1:
+            partial.append("%s (missing %s, codebook markers %s)"
+                           % (stem, missing or "none", sorted(marks) or "none"))
+            continue
+        groups[stem] = {name: found[name] for name in _EXL3_OBJECTS}
+        groups[stem]["codebook"] = marks[0]
+        groups[stem]["marker"] = "%s.%s" % (stem, marks[0])
+        groups[stem]["shared"] = shared
+        layout = shared[2] if shared is not None else "per_module"
+        per_layout[layout] = per_layout.get(layout, 0) + 1
+    if partial:
+        raise ValueError(
+            "%d incomplete trellis payload group(s): %s%s"
+            % (len(partial), "; ".join(sorted(partial)[:3]),
+               " (+%d more)" % (len(partial) - 3) if len(partial) > 3 else ""))
+    vectors = sorted(key for entry in list(shared_h.values()) + list(r7.values())
+                     for key in entry.values())
+    orphans = [key for key in vectors if key not in consumers]
+    if orphans:
+        raise ValueError(
+            "%d layer-shared rotation vector(s) resolve no module (e.g. %s)"
+            % (len(orphans), orphans[0]))
+    layouts = sorted(name for name in per_layout if name != "per_module")
+    if len(layouts) > 1:
+        raise ValueError(
+            "two shared rotation layouts in one checkpoint: %s" % ", ".join(layouts))
+    census = {"layout": layouts[0] if layouts else "per_module",
+              "shared_vectors": vectors, "per_layout": dict(sorted(per_layout.items()))}
+    return groups, census
+
+
+def exl3_declared_module_bits(name, qc, tail):
+    """The bits an artifact declares for a NON-ROUTED exl3 module, or None.
+
+    jpsequeira: hybrid_tr3_tail.protected_tensor_policy.tensors[name].bits;
+    brandonmusic: quantization_config.tensor_storage[name].bits_per_weight;
+    a stock inline exl3 config: quantization_config.head_bits for lm_head.
+    """
+    entry = (((tail or {}).get("protected_tensor_policy") or {}).get("tensors") or {}).get(name)
+    if isinstance(entry, dict):
+        bits = entry.get("bits")
+        if isinstance(bits, (int, float)) and not isinstance(bits, bool):
+            return bits
+    entry = ((qc or {}).get("tensor_storage") or {}).get(name)
+    if isinstance(entry, dict):
+        bits = entry.get("bits_per_weight")
+        if isinstance(bits, (int, float)) and not isinstance(bits, bool):
+            return bits
+    if name == "lm_head":
+        bits = (qc or {}).get("head_bits")
+        if isinstance(bits, (int, float)) and not isinstance(bits, bool):
+            return bits
+    return None
+
+
+def _exl3_names_sha256(names):
+    if not names:
+        return None
+    import hashlib
+    return hashlib.sha256("\n".join(sorted(names)).encode("utf-8")).hexdigest()
+
+
+def exl3_layout_contract(keys, qc, tail):
+    """The rotation-layout half of an exl3 weights_decode contract, from the
+    index names and the config alone.
+
+    Returns (contract, detail). `contract` is bound field for field into
+    `weights_decode.quantization_config` on both the controller and the pod:
+    rotation_layout, shared_vectors {count, names_sha256}, nonrouted_exl3
+    {count, names_sha256, declared_bits histogram}, activation_scheme.
+    `detail` carries what the pod's decoder needs beyond the contract: the
+    groups, the census, the per-module declared bits of the non-routed
+    modules and the r7 k_values. Raises ValueError when the names and the
+    declaration disagree.
+    """
+    qc = qc if isinstance(qc, dict) else {}
+    tail = tail if isinstance(tail, dict) else {}
+    groups, census = exl3_rotation_groups(keys)
+    layout = census["layout"]
+    declared_layout = tail.get("rotation_layout")
+    if layout == "shared_h_v1":
+        if (declared_layout != "shared_h_v1"
+                or tail.get("shared_h_tensor_schema") != EXL3_SHARED_H_TENSOR_SCHEMA):
+            raise ValueError(
+                "the index stores layer-shared H-side rotations under experts.shared_h "
+                "but hybrid_tr3_tail declares rotation_layout=%r, shared_h_tensor_schema=%r "
+                "(the authors' reader requires 'shared_h_v1' and %r)"
+                % (declared_layout, tail.get("shared_h_tensor_schema"),
+                   EXL3_SHARED_H_TENSOR_SCHEMA))
+    elif declared_layout not in (None, "per_expert_v1"):
+        raise ValueError(
+            "hybrid_tr3_tail declares rotation_layout=%r but the index carries no "
+            "experts.shared_h vector" % (declared_layout,))
+    r7 = qc.get("r7_routed_experts")
+    if layout == "r7_shared":
+        if not isinstance(r7, dict) or not r7.get("schema"):
+            raise ValueError(
+                "the index stores layer-shared rotations under experts.r7_shared but "
+                "quantization_config declares no r7_routed_experts block (the authors' "
+                "reader keys the r7_shared aliasing on it)")
+    nonrouted = sorted({_EXL3_RANK_SUFFIX_RE.sub("", stem) for stem in groups
+                        if _EXL3_EXPERT_RE.match(stem) is None})
+    module_bits = {name: exl3_declared_module_bits(name, qc, tail) for name in nonrouted}
+    histogram = {}
+    for bits in module_bits.values():
+        if isinstance(bits, float) and bits.is_integer():
+            bits = int(bits)
+        label = str(bits) if bits is not None else "undeclared"
+        histogram[label] = histogram.get(label, 0) + 1
+    overlay = tail.get("online_mxfp8_overlay")
+    activation = None
+    if isinstance(overlay, dict) and overlay:
+        activation = overlay.get("activation") or overlay.get("format")
+    if activation is None:
+        activation = qc.get("activation_scheme")
+    contract = {
+        "rotation_layout": layout,
+        "shared_vectors": {"count": len(census["shared_vectors"]),
+                           "names_sha256": _exl3_names_sha256(census["shared_vectors"])},
+        "nonrouted_exl3": {"count": len(nonrouted),
+                           "names_sha256": _exl3_names_sha256(nonrouted),
+                           "declared_bits": dict(sorted(histogram.items()))},
+        "activation_scheme": str(activation) if activation is not None else None,
+    }
+    r7_k_values = sorted({int(k) for k in ((r7 or {}).get("k_values") or [])
+                          if isinstance(k, int) and not isinstance(k, bool)}) \
+        if isinstance(r7, dict) else []
+    detail = {"groups": groups, "census": census, "nonrouted_bits": module_bits,
+              "r7_k_values": r7_k_values,
+              "r7_declaration": ({k: r7.get(k) for k in ("schema", "feature", "moe_layers",
+                                                          "k_values", "bit_map_manifests",
+                                                          "loader_implementation_status")}
+                                 if isinstance(r7, dict) else None)}
+    return contract, detail
+
+
 def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Dict[str, Any]]:
     """The exact EXL3 trellis form this schedule decodes, or None.
 
@@ -750,7 +990,10 @@ def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Di
     quantized module, `<codebook>` in {mul1, mcg} PER MODULE -- drowzeys'
     `keys-GLM-5.3-EXL3` uses `mcg` on layer 3 and `mul1` on layers 4-77, so
     the codebook is read from the object each module actually carries and not
-    from `quantization_config.codebook`, which names only one of them.
+    from `quantization_config.codebook`, which names only one of them -- and
+    the two layer-shared rotation layouts (`shared_h_v1`, `r7_shared`; see
+    `exl3_rotation_groups`), where a routed expert's H-side vector is resolved
+    BY NAME from the layer's shared tensor and refused when it cannot be.
     """
     qc = _config_dict(getattr(config, "quantization_config", None)
                       if not isinstance(config, dict) else config.get("quantization_config"))
@@ -758,7 +1001,11 @@ def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Di
     declared_method = qc.get("quant_method")
     if declared_method != "exl3" and tail is None:
         return None
-    groups = trellis_payload_groups(declared_keys)
+    try:
+        layout, detail = exl3_layout_contract(declared_keys, qc, tail)
+    except ValueError as exc:
+        raise LayerOuterError("REFUSED: %s" % exc) from None
+    groups = detail["groups"]
     if not groups:
         raise LayerOuterError(
             "REFUSED: the config declares an exl3 artifact (quant_method=%r, "
@@ -830,50 +1077,44 @@ def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Di
             "modules_to_not_convert": sorted(
                 str(m) for m in (qc.get("modules_to_not_convert") or [])),
         }
+    # The rotation layout, the shared-vector and non-routed name digests and
+    # the declared activation overlay are CONTRACT: read from the index names
+    # on both sides by the byte-identical `exl3_layout_contract`.
+    contract.update(layout)
     contract["_observed"] = {
         "quantized_module_count": len(groups),
         "codebook_histogram": dict(sorted(codebooks.items())),
         "quant_method_declared": declared_method,
         "declared_by": "hybrid_tr3_tail" if tail is not None else "quantization_config",
         "composition": composition,
+        "rotation_layout": detail["census"]["layout"],
+        "modules_per_layout": detail["census"]["per_layout"],
+        "shared_vector_count": len(detail["census"]["shared_vectors"]),
+        "r7_declaration": detail["r7_declaration"],
+        # What the decoder checks each module's K against beyond the tail's
+        # k_values: the declared bits of every non-routed exl3 module and the
+        # r7 block's own k_values for the unsharded routed experts.
+        "module_bits_policy": {"nonrouted": detail["nonrouted_bits"],
+                               "r7_k_values": detail["r7_k_values"]},
     }
     return contract
 
 
-def trellis_payload_groups(keys: Iterable[str]) -> Dict[str, Dict[str, str]]:
+def trellis_payload_groups(keys: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     """Group `<module>.{trellis,suh,svh,<codebook>}` keys by module.
 
     A group is returned only when all three payload objects AND exactly one
     codebook marker are present; a partial group is a refusal, not a skip,
     because a module whose trellis is loaded without its scales is the silent
-    failure this decoder exists to prevent.
+    failure this decoder exists to prevent. Under `shared_h_v1` / `r7_shared`
+    a routed expert's missing H-side vector resolves BY NAME to the layer's
+    shared tensor (`exl3_rotation_groups`); every group then names the exact
+    key each of its three objects is read from, and `shared` says which.
     """
-    staged: Dict[str, Dict[str, str]] = {}
-    for key in keys:
-        stem, _, last = key.rpartition(".")
-        if not stem:
-            continue
-        if last in TRELLIS_PAYLOAD_OBJECTS:
-            staged.setdefault(stem, {})[last] = key
-        elif last in TRELLIS_CODEBOOKS:
-            staged.setdefault(stem, {}).setdefault("codebooks", []).append(last)  # type: ignore[union-attr]
-    groups: Dict[str, Dict[str, str]] = {}
-    partial: List[str] = []
-    for module, found in staged.items():
-        marks = found.get("codebooks") or []
-        missing = [name for name in TRELLIS_PAYLOAD_OBJECTS if name not in found]
-        if missing or len(marks) != 1:
-            partial.append("%s (missing %s, codebook markers %s)"
-                           % (module, missing or "none", sorted(marks) or "none"))
-            continue
-        groups[module] = {name: found[name] for name in TRELLIS_PAYLOAD_OBJECTS}
-        groups[module]["codebook"] = marks[0]
-        groups[module]["marker"] = "%s.%s" % (module, marks[0])
-    if partial:
-        raise LayerOuterError(
-            "REFUSED: %d incomplete trellis payload group(s): %s%s"
-            % (len(partial), "; ".join(sorted(partial)[:3]),
-               " (+%d more)" % (len(partial) - 3) if len(partial) > 3 else ""))
+    try:
+        groups, _ = exl3_rotation_groups(list(keys))
+    except ValueError as exc:
+        raise LayerOuterError("REFUSED: %s" % exc) from None
     return groups
 
 
@@ -929,9 +1170,13 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
     """
     surface = _exl3hf()
     groups = trellis_payload_groups(subset)
+    # Every key a group reads -- including a layer-shared rotation vector
+    # several groups resolve to -- is consumed here and never reaches the
+    # converter as a stray tensor.
     consumed = {key for objects in groups.values()
-                for name, key in objects.items() if name != "codebook"}
+                for name, key in objects.items() if name not in ("codebook", "shared")}
     passthrough = {key: value for key, value in subset.items() if key not in consumed}
+    policy = stats.get("module_bits_policy") or {}
     # The FP8 half counts into ITS OWN counter dict: the two decoders keep
     # separate stats and the log line reads both by name, so handing the
     # trellis dict to the FP8 decoder is a KeyError on the first dequantized
@@ -987,7 +1232,14 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
         stats["trellis_bits"] += bits
         histogram = stats.setdefault("k_histogram", {})
         histogram[str(bits)] = histogram.get(str(bits), 0) + 1
-        _check_declared_bits(module, bits, plan, composition)
+        shared = objects.get("shared")
+        layouts = stats.setdefault("modules_per_layout", {})
+        layout = shared[2] if shared is not None else "per_module"
+        layouts[layout] = layouts.get(layout, 0) + 1
+        if shared is not None:
+            stats["shared_vectors_applied"] = stats.get("shared_vectors_applied", 0) + 1
+        _check_declared_bits(module, bits, plan, composition, policy=policy,
+                             layout=layout, shared=shared is not None)
         ranked = TRELLIS_RANK_RE.match(module)
         weight_key = "%s.weight" % (ranked.group("module") if ranked else module)
         if weight_key in subset:
@@ -995,7 +1247,20 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
                 "REFUSED: %s exists as a plain weight beside its trellis payload; the "
                 "checkpoint carries two versions of one tensor and this schedule will "
                 "not pick one" % weight_key)
+        if _EXL3_EXPERT_RE.match(module) is None:
+            # A NON-ROUTED exl3 module (o_proj, q_b_proj, indexer.wq_b, lm_head):
+            # decoded by the same function wherever it sits, and named with its
+            # K in the evidence -- the head's K is what hf_capture seals as the
+            # candidate's own dequantized head (HEAD-1d, own heads).
+            stats.setdefault("nonrouted_exl3_decoded", {})[weight_key[:-len(".weight")]] = bits
         if ranked is None:
+            if layout == "r7_shared":
+                # brandonmusic's r7 encoder stores each expert with its
+                # INTERMEDIATE channels permuted (gate/up rows, down columns,
+                # one permutation per expert: r7_encoder/permutation.py
+                # permute_expert_hf); the layer manifest names it and the
+                # inverse puts the decoded module in the source's order.
+                decoded = _r7_unpermute(module, objects, decoded, stats)
             emit(weight_key, decoded)
             continue
         if composition is None:
@@ -1018,7 +1283,9 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
 
 
 def _check_declared_bits(module: str, bits: int, plan: Dict[str, Any],
-                         composition: Optional[Dict[str, Any]]) -> None:
+                         composition: Optional[Dict[str, Any]],
+                         policy: Optional[Dict[str, Any]] = None,
+                         layout: str = "per_module", shared: bool = False) -> None:
     """The payload's own K against what the artifact declares.
 
     A uniform declaration (`bits: 4`) must equal every module's K. A TR3 tail
@@ -1026,7 +1293,31 @@ def _check_declared_bits(module: str, bits: int, plan: Dict[str, Any],
     `k_values: [3, 4]`, so the check is membership in k_values. A declaration
     that is neither is not checkable and is recorded, not trusted: the row's
     bit-width label then rests on the K histogram in the decode evidence.
+
+    `policy` (the plan's `module_bits_policy`) adds two per-module rules: a
+    non-routed exl3 module must carry exactly the bits its artifact declares
+    for it (jpsequeira's protected_tensor_policy, brandonmusic's
+    tensor_storage, a stock config's head_bits), and an `r7_shared` routed
+    expert must carry a K in `quantization_config.r7_routed_experts.k_values`
+    -- the tail's k_values describe only the rank-sharded layer it covers.
     """
+    policy = policy or {}
+    name = _EXL3_RANK_SUFFIX_RE.sub("", module)
+    nonrouted = policy.get("nonrouted") or {}
+    if name in nonrouted:
+        declared_bits = nonrouted[name]
+        if declared_bits is not None and int(declared_bits) != bits:
+            raise LayerOuterError(
+                "REFUSED: %s is a K%d payload but the artifact declares %r bits for it"
+                % (module, bits, declared_bits))
+        return
+    if shared and layout == "r7_shared":
+        r7_k = policy.get("r7_k_values") or []
+        if r7_k and bits not in set(r7_k):
+            raise LayerOuterError(
+                "REFUSED: %s is a K%d payload but r7_routed_experts declares k_values %s"
+                % (module, bits, sorted(r7_k)))
+        return
     declared = plan.get("bits")
     k_values = (composition or {}).get("k_values") if composition else None
     if k_values:
@@ -1051,6 +1342,146 @@ def _check_declared_bits(module: str, bits: int, plan: Dict[str, Any],
             "REFUSED: %s is a K%d payload but the artifact declares bits=%r; the row "
             "would be labelled with a bit-width its bytes do not carry"
             % (module, bits, declared))
+
+
+R7_MANIFEST_RE = re.compile(r"^r7-experts-layer-(?P<layer>\d+)\.json$")
+R7_UNPERMUTE_REFERENCE = (
+    "brandonmusic/GLM-5.2-EXL3-TR3v4-3.5bpw-MTP78@7c73450f r7_encoder/permutation.py:99-114 "
+    "(permute_expert_hf: gate/up rows and down columns index_select'ed by the expert's "
+    "permutation before encoding), :91-96 (inverse_permutation) and r7_encoder/schema.py:268-272 "
+    "(the layer manifest's permutations[E].new_to_old is that permutation)")
+
+
+class R7PermutationSource:
+    """The per-expert intermediate permutations of an `r7_shared` artifact.
+
+    brandonmusic's r7 encoder permutes each expert's 2048 intermediate
+    channels (`energy_balanced` or identity, one permutation per expert,
+    applied identically to gate rows, up rows and down columns --
+    `r7_encoder/permutation.py::permute_expert_hf`) BEFORE the trellis
+    encode, and writes `new_to_old` into the layer's manifest
+    `r7-experts-layer-{L:03d}.json` (`permutations[E]`), the files
+    `quantization_config.r7_routed_experts.bit_map_manifests` lists and the
+    repository ships beside its shards. Serving never undoes it (a permutation
+    of the intermediate axis is invisible to gate*up@down when all three carry
+    it); this decoder does, so the decoded module sits under the official name
+    in the SOURCE's channel order and can be proven against the BF16 rows
+    (evidence: TRELLIS_LAYOUT_EVIDENCE -- decoded as stored, cosine ~0 against
+    the source; inverse-permuted, the K-band). The same manifest's
+    `vector_refs[module]` must name exactly the suh/svh keys the name
+    resolution chose; a disagreement refuses.
+    """
+
+    def __init__(self, model_dir: str, manifests: Sequence[str], intermediate: int):
+        self.model_dir = model_dir
+        self.intermediate = int(intermediate)
+        self.by_layer: Dict[int, str] = {}
+        for name in manifests:
+            match = R7_MANIFEST_RE.match(str(name))
+            if match is None:
+                raise LayerOuterError(
+                    "REFUSED: r7_routed_experts.bit_map_manifests names %r, not an "
+                    "r7-experts-layer-NNN.json manifest" % (name,))
+            self.by_layer[int(match.group("layer"))] = str(name)
+        self._layers: Dict[int, Dict[str, Any]] = {}
+        self.stats: Dict[str, Any] = {"manifests_read": 0, "experts_unpermuted": 0,
+                                      "policies": {}, "manifest_sha256": {}}
+
+    def verify_present(self) -> None:
+        missing = [name for name in self.by_layer.values()
+                   if not os.path.isfile(os.path.join(self.model_dir, name))]
+        if missing:
+            raise LayerOuterError(
+                "REFUSED: %d r7 layer manifest(s) the config lists are absent from the "
+                "checkpoint (e.g. %s); the experts' intermediate permutations cannot be "
+                "undone without them" % (len(missing), missing[0]))
+
+    def _layer(self, layer: int) -> Dict[str, Any]:
+        if layer in self._layers:
+            return self._layers[layer]
+        name = self.by_layer.get(layer)
+        if name is None:
+            raise LayerOuterError(
+                "REFUSED: layer %d stores r7_shared experts but r7_routed_experts."
+                "bit_map_manifests lists no manifest for it" % layer)
+        path = os.path.join(self.model_dir, name)
+        with open(path, "rb") as handle:
+            raw = handle.read()
+        doc = json.loads(raw.decode("utf-8"))
+        if int(doc.get("layer", -1)) != layer:
+            raise LayerOuterError(
+                "REFUSED: %s says layer %r, expected %d" % (name, doc.get("layer"), layer))
+        self._layers[layer] = doc
+        self.stats["manifests_read"] += 1
+        self.stats["manifest_sha256"][name] = hashlib.sha256(raw).hexdigest()
+        return doc
+
+    def inverse(self, layer: int, expert: int, module: str, objects: Dict[str, Any]):
+        """The index that puts a decoded expert's intermediate axis back in
+        source order, after the manifest's vector_refs confirm the name resolution."""
+        import torch
+
+        doc = self._layer(layer)
+        refs = (doc.get("vector_refs") or {}).get(module)
+        chosen = {"suh": objects["suh"], "svh": objects["svh"]}
+        if refs != chosen:
+            raise LayerOuterError(
+                "REFUSED: %s: the layer manifest's vector_refs name %r but the index names "
+                "resolved %r" % (module, refs, chosen))
+        entry = (doc.get("permutations") or {}).get(str(expert))
+        perm = entry.get("new_to_old") if isinstance(entry, dict) else None
+        if (not isinstance(perm, list) or len(perm) != self.intermediate
+                or sorted(perm) != list(range(self.intermediate))):
+            raise LayerOuterError(
+                "REFUSED: %s: the layer manifest carries no valid %d-element permutation "
+                "for expert %d" % (module, self.intermediate, expert))
+        policy = str(entry.get("policy"))
+        self.stats["policies"][policy] = self.stats["policies"].get(policy, 0) + 1
+        self.stats["experts_unpermuted"] += 1
+        inverse = torch.empty(self.intermediate, dtype=torch.long)
+        inverse[torch.tensor(perm, dtype=torch.long)] = torch.arange(self.intermediate)
+        return inverse
+
+
+def _r7_unpermute(module: str, objects: Dict[str, Any], decoded, stats: Dict[str, Any]):
+    source = stats.get("r7_permutations")
+    if not isinstance(source, R7PermutationSource):
+        raise LayerOuterError(
+            "REFUSED: %s is an r7_shared expert but the decode carries no permutation "
+            "source (the layer manifests were not planned)" % module)
+    expert = _EXL3_EXPERT_RE.match(module)
+    layer_match = re.search(r"\.layers\.(\d+)\.", module)
+    if expert is None or layer_match is None:
+        raise LayerOuterError("REFUSED: %s is not a routed-expert projection" % module)
+    inverse = source.inverse(int(layer_match.group(1)), int(expert.group("expert")), module, objects)
+    axis = 1 if expert.group("proj") == "down_proj" else 0
+    if decoded.shape[axis] != source.intermediate:
+        raise LayerOuterError(
+            "REFUSED: %s decodes to %s; its intermediate axis is not %d"
+            % (module, tuple(decoded.shape), source.intermediate))
+    return decoded.index_select(axis, inverse.to(decoded.device))
+
+
+def r7_permutation_source(config, model_dir: str, declaration: Dict[str, Any]) -> R7PermutationSource:
+    """The permutation source an `r7_shared` decode needs, from the artifact's own
+    declaration (`r7_routed_experts.bit_map_manifests`) and geometry; every
+    listed manifest must be present in the checkpoint directory."""
+    manifests = declaration.get("bit_map_manifests") or []
+    if not isinstance(manifests, list) or not manifests:
+        raise LayerOuterError(
+            "REFUSED: the index stores r7_shared experts but r7_routed_experts declares no "
+            "bit_map_manifests; the experts' intermediate permutations live in those files")
+    text = _config_dict(getattr(config, "text_config", None)
+                        if not isinstance(config, dict) else config.get("text_config"))
+    geometry = text if text else _config_dict(config)
+    intermediate = geometry.get("moe_intermediate_size")
+    if isinstance(intermediate, bool) or not isinstance(intermediate, int) or intermediate <= 0:
+        raise LayerOuterError(
+            "REFUSED: r7_shared experts need the config's moe_intermediate_size to validate "
+            "their permutations; got %r" % (intermediate,))
+    source = R7PermutationSource(model_dir, manifests, intermediate)
+    source.verify_present()
+    return source
 
 
 def _compose_tp_ranks(module: str, by_rank: Dict[int, Any], composition: Dict[str, Any],
@@ -1091,8 +1522,12 @@ def _compose_tp_ranks(module: str, by_rank: Dict[int, Any], composition: Dict[st
     projection = module.rsplit(".", 1)[-1]
     declared = (composition.get("declared_slicing") or {}).get(projection)
     if declared is not None:
-        declared_axis = (0 if declared.startswith("N-sliced")
-                         else 1 if declared.startswith("K-sliced") else None)
+        # davidsyoung writes "K-sliced: rank r = input cols"; the GLM-5.2 TR3
+        # tails (willfalco, jpsequeira, brandonmusic) write "TP4 K-slice: rank r
+        # owns input columns [512r,512r+512)". The axis token is what is read;
+        # a declaration naming neither, or both, still refuses.
+        tokens = set(re.findall(r"\b([NK])-slice[d]?\b", str(declared)))
+        declared_axis = (0 if tokens == {"N"} else 1 if tokens == {"K"} else None)
         if declared_axis != axis:
             raise LayerOuterError(
                 "REFUSED: %s: the shapes admit concatenation along axis %d but the "
@@ -2101,6 +2536,13 @@ def checkpoint_decode_plans(config, model_dir: str, log: Callable[..., None]):
         trellis_stats["composition"] = observed.get("composition")
         trellis_stats["quant_method_declared"] = observed.get("quant_method_declared")
         trellis_stats["declared_by"] = observed.get("declared_by")
+        if observed.get("rotation_layout") == "r7_shared":
+            trellis_stats["r7_permutations"] = r7_permutation_source(
+                config, model_dir, observed.get("r7_declaration") or {})
+        trellis_stats["rotation_layout"] = observed.get("rotation_layout")
+        trellis_stats["modules_per_layout_planned"] = observed.get("modules_per_layout")
+        trellis_stats["r7_declaration"] = observed.get("r7_declaration")
+        trellis_stats["module_bits_policy"] = observed.get("module_bits_policy")
         log(stage="trellis_decode_plan",
             method=(TRELLIS_TP_COMPOSE_METHOD if observed.get("composition")
                     else TRELLIS_DECODE_METHOD),
@@ -2816,6 +3258,28 @@ def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]
                 "evidence": "engines/tools/layer-outer-evidence/"
                             "glm53-exl3-tp-rank-and-zero-pad-parity.json",
             }
+        # The ROTATION LAYOUT the decoder resolved (contract keys ride inside
+        # quantization_config; this block is the census beside them).
+        layout = stats.get("rotation_layout") or trellis_plan.get("rotation_layout")
+        evidence["rotation_layout"] = {
+            "layout": layout,
+            "reader": TRELLIS_LAYOUT_READERS.get(layout),
+            "modules_per_layout": dict(sorted((stats.get("modules_per_layout") or {}).items())),
+            "shared_vectors_declared": int(
+                (trellis_plan.get("shared_vectors") or {}).get("count") or 0),
+            "shared_vectors_applied": int(stats.get("shared_vectors_applied", 0)),
+            "nonrouted_exl3_modules": [
+                {"name": name, "K": int(bits)}
+                for name, bits in sorted((stats.get("nonrouted_exl3_decoded") or {}).items())],
+            "r7_declaration": stats.get("r7_declaration"),
+            "evidence": TRELLIS_LAYOUT_EVIDENCE,
+        }
+        permutations = stats.get("r7_permutations")
+        if isinstance(permutations, R7PermutationSource):
+            evidence["rotation_layout"]["r7_intermediate_unpermute"] = dict(
+                permutations.stats, intermediate=permutations.intermediate,
+                manifests_declared=len(permutations.by_layer),
+                reference=R7_UNPERMUTE_REFERENCE)
         if stats.get("zero_padded_rows_truncated"):
             evidence["zero_padded_rows_truncated"] = dict(
                 stats["zero_padded_rows_truncated"], method=ZERO_PAD_METHOD)
@@ -2904,6 +3368,27 @@ def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]
     }
     evidence.update(fp8_device_parity_evidence(stats))
     return evidence
+
+
+def head_decode_identity(streamer: StreamedModel) -> Optional[Dict[str, Any]]:
+    """How the model's `lm_head.weight` came to be, for the sealed head identity.
+
+    None when the head was loaded as shipped (native). When the trellis
+    decoder produced it from an exl3 payload group (jpsequeira's 8-bit
+    `lm_head.{trellis,suh,svh,mcg}`), the head hf_capture seals is the
+    candidate's OWN dequantized head: `quantized: true`, its payload K as
+    `bits`, `source: artifact_dequantized` (docs/FIDELITY-DATASET-SPEC.md,
+    head source table) -- and the comparison runs it under HEAD-1d, own
+    heads, so the head's quantization error is inside the number.
+    """
+    if getattr(streamer, "trellis_plan", None) is None:
+        return None
+    decoded = dict(getattr(streamer, "trellis_stats", {}) or {}).get("nonrouted_exl3_decoded") or {}
+    bits = decoded.get("lm_head")
+    if bits is None:
+        return None
+    return {"quantized": True, "bits": int(bits), "source": "artifact_dequantized",
+            "method": TRELLIS_DECODE_METHOD, "reference": TRELLIS_DECODE_REFERENCE}
 
 
 def fp8_device_parity_evidence(stats: Dict[str, Any]) -> Dict[str, Any]:
