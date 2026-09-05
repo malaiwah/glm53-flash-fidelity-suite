@@ -253,11 +253,29 @@ thereafter downloaded rather than re-run. Step 2 is publishable **standalone**,
 before any comparison exists. Step 3 runs with **neither** set of weights
 present.
 
-### Race mode — `--role root --race`
+### Race mode — `--role root --race` (engine-level experiment; refused on the paid path)
+
+**Status 2026-09-05: not runnable on the paid path.** `--race`, `--preview-of`
+and `--race-workers` are hidden from `measure-cloud --help` and refused at
+three layers before any spend: `measure_cloud.py` `_runpod_forbidden`
+(*"--race (not wired on the RunPod path yet; see docs/RACE-MODE.md)"*),
+`bin/fidelity/stages.py` `stage_sequence(role="root", race=True)` (*"race/preview
+root capture is unsupported by the first safe paid path"*), and
+`bin/stage_measure.sh` `race_bootstrap`/`race_capture`. What exists is the
+identity separation below (`engines/tools/race_fetch.py`, tested by
+`bin/selftest_race_mode.py`) and the design in
+[`docs/RACE-MODE.md`](../docs/RACE-MODE.md). The sub-hour path that DOES run
+today is `--resume-capture <out-A>/result/dataset --resume-origin-job
+<out-A>/result/job.json`: cold run 1 on pod A, cold run 2 plus qualification
+on pod B (the published GLM-5.3 root was made this way; a one-run capture is
+never publishable as the root). On the container-disk layout the saving race
+mode would buy is bounded by `min(fetch, capture)` ≈ 10 min (JOURNAL 2026-09-04:
+1.5 TB in 12 min, cold run ~10 min).
 
 When a model lands on the Hub, the quants appear within hours and nobody can
 say how good any of them are, because there is no root to measure against.
-[`docs/RACE-MODE.md`](../docs/RACE-MODE.md) is the whole story; the short form:
+[`docs/RACE-MODE.md`](../docs/RACE-MODE.md) is the whole story; the short form
+of what is built:
 
 * **The fetch stops being a barrier.** `engines/tools/race_fetch.py` reads
   `model.safetensors.index.json`, buckets every shard by the first layer that

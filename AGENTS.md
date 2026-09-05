@@ -50,9 +50,10 @@ and Bash CLIs over explicit filesystem/JSON state, in six stages:
 The portable dataset route is parallel, not a shortcut around any of that:
 `bin/fidelity-dataset capture | verify | compare | publish` makes a root capture a
 public good that later measurements read instead of re-paying for. `measure-cloud
---role root` is how a root is captured; `--race` overlaps that capture with the
-still-running download ([`docs/RACE-MODE.md`](docs/RACE-MODE.md)). Model-card
-publication is a separate, permissioned step *after* registry identity exists.
+--role root` is how a root is captured, and with `--candidate-scope … --reference-dataset`
+how a quant is scored against a published root; `--race` is an engine-level
+experiment the paid controller refuses ([`docs/RACE-MODE.md`](docs/RACE-MODE.md)).
+Model-card publication is a separate, permissioned step *after* registry identity exists.
 
 State is files — plans, `job.json`, leases, stage logs, `.done` markers, captures,
 reports, receipts — and a `.done` marker appears only after success. CLIs are
@@ -130,8 +131,8 @@ Read-only and planning commands, safe to run freely:
 ```bash
 bin/measure <hf-repo-or-url> --plan-only
 bin/measure-local --artifact <repo> --panel <dataset> --estimate-only
-bin/measure-cloud --model <repo> --panel <dataset> --lane streaming \
-    --max-cost <usd> --max-runtime <duration> --dry-run
+bin/measure-cloud --provider runpod --role root --model <repo> --panel-dir <dir> --dataset-id <id> \
+    --measurer <handle> --max-cost <usd> --max-runtime <duration> --out <dir> --dry-run
 bin/registry-view rows --model <name> --lane <lane> --registry local
 bin/registry-submit <receipt.json>                     # validates; publishes nothing
 container/build.sh --tag quant-fidelity-measure:dev    # docker or podman; refuses a dirty tree

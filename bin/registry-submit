@@ -10,7 +10,19 @@
 # network, nothing published.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RECEIPT="${1:?usage: registry-submit <receipt.json>}"
+case "${1:-}" in
+  -h|--help|"")
+    echo "usage: bin/registry-submit <receipt.json>"
+    echo
+    echo "Validates a sealed measurement-receipt.json exactly as the registry will"
+    echo "(offline; nothing is published) and prints the row it would generate."
+    echo "The candidate route's comparison-receipt.json is not a submission receipt;"
+    echo "see docs/THIRD-PARTY-QUICKSTART.md section 5."
+    [ -n "${1:-}" ] && exit 0
+    exit 2
+    ;;
+esac
+RECEIPT="$1"
 PY="${FIDELITY_PYTHON:-python3}"
 "$PY" "$ROOT/registry/tools/registry_validate.py" --submission "$RECEIPT"
 echo

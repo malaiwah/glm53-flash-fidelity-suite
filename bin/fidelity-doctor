@@ -41,6 +41,10 @@ def warn(name, detail, remedy):
     warnings.append(name)
 
 
+def info(name, detail):
+    print("  INFO  %-34s %s" % (name, detail))
+
+
 def fail(name, detail, remedy):
     print("  FAIL  %-34s %s" % (name, detail))
     print("        remedy: %s" % remedy)
@@ -148,16 +152,16 @@ def main():
     else:
         warn("runpod reaper state", "canonical control/health artifacts absent",
              "install with the exact RunPod command in "
-             "docs/THIRD-PARTY-QUICKSTART.md §3")
+             "docs/THIRD-PARTY-QUICKSTART.md §2")
 
     proof = state / "drill" / "proof.json"
     if proof.is_file():
         ok("controller-loss proof", "artifact present; measure-cloud validates "
                                     "its account, checkout, age and billing")
     else:
-        warn("controller-loss proof", "no canonical paid drill proof",
-             "run the spend-free drill dry-run, then the explicitly authorized "
-             "paid drill in docs/THIRD-PARTY-QUICKSTART.md §4")
+        info("controller-loss proof", "none (strict campaign mode only: the "
+             "default paid path does not require a drill proof; "
+             "docs/CLOUD-RECIPES.md 'Strict campaign mode')")
 
     # -- FIDELITY_PYTHON (local execute / preview scoring only) ------------
     fpy = os.environ.get("FIDELITY_PYTHON")
@@ -192,7 +196,8 @@ def main():
     else:
         print("LOCAL PREREQUISITES PRESENT. This is not paid GO; run the exact "
               "supported --dry-run next.")
-    print("next: docs/THIRD-PARTY-QUICKSTART.md §5")
+    print("next: docs/THIRD-PARTY-QUICKSTART.md §2 (reaper), then §3 (root) "
+          "or §3b (a quant against a published root)")
     return 0
 
 

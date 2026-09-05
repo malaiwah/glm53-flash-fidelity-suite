@@ -87,7 +87,7 @@ instead of restating it.
 | lane | reachable via | receipt class | rates with a profile |
 |---|---|---|---|
 | `sealed-ep8` | `bin/measure-cloud --lane sealed-ep8` | (not declared) | no bpw→profile map (profile named by the campaign driver) |
-| `streaming` | `bin/measure --lane streaming`, `bin/measure-cloud --lane streaming` | submittable | dione: 3.0, 4.0 bpw; exl3hf: 2.0, 2.05, 3.05, 4.05 bpw; gguf: any rate; native-bf16: unquantized; tr3-published: 4.0, 6.0 bpw |
+| `streaming` | `bin/measure --lane streaming` (redirects), `bin/measure-cloud` (its only lane) | submittable | dione: 3.0, 4.0 bpw; exl3hf: 2.0, 2.05, 3.05, 4.05 bpw; gguf: any rate; native-bf16: unquantized; tr3-published: 4.0, 6.0 bpw |
 | `local-mps` | `bin/measure --lane local-mps`, `bin/measure-local --lane local-mps` | preview | 6.0→k6, 8.0→k8, native→native-bf16 |
 | `local-cuda-budget` | `bin/measure --lane local-cuda-budget`, `bin/measure-local --lane local-cuda-budget` | preview | 6.0→k6, 8.0→k8, native→native-bf16 |
 | `bf16-floor` | no runner — campaign lane, driven directly (`engines/tools/`) | (not declared) | fixed: native-bf16 |
@@ -176,7 +176,10 @@ opt-in; [`docs/CLOUD-RECIPES.md`](docs/CLOUD-RECIPES.md) has the guarantees,
 the recipe and the tradeoffs, and `bin/measure-cloud --help` is the ground
 truth for every flag.
 
-The minimal root capture, as the `--help` epilog shows it:
+The minimal root capture, as the `--help` epilog shows it (`--max-runtime`
+is the bound authored in `bin/engines.json` for this target, `--max-cost`
+the all-in maximum computed from it; when either moves the dry-run refuses
+with the new number):
 
 ```bash
 bin/measure-cloud --provider runpod --role root \
@@ -184,13 +187,17 @@ bin/measure-cloud --provider runpod --role root \
     --panel-dir engines/panels/<panel> \
     --dataset-id fidelity--<id> --publish-root-to <owner>/<repo> \
     --hf-token-file ~/.hf_token --measurer <your-hf-handle> \
-    --max-cost 40 --max-runtime 3h30m --retrieval-delete-reserve 14400 \
+    --max-cost 65 --max-runtime 7h30m --retrieval-delete-reserve 14400 \
     --out ~/fidelity-runs/<name> --dry-run
 ```
 
 `--dry-run` prints the plan with every derived value and creates nothing;
 re-run without it to spend. Exit codes: 0 ok; 1 the run failed and the pod is
 proven gone; 3 refused before anything was created; 90 a pod may remain.
+A quant is measured against a published root with the same command plus
+`--candidate-scope/--candidate-codec/--candidate-bits/--reference-dataset`
+— the route behind every GLM-5.3 quant row; the walkthrough is
+[QUICKSTART §3b](docs/THIRD-PARTY-QUICKSTART.md).
 
 ### Container image — local/developer surface, not paid admission
 

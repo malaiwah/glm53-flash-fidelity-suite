@@ -73,37 +73,50 @@ placeholders. Both are refused for free.
 
 ## 1. Produce the receipt
 
-Either runner seals one at the end of a run, at
-`<out>/receipts/measurement-receipt.json`. **One noun, one file:
-`measurement-receipt.json` IS your submission receipt** (schema
-`quant-fidelity-registry/submission-receipt.v1`) — older copies of these docs
-called the same object `submission.json`, and every snippet below now uses the
-filename the runner actually writes:
+There are two paid-route outputs today, and they are filed differently:
+
+* **The candidate route** — a quant measured on a rented H200 against the
+  published root dataset of its family (`measure-cloud --provider runpod
+  --role root --candidate-scope … --candidate-codec … --candidate-bits …
+  --reference-dataset OWNER/REPO@40HEX`). This is how every GLM-5.3 quant row
+  in the registry was made. It writes
+  `<out>/result/receipts/reference-comparison/comparison-receipt.json`, which
+  is **not** a submission receipt: you hand over the discussion your
+  `fidelity-post publish` opened plus the receipts directory, and the
+  maintainer files the row (§4). The walkthrough, with the observed dry-run
+  output, is [`docs/THIRD-PARTY-QUICKSTART.md` §3b](../docs/THIRD-PARTY-QUICKSTART.md);
+  do not restate it from memory — it is probed against `--help` by
+  `bin/selftest_readme_recipes.py`.
+* **The legacy teacher-logits lane** (`--role quant`, the default) and
+  `measure-local` seal `<out>/receipts/measurement-receipt.json`. **One noun,
+  one file: `measurement-receipt.json` IS your submission receipt** (schema
+  `quant-fidelity-registry/submission-receipt.v1`) — older copies of these
+  docs called the same object `submission.json`. This lane admits only exact
+  authored targets on the paid path; the local lanes read `packed` and
+  `native-bf16` surfaces only (README support matrix).
 
 ```bash
-# cloud -- rents a GPU, measures, tears the instance down, prints the real cost
-# (if you have already run `jl setup`, the runner finds that credential and you
-#  do not need to export anything; the same is true of a cached HF login)
-export JL_API_KEY=...        # optional -- see above
-./bin/measure-cloud \
-    --model  <hf-repo> \
-    --panel  brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
-    --lane   streaming --spot --max-runtime 8h
+# cloud, candidate route -- $0 dry-run first; the QUICKSTART has the full command
+bin/measure-cloud --provider runpod --role root --model <hf-repo> --revision <rev> \
+    --panel-dir engines/panels/panel--glm53.malaiwah.corpus5x5-v1 --dataset-id fidelity--<id> \
+    --candidate-scope <scope.json> --candidate-codec exl3-mcg --candidate-bits 3.25 \
+    --reference-dataset malaiwah/glm53-fidelity-root-v1@9c4a29ee10f393ed2fdbdb9262c1192ddb1507b4 \
+    --gpu H200 --measurer <your-hf-handle> --max-cost 45 --max-runtime 3h30m \
+    --retrieval-delete-reserve 14400 --out <out> --dry-run
 
 # local -- Apple Silicon, or a consumer CUDA card under a hard VRAM budget
-./bin/measure-local \
-    --artifact <hf-repo> \
-    --panel    brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
-    --vram-budget 30
+bin/measure-local --artifact <hf-repo> --panel <hf-dataset> --vram-budget 30 --estimate-only
 ```
 
-Run it with `--dry-run` (cloud) or `--estimate-only` (local) first. Both
-validate everything, download nothing, create nothing and spend nothing, and
-both print what the run will cost you in dollars, disk, memory and hours.
+`--dry-run` (cloud) and `--estimate-only` (local) validate everything,
+download nothing, create nothing and spend nothing, and print the plan: the
+cloud plan's `all-in hard cap` is the liability ceiling, not the expected
+spend.
 
-**Keep the default of at least two cold runs.** A single run produces a real
-number that the registry will nonetheless reject: `run_count >= 2` is required,
-because one run cannot demonstrate determinism.
+**Keep the default of two cold runs.** A single run produces a real number
+that the registry will nonetheless reject: `run_count >= 2` is required,
+because one run cannot demonstrate determinism. The paid path refuses
+`--cold-runs` other than 2.
 
 Check it sealed correctly before you send it — four lines, no dependencies:
 
@@ -157,10 +170,26 @@ all of its inputs exist. If you have that clone, `bin/registry-submit
 
 ### What it costs, before you start
 
-Both runners print a dollar estimate before they spend anything, but here is
-the shape of the bill so you can decide whether to bother. All figures are
-**measured**, on JarvisLabs spot GPUs in `IN2`, on the GLM-5.3-Flash sealed
-25-window panel (51,175 positions).
+The product a contributor uses today is the candidate route on a RunPod
+secure H200 (on-demand, $4.59/h on 2026-09-05, datacenter `US-NC-1`). Two
+reference points, from the receipts and the JOURNAL:
+
+| what | pod time | cost | source |
+|---|---:|---:|---|
+| a 394 GB EXL3 candidate against the published GLM-5.3 root (fetch, 2 cold runs, self-compare, reference comparison, teardown) | ~33–45 min | ≈ $3–4 [computed at $4.59/h] | JOURNAL 2026-09-05 (K4: fetch 4m22s, cold runs 9m00s + 7m10s, comparisons ~11 min, ~33 min); lease `h3nnboclnzu7cs` (3.25 bpw TR3): create observed 02:49:29Z, absence proven 03:33:59Z |
+| the 1.5 TB GLM-5.3-BF16 root, two cold runs | ~1.5–2 h [computed from JOURNAL 2026-09-04: 12 min fetch, ~10 min forward per cold run, plus verify/qualify] | ≈ $10 [computed at $4.59/h] | `bin/engines.json` carries the authored **bound** (26925 s), which is what `--max-runtime` must cover |
+
+Take the number the dry-run prints as the **cap** (`all-in hard cap`, GPU
+rate x deadline + storage + retrieval reserve); it is the liability ceiling,
+about ten times the observed spend for a candidate. Every real candidate ran
+with `--retrieval-delete-reserve 14400` rather than the 21600 s default.
+
+#### Historical: the JarvisLabs teacher-logits path (2026-08)
+
+The figures below are from the legacy `--role quant` teacher-logits lane on
+JarvisLabs spot GPUs in `IN2`, on the GLM-5.3-Flash sealed 25-window panel
+(51,175 positions). JarvisLabs and spot offers are refused by the paid
+controller today; the numbers are kept as the record of that path.
 
 The streaming lane fits on ONE GPU and its bottleneck is reading weights, not
 matmul. What you pay for is therefore (a) pulling the artifact onto the box and

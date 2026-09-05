@@ -239,9 +239,13 @@ f84237e4b3c4a50a9c3aee9f271573fb11c279f68b16b88e508d398aae822276
 That is your acceptance target. Teardown now refuses to destroy a
 verified-but-unpublished root, and `--publish-root-to` uploads before teardown
 can run, so the failure mode is closed — but capture it expecting that digest,
-and say so loudly if it differs. Race mode (`--race --preview-of`) is available
-and untested in anger; a preview publishes under a **different** dataset id and
-is never updated in place.
+and say so loudly if it differs. Race mode (`--race --preview-of`) is **refused
+on the paid path** at three layers (`measure_cloud.py` `_runpod_forbidden`,
+`stages.py` `stage_sequence`, `stage_measure.sh`; status 2026-09-05 in
+`bin/README.md` "Race mode" and the `docs/RACE-MODE.md` banner) — the
+sub-hour path that runs is `--resume-capture`. Its design still holds: a
+preview would publish under a **different** dataset id and never be updated
+in place.
 
 ### M3b/M3c — GLM-5.2 and GLM-5.3, and the lineage question
 

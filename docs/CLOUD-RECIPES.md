@@ -56,21 +56,66 @@ bin/measure-cloud --provider runpod --role root \
     --panel-dir engines/panels/<panel> \
     --dataset-id fidelity--<id> --publish-root-to <owner>/<repo> \
     --hf-token-file ~/.hf_token --measurer <hub-handle> \
-    --max-cost 40 --max-runtime 3h30m --retrieval-delete-reserve 14400 \
+    --max-cost 65 --max-runtime 7h30m --retrieval-delete-reserve 14400 \
     --out ~/fidelity-runs/<name> --dry-run
 ```
+
+The two numbers are the tool's own for this target: `--max-runtime` must be
+at least the bound authored in `bin/engines.json`
+`root_timing_profiles` for `zai-org/GLM-5.3-BF16@304b8051` on an H200
+(26925 s, so `7h30m`), and `--max-cost` must cover the all-in maximum the
+controller computes from that deadline plus the reserve ($62.925 at $4.59/h
+on 2026-09-05). When the bound moves, the dry-run refuses with the new
+number; `bin/selftest_readme_recipes.py` fails when a documented recipe
+falls below the authored bound.
 
 `--dry-run` runs every check, prints the plan and spends $0.00. Re-run the
 same command without `--dry-run` to spend; the interactive prompt quotes the
 calculated maximum and the hard cap, and only `y`/`yes` permits the single
 create POST. `--yes` skips the prompt.
 
-Required: `--provider`, `--role`, `--model`, `--revision` (for a paid run;
+Required: `--provider`, `--model`, `--revision` (for a paid run;
 `--dry-run` resolves and prints `main`'s commit when it is omitted),
 `--panel-dir`, `--dataset-id`, `--measurer`, `--max-cost`, `--max-runtime`,
-`--out`. `--publish-root-to` and `--hf-token-file` are only needed when the
-dataset is to be published from this machine after teardown; without them the
-sealed dataset stays under `--out`.
+`--out`. `--role` defaults to `quant`; a root capture and the candidate route
+below both pass `--role root`. `--publish-root-to` and `--hf-token-file`
+are only needed when the dataset is to be published from this machine after
+teardown; without them the sealed dataset stays under `--out`
+([QUICKSTART §4](THIRD-PARTY-QUICKSTART.md) shows `fidelity-dataset publish`
+for publishing it later).
+
+### The candidate route: a quant against a published root
+
+Every GLM-5.3 quant row was measured this way — the root protocol on a
+quantized target, scored on the pod against the published root dataset. It
+is `--role root` plus four flags that go together: `--candidate-scope`
+(authored from the checkpoint index with `engines/tools/exl3_scope.py` or
+`fp8_scope.py`), `--candidate-codec`, `--candidate-bits` and
+`--reference-dataset OWNER/REPO@40HEX`. A quant has no authored timing row,
+so `--gpu H200` (the root's GPU) and your own `--max-runtime` are the bound:
+
+```bash
+bin/measure-cloud --provider runpod --role root \
+    --model <owner>/<quant> --revision <40-hex> \
+    --panel-dir engines/panels/panel--glm53.malaiwah.corpus5x5-v1 \
+    --dataset-id fidelity--glm53.<hub-handle>.quant.<slug> \
+    --candidate-scope engines/scopes/scope--<slug>.json --candidate-codec exl3-mcg --candidate-bits 3.25 \
+    --reference-dataset malaiwah/glm53-fidelity-root-v1@9c4a29ee10f393ed2fdbdb9262c1192ddb1507b4 \
+    --gpu H200 --runpod-datacenter US-NC-1 \
+    --hf-token-file ~/.hf_token --measurer <hub-handle> \
+    --max-cost 45 --max-runtime 3h30m --retrieval-delete-reserve 14400 \
+    --out ~/fidelity-runs/<name> --dry-run
+```
+
+Observed on H200 / US-NC-1 (JOURNAL 2026-09-05): a 394 GB EXL3 candidate
+takes ~33–45 min of pod time, ≈ $3–4; the `$45` is the hard cap the plan
+prints, not the estimate. The pre-spend gates read the trellis/FP8 identity
+from bytes, verify the panel is exact for the reference root, bind the
+reference dataset's seal and content digest into the job, and resolve the
+unexpected-tensor allowlist from the authored table (a quant without one is
+authored with `engines/tools/index_census_allowlist.py` and registered by
+the maintainer; the plan warns until then). The walkthrough with the observed
+dry-run output is [QUICKSTART §3b](THIRD-PARTY-QUICKSTART.md).
 
 Derived unless you override them: GPU from the target's authored timing
 evidence (`--gpu` when it has none); pod storage from the checkpoint plus both
@@ -201,6 +246,14 @@ bin/measure-cloud reaper --provider runpod --list
 bin/measure-cloud reaper --provider runpod --sweep --dry-run
 ```
 
-`--list` shows every lease with its state and whether the timer is healthy.
-A real `--sweep` destroys only exact ids authorized by leases this tool wrote.
-Never delete, pause or adopt a resource you did not create.
+`--list` prints one `<lease-file> <STATE>` line per lease (terminal ones
+included) and a `health` line for the timer; `--sweep --dry-run` prints only
+failures, so silence is "nothing would fail", not "nothing to do". A lease in
+state `AMBIGUOUS` with no pod id (create was attempted, no pod was ever
+observed) blocks new runs with *an earlier lease may still hold a pod*; the
+reaper cannot settle it by design (`cloudlease.py` yields
+`ambiguous-needs-operator`). Verify in the RunPod console that no pod of that
+lease exists, then pass `--allow-unresolved-leases` to proceed beside it —
+the reaper still destroys anything past its deadline. A real `--sweep`
+destroys only exact ids authorized by leases this tool wrote. Never delete,
+pause or adopt a resource you did not create.

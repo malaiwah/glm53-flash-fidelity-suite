@@ -58,6 +58,82 @@ class Refusal(RuntimeError):
         super().__init__(reason)
 
 
+SUITE_ROOT = Path(__file__).resolve().parent.parent
+HF_DATASET_URI = "https://huggingface.co/datasets/"
+
+
+def candidate_handoff(reg, panel_ref: str, reference_ref: str) -> Optional[dict]:
+    """The paid candidate route this family is measured on, if the registry
+    names one: the panel is in this checkout (engines/panels/<panel_ref>) and
+    the picked reference is a published root dataset (panels.jsonl
+    availability.uri -> hf dataset; references.jsonl capture_receipt_sha256 is
+    that dataset's dataset_sha256). None when either half is missing, and the
+    caller refuses the old way. Nothing here rents or fetches."""
+    panel_dir = SUITE_ROOT / "engines" / "panels" / panel_ref
+    if not (panel_dir / "panel.json").is_file():
+        return None
+    panel_row = reg.collections.get("panels", {}).get(panel_ref) or {}
+    uri = ((panel_row.get("availability") or {}).get("uri") or "")
+    if not uri.startswith(HF_DATASET_URI):
+        return None
+    repo = uri[len(HF_DATASET_URI):].strip("/")
+    if repo.count("/") != 1:
+        return None
+    ref_row = reg.collections.get("references", {}).get(reference_ref) or {}
+    dataset_sha = (ref_row.get("capture") or {}).get("capture_receipt_sha256")
+    if not (isinstance(dataset_sha, str) and RC.SHA40.match(dataset_sha[:40])
+            and len(dataset_sha) == 64):
+        return None
+    return {"panel_dir": panel_dir, "repo": repo, "dataset_sha256": dataset_sha}
+
+
+def handoff_refusal(handoff: dict, target: dict, resolved: Optional[str],
+                    surface=None, hf_ok: bool = True) -> Refusal:
+    """Refuse with the exact measure-cloud candidate command, values filled in
+    from the registry, the live Hub and the surface sniff. `bin/measure` never
+    rents, so this prints and stops at $0.00."""
+    repo = handoff["repo"]
+    head = None
+    if hf_ok:
+        try:
+            from fidelity.hfmeta import resolve_revision
+            head = resolve_revision(repo, "dataset", "main")
+        except HFError:
+            head = None
+    reference = "%s@%s" % (repo, head or "<40-hex head of %s>" % repo)
+    codec = getattr(surface, "codec_family", None) or "<registry numeric_format>"
+    bits = getattr(surface, "bits", None)
+    bits_text = ("%g" % bits) if isinstance(bits, (int, float)) else "<declared bpw>"
+    slug = target["repo"].split("/", 1)[-1].lower()
+    family = handoff["panel_dir"].name.split("--", 1)[-1].split(".", 1)[0]
+    reason = (
+        "panel %s is in this checkout (%s) and its reference is the published "
+        "root dataset %s (dataset_sha256 %s...); this family is measured on a "
+        "rented GPU with the candidate route, and bin/measure never rents"
+        % (handoff["panel_dir"].name,
+           handoff["panel_dir"].relative_to(SUITE_ROOT), repo,
+           handoff["dataset_sha256"][:16]))
+    lines = [
+        "dry-run it ($0.00; docs/THIRD-PARTY-QUICKSTART.md 3b):",
+        "  bin/measure-cloud --provider runpod --role root \\",
+        "    --model %s --revision %s \\" % (target["repo"], resolved or "<40-hex>"),
+        "    --panel-dir %s \\" % handoff["panel_dir"].relative_to(SUITE_ROOT),
+        "    --dataset-id fidelity--%s.<hub-handle>.quant.%s \\" % (family, slug),
+        "    --reference-dataset %s \\" % reference,
+        "    --candidate-scope <engines/tools/exl3_scope.py or fp8_scope.py output> "
+        "--candidate-codec %s --candidate-bits %s \\" % (codec, bits_text),
+        "    --gpu H200 --runpod-datacenter US-NC-1 --measurer <hub-handle> \\",
+        "    --max-cost 45 --max-runtime 3h30m --retrieval-delete-reserve 14400 \\",
+        "    --out ~/fidelity-runs/<name> --dry-run",
+    ]
+    lines.append(
+        "the dry-run prints %s%s's dataset_sha256 on its `candidate reference` "
+        "line; it must equal the registry's %s... or you are scoring against a "
+        "different root" % (repo, ("@" + head[:12]) if head else "",
+                           handoff["dataset_sha256"][:16]))
+    return Refusal(reason, lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="measure", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -204,16 +280,23 @@ def run(args: argparse.Namespace, con: Console) -> int:
     for alt in pick["alternatives"]:
         con.say("      alternative: --panel %s --teacher %s (%d rows)"
                 % (alt["panel_ref"], alt["reference_ref"], alt["rows"]))
+    handoff = None
     if panel_ref != DEFAULT_PANEL.panel_ref:
-        raise Refusal(
-            "panel %s has no local fetch descriptor in this checkout (only %s "
-            "ships one)" % (panel_ref, DEFAULT_PANEL.panel_ref),
-            ["pass measure-local --panel-descriptor with a JSON naming its "
-             "include globs, contexts and positions -- the tool will not "
-             "guess a panel's shape"])
+        handoff = candidate_handoff(reg, panel_ref, reference_ref)
+        if handoff is None:
+            raise Refusal(
+                "panel %s has no local fetch descriptor in this checkout (only %s "
+                "ships one)" % (panel_ref, DEFAULT_PANEL.panel_ref),
+                ["pass measure-local --panel-descriptor with a JSON naming its "
+                 "include globs, contexts and positions -- the tool will not "
+                 "guess a panel's shape"])
+        con.say("      panel %s is in this checkout and its reference is the "
+                "published root dataset %s (dataset_sha256 %s...)"
+                % (panel_ref, handoff["repo"], handoff["dataset_sha256"][:16]))
 
     # 7. surface -----------------------------------------------------------
     surface_name = None
+    surface = None
     if hf_ok:
         try:
             meta = repo_meta(target["repo"], "model", resolved or "main")
@@ -258,6 +341,11 @@ def run(args: argparse.Namespace, con: Console) -> int:
                 if not args.plan_only:
                     raise Refusal(reason, lines)
                 con.warn(reason + " -- planning without one")
+            elif handoff is not None:
+                # The family is measured on the candidate route; the surface
+                # sniff only fills --candidate-codec/--candidate-bits into the
+                # handoff. Refused below, after the sniff line, at $0.00.
+                pass
             elif surface.problems or surface.surface not in readable_here:
                 elsewhere = (surface.surface in readable_streaming
                              and not surface.problems)
@@ -303,6 +391,9 @@ def run(args: argparse.Namespace, con: Console) -> int:
         con.warn("[7/9] surface unknown (HF unreachable); a real run would "
                  "re-check")
 
+    if handoff is not None:
+        raise handoff_refusal(handoff, target, resolved, surface=surface, hf_ok=hf_ok)
+
     # 8. lane --------------------------------------------------------------
     lane = args.lane
     if lane == "streaming":
@@ -310,7 +401,7 @@ def run(args: argparse.Namespace, con: Console) -> int:
             "lane 'streaming' is cloud-engine capability; bin/measure never "
             "rents hardware and cannot authorize a generic paid handoff.",
             ["current paid execution is exact-target-only:",
-             "  docs/THIRD-PARTY-QUICKSTART.md §5"])
+             "  docs/THIRD-PARTY-QUICKSTART.md 3 (root) and 3b (candidate)"])
     if lane == "auto":
         import platform
         lane = ("local-mps" if platform.machine() == "arm64" and
