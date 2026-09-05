@@ -5354,13 +5354,24 @@ def _g53_harness(*, pin_compare, capture_pins, note):
                 raise SystemExit("seed_registry: %s at %s does not hash to the digest the %s "
                                  "capture recorded" % (path, pin[:12], prefix))
             digests.append({"role": "%s_%s" % (role, prefix), "path": path, "sha256": recorded})
-    panel_sha = None
-    for pin, files in capture_pins.values():
-        if panel_sha is None:
-            panel_sha = files["bin/fidelity/panel.py"]
-        elif files["bin/fidelity/panel.py"] != panel_sha:
-            raise SystemExit("seed_registry: the two captures bound the panel with different code")
-    digests.append({"role": "panel", "path": "bin/fidelity/panel.py", "sha256": panel_sha})
+    # The panel binder is part of each capture's closure. The GLM-5.3 family bound
+    # every capture with one panel.py (one `panel` role); the Flash root and its K3
+    # were captured at commits on either side of PANEL-D7 (9bd8823), so their
+    # receipts record two digests. Each is verified against its own pin and recorded
+    # under its capture's role; the harness_id then differs, as it must.
+    panel_shas = {prefix: files["bin/fidelity/panel.py"]
+                  for prefix, (pin, files) in capture_pins.items()}
+    for prefix, (pin, files) in capture_pins.items():
+        if _g53_git_sha(pin, "bin/fidelity/panel.py") != panel_shas[prefix]:
+            raise SystemExit("seed_registry: bin/fidelity/panel.py at %s does not hash to the "
+                             "digest the %s capture recorded" % (pin[:12], prefix))
+    if len(set(panel_shas.values())) == 1:
+        digests.append({"role": "panel", "path": "bin/fidelity/panel.py",
+                        "sha256": next(iter(panel_shas.values()))})
+    else:
+        for prefix, sha in panel_shas.items():
+            digests.append({"role": "panel_%s" % prefix, "path": "bin/fidelity/panel.py",
+                            "sha256": sha})
     for role, path in (("front_end", "bin/fidelity_dataset.py"),
                        ("comparator", "bin/fidelity/dscompare.py"),
                        ("format", "bin/fidelity/dsformat.py"),
@@ -5834,6 +5845,487 @@ def build_measurements_glm53(artifacts_map):
     return rows
 
 
+# ===========================================================================
+# 9. GLM-5.3-Flash, same-lane (glm53-hf) -- the Flash re-captured by this
+#    suite's own layer-outer streaming engine on brandonmusic's final25 token
+#    panel, and wrldsuksgo2mars' K3 scored against that capture.
+#
+# Registry slug: `glm53-hf`. The 13 older Flash rows on panel--glm53.brandonmusic
+# .final25 were scored against brandonmusic's stored fp32 teacher logits
+# (reference--brandonmusic.glm53-bf16-fp32-logits.final25), a different lane
+# with an inferred 0.011506 floor. This root is a NEW reference and therefore a
+# NEW comparability group beside them: the comparability key binds the
+# reference, so nothing here upgrades or re-ranks an older row, and the two
+# groups are never tabled together (bin/registry-view shows them apart).
+#
+# Same panel, same panel row: the transported panel directory carries
+# brandonmusic's panel.json byte for byte (no panel_id inside it), so the
+# sealed datasets name it `panel-artifact-sha256:<sha256 of panel.json>` =
+# 6bafe3283c54..., which IS panel--glm53.brandonmusic.final25's
+# identity.panel_token_sha256. Same token ids, same panel record.
+#
+# Every number below is READ from a committed receipt in
+# registry/protocol/glm53-hf/ at seed time; nothing is transcribed by hand.
+# ===========================================================================
+G53F_BF16_REV = "a6c167b62691b2bac901344b65cb651a70f53e43"
+G53F_K3 = "artifact--wrldsuksgo2mars.glm-5.3-flash-exl3-k3-v1"
+G53F_K3_REV = "1e4abd26e4e1e8d58d81fbd557d6c4099352fe63"
+R_G53F_HF = "reference--malaiwah.glm53-bf16-hf.brandonmusic-final25"
+G53F_PROTOCOL = "protocol/glm53-hf/"
+G53F_GH = "https://github.com/malaiwah/quant-fidelity-suite/blob/main/registry/protocol/glm53-hf/"
+G53F_ROOT_DS = "https://huggingface.co/datasets/malaiwah/glm53-flash-fidelity-root-v1"
+G53F_ROOT_DS_REV = "bdd25fe0771a2f6002dffb3a2217a4d4a201a6a4"
+G53F_K3_DS = "https://huggingface.co/datasets/malaiwah/glm53-flash-fidelity-exl3-wrld-k3-v1"
+G53F_K3_DS_REV = "e68c008c4bae393598d54abfd78b7a6c4968d447"
+# The commits whose bytes ran, identified BY THE RECEIPTS (each dataset's
+# runtime/capture-runtime.json records the sha256 of hf_capture.py,
+# layer_outer.py and panel.py; _g53_harness re-verifies them with git show).
+G53F_PIN_ROOT = "980548119a2cedec0269260e96a4a82d8950720c"
+G53F_PIN_K3 = "fb2fe62a3964ffd842d91e5f8f07697e2406c1ef"
+# The workstation own-heads floor comparison ran from this commit; the K3
+# comparison cited as the metric source ran on the pod at G53F_PIN_K3.
+G53F_PIN_COMPARE = "759c4c129e96b80205b8148137573923ab4a2943"
+
+
+def _g53f_json(name):
+    with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           G53F_PROTOCOL, name), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _g53f_sha(name):
+    return _receipt_sha(G53F_PROTOCOL + name)
+
+
+G53F_PANEL_ARTIFACT_ID = "panel-artifact-sha256:6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff"
+
+
+def _g53f_dataset(name, *, want_role, want_repository, want_revision):
+    d = _g53f_json(name)
+    if d.get("schema") != "malaiwah.fidelity-dataset.v1":
+        raise SystemExit("seed_registry: %s is not a fidelity dataset descriptor" % name)
+    if d["dataset"]["repository"] != want_repository:
+        raise SystemExit("seed_registry: %s is %s, the row wants %s"
+                         % (name, d["dataset"]["repository"], want_repository))
+    if d["weights"]["revision"] != want_revision:
+        raise SystemExit("seed_registry: %s captured %s, the row wants %s"
+                         % (name, d["weights"]["revision"][:12], want_revision[:12]))
+    if d["capture"]["form"] != "hidden" or d["panel"]["panel_id"] != G53F_PANEL_ARTIFACT_ID:
+        raise SystemExit("seed_registry: %s is not a hidden-form capture on the transported "
+                         "brandonmusic final25 panel" % name)
+    if d["panel"]["suite_token_hash_sha256"] != M2_PANEL_SUITE_TOKEN_SHA256_SEED:
+        raise SystemExit("seed_registry: %s panel token hash is not the final25 suite hash" % name)
+    if d["generation_sanity_probe"]["status"] != "pass" \
+            or not d["generation_sanity_probe"]["enforced"]:
+        raise SystemExit("seed_registry: %s did not pass the enforced generation probe" % name)
+    if d["dataset"].get("role") not in (want_role, None):
+        raise SystemExit("seed_registry: %s has role %r" % (name, d["dataset"].get("role")))
+    return d
+
+
+# bin/fidelity/panel.py M2_PANEL_SUITE_TOKEN_SHA256: the 25 final windows'
+# newline-joined token digests; registry/ runs without bin/ so it is restated
+# here and cross-checked against the sealed descriptors.
+M2_PANEL_SUITE_TOKEN_SHA256_SEED = "186b6923582ba59334262178f445440070bd428a862e2e5c9459aaa15b4475fe"
+
+
+def _g53f_comparison(name, *, want_kind, reference_ds, candidate_ds):
+    c = _g53f_json(name)
+    if c.get("schema") != "malaiwah.fidelity-comparison-receipt.v1":
+        raise SystemExit("seed_registry: %s is not a comparison receipt" % name)
+    if c["comparison_kind"] != want_kind:
+        raise SystemExit("seed_registry: %s is a %s, the row wants %s"
+                         % (name, c["comparison_kind"], want_kind))
+    if c["estimator"]["head_policy"] != "native_head":
+        raise SystemExit("seed_registry: %s has head_policy %s, the row wants native_head"
+                         % (name, c["estimator"]["head_policy"]))
+    if c["reference"]["dataset_sha256"] != reference_ds["dataset_sha256"]:
+        raise SystemExit("seed_registry: %s compares a different reference dataset" % name)
+    if c["candidate"]["dataset_sha256"] != candidate_ds["dataset_sha256"]:
+        raise SystemExit("seed_registry: %s compares a different candidate dataset" % name)
+    if c["panel"]["panel_id"] != G53F_PANEL_ARTIFACT_ID \
+            or c["panel"]["suite_token_hash_sha256"] != M2_PANEL_SUITE_TOKEN_SHA256_SEED:
+        raise SystemExit("seed_registry: %s was scored on panel %s" % (name, c["panel"]["panel_id"]))
+    if c["measurement_scope"]["scored_positions"] != 51175 \
+            or c["measurement_scope"]["contexts"] != 25 \
+            or not c["measurement_scope"]["covers_full_panel"]:
+        raise SystemExit("seed_registry: %s does not cover the full 25-window panel" % name)
+    if c["metric"]["name"] != "mean_tokenwise_kld" \
+            or c["metric"]["direction"] != "reference_to_candidate" \
+            or c["estimator"]["accumulation_dtype"] != "float64":
+        raise SystemExit("seed_registry: %s is not a full-vocabulary fp64 KL(ref||cand)" % name)
+    if not c["comparability"]["same_lane"]:
+        raise SystemExit("seed_registry: %s is not a same-lane comparison" % name)
+    if any(d.get("severity") == "blocking" for d in c.get("disclosures") or []):
+        raise SystemExit("seed_registry: %s carries a blocking disclosure" % name)
+    return c
+
+
+G53F_ROOT_DESC = _g53f_dataset("dataset.glm53-flash-bf16-root.json", want_role="root",
+                               want_repository="malaiwah/glm53-flash-fidelity-root-v1",
+                               want_revision=G53F_BF16_REV)
+G53F_ROOT_REPEAT_DESC = _g53f_dataset("dataset.glm53-flash-bf16-root-repeat.json", want_role="root",
+                                      want_repository="malaiwah/glm53-flash-fidelity-root-v1",
+                                      want_revision=G53F_BF16_REV)
+G53F_K3_DESC = _g53f_dataset("dataset.glm53-flash-exl3-k3-wrldsuksgo2mars.json", want_role="quant",
+                             want_repository="malaiwah/glm53-flash-fidelity-exl3-wrld-k3-v1",
+                             want_revision=G53F_K3_REV)
+G53F_ROOT_DS_SHA = G53F_ROOT_DESC["dataset_sha256"]
+G53F_ROOT_CAPTURE_SHA = G53F_ROOT_DESC["capture"]["capture_content_digest"]
+G53F_HEAD_SHA = G53F_ROOT_DESC["head"]["tensor_content_sha256"]
+G53F_STACK_FINGERPRINT_SHA = G53F_ROOT_DESC["runtime"]["stack_fingerprint_sha256"]
+if G53F_ROOT_REPEAT_DESC["capture"]["capture_content_digest"] != G53F_ROOT_CAPTURE_SHA:
+    raise SystemExit("seed_registry: the two Flash root captures differ")
+if G53F_K3_DESC["head"]["tensor_content_sha256"] != G53F_HEAD_SHA:
+    raise SystemExit("seed_registry: the Flash K3 head differs from the root's; the row says otherwise")
+if G53F_K3_DESC["runtime"]["stack_fingerprint_sha256"] != G53F_STACK_FINGERPRINT_SHA:
+    raise SystemExit("seed_registry: the Flash K3 ran on a different stack than the root")
+G53F_ROOT_SCOPE = _g53_dataset_scope(G53F_ROOT_DESC)
+G53F_K3_SCOPE = scope_from_evidence("engines/scopes/scope--wrld-flash-exl3-k3.json")
+
+ARTIFACTS += [
+    artifact(G53F_K3, GLM,
+             "wrldsuksgo2mars GLM-5.3-Flash EXL3 K3 v1 (routed experts trellis K3 mcg, rest bf16)",
+             "quant",
+             hf("wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1", G53F_K3_REV, "hf_api"),
+             "exl3", "K3", 136686260192,
+             codec("exl3-mcg", 3.0, None, tool="gptqmodel", version="7.3.5",
+                   calibration={"used": True, "corpus": None, "tokens": None,
+                                "overlaps_any_panel": None, "overlapping_panel_refs": []}),
+             G53F_K3_SCOPE,
+             attr("wrldsuksgo2mars", "quantizer", handle="wrldsuksgo2mars",
+                  url="https://huggingface.co/wrldsuksgo2mars"),
+             [src("model_card", "https://huggingface.co/wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1", None,
+                  "revision %s; 16 shards; config.json sha256 %s... declares quantization_config "
+                  "{quant_method exl3, bits 3, codebook mcg, module_include the routed experts of "
+                  "layers 3..45}; meta names quantizer gptqmodel 7.3.5 and source_revision f12e0fe1 of "
+                  "the BF16 release (same 120 shard bytes as a6c167b6; only README and chat_template "
+                  "differ); index sha256 d7515492..."
+                  % (G53F_K3_REV[:12], G53F_K3_DESC["weights"]["config_sha256"][:8])),
+              src("github_file", "https://github.com/malaiwah/quant-fidelity-suite/blob/main/"
+                                 "engines/scopes/scope--wrld-flash-exl3-k3.json",
+                  _receipt_sha("../engines/scopes/scope--wrld-flash-exl3-k3.json"),
+                  "scope authored from the checkpoint's own index bytes and shard headers by "
+                  "engines/tools/exl3_scope.py (the model.language_model.layers.N stack of "
+                  "Glm5NextForConditionalGeneration)"),
+              src("dataset_card", G53F_K3_DS, None,
+                  "the capture of these weights: dataset_sha256 %s..., capture_content_digest %s..."
+                  % (G53F_K3_DESC["dataset_sha256"][:8],
+                     G53F_K3_DESC["capture"]["capture_content_digest"][:8]))],
+             [disc("record_note", "info",
+                   "Read from bytes: the 37,152 routed-expert matrices (layers 3-45 incl. the MTP "
+                   "block's, 288 experts x gate/up/down) are stock exllamav3 payload groups "
+                   "(trellis/suh/svh + an mcg marker each) at K=3; every non-routed tensor -- "
+                   "attention, dense MLPs, shared experts, router, norms, embeddings, the vision "
+                   "tower and lm_head -- is carried whole in its source dtype (bf16 weights, fp32 "
+                   "router bias / SSM scalars / hyper-connection scalars). The MTP block (layer 45) "
+                   "is quantized like the rest but never built by the architecture."),
+              disc("native_head_retained", "info",
+                   "lm_head.weight is a plain bf16 tensor, content-identical to the official head "
+                   "(%s...); every comparison replays both sides through it (HEAD-1d)."
+                   % G53F_HEAD_SHA[:12]),
+              disc("third_party_artifact_self_measured", "info",
+                   "wrldsuksgo2mars's weights, our measurement."),
+              disc("revision_unpinned", "caveat",
+                   "The release names source_revision f12e0fe1 of zai-org/GLM-5.3-Flash-BF16, whose "
+                   "120 weight shards are byte-identical (LFS oids) to the a6c167b6 pin the root was "
+                   "captured from; derived_from_artifact_ref names that pin on that evidence.")],
+             weights_extra={"size_basis": "repo_weight_files", "shard_count": 16,
+                            "config_sha256": G53F_K3_DESC["weights"]["config_sha256"],
+                            "index_sha256": "d751549235ef63d1954be328754e001c8e488795ed4c2ef6d5b0e4a2dc08f0dc"},
+             derived_from_artifact_ref=A_BF16_A6,
+             availability={"status": "public",
+                           "uri": "https://huggingface.co/wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1"},
+             cross_refs=lair(), seal={"sealed": False}),
+]
+
+REFERENCES += [
+    {"schema_version": V, "id": R_G53F_HF,
+     "name": "malaiwah GLM-5.3-Flash BF16 hidden-state capture, hf-transformers layer-outer "
+             "streaming lane, brandonmusic final25 panel (transported token ids)",
+     "artifact_ref": A_BF16_A6, "panel_ref": P_B25, "reference_kind": "native_bf16",
+     "capture": {"stack": "transformers", "stack_version": "5.16.1",
+                 "pipeline_ref": PL_FIDDS_G53,
+                 "compute_dtype": "bf16", "logits_dtype": "fp32", "kv_cache_dtype": "bf16",
+                 "head_source": "own_head", "head_sha256": G53F_HEAD_SHA,
+                 "batch_invariant": None,
+                 "capture_receipt_sha256": G53F_ROOT_DS_SHA},
+     "author": MAL("measurer"), "logits_available": True,
+     "self_consistency": {
+         "floor_measurement_ref": "measurement--glm53-hf.bf16-selfcompare-floor.brandonmusic-final25",
+         "note": "Reference and candidates are captured by the SAME engine on the SAME lane and "
+                 "compared offline in fp64, so there is no cross-stack floor term to subtract. "
+                 "Measured, not assumed: two cold captures of these weights in two fresh "
+                 "processes on one H200 (and a third on a second H200 the same day, whose "
+                 "dataset was refused publication on a schema pattern and discarded) agree "
+                 "bitwise (capture_content_digest %s...), and comparing them with "
+                 "--force-compute --own-heads over all 51,175 x 154,880 logits returns exactly "
+                 "0.0 nats at top-1 agreement 1.0." % G53F_ROOT_CAPTURE_SHA[:8]},
+     "sources": [src("dataset_card", G53F_ROOT_DS, None,
+                     "malaiwah.fidelity-dataset.v1 at revision %s; dataset_sha256 %s..., "
+                     "capture_content_digest %s..., model revision %s..."
+                     % (G53F_ROOT_DS_REV[:12], G53F_ROOT_DS_SHA[:8], G53F_ROOT_CAPTURE_SHA[:8],
+                        G53F_BF16_REV[:8])),
+                 src("github_file", G53F_GH + "dataset.glm53-flash-bf16-root.json",
+                     _g53f_sha("dataset.glm53-flash-bf16-root.json"),
+                     "the sealed dataset descriptor, byte-verbatim")],
+     "disclosures": [
+         disc("record_note", "info",
+              "NEW GROUP, NOT AN UPGRADE. The 13 older rows on this panel are scored against "
+              "reference--brandonmusic.glm53-bf16-fp32-logits.final25 (brandonmusic's stored "
+              "fp32 teacher logits, a different lane, inferred floor 0.011506). This reference "
+              "is a fresh same-lane capture of the same BF16 weights on the same 25 windows; "
+              "it forms a separate comparability group and re-ranks nothing. A row from the "
+              "old group and a row from this one are never tabled together."),
+         disc("record_note", "info",
+              "SAME PANEL BY CONTENT. The capture reads brandonmusic's calibration/panel-v1 "
+              "directory transported byte for byte (engines/tools/transport_token_panel.py; "
+              "669 files verified against the Hub listing); its panel.json declares no "
+              "panel_id, so the sealed datasets name the panel panel-artifact-sha256:6bafe328..., "
+              "which is this panel row's identity.panel_token_sha256. Token ids were "
+              "transported, never re-tokenized; the panel binding also byte-verified the "
+              "tokenizer files of the a6c167b6 pin."),
+         disc("record_note", "info",
+              "OWN HEADS. The capture is hidden-form (after the final RMSNorm, before lm_head) "
+              "and ships the root's own lm_head; every comparison against it replays EACH side "
+              "through the head its own dataset sealed (HEAD-1d, head_policy native_head)."),
+         disc("architecture_subset_loaded", "info",
+              "The checkpoint's MTP block (model.language_model.layers.45, 889 tensors) is "
+              "present and intentionally unused: Glm5NextForConditionalGeneration builds 45 "
+              "decoder layers and no draft head. The unused set matched the pinned allowlist "
+              "35b7f1bd... exactly; every other tensor loaded with 0 missing, 0 unexpected and "
+              "0 mismatched. The vision tower is built and loaded but sees no image."),
+         disc("record_note", "info",
+              "LANE IDENTITY. transformers 5.16.1 eager attention, bf16 weights streamed one "
+              "decoder layer at a time (layer-outer / window-inner), torch 2.11.0+cu130 on one "
+              "NVIDIA H200 (RunPod US-NC-1), cuda 13.0, default matmul precision with no TF32 "
+              "override. stack_fingerprint_sha256 %s... is identical on the root and on the K3 "
+              "capture." % G53F_STACK_FINGERPRINT_SHA[:12])]},
+]
+
+
+def build_measurements_glm53_hf(artifacts_map):
+    """The same-lane GLM-5.3-Flash rows: a MEASURED 0.0 floor and the K3 scored against it."""
+    M = lambda *a, **k: measurement(*a, artifacts_map=artifacts_map, **k)
+    est = dict(accumulation="float64", head_policy="native_head",
+               vocab_chunk=8192, two_pass=True, stack_relation="same_stack")
+
+    def logits_dtype_of(receipt):
+        backend = (receipt.get("comparator") or {}).get("replay_backend") or ""
+        parts = backend.split(":")
+        names = {"float32": "fp32", "float64": "fp64", "bfloat16": "bf16", "float16": "fp16"}
+        if len(parts) != 3 or parts[2] not in names:
+            raise SystemExit("seed_registry: cannot derive logits_dtype from comparator.replay_backend %r"
+                             % backend)
+        return names[parts[2]]
+
+    def runtime_files(desc_name):
+        # The capture-side digests the sealed dataset's runtime receipt RECORDED
+        # (fidelity-dataset.json upstream_receipts carries the runtime file digest;
+        # the receipt itself is in the sink bundle). Restated here from the two
+        # bundles and re-verified against `git show <pin>:<path>` by _g53_harness.
+        return {
+            "dataset.glm53-flash-bf16-root.json": {
+                "engines/tools/hf_capture.py": "ae5f1a7c89d66c09d3596200e7ff2ba8b065f4af7f26a1b88062a009cfe84bab",
+                "engines/tools/layer_outer.py": "0209098bbf52578cb05a77815627bb15b01acdc1c754d17264247f4ba0863c09",
+                "bin/fidelity/panel.py": "84e02b78781663293c24f5da94e50fecdcf34ad1c72202155792dc54e33f4324",
+            },
+            "dataset.glm53-flash-exl3-k3-wrldsuksgo2mars.json": {
+                "engines/tools/hf_capture.py": "d66f5b57632f4f402336d33d78d35b5e132cf553c4c853f1585685083a398c51",
+                "engines/tools/layer_outer.py": "bec648063597523da369a753bf8193602eeb056225d2c10f29fbc81b9553c619",
+                "bin/fidelity/panel.py": "e3e4f2305ee0cc18878106849fcb1a7496ba8dabab8cebee08fd113e1fb53e4c",
+            },
+        }[desc_name]
+
+    ds_root = src("dataset_card", G53F_ROOT_DS, None,
+                  "reference capture at revision %s: dataset_sha256 %s..., capture_content_digest %s..."
+                  % (G53F_ROOT_DS_REV[:12], G53F_ROOT_DS_SHA[:8], G53F_ROOT_CAPTURE_SHA[:8]))
+
+    def aux_of(c):
+        kl = c["kl"]
+        domains = dict(c["per_domain"] or {})
+        if sorted(domains) != ["axis1_general", "axis2_legal", "axis3_code_agentic",
+                               "axis4_reasoning_termination"]:
+            raise SystemExit("seed_registry: a glm53-hf receipt lacks the four per-domain means")
+        return {"median_kld": kl["median"], "p95_kld": kl["p95"], "p99_kld": kl["p99"],
+                "p999_kld": kl["p99_9"], "max_kld": kl["max"],
+                "context_macro_mean_kld": sum(domains.values()) / len(domains),
+                "strata": domains}
+
+    def notes_of(c):
+        pc = c["per_context"] or []
+        means = [w["mean"] for w in pc]
+        lo = min(pc, key=lambda w: w["mean"])
+        hi = max(pc, key=lambda w: w["mean"])
+        return ("Per-window mean %.17g, population sd %.17g, min %.17g (%s, %s), max %.17g "
+                "(%s, %s) over %d windows; the token mean is the published value. NEW GROUP: "
+                "scored against the same-lane root reference--malaiwah.glm53-bf16-hf."
+                "brandonmusic-final25, not against brandonmusic's teacher logits; do not read "
+                "it beside the 13 older Flash rows on this panel."
+                % (sum(means) / len(means), L.population_stddev(means), lo["mean"],
+                   lo["window_id"], lo["domain"], hi["mean"], hi["window_id"], hi["domain"],
+                   len(pc)))
+
+    rows = []
+    floor_name = "comparison.glm53-flash-bf16-selfcompare-floor.brandonmusic-final25.json"
+    floor_pod = "comparison.glm53-flash-bf16-selfcompare-floor.brandonmusic-final25.pod-shared-head.json"
+    floor = _g53f_comparison(floor_name, want_kind="reproduction_confirmation",
+                             reference_ds=G53F_ROOT_DESC, candidate_ds=G53F_ROOT_REPEAT_DESC)
+    if floor["metric"]["value"] != 0.0 or floor["top1_agreement"] != 1.0 \
+            or not floor["self_compare"]["force_compute_agreed"] \
+            or not floor["self_compare"]["capture_content_digest_equal"] \
+            or floor["comparability"]["class"] != "strict":
+        raise SystemExit("seed_registry: the glm53-hf floor receipt is not an exact, force-computed, strict 0.0")
+    rows.append(M(
+        "measurement--glm53-hf.bf16-selfcompare-floor.brandonmusic-final25",
+        GLM, A_BF16_A6, P_B25, R_G53F_HF, PL_FIDDS_G53, 0.0,
+        top1=1.0, scored_positions=51175, contexts=25,
+        runs=2, cold=True, identical=True,
+        evidence_kind="hidden_state_tensor_sha256",
+        evidence_hashes=[G53F_ROOT_CAPTURE_SHA],
+        det_note="TWO cold captures of the same bf16 weights, in two fresh processes on one H200, "
+                 "produced the same capture_content_digest %s...; a third capture on another H200 "
+                 "earlier the same day (refused publication on a schema pattern, discarded) also "
+                 "did. Their dataset_sha256 values differ (%s... vs %s...) because a manifest embeds "
+                 "timestamps and a cold-run label, which is why determinism evidence is taken over "
+                 "tensor CONTENT."
+                 % (G53F_ROOT_CAPTURE_SHA[:8], G53F_ROOT_DS_SHA[:8],
+                    G53F_ROOT_REPEAT_DESC["dataset_sha256"][:8]),
+        sources=[ds_root,
+                 src("github_file", G53F_GH + floor_name, _g53f_sha(floor_name),
+                     "malaiwah.fidelity-comparison-receipt.v1 for the --self-compare "
+                     "--force-compute --own-heads comparison of the two cold root captures "
+                     "(receipt_sha256 %s...)" % floor["receipt_sha256"][:8]),
+                 src("github_file", G53F_GH + floor_pod, _g53f_sha(floor_pod),
+                     "the same self-compare as the pod's qualify_root ran it (HEAD-1a, shared "
+                     "head, --force-compute): tokenwise-kld digest %s..., identical"
+                     % _g53f_json(floor_pod)["self_compare"]["expected_tokenwise_sha256"][:8]),
+                 src("github_file", G53F_GH + "dataset.glm53-flash-bf16-root-repeat.json",
+                     _g53f_sha("dataset.glm53-flash-bf16-root-repeat.json"),
+                     "the repeat capture's sealed descriptor (root-cold-2)")],
+        disclosures=[
+            disc("record_note", "info",
+                 "THE FLOOR, MEASURED. `fidelity-dataset compare --self-compare --force-compute "
+                 "--own-heads` over all 51,175 x 154,880 logits in fp64 returns mean tokenwise "
+                 "KLD exactly 0.0 nats at top-1 agreement 1.0, with every percentile also 0.0; "
+                 "the forced computation reproduced the hash proof's tokenwise-kld digest %s... "
+                 "byte for byte. Every candidate row on this reference reports an excess over "
+                 "control EQUAL to its raw KLD." % floor["self_compare"]["expected_tokenwise_sha256"][:8]),
+            disc("record_note", "info",
+                 "NEW GROUP, NOT AN UPGRADE: this floor belongs to the same-lane reference "
+                 "reference--malaiwah.glm53-bf16-hf.brandonmusic-final25 only. The older Flash "
+                 "rows on this panel keep their own reference and floor; nothing is subtracted "
+                 "across groups (BIAS-006)."),
+            disc("reduced_run_count", "info",
+                 "TWO cold captures, not the campaign's usual five: the evidence is a CONTENT "
+                 "digest rather than a spread over run means."),
+            disc("architecture_subset_loaded", "info",
+                 "The MTP block's 889 tensors are present and unused; the set matched the "
+                 "pinned allowlist exactly on both captures.")],
+        logits_dtype=logits_dtype_of(floor), **est))
+    rows[-1]["harness"] = _g53_harness(
+        pin_compare=G53F_PIN_COMPARE,
+        capture_pins={"reference": (G53F_PIN_ROOT, runtime_files("dataset.glm53-flash-bf16-root.json")),
+                      "repeat": (G53F_PIN_ROOT, runtime_files("dataset.glm53-flash-bf16-root.json"))},
+        note=G53_HARNESS_SPAN_NOTE % "%s (both captures), %s" % (G53F_PIN_ROOT[:8], G53F_PIN_COMPARE[:8]))
+
+    name = "comparison.glm53-flash-exl3-k3-wrldsuksgo2mars.brandonmusic-final25.json"
+    repro_name = "reproduction.glm53-flash-exl3-k3-wrldsuksgo2mars.json"
+    c = _g53f_comparison(name, want_kind="measurement",
+                         reference_ds=G53F_ROOT_DESC, candidate_ds=G53F_K3_DESC)
+    if c["comparability"]["class"] != "advisory" \
+            or not any(d["code"] == "weights_reconstructed" for d in c["disclosures"]):
+        raise SystemExit("seed_registry: the K3 receipt is not the advisory weights-reconstructed "
+                         "comparison the row describes")
+    repro = _g53f_json(repro_name)
+    if repro["comparison_kind"] != "reproduction_confirmation" \
+            or repro["metric"]["value"] != 0.0 \
+            or not repro["self_compare"]["capture_content_digest_equal"] \
+            or G53F_K3_DESC["capture"]["capture_content_digest"] not in (
+                repro["reference"]["capture_content_digest"],
+                repro["candidate"]["capture_content_digest"]):
+        raise SystemExit("seed_registry: the K3 reproduction receipt does not confirm the canonical capture")
+    art = artifacts_map[G53F_K3]
+    rows.append(M(
+        "measurement--glm53-hf.exl3-k3-wrldsuksgo2mars.brandonmusic-final25",
+        GLM, G53F_K3, P_B25, R_G53F_HF, PL_FIDDS_G53,
+        c["metric"]["value"], top1=c["top1_agreement"], aux=aux_of(c), notes=notes_of(c),
+        scored_positions=51175, contexts=25,
+        runs=2, cold=True, identical=True,
+        evidence_kind="hidden_state_tensor_sha256",
+        evidence_hashes=[G53F_K3_DESC["capture"]["capture_content_digest"]],
+        det_note="TWO cold captures of the candidate in two fresh processes on one H200 produced "
+                 "the same capture_content_digest %s...; the pod's qualify_root stage compared "
+                 "them with --self-compare --force-compute and got exactly 0.0 (reproduction "
+                 "receipt %s...). The reference side is the two-capture-verified root the floor "
+                 "row uses."
+                 % (G53F_K3_DESC["capture"]["capture_content_digest"][:8], repro["receipt_sha256"][:8]),
+        cls="advisory",
+        sources=[ds_root,
+                 src("dataset_card", G53F_K3_DS, None,
+                     "candidate capture at revision %s: dataset_sha256 %s..., capture_content_digest %s..."
+                     % (G53F_K3_DS_REV[:12], G53F_K3_DESC["dataset_sha256"][:8],
+                        G53F_K3_DESC["capture"]["capture_content_digest"][:8])),
+                 src("model_card", "https://huggingface.co/wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1",
+                     None, "revision %s..." % G53F_K3_REV[:8]),
+                 src("github_file", G53F_GH + name, _g53f_sha(name),
+                     "malaiwah.fidelity-comparison-receipt.v1, HEAD-1d own-head replay on the pod "
+                     "(receipt_sha256 %s...)" % c["receipt_sha256"][:8]),
+                 src("github_file", G53F_GH + repro_name, _g53f_sha(repro_name),
+                     "the pod's two-cold-run reproduction confirmation for the candidate"),
+                 src("github_file", G53F_GH + "dataset.glm53-flash-exl3-k3-wrldsuksgo2mars.json",
+                     _g53f_sha("dataset.glm53-flash-exl3-k3-wrldsuksgo2mars.json"),
+                     "the candidate's sealed dataset descriptor, byte-verbatim"),
+                 src("discussion", "https://huggingface.co/wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1/discussions/1",
+                     None, "the measurement as posted on the artifact's Hub page")],
+        disclosures=[
+            disc("lossy_capture_codec", "caveat",
+                 "RECONSTRUCTED, NOT EXECUTED. The 36,288 routed-expert trellis payload groups "
+                 "of layers 3-44 are decoded to bf16 per module on the capture device "
+                 "(exl3-trellis-decode-to-bf16: exllamav3's unpack, tile permutation, two "
+                 "Hadamard GEMMs and su/sv scaling, mcg codebook read from each module's own "
+                 "marker, TF32 pinned off and recorded) BEFORE the loader; every non-routed "
+                 "tensor is carried as shipped. The decoder reproduces "
+                 "engines/tools/exl3hf_surface.py:decode_payload_hf bitwise on real payloads and "
+                 "in-house fp64 routes; it has NOT been proven bitwise against a running "
+                 "exllamav3 kernel, which is why this row is advisory.", True),
+            disc("record_note", "info",
+                 "Head identity: the K3's lm_head is content-identical to the BF16 root's "
+                 "(%s...), so own-head replay and shared-head replay are the same arithmetic."
+                 % G53F_HEAD_SHA[:12]),
+            disc("third_party_artifact_self_measured", "info",
+                 "wrldsuksgo2mars's weights, our measurement."),
+            disc("record_note", "info",
+                 "Attributable error EQUALS this value: the floor on this reference is a "
+                 "measured 0.0, so nothing is subtracted."),
+            disc("record_note", "info",
+                 "NEW GROUP, NOT AN UPGRADE: this row's reference is the same-lane Flash root; "
+                 "it is not comparable to the 13 older Flash rows on this panel (other "
+                 "reference, other lane) nor to the full GLM-5.3 rows (other model, other panel)."),
+            disc("reduced_run_count", "info",
+                 "TWO cold captures of the candidate, not the campaign's usual five: the "
+                 "evidence is a CONTENT digest (both captures bitwise identical). The "
+                 "comparison itself is deterministic offline arithmetic over the two sealed datasets."),
+            disc("architecture_subset_loaded", "info",
+                 "The checkpoint's MTP block (model.language_model.layers.45: 3,481 index keys, "
+                 "its experts as trellis payloads) is present and unused; the unused set matched "
+                 "the pinned allowlist 1fbe3c69... exactly on both captures."),
+            disc("local_device_reduction_order", "info",
+                 "REPLAY HOST. This value was computed on the pod's host CPU by the pod's "
+                 "compare_reference stage (comparator.replay_backend numpy:cpu:float32, "
+                 "scipy-openblas); the fp32 GEMM accumulation order is a per-host term "
+                 "measured below 1e-8 nats on the full GLM-5.3 family. No workstation "
+                 "re-computation exists for this row.")],
+        logits_dtype=logits_dtype_of(c), **est))
+    rows[-1]["harness"] = _g53_harness(
+        pin_compare=G53F_PIN_K3,
+        capture_pins={"reference": (G53F_PIN_ROOT, runtime_files("dataset.glm53-flash-bf16-root.json")),
+                      "candidate": (G53F_PIN_K3, runtime_files("dataset.glm53-flash-exl3-k3-wrldsuksgo2mars.json"))},
+        note=G53_HARNESS_SPAN_NOTE % "%s, %s, %s (the pod compared at the candidate's commit)"
+             % (G53F_PIN_ROOT[:8], G53F_PIN_K3[:8], G53F_PIN_K3[:8]))
+    return rows
+
+
 def stamp_harness(measurements):
     """Attach the harness block, and mark what predates it.
 
@@ -5918,7 +6410,8 @@ def main():
     amap = {a["id"]: a for a in ARTIFACTS}
     measurements = (build_measurements(amap) + build_measurements_runtime(amap)
                     + build_measurements_qwen(amap) + build_measurements_fruit(amap)
-                    + build_measurements_qwen38_hf(amap) + build_measurements_glm53(amap))
+                    + build_measurements_qwen38_hf(amap) + build_measurements_glm53(amap)
+                    + build_measurements_glm53_hf(amap))
     # Joint fidelity standard (2026-08-29): window-clustered BCa intervals, the
     # per-domain table, sigma_run in quadrature, the protocol stamp, and the
     # calibration-clean scope siblings. Implemented in tools/joint_enrich.py so

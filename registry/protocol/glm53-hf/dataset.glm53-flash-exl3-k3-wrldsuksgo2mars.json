@@ -1,0 +1,450 @@
+{
+  "capture": {
+    "capture_content_digest": "ddc7aec876018273e9f2588a9bb218199cb6dc82ecb3a480edeee7f79df76477",
+    "dtype": "BF16",
+    "dtype_lossless": true,
+    "form": "hidden",
+    "head_not_separable_reason": null,
+    "head_separable": true,
+    "hidden_width": 4096,
+    "lossy_codec": null,
+    "manifest_file": "capture/manifest.json",
+    "manifest_file_sha256": "48795a417041327fdfc740d20876f3cff4a39d3253fb2f87651250e7514616c0",
+    "records_count": 25,
+    "scored_rows_total": 51175,
+    "semantic_point": "after_final_rmsnorm_before_lm_head",
+    "tensor_key": "hidden_states",
+    "total_size_bytes": 419232300,
+    "vocab_size": 154880
+  },
+  "coverage": {
+    "complete": true,
+    "declared_records": 25,
+    "index_range": [
+      0,
+      24
+    ],
+    "missing_indices_sample": [],
+    "present_records": 25,
+    "shard_of": null,
+    "subset_detail": null
+  },
+  "created_utc": "2026-09-05T13:54:43Z",
+  "dataset": {
+    "author": {
+      "handle": null,
+      "is_registry_maintainer": false,
+      "name": "malaiwah",
+      "role": "capture-author",
+      "url": null
+    },
+    "base_capture": null,
+    "id": "fidelity--glm53flash.malaiwah.quant.exl3-wrld-k3",
+    "license": "mit",
+    "name": "fidelity--glm53flash.malaiwah.quant.exl3-wrld-k3",
+    "qualification": null,
+    "repository": "malaiwah/glm53-flash-fidelity-exl3-wrld-k3-v1",
+    "revision": null,
+    "role": "quant",
+    "structural_status": "sealed"
+  },
+  "dataset_sha256": "2a37cb44c047fd278069ec5ea70cec0d7266cf70b99f382829f6410a134a82e6",
+  "determinism": {
+    "cold_start_per_run": true,
+    "distinct_evidence_hash_count": 1,
+    "evidence_hashes": [
+      "ddc7aec876018273e9f2588a9bb218199cb6dc82ecb3a480edeee7f79df76477"
+    ],
+    "evidence_kind": "hidden_state_tensor_sha256",
+    "identical_across_runs": null,
+    "note": "a single cold capture; cross-run determinism is NOT asserted here. Capture a second cold run and run `fidelity-dataset compare --self-compare` -- an exactly 0.0 result is the SC-1 reproduction confirmation.",
+    "repeat_noise": null,
+    "repeats": [],
+    "run_count": 1
+  },
+  "disclosures": [
+    {
+      "affects_comparability": false,
+      "code": "no_known_deviations",
+      "detail": "captured by engines/tools/hf_capture.py",
+      "severity": "info"
+    },
+    {
+      "affects_comparability": false,
+      "code": "checkpoint_tensors_intentionally_unused",
+      "detail": "3481 checkpoint tensor(s) were present but intentionally unused by this architecture. Their complete set exactly matched pinned allowlist 1fbe3c6978153b8e1d7e0c0630fe163c53e56efed4f2dfdafc88fe69f670c981 (canonical sorted-name SHA-256 37b68b125e58910a7e1e32b8cd7323e3c5affa208238d31a773f447bf608217c).",
+      "severity": "caveat"
+    },
+    {
+      "affects_comparability": false,
+      "code": "reduced_run_count",
+      "detail": "this dataset is ONE cold capture (run_count 1, the DET-D4 floor is 5). Cross-run determinism is not asserted by the dataset; it is established by a second cold capture plus `fidelity-dataset compare --self-compare`, whose exactly-0.0 result is the SC-1 reproduction confirmation.",
+      "severity": "caveat"
+    }
+  ],
+  "format_version": 1,
+  "generation_sanity_probe": {
+    "degenerate": false,
+    "enforced": true,
+    "entropy_nats": 2.2565324148394588,
+    "expect": "Paris",
+    "expected_first_ids": [
+      1732,
+      12089,
+      40631,
+      59190
+    ],
+    "logit_spread": 26.0625,
+    "note": "one extra window through the same schedule; its hidden state is discarded and never enters the dataset.",
+    "prompt": "The capital of France is",
+    "schema": "malaiwah.generation-sanity-probe.v1",
+    "status": "pass",
+    "top1_id": 12089,
+    "top1_probability": 0.5987934806438582,
+    "top1_text": " Paris",
+    "top_k": [
+      {
+        "id": 12089,
+        "probability": 0.5987934806438582,
+        "text": " Paris"
+      },
+      {
+        "id": 3881,
+        "probability": 0.05569646974476378,
+        "text": " known"
+      },
+      {
+        "id": 264,
+        "probability": 0.052321991230826634,
+        "text": " a"
+      },
+      {
+        "id": 825,
+        "probability": 0.04915196203465067,
+        "text": " one"
+      },
+      {
+        "id": 11240,
+        "probability": 0.03596034361794241,
+        "text": " famous"
+      }
+    ],
+    "uniform_entropy_nats": 11.950405902510404,
+    "vocab_size": 154880
+  },
+  "head": {
+    "applied_in_capture": false,
+    "bias": null,
+    "bits": 16,
+    "compat_tensor_key": "weight",
+    "dtype": "BF16",
+    "equality_receipt": null,
+    "file": "head/weight.safetensors",
+    "file_sha256": "7b8a6349b5bbcf3de1ec469bc79a12788cfd3846e08019b6b76037f9fbbad411",
+    "final_norm": {
+      "applied_at_replay": false,
+      "applied_in_capture": true,
+      "dtype": null,
+      "file": null,
+      "file_sha256": null,
+      "shape": null,
+      "tensor_content_sha256": null,
+      "tensor_key": null
+    },
+    "head_json": "head/head.json",
+    "present": true,
+    "quantized": false,
+    "raw_tensor_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4",
+    "shape": [
+      154880,
+      4096
+    ],
+    "source": "native",
+    "tensor_content_sha256": "aa21c427970f64edd82669db3a8fb46613084e8bc271a3728784a52eb3f25ab4",
+    "tensor_key": "lm_head.weight"
+  },
+  "interop": {
+    "adapted_from": null,
+    "compatible_with": [
+      "kimi-k3-distribution-fidelity/1"
+    ],
+    "divergences": [
+      {
+        "field": "head",
+        "id": "D-1",
+        "reason": "every capture declares its OWN head identity by tensor content digest; the comparator refuses a hidden-form comparison across differing heads."
+      },
+      {
+        "field": "runtime.lane",
+        "id": "D-2",
+        "reason": "lane is required and gated at compare time so registry BIAS-006 is checked before a number exists, not at submission."
+      },
+      {
+        "field": "panel.scoring_window",
+        "id": "D-3",
+        "reason": "scoring_window is part of panel identity, not a comparator flag: a score_from=1024 number is a different panel, not a variant."
+      },
+      {
+        "field": "comparison_kind",
+        "id": "D-4",
+        "reason": "self-compare is a first-class mode asserting exactly 0.0."
+      },
+      {
+        "field": "estimator.accumulation_dtype",
+        "id": "D-5",
+        "reason": "required, fp64 default; an fp32 estimator lands in a different comparability class on the same data and that must be visible."
+      },
+      {
+        "field": "coverage",
+        "id": "D-6",
+        "reason": "declared vs present record counts with shard_of; fixes our own manifest that claimed 5,120 captures in a 512-file repository."
+      },
+      {
+        "field": "panel",
+        "id": "D-7",
+        "reason": "the panel is a separately referenceable object, which is what makes a candidate capture publishable standalone."
+      },
+      {
+        "field": "capture.lossy_codec",
+        "id": "D-8",
+        "reason": "lets a llama.cpp .kld be ingested without laundering a lossy capture as exact."
+      },
+      {
+        "field": "capture.records[].attention_mask_sha256",
+        "id": "D-9",
+        "reason": "our packed and streaming lanes vary mask construction; a single-request capture path makes it invariant and has no equivalent field."
+      },
+      {
+        "field": "capture.head_separable",
+        "id": "D-10",
+        "reason": "hidden form is the default; logit form must declare head_separable:false with a reason."
+      }
+    ],
+    "k3_compat_emitted": false,
+    "note": null
+  },
+  "panel": {
+    "contamination": {
+      "checked": false,
+      "hits": null,
+      "method": "not established",
+      "receipt": null
+    },
+    "context_length": 2048,
+    "contexts": 25,
+    "panel_file": "panel/panel.json",
+    "panel_file_sha256": "34683256819e7f5e1029c13f18ef63f665a4a03fed6687ca02346382b756be19",
+    "panel_id": "panel-artifact-sha256:6bafe3283c54bc9342d0f30aa3199d36032d103feb92c31715be8545362790ff",
+    "panel_receipt_file": "panel/panel-receipt.json",
+    "panel_receipt_sha256": "0beec5770e5107547731b084f1bc5f9fb8ba79d67af56ddb70d919da367737d5",
+    "panel_token_sha256_legacy": "023f9dbbbf62088634857c70253b3cd0bc0619812e1cc1559e8061f746a287f1",
+    "remap_file": null,
+    "repository": null,
+    "revision": null,
+    "scored_positions_total": 51175,
+    "scoring_window": {
+      "dropped_positions_total": 0,
+      "min_left_context_tokens": 1,
+      "policy": "every causal prediction position of every window is scored; nothing is dropped",
+      "score_from": 0,
+      "windowed": false
+    },
+    "suite_token_hash_sha256": "186b6923582ba59334262178f445440070bd428a862e2e5c9459aaa15b4475fe",
+    "tokenizer": {
+      "files": [
+        {
+          "bytes": 8617,
+          "name": "chat_template.jinja",
+          "sha256": "41cff9af7b3a86c96751b107a8444f245fbda0bd5320b636a5bb1f7f4ba1a5c3"
+        },
+        {
+          "bytes": 20217442,
+          "name": "tokenizer.json",
+          "sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d"
+        },
+        {
+          "bytes": 761,
+          "name": "tokenizer_config.json",
+          "sha256": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"
+        }
+      ],
+      "files_verified": true,
+      "id": "zai-org/GLM-5.3-Flash-BF16",
+      "identity_sha256": "4de3937ae77b0908990b28ef7b64a6517b5a005bc51205cd071746fd3f60b09d",
+      "maximum_token_id_exclusive": 154856,
+      "receipt": {
+        "declared_receipt_sha256": "d1522ca96b57e1e60e781d217557d5ed4b9669537cddfeefe346e568ccce8656",
+        "receipt_file_bytes": 1778,
+        "receipt_file_sha256": "fd6e407903e7c787f84df361c44d0af945193ade27e953a02dd613ecf9a4c3b2",
+        "receipt_seal_mode": "legacy-field-absent"
+      },
+      "repository": "zai-org/GLM-5.3-Flash-BF16",
+      "revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+      "vocab_size": 154856
+    }
+  },
+  "runtime": {
+    "backend_identity_sha256": null,
+    "file": "runtime/capture-runtime.json",
+    "file_sha256": "b306adb79c31095ac6e2d9e2335bff31c9a0425460a5bb4a938e63b61bd3aa3d",
+    "lane": "streaming",
+    "lane_identity_sha256": "025ae83c1cb0e2c518baa8bd0c46965f0c17b6aaca5b1b875ca5fcea71f565d5",
+    "lane_inferred": false,
+    "runtime_reader_sha256": null,
+    "source": "native",
+    "stack_fingerprint_sha256": "e7ddf6b280474c1709836e227b55dda1247b32148313bc87fd88a2ada704f0e0"
+  },
+  "schema": "malaiwah.fidelity-dataset.v1",
+  "scope": {
+    "assignments": [
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "45 tensors: model.language_model.layers.N.self_attn.o_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "attn.o",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": null,
+        "format": "mixed",
+        "layer_range": "0-44",
+        "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 405 x native:bf16@16 (model.language_model.layers.N.self_attn.b_proj.weight, model.language_model.layers.N.self_attn.f_a_proj.weight, model.language_model.layers.N.self_attn.f_b_proj.weight); 68 x native:fp32@32 (model.language_model.layers.N.self_attn.A_log, model.language_model.layers.N.self_attn.dt_bias). read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "attn.other",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "146 tensors: model.language_model.layers.N.self_attn.k_proj.weight, model.language_model.layers.N.self_attn.kv_a_proj_with_mqa.weight, model.language_model.layers.N.self_attn.kv_b_proj.weight, model.language_model.layers.N.self_attn.q_a_proj.weight, model.language_model.layers.N.self_attn.q_b_proj.weight, model.language_model.layers.N.self_attn.q_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "attn.qkv",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "1 tensors: model.language_model.embed_tokens.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "embed_tokens",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "1 tensors: lm_head.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "lm_head",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "3 tensors: model.language_model.layers.N.mlp.down_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "mlp.down",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "3 tensors: model.language_model.layers.N.mlp.gate_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "mlp.gate",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "3 tensors: model.language_model.layers.N.mlp.up_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "mlp.up",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 3.0,
+        "format": "exl3-mcg",
+        "layer_range": "all",
+        "note": "36288 tensors: model.language_model.layers.N.mlp.experts.E.down_proj.weight, model.language_model.layers.N.mlp.experts.E.gate_proj.weight, model.language_model.layers.N.mlp.experts.E.up_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "moe.experts",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": null,
+        "format": "mixed",
+        "layer_range": "3-44",
+        "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 42 x native:bf16@16 (model.language_model.layers.N.mlp.gate.weight); 42 x native:fp32@32 (model.language_model.layers.N.mlp.gate.e_score_correction_bias). read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "moe.router",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "126 tensors: model.language_model.layers.N.mlp.shared_experts.down_proj.weight, model.language_model.layers.N.mlp.shared_experts.gate_proj.weight, model.language_model.layers.N.mlp.shared_experts.up_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "moe.shared_expert",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": null,
+        "format": "mixed",
+        "layer_range": "45",
+        "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 24 x native:bf16@16 (model.language_model.layers.N.eh_proj.weight, model.language_model.layers.N.enorm.weight, model.language_model.layers.N.hnorm.weight); 1 x native:fp32@32 (model.language_model.layers.N.mlp.gate.e_score_correction_bias); 864 x quantized:exl3-mcg@3.0 (model.language_model.layers.N.mlp.experts.E.down_proj.weight, model.language_model.layers.N.mlp.experts.E.gate_proj.weight, model.language_model.layers.N.mlp.experts.E.up_proj.weight). read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "mtp",
+        "treatment": "quantized"
+      },
+      {
+        "bits_per_weight": 16,
+        "format": "bf16",
+        "layer_range": "all",
+        "note": "92 tensors: model.language_model.layers.N.input_layernorm.weight, model.language_model.layers.N.post_attention_layernorm.weight, model.language_model.norm.weight, model.visual.post_layernorm.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "norm",
+        "treatment": "native"
+      },
+      {
+        "bits_per_weight": null,
+        "format": "mixed",
+        "layer_range": "0-44",
+        "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 436 x native:bf16@16 (model.language_model.layers.N.hc_attn_fn, model.language_model.layers.N.hc_ffn_fn, model.visual.blocks.0.attn.k_norm.weight); 180 x native:fp32@32 (model.language_model.layers.N.hc_attn_base, model.language_model.layers.N.hc_attn_scale, model.language_model.layers.N.hc_ffn_base). read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+        "tensor_class": "other",
+        "treatment": "native"
+      }
+    ],
+    "head_policy": "native",
+    "kv_cache_dtype": "bf16",
+    "policy": "mixed",
+    "scope_digest": "attn.o=native:bf16@16|attn.other=native:mixed|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3|moe.router=native:mixed|moe.shared_expert=native:bf16@16|mtp=quantized:mixed|norm=native:bf16@16|other=native:mixed|head=native|kv=bf16"
+  },
+  "seal": {
+    "checksums_file": "checksums.txt",
+    "checksums_format": "sha256sum",
+    "checksums_sha256": "9e3d8ffb8e383eb93f33dc54a693509d677aca053a2fef4fa81942445c635357",
+    "covers": [
+      "every published file except checksums.txt and fidelity-dataset.json, via checksums.txt",
+      "fidelity-dataset.json itself, via the self-blanked seal",
+      "every capture tensor a second time by CONTENT, via capture.capture_content_digest"
+    ],
+    "excludes": [
+      "checksums.txt",
+      "fidelity-dataset.json"
+    ],
+    "external_anchor": null,
+    "method": "self_blanked_canonical_json_sha256",
+    "seal_field": "dataset_sha256"
+  },
+  "upstream_receipts": [],
+  "weights": {
+    "artifact_ref": null,
+    "checkpoint_identity_sha256": "aefa2a693c139c61d4d3651a81ff39ff7b481e82f93d10f1f1c12007f615e405",
+    "codec": "exl3-mcg",
+    "config_sha256": "e445e0443e7fce59943297323ff388e72c973f0e0a0f43b881be5ba55765e572",
+    "declared_bits": 3.0,
+    "declared_head_bits": 16,
+    "index_sha256": null,
+    "model_ref": null,
+    "model_revision": "1e4abd26e4e1e8d58d81fbd557d6c4099352fe63",
+    "quantized": true,
+    "repository": "wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1",
+    "revision": "1e4abd26e4e1e8d58d81fbd557d6c4099352fe63"
+  }
+}

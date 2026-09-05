@@ -2,15 +2,15 @@
   "collections": {
     "artifacts": {
       "file": "data/artifacts.jsonl",
-      "record_count": 47,
+      "record_count": 48,
       "schema": "schema/artifact.schema.json",
-      "sha256": "2feae33edff9a3e249e56d05fc41d5bc2ae2e762f8fd75ad83dc8488c2521c30"
+      "sha256": "4c390d0bfc307755815ab6661c215d407f5995e3a133873cb74193ae95e9fcd8"
     },
     "measurements": {
       "file": "data/measurements.jsonl",
-      "record_count": 83,
+      "record_count": 85,
       "schema": "schema/measurement.schema.json",
-      "sha256": "f8b00fd5620901ade159d8eff47deb3682944320545e85a41d3372b9ada783bb"
+      "sha256": "420f705d5fafd81b4d67a53454de677ce8c732b5fbb390e7ab4f4bb9ddc3ee3f"
     },
     "models": {
       "file": "data/models.jsonl",
@@ -32,9 +32,9 @@
     },
     "references": {
       "file": "data/references.jsonl",
-      "record_count": 14,
+      "record_count": 15,
       "schema": "schema/reference.schema.json",
-      "sha256": "08e3349cce7ff0fe1494e98d74714ce392d23950ab037baa0133a61c50141e39"
+      "sha256": "ea9e8a60285e5f7b06eadfabd30cc12d56a9c8cfdfef91926a97a561a4c18976"
     }
   },
   "comparability_keys": [
@@ -854,6 +854,50 @@
     {
       "accumulation_dtype": "float64",
       "comparability": {
+        "comparable": "true",
+        "live_member_count": 2,
+        "predicate_version": "comparability-predicate/v1",
+        "reasons": [],
+        "secondary": {
+          "hardware": {
+            "status": "pass",
+            "values": [
+              "1x NVIDIA H200"
+            ]
+          },
+          "lane": {
+            "status": "pass",
+            "values": [
+              "sealed-ep8"
+            ]
+          },
+          "pipeline": {
+            "status": "pass",
+            "values": [
+              "pipeline--malaiwah.fidelity-dataset-hf.h200-layer-outer"
+            ]
+          },
+          "scope": {
+            "status": "pass",
+            "values": [
+              "moe.experts+mtp|head=native|kv=bf16"
+            ]
+          }
+        }
+      },
+      "direction": "reference_to_candidate",
+      "head_policy": "native_head",
+      "key": "cmp--f0823827adb15376",
+      "label": "mean_tokenwise_kld on panel--glm53.brandonmusic.final25 (same_stack, native_head)",
+      "member_count": 2,
+      "metric_name": "mean_tokenwise_kld",
+      "panel_id": "panel--glm53.brandonmusic.final25",
+      "reference_id": "reference--malaiwah.glm53-bf16-hf.brandonmusic-final25",
+      "stack_relation": "same_stack"
+    },
+    {
+      "accumulation_dtype": "float64",
+      "comparability": {
         "comparable": "false",
         "live_member_count": 7,
         "predicate_version": "comparability-predicate/v1",
@@ -903,18 +947,18 @@
   "comparability_predicate_rule": "Per group: comparable='true' means lane, pipeline, scope coverage and hardware are recorded and homogeneous across live members; 'false' means a recorded dimension differs (ranking across it attributes a lane/pipeline/hardware/scope effect to quantization quality); 'unknown' means no recorded difference but at least one dimension is unrecorded. Recomputed by the validator (CMP-007); a hand-edited predicate is rejected.",
   "comparability_rule": "The seven-field comparability.key is a NECESSARY partition key, not a sufficient certificate: two measurement values with different keys are NEVER comparable, and a table that mixes keys is malformed. Equal keys make two rows candidates for comparison ONLY -- the key deliberately omits measurement lane, candidate pipeline, hardware and artifact scope, all of which this project has MEASURED moving results by more than the gaps it publishes between quantizers. Before ranking rows as like-for-like, a consumer must also check each group's comparability_keys[].comparability predicate: comparable=true/false/unknown with machine-readable reasons.",
   "counts": {
-    "artifacts": 47,
-    "measurements": 83,
-    "measurements_advisory": 77,
+    "artifacts": 48,
+    "measurements": 85,
+    "measurements_advisory": 78,
     "measurements_author_reported": 15,
     "measurements_independently_verified": 0,
-    "measurements_self_measured": 68,
-    "measurements_strict": 6,
+    "measurements_self_measured": 70,
+    "measurements_strict": 7,
     "measurements_third_party_reported": 0,
     "models": 4,
     "panels": 13,
     "pipelines": 16,
-    "references": 14
+    "references": 15
   },
   "cross_refs": {
     "local_ai_registry": {
@@ -924,13 +968,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-09-05T11:37:24+00:00",
+  "generated_at": "2026-09-05T18:45:12+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-09-05T11:37:24+00:00",
+    "last_run_at": "2026-09-05T18:45:12+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }
