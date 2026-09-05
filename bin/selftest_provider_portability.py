@@ -469,6 +469,67 @@ src_mc = open(os.path.join(here, "measure_cloud.py"), encoding="utf-8").read()
 check("preflight REFUSES a no-cuda machine",
       '"no cuda"' in src_mc and "no working CUDA device" in src_mc)
 
+print("\n== Vast container mode: argv as a list, secrets only in env ==")
+from fidelity.vastapi import Vast                                 # noqa: E402
+
+_captured = []
+
+
+class StubVast(Vast):
+    """A Vast whose _req captures bodies instead of hitting the API."""
+    def _load_key(self):
+        return "stub-key"
+    def _req(self, method, path, body=None, **kw):
+        _captured.append({"method": method, "path": path, "body": body})
+        if "/asks/" in path and method == "PUT":
+            return {"success": True, "new_contract": 999}
+        return {}
+
+
+_v = StubVast(dry=False, ssh_key="/nonexistent/id_ed25519")
+_SECRET = "hf_secret_token_abc123xyz"
+_SINK = "https://ntfy.sh/s3cret-topic-with-cred"
+
+_v.create(
+    ask_id=42, storage=80,
+    image="ghcr.io/malaiwah/quant-fidelity-measure:main",
+    docker_cmd=["capture", "--model", "malaiwah/GLM-5.2-SIQ-Fruit-bf16",
+                "--revision", "e" * 40,
+                "--sanity-expect", ""],
+    env={"HF_TOKEN": _SECRET, "FIDELITY_RESULT_SINK": _SINK},
+    onstart="mkdir -p /workspace",
+    name="vast-container-test")
+
+_body = _captured[-1]["body"]
+check("container mode uses runtype ssh", _body.get("runtype") == "ssh")
+check("container mode onstart embeds the capture argv",
+      "container_entry.py" in _body.get("onstart", "")
+      and "--sanity-expect" in _body.get("onstart", "")
+      and "capture" in _body.get("onstart", ""))
+check("container mode onstart preserves an empty argument",
+      "''" in _body.get("onstart", ""))
+check("container mode image is the measurement image",
+      _body.get("image") == "ghcr.io/malaiwah/quant-fidelity-measure:main")
+check("container mode env carries the HF token",
+      "-e HF_TOKEN=%s" % _SECRET in _body.get("env", ""))
+check("container mode env carries the result sink",
+      "-e FIDELITY_RESULT_SINK=%s" % _SINK in _body.get("env", ""))
+
+# The critical assertion: no secret appears in onstart text.
+# A provider may echo the command back; environment variables it does not.
+_onstart_text = _body.get("onstart", "")
+check("no secret token in onstart", _SECRET not in _onstart_text)
+check("no secret sink URL in onstart", _SINK not in _onstart_text)
+
+# SSH path is byte-identical when docker_cmd is absent.
+_captured.clear()
+_v.create(ask_id=42, storage=80)
+_ssh = _captured[-1]["body"]
+check("ssh path uses runtype ssh", _ssh.get("runtype") == "ssh")
+check("ssh path has no args field", "args" not in _ssh)
+check("ssh path onstart is empty", _ssh.get("onstart") == "")
+check("ssh path env is empty dict", _ssh.get("env") == {})
+
 print()
 if FAILED:
     print("selftest_provider_portability: %d FAILED" % len(FAILED))

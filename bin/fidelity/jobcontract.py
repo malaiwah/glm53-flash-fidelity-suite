@@ -591,7 +591,7 @@ def validate_job(document: dict) -> None:
     attempt = document.get("execution_attempt")
     if not isinstance(attempt, dict):
         raise JobContractError("execution_attempt must be an object")
-    if attempt.get("kind") in ("local-container", "local"):
+    if attempt.get("kind") in ("local-container", "local", "vast-container"):
         kind = attempt["kind"]
         if set(attempt) != {"number", "kind", "attempt_id"}:
             raise JobContractError(

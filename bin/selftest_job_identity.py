@@ -214,6 +214,24 @@ def main():
         pass
     else:
         raise AssertionError("absolute lease path accepted")
+    # A vast-container execution_attempt is the same minimal shape as
+    # local-container: number 1, kind, 24-hex attempt_id.
+    vast_container = copy.deepcopy(base)
+    vast_container["execution_attempt"] = {
+        "kind": "vast-container", "number": 1, "attempt_id": "a" * 24}
+    vast_finalized = finalize_job(vast_container)
+    check("vast-container execution_attempt is accepted",
+          verify_job(vast_finalized) == vast_finalized["job_id_full"])
+    vast_bad = copy.deepcopy(base)
+    vast_bad["execution_attempt"] = {
+        "kind": "vast-container", "number": 1, "attempt_id": "a" * 24,
+        "extra": True}
+    try:
+        finalize_job(vast_bad)
+    except JobContractError:
+        pass
+    else:
+        raise AssertionError("vast-container with extra fields accepted")
     return 0
 
 

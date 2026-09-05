@@ -21,6 +21,7 @@ plan computed and refuses an offer that cannot hold it.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import time
@@ -256,7 +257,69 @@ class Vast(SSHTransport):
                     "no rentable Vast offer for %s with >=%d GB VRAM and >=%d GB "
                     "disk" % (want or "any GPU",
                               int(kw.get("min_vram_gb") or 0), disk))
-            ask = fits[0].raw["ask_id"]
+        # Container-native mode.  Vast's `runtype: "args"` preserves the
+        # image ENTRYPOINT and passes `args` as CMD -- but has no post-start
+        # hook, so preparation (target.json, tokenizer, panel binding) cannot
+        # run before the capture.  `runtype: "ssh"` replaces the entrypoint
+        # with sshd and runs `onstart` AFTER init -- so the full command
+        # (prep + entrypoint) goes in `onstart` as a shell script.  The
+        # container stays alive for SSH after the script exits; we destroy
+        # it when the result arrives.  Secrets travel in `env`, never in
+        # onstart text: a provider may echo the command back, but environment
+        # variables it does not.  Triggered by `docker_cmd`; when absent the
+        # SSH path below is byte-identical.
+        docker_cmd = kw.get("docker_cmd")
+        if docker_cmd is not None:
+            onstart = kw.get("onstart") or ""
+            # If onstart is supplied it is a prep script; the docker_cmd
+            # (the capture argv) is appended after it so both run in one
+            # shell.  If onstart is empty, docker_cmd runs alone.
+            if onstart and docker_cmd:
+                exec_line = (
+                    "exec python3.12 /opt/fidelity/suite/bin/container_entry.py "
+                    + " ".join("'%s'" % a.replace("'", "'\\''")
+                              for a in docker_cmd))
+                full = onstart + "\n" + exec_line
+            elif docker_cmd:
+                full = (
+                    "exec python3.12 /opt/fidelity/suite/bin/container_entry.py "
+                    + " ".join("'%s'" % a.replace("'", "'\\''")
+                              for a in docker_cmd))
+            else:
+                full = onstart
+            # Vast limits onstart to 4048 chars.  gzip+base64 the prep
+            # script and decode it at runtime when the combined text is
+            # too long (Vast's own documented workaround).
+            if len(full) > 4048 and onstart and docker_cmd:
+                import gzip as _gz
+                compressed = _gz.compress(onstart.encode("utf-8"))
+                encoded = base64.b64encode(compressed).decode("ascii")
+                exec_line = (
+                    "exec python3.12 /opt/fidelity/suite/bin/container_entry.py "
+                    + " ".join("'%s'" % a.replace("'", "'\\''")
+                              for a in docker_cmd))
+                full = (
+                    "echo '%s' | base64 -d | gunzip > /workspace/prep.sh "
+                    "&& bash /workspace/prep.sh\n" % encoded) + exec_line
+            # Vast's REST API takes `env` as a string in Docker flag
+            # format (e.g. "-e KEY=VAL -p 8000:8000"), not a plain dict.
+            # The CLI's parse_env converts this to a dict internally, but
+            # the PUT body expects the string form.  Secrets stay under env,
+            # never in onstart or args.
+            env_dict = kw.get("env") or {}
+            env_str = " ".join("-e %s=%s" % (k, v) for k, v in env_dict.items())
+            body = {"client_id": "me",
+                    "image": kw.get("image") or DEFAULT_IMAGE,
+                    "disk": disk,
+                    "label": kw.get("name") or "fidcloud",
+                    "runtype": "ssh",
+                    "onstart": full,
+                    "env": env_str}
+            got = self._req("PUT", "/asks/%s/" % ask, body, timeout=180)
+            if not got.get("success"):
+                raise VastError("Vast refused the rental: %s"
+                                % redact(json.dumps(got)[:300]))
+            return {"machine_id": got.get("new_contract"), "ask_id": ask}
         pub = ""
         kp = self.ssh_key + ".pub"
         if os.path.isfile(kp):
