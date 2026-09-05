@@ -1,0 +1,113 @@
+{
+  "activation_quantization": null,
+  "assignments": [
+    {
+      "bits_per_weight": 8.5,
+      "format": "gguf-k-quant",
+      "layer_range": "0-77",
+      "note": "78 GGUF tensors: layers.N.self_attn.o_proj.weight. ggml types: Q8_0 x78. MEASURED 8.5000 bits/weight over 7851737088 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "attn.o",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "0-77",
+      "note": "class mixes stored formats on the same layers (SCOPE-004 admits one row per class and layer_range): 261 GGUF tensors: layers.N.self_attn.indexer.k_norm.bias, layers.N.self_attn.indexer.k_norm.weight, layers.N.self_attn.indexer.weights_proj.weight, layers.N.self_attn.indexer.wk.weight, layers.N.self_attn.indexer.wq_b.weight, layers.N.self_attn.kv_a_layernorm.weight, layers.N.self_attn.q_a_layernorm.weight. ggml types: F32 x219, Q8_0 x42. MEASURED 9.0170 bits/weight over 197009664 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "attn.other",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8.5,
+      "format": "gguf-k-quant",
+      "layer_range": "0-77",
+      "note": "390 GGUF tensors: layers.N.self_attn.kv_a_proj_with_mqa.weight, layers.N.self_attn.kv_b_proj.weight, layers.N.self_attn.q_a_proj.weight, layers.N.self_attn.q_b_proj.weight. ggml types: Q8_0 x390. MEASURED 8.5000 bits/weight over 5019795456 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "attn.qkv",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8.5,
+      "format": "gguf-k-quant",
+      "layer_range": "all",
+      "note": "1 GGUF tensors: model.embed_tokens.weight. ggml types: Q8_0 x1. MEASURED 8.5000 bits/weight over 951582720 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "embed_tokens",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 6.5625,
+      "format": "gguf-k-quant",
+      "layer_range": "all",
+      "note": "1 GGUF tensors: lm_head.weight. ggml types: Q6_K x1. MEASURED 6.5625 bits/weight over 951582720 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "lm_head",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8.5,
+      "format": "gguf-k-quant",
+      "layer_range": "0-2",
+      "note": "3 GGUF tensors: layers.N.mlp.down_proj.weight. ggml types: Q8_0 x3. MEASURED 8.5000 bits/weight over 226492416 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "mlp.down",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8.5,
+      "format": "gguf-k-quant",
+      "layer_range": "0-2",
+      "note": "3 GGUF tensors: layers.N.mlp.gate_proj.weight. ggml types: Q8_0 x3. MEASURED 8.5000 bits/weight over 226492416 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "mlp.gate",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 8.5,
+      "format": "gguf-k-quant",
+      "layer_range": "0-2",
+      "note": "3 GGUF tensors: layers.N.mlp.up_proj.weight. ggml types: Q8_0 x3. MEASURED 8.5000 bits/weight over 226492416 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "mlp.up",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 3.5053,
+      "format": "gguf-i-quant",
+      "layer_range": "3-77",
+      "note": "225 GGUF tensors: layers.N.mlp.experts.E.down_proj.weight, layers.N.mlp.experts.E.gate_proj.weight, layers.N.mlp.experts.E.up_proj.weight. ggml types: IQ3_XXS x148, IQ4_XS x73, Q5_K x1, Q6_K x3. MEASURED 3.5053 bits/weight over 724775731200 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "moe.experts",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 32.0,
+      "format": "fp32",
+      "layer_range": "3-77",
+      "note": "150 GGUF tensors: layers.N.mlp.gate.e_score_correction_bias, layers.N.mlp.gate.weight. ggml types: F32 x150. MEASURED 32.0000 bits/weight over 117984000 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name Stored natively by the artifact; the lane loads it at the official release's dtype (bf16 except e_score_correction_bias), a cast the layout audit proved exact for every F32 tensor the converter widened.",
+      "tensor_class": "moe.router",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 8.5,
+      "format": "gguf-k-quant",
+      "layer_range": "3-77",
+      "note": "225 GGUF tensors: layers.N.mlp.shared_experts.down_proj.weight, layers.N.mlp.shared_experts.gate_proj.weight, layers.N.mlp.shared_experts.up_proj.weight. ggml types: Q8_0 x225. MEASURED 8.5000 bits/weight over 2831155200 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "moe.shared_expert",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "78",
+      "note": "class mixes stored formats on the same layers (SCOPE-004 admits one row per class and layer_range): 27 GGUF tensors: layers.N.eh_proj.weight, layers.N.enorm.weight, layers.N.hnorm.weight, layers.N.input_layernorm.weight, layers.N.mlp.experts.E.down_proj.weight, layers.N.mlp.experts.E.gate_proj.weight, layers.N.mlp.experts.E.up_proj.weight, layers.N.mlp.gate.e_score_correction_bias. ggml types: F32 x12, Q3_K x2, Q4_K x1, Q8_0 x12. MEASURED 3.9328 bits/weight over 9952920576 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name",
+      "tensor_class": "mtp",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 32.0,
+      "format": "fp32",
+      "layer_range": "all",
+      "note": "157 GGUF tensors: layers.N.input_layernorm.weight, layers.N.post_attention_layernorm.weight, model.norm.weight. ggml types: F32 x157. MEASURED 32.0000 bits/weight over 964608 weights. read from unsloth/GLM-5.3-GGUF@346b3591c7f28d1a23716f97a065ecf12ec14771 UD-Q3_K_XL: every ggml type, dim and byte count from the 9 GGUF tensor tables (1809 tensors, arch glm-dsa), names mapped through gguf_surface's proven glm-dsa map; bits are 8*bytes/elements from ggml block traits, not the build name Stored natively by the artifact; the lane loads it at the official release's dtype (bf16 except e_score_correction_bias), a cast the layout audit proved exact for every F32 tensor the converter widened.",
+      "tensor_class": "norm",
+      "treatment": "native"
+    }
+  ],
+  "head_policy": "quantized",
+  "kv_cache_dtype": "not_applicable",
+  "mtp_included": true,
+  "policy": "mixed"
+}

@@ -1,0 +1,168 @@
+{
+ "audited_at_utc": "2026-09-05T11:10:38Z",
+ "official": {
+  "added_tokens": 36,
+  "eos_token": "<|endoftext|>",
+  "pad_token": "<|endoftext|>",
+  "repo": "zai-org/GLM-5.3-BF16",
+  "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+  "tokenizer_config_sha256": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc",
+  "tokenizer_json_sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+  "vocab_entries": 154820
+ },
+ "schema": "malaiwah.glm53-gguf-glmdsa-tokenizer-order-audit.v1",
+ "variants": {
+  "BF16": {
+   "absent_count": 24,
+   "absent_gguf_strings": [
+    "[PAD154856]",
+    "[PAD154857]",
+    "[PAD154858]",
+    "[PAD154859]",
+    "[PAD154860]",
+    "[PAD154861]",
+    "[PAD154862]",
+    "[PAD154863]"
+   ],
+   "gguf_ids_absent_from_official_tokenizer": [
+    154856,
+    154857,
+    154858,
+    154859,
+    154860,
+    154861,
+    154862,
+    154863
+   ],
+   "merges": 321649,
+   "merges_equal_official": true,
+   "model": "gpt2",
+   "order_mismatches_vs_official": 0,
+   "pre": "glm4",
+   "special": {
+    "tokenizer.ggml.bos_token_id": 154822,
+    "tokenizer.ggml.eom_token_id": 154829,
+    "tokenizer.ggml.eos_token_id": 154820,
+    "tokenizer.ggml.eot_token_id": 154827,
+    "tokenizer.ggml.padding_token_id": 154821,
+    "tokenizer.ggml.unknown_token_id": 154820
+   },
+   "tokens": 154880,
+   "tokens_sha256": "3a6e8d9fb543417d790e49e5333e9b63be4ab35e651e9f4d9e34a9507bd79915"
+  },
+  "UD-IQ4_XS": {
+   "absent_count": 24,
+   "absent_gguf_strings": [
+    "[PAD154856]",
+    "[PAD154857]",
+    "[PAD154858]",
+    "[PAD154859]",
+    "[PAD154860]",
+    "[PAD154861]",
+    "[PAD154862]",
+    "[PAD154863]"
+   ],
+   "gguf_ids_absent_from_official_tokenizer": [
+    154856,
+    154857,
+    154858,
+    154859,
+    154860,
+    154861,
+    154862,
+    154863
+   ],
+   "merges": 321649,
+   "merges_equal_official": true,
+   "model": "gpt2",
+   "order_mismatches_vs_official": 0,
+   "pre": "glm4",
+   "special": {
+    "tokenizer.ggml.bos_token_id": 154822,
+    "tokenizer.ggml.eom_token_id": 154829,
+    "tokenizer.ggml.eos_token_id": 154820,
+    "tokenizer.ggml.eot_token_id": 154827,
+    "tokenizer.ggml.padding_token_id": 154821,
+    "tokenizer.ggml.unknown_token_id": 154820
+   },
+   "tokens": 154880,
+   "tokens_sha256": "3a6e8d9fb543417d790e49e5333e9b63be4ab35e651e9f4d9e34a9507bd79915"
+  },
+  "UD-Q3_K_XL": {
+   "absent_count": 24,
+   "absent_gguf_strings": [
+    "[PAD154856]",
+    "[PAD154857]",
+    "[PAD154858]",
+    "[PAD154859]",
+    "[PAD154860]",
+    "[PAD154861]",
+    "[PAD154862]",
+    "[PAD154863]"
+   ],
+   "gguf_ids_absent_from_official_tokenizer": [
+    154856,
+    154857,
+    154858,
+    154859,
+    154860,
+    154861,
+    154862,
+    154863
+   ],
+   "merges": 321649,
+   "merges_equal_official": true,
+   "model": "gpt2",
+   "order_mismatches_vs_official": 0,
+   "pre": "glm4",
+   "special": {
+    "tokenizer.ggml.bos_token_id": 154822,
+    "tokenizer.ggml.eom_token_id": 154829,
+    "tokenizer.ggml.eos_token_id": 154820,
+    "tokenizer.ggml.eot_token_id": 154827,
+    "tokenizer.ggml.padding_token_id": 154821,
+    "tokenizer.ggml.unknown_token_id": 154820
+   },
+   "tokens": 154880,
+   "tokens_sha256": "3a6e8d9fb543417d790e49e5333e9b63be4ab35e651e9f4d9e34a9507bd79915"
+  },
+  "UD-Q4_K_XL": {
+   "absent_count": 24,
+   "absent_gguf_strings": [
+    "[PAD154856]",
+    "[PAD154857]",
+    "[PAD154858]",
+    "[PAD154859]",
+    "[PAD154860]",
+    "[PAD154861]",
+    "[PAD154862]",
+    "[PAD154863]"
+   ],
+   "gguf_ids_absent_from_official_tokenizer": [
+    154856,
+    154857,
+    154858,
+    154859,
+    154860,
+    154861,
+    154862,
+    154863
+   ],
+   "merges": 321649,
+   "merges_equal_official": true,
+   "model": "gpt2",
+   "order_mismatches_vs_official": 0,
+   "pre": "glm4",
+   "special": {
+    "tokenizer.ggml.bos_token_id": 154822,
+    "tokenizer.ggml.eom_token_id": 154829,
+    "tokenizer.ggml.eos_token_id": 154820,
+    "tokenizer.ggml.eot_token_id": 154827,
+    "tokenizer.ggml.padding_token_id": 154821,
+    "tokenizer.ggml.unknown_token_id": 154820
+   },
+   "tokens": 154880,
+   "tokens_sha256": "3a6e8d9fb543417d790e49e5333e9b63be4ab35e651e9f4d9e34a9507bd79915"
+  }
+ }
+}

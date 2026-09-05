@@ -42,10 +42,7 @@
    "unsupported_types": [
     "IQ1_M",
     "IQ2_XXS",
-    "IQ3_XXS",
-    "IQ4_XS",
-    "Q2_K",
-    "Q3_K"
+    "Q2_K"
    ],
    "v1_supported": false
   },
@@ -69,10 +66,7 @@
    "unsupported_types": [
     "IQ1_S",
     "IQ2_XXS",
-    "IQ3_XXS",
-    "IQ4_XS",
-    "Q2_K",
-    "Q3_K"
+    "Q2_K"
    ],
    "v1_supported": false
   },
@@ -96,10 +90,7 @@
    "unsupported_types": [
     "IQ2_S",
     "IQ2_XXS",
-    "IQ3_XXS",
-    "IQ4_XS",
-    "Q2_K",
-    "Q3_K"
+    "Q2_K"
    ],
    "v1_supported": false
   },
@@ -119,10 +110,7 @@
    },
    "unsupported_types": [
     "IQ2_S",
-    "IQ3_S",
-    "IQ4_XS",
-    "Q2_K",
-    "Q3_K"
+    "Q2_K"
    ],
    "v1_supported": false
   },
@@ -139,12 +127,8 @@
     "Q6_K": 4,
     "Q8_0": 644
    },
-   "unsupported_types": [
-    "IQ3_S",
-    "IQ4_XS",
-    "Q3_K"
-   ],
-   "v1_supported": false
+   "unsupported_types": [],
+   "v1_supported": true
   },
   "UD-Q2_K_XL": {
    "census_complete": true,
@@ -164,10 +148,7 @@
    },
    "unsupported_types": [
     "IQ2_XS",
-    "IQ3_XXS",
-    "IQ4_XS",
-    "Q2_K",
-    "Q3_K"
+    "Q2_K"
    ],
    "v1_supported": false
   },
@@ -184,12 +165,8 @@
     "Q6_K": 4,
     "Q8_0": 644
    },
-   "unsupported_types": [
-    "IQ3_XXS",
-    "IQ4_XS",
-    "Q3_K"
-   ],
-   "v1_supported": false
+   "unsupported_types": [],
+   "v1_supported": true
   },
   "UD-Q4_K_XL": {
    "census_complete": true,
@@ -235,6 +212,38 @@
  "repo": "unsloth/GLM-5.3-Flash-GGUF",
  "revision": "2975ab414d30340466d8c51533c6e91f0cca64c1",
  "schema": "malaiwah.glm53-gguf-build-census.v1",
+ "supported_types_history": [
+  {
+   "note": "v1 as shipped for the Flash lane",
+   "types": [
+    "F32",
+    "F16",
+    "BF16",
+    "Q8_0",
+    "Q4_K",
+    "Q5_K",
+    "Q6_K"
+   ],
+   "until": "2026-09-05"
+  },
+  {
+   "note": "Q3_K/IQ4_XS/IQ3_XXS/IQ3_S added for the GLM-5.3 flagship UD-Q3_K_XL/UD-IQ4_XS builds, each proven bitwise vs gguf-py 0.19.0 on real blocks (manifest.json dequant_fixtures)",
+   "since": "2026-09-05",
+   "types": [
+    "F32",
+    "F16",
+    "BF16",
+    "Q8_0",
+    "Q4_K",
+    "Q5_K",
+    "Q6_K",
+    "Q3_K",
+    "IQ4_XS",
+    "IQ3_XXS",
+    "IQ3_S"
+   ]
+  }
+ ],
  "v1_supported_types": [
   "F32",
   "F16",
@@ -242,6 +251,10 @@
   "Q8_0",
   "Q4_K",
   "Q5_K",
-  "Q6_K"
+  "Q6_K",
+  "Q3_K",
+  "IQ4_XS",
+  "IQ3_XXS",
+  "IQ3_S"
  ]
 }

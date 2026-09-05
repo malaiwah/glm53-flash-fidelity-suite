@@ -228,7 +228,7 @@ def main() -> int:
                 "the committed %s reference is NOT what this gguf-py produces" % qtype)
     passed.append(
         "1 reference equality: %s bitwise == committed gguf-py output on real "
-        "UD-Q4_K_XL bytes%s"
+        "unsloth bytes (Flash UD-Q4_K_XL; flagship UD-Q3_K_XL/UD-IQ4_XS)%s"
         % (", ".join(sorted(manifest["dequant_fixtures"])),
            " (and recomputed live from gguf-py)" if have_gguf
            else " (gguf-py absent: live recompute SKIPPED)"))
@@ -347,11 +347,11 @@ def main() -> int:
     def _retype(local_rows):
         for row in local_rows:
             if row["name"] == "blk.7.ffn_gate_exps.weight":
-                row["type"] = "IQ3_S"
+                row["type"] = "IQ2_XS"
 
     bad = _one("iq.gguf", mutate_rows=_retype)
     _refuses(lambda: gs.load_gguf_surface([str(bad)], require_file_hashes=False),
-             "v1 decode kernel", "IQ3_S", "blk.7.ffn_gate_exps.weight")
+             "v1 decode kernel", "IQ2_XS", "blk.7.ffn_gate_exps.weight")
 
     bad = _one("alias.gguf",
                mutate_rows=lambda r: r.append({"name": "blk.11.indexer.kpool_ape.weight",
@@ -428,10 +428,11 @@ def main() -> int:
             "%s: the census says v1_supported=%r but recomputing from its own type list "
             "gives %r" % (name, row["v1_supported"], recomputed))
         (supported_builds if recomputed else refused_builds).append(name)
-    assert supported_builds == ["BF16", "Q8_0", "UD-Q4_K_XL", "UD-Q5_K_XL", "UD-Q6_K_XL"], \
-        supported_builds
-    assert "UD-Q2_K_XL" in refused_builds and "UD-Q3_K_XL" in refused_builds, (
-        "UD-Q2_K_XL/UD-Q3_K_XL carry IQ types despite their K-quant names and must refuse")
+    assert supported_builds == ["BF16", "Q8_0", "UD-IQ4_XS", "UD-Q3_K_XL", "UD-Q4_K_XL",
+                                "UD-Q5_K_XL", "UD-Q6_K_XL"], supported_builds
+    assert "UD-Q2_K_XL" in refused_builds and "UD-IQ3_XXS" in refused_builds, (
+        "UD-Q2_K_XL (IQ2_XS/Q2_K) and UD-IQ3_XXS (IQ2_S/Q2_K) carry types without a kernel "
+        "and must refuse; UD-Q3_K_XL is admitted only because IQ3_XXS/IQ4_XS/Q3_K landed")
 
     ddh0_rows = _real_rows("ddh0-tensors.json")
     ddh0_names = {name: gs.classify_tensor(name)[0] for name in ddh0_rows}
@@ -447,16 +448,23 @@ def main() -> int:
     ddh0_kv.pop("split.count", None)
     ddh0_kv.pop("split.tensors.count", None)
     ddh0_kv["general.architecture"] = "glm5-next"
-    ddh0 = write_gguf(single_dir / "ddh0.gguf", ddh0_kv, _rows_for_writer(ddh0_rows))
-    message = _refuses(lambda: gs.load_gguf_surface([str(ddh0)], require_file_hashes=False),
-                       "v1 decode kernel", "IQ3_S", "IQ4_XS")
-    assert "named exclusion" in message
+    ddh0_dir = scratch / "ddh0"
+    ddh0_dir.mkdir()
+    ddh0 = write_gguf(ddh0_dir / "ddh0.gguf", ddh0_kv, _rows_for_writer(ddh0_rows))
+    # ddh0 (IQ3_S/IQ4_XS experts, arch spelled glm5-next) was v1-REFUSED by
+    # type; with the IQ3_S/IQ4_XS kernels landed it LOADS, and its census must
+    # close on the same 1,412 names through the second convert vintage's aliases
+    ddh0_surface = gs.load_gguf_surface([str(ddh0)], require_file_hashes=False)
+    assert ddh0_surface.container.architecture == "glm5-next"
+    assert sorted(ddh0_surface.scope_policy["routed_expert_types"]) == ["IQ3_S", "IQ4_XS"], \
+        ddh0_surface.scope_policy["routed_expert_types"]
+    assert len(ddh0_surface.census.direct_map) == 1259
     passed.append(
         "4 real-metadata census: 1,412 GGUF tensors close (1,259 direct + 129 fused + 24 MLA) "
         "and their 1,271 official names biject the real BF16 index (38,770 - 37,152 routed - "
-        "347 vision); ddh0's second convert vintage maps 1,412/1,412 names and is refused only "
-        "by TYPE (IQ3_S/IQ4_XS), arch spelled glm5-next; of unsloth's 12 builds v1 scores %s "
-        "and refuses %s (UD-Q2_K_XL/UD-Q3_K_XL carry IQ types despite their names)"
+        "347 vision); ddh0's second convert vintage maps 1,412/1,412 names (arch spelled "
+        "glm5-next) and now loads on the IQ3_S/IQ4_XS kernels; of unsloth's 12 builds the "
+        "adapter scores %s and refuses %s (types without a kernel)"
         % (", ".join(supported_builds), ", ".join(refused_builds)))
 
     # ---- 5. MLA placement audit on real bytes -------------------------------
@@ -764,6 +772,8 @@ def main() -> int:
     else:
         passed.append("7b SKIPPED (no --pipeline-root: stream_score.py imports quant_pipeline)")
 
+    passed.extend(_glmdsa_rungs(scratch, torch))
+
     if not args.keep:
         shutil.rmtree(scratch, ignore_errors=True)
     for line in passed:
@@ -781,6 +791,349 @@ def _sha256_file(path: Path) -> str:
     import hashlib
 
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# rungs 8-8e: the GLM-5.3 FLAGSHIP (general.architecture glm-dsa), the surface
+# the layer-outer `gguf-dequant-to-bf16` lane decodes.
+# ---------------------------------------------------------------------------
+def _glmdsa_rungs(scratch: Path, torch) -> "list":
+    import gzip
+    import hashlib
+
+    passed = []
+    arch = gs.GLM_DSA
+    config = json.loads((EVIDENCE / "glm53-official-config.json").read_text(encoding="utf-8"))
+    full = gs.indexer_full_layers_from_config(config, arch)
+    assert full[:4] == (0, 1, 2, 6) and full[-1] == 78 and len(full) == 22, full
+
+    # ---- 8. real-metadata census + bijection on the flagship ----------------
+    rows = _real_rows("unsloth-glm53-udq4kxl-tensors.json")
+    kv = json.loads((EVIDENCE / "unsloth-glm53-udq4kxl-kv.json").read_text(encoding="utf-8"))
+    for key in ("split.no", "split.count", "split.tensors.count"):
+        kv.pop(key, None)
+    flag_dir = scratch / "glmdsa"
+    flag_dir.mkdir()
+    good = write_gguf(flag_dir / "flagship.gguf", kv, _rows_for_writer(rows))
+    # the census REFUSES to guess which indexer tensors are copies
+    _refuses(lambda: gs.load_gguf_surface([str(good)], require_file_hashes=False),
+             "indexer_types", "glm-dsa")
+    surface = gs.load_gguf_surface([str(good)], repo="unsloth/GLM-5.3-GGUF",
+                                   revision="346b3591c7f28d1a23716f97a065ecf12ec14771",
+                                   require_file_hashes=False, indexer_full_layers=full)
+    census = surface.census
+    assert surface.arch is arch and surface.container.architecture == "glm-dsa"
+    assert len(surface.container.tensors) == 1809
+    assert len(census.routed) == 76 * 3 and len(census.mla) == 79 * 2, (len(census.routed), len(census.mla))
+    assert len(census.shared_indexer_copies) == (79 - 22) * 5 - 0, len(census.shared_indexer_copies)
+    # 79 layers x 5 indexer tensors = 395 in the GGUF; 22 full layers keep theirs
+    assert sum(1 for n in surface.container.tensors if ".indexer." in n) == 395
+    assert len(census.direct_map) == 1809 - 228 - 158 - len(census.shared_indexer_copies)
+    official = json.loads(gzip.open(EVIDENCE / "glm53-official-bf16-weight-map.json.gz", "rt").read())
+    assert official["revision"] == "304b8051cfb2b260b61ce0cbe330e02a98e73639"
+    bijection = gs.verify_nonrouted_bijection(census, official["weight_map"].keys())
+    assert bijection["official_tensors"] == 59585
+    assert bijection["official_routed_tensors"] == 76 * 256 * 3
+    assert bijection["official_vision_tensors"] == 0
+    assert bijection["mla_reconstructed_tensors"] == 79
+    assert bijection["shared_indexer_copies_not_loaded"] == 285
+    for gguf_name, parent in list(census.shared_indexer_copies.items())[:3]:
+        assert parent in full and int(gguf_name.split(".")[1]) not in full
+    # the layer partition covers every tensor exactly once and never a copy
+    partition = gs.layer_partition(census)
+    covered = [n for names in partition.values() for n in names]
+    assert len(covered) == len(set(covered)) == 1809 - len(census.shared_indexer_copies)
+    assert sorted(partition[gs.RESIDENT_LAYER]) == ["output.weight", "output_norm.weight",
+                                                    "token_embd.weight"]
+    assert sorted(l for l in partition if l >= 0) == list(range(79))
+    # refusals specific to the flagship table
+    bad_types = list(config["indexer_types"])
+    bad_types[0] = "shared"
+    _refuses(lambda: gs.indexer_full_layers_from_config(dict(config, indexer_types=bad_types), arch),
+             "layer 0 must be 'full'")
+    _refuses(lambda: gs.indexer_full_layers_from_config(dict(config, indexer_types=bad_types[:-1]), arch),
+             "77 entries", "78 decoder layers")
+    bad_kv = dict(kv)
+    bad_kv["glm-dsa.attention.key_length_mla"] = 192
+    bad = write_gguf(flag_dir / "geom.gguf", bad_kv, _rows_for_writer(rows))
+    _refuses(lambda: gs.load_gguf_surface([str(bad)], require_file_hashes=False,
+                                          indexer_full_layers=full),
+             "geometry gate", "attention.key_length_mla")
+    passed.append(
+        "8 glm-dsa census: the real 1,809-tensor UD-Q4_K_XL table closes (1,138 direct + 228 "
+        "fused + 158 MLA halves + 285 shared-indexer copies never loaded) and bijects the real "
+        "official BF16 index (59,585 - 58,368 routed); the census refuses without the "
+        "config's indexer_types and on a wrong MLA geometry")
+
+    # ---- 8a. flagship gguf-py parity fixtures were taken from the RIGHT builds -
+    manifest = json.loads((EVIDENCE / "manifest.json").read_text(encoding="utf-8"))
+    build_types = json.loads((EVIDENCE / "unsloth-glm53-build-types.json").read_text(encoding="utf-8"))
+    for qtype in ("IQ3_XXS", "IQ4_XS", "Q3_K", "IQ3_S"):
+        spec = manifest["dequant_fixtures"][qtype]
+        src = spec["source"]
+        assert src["repo"] == "unsloth/GLM-5.3-GGUF" and src["architecture"] == "glm-dsa"
+        assert build_types["builds"][src["build"]]["types_by_tensor"][spec["gguf_tensor"]] == qtype, (
+            qtype, src)
+        # and their type traits are the ones the census sizes bytes with
+        per_block, block_bytes = gs.BLOCK_TRAITS[qtype]
+        assert spec["raw_bytes"] == spec["rows"] * spec["cols"] // per_block * block_bytes
+    # the two flagship builds the lane measures are FULLY decodable, by type
+    for build, want in (("UD-Q3_K_XL", {"F32", "Q8_0", "Q6_K", "Q5_K", "Q4_K", "Q3_K",
+                                        "IQ4_XS", "IQ3_XXS"}),
+                        ("UD-IQ4_XS", {"F32", "Q8_0", "Q6_K", "Q5_K", "Q4_K", "Q3_K",
+                                       "IQ4_XS", "IQ3_S"})):
+        types = set(build_types["builds"][build]["types_by_tensor"].values())
+        assert types == want, (build, types)
+        assert types <= set(gs.SUPPORTED_TYPES)
+    passed.append(
+        "8a flagship parity provenance: the IQ3_XXS/IQ4_XS/Q3_K/IQ3_S fixtures come from the "
+        "named tensors of UD-Q3_K_XL / UD-IQ4_XS (type-checked against the committed build "
+        "tables), and both builds' full type sets are decodable")
+
+    # ---- 8b. MLA composition is EXACT on real BF16 windows -------------------
+    spec = manifest["flagship_glmdsa"]["mla_fixture"]
+    k = torch.from_numpy(np.load(EVIDENCE / "glmdsa_mla_k_b_head_window.npy").astype(np.int32)).to(torch.int32)
+    v = torch.from_numpy(np.load(EVIDENCE / "glmdsa_mla_v_b_head_window.npy").astype(np.int32)).to(torch.int32)
+    off = torch.from_numpy(np.load(EVIDENCE / "glmdsa_mla_official_row_window_bf16.npy").astype(np.int32))
+    heads = int(spec["heads_in_fixture"])
+    assert k.shape == (heads, 512, 192) and v.shape == (heads, 256, 512)
+    window_arch = gs.GgufArch(**dict(arch.__dict__, mla_heads=heads))
+    composed = gs.compose_kv_b(k.to(torch.float32), v.to(torch.float32), window_arch)
+    assert composed.shape == (heads * 448, 512)
+    assert torch.equal(composed.to(torch.int32), off), "kv_b composition is not bit-exact"
+    wrong = torch.cat([v.to(torch.float32), k.to(torch.float32).transpose(1, 2)], dim=1).reshape(-1, 512)
+    assert not torch.equal(wrong.to(torch.int32), off)
+    audit = json.loads((EVIDENCE / "glmdsa-layout-audit.json").read_text(encoding="utf-8"))
+    assert audit["all_equal"] is True and audit["official"]["revision"] == "304b8051cfb2b260b61ce0cbe330e02a98e73639"
+    comparisons = [c for c in audit["comparisons"] if "equal" in c]
+    assert len(comparisons) >= 45 and all(c["equal"] for c in comparisons)
+    labels = " ".join(c["label"] for c in comparisons)
+    for needle in ("kv_b_proj composition", "q_b_proj", "kv_a_proj_with_mqa", "dense mlp.gate_proj",
+                   "routed expert 255", "indexer.wk", "embed_tokens", "lm_head", "model.norm",
+                   "MTP layer 78 eh_proj"):
+        assert needle in labels, needle
+    shared = next(c for c in audit["comparisons"] if c["label"].startswith("shared-indexer"))
+    assert shared["official_has_indexer_on_layers"] == list(full)
+    assert all(all(t["equals_prev_full_layer_%d" % row["shares_with_full_layer"]]
+                   for t in row["tensors"].values()) for row in shared["per_layer"].values())
+    tok = json.loads((EVIDENCE / "glmdsa-tokenizer-order-audit.json").read_text(encoding="utf-8"))
+    for build in ("BF16", "UD-Q4_K_XL", "UD-Q3_K_XL", "UD-IQ4_XS"):
+        row = tok["variants"][build]
+        assert row["tokens"] == 154880 and row["order_mismatches_vs_official"] == 0
+        assert row["absent_count"] == 24 and row["merges_equal_official"] is True
+    passed.append(
+        "8b glm-dsa layout: kv_b_proj = per-head [k_b^T (192 rows); v_b (256 rows)] is BIT-EXACT "
+        "against the official BF16 rows on the committed 2-head window (and the wrong order is not); "
+        "the committed audit holds %d exact comparisons over the BF16 build incl. every MLA/dense/"
+        "routed/indexer/embed/head/MTP class, 285 shared-indexer copies value-identical to their "
+        "parents, and the tokenizer order equals the official vocab on all four builds (24 trailing "
+        "[PAD] ids past the official 154856)" % len(comparisons))
+
+    # ---- 8c. materialize_layer on a synthetic two-layer glm-dsa GGUF -----------
+    # The real geometry is 3.2e9 elements per fused expert tensor; the reader's
+    # LOGIC (name map, slot slicing, kv_b composition, dtype policy) does not
+    # depend on the numbers, so the fixture runs the same code over a shrunken
+    # GgufArch (4 experts, 2 MLA heads, hidden 256) whose dims the file carries.
+    rng = np.random.default_rng(0x6D5A)
+    HID, RANK, QR, INTER, HEADS, NOPE, VD, E = 256, 64, 64, 64, 2, 24, 32, 4
+    mini_arch = gs.GgufArch(**dict(
+        arch.__dict__, num_experts=E, mla_heads=HEADS, mla_k_nope=NOPE, mla_v_dim=VD,
+        mla_kv_lora_rank=RANK,
+        projection_shape={"gate_proj": (INTER, HID), "up_proj": (INTER, HID),
+                          "down_proj": (HID, INTER)}))
+    assert mini_arch.kv_b_rows == HEADS * (NOPE + VD) and mini_arch.mtp_layer == 78
+
+    def blocks(count, block_bytes, scale_fields=1, scale_at=0):
+        out = rng.integers(0, 256, size=(count, block_bytes), dtype=np.uint8)
+        scales = (rng.standard_normal((count, scale_fields)) * 0.01).astype(np.float16)
+        out[:, scale_at:scale_at + 2 * scale_fields] = scales.view(np.uint8)
+        return out.tobytes()
+
+    def q8(n):
+        return blocks(n // 32, 34)
+
+    def q4k(n):
+        return blocks(n // 256, 144, 2)
+
+    def iq3(n):
+        return blocks(n // 256, 98)
+
+    def f32(*shape):
+        return rng.standard_normal(shape).astype(np.float32).tobytes()
+
+    tensors = {  # name -> (type, dims fastest-first, bytes)
+        "token_embd.weight": ("Q8_0", [HID, 8], q8(8 * HID)),
+        "output.weight": ("Q8_0", [HID, 8], q8(8 * HID)),
+        "output_norm.weight": ("F32", [HID], f32(HID)),
+    }
+    for layer in (5, 78):
+        b = "blk.%d." % layer
+        tensors.update({
+            b + "attn_norm.weight": ("F32", [HID], f32(HID)),
+            b + "ffn_norm.weight": ("F32", [HID], f32(HID)),
+            b + "attn_q_a.weight": ("Q8_0", [HID, QR], q8(HID * QR)),
+            b + "attn_q_a_norm.weight": ("F32", [QR], f32(QR)),
+            b + "attn_q_b.weight": ("Q8_0", [QR, HEADS * 64], q8(QR * HEADS * 64)),
+            b + "attn_kv_a_mqa.weight": ("Q8_0", [HID, RANK + 64], q8(HID * (RANK + 64))),
+            b + "attn_kv_a_norm.weight": ("F32", [RANK], f32(RANK)),
+            b + "attn_k_b.weight": ("Q8_0", [NOPE, RANK, HEADS], q8(NOPE * RANK * HEADS)),
+            b + "attn_v_b.weight": ("Q8_0", [RANK, VD, HEADS], q8(RANK * VD * HEADS)),
+            b + "attn_output.weight": ("Q8_0", [HEADS * VD, HID], q8(HEADS * VD * HID)),
+            b + "ffn_gate_inp.weight": ("F32", [HID, E], f32(E, HID)),
+            b + "exp_probs_b.bias": ("F32", [E], f32(E)),
+            b + "ffn_gate_exps.weight": ("Q4_K", [HID, INTER, E], q4k(HID * INTER * E)),
+            b + "ffn_up_exps.weight": ("IQ3_XXS", [HID, INTER, E], iq3(HID * INTER * E)),
+            b + "ffn_down_exps.weight": ("Q4_K", [INTER, HID, E], q4k(HID * INTER * E)),
+            b + "ffn_gate_shexp.weight": ("Q8_0", [HID, INTER], q8(HID * INTER)),
+            b + "ffn_up_shexp.weight": ("Q8_0", [HID, INTER], q8(HID * INTER)),
+            b + "ffn_down_shexp.weight": ("Q8_0", [INTER, HID], q8(HID * INTER)),
+            b + "indexer.attn_k.weight": ("Q8_0", [HID, 32], q8(HID * 32)),
+            b + "indexer.attn_q_b.weight": ("Q8_0", [QR, 64], q8(QR * 64)),
+            b + "indexer.proj.weight": ("F32", [HID, 8], f32(8, HID)),
+            b + "indexer.k_norm.weight": ("F32", [32], f32(32)),
+            b + "indexer.k_norm.bias": ("F32", [32], f32(32)),
+        })
+    tensors["blk.78.nextn.eh_proj.weight"] = ("Q8_0", [2 * HID, HID], q8(2 * HID * HID))
+    for suffix in ("nextn.enorm.weight", "nextn.hnorm.weight", "nextn.shared_head_norm.weight"):
+        tensors["blk.78." + suffix] = ("F32", [HID], f32(HID))
+    rows_w, data, offset = [], b"", 0
+    for name in sorted(tensors):
+        ttype, dims, raw = tensors[name]
+        rows_w.append({"name": name, "dims": dims, "type": ttype, "offset": offset})
+        data += raw
+        pad = (-len(raw)) % 32
+        data += b"\0" * pad
+        offset += len(raw) + pad
+    mini_kv = {k: v for k, v in kv.items() if k.startswith("glm-dsa.") or k == "general.architecture"}
+    mini_path = write_gguf(flag_dir / "mini-glmdsa.gguf", mini_kv, rows_w, data=data)
+    mini_container = gs.GgufContainer([gs.GgufFile(str(mini_path))])
+    # the census closure demands every routed layer; the synthetic file has two,
+    # so build the census by hand from the same classifier, as layer_outer's
+    # plan would on a truncated fixture tree
+    direct_map, routed, mla = {}, {}, {}
+    for name in mini_container.tensors:
+        role = gs.classify_tensor(name, arch)
+        assert role[0] != "unmapped", name
+        if role[0] == "top":
+            direct_map[name] = role[1]
+        elif role[0] == "direct":
+            direct_map[name] = role[2]
+        elif role[0] == "routed":
+            routed[(role[1], role[2])] = name
+        else:
+            mla[(role[1], role[2])] = name
+    mini_census = gs.GgufCensus(direct_map=direct_map, routed=routed, mla=mla,
+                                mla_layers=(5, 78), arch=mini_arch)
+    mini_surface = gs.GgufSurface(
+        container=mini_container, census=mini_census, repo="test", revision="0" * 40,
+        architecture="glm-dsa", file_records=({"name": "mini-glmdsa.gguf", "bytes": 1, "sha256": None},),
+        file_hash_verification="skipped", type_census={}, scope_policy={}, quant_metadata={})
+    stats: dict = {}
+    out = gs.materialize_layer(mini_surface, 5, stats=stats)
+    want_names = {arch.layer_name(5, s) for s in (
+        "input_layernorm.weight", "post_attention_layernorm.weight", "self_attn.q_a_proj.weight",
+        "self_attn.q_a_layernorm.weight", "self_attn.q_b_proj.weight",
+        "self_attn.kv_a_proj_with_mqa.weight", "self_attn.kv_a_layernorm.weight",
+        "self_attn.kv_b_proj.weight", "self_attn.o_proj.weight", "mlp.gate.weight",
+        "mlp.gate.e_score_correction_bias", "mlp.shared_experts.gate_proj.weight",
+        "mlp.shared_experts.up_proj.weight", "mlp.shared_experts.down_proj.weight",
+        "self_attn.indexer.wk.weight", "self_attn.indexer.wq_b.weight",
+        "self_attn.indexer.weights_proj.weight", "self_attn.indexer.k_norm.weight",
+        "self_attn.indexer.k_norm.bias")}
+    want_names |= {arch.expert_name(5, e, p) for e in range(E) for p in gs.PROJECTIONS}
+    assert set(out) == want_names, (sorted(set(out) ^ want_names)[:5])
+    assert out[arch.kv_b_name(5)].shape == (HEADS * (NOPE + VD), RANK) and out[arch.kv_b_name(5)].dtype == torch.bfloat16
+    assert out[arch.layer_name(5, "mlp.gate.e_score_correction_bias")].dtype == torch.float32
+    assert out[arch.layer_name(5, "mlp.gate.weight")].dtype == torch.bfloat16
+    assert out[arch.layer_name(5, "input_layernorm.weight")].dtype == torch.bfloat16
+    assert out[arch.expert_name(5, 0, "gate_proj")].shape == (INTER, HID)
+    assert out[arch.expert_name(5, E - 1, "down_proj")].shape == (HID, INTER)
+    assert out[arch.layer_name(5, "self_attn.q_b_proj.weight")].shape == (HEADS * 64, QR)
+    assert stats["tensors_decoded"] == 23 and stats["official_tensors_produced"] == 19 + 3 * E
+    assert stats["ggml_types"] == {"F32": 9, "Q8_0": 11, "Q4_K": 2, "IQ3_XXS": 1}, stats["ggml_types"]
+    # values: the expert slice equals a direct decode of its byte range, once bf16-rounded
+    row = mini_container.tensors["blk.5.ffn_up_exps.weight"]
+    rel, nbytes = gs.expert_slice_range(row, 2, mini_arch)
+    direct = gs.dequant_bytes("IQ3_XXS", mini_container.read_tensor_range(row["name"], rel, nbytes),
+                              INTER * HID).reshape(INTER, HID).to(torch.bfloat16)
+    assert torch.equal(out[arch.expert_name(5, 2, "up_proj")], direct)
+    # kv_b: composed from the two decoded halves, then ONE rounding
+    k_full = gs.dequant_bytes("Q8_0", mini_container.read_tensor("blk.5.attn_k_b.weight"), NOPE * RANK * HEADS)
+    v_full = gs.dequant_bytes("Q8_0", mini_container.read_tensor("blk.5.attn_v_b.weight"), RANK * VD * HEADS)
+    assert torch.equal(out[arch.kv_b_name(5)], gs.compose_kv_b(k_full, v_full, mini_arch).to(torch.bfloat16))
+    # e_score_correction_bias passes through byte-exact (official float32)
+    bias = np.frombuffer(tensors["blk.5.exp_probs_b.bias"][2], dtype=np.float32)
+    assert np.array_equal(out[arch.layer_name(5, "mlp.gate.e_score_correction_bias")].numpy(), bias)
+    resident = gs.materialize_layer(mini_surface, gs.RESIDENT_LAYER)
+    assert set(resident) == {"model.embed_tokens.weight", "lm_head.weight", "model.norm.weight"}
+    assert resident["lm_head.weight"].shape == (8, HID) and resident["lm_head.weight"].dtype == torch.bfloat16
+    mtp = gs.materialize_layer(mini_surface, 78)
+    assert arch.layer_name(78, "eh_proj.weight") in mtp and mtp[arch.layer_name(78, "eh_proj.weight")].shape == (HID, 2 * HID)
+    assert len(mtp) == 19 + 4 + 3 * E
+    _refuses(lambda: gs.materialize_layer(mini_surface, 6), "not a layer of this artifact")
+    plan = gs.materialize_plan(mini_surface)
+    assert plan["kv_b_shape"] == [HEADS * (NOPE + VD), RANK] and plan["mtp_layer"] == 78
+    assert gs.materialize_plan(surface)["kv_b_shape"] == [28672, 512]
+    passed.append(
+        "8c materialize_layer: a synthetic two-layer glm-dsa GGUF (Q8_0/Q4_K/IQ3_XXS/F32, real "
+        "container bytes, shrunken geometry) decodes layer 5 into %d official names (E x 3 experts sliced "
+        "from the fused tensors, kv_b_proj composed per head, e_score_correction_bias kept fp32, norms "
+        "cast bf16), the resident set and the MTP block; expert and kv_b values equal a direct "
+        "decode rounded once" % len(out))
+
+    # ---- 8d. shared-indexer copies: the proof routine and its refusal -------------
+    # a container where layer 5 declares itself a copy of layer 78 (synthetic
+    # parent): identical bytes pass, one flipped byte refuses by name
+    copy_census = gs.GgufCensus(direct_map=direct_map, routed=routed, mla=mla, mla_layers=(5, 78),
+                                arch=mini_arch, shared_indexer_copies={
+                                    "blk.5.indexer.k_norm.bias": 78})
+    twin_dir = flag_dir / "twin"
+    twin_dir.mkdir()
+    twin_tensors = dict(tensors)
+    twin_tensors["blk.5.indexer.k_norm.bias"] = twin_tensors["blk.78.indexer.k_norm.bias"]
+    rows_t, data_t, offset = [], b"", 0
+    for name in sorted(twin_tensors):
+        ttype, dims, raw = twin_tensors[name]
+        rows_t.append({"name": name, "dims": dims, "type": ttype, "offset": offset})
+        data_t += raw + b"\0" * ((-len(raw)) % 32)
+        offset += len(raw) + (-len(raw)) % 32
+    twin = gs.GgufContainer([gs.GgufFile(str(write_gguf(twin_dir / "twin.gguf", mini_kv, rows_t, data=data_t)))])
+    proof = gs.verify_shared_indexer_copies(twin, copy_census)
+    assert proof == {"copies_compared": 1, "copies_by_parent_layer": {78: 1}, "all_value_identical": True}
+    _refuses(lambda: gs.verify_shared_indexer_copies(mini_container, copy_census),
+             "blk.5.indexer.k_norm.bias", "not a value-identical copy")
+    passed.append("8d shared-indexer proof: value-identical copies pass, a differing copy refuses by name")
+
+    # ---- 8e. the scope tool over the real header table ---------------------------
+    import gguf_scope
+    source = "test source"
+    rows_scope = gguf_scope.assignments(surface, source)
+    by_class = {r["tensor_class"]: r for r in rows_scope}
+    assert by_class["lm_head"] == dict(by_class["lm_head"], treatment="quantized", format="gguf-k-quant",
+                                       bits_per_weight=8.5, layer_range="all")
+    assert by_class["moe.experts"]["format"] == "gguf-k-quant" and by_class["moe.experts"]["layer_range"] == "3-77"
+    assert abs(by_class["moe.experts"]["bits_per_weight"] - 4.8611) < 1e-4
+    assert by_class["mtp"]["layer_range"] == "78" and by_class["mtp"]["format"] == "mixed"
+    assert by_class["attn.other"]["format"] == "mixed" and by_class["attn.other"]["bits_per_weight"] is None
+    assert by_class["moe.router"]["treatment"] == "native" and by_class["moe.router"]["format"] == "fp32"
+    assert by_class["mlp.gate"]["layer_range"] == "0-2"
+    pairs = [(r["tensor_class"], r["layer_range"]) for r in rows_scope]
+    assert len(pairs) == len(set(pairs)), "SCOPE-004: duplicate (class, range)"
+    committed = json.loads((TOOLS.parent / "scopes" / "scope--glm53-gguf-unsloth-udq4kxl.json").read_text(encoding="utf-8"))
+    strip = lambda rows_: [{k: v for k, v in r.items() if k != "note"} for r in rows_]  # noqa: E731
+    assert strip(committed["assignments"]) == strip(rows_scope), "the committed scope drifted from the header table"
+    assert committed["head_policy"] == "quantized" and committed["mtp_included"] is True
+    allow = gguf_scope.mtp_allowlist(surface)
+    committed_allow = json.loads((TOOLS / "layer-outer-evidence" /
+                                  "gguf-unsloth-glm53-layer78-unexpected-keys.json").read_text(encoding="utf-8"))
+    assert allow == committed_allow and len(allow) == 791
+    assert hashlib.sha256(json.dumps(sorted(allow), separators=(",", ":")).encode()).hexdigest() == \
+        "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57"
+    passed.append(
+        "8e gguf_scope: the committed UD-Q4_K_XL scope equals the rows re-derived from the header "
+        "table (13 classes, one row per (class, range), measured bits: experts 4.8611, head 8.5) "
+        "and the committed 791-name MTP allowlist equals the header census (digest 61e5f26a...)")
+    return passed
 
 
 def _mock_official_side(scratch: Path) -> "tuple":

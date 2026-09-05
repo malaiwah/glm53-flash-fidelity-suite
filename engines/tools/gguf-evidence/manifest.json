@@ -1,5 +1,93 @@
 {
  "dequant_fixtures": {
+  "IQ3_S": {
+   "cols": 6144,
+   "first_row_first_4": [
+    -0.009689748287200928,
+    0.016149580478668213,
+    -0.009689748287200928,
+    -0.009689748287200928
+   ],
+   "gguf_tensor": "blk.5.ffn_gate_exps.weight",
+   "raw_bytes": 21120,
+   "reference": "gguf-py 0.19.0 gguf.quants.dequantize",
+   "rows": 8,
+   "source": {
+    "architecture": "glm-dsa",
+    "build": "UD-IQ4_XS",
+    "expert_slot": 0,
+    "file": "GLM-5.3-UD-IQ4_XS-00002-of-00009.gguf",
+    "repo": "unsloth/GLM-5.3-GGUF",
+    "revision": "346b3591c7f28d1a23716f97a065ecf12ec14771",
+    "rows": "0-7 of expert 0 (fused [in,out,256] tensor, leading bytes)"
+   }
+  },
+  "IQ3_XXS": {
+   "cols": 6144,
+   "first_row_first_4": [
+    -0.008711814880371094,
+    0.014519691467285156,
+    -0.008711814880371094,
+    -0.0029039382934570312
+   ],
+   "gguf_tensor": "blk.5.ffn_gate_exps.weight",
+   "raw_bytes": 18816,
+   "reference": "gguf-py 0.19.0 gguf.quants.dequantize",
+   "rows": 8,
+   "source": {
+    "architecture": "glm-dsa",
+    "build": "UD-Q3_K_XL",
+    "expert_slot": 0,
+    "file": "GLM-5.3-UD-Q3_K_XL-00002-of-00009.gguf",
+    "repo": "unsloth/GLM-5.3-GGUF",
+    "revision": "346b3591c7f28d1a23716f97a065ecf12ec14771",
+    "rows": "0-7 of expert 0 (fused [in,out,256] tensor, leading bytes)"
+   }
+  },
+  "IQ4_XS": {
+   "cols": 2048,
+   "first_row_first_4": [
+    -0.010280609130859375,
+    0.01116180419921875,
+    -0.019092559814453125,
+    0.015567779541015625
+   ],
+   "gguf_tensor": "blk.5.ffn_down_exps.weight",
+   "raw_bytes": 8704,
+   "reference": "gguf-py 0.19.0 gguf.quants.dequantize",
+   "rows": 8,
+   "source": {
+    "architecture": "glm-dsa",
+    "build": "UD-Q3_K_XL",
+    "expert_slot": 0,
+    "file": "GLM-5.3-UD-Q3_K_XL-00002-of-00009.gguf",
+    "repo": "unsloth/GLM-5.3-GGUF",
+    "revision": "346b3591c7f28d1a23716f97a065ecf12ec14771",
+    "rows": "0-7 of expert 0 (fused [in,out,256] tensor, leading bytes)"
+   }
+  },
+  "Q3_K": {
+   "cols": 6144,
+   "first_row_first_4": [
+    -0.007413148880004883,
+    -0.014826297760009766,
+    -0.007413148880004883,
+    0.014826297760009766
+   ],
+   "gguf_tensor": "blk.78.ffn_gate_exps.weight",
+   "raw_bytes": 21120,
+   "reference": "gguf-py 0.19.0 gguf.quants.dequantize",
+   "rows": 8,
+   "source": {
+    "architecture": "glm-dsa",
+    "build": "UD-Q3_K_XL",
+    "expert_slot": 0,
+    "file": "GLM-5.3-UD-Q3_K_XL-00009-of-00009.gguf",
+    "repo": "unsloth/GLM-5.3-GGUF",
+    "revision": "346b3591c7f28d1a23716f97a065ecf12ec14771",
+    "rows": "0-7 of expert 0 (fused [in,out,256] tensor, leading bytes)"
+   }
+  },
   "Q4_K": {
    "cols": 4096,
    "first_row_first_4": [
@@ -52,6 +140,30 @@
    "reference": "gguf-py 0.19.0 gguf.quants.dequantize",
    "rows": 8
   }
+ },
+ "flagship_glmdsa": {
+  "layout_audit": "glmdsa-layout-audit.json",
+  "mla_fixture": {
+   "build": "BF16",
+   "equality": "exact (uint16 bit patterns)",
+   "files": [
+    "glmdsa_mla_k_b_head_window.npy",
+    "glmdsa_mla_v_b_head_window.npy",
+    "glmdsa_mla_official_row_window_bf16.npy"
+   ],
+   "ggml_type": "BF16",
+   "gguf_tensors": [
+    "blk.5.attn_k_b.weight",
+    "blk.5.attn_v_b.weight"
+   ],
+   "heads_in_fixture": 2,
+   "heads_in_full_tensor": 64,
+   "official_dtype": "bfloat16 (stored as uint16 view)",
+   "official_rows_in_fixture": 896,
+   "official_tensor": "model.layers.5.self_attn.kv_b_proj.weight",
+   "per_head_official_rows": 448
+  },
+  "tokenizer_audit": "glmdsa-tokenizer-order-audit.json"
  },
  "mla_fixture": {
   "full_tensor_audit": "mla-full-audit.json",
