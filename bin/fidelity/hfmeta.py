@@ -523,6 +523,248 @@ def tr3_tail_declared_bits(tail):
     return tail.get("bits_avg", tail.get("bits"))
 
 
+# --- exl3 rotation layouts ---------------------------------------------------
+# Three ways a GLM-5.x EXL3 checkpoint stores the two per-module rotation
+# vectors of an exl3 payload (`suh` on the input side, `svh` on the output
+# side), read from the INDEX NAMES and cross-checked against the declaration:
+#
+#   per_module   stock exllamav3: every module carries its own suh and svh
+#                (exllamav3 1.4.2 modules/linear.py:391-407 load_exl3 reads
+#                `key + ".suh"` / `key + ".svh"` per module and nothing else).
+#   shared_h_v1  willfalco / jpsequeira TR3: the H-side (hidden-dim) vector of
+#                every routed expert is one vector per layer, projection and
+#                rank at `experts.shared_h.{proj}.rank{r}.{suh|svh}` (suh for
+#                gate/up, svh for down); the I-side stays per expert. Declared
+#                by hybrid_tr3_tail.rotation_layout / shared_h_tensor_schema.
+#                Reader: the authors' vLLM overlay (brandonmusic's pinned
+#                runtime/r17-g64-q-only/exl3_overlay.py:353-357, 1228-1239,
+#                1667-1700, 2575-2583, 2633-2664): the shared row is loaded
+#                into expert 0's slot and broadcast to every expert.
+#   r7_shared    brandonmusic TR3v4: UNSHARDED routed experts carry only their
+#                I-side vector; the layer's H-side vectors are
+#                `experts.r7_shared.gate_up_suh` (one suh for gate AND up) and
+#                `experts.r7_shared.down_svh`. Declared by
+#                quantization_config.r7_routed_experts; the same overlay maps
+#                them to expert 0's suh/svh (exl3_overlay.py:1655-1664) and
+#                aliases w3's suh to w1's (2668-2673).
+#
+# `exl3_rotation_groups` / `exl3_layout_contract` are byte-identical in
+# engines/tools/layer_outer.py (no bin/ import on the pod); the trellis
+# selftest's mirror rung asserts the two sources are the same text.
+EXL3_ROTATION_LAYOUTS = ("per_module", "shared_h_v1", "r7_shared")
+EXL3_SHARED_H_TENSOR_SCHEMA = (
+    "model.layers.{L}.mlp.experts.shared_h.{proj}.rank{r}.{suh|svh}")
+_EXL3_OBJECTS = ("trellis", "suh", "svh")
+_EXL3_CODEBOOKS = ("mul1", "mcg")
+_EXL3_EXPERT_RE = re.compile(
+    r"^(?P<experts>.+\.experts)\.(?P<expert>\d+)\.(?P<proj>gate_proj|up_proj|down_proj)"
+    r"(?:\.rank(?P<rank>\d+))?$")
+_EXL3_SHARED_H_RE = re.compile(
+    r"^(?P<experts>.+\.experts)\.shared_h\.(?P<proj>gate_proj|up_proj|down_proj)"
+    r"\.rank(?P<rank>\d+)\.(?P<field>suh|svh)$")
+_EXL3_R7_SHARED_RE = re.compile(
+    r"^(?P<experts>.+\.experts)\.r7_shared\.(?P<field>gate_up_suh|down_svh)$")
+_EXL3_RANK_SUFFIX_RE = re.compile(r"\.rank\d+$")
+
+
+def exl3_rotation_groups(keys):
+    """Group `<module>.{trellis,suh,svh,<codebook>}` keys by module, resolving a
+    layer-shared H-side rotation vector BY NAME where a module's own group
+    omits it.
+
+    Returns (groups, census). `groups[stem]` = {trellis, suh, svh: key,
+    codebook, marker, shared: None | (field, key, layout)}. `census` =
+    {layout, shared_vectors: sorted shared keys, per_layout: {layout: modules}}.
+    A group is complete only when all three objects resolve AND exactly one
+    codebook marker is present; a partial group, a module carrying its own
+    H-side vector beside a shared one, a shared vector no module resolves, or
+    two shared layouts in one checkpoint all raise ValueError.
+    """
+    staged = {}
+    shared_h = {}
+    r7 = {}
+    for key in keys:
+        match = _EXL3_SHARED_H_RE.match(key)
+        if match is not None:
+            slot = (match.group("experts"), match.group("proj"), int(match.group("rank")))
+            shared_h.setdefault(slot, {})[match.group("field")] = key
+            continue
+        match = _EXL3_R7_SHARED_RE.match(key)
+        if match is not None:
+            r7.setdefault(match.group("experts"), {})[match.group("field")] = key
+            continue
+        stem, _, last = key.rpartition(".")
+        if not stem:
+            continue
+        if last in _EXL3_OBJECTS:
+            staged.setdefault(stem, {})[last] = key
+        elif last in _EXL3_CODEBOOKS:
+            staged.setdefault(stem, {}).setdefault("codebooks", []).append(last)
+    groups = {}
+    partial = []
+    consumers = {}
+    per_layout = {}
+    for stem, found in staged.items():
+        marks = found.get("codebooks") or []
+        missing = [name for name in _EXL3_OBJECTS if name not in found]
+        shared = None
+        expert = _EXL3_EXPERT_RE.match(stem)
+        if expert is not None:
+            proj = expert.group("proj")
+            h_side = "svh" if proj == "down_proj" else "suh"
+            if expert.group("rank") is not None:
+                slot = (expert.group("experts"), proj, int(expert.group("rank")))
+                vector = shared_h.get(slot, {}).get(h_side)
+                layout = "shared_h_v1"
+            else:
+                vector = r7.get(expert.group("experts"), {}).get(
+                    "down_svh" if proj == "down_proj" else "gate_up_suh")
+                layout = "r7_shared"
+            if vector is not None:
+                if h_side in found:
+                    raise ValueError(
+                        "%s carries its own %s beside the layer-shared %s; two "
+                        "candidates for one rotation vector" % (stem, h_side, vector))
+                found[h_side] = vector
+                missing = [name for name in missing if name != h_side]
+                shared = (h_side, vector, layout)
+                consumers[vector] = consumers.get(vector, 0) + 1
+        if missing or len(marks) != 1:
+            partial.append("%s (missing %s, codebook markers %s)"
+                           % (stem, missing or "none", sorted(marks) or "none"))
+            continue
+        groups[stem] = {name: found[name] for name in _EXL3_OBJECTS}
+        groups[stem]["codebook"] = marks[0]
+        groups[stem]["marker"] = "%s.%s" % (stem, marks[0])
+        groups[stem]["shared"] = shared
+        layout = shared[2] if shared is not None else "per_module"
+        per_layout[layout] = per_layout.get(layout, 0) + 1
+    if partial:
+        raise ValueError(
+            "%d incomplete trellis payload group(s): %s%s"
+            % (len(partial), "; ".join(sorted(partial)[:3]),
+               " (+%d more)" % (len(partial) - 3) if len(partial) > 3 else ""))
+    vectors = sorted(key for entry in list(shared_h.values()) + list(r7.values())
+                     for key in entry.values())
+    orphans = [key for key in vectors if key not in consumers]
+    if orphans:
+        raise ValueError(
+            "%d layer-shared rotation vector(s) resolve no module (e.g. %s)"
+            % (len(orphans), orphans[0]))
+    layouts = sorted(name for name in per_layout if name != "per_module")
+    if len(layouts) > 1:
+        raise ValueError(
+            "two shared rotation layouts in one checkpoint: %s" % ", ".join(layouts))
+    census = {"layout": layouts[0] if layouts else "per_module",
+              "shared_vectors": vectors, "per_layout": dict(sorted(per_layout.items()))}
+    return groups, census
+
+
+def exl3_declared_module_bits(name, qc, tail):
+    """The bits an artifact declares for a NON-ROUTED exl3 module, or None.
+
+    jpsequeira: hybrid_tr3_tail.protected_tensor_policy.tensors[name].bits;
+    brandonmusic: quantization_config.tensor_storage[name].bits_per_weight;
+    a stock inline exl3 config: quantization_config.head_bits for lm_head.
+    """
+    entry = (((tail or {}).get("protected_tensor_policy") or {}).get("tensors") or {}).get(name)
+    if isinstance(entry, dict):
+        bits = entry.get("bits")
+        if isinstance(bits, (int, float)) and not isinstance(bits, bool):
+            return bits
+    entry = ((qc or {}).get("tensor_storage") or {}).get(name)
+    if isinstance(entry, dict):
+        bits = entry.get("bits_per_weight")
+        if isinstance(bits, (int, float)) and not isinstance(bits, bool):
+            return bits
+    if name == "lm_head":
+        bits = (qc or {}).get("head_bits")
+        if isinstance(bits, (int, float)) and not isinstance(bits, bool):
+            return bits
+    return None
+
+
+def _exl3_names_sha256(names):
+    if not names:
+        return None
+    import hashlib
+    return hashlib.sha256("\n".join(sorted(names)).encode("utf-8")).hexdigest()
+
+
+def exl3_layout_contract(keys, qc, tail):
+    """The rotation-layout half of an exl3 weights_decode contract, from the
+    index names and the config alone.
+
+    Returns (contract, detail). `contract` is bound field for field into
+    `weights_decode.quantization_config` on both the controller and the pod:
+    rotation_layout, shared_vectors {count, names_sha256}, nonrouted_exl3
+    {count, names_sha256, declared_bits histogram}, activation_scheme.
+    `detail` carries what the pod's decoder needs beyond the contract: the
+    groups, the census, the per-module declared bits of the non-routed
+    modules and the r7 k_values. Raises ValueError when the names and the
+    declaration disagree.
+    """
+    qc = qc if isinstance(qc, dict) else {}
+    tail = tail if isinstance(tail, dict) else {}
+    groups, census = exl3_rotation_groups(keys)
+    layout = census["layout"]
+    declared_layout = tail.get("rotation_layout")
+    if layout == "shared_h_v1":
+        if (declared_layout != "shared_h_v1"
+                or tail.get("shared_h_tensor_schema") != EXL3_SHARED_H_TENSOR_SCHEMA):
+            raise ValueError(
+                "the index stores layer-shared H-side rotations under experts.shared_h "
+                "but hybrid_tr3_tail declares rotation_layout=%r, shared_h_tensor_schema=%r "
+                "(the authors' reader requires 'shared_h_v1' and %r)"
+                % (declared_layout, tail.get("shared_h_tensor_schema"),
+                   EXL3_SHARED_H_TENSOR_SCHEMA))
+    elif declared_layout not in (None, "per_expert_v1"):
+        raise ValueError(
+            "hybrid_tr3_tail declares rotation_layout=%r but the index carries no "
+            "experts.shared_h vector" % (declared_layout,))
+    r7 = qc.get("r7_routed_experts")
+    if layout == "r7_shared":
+        if not isinstance(r7, dict) or not r7.get("schema"):
+            raise ValueError(
+                "the index stores layer-shared rotations under experts.r7_shared but "
+                "quantization_config declares no r7_routed_experts block (the authors' "
+                "reader keys the r7_shared aliasing on it)")
+    nonrouted = sorted({_EXL3_RANK_SUFFIX_RE.sub("", stem) for stem in groups
+                        if _EXL3_EXPERT_RE.match(stem) is None})
+    module_bits = {name: exl3_declared_module_bits(name, qc, tail) for name in nonrouted}
+    histogram = {}
+    for bits in module_bits.values():
+        if isinstance(bits, float) and bits.is_integer():
+            bits = int(bits)
+        label = str(bits) if bits is not None else "undeclared"
+        histogram[label] = histogram.get(label, 0) + 1
+    overlay = tail.get("online_mxfp8_overlay")
+    activation = None
+    if isinstance(overlay, dict) and overlay:
+        activation = overlay.get("activation") or overlay.get("format")
+    if activation is None:
+        activation = qc.get("activation_scheme")
+    contract = {
+        "rotation_layout": layout,
+        "shared_vectors": {"count": len(census["shared_vectors"]),
+                           "names_sha256": _exl3_names_sha256(census["shared_vectors"])},
+        "nonrouted_exl3": {"count": len(nonrouted),
+                           "names_sha256": _exl3_names_sha256(nonrouted),
+                           "declared_bits": dict(sorted(histogram.items()))},
+        "activation_scheme": str(activation) if activation is not None else None,
+    }
+    r7_k_values = sorted({int(k) for k in ((r7 or {}).get("k_values") or [])
+                          if isinstance(k, int) and not isinstance(k, bool)}) \
+        if isinstance(r7, dict) else []
+    detail = {"groups": groups, "census": census, "nonrouted_bits": module_bits,
+              "r7_k_values": r7_k_values,
+              "r7_declaration": ({k: r7.get(k) for k in ("schema", "feature", "moe_layers",
+                                                          "k_values", "bit_map_manifests",
+                                                          "loader_implementation_status")}
+                                 if isinstance(r7, dict) else None)}
+    return contract, detail
+
+
 def normalize_codec(quant_method: Optional[str],
                     codebook: Optional[str] = None) -> str:
     raw = (quant_method or "").strip().lower()
