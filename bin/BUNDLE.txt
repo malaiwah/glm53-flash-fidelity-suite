@@ -113,6 +113,9 @@ engines/tools/stream_score.py
 # which is the only place that check can be made before a paid capture.
 engines/tools/exl3hf_surface.py
 engines/tools/selftest_exl3hf_offline.py
+# Decoder parity vs exllamav3's own reconstruct; selftest_exl3hf_offline imports it
+# and its [7] rung SKIPs loudly until the receipt exists.
+engines/tools/exl3_decoder_parity_vs_exllamav3.py
 engines/tools/selftest_trellis_decode_offline.py
 # The SEALED tr3-published surface (stream_score.py --source tr3). It composes
 # exl3hf_surface for the decode, and needs official-nonrouted-names.json: the

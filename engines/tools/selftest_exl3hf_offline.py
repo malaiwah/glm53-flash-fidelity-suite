@@ -23,6 +23,16 @@ skipped rungs run there before any paid capture.
   [5] materializer mapping on a synthetic mini-checkpoint: KDA qkv/conv split,
       visual qkv fusion, bias adoption, routed skip + virtual entries,
       official-index completeness gate, sealed inventory + receipt.
+  [7] decoder parity vs exllamav3 ITSELF: every rung above compares our decoder
+      with in-house code or a transliteration (review S2-4). The receipt
+      layer-outer-evidence/exl3-decoder-parity-vs-exllamav3.json is produced by
+      exl3_decoder_parity_vs_exllamav3.py on a CUDA host (exllamav3 1.4.2 has
+      no CPU reconstruct). Here: the committed 8x8-tile windows re-decode to the
+      committed digests and equal exllamav3's committed pre-Hadamard digests
+      bitwise on ANY host; where `import exllamav3` succeeds with a CUDA device,
+      exllamav3 reconstructs the windows again and the result is re-asserted.
+      SKIPS loudly (never silently) when the receipt is absent or exllamav3
+      cannot run.
 """
 
 from __future__ import annotations
@@ -413,5 +423,68 @@ if CAMPAIGN_READER is not None:
         skip("mcg decode parity vs campaign reader (K2)",
              "the campaign reader's SUPPORTED_BITS does not include 2; the "
              "pack.cu round-trip above is the K2 evidence")
+
+
+# [7] decoder parity vs exllamav3's own reconstruction --------------------------
+import exl3_decoder_parity_vs_exllamav3 as xp  # noqa: E402
+
+PARITY_RUNG = "decoder parity vs exllamav3 reconstruct"
+if not xp.DEFAULT_OUT.exists():
+    skip(PARITY_RUNG,
+         f"{xp.DEFAULT_OUT.relative_to(TOOLS.parent.parent)} absent: exllamav3 {xp.EXLLAMAV3_VERSION}'s "
+         "reconstruct is a CUDA kernel; run engines/tools/exl3_decoder_parity_vs_exllamav3.py "
+         "--install on a CUDA host (python 3.12, torch 2.11.0) to produce it")
+else:
+    parity = json.loads(xp.DEFAULT_OUT.read_text(encoding="utf-8"))
+    check("parity receipt schema + pinned exllamav3 version",
+          parity.get("schema") == xp.SCHEMA and parity.get("exllamav3_version") == xp.EXLLAMAV3_VERSION
+          and parity.get("exllamav3_commit") == xp.EXLLAMAV3_COMMIT,
+          f"{parity.get('schema')} exllamav3 {parity.get('exllamav3_version')}@{parity.get('exllamav3_commit')}")
+    check("parity receipt covers both codebooks, K3 and K4, and >= 9 real modules",
+          set(parity["codebooks"]) == {"mcg", "mul1"} and {3, 4} <= set(parity["k_values"])
+          and parity["modules_compared"] >= 9 and len(parity["modules"]) == parity["modules_compared"])
+    check("pre-Hadamard stage bitwise equal to exllamav3_ext.reconstruct on every module",
+          parity["all_bitwise_pre_hadamard"] and all(m["pre_hadamard"]["equal"] for m in parity["modules"]),
+          ", ".join(f"{m['name']}={m['pre_hadamard']['differing_elements']}" for m in parity["modules"]
+                    if not m["pre_hadamard"]["equal"]))
+    check("all_bitwise is the conjunction of the per-module fp16 verdicts",
+          parity["all_bitwise"] == all(m["equal"] for m in parity["modules"]))
+    windows = []
+    for module in parity["modules"]:
+        window = module["window"]
+        trellis = xp.unb64(window["trellis_i16_b64"], "I16", window["trellis_shape"])
+        suh = xp.unb64(window["suh_f16_b64"], "F16", [window["k_tiles"] * 16])
+        svh = xp.unb64(window["svh_f16_b64"], "F16", [window["n_tiles"] * 16])
+        check(f"committed window is one 128x128 Hadamard block at K{module['K']} ({module['label']} {module['name']})",
+              tuple(trellis.shape) == (8, 8, module["K"] * 16) and suh.numel() == 128 and svh.numel() == 128)
+        pre = xp.ours_pre_hadamard(trellis, module["codebook"])
+        check(f"window pre-Hadamard re-decodes to the committed digest ({module['label']} {module['codebook']} K{module['K']})",
+              xp.sha256_tensor(pre) == window["ours_pre_hadamard_sha256"])
+        check(f"window pre-Hadamard digest equals exllamav3's ({module['label']} {module['codebook']} K{module['K']})",
+              window["exllamav3_pre_hadamard_sha256"] == window["ours_pre_hadamard_sha256"]
+              and window["pre_hadamard"]["equal"] and window["pre_hadamard"]["differing_elements"] == 0)
+        windows.append((module, trellis, suh, svh, pre))
+    try:
+        _, exl3_live, imported = xp.import_exllamav3(expect_precompiled=False)
+        if not torch.cuda.is_available():
+            raise xp.ParityError("exllamav3 imported but no CUDA device is present")
+    except Exception as exc:  # noqa: BLE001 - the skip names the failure
+        skip("exllamav3 live re-reconstruction of the committed windows",
+             f"{type(exc).__name__}: {str(exc)[:200]}")
+    else:
+        device = torch.device("cuda:0")
+        for module, trellis, suh, svh, pre in windows:
+            marker = torch.tensor([module["marker"]], dtype=torch.int32)
+            t_pre, t_weight = xp.theirs_reconstruct(exl3_live, trellis, suh, svh, module["codebook"], marker, device)
+            check(f"exllamav3 live pre-Hadamard equals committed digest and ours ({module['label']} K{module['K']})",
+                  xp.sha256_tensor(t_pre) == module["window"]["exllamav3_pre_hadamard_sha256"]
+                  and torch.equal(pre, t_pre))
+            live = xp.compare(xp.ours_weight(trellis, suh, svh, module["codebook"]).to(torch.float16), t_weight)
+            committed = module["window"]["weight_fp16"]
+            check(f"exllamav3 live weight verdict reproduces the committed one ({module['label']} K{module['K']})",
+                  live["equal"] == committed["equal"]
+                  and live["differing_elements"] == committed["differing_elements"]
+                  and abs(live["max_abs_diff"] - committed["max_abs_diff"]) <= 1e-12,
+                  f"live {live} committed {committed}")
 
 print(f"selftest_exl3hf_offline: {sum(1 for _, ok, _ in RESULTS if ok)}/{len(RESULTS)} green")
