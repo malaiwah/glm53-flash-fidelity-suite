@@ -761,17 +761,38 @@ def _load_target_descriptor(path, model: str, revision: str) -> dict:
 def _resolve_profile_and_timing(args, target: dict, role: str):
     try:
         if role == "root":
-            timing = resolve_root_timing(
-                target_repo=target["repo_id"],
-                target_revision=target["revision"],
-                gpu=args.gpu,
-                form=args.form,
-                schedule="two-fresh-process-qualification")
-            model_identity = timing.get("model_identity") or {}
-            for field in ("model_bytes", "config_sha256", "index_sha256"):
-                if model_identity.get(field) != target.get(field):
-                    raise Refusal(
-                        "root timing evidence differs from target %s" % field)
+            try:
+                timing = resolve_root_timing(
+                    target_repo=target["repo_id"],
+                    target_revision=target["revision"],
+                    gpu=args.gpu,
+                    form=args.form,
+                    schedule="two-fresh-process-qualification")
+            except RootTimingUnavailable as exc:
+                if not getattr(args, "gpu_unlisted", False):
+                    raise
+                # A card with no authored timing row, admitted only because the
+                # operator said so in argv. The row's purpose is capping paid
+                # spend; a local run has no meter. The acknowledgement is part
+                # of the job identity (timing is hashed) and a caveat disclosure
+                # (job_document appends it); nothing is admitted silently.
+                timing = {
+                    "kind": "gpu-unlisted-acknowledged",
+                    "gpu": args.gpu,
+                    "conservative_upper_hours": None,
+                    "evidence": None,
+                    "resource_admission": {
+                        "required": False,
+                        "mode": "operator_acknowledged_unlisted_gpu"},
+                    "refusal_overridden": str(exc),
+                    "acknowledged_by": "--gpu-unlisted",
+                }
+            else:
+                model_identity = timing.get("model_identity") or {}
+                for field in ("model_bytes", "config_sha256", "index_sha256"):
+                    if model_identity.get(field) != target.get(field):
+                        raise Refusal(
+                            "root timing evidence differs from target %s" % field)
             profile = {
                 "profile_id": "root-hf-transformers-bf16",
                 "lane": "root",
@@ -1062,6 +1083,16 @@ def job_document(args, suite: Path, fs_root: Path, con) -> dict:
         }
     if args.official_bf16_revision:
         doc["official_bf16_revision"] = args.official_bf16_revision
+    if timing.get("kind") == "gpu-unlisted-acknowledged":
+        doc["disclosures"].append({
+            "code": "gpu_unlisted",
+            "severity": "caveat",
+            "affects_comparability": False,
+            "detail": "GPU %r has no authored timing row in bin/engines.json; "
+                      "admitted by --gpu-unlisted. No runtime bound or paid-spend "
+                      "cap applies; the capture's numbers are unaffected (the "
+                      "schedule is fixed by the job)." % args.gpu,
+        })
     try:
         finalized = finalize_job(doc)
         validate_job_document(finalized, fs_root)
@@ -1532,6 +1563,11 @@ def add_job_flags(p, *, root: bool) -> None:
     p.add_argument("--cold-runs", type=int, default=2)
     p.add_argument("--gpu", required=True,
                    help="exact observed GPU model used for profile/timing admission")
+    p.add_argument("--gpu-unlisted", action="store_true",
+                   help="admit a root --gpu with no authored timing row in "
+                        "bin/engines.json (root_timing_evidence_absent). Explicit "
+                        "acknowledgement only: it is recorded in job.timing and as a "
+                        "gpu_unlisted caveat disclosure; nothing is admitted silently")
     p.add_argument("--gpu-count", type=int, default=1)
     p.add_argument("--host", default=os.environ.get("FIDELITY_HOST", "local"),
                    help="local execution-host provenance label; this flag does "

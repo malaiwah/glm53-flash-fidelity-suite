@@ -605,6 +605,42 @@ def rung_job_document():
         except CE.Refusal:
             check("C3s quant scope must resolve before stages", True)
 
+        # A root --gpu with no authored timing row: refused by name, and
+        # admitted only by an explicit acknowledgement that the job records.
+        unlisted_fs = work / "unlisted"
+        unlisted_fs.mkdir()
+        unlisted = argparse.Namespace(**{**vars(root_args), "gpu": "NVIDIA RTX PRO 6000"})
+        try:
+            CE.job_document(unlisted, SUITE, unlisted_fs, quiet)
+            check("C3t a root --gpu with no timing row is refused without --gpu-unlisted",
+                  False)
+        except CE.Refusal as exc:
+            check("C3t a root --gpu with no timing row is refused without --gpu-unlisted",
+                  "root_timing_evidence_absent" in str(exc), str(exc)[:160])
+        acknowledged_fs = work / "unlisted-acknowledged"
+        acknowledged_fs.mkdir()
+        acknowledged = argparse.Namespace(**{**vars(unlisted), "gpu_unlisted": True})
+        try:
+            doc = CE.job_document(acknowledged, SUITE, acknowledged_fs, quiet)
+        except CE.Refusal as exc:
+            doc = None
+            check("C3u --gpu-unlisted admits it", False, str(exc)[:160])
+        if doc is not None:
+            codes = [row.get("code") for row in doc.get("disclosures") or []]
+            check("C3u --gpu-unlisted admits it, with the acknowledgement in job.timing "
+                  "(hashed into the job identity) and a gpu_unlisted caveat disclosure",
+                  doc["timing"].get("kind") == "gpu-unlisted-acknowledged"
+                  and doc["timing"].get("gpu") == "NVIDIA RTX PRO 6000"
+                  and doc["timing"].get("acknowledged_by") == "--gpu-unlisted"
+                  and "root_timing_evidence_absent" in doc["timing"].get(
+                      "refusal_overridden", "")
+                  and codes == ["gpu_unlisted"]
+                  and CE.verify_job(doc) == doc["job_id_full"],
+                  json.dumps({"timing": doc["timing"], "codes": codes})[:240])
+            check("C3v a listed GPU never carries the acknowledgement, flag or not",
+                  root["timing"].get("kind") != "gpu-unlisted-acknowledged"
+                  and (root.get("disclosures") or []) == [])
+
 
 # --------------------------------------------------------------------------
 # C4  the token

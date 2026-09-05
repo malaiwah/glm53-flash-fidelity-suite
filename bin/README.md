@@ -140,12 +140,14 @@ knobs (`--window-batch`, `--nonrouted-residency`, `--decode-batch-matrices`,
 `--prefetch-depth`) are never forwarded to an engine; `--vram-budget` maps to
 the engine's `--vram-budget-gb`; `--reduce-order native` is refused at
 invocation build (a sealed-lane concept — engine orders are
-fp32|sequential|reverse|pairwise|rotate:N). Local lanes emit
-`receipt_class: preview`; only the streaming lane's chain is submittable.
-Timing stays honest: the local lanes' `minutes_per_window` is **null** —
-decode is measured (16–20 ms/matrix MPS) but the KDA trunk forward is not,
-and no number is invented (run `bin/measure-local --fixture fetch` for the
-fixture-scale datum).
+fp32|sequential|reverse|pairwise|rotate:N). The lanes `measure-local`
+executes emit `receipt_class: preview`; the submittable chain is the
+streaming lane's (`measure-cloud`) and the dataset route's
+(`fidelity-dataset capture --engine hf-transformers` → `compare`, the engine
+behind every GLM-5.3 row). Timing stays honest: the local lanes'
+`minutes_per_window` is **null** — decode is measured (16–20 ms/matrix MPS)
+but the KDA trunk forward is not, and no number is invented (run
+`bin/measure-local --fixture fetch` for the fixture-scale datum).
 
 ### History: the 2026-08 flag reconciliation
 
@@ -196,20 +198,37 @@ step 7.
 
 ## Performance notes (local)
 
-The engine's only schedule is window-major (`--stream-mode window-major`,
-deliberately: it replays the sealed per-window `model()` call verbatim). The
-planner prices it honestly (`window_major_cost` in `local-plan.json`): decode
-16–20 ms/matrix on MPS → ~11 min/pass, ×25 windows with `--decode-cache none`
-(~4.5 h), vs `--decode-cache disk` = one decode + 25 re-reads of the 609 GB
-decoded surface (~42–51 min at the 5–6 GB/s of Apple internal NVMe — IF 609
-GB is free; measure your disk before assuming). `ram` caches
-`floor(0.8·budget/14.5 GB)` layers (7 of 42 on 128 GB). `--unpack-device cpu`
-is a fixed flag of the local-mps lane (the MPS int64 escape; decode stays
-bitwise). The scorer takes `--chunk-positions 512` (selftest-proven) vs the
-sealed default 16. A layer-major preview schedule (decode once + 25 forwards)
-is future work, gated on fixture-proven bitwise equivalence plus ≥1 real
-window — no engine implements it today, and the planner's legacy layer-outer
-block says so in its own `note`.
+Two engines, two schedules; `measure-local --estimate-only` names the one
+that reads your target on its `MEMORY PLAN` line and prices only that one.
+
+**`stream_score.py` (the lanes `measure-local` executes): window-major**
+(`--stream-mode window-major`, deliberately: it replays the sealed per-window
+`model()` call verbatim). The planner prices it honestly (`window_major_cost`
+in `local-plan.json`): decode 16–20 ms/matrix on MPS → ~11 min/pass, ×25
+windows with `--decode-cache none` (~4.5 h), vs `--decode-cache disk` = one
+decode + 25 re-reads of the 609 GB decoded surface (~42–51 min at the 5–6 GB/s
+of Apple internal NVMe — IF 609 GB is free; measure your disk before
+assuming). `ram` caches `floor(0.8·budget/14.5 GB)` layers (7 of 42 on 128
+GB). `--unpack-device cpu` is a fixed flag of the local-mps lane (the MPS
+int64 escape; decode stays bitwise). The scorer takes `--chunk-positions 512`
+(selftest-proven) vs the sealed default 16. The planner's `expert_chunk` /
+`window_batch` block is this lane's panel-batched **cost model**, priced over
+the pinned GLM-5.3-Flash census, and applies to Flash `packed`/`native-bf16`
+targets only.
+
+**`hf_capture.py --schedule layer-outer` (the dataset route,
+[`docs/LAYER-OUTER.md`](../docs/LAYER-OUTER.md)):** one decoder layer resident,
+the checkpoint read once per cold run, windows pushed through sequentially and
+never batched. Reads `native-bf16`, `fp8-block` and `exl3hf`. For those
+surfaces the planner prints a `LAYER-OUTER CAPTURE PLAN` from the target's
+own `config.json` (verified per-layer arithmetic for `glm_moe_dsa`, `qwen3`
+and `glm5_next`; an unverified `model_type` is refused by name) and the peaks
+the H200 pods measured: GLM-5.3 bf16 and FP8 37.53 GB allocated / 57.08 GB
+reserved, the K4 trellis candidate 56.86 GB — so a GLM-5.3-class target is
+refused below 64 GB until the chunked expert loader (§8.1) exists, and the
+plan says so before any byte is fetched (`BEFORE YOU FETCH`, above 100 GB).
+Reached through `bin/fidelity-dataset capture --engine hf-transformers`, not
+`measure-local --execute`; README *Recipe 2* has the copy/paste sequence.
 
 ## Layout
 
@@ -308,19 +327,29 @@ they consume are not yet in place**. Read this before planning GPU time.
 
 | you will want | state today | what to do |
 |---|---|---|
-| a **root fidelity dataset** to fetch (step 1) | **one is published: [`malaiwah/fruit-fidelity-root-v1`](https://huggingface.co/datasets/malaiwah/fruit-fidelity-root-v1)** — a sealed `malaiwah.fidelity-dataset.v1` hidden-form root for the 5B GLM-5.2-SIQ-Fruit CI fixture, 385 MB, 16 contexts, `describe`/`verify` both resolve it. What does **not** exist is a root for a *production* model: publishing suite-scale captures is out of scope for v1 (spec §14), so there is nothing to fetch for GLM-5.3-Flash or Qwen3.8-27B. `hf://malaiwah/some-fidelity-dataset` in the examples below is still a **placeholder**, not a resolvable id. | To see the whole three-step path working, point at the Fruit root: `bin/fidelity-dataset describe hf://malaiwah/fruit-fidelity-root-v1`. For a production model, capture your own root from the reference weights (same `capture` command, `--role root`), or translate our published serving-lane capture with `adapt --source malaiwah-serving-v2` — that repo (`malaiwah/GLM-5.3-Flash-fidelity-suite-v1`) is **not** itself a conformant dataset, so `verify hf://…` on it will fail. |
-| a **token panel** for `--token-panel` (step 1/2) | a **sealed token-panel receipt** produced by the quant pipeline. `capture` hard-requires it — the wrapper needs the mask `.npy` paths, which `capture-receipt.json` does not carry. **One published panel receipt exists**, inside the Fruit root above (`panel/panel-receipt.json` plus `panel/tokens/` and `panel/masks/`), and `fidelity-dataset` fetches it with the dataset. **For every production model the panel is still yours to obtain**: no command here fetches or builds one for GLM-5.3-Flash or Qwen3.8-27B. (Separately, and confusingly: the *runners* — `measure-cloud`/`measure-local` — do not use `--token-panel` at all. They take `--panel <hf-dataset>` and carry one built-in fetch descriptor, brandonmusic's 25-window GLM-5.3-Flash panel. Anything else needs `--panel-descriptor`, and the five Qwen3.8-27B panels are `private` so no descriptor can be written for them.) | Obtain or build a panel receipt before booking a GPU. Both sides of a comparison must be on the *same* panel — `compare` refuses `panel_mismatch` with no override, by design (PANEL-D3). Once you have one, note that its `verified_artifacts` are pinned to the **producer's absolute paths** (`/workspace/artifacts/…`); `bin/stage_panel_paths.py --panel <dir>` copies your fetched files into those paths and verifies each by digest. On a cold box, skipping it fails with `artifact identity mismatch` *after* the fetch, the materialize and the model load. |
-| a **cost/time estimate** for a capture | `capture --dry-run` validates inputs, seal and layout only. Unlike `measure-local --estimate-only` and `measure-cloud --dry-run`, **it prints no hours, no VRAM and no dollars.** | Size the run with `measure-local --estimate-only` / `measure-cloud --dry-run` first. As a reference point, a 25-window / 2-cold-run panel is ~2.4-2.7 GPU-hours of scoring on the streaming lane (`engines.json` carries the measured minutes-per-window per surface: 2.82 tr3-published, 3.12 exl3hf, 3.19 dione), ~3.5-4 h end to end with bootstrap, fetch and materialize. The ~8.35 h that used to be quoted here was the K6 **payload-store** path at 7.35 min/window, superseded by M2. |
+| a **root fidelity dataset** to fetch (step 1) | **two are published.** [`malaiwah/glm53-fidelity-root-v1`](https://huggingface.co/datasets/malaiwah/glm53-fidelity-root-v1) is the sealed hidden-form root of the production GLM-5.3 (zai-org/GLM-5.3-BF16 @ 304b8051), captured layer-outer on an H200 under the two-fresh-process protocol; every GLM-5.3 quant row in the registry is scored against it (`compare --reference hf://malaiwah/glm53-fidelity-root-v1 --own-heads`). [`malaiwah/fruit-fidelity-root-v1`](https://huggingface.co/datasets/malaiwah/fruit-fidelity-root-v1) is the 385 MB CI-fixture root (5B GLM-5.2-SIQ-Fruit, 16 contexts) for seeing the whole three-step path without a GPU. No root exists yet for GLM-5.3-Flash or Qwen3.8-27B. | `bin/fidelity-dataset describe hf://malaiwah/glm53-fidelity-root-v1` prints the identity card (vocab 154880, hidden 6144, panel id/hash, lane `streaming`). To capture your own root, README *Recipe 2 → Local GPU quickstart* is the copy/paste sequence (`capture --engine hf-transformers` → `verify` ×2 → `compare --self-compare` → `qualify-root --local` → `publish`). |
+| a **token panel** (step 1/2) | the hf-transformers engine takes `--panel <dir>`: a committed token-panel tree under `engines/panels/` (`panel.json`, `panel.receipt.json`, `arrays/`). `panel--glm53.malaiwah.corpus5x5-v1` (356 KB, the GLM-5.3 family's panel, tokenizer zai-org/GLM-5.3-BF16) and the Flash and Fruit panels are committed; `engines/panels/README.md` lists them. The `sealed-lane` engine's `--token-panel` receipt is campaign-internal. (The *runners* `measure-cloud`/`measure-local` take `--panel <hf-dataset>`, a teacher-logit dataset, and the local planner no longer prices its 31.7 GB for the dataset route, which never fetches it.) | For a new family build the panel first: `engines/tools/build_token_panel.py` ([`engines/panels/README.md`](../engines/panels/README.md)). A root capture also needs the panel **binding**: `bin/fidelity-dataset panel-binding --panel engines/panels/<id> --tokenizer-root <checkpoint dir> --out panel.binding.json` writes it and prints the sha256 for `--panel-binding-sha256`. |
+| a **cost/time estimate** for a capture | `capture --dry-run` validates inputs, seal and layout for the sealed-lane engine only; the hf-transformers engine has no plan phase and returns exit 4 (`USAGE`) for `--dry-run`. **Neither prints hours, VRAM or dollars.** | Size it with `bin/measure-local --artifact <repo> --panel <dataset> --estimate-only` (the layer-outer capture plan from the target's config.json, the measured H200 peaks, the pre-fetch gate and the exact `fidelity-dataset capture` argv) or `measure-cloud --dry-run`. Measured on H200: GLM-5.3 bf16 root cold capture 1,947 s per run after a 1.51 TB fetch; the K4 candidate 442 s per run after 394 GB. |
 | to **submit a comparison to the registry** (step 3) | **works, and needs one input file.** `compare --emit-submission` requires `--submission-provenance FILE`: the artifact (HF repo at a 40-hex revision, codec, quantization scope), `panel_ref` and `reference_ref` are registry identities a fidelity dataset cannot know, and `panel_ref`/`reference_ref` must already exist because a measurement may not introduce a panel. Without the file the command **refuses** rather than writing empty blocks. | `fidelity-dataset provenance-template --out prov.json`, fill it in, then `compare … --emit-submission --submission-provenance prov.json`. The command then runs `registry_validate.py --submission` **on its own output** and prints ACCEPTED/REJECTED, so you find out now rather than in review. Copy the accepted file into `registry/receipts/<your-handle>/` and open a PR. |
 | to **annotate your card** with the result | `fidelity-card annotate --role quant` resolves its numbers from **published registry measurements**, not from your comparison receipt. With no row yet it refuses, and the refusal names the ordering. | The order is: capture → compare → **get the row into the registry** → then annotate. There is no receipt-to-card path, by design: a card cites registry ids, not local receipts. `--role fidelity-dataset` **is** usable — pass `--fidelity-dataset-root DIR` and every value is read out of that dataset's own manifest. `annotate` always self-validates and exits non-zero rather than writing an invalid card. |
 
 ```bash
-# step 1/2 -- capture (wraps hidden_replay.py / stream_score.py; never edits them)
-bin/fidelity-dataset capture --out ds-bf16 --form hidden --role root \
-    --lane sealed-ep8 -- --source native --token-panel <panel> --store-positions all ...
-bin/fidelity-dataset capture --dry-run --out /tmp/x --role root --lane sealed-ep8 -- ...
+# step 1/2 -- capture. Default engine hf-transformers = engines/tools/hf_capture.py,
+# any HF causal LM, --schedule layer-outer holds one decoder layer resident and
+# reads the checkpoint once; everything after `--` is the engine's own argv
+# (`capture --help` prints the argv the GLM-5.3 K4 job ran; README Recipe 2
+# has the root and candidate sequences in full).
+bin/fidelity-dataset capture --engine hf-transformers --out ds-bf16 --form hidden --role root --lane streaming -- \
+    --model /nvme/models/m --model-revision <40-hex> --weights-repository <owner>/<repo> --repository <handle>/<dataset-repo> \
+    --panel engines/panels/panel--glm53.malaiwah.corpus5x5-v1 --panel-id panel--glm53.malaiwah.corpus5x5-v1 \
+    --panel-binding panel.binding.json --panel-binding-sha256 <sha256> \
+    --schedule layer-outer --device cuda --dtype bfloat16 --sanity-expect Paris \
+    --dataset-id fidelity--<family>.<handle>.root.bf16 --dataset-name "<name>" \
+    --run-name root-cold-1 --cold-run root-cold-1 --author <handle> --role root
+        # hf-transformers has no --dry-run (exit 4): size it with measure-local --estimate-only.
+bin/fidelity-dataset capture --engine sealed-lane --dry-run --out /tmp/x --role root --lane sealed-ep8 -- ...
+        # sealed-lane (campaign-internal hidden_replay.py + stream_score.py, Flash geometry only):
         # --dry-run validates every input, seal and layout and exits 0 WITHOUT a GPU.
-        # This is the CI conformance hook.
 
 # verify -- seal + digest chain; stops at the first refusal; there is no --force
 # Tensor content digests are recomputed BY DEFAULT: the seal covers the manifest
@@ -393,6 +422,22 @@ bin/fidelity-dataset adapt --source llamacpp-kld --in base.kld --out kld-transla
 bin/fidelity-dataset verify-k3-compat ds-bf16
         # compat/ is three JSON files of RELATIVE ALIASES: no tensor is copied,
         # and the tree is written before the seal so checksums.txt covers it.
+
+# a root captured on YOUR card: qualify the two cold runs without a controller
+# job.json, then publish without the pod's result.tar.gz triple
+bin/fidelity-dataset qualify-root --local --model-dir /nvme/models/m --first ds-bf16 --repeat ds-bf16-repeat \
+    --first-label root-cold-1 --repeat-label root-cold-2 --first-verify v1.json --repeat-verify v2.json \
+    --comparison repro/comparison-receipt.json --out receipts/root-qualification.json
+        # writes receipts/job.json with execution_kind local, derived from the captures'
+        # own sealed evidence (panel binding, the per-shard census hf_capture hashed,
+        # the stack fingerprint); the receipt records the card, torch/transformers
+        # and that no pod attestation exists. Roots only; the comparison must have
+        # run --replay-device numpy --vocab-chunk 8192 (the root contract's profile).
+bin/fidelity-dataset publish ds-bf16 --repo <handle>/<dataset-repo> --expected-head absent \
+    --qualification receipts/root-qualification.json --job receipts/job.json --dry-run
+        # every seal/identity gate runs, no token is read, nothing uploads; drop
+        # --dry-run and add --token-file to publish. A pod-qualified root still
+        # needs --result-archive / --expected-archive-sha256 / --expected-archive-bytes.
 ```
 
 **Exit codes:** `0` ok, `2` warnings only, `3` refused, `4` bad usage.

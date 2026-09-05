@@ -216,8 +216,25 @@ they are not a shortcut around paid admission.
 
 ### Recipe 2 — local: your own hardware
 
-Three things to know before pasting, because this runner is deliberately
-narrower than it looks:
+Two engines exist, and which one your target reaches decides everything
+below. `bin/measure-local --estimate-only` says which on its `MEMORY PLAN`
+line, and prices only that one:
+
+* **`engines/tools/stream_score.py`, window-major** — the lanes
+  `measure-local` can execute (`local-mps`, `local-cuda-budget`). They read the
+  campaign's `packed` payload stores and the GLM-5.3-Flash `native-bf16` tree
+  ([support matrix](#before-you-rent-what-is-measurable-today)) and emit
+  `receipt_class: preview`. The checkpoint is re-read once per panel window.
+* **`engines/tools/hf_capture.py --schedule layer-outer`**
+  ([docs/LAYER-OUTER.md](docs/LAYER-OUTER.md)) — one decoder layer resident,
+  checkpoint read once per cold run, windows never batched. It reads
+  `native-bf16`, `fp8-block` and `exl3hf` releases, it is the engine behind
+  every GLM-5.3 row in the registry, and you reach it through
+  `bin/fidelity-dataset capture --engine hf-transformers`, **not** through
+  `measure-local --execute`. The [quickstart below](#local-gpu-quickstart)
+  is that route.
+
+Three things to know about `measure-local` before pasting:
 
 1. **`measure-local` is plan-only by default.** Without `--execute` it plans,
    prints "Plan accepted. Nothing was executed", and exits 3. That is not a
@@ -228,17 +245,16 @@ narrower than it looks:
    or place it at `<work>/teacher`), not the quant pipeline
    (`--pipeline-root`). `--execute` preflights all three and refuses with the
    full list of what is missing and how to get each one.
-3. **The local lanes read only `packed` and `native-bf16`**
-   ([support matrix](#before-you-rent-what-is-measurable-today)), and `packed`
-   means this campaign's own payload-store output — so a third-party quant
-   (including the example artifact below) gets a costed plan and a refusal
-   naming `bin/measure-cloud`, never a local number.
+3. **The lanes it executes read only `packed` and `native-bf16`** Flash
+   trees. For an `exl3hf`/`fp8-block`/`native-bf16` GLM-5.3-class target the
+   plan prints the layer-outer capture plan, the pre-fetch gate and the
+   dataset-route commands, and `--execute` refuses by name.
 
 ```bash
 # Plan: $0.00, downloads nothing, executes nothing. This artifact is already
 # measured, so the registry front gate answers first and exits 0 (--force
-# plans anyway). The plan is memory/disk/time arithmetic; the missing local
-# reader for a third-party surface is refused at --execute, with remedies.
+# plans anyway). The plan is memory/disk/time arithmetic over the target's
+# own config.json, never a pinned constant.
 bin/measure-local \
     --artifact brandonmusic/GLM-5.3-Flash-tr3-4bpw \
     --panel    brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits \
@@ -256,26 +272,30 @@ bin/measure-local \
     --pipeline-root  /path/to/quant_pipeline
 ```
 
-Works on a 128 GB Apple-Silicon Mac via MPS, and on a 32 GB consumer CUDA card
-under a `--vram-budget` that is a **hard bound, not a hint**. A 600 GB model
-fits in 30 GB because the schedule is inverted: instead of streaming the whole
-checkpoint once per panel window, it goes layer-outer and pushes all 25 windows
-through each layer, so every expert is decoded exactly once for the whole panel.
-`--expert-chunk` and `--window-batch` then shrink the peak without moving the
-number — experts are visited in ascending order and accumulated sequentially in
-fp32, so the result is bit-identical at any setting.
-
-`--estimate-only` prints the plan and stops. `--simulate-device "RTX 5090:32"`
-plans for hardware you do not own yet.
+`--estimate-only` prints the plan and stops; `--simulate-device "RTX 5090:32"`
+plans for hardware you do not own yet. For a Flash `packed` target the plan is
+the streaming lane's panel-batched cost model (`expert_chunk` /
+`window_batch`, bit-identical at any setting because experts are visited in
+ascending order into an fp32 accumulator). For a GLM-5.3-class target it is
+the layer-outer plan against the peaks the H200 pods measured:
 
 ```
-$ bin/measure-local --artifact ... --panel ... --vram-budget 30 --estimate-only
-  expert_chunk    156 of 288 experts  (numerics-invariant)
-  window_batch    25 of 25 windows -> 1 pass(es) over the checkpoint
-  peak VRAM       25.45 GB of 30.00 GB budget (85%)
+$ bin/measure-local --artifact wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1 --panel ... \
+      --simulate-device "RTX 5090:32" --estimate-only --force
+  census source          config.json (exact)  (78L / hidden 6144 / 256 experts / vocab 154880)
+  engine                 engines/tools/hf_capture.py --schedule layer-outer
+  modelled peak          61.93 GB  (arithmetic, docs/LAYER-OUTER.md 8.1)
+  measured peak          56.86 GB allocated / 58.14 GB reserved on NVIDIA H200 SXM 141 GB
+  device needs           64.00 GB  (RTX 5090 has 32.00 GB)
+  WARNING  WOULD REFUSE (real run): RTX 5090 (32.00 GB) is below the layer-outer plan
+BEFORE YOU FETCH  (394.11 GB is more than 100.00 GB: read this first)
+  fetch size             394.11 GB
+  disk free              18.53 GB at ... (568.45 GB needed)
+  estimated VRAM         64.00 GB needed on the device, RTX 5090 has 32.00 GB -- DOES NOT FIT
 ```
 
-Ask for too little and it refuses with the arithmetic, not a stack trace:
+Ask the streaming planner for too little and it refuses with the arithmetic,
+not a stack trace:
 
 ```
 REFUSE: no schedule fits a 3.60 GB budget
@@ -283,7 +303,7 @@ REFUSE: no schedule fits a 3.60 GB budget
         that floor is set by the lm_head step -- the lm_head weight (1.27 GB)
         and one window of fp32 logits (1.27 GB) must be resident together, and
         neither shrinks with --expert-chunk or --window-batch
-        run the cloud recipe instead:  bin/measure-cloud --lane streaming
+        run the cloud recipe instead: docs/THIRD-PARTY-QUICKSTART.md section 3b
 ```
 
 Verify the machine before trusting it — both selftests are offline and take
@@ -292,6 +312,126 @@ under a minute:
 ```bash
 bin/measure-local --selftest      # fit estimator vs known cases + decode parity
 ```
+
+#### Local GPU quickstart
+
+The finishable sequence for one card. Everything a human had to guess is a
+documented default or a refusal ([table](#every-default-and-refusal-in-one-place)).
+**Card sizes, measured on H200 by the engine you will run** (pod logs quoted
+in `docs/LAYER-OUTER.md` §8.1): GLM-5.3 bf16/FP8 37.53 GB allocated /
+57.08 GB reserved, the K4 trellis candidate 56.86 GB. So:
+
+| card | root of a mid-size bf16 release (Qwen3-8B class, largest layer + head ≲ 20 GB) | GLM-5.3 root or candidate |
+|---|---|---|
+| RTX PRO 6000, 96 GB | runs | runs (measured 57 GB; ~39 GB headroom on paper) |
+| RTX 5090, 32 GB | runs | **refused today** by `measure-local` and the plan below: the loader materialises one whole layer's 19.33 GB of routed experts before fusing them. The chunked loader that would bring the peak to ~28 GB is described in LAYER-OUTER.md §8.1 and not built. |
+
+**Environment (both cards).** The pod's exact hashed closure — torch
+2.11.0+cu130, transformers 5.16.1, accelerate, hf_transfer — on Python 3.12;
+the CUDA 13.0 wheels need a driver that supports them.
+
+```bash
+python3.12 -m venv ~/.venvs/fidelity
+~/.venvs/fidelity/bin/pip install --no-deps --require-hashes --only-binary=:all: -r bin/requirements-cu130-py312.lock
+export FIDELITY_PYTHON=~/.venvs/fidelity/bin/python HF_HOME=/nvme/hf HF_HUB_ENABLE_HF_TRANSFER=1
+bin/fidelity-doctor
+bin/measure-local --artifact <hf-repo> --panel brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits --estimate-only --force   # the plan + the exact argv for YOUR target
+```
+
+**A root (96 GB card; on 32 GB only for a model whose plan fits).** Two cold
+runs are two processes with distinct labels. `--device cuda` (not `cuda:0`),
+`--lane streaming` (the published roots' lane) and `--repository` (the
+immutable dataset identity) are contract inputs, not style.
+
+```bash
+REV=<40-hex>; M=/nvme/models/<name>
+hf download <owner>/<repo> --revision $REV --local-dir $M                          # zai-org/GLM-5.3-BF16: 1.51 TB
+bin/fidelity-dataset panel-binding --panel engines/panels/panel--glm53.malaiwah.corpus5x5-v1 \
+    --tokenizer-root $M --out /nvme/ds/panel.binding.json                          # prints the sha256 to pass below
+for run in 1 2; do
+  bin/fidelity-dataset capture --engine hf-transformers --out /nvme/ds/root-$run --form hidden --role root --lane streaming -- \
+      --model $M --model-revision $REV --weights-repository <owner>/<repo> --repository <handle>/<dataset-repo> \
+      --panel engines/panels/panel--glm53.malaiwah.corpus5x5-v1 --panel-id panel--glm53.malaiwah.corpus5x5-v1 \
+      --panel-binding /nvme/ds/panel.binding.json --panel-binding-sha256 <sha256-printed-above> \
+      --schedule layer-outer --device cuda --dtype bfloat16 --sanity-expect Paris \
+      --dataset-id fidelity--<family>.<handle>.root.bf16 --dataset-name "<name> root bf16" \
+      --run-name root-cold-$run --cold-run root-cold-$run --author <handle> --role root \
+      --dataset-license other --weights-license-file $M/LICENSE \
+      --weights-license-sha256 "$(sha256sum $M/LICENSE | cut -d' ' -f1)" --weights-license-bytes "$(stat -c %s $M/LICENSE)" \
+      --memory-report /nvme/ds/mem-$run.json
+done
+bin/fidelity-dataset verify /nvme/ds/root-1 --json /nvme/ds/root-1.verify.json
+bin/fidelity-dataset verify /nvme/ds/root-2 --json /nvme/ds/root-2.verify.json
+bin/fidelity-dataset compare --reference /nvme/ds/root-1 --candidate /nvme/ds/root-2 --self-compare --force-compute \
+    --replay-device numpy --vocab-chunk 8192 --out /nvme/ds/root-repro          # the root contract's replay profile; expect exactly 0.0
+bin/fidelity-dataset qualify-root --local --model-dir $M --first /nvme/ds/root-1 --repeat /nvme/ds/root-2 \
+    --first-label root-cold-1 --repeat-label root-cold-2 \
+    --first-verify /nvme/ds/root-1.verify.json --repeat-verify /nvme/ds/root-2.verify.json \
+    --comparison /nvme/ds/root-repro/comparison-receipt.json --out /nvme/ds/receipts/root-qualification.json
+bin/fidelity-dataset publish /nvme/ds/root-1 --repo <handle>/<dataset-repo> --expected-head absent \
+    --qualification /nvme/ds/receipts/root-qualification.json --job /nvme/ds/receipts/job.json --dry-run   # drop --dry-run, add --token-file, to publish
+```
+
+`qualify-root --local` writes `receipts/job.json` with `execution_kind: local`
+from the captures' own sealed evidence (panel binding, the per-shard census
+`hf_capture` hashed, the stack fingerprint) and the receipt records the card,
+torch/transformers versions and that no pod attestation exists; `publish`
+accepts it without the pod's `result.tar.gz` triple and keeps every seal and
+identity gate. Wall clock from the H200 pod, GLM-5.3 bf16: cold capture
+1,947 s, self-compare ~6 min, after the 1.51 TB fetch.
+
+**An EXL3/FP8 quant against the published GLM-5.3 root (≥ 64 GB card).**
+`--codec`/`--declared-bits` are read from the artifact's `quantization_config`
+(`exl3-trellis` @ 4 for the K4); the scope file comes from
+`engines/tools/exl3_scope.py` (or `fp8_scope.py`).
+
+```bash
+Q=<owner>/<quant>; QREV=<40-hex>; C=/nvme/models/<quant>
+hf download $Q --revision $QREV --local-dir $C                                     # K4: 394 GB
+$FIDELITY_PYTHON engines/tools/exl3_scope.py --index $C/model.safetensors.index.json --config $C/config.json \
+    --repo $Q --revision $QREV --out /nvme/ds/scope.json
+for run in 1 2; do
+  bin/fidelity-dataset capture --engine hf-transformers --out /nvme/ds/cand-$run --form hidden --role quant --lane streaming -- \
+      --model $C --model-revision $QREV --weights-repository $Q --repository <handle>/<dataset-repo> \
+      --panel engines/panels/panel--glm53.malaiwah.corpus5x5-v1 --panel-id panel--glm53.malaiwah.corpus5x5-v1 \
+      --schedule layer-outer --device cuda --dtype bfloat16 --sanity-expect Paris \
+      --dataset-id fidelity--glm53.<handle>.quant.<slug> --dataset-name "<quant>" \
+      --run-name cand-cold-$run --cold-run cand-cold-$run --author <handle> --role quant \
+      --scope-file /nvme/ds/scope.json --codec exl3-trellis --declared-bits 4 --memory-report /nvme/ds/mem-cand-$run.json
+done
+bin/fidelity-dataset compare --reference /nvme/ds/cand-1 --candidate /nvme/ds/cand-2 --self-compare --force-compute \
+    --vocab-chunk 8192 --device cuda --replay-device cuda --out /nvme/ds/cand-repro   # determinism: exactly 0.0
+bin/fidelity-dataset compare --reference hf://malaiwah/glm53-fidelity-root-v1 --candidate /nvme/ds/cand-1 \
+    --own-heads --vocab-chunk 8192 --device cuda --replay-device cuda --cache /nvme/ds/cache --out /nvme/ds/cmp
+```
+
+Expect `class advisory`, `stack_relation cross_stack` against the H200 root:
+the stack fingerprint includes the device name, and a same-backend replay
+(`--replay-device cuda` on both sides of a group) is what makes rows within
+your own group rankable. The K4 row measured 0.044804 nats on the pod.
+
+##### Every default and refusal in one place
+
+| you would otherwise guess | what the tools do |
+|---|---|
+| interpreter | `FIDELITY_PYTHON` → the venv above; `fidelity-dataset capture|compare` run under it |
+| which tool | `measure-local --estimate-only` plans and prints the route; `fidelity-dataset capture` runs it; the container is pod-contract-only ([CONTAINER.md](docs/CONTAINER.md)) |
+| `--engine` | default `hf-transformers` (sealed-lane is campaign-internal, opt-in) |
+| `--schedule` | `layer-outer` is required in the quickstart; the default `window-outer` loads the whole model and is refused by the root contract |
+| `--device` | `cuda` exactly; `cuda:0` is refused at `qualify-root` (the contract binds `cuda`) |
+| `--lane` | `streaming`, the published roots' lane; `compare` refuses a lane mismatch without `--allow-cross-lane` |
+| panel | a committed tree under `engines/panels/`; a new family builds one with `engines/tools/build_token_panel.py` |
+| panel binding | `fidelity-dataset panel-binding` writes it and prints the sha256 |
+| ids | `fidelity--<family>.<handle>.<role>.<codec>`; `--repository <handle>/<dataset-repo>` must differ from the weights repo |
+| checkpoint location | `--model <dir>` after `hf download --local-dir`; `HF_HOME` keeps the cache off your home volume |
+| scope / codec / bits | `exl3_scope.py`/`fp8_scope.py`; `quantization_config` (`exl3-trellis` @ 4 for the K4) |
+| `--sanity-expect Paris` | fail-closed generation probe; always pass it |
+| `--author`, `--dataset-license` | pass both; `other` + the LICENSE bytes for a root that redistributes the head weights |
+| replay for qualification | `--replay-device numpy --vocab-chunk 8192`; anything else is refused by `qualify-root` with the remedy |
+| disk | checkpoint + 2 × 2.53 GB datasets (+ 2.53 GB root when comparing); the plan prints free disk before the fetch |
+| memory | GLM-5.3-class needs ≥ 64 GB today; the plan refuses below it and says why |
+| token | `hf download` uses the cached login; `compare`/`publish` take `--token-file`; `publish --dry-run` reads none |
+| comparability | `advisory` / `cross_stack` against an H200 root, by construction |
 
 ### Recipe 3 — submit it
 
@@ -366,21 +506,27 @@ The format is versioned and stable at v1
 ([`docs/FIDELITY-DATASET-SPEC.md`](docs/FIDELITY-DATASET-SPEC.md)); the
 three-step rationale is [WHAT-WE-MEASURE §8](WHAT-WE-MEASURE.md).
 
-**One conformant root is published**, and it is the cheapest way to see the
-whole three-step path end to end without renting anything:
+**Two conformant roots are published.** The production one is the GLM-5.3
+root every registry row of that family is scored against; the small one is
+the cheapest way to see the whole three-step path end to end without renting
+anything:
 
 ```bash
-bin/fidelity-dataset describe hf://malaiwah/fruit-fidelity-root-v1   # 385 MB
+bin/fidelity-dataset describe hf://malaiwah/glm53-fidelity-root-v1   # GLM-5.3 (zai-org/GLM-5.3-BF16 @ 304b8051), 25 windows, 2.5 GB
+bin/fidelity-dataset describe hf://malaiwah/fruit-fidelity-root-v1   # 5B CI fixture, 385 MB
 ```
 
+[`malaiwah/glm53-fidelity-root-v1`](https://huggingface.co/datasets/malaiwah/glm53-fidelity-root-v1)
+is a sealed `malaiwah.fidelity-dataset.v1` hidden-form root captured layer-outer
+on an H200 under the two-fresh-process protocol, on the committed panel
+`engines/panels/panel--glm53.malaiwah.corpus5x5-v1`; a quant of GLM-5.3 is
+scored against it with `compare --reference hf://malaiwah/glm53-fidelity-root-v1
+--own-heads` ([Recipe 2 → Local GPU quickstart](#local-gpu-quickstart)).
 [`malaiwah/fruit-fidelity-root-v1`](https://huggingface.co/datasets/malaiwah/fruit-fidelity-root-v1)
-is a sealed `malaiwah.fidelity-dataset.v1` root for the 5B GLM-5.2-SIQ-Fruit CI
-fixture: hidden-form capture, the shared `lm_head`, and — this is the part the
-runners cannot give you — **a token panel and its sealed receipt inside the
-dataset**, so step 1 is a download rather than a GPU booking. Suite-scale roots
-for the big models are still out of scope for v1 (spec §14); see
-[`bin/README.md`](bin/README.md#before-you-start--what-exists-today-and-what-does-not)
-for what that means when you plan GPU time on GLM-5.3-Flash or Qwen3.8-27B.
+is the same format for the 5B GLM-5.2-SIQ-Fruit CI fixture, **with a token panel
+and its sealed receipt inside the dataset**, so step 1 is a download rather than
+a GPU booking. No root exists yet for GLM-5.3-Flash or Qwen3.8-27B; the
+10.48M-position suite-scale capture (spec §14) remains out of scope for v1.
 
 ## Headline results
 

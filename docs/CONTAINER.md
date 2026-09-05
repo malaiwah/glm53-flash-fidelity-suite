@@ -88,29 +88,60 @@ The entrypoint mirrors the CLI and writes the **same `job.json` contract**
 which stages run, and the SSH controller now asks that same module — so the two
 transports cannot drift into different sequences.
 
-```bash
-# a reference (root) capture
-docker run --gpus all --rm \
-    -v /data/run:/workspace \
-    -v $PWD/engines/panels/panel--x:/panel:ro \
-    -e HF_TOKEN \
-    <image> capture \
-        --model <repo> --revision <40-hex> \
-        --panel-dir /panel --dataset-id fidelity--x.malaiwah.root.bf16 \
-        --lane streaming --gpu "NVIDIA A10"
+**`capture` and `measure` are pod-contract verbs, not a human's command line.**
+Both require a planner-written `--target-descriptor` (the exact shard census
+the controller computes: config/index digests, shard bytes, download manifest —
+`bin/selftest_container.py` and `bin/selftest_root_publish.py` show its
+shape; no user-facing tool writes one), the three resource minima
+(`--workspace-available-bytes-minimum`, `--container-available-bytes-minimum`,
+`--expected-vram-bytes`) and a `--gpu` string with an **authored timing row**
+in `bin/engines.json`: today `NVIDIA L4` for the Fruit root and `NVIDIA H200`
+for GLM-5.3-Flash-BF16 and GLM-5.3-BF16 (`root_timing_profiles`); `measure`
+additionally admits only the `tr3-6bpw` / `native-bf16` profiles. Any other
+card refuses with `root_timing_evidence_absent` before anything is fetched —
+the row exists to cap paid spend, and the entrypoint does not know it is not
+on a meter. There is no `--surface`/`--bits` on `measure` (the target
+descriptor carries them). Run as written, with `--dry-run`:
 
-# measuring a quantized artifact
-docker run --gpus all --rm -v /data/run:/workspace -e HF_TOKEN \
-    <image> measure \
-        --model <repo> --revision <40-hex> --surface exl3hf --bits 4.0 \
-        --profile k6 --panel-descriptor /panel.json --lane streaming
-
-# one stage, against a job document that already exists
-docker run --gpus all --rm -v /data/run:/workspace <image> stage measure
-
-# what is this image, and what can it see?
-docker run --gpus all --rm <image> doctor
 ```
+$ python3 bin/container_entry.py capture --dry-run --model zai-org/GLM-5.3-BF16 --revision 304b8051cfb2b260b61ce0cbe330e02a98e73639 \
+      --panel-dir /panel --dataset-id fidelity--x.malaiwah.root.bf16 --lane streaming --gpu "NVIDIA A10"
+fidelity capture: error: the following arguments are required: --target-descriptor, --workspace-available-bytes-minimum, --container-available-bytes-minimum, --expected-vram-bytes
+$ python3 bin/container_entry.py measure --dry-run --model x/y --revision 304b8051cfb2b260b61ce0cbe330e02a98e73639 \
+      --profile k6 --panel-descriptor /panel.json --lane streaming
+fidelity measure: error: the following arguments are required: --target-descriptor, --gpu, --workspace-available-bytes-minimum, --container-available-bytes-minimum, --expected-vram-bytes
+```
+
+What a human at a workstation can drive:
+
+```bash
+# what is this image, and what can it see? (needs a writable /workspace)
+docker run --gpus all --rm -v /data/run:/workspace <image> doctor
+docker run --rm <image> version
+
+# one stage, against a job document a controller already wrote
+docker run --gpus all --rm -v /data/run:/workspace <image> stage --job /workspace/fidelity/job.json capture
+
+# the zero-venv LOCAL route: the image's pinned interpreter running the dataset
+# tools it ships (fidelity_dataset.py, hf_capture.py, the committed panels).
+# Same argv as README Recipe 2 -> Local GPU quickstart; the checkpoint and the
+# output live on your mount. Nothing here is a pod contract.
+docker run --gpus all --rm -v /nvme:/nvme -e HF_HOME=/nvme/hf \
+    --entrypoint /opt/fidelity/venv/bin/python <image> \
+    /opt/fidelity/suite/bin/fidelity_dataset.py capture --engine hf-transformers \
+        --out /nvme/ds/root-1 --form hidden --role root --lane streaming -- \
+        --model /nvme/models/m --model-revision <40-hex> --weights-repository <owner>/<repo> --repository <handle>/<dataset-repo> \
+        --panel /opt/fidelity/suite/engines/panels/panel--glm53.malaiwah.corpus5x5-v1 \
+        --panel-id panel--glm53.malaiwah.corpus5x5-v1 --schedule layer-outer --device cuda --dtype bfloat16 \
+        --dataset-id fidelity--<family>.<handle>.root.bf16 --dataset-name "<name>" \
+        --run-name root-cold-1 --cold-run root-cold-1 --author <handle> --role root --sanity-expect Paris
+```
+
+Size it first with `bin/measure-local --artifact <repo> --panel <dataset>
+--estimate-only` on the host: GLM-5.3-class captures measured 37.53 GB
+allocated / 57.08 GB reserved (bf16, FP8) and 56.86 GB (K4 trellis) on H200 and
+are refused below 64 GB; the container adds nothing to that arithmetic. The
+container runs as root, so `chown` the mount afterwards (below).
 
 Useful everywhere: `--dry-run` prints the job document and the stage list and
 creates nothing; `--job FILE` uses a planner-written document verbatim;
