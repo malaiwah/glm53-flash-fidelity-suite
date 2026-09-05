@@ -9700,10 +9700,12 @@ def build_parser() -> argparse.ArgumentParser:
              "drill that seals a safety proof for strict campaign mode. "
              "adopt: not supported on RunPod.")
     p.add_argument(
-        "--provider", default=None,
+        "--provider", default="runpod",
         choices=("jarvislabs", "runpod", "vast", "lambda"),
-        help="required. Paid measurement runs on runpod only; jarvislabs is "
-             "accepted solely for `reaper` cleanup of historical leases.")
+        help="default runpod, the only provider paid measurement runs on; "
+             "jarvislabs is accepted solely for `reaper` cleanup of "
+             "historical leases, vast and lambda are refused before any "
+             "provider mutation.")
 
     t = p.add_argument_group("what to measure")
     t.add_argument(
