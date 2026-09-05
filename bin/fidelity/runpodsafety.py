@@ -169,6 +169,15 @@ _ALLOWLISTS = {
         "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
         "count": 791,
     },
+    ("zai-org/GLM-5.2",
+     "cf457fa734ab149ffef225f80893eb38c6ff5cdc"): {
+        # index census of model.layers.78 (Glm52Root, see the .provenance.json
+        # beside it): the same 791 bf16 names as the 5.3 BF16 list.
+        "path": "engines/tools/layer-outer-evidence/glm52-layer78-unexpected-keys.json",
+        "artifact_sha256": "969cee605deba10dd82afbaa9b1b7a35d2339fdb122efece14530c9030aa1436",
+        "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
+        "count": 791,
+    },
     ("zai-org/GLM-5.3-BF16",
      "304b8051cfb2b260b61ce0cbe330e02a98e73639"): {
         "path": "engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json",

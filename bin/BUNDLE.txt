@@ -98,6 +98,7 @@ engines/tools/layer-outer-evidence/incoai-nvfp4-layer78-unexpected-keys.json
 engines/tools/layer-outer-evidence/inferact-nvfp4-layer78-unexpected-keys.json
 engines/tools/layer-outer-evidence/gguf-unsloth-glm53-layer78-unexpected-keys.json
 engines/tools/layer-outer-evidence/glm52-gguf-unsloth-udq4kxl-layer78-unexpected-keys.json
+engines/tools/layer-outer-evidence/glm52-layer78-unexpected-keys.json
 engines/tools/dione-evidence/m2-layer45-unexpected-keys.json
 # The UNSEALED Dione (0xSero) selective-EXL3 surface. It serves BOTH lanes:
 # student_capture --surface dione (sealed EP8) and stream_score --source
