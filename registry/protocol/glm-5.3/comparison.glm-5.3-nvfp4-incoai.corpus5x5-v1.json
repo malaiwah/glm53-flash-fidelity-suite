@@ -1,0 +1,700 @@
+{
+  "candidate": {
+    "capture_content_digest": "ba15dfe4de3e9b8dfeb9b23461aa894b541dbd19f1560ec2d49cb0f8e7989d40",
+    "dataset_id": "fidelity--glm53.malaiwah.quant.nvfp4-incoai",
+    "dataset_sha256": "a241052c7d6ffede08b03ea28d9e92851fad05d95ec2c4d0c8e04bef08113f7b",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd",
+      "source": "native",
+      "tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd"
+    },
+    "label": "candidate",
+    "lane": "streaming",
+    "lane_identity_sha256": "025ae83c1cb0e2c518baa8bd0c46965f0c17b6aaca5b1b875ca5fcea71f565d5",
+    "repository": "malaiwah/glm53-fidelity-nvfp4-incoai-v1",
+    "revision": null,
+    "role": "quant",
+    "scope_digest": "attn.o=native:bf16@16|attn.other=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:nvfp4@4|moe.router=native:mixed|moe.shared_expert=native:bf16@16|mtp=native:mixed|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "e7ddf6b280474c1709836e227b55dda1247b32148313bc87fd88a2ada704f0e0",
+    "weights": {
+      "artifact_ref": null,
+      "checkpoint_identity_sha256": "2bafa83a937934c04da9cbc20540babe9dddf945aa3926392497d25f1a8c58b6",
+      "codec": "nvfp4",
+      "config_sha256": "48025a5f559f7a747734be8499810a22d34330577e1566a28810466319f57ef4",
+      "declared_bits": 4.0,
+      "declared_head_bits": 16,
+      "index_sha256": null,
+      "model_ref": null,
+      "model_revision": "54e52520606f96b3d9fc84088ad22882a61648ac",
+      "quantized": true,
+      "repository": "incoai/GLM-5.3-NVFP4",
+      "revision": "54e52520606f96b3d9fc84088ad22882a61648ac"
+    }
+  },
+  "comparability": {
+    "bias": null,
+    "class": "strict",
+    "key": "cmp--3b19974d0dc2c657",
+    "key_inputs": {
+      "accumulation_dtype": "float64",
+      "direction": "reference_to_candidate",
+      "head_policy": "native_head",
+      "metric_name": "mean_tokenwise_kld",
+      "note": "provisional; the registry recomputes with its reference record id (registry CMP-001)",
+      "panel_id": "panel--glm53.malaiwah.corpus5x5-v1",
+      "reference_id": "fidelity--glm53.malaiwah.root.bf16",
+      "stack_relation": "same_stack"
+    },
+    "same_lane": true,
+    "usable_as_floor": true
+  },
+  "comparator": {
+    "accumulation_dtype": "float64",
+    "bf16_reduced_precision_reduction": false,
+    "cublas_workspace_config": null,
+    "deterministic_algorithms": true,
+    "device": "cpu",
+    "estimator_backend": "torch:k6_kld_report._token_kld",
+    "head_applied_candidate_tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd",
+    "head_applied_reference_tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd",
+    "head_applied_tensor_content_sha256": null,
+    "logprob_dtype": "float64",
+    "position_block": 128,
+    "replay_backend": "numpy:cpu:float32",
+    "replay_env": {
+      "blas_configuration": "OpenBLAS 0.3.34.0.0  USE64BITINT DYNAMIC_ARCH NO_AFFINITY Haswell MAX_THREADS=64",
+      "blas_name": "scipy-openblas",
+      "blas_threads": 64,
+      "blas_threads_source": "ctypes:scipy_openblas_get_num_threads64_",
+      "blas_version": "0.3.34.0.0",
+      "cpu_model": "INTEL(R) XEON(R) PLATINUM 8568Y+",
+      "library": "numpy",
+      "numpy_version": "2.5.2",
+      "replay_dtype": "float32"
+    },
+    "replay_peak_device_bytes": null,
+    "short_circuited": false,
+    "source_file_hashes_verified": true,
+    "tensor_content_digests_verified": true,
+    "tf32": false,
+    "tool": {
+      "entrypoint": "bin/fidelity-dataset compare",
+      "note": "the fp64 estimator is k6_kld_report._token_kld, imported not copied, whenever torch is importable; estimator_backend records which path ran."
+    },
+    "two_pass": true,
+    "vocab_chunk": 8192
+  },
+  "comparison_kind": "measurement",
+  "context_depth_buckets": {
+    "0000-0255": 0.08186086380723191,
+    "0256-0511": 0.06840679524450871,
+    "0512-1023": 0.061011361959783246,
+    "1024-1535": 0.05390494670896799,
+    "1536-2046": 0.04739898277043661
+  },
+  "created_utc": "2026-09-05T12:40:12Z",
+  "determinism": {
+    "cold_start_per_run": null,
+    "distinct_evidence_hash_count": 2,
+    "evidence_hashes": [
+      "9eba97dddb4ff2e2a1d1fad8fdac1a57ec22963f1f85345451fcadcfc42682b8",
+      "ba15dfe4de3e9b8dfeb9b23461aa894b541dbd19f1560ec2d49cb0f8e7989d40"
+    ],
+    "evidence_kind": "hidden_state_tensor_sha256",
+    "identical_across_runs": null,
+    "max_run_mean": 0.05936812454877349,
+    "min_run_mean": 0.05936812454877349,
+    "note": "one comparison of two sealed captures. identical_across_runs is null, not true: that claim needs two independently produced captures of the SAME weights (SC-2), which is a different receipt.",
+    "population_stddev_of_run_means": 0.0,
+    "run_count": 1,
+    "run_means": [
+      0.05936812454877349
+    ]
+  },
+  "disclosures": [
+    {
+      "affects_comparability": false,
+      "code": "native_head_replay",
+      "detail": "HEAD-1d: each side replayed through its own sealed head (reference 864f488a0074, candidate 864f488a0074); head error is inside the measurement, as under HEAD-2, and nothing is substituted. The heads are content-identical.",
+      "severity": "info"
+    }
+  ],
+  "estimator": {
+    "accumulation_dtype": "float64",
+    "head_policy": "native_head",
+    "hidden_dtype": "bf16",
+    "logits_dtype": "float32",
+    "softmax_note": "full vocabulary, torch.log_softmax in float64; no truncation, no top-k, no clamp. A non-finite intermediate is a hard refusal.",
+    "stack_relation": "same_stack",
+    "two_pass": true,
+    "vocab_chunk": 8192,
+    "zero_handling": null
+  },
+  "format_version": 1,
+  "gates": {
+    "coverage": {
+      "detail": "25 of 25/25 declared records shared",
+      "overridden_by": null,
+      "passed": true
+    },
+    "decode": {
+      "detail": "weights_decode reference none; candidate nvfp4-modelopt-dequant-to-bf16",
+      "overridden_by": null,
+      "passed": true
+    },
+    "form": {
+      "detail": "hidden vs hidden",
+      "overridden_by": null,
+      "passed": true
+    },
+    "geometry": {
+      "detail": "vocab_size 154880 equal; hidden_width 6144",
+      "overridden_by": null,
+      "passed": true
+    },
+    "head": {
+      "detail": "HEAD-1d: own heads on both sides (864f488a0074 vs 864f488a0074)",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lane": {
+      "detail": "lane=streaming vs streaming",
+      "overridden_by": null,
+      "passed": true
+    },
+    "lossy": {
+      "detail": "lossy_codec null on both sides",
+      "overridden_by": null,
+      "passed": true
+    },
+    "panel": {
+      "detail": "suite_token_hash_sha256 equal; 25 shared records; per-record token and mask digests equal; scoring_window equal",
+      "overridden_by": null,
+      "passed": true
+    },
+    "seal": {
+      "detail": "both manifests self-seal and checksums.txt verified; every tensor_content_sha256 recomputed",
+      "overridden_by": null,
+      "passed": true
+    },
+    "stack": {
+      "detail": "lane_identity equal / stack_fingerprint equal -> same_stack",
+      "overridden_by": null,
+      "passed": true
+    }
+  },
+  "high_kld_contexts": [
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 14,
+      "max": 5.778717932355363,
+      "mean": 0.17619923954878838,
+      "scored_rows": 2047,
+      "window_id": "final-0014"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 13,
+      "max": 5.115518711334838,
+      "mean": 0.10595912214506682,
+      "scored_rows": 2047,
+      "window_id": "final-0013"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 17,
+      "max": 5.725318116823384,
+      "mean": 0.10515213449749049,
+      "scored_rows": 2047,
+      "window_id": "final-0017"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 11,
+      "max": 6.843897934201537,
+      "mean": 0.08069410395675321,
+      "scored_rows": 2047,
+      "window_id": "final-0011"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 4,
+      "max": 7.251711780080382,
+      "mean": 0.08047497036541265,
+      "scored_rows": 2047,
+      "window_id": "final-0004"
+    }
+  ],
+  "kl": {
+    "max": 9.279564802970585,
+    "mean": 0.05936812454877349,
+    "median": 0.004044304496228963,
+    "p95": 0.2691414856412762,
+    "p99": 0.9350867866972806,
+    "p99_9": 2.6166933964111463
+  },
+  "kl_macro_stratum_mean": null,
+  "kl_micro_token_mean": 0.05936812454877349,
+  "measurement_scope": {
+    "contexts": 25,
+    "covers_full_panel": true,
+    "position_filter": "all",
+    "positions_per_context": 2047,
+    "scored_positions": 51175,
+    "subset_detail": null
+  },
+  "metric": {
+    "direction": "reference_to_candidate",
+    "direction_label": "KL(reference || candidate)",
+    "higher_is_better": false,
+    "name": "mean_tokenwise_kld",
+    "units": "nats",
+    "value": 0.05936812454877349
+  },
+  "panel": {
+    "context_length": 2048,
+    "contexts": 25,
+    "panel_id": "panel--glm53.malaiwah.corpus5x5-v1",
+    "panel_token_sha256_legacy": "d177a85308683012b4289e35770ef08e4bdc8e17adf59c5d26de3e5da9479734",
+    "scored_positions": 51175,
+    "scoring_window": {
+      "dropped_positions_total": 0,
+      "min_left_context_tokens": 1,
+      "policy": "every causal prediction position of every window is scored; nothing is dropped",
+      "score_from": 0,
+      "windowed": false
+    },
+    "suite_token_hash_sha256": "f09ee395f635225a077695ed193d61f7d1e70650cebe1b68f82b16f59d399f86",
+    "tokenizer": {
+      "files": [
+        {
+          "bytes": 4263,
+          "name": "LICENSE",
+          "sha256": "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c"
+        },
+        {
+          "bytes": 10465,
+          "name": "chat_template.jinja",
+          "sha256": "69bb3ab52067898e2466b855407636de559568947f367945842aabcb7fcc1705"
+        },
+        {
+          "bytes": 3732,
+          "name": "config.json",
+          "sha256": "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca"
+        },
+        {
+          "bytes": 194,
+          "name": "generation_config.json",
+          "sha256": "ac76b43d8683d3b930126870fc8be73d8679308fe752fa1f381096d8354f6a55"
+        },
+        {
+          "bytes": 20217442,
+          "name": "tokenizer.json",
+          "sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d"
+        },
+        {
+          "bytes": 761,
+          "name": "tokenizer_config.json",
+          "sha256": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"
+        }
+      ],
+      "files_verified": true,
+      "id": "zai-org/GLM-5.3-BF16",
+      "identity_sha256": "b18e4d378be7e75fd2b323f7c81cc65640f6a08e1842d3bf4e025d88a9d78bf9",
+      "maximum_token_id_exclusive": 154820,
+      "receipt": null,
+      "repository": "zai-org/GLM-5.3-BF16",
+      "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+      "vocab_size": 154820
+    },
+    "tokenizer_candidate": {
+      "files": [
+        {
+          "bytes": 4263,
+          "name": "LICENSE",
+          "sha256": "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c"
+        },
+        {
+          "bytes": 10465,
+          "name": "chat_template.jinja",
+          "sha256": "69bb3ab52067898e2466b855407636de559568947f367945842aabcb7fcc1705"
+        },
+        {
+          "bytes": 3732,
+          "name": "config.json",
+          "sha256": "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca"
+        },
+        {
+          "bytes": 194,
+          "name": "generation_config.json",
+          "sha256": "ac76b43d8683d3b930126870fc8be73d8679308fe752fa1f381096d8354f6a55"
+        },
+        {
+          "bytes": 20217442,
+          "name": "tokenizer.json",
+          "sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d"
+        },
+        {
+          "bytes": 761,
+          "name": "tokenizer_config.json",
+          "sha256": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"
+        }
+      ],
+      "files_verified": true,
+      "id": "zai-org/GLM-5.3-BF16",
+      "identity_sha256": "b18e4d378be7e75fd2b323f7c81cc65640f6a08e1842d3bf4e025d88a9d78bf9",
+      "maximum_token_id_exclusive": 154820,
+      "receipt": null,
+      "repository": "zai-org/GLM-5.3-BF16",
+      "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+      "vocab_size": 154820
+    },
+    "tokenizer_identity_equal": true,
+    "tokenizer_reference": {
+      "files": [
+        {
+          "bytes": 4263,
+          "name": "LICENSE",
+          "sha256": "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c"
+        },
+        {
+          "bytes": 10465,
+          "name": "chat_template.jinja",
+          "sha256": "69bb3ab52067898e2466b855407636de559568947f367945842aabcb7fcc1705"
+        },
+        {
+          "bytes": 3732,
+          "name": "config.json",
+          "sha256": "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca"
+        },
+        {
+          "bytes": 194,
+          "name": "generation_config.json",
+          "sha256": "ac76b43d8683d3b930126870fc8be73d8679308fe752fa1f381096d8354f6a55"
+        },
+        {
+          "bytes": 20217442,
+          "name": "tokenizer.json",
+          "sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d"
+        },
+        {
+          "bytes": 761,
+          "name": "tokenizer_config.json",
+          "sha256": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"
+        }
+      ],
+      "files_verified": true,
+      "id": "zai-org/GLM-5.3-BF16",
+      "identity_sha256": "b18e4d378be7e75fd2b323f7c81cc65640f6a08e1842d3bf4e025d88a9d78bf9",
+      "maximum_token_id_exclusive": 154820,
+      "receipt": null,
+      "repository": "zai-org/GLM-5.3-BF16",
+      "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+      "vocab_size": 154820
+    }
+  },
+  "per_context": [
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 0,
+      "max": 4.948893455646604,
+      "mean": 0.03780175570960455,
+      "scored_rows": 2047,
+      "window_id": "final-0000"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 1,
+      "max": 4.2896861841896055,
+      "mean": 0.0616046891014433,
+      "scored_rows": 2047,
+      "window_id": "final-0001"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 2,
+      "max": 5.034262816977633,
+      "mean": 0.043723927428489254,
+      "scored_rows": 2047,
+      "window_id": "final-0002"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 3,
+      "max": 5.710785844984506,
+      "mean": 0.06379980967175056,
+      "scored_rows": 2047,
+      "window_id": "final-0003"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "code",
+      "index": 4,
+      "max": 7.251711780080382,
+      "mean": 0.08047497036541265,
+      "scored_rows": 2047,
+      "window_id": "final-0004"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 5,
+      "max": 3.3763258639226716,
+      "mean": 0.06308035669296702,
+      "scored_rows": 2047,
+      "window_id": "final-0005"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 6,
+      "max": 4.9549297206834675,
+      "mean": 0.06708346213880008,
+      "scored_rows": 2047,
+      "window_id": "final-0006"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 7,
+      "max": 3.619114863396594,
+      "mean": 0.07313999432191944,
+      "scored_rows": 2047,
+      "window_id": "final-0007"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 8,
+      "max": 3.3284551143097323,
+      "mean": 0.06965582321198818,
+      "scored_rows": 2047,
+      "window_id": "final-0008"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "encyclopedic",
+      "index": 9,
+      "max": 0.7589034923344712,
+      "mean": 0.03583278323564234,
+      "scored_rows": 2047,
+      "window_id": "final-0009"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 10,
+      "max": 2.9216991272331647,
+      "mean": 0.015470657173286096,
+      "scored_rows": 2047,
+      "window_id": "final-0010"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 11,
+      "max": 6.843897934201537,
+      "mean": 0.08069410395675321,
+      "scored_rows": 2047,
+      "window_id": "final-0011"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 12,
+      "max": 9.279564802970585,
+      "mean": 0.009849465726430357,
+      "scored_rows": 2047,
+      "window_id": "final-0012"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 13,
+      "max": 5.115518711334838,
+      "mean": 0.10595912214506682,
+      "scored_rows": 2047,
+      "window_id": "final-0013"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "literary",
+      "index": 14,
+      "max": 5.778717932355363,
+      "mean": 0.17619923954878838,
+      "scored_rows": 2047,
+      "window_id": "final-0014"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 15,
+      "max": 3.7998722109179512,
+      "mean": 0.046714434902432427,
+      "scored_rows": 2047,
+      "window_id": "final-0015"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 16,
+      "max": 1.253621565864408,
+      "mean": 0.03999134781177709,
+      "scored_rows": 2047,
+      "window_id": "final-0016"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 17,
+      "max": 5.725318116823384,
+      "mean": 0.10515213449749049,
+      "scored_rows": 2047,
+      "window_id": "final-0017"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 18,
+      "max": 1.3429359560885152,
+      "mean": 0.03926991597296521,
+      "scored_rows": 2047,
+      "window_id": "final-0018"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "multilingual",
+      "index": 19,
+      "max": 3.3220998410239164,
+      "mean": 0.0702863617368366,
+      "scored_rows": 2047,
+      "window_id": "final-0019"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 20,
+      "max": 2.3675266520121987,
+      "mean": 0.034820624433625866,
+      "scored_rows": 2047,
+      "window_id": "final-0020"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 21,
+      "max": 0.7158927057890547,
+      "mean": 0.034431963856942464,
+      "scored_rows": 2047,
+      "window_id": "final-0021"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 22,
+      "max": 2.521284516467078,
+      "mean": 0.041334001189002725,
+      "scored_rows": 2047,
+      "window_id": "final-0022"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 23,
+      "max": 1.691788117058879,
+      "mean": 0.038965033006161075,
+      "scored_rows": 2047,
+      "window_id": "final-0023"
+    },
+    {
+      "allocation_stratum": null,
+      "domain": "scientific",
+      "index": 24,
+      "max": 2.1244021258907013,
+      "mean": 0.048867135883761174,
+      "scored_rows": 2047,
+      "window_id": "final-0024"
+    }
+  ],
+  "per_domain": {
+    "code": 0.05748103045534007,
+    "encyclopedic": 0.06175848392026341,
+    "literary": 0.07763451771006498,
+    "multilingual": 0.060282838984300355,
+    "scientific": 0.03968375167389866
+  },
+  "per_stratum": null,
+  "receipt_sha256": "f6eb64cc3eb464dacc930e31a54e12f38cf123e803f54ca5ac460723547f44ef",
+  "reference": {
+    "capture_content_digest": "9eba97dddb4ff2e2a1d1fad8fdac1a57ec22963f1f85345451fcadcfc42682b8",
+    "dataset_id": "fidelity--glm53.malaiwah.root.bf16",
+    "dataset_sha256": "6b8d3a7bdf934f18fc819cc72d85c5385c3351fa50a8c9c2612dd9a29172a4a4",
+    "form": "hidden",
+    "head": {
+      "bits": 16,
+      "quantized": false,
+      "raw_tensor_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd",
+      "source": "native",
+      "tensor_content_sha256": "864f488a0074d236062a4f24800940df7ba611dba76238d4f9f847d9659e11cd"
+    },
+    "label": "root",
+    "lane": "streaming",
+    "lane_identity_sha256": "025ae83c1cb0e2c518baa8bd0c46965f0c17b6aaca5b1b875ca5fcea71f565d5",
+    "repository": "malaiwah/glm53-fidelity-root-v1",
+    "revision": null,
+    "role": "root",
+    "scope_digest": "attn.o=native:bf16@16|attn.qkv=native:bf16@16|embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=native:bf16@16|norm=native:bf16@16|head=native|kv=bf16",
+    "stack_fingerprint_sha256": "e7ddf6b280474c1709836e227b55dda1247b32148313bc87fd88a2ada704f0e0",
+    "weights": {
+      "artifact_ref": null,
+      "checkpoint_identity_sha256": "02963bc5f9012be8a597a29737adcb9204fe5a7513f66e9b1f85075449f4dda1",
+      "codec": null,
+      "config_sha256": "ca8f2f47b07919a514c0ca223dc2ea2bc7445afaa5ac76c013a3784e096426ca",
+      "declared_bits": null,
+      "declared_head_bits": 16,
+      "index_sha256": null,
+      "model_ref": null,
+      "model_revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639",
+      "quantized": false,
+      "repository": "zai-org/GLM-5.3-BF16",
+      "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639"
+    }
+  },
+  "schema": "malaiwah.fidelity-comparison-receipt.v1",
+  "self_compare": null,
+  "submission": {
+    "emitted": false,
+    "path": null,
+    "receipt_sha256": null,
+    "refusal": null,
+    "submission_schema": null
+  },
+  "tokenwise": {
+    "bytes": 409528,
+    "path": "tokenwise-kld.npy",
+    "sha256": "0e65128b5a41bd8179efae1654c0e6eb5a9a5731a71c14d22af52e2f331ddb9c"
+  },
+  "top1_agreement": 0.9329164631167562,
+  "top1_discordant_contexts": [],
+  "uncertainty": {
+    "ci95_high": null,
+    "ci95_low": null,
+    "cluster_unit": null,
+    "clusters": null,
+    "method": "none",
+    "samples": null,
+    "seed": null
+  }
+}
