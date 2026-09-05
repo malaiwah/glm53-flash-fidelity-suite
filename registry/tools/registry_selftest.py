@@ -1392,6 +1392,125 @@ def main():
 
     print()
     print("=" * 78)
+    print("S. an all-native format census is never a quantized assignment (SCOPE-011)")
+    print("=" * 78)
+    # review-science S1-1: the published GLM-5.3 scopes carried `quantized:mixed` rows
+    # whose own census named nothing but native groups (bf16 router weights beside an
+    # fp32 correction bias). fp8_scope.assignments_from_census has written those as
+    # treatment=native since 56ff020; the validator must refuse the old rows so the
+    # contradiction cannot be republished. Fixtures are the OLD published strings.
+    _src_drowzeys = (
+        "read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 "
+        "model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights "
+        "are stored as trellis/suh/svh payload groups (codebook from the object each module "
+        "carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a "
+        "_scale_inv sibling exists, native otherwise (stored dtype from the shard headers).")
+    _src_wrld = (
+        "read from wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1@47af23347db743b4666d952e2eb48f2b01c3fede "
+        "model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights "
+        "are stored as trellis/suh/svh payload groups (codebook from the object each module "
+        "carries: mcg:57600; declared bits 4 by quantization_config), fp8_e4m3 when a "
+        "_scale_inv sibling exists, native otherwise (stored dtype from the shard headers).")
+    _mixes = "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): "
+    all_native = {
+        "artifact--drowzeys.keys-glm-5.3-exl3": [
+            {"tensor_class": "attn.other", "layer_range": "0-77", "treatment": "quantized",
+             "format": "mixed", "bits_per_weight": None,
+             "note": _mixes + "156 x native:bf16@16 (model.layers.N.self_attn.kv_a_layernorm.weight, "
+                     "model.layers.N.self_attn.q_a_layernorm.weight); 105 x native:fp16@16 "
+                     "(model.layers.N.self_attn.indexer.k_norm.bias, "
+                     "model.layers.N.self_attn.indexer.k_norm.weight, "
+                     "model.layers.N.self_attn.indexer.weights_proj.weight). " + _src_drowzeys},
+            {"tensor_class": "moe.router", "layer_range": "3-77", "treatment": "quantized",
+             "format": "mixed", "bits_per_weight": None,
+             "note": _mixes + "75 x native:fp16@16 (model.layers.N.mlp.gate.weight); 75 x native:fp32@32 "
+                     "(model.layers.N.mlp.gate.e_score_correction_bias). " + _src_drowzeys},
+            {"tensor_class": "mtp", "layer_range": "78", "treatment": "quantized",
+             "format": "mixed", "bits_per_weight": None,
+             "note": _mixes + "7 x native:bf16@16 (model.layers.N.enorm.weight, model.layers.N.hnorm.weight, "
+                     "model.layers.N.input_layernorm.weight); 783 x native:fp16@16 "
+                     "(model.layers.N.eh_proj.weight, model.layers.N.mlp.experts.E.down_proj.weight, "
+                     "model.layers.N.mlp.experts.E.gate_proj.weight); 1 x native:fp32@32 "
+                     "(model.layers.N.mlp.gate.e_score_correction_bias). " + _src_drowzeys},
+        ],
+        "artifact--wrldsuksgo2mars.glm-5.3-exl3-k4-v1": [
+            {"tensor_class": "moe.router", "layer_range": "3-77", "treatment": "quantized",
+             "format": "mixed", "bits_per_weight": None,
+             "note": _mixes + "75 x native:bf16@16 (model.layers.N.mlp.gate.weight); 75 x native:fp32@32 "
+                     "(model.layers.N.mlp.gate.e_score_correction_bias). " + _src_wrld},
+        ],
+    }
+
+    def _scope011(assignments):
+        C = {"artifacts": {aid: {"scope": {"policy": "mixed", "head_policy": "native",
+                                           "kv_cache_dtype": "bf16", "assignments": rows}}
+                           for aid, rows in assignments.items()},
+             "measurements": {}}
+        rep = RV.Report()
+        RV.check_scope(C, rep)
+        return [f for f in rep.errors if f["check"] == "SCOPE-011"]
+
+    hits = _scope011(all_native)
+    hit_ids = sorted(f["id"] for f in hits)
+    want_ids = ["artifact--drowzeys.keys-glm-5.3-exl3"] * 3 + ["artifact--wrldsuksgo2mars.glm-5.3-exl3-k4-v1"]
+    ok = hit_ids == want_ids and all(
+        "native:" in f["message"] and "quantized:" not in f["message"] for f in hits)
+    print("  %-58s %s" % ("SCOPE-011 the OLD quantized:mixed all-native rows are REFUSED (3+1)",
+                          "PASS" if ok else "FAIL (%s)" % hit_ids))
+    passed += ok
+    failed += not ok
+
+    # The same censuses with the treatment fp8_scope writes today must be clean.
+    relabelled = {aid: [dict(x, treatment="native") for x in rows] for aid, rows in all_native.items()}
+    ok = not _scope011(relabelled)
+    print("  %-58s %s" % ("SCOPE-011 treatment=native with the same census is clean", "PASS" if ok else "FAIL"))
+    passed += ok
+    failed += not ok
+
+    # A census with ANY quantized group is a genuinely mixed class: silent.
+    mixed = {"artifact--x.mixed": [
+        {"tensor_class": "mtp", "layer_range": "78", "treatment": "quantized",
+         "format": "mixed", "bits_per_weight": None,
+         "note": _mixes + "12 x native:bf16@16 (model.layers.N.eh_proj.weight); 1 x native:fp32@32 "
+                 "(model.layers.N.mlp.gate.e_score_correction_bias); 75 x quantized:exl3-mcg@4 "
+                 "(model.layers.N.mlp.experts.E.down_proj.weight). " + _src_wrld},
+        {"tensor_class": "attn.other", "layer_range": "0-77", "treatment": "quantized",
+         "format": "mixed", "bits_per_weight": None,
+         "note": _mixes + "219 x native:bf16@16 (model.layers.N.self_attn.indexer.k_norm.bias); "
+                 "42 x quantized:fp8_e4m3@8 (model.layers.N.self_attn.indexer.wk.weight). " + _src_wrld},
+    ]}
+    ok = not _scope011(mixed)
+    print("  %-58s %s" % ("SCOPE-011 a census with a quantized group is silent", "PASS" if ok else "FAIL"))
+    passed += ok
+    failed += not ok
+
+    # A prose note carries no census: nothing to contradict, so the rule stays silent
+    # even when the prose mentions native storage.
+    prose = {"artifact--x.prose": [
+        {"tensor_class": "moe.experts", "layer_range": "all", "treatment": "quantized",
+         "format": "exl3-mcg", "bits_per_weight": 4.0,
+         "note": "57600 tensors: model.layers.N.mlp.experts.E.down_proj.weight. " + _src_wrld},
+        {"tensor_class": "attn.o", "layer_range": "all", "treatment": "quantized",
+         "format": "fp8_e4m3", "bits_per_weight": 8,
+         "note": "native bf16 elsewhere; 78 tensors quantized to fp8_e4m3 with native:bf16 scales"},
+    ]}
+    ok = not _scope011(prose)
+    print("  %-58s %s" % ("SCOPE-011 a prose-only note is silent", "PASS" if ok else "FAIL"))
+    passed += ok
+    failed += not ok
+
+    # The catalogue must know the code, or the finding is unexplainable to a reader.
+    with open(os.path.join(args.root, "schema", "invariants.json"), encoding="utf-8") as fh:
+        _inv = json.load(fh)
+    _entry = [i for i in _inv.get("invariants", []) if i.get("id") == "SCOPE-011"]
+    ok = len(_entry) == 1 and _entry[0].get("severity") == "error"
+    print("  %-58s %s" % ("SCOPE-011 is catalogued in schema/invariants.json as an error",
+                          "PASS" if ok else "FAIL"))
+    passed += ok
+    failed += not ok
+
+    print()
+    print("=" * 78)
     print("E. the tools import no networking library")
     print("=" * 78)
     for tool in ("registry_validate.py", "registry_add.py"):

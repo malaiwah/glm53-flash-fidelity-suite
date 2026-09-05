@@ -114,15 +114,9 @@ def main() -> int:
     else:
         sel_sha = None
 
-    # per-window inputs, so a row's value can be re-derived from its own scope
-    pw_dir = os.path.join(proto_dir, "per-window")
-    per_window = {}
-    if os.path.isdir(pw_dir):
-        for f in sorted(os.listdir(pw_dir)):
-            if f.endswith(".json"):
-                d = json.load(open(os.path.join(pw_dir, f), encoding="utf-8"))
-                per_window[f[:-5]] = d["per_window"]
-
+    # per-window inputs, so a row's value can be re-derived from its own scope.
+    # Each series names its own file and shape (the Flash per-window arrays, the
+    # GLM-5.3 receipts' per_context); joint_enrich.Series.load is the ONE reader.
     try:
         from joint_enrich import SERIES, CLEAN_SUFFIX, CLEAN_PANEL
     except Exception as exc:                                  # pragma: no cover
@@ -239,12 +233,16 @@ def main() -> int:
                   "%s: estimator states a vocab_masking_policy" % mid)
 
     # --------------------------- the value must BE the mean of its own scope
-    for mid, slug in SERIES.items():
-        pw = per_window.get(slug)
-        if pw is None:
-            rep.check(False, "JOINT-006", "missing per-window input %s.json" % slug)
+    for mid, series in SERIES.items():
+        try:
+            pw = series.load(args.root)
+        except OSError:
+            rep.check(False, "JOINT-006", "missing per-window input %s" % series.path)
             continue
-        for suffix, keep in ((None, None), (CLEAN_SUFFIX, set(sel["selected_windows"]) if sel else None)):
+        scopes = [(None, None)]
+        if series.panel:
+            scopes.append((CLEAN_SUFFIX, set(sel["selected_windows"]) if sel else None))
+        for suffix, keep in scopes:
             rid = mid + (suffix or "")
             row = by_id.get(rid)
             if row is None:

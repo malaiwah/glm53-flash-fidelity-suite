@@ -12,7 +12,9 @@ Every case here fails against the pre-2026-08-30 code.  T1/T2 fail because
 `derive_seed` does not exist and every domain drew the same stream; T3 fails
 because `delta_t_log` does not exist; T4 fails because `domain_table` had no
 `interval` parameter to ask for the old procedure by name; T6/T7 fail because
-`coverage_measured` was never computed for anything.
+`coverage_measured` was never computed for anything.  T8 fails against the
+pre-2026-09-05 code because `joint_enrich` read only the Flash per-window files
+and left every GLM-5.3 row at `uncertainty.method: none`.
 
 Needs numpy, for the same reason `make reseed` does: the resample stream must be
 PCG64.  Run with `make stat-selftest`.
@@ -62,6 +64,88 @@ def real_cells():
             for dom in sorted(by):
                 if len(by[dom]) >= 2:
                     yield (slug, scope, dom), by[dom]
+
+
+def _receipt_row(mid, value, scored_positions=51175, identical=True):
+    """The minimum a row needs for joint_enrich.apply; the receipt supplies the rest."""
+    return {
+        "id": mid,
+        "estimator": {"vocab_masking_policy": "full_stored_vocab"},
+        "provenance": {"measured_by": "self-measured"},
+        "metric": {"name": "mean_tokenwise_kld", "value": value},
+        "measurement_scope": {"scored_positions": scored_positions, "contexts": 25},
+        "determinism": {"run_count": 2, "identical_across_runs": identical,
+                        "evidence_kind": "hidden_state_tensor_sha256"},
+        "comparability": {"key": "cmp--selftest"},
+        "uncertainty": {"method": "none"},
+    }
+
+
+def receipt_series_section():
+    """T8: a receipt's per_context is a window source, and it is checked, not trusted."""
+    print()
+    print("=" * 78)
+    print("T8. GLM-5.3 rows get the interval from their receipt's per_context")
+    print("=" * 78)
+    fp8 = "measurement--glm-5.3.fp8-dequantized.corpus5x5-v1"
+    k4 = "measurement--glm-5.3.exl3-k4-wrldsuksgo2mars.corpus5x5-v1"
+    try:
+        series = JE.SERIES[fp8]
+        pw = series.load()
+        n = sum(w["count"] for w in pw)
+        value = S.se_from_window_summaries(pw)["mean"]
+        rows = JE.apply([_receipt_row(fp8, value, n)])
+    except Exception as exc:                                  # the pre-fix tree
+        check(False, "receipt-sourced series is declared and loads", repr(exc))
+        return
+    check(series.source == "receipt-per-context" and not series.panel,
+          "the series is declared receipt-per-context with panel enrichment OFF")
+    check(len(pw) == 25 and n == 51175 and len({w["window_id"] for w in pw}) == 25,
+          "25 distinct windows, 51,175 scored positions, read from the receipt")
+    check(len(rows) == 1, "no clean17 sibling is appended (%d rows out)" % len(rows))
+    row = rows[0]
+    u = row.get("uncertainty") or {}
+    check(u.get("method") == "window_block_bootstrap_bca" and u.get("interval_kind") == "bca",
+          "uncertainty.method is window_block_bootstrap_bca (bca)", repr(u.get("method")))
+    check(u.get("clusters") == 25 and u.get("samples") == 51175
+          and u.get("cluster_unit") == "window",
+          "clusters 25, samples 51175, cluster_unit window")
+    check(u.get("bootstrap_b") == JE.BOOTSTRAP_B and u.get("bootstrap_seed") == JE.SEED,
+          "B=%d, seed=%d" % (JE.BOOTSTRAP_B, JE.SEED))
+    check(u.get("ci95_low") is not None and u["ci95_low"] <= value <= u["ci95_high"],
+          "the BCa interval brackets the value")
+    check(u.get("se_clustered") is not None and "se_naive" not in u and "deff" not in u,
+          "se_clustered is quoted; se_naive/deff are not (the receipt carries no std)")
+    check(u.get("sigma_run") == 0.0 and u.get("sigma_run_runs") == 2
+          and u.get("se_total") == u.get("se_clustered"),
+          "bitwise-identical cold runs give sigma_run 0.0 over 2 runs")
+    check("coverage_measured" not in u and "NOT measured" in u.get("note", ""),
+          "no coverage_measured; the note says coverage is not measured for this panel")
+    check("by_domain" not in row and "protocol" not in row
+          and "scope_name" not in row["measurement_scope"],
+          "no by_domain, protocol stamp or scope naming on a panel=False series")
+    # A per_context that does not reproduce the headline is a refusal, not a footnote.
+    for label, bad in (("value off by 1e-9", _receipt_row(fp8, value + 1e-9, n)),
+                       ("scored_positions off by one", _receipt_row(fp8, value, n - 1))):
+        try:
+            JE.apply([bad])
+            check(False, "refuses a row whose %s" % label)
+        except SystemExit as exc:
+            check("joint_enrich" in str(exc), "refuses a row whose %s" % label, str(exc))
+    # Two rows in one group get the paired ordering footnote.
+    pw_k4 = JE.SERIES[k4].load()
+    v_k4 = S.se_from_window_summaries(pw_k4)["mean"]
+    both = JE.apply([_receipt_row(k4, v_k4, n), _receipt_row(fp8, value, n)])
+    pairs = JE.orderings(both)
+    check(len(pairs) == 1 and pairs[0]["lower"] == fp8 and pairs[0]["higher"] == k4
+          and pairs[0]["windows"] == 25 and pairs[0]["wins"] + pairs[0]["ties"] <= 25
+          and 0.0 < pairs[0]["sign_test_p"] <= 1.0,
+          "orderings() pairs the two rows lowest-first with a sign-test p in (0, 1]")
+    check(all("Ordering vs" in r["uncertainty"]["note"] for r in both),
+          "each row's note carries the ordering sentence")
+    check(sum(1 for r in both if "Ordering vs" in r["uncertainty"]["note"]) == 2
+          and "Ordering vs" not in u["note"],
+          "a row alone in its group gets no ordering sentence")
 
 
 def main():
@@ -229,7 +313,7 @@ def main():
     rows = [json.loads(l) for l in open(os.path.join(_REGISTRY, "data",
                                                      "measurements.jsonl"),
                                         encoding="utf-8")]
-    slug_of = {mid: slug for mid, slug in JE.SERIES.items()}
+    slug_of = {mid: s.slug for mid, s in JE.SERIES.items()}
     checked = mismatch = 0
     for r in rows:
         for cell in r.get("by_domain") or []:
@@ -280,6 +364,8 @@ def main():
     check(not bad_dir,
           "the OLD interval missed HIGH on every cell: it understated divergence",
           "%d cells did not" % len(bad_dir))
+
+    receipt_series_section()
 
     print()
     print("-" * 78)

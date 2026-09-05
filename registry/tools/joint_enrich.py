@@ -29,6 +29,19 @@ because brandonmusic's 13-gram scan showed the sealed panel is not
 calibration-clean.  The two scopes disagree in DIRECTION between contributors --
 every malaiwah row falls 12.6-16.2% on the clean scope while his own 4bpw row
 rises 1.6% -- so neither scope can stand in for the other and both are published.
+The two Flash rows that carry no per-window array (the BF16 streaming floor and
+the Dione Q4) are named in NOT_RECOMPUTABLE so the omission is visible.
+
+GLM-5.3 (the 2026-09 family, slug ``glm-5.3``, panel corpus5x5-v1) is a second
+SOURCE of the same window means: its comparison receipts under
+``registry/protocol/glm-5.3/`` carry ``per_context`` -- one entry per window
+with the window's mean and its scored-position count.  Those rows get the
+interval and nothing else.  The frozen protocol, the calibration-overlap scan,
+the clean17 scope and the coverage simulation are all objects of the Flash
+panel25 and would be a borrowed claim on any other panel, so a series declares
+``panel=False`` and the enrichment refuses to write any of them.  No coverage
+simulation exists for corpus5x5-v1; the note says so and calls the level
+nominal.
 
 No number here is invented: every value is a deterministic function of
 per-window means this registry already publishes, and ``make check`` re-derives
@@ -37,9 +50,11 @@ all of it from those files.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import os
+import statistics
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -76,17 +91,75 @@ COVERAGE_FILE = os.path.join(PROTOCOL_DIR, "coverage", "domain-interval-coverage
 DOMAIN_PROCEDURE = "new_delta_t_log"
 PANEL_PROCEDURE = "panel_bca_b5000"
 
-# measurement id -> per-window file basename.  Only rows whose receipts actually
-# carry per-window arrays appear here; the two that do not (the BF16 streaming
-# floor and the Dione Q4, both scalar-only receipts) are deliberately absent and
-# are named in NOT_RECOMPUTABLE so the omission is visible rather than silent.
+
+@dataclasses.dataclass(frozen=True)
+class Series:
+    """One measurement series the enrichment re-derives from its own windows.
+
+    ``source`` names the shape of the file at ``path`` (registry-relative):
+
+      * ``per-window``: ``{"per_window": [{window_id, count, mean, std, domain}]}``,
+        the joint standard's shape under registry/protocol/per-window/;
+      * ``receipt-per-context``: a sealed comparison receipt whose
+        ``per_context`` array carries ``{window_id, scored_rows, mean, domain}``
+        per window.  No per-window std, so se_naive/deff are not derivable.
+
+    ``panel`` is the Flash panel25 enrichment -- by_domain, the protocol stamp,
+    the scope naming, coverage_measured and the clean17 sibling -- which is a
+    property of THAT panel and is refused elsewhere.  A ``panel=False`` series
+    gets exactly the ``uncertainty`` block.
+    """
+
+    slug: str
+    source: str
+    path: str
+    panel: bool
+
+    def load(self, registry_root: str = _REGISTRY) -> List[Dict[str, Any]]:
+        """The window summaries, in the shape se_from_window_summaries expects."""
+        doc = _load_json(os.path.join(registry_root, self.path))
+        if self.source == "per-window":
+            return doc["per_window"]
+        if self.source == "receipt-per-context":
+            return [{"window_id": w["window_id"], "count": int(w["scored_rows"]),
+                     "mean": w["mean"], "domain": w.get("domain")}
+                    for w in doc["per_context"]]
+        raise SystemExit("joint_enrich: %s: unknown series source %r" % (self.slug, self.source))
+
+
+def _flash(slug: str) -> Series:
+    return Series(slug, "per-window", "protocol/per-window/%s.json" % slug, panel=True)
+
+
+def _glm53(slug: str) -> Series:
+    return Series(slug, "receipt-per-context",
+                  "protocol/glm-5.3/comparison.glm-5.3-%s.corpus5x5-v1.json" % slug,
+                  panel=False)
+
+
+# measurement id -> series.  Only rows whose receipts actually carry per-window
+# means appear here; the two Flash rows that do not (the BF16 streaming floor
+# and the Dione Q4, both scalar-only receipts) are deliberately absent and are
+# named in NOT_RECOMPUTABLE so the omission is visible rather than silent.
 SERIES = {
-    "measurement--glm53.k6-6bpw.brandonmusic-final25": "k6-sealed",
-    "measurement--glm53.k6-6bpw-stream.brandonmusic-final25": "k6-streaming",
-    "measurement--glm53.k8-8bpw-stream.brandonmusic-final25": "k8-streaming",
-    "measurement--glm53.official-fp8.brandonmusic-final25.crossstack": "fp8-crossstack",
-    "measurement--glm53.bf16-replay-floor.brandonmusic-final25": "bf16-floor-crossstack",
-    "measurement--glm53.brandonmusic-4bpw.brandonmusic-final25": "brandonmusic-4bpw",
+    "measurement--glm53.k6-6bpw.brandonmusic-final25": _flash("k6-sealed"),
+    "measurement--glm53.k6-6bpw-stream.brandonmusic-final25": _flash("k6-streaming"),
+    "measurement--glm53.k8-8bpw-stream.brandonmusic-final25": _flash("k8-streaming"),
+    "measurement--glm53.official-fp8.brandonmusic-final25.crossstack": _flash("fp8-crossstack"),
+    "measurement--glm53.bf16-replay-floor.brandonmusic-final25": _flash("bf16-floor-crossstack"),
+    "measurement--glm53.brandonmusic-4bpw.brandonmusic-final25": _flash("brandonmusic-4bpw"),
+    # GLM-5.3 on corpus5x5-v1: the interval only. The bf16 self-compare floor is
+    # exactly 0.0 on every window and is not listed -- an interval on a
+    # zero-variance panel is [0, 0] and says nothing the value does not.
+    "measurement--glm-5.3.fp8-dequantized.corpus5x5-v1": _glm53("fp8-dequantized"),
+    "measurement--glm-5.3.exl3-k4-wrldsuksgo2mars.corpus5x5-v1": _glm53("exl3-k4-wrldsuksgo2mars"),
+    "measurement--glm-5.3.exl3-tr3-3.42bpw-davidsyoung.corpus5x5-v1":
+        _glm53("exl3-tr3-3.42bpw-davidsyoung"),
+    "measurement--glm-5.3.exl3-tr3-3.25bpw-davidsyoung.corpus5x5-v1":
+        _glm53("exl3-tr3-3.25bpw-davidsyoung"),
+    "measurement--glm-5.3.exl3-tr3-3.0bpw-davidsyoung.corpus5x5-v1":
+        _glm53("exl3-tr3-3.0bpw-davidsyoung"),
+    "measurement--glm-5.3.exl3-keys-drowzeys.corpus5x5-v1": _glm53("exl3-keys-drowzeys"),
 }
 
 NOT_RECOMPUTABLE = {
@@ -142,9 +215,8 @@ class _Context:
         self.selection_sha = _sha256_file(SELECTION_FILE)
         self.clean = list(self.selection["selected_windows"])
         self.per_window: Dict[str, List[Dict[str, Any]]] = {}
-        for mid, slug in SERIES.items():
-            doc = _load_json(os.path.join(PER_WINDOW_DIR, slug + ".json"))
-            self.per_window[mid] = doc["per_window"]
+        for mid, series in SERIES.items():
+            self.per_window[mid] = series.load()
         scan = {
             "method": self.selection["method"],
             "ngram_n": self.selection["ngram_n"],
@@ -212,7 +284,8 @@ def _uncertainty(per_window: List[Dict[str, Any]], run_means: Optional[List[floa
                  sigma_note: Optional[str] = None,
                  ctx: Optional["_Context"] = None,
                  slug: Optional[str] = None,
-                 scope: Optional[str] = None) -> Dict[str, Any]:
+                 scope: Optional[str] = None,
+                 no_coverage_note: Optional[str] = None) -> Dict[str, Any]:
     summary = _stats.se_from_window_summaries(per_window)
     means = {w["window_id"]: float(w["mean"]) for w in per_window}
     # STAT-03. backend="auto" made the PUBLISHED CI endpoints depend on whether numpy
@@ -304,6 +377,8 @@ def _uncertainty(per_window: List[Dict[str, Any]], run_means: Optional[List[floa
                     "method is unchanged, and this sentence is the difference between "
                     "an interval that states its level and one that assumes it."
                     % (100.0 * cm["measured"], cm["reps"], cm["population"]))
+    elif no_coverage_note:
+        note.append(no_coverage_note)
     note.append("Percentiles of the per-token distribution are NOT quoted: they are not "
                 "derivable from per-window summaries.")
     unc["note"] = " ".join(note)
@@ -396,7 +471,7 @@ def _clean_row(row: Dict[str, Any], ctx: _Context,
     sigma = 0.0 if bitwise else None
     new["uncertainty"] = _uncertainty(
         clean, None, ctx.proto.sigma_run_gate,
-        ctx=ctx, slug=SERIES[row["id"]], scope="clean17",
+        ctx=ctx, slug=SERIES[row["id"]].slug, scope="clean17",
         sigma_override=sigma, sigma_runs=det.get("run_count") if bitwise else None,
         sigma_note=("sigma_run is exactly 0.0 on any window subset because the cold runs "
                     "are bitwise identical (%s, one distinct content hash)."
@@ -404,7 +479,7 @@ def _clean_row(row: Dict[str, Any], ctx: _Context,
                    ("sigma_run is not quoted on this scope: the runs are not bitwise "
                     "identical and per-run clean-scope means are not recoverable from "
                     "the published panel-scope run means."))
-    new["by_domain"] = _by_domain(clean, ctx, SERIES[row["id"]], "clean17")
+    new["by_domain"] = _by_domain(clean, ctx, SERIES[row["id"]].slug, "clean17")
     ms = dict(new["measurement_scope"])
     ms.update({
         "scored_positions": summary["n"],
@@ -430,7 +505,7 @@ def _clean_row(row: Dict[str, Any], ctx: _Context,
     cmp_["class"] = "advisory"
     if cmp_.get("bias") and cmp_["bias"].get("floor_measurement_ref"):
         floor = cmp_["bias"]["floor_measurement_ref"]
-        if floor in SERIES:
+        if floor in SERIES and SERIES[floor].panel:
             # the floor has a clean sibling, so point at the SCOPE-MATCHED one
             cmp_["bias"]["floor_measurement_ref"] = floor + CLEAN_SUFFIX
             cmp_["bias"]["detail"] = (
@@ -514,10 +589,14 @@ def apply(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 raise SystemExit(
                     "joint_enrich: %s per-window mean %.17g does not reproduce the "
                     "published value %.17g" % (mid, recomputed, row["metric"]["value"]))
+            if not SERIES[mid].panel:
+                row["uncertainty"] = _receipt_uncertainty(row, pw, ctx)
+                out.append(row)
+                continue
             row["uncertainty"] = _uncertainty(
                 pw, row["determinism"].get("run_means"), ctx.proto.sigma_run_gate,
-                ctx=ctx, slug=SERIES[mid], scope="panel25")
-            row["by_domain"] = _by_domain(pw, ctx, SERIES[mid], "panel25")
+                ctx=ctx, slug=SERIES[mid].slug, scope="panel25")
+            row["by_domain"] = _by_domain(pw, ctx, SERIES[mid].slug, "panel25")
             row["protocol"] = dict(proto_block)
             ms = row["measurement_scope"]
             ms["scope_name"] = "panel25"
@@ -536,7 +615,137 @@ def apply(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "recomputed without re-running the measurement."
                     % NOT_RECOMPUTABLE[mid])
             out.append(row)
+    _ordering_footnotes(out, ctx.per_window)
     return out + clean_rows
+
+
+def _receipt_uncertainty(row: Dict[str, Any], pw: List[Dict[str, Any]],
+                         ctx: _Context) -> Dict[str, Any]:
+    """The interval for a ``panel=False`` series: the same bootstrap, nothing else.
+
+    sigma_run follows the row's own determinism block. Bitwise-identical cold
+    runs give sigma_run = 0.0 exactly -- every per-run per-token array is the
+    same array -- and that is the only way a row without published run_means
+    gets a sigma at all; anything else is stated as not estimable rather than
+    guessed.
+    """
+    det = row["determinism"]
+    run_means = det.get("run_means")
+    bitwise = det.get("identical_across_runs") is True
+    sigma = None
+    runs = None
+    sigma_note = None
+    if not (run_means and len(run_means) >= 2):
+        if bitwise:
+            sigma = 0.0
+            runs = det.get("run_count")
+            sigma_note = ("sigma_run is exactly 0.0 because the %d cold runs are bitwise "
+                          "identical (%s, one distinct content hash)."
+                          % (runs or 0, det.get("evidence_kind")))
+        else:
+            run_means = None
+            sigma_note = ("sigma_run not estimable: the runs are not bitwise identical "
+                          "and no per-run means are published for this row.")
+    unc = _uncertainty(
+        pw, run_means, ctx.proto.sigma_run_gate,
+        sigma_override=sigma, sigma_runs=runs, sigma_note=sigma_note,
+        no_coverage_note=("Coverage of these BCa endpoints is NOT measured for this "
+                          "panel: no coverage simulation exists for it, so the 95% is "
+                          "nominal, not measured. No by_domain table, protocol stamp or "
+                          "clean17 sibling is written: those are objects of the Flash "
+                          "panel25 and do not transfer."))
+    # The symmetric window-cluster t-interval beside the BCa one: it is what a
+    # reader with the 25 per-window means and a pocket calculator gets, and the
+    # BCa endpoints sit above it on a right-skewed panel. Quoted only for the
+    # one degree of freedom this family has; t_{0.975, 24} is a constant, not a
+    # dependency.
+    if unc["clusters"] == 25:
+        t = 2.0638985616280205
+        mean = _stats.se_from_window_summaries(pw)["mean"]
+        unc["note"] += (" Window-cluster 95%% t-interval (24 df) [%.5f, %.5f] = mean +- %.4f x "
+                        "se_clustered." % (mean - t * unc["se_clustered"],
+                                            mean + t * unc["se_clustered"], t))
+    return unc
+
+
+def orderings(rows: List[Dict[str, Any]],
+              windows: Optional[Dict[str, List[Dict[str, Any]]]] = None
+              ) -> List[Dict[str, Any]]:
+    """Adjacent-pair paired statistics for every comparability group of
+    ``panel=False`` series rows, in ascending order of metric.value.
+
+    Two rows on the same 25 windows are paired, so the honest question about
+    their ORDER is the per-window delta, not the two marginal intervals: the
+    paired delta's scatter is smaller than either interval and the sign test
+    asks nothing of its distribution. Reported per adjacent pair: the paired
+    mean delta (higher minus lower), its sd (ddof=1), the count of windows on
+    which the higher row is higher, and the exact two-sided sign-test p over
+    the non-tied windows. ``windows`` is measurement id -> window summaries;
+    when omitted every series is read from its own file.
+    """
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        s = SERIES.get(row["id"])
+        if s is None or s.panel or row["metric"].get("value") is None:
+            continue
+        groups.setdefault(row["comparability"]["key"], []).append(row)
+    out: List[Dict[str, Any]] = []
+    for key in sorted(groups):
+        members = sorted(groups[key], key=lambda r: r["metric"]["value"])
+        for lo, hi in zip(members, members[1:]):
+            a = {w["window_id"]: float(w["mean"]) for w in
+                 (windows[lo["id"]] if windows else SERIES[lo["id"]].load())}
+            b = {w["window_id"]: float(w["mean"]) for w in
+                 (windows[hi["id"]] if windows else SERIES[hi["id"]].load())}
+            if set(a) != set(b):
+                raise SystemExit("joint_enrich: %s and %s do not share a window set"
+                                 % (lo["id"], hi["id"]))
+            deltas = [b[w] - a[w] for w in sorted(a)]
+            wins = sum(1 for d in deltas if d > 0)
+            ties = sum(1 for d in deltas if d == 0)
+            n = len(deltas) - ties
+            # exact two-sided binomial test at p = 1/2 over the non-tied windows
+            k = min(wins, n - wins)
+            p = min(1.0, 2.0 * sum(math.comb(n, i) for i in range(k + 1)) / 2.0 ** n) \
+                if n else 1.0
+            out.append({
+                "comparability_key": key,
+                "lower": lo["id"],
+                "higher": hi["id"],
+                "windows": len(deltas),
+                "mean_delta": _round(math.fsum(deltas) / len(deltas)),
+                "sd_delta": _round(statistics.stdev(deltas)) if len(deltas) >= 2 else None,
+                "wins": wins,
+                "ties": ties,
+                "sign_test_p": _round(p),
+            })
+    return out
+
+
+def _ordering_footnotes(rows: List[Dict[str, Any]],
+                        windows: Dict[str, List[Dict[str, Any]]]) -> None:
+    """One sentence per row about the adjacent pair below it (above it for the
+    lowest row), appended to ``uncertainty.note``. Free text only: the schema
+    gains no field for this."""
+    by_id = {r["id"]: r for r in rows}
+    pairs = orderings(rows, windows)
+    spoken = set()
+    for o in pairs:
+        for mid in (o["higher"], o["lower"]):
+            if mid in spoken:
+                continue
+            spoken.add(mid)
+            other = o["lower"] if mid == o["higher"] else o["higher"]
+            unc = by_id[mid]["uncertainty"]
+            unc["note"] = unc["note"] + (
+                " Ordering vs %s (%s row in this comparability group): per-window delta "
+                "(%s minus %s) mean %+.6f nats, sd %.6f (ddof=1), positive on %d of %d "
+                "windows, two-sided sign-test p=%.3g."
+                % (SERIES[other].slug,
+                   "the next-lower" if other == o["lower"] else "the next-higher",
+                   SERIES[o["higher"]].slug, SERIES[o["lower"]].slug,
+                   o["mean_delta"], o["sd_delta"] or 0.0, o["wins"], o["windows"],
+                   o["sign_test_p"]))
 
 
 # ==========================================================================

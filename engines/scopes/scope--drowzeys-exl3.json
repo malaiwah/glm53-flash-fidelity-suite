@@ -2,12 +2,12 @@
   "activation_quantization": null,
   "assignments": [
     {
-      "bits_per_weight": 16,
-      "format": "fp16",
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
       "layer_range": "all",
-      "note": "78 tensors: model.layers.N.self_attn.o_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "note": "stored fp16; values bitwise equal to fp16(dequantize_block_fp8(zai-org/GLM-5.3@187fb9ff)) on the sampled rows (10 tensors; 576 rows each; 0 differing elements; sampled tensors of this class: model.layers.40.self_attn.o_proj.weight), evidence engines/tools/layer-outer-evidence/drowzeys-nonrouted-provenance.json. Original census: 78 tensors: model.layers.N.self_attn.o_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
       "tensor_class": "attn.o",
-      "treatment": "native"
+      "treatment": "quantized"
     },
     {
       "bits_per_weight": null,
@@ -15,15 +15,15 @@
       "layer_range": "0-77",
       "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 156 x native:bf16@16 (model.layers.N.self_attn.kv_a_layernorm.weight, model.layers.N.self_attn.q_a_layernorm.weight); 105 x native:fp16@16 (model.layers.N.self_attn.indexer.k_norm.bias, model.layers.N.self_attn.indexer.k_norm.weight, model.layers.N.self_attn.indexer.weights_proj.weight). read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
       "tensor_class": "attn.other",
-      "treatment": "quantized"
+      "treatment": "native"
     },
     {
-      "bits_per_weight": 16,
-      "format": "fp16",
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
       "layer_range": "all",
-      "note": "312 tensors: model.layers.N.self_attn.kv_a_proj_with_mqa.weight, model.layers.N.self_attn.kv_b_proj.weight, model.layers.N.self_attn.q_a_proj.weight, model.layers.N.self_attn.q_b_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "note": "stored fp16; values bitwise equal to fp16(dequantize_block_fp8(zai-org/GLM-5.3@187fb9ff)) on the sampled rows (10 tensors; 576 rows each; 0 differing elements; sampled tensors of this class: model.layers.0.self_attn.kv_a_proj_with_mqa.weight, model.layers.0.self_attn.q_a_proj.weight, model.layers.0.self_attn.q_b_proj.weight, model.layers.40.self_attn.kv_b_proj.weight), evidence engines/tools/layer-outer-evidence/drowzeys-nonrouted-provenance.json. Original census: 312 tensors: model.layers.N.self_attn.kv_a_proj_with_mqa.weight, model.layers.N.self_attn.kv_b_proj.weight, model.layers.N.self_attn.q_a_proj.weight, model.layers.N.self_attn.q_b_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
       "tensor_class": "attn.qkv",
-      "treatment": "native"
+      "treatment": "quantized"
     },
     {
       "bits_per_weight": 16,
@@ -42,28 +42,28 @@
       "treatment": "native"
     },
     {
-      "bits_per_weight": 16,
-      "format": "fp16",
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
       "layer_range": "all",
-      "note": "3 tensors: model.layers.N.mlp.down_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "note": "stored fp16; values bitwise equal to fp16(dequantize_block_fp8(zai-org/GLM-5.3@187fb9ff)) on the sampled rows (10 tensors; 576 rows each; 0 differing elements; sampled tensors of this class: model.layers.1.mlp.down_proj.weight), evidence engines/tools/layer-outer-evidence/drowzeys-nonrouted-provenance.json. Original census: 3 tensors: model.layers.N.mlp.down_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
       "tensor_class": "mlp.down",
-      "treatment": "native"
+      "treatment": "quantized"
     },
     {
-      "bits_per_weight": 16,
-      "format": "fp16",
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
       "layer_range": "all",
-      "note": "3 tensors: model.layers.N.mlp.gate_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "note": "stored fp16; values bitwise equal to fp16(dequantize_block_fp8(zai-org/GLM-5.3@187fb9ff)) on the sampled rows (10 tensors; 576 rows each; 0 differing elements; sampled tensors of this class: model.layers.0.mlp.gate_proj.weight), evidence engines/tools/layer-outer-evidence/drowzeys-nonrouted-provenance.json. Original census: 3 tensors: model.layers.N.mlp.gate_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
       "tensor_class": "mlp.gate",
-      "treatment": "native"
+      "treatment": "quantized"
     },
     {
-      "bits_per_weight": 16,
-      "format": "fp16",
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
       "layer_range": "all",
-      "note": "3 tensors: model.layers.N.mlp.up_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "note": "stored fp16; values bitwise equal to fp16(dequantize_block_fp8(zai-org/GLM-5.3@187fb9ff)) on the sampled rows (10 tensors; 576 rows each; 0 differing elements; sampled tensors of this class: model.layers.2.mlp.up_proj.weight), evidence engines/tools/layer-outer-evidence/drowzeys-nonrouted-provenance.json. Original census: 3 tensors: model.layers.N.mlp.up_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
       "tensor_class": "mlp.up",
-      "treatment": "native"
+      "treatment": "quantized"
     },
     {
       "bits_per_weight": 3.0,
@@ -87,15 +87,15 @@
       "layer_range": "3-77",
       "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 75 x native:fp16@16 (model.layers.N.mlp.gate.weight); 75 x native:fp32@32 (model.layers.N.mlp.gate.e_score_correction_bias). read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
       "tensor_class": "moe.router",
-      "treatment": "quantized"
+      "treatment": "native"
     },
     {
-      "bits_per_weight": 16,
-      "format": "fp16",
+      "bits_per_weight": 8,
+      "format": "fp8_e4m3",
       "layer_range": "all",
-      "note": "225 tensors: model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "note": "stored fp16; values bitwise equal to fp16(dequantize_block_fp8(zai-org/GLM-5.3@187fb9ff)) on the sampled rows (10 tensors; 576 rows each; 0 differing elements; sampled tensors of this class: model.layers.3.mlp.shared_experts.gate_proj.weight, model.layers.77.mlp.shared_experts.down_proj.weight), evidence engines/tools/layer-outer-evidence/drowzeys-nonrouted-provenance.json. Original census: 225 tensors: model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
       "tensor_class": "moe.shared_expert",
-      "treatment": "native"
+      "treatment": "quantized"
     },
     {
       "bits_per_weight": null,
@@ -103,7 +103,7 @@
       "layer_range": "78",
       "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 7 x native:bf16@16 (model.layers.N.enorm.weight, model.layers.N.hnorm.weight, model.layers.N.input_layernorm.weight); 783 x native:fp16@16 (model.layers.N.eh_proj.weight, model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight); 1 x native:fp32@32 (model.layers.N.mlp.gate.e_score_correction_bias). read from drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:768, mul1:56832; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
       "tensor_class": "mtp",
-      "treatment": "quantized"
+      "treatment": "native"
     },
     {
       "bits_per_weight": 16,

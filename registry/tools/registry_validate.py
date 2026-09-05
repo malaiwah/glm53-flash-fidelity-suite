@@ -17,6 +17,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -26,6 +27,12 @@ import harness_id as H        # noqa: E402
 
 FORBIDDEN_NET_MODULES = ("socket", "ssl", "urllib", "http", "requests", "huggingface_hub",
                          "aiohttp", "httpx", "ftplib", "telnetlib", "xmlrpc")
+
+# One group of the format census engines/tools/fp8_scope.py assignments_from_census
+# writes into a `format: mixed` assignment note: "<N> x <treatment>:<fmt>[@<bits>] (<names>)".
+# The token keeps its treatment prefix, so `native:bf16@16` and `quantized:fp8_e4m3@8`
+# are told apart by the census itself, never by the row's treatment field.
+SCOPE_CENSUS_GROUP_RE = re.compile(r"\b(\d+) x ([A-Za-z0-9_:.\-]+?(?:@\d+(?:\.\d+)?)?) \(")
 
 
 class Report(object):
@@ -929,6 +936,18 @@ def check_scope(C, rep):
         cal = (a.get("codec") or {}).get("calibration") or {}
         if cal.get("overlaps_any_panel") and not cal.get("overlapping_panel_refs"):
             rep.err("SCOPE-008", "%s declares calibration/panel overlap but names no panel" % aid, aid)
+        # SCOPE-011 - a class whose census is ALL native groups (bf16 weights beside
+        # fp32 router bias) is native at more than one width, not quantized. The
+        # treatment says what was done to the tensors; the note's census is the
+        # evidence, and the two must not contradict each other.
+        for x in sc.get("assignments", []):
+            if x.get("treatment") != "quantized":
+                continue
+            tokens = [t for _, t in SCOPE_CENSUS_GROUP_RE.findall(x.get("note") or "")]
+            if tokens and all(t.startswith("native:") for t in tokens):
+                rep.err("SCOPE-011", "%s: assignment %s[%s] is treatment=quantized but its note census "
+                                     "lists only native groups (%s)"
+                        % (aid, x.get("tensor_class"), x.get("layer_range"), ", ".join(tokens)), aid)
 
     for mid, m in C["measurements"].items():
         art = C["artifacts"].get(m.get("artifact_ref"))

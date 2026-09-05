@@ -4,13 +4,13 @@
       "file": "data/artifacts.jsonl",
       "record_count": 47,
       "schema": "schema/artifact.schema.json",
-      "sha256": "ddf35af88e42d1a3150faea8968825c4a3277400cff30d632493ceeede26b941"
+      "sha256": "2feae33edff9a3e249e56d05fc41d5bc2ae2e762f8fd75ad83dc8488c2521c30"
     },
     "measurements": {
       "file": "data/measurements.jsonl",
       "record_count": 83,
       "schema": "schema/measurement.schema.json",
-      "sha256": "f14424e98220b6e169207957c2297ea2a22c808003bb0c641eab7c25b3c86c8e"
+      "sha256": "f8b00fd5620901ade159d8eff47deb3682944320545e85a41d3372b9ada783bb"
     },
     "models": {
       "file": "data/models.jsonl",
@@ -858,7 +858,7 @@
         "live_member_count": 7,
         "predicate_version": "comparability-predicate/v1",
         "reasons": [
-          "scope: members span {attn.o+attn.other+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.router+moe.shared_expert+mtp|head=native|kv=bf16, attn.o+attn.other+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.shared_expert+mtp|head=native|kv=bf16, attn.other+moe.experts+moe.router+mtp|head=native|kv=bf16, moe.experts+moe.router+mtp|head=native|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
+          "scope: members span {attn.o+attn.other+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.shared_expert+mtp|head=native|kv=bf16, attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.shared_expert|head=native|kv=bf16, moe.experts+mtp|head=native|kv=bf16} -- these are different interventions; equal nominal bpw does not make a routed-experts-only quant and a full-forward quant the same thing (docs/GGUF-MEASUREMENT.md)"
         ],
         "secondary": {
           "hardware": {
@@ -882,10 +882,9 @@
           "scope": {
             "status": "fail",
             "values": [
-              "attn.o+attn.other+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.router+moe.shared_expert+mtp|head=native|kv=bf16",
               "attn.o+attn.other+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.shared_expert+mtp|head=native|kv=bf16",
-              "attn.other+moe.experts+moe.router+mtp|head=native|kv=bf16",
-              "moe.experts+moe.router+mtp|head=native|kv=bf16"
+              "attn.o+attn.qkv+mlp.down+mlp.gate+mlp.up+moe.experts+moe.shared_expert|head=native|kv=bf16",
+              "moe.experts+mtp|head=native|kv=bf16"
             ]
           }
         }
@@ -925,13 +924,13 @@
       "url": "https://huggingface.co/datasets/0xSero/local-ai-registry"
     }
   },
-  "generated_at": "2026-09-05T07:54:11+00:00",
+  "generated_at": "2026-09-05T11:37:24+00:00",
   "registry_id": "malaiwah/quant-fidelity-registry",
   "resolver_rule": "Every *_ref is the id field of a record in the collection named by the ref's id prefix: model--, artifact--, panel--, reference--, pipeline--, measurement--.",
   "schema_version": "quant-fidelity-registry/v1",
   "validator": {
     "invariants_file": "schema/invariants.json",
-    "last_run_at": "2026-09-05T07:54:11+00:00",
+    "last_run_at": "2026-09-05T11:37:24+00:00",
     "passed": true,
     "tool": "tools/registry_validate.py"
   }

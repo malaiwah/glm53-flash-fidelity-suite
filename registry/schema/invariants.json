@@ -475,6 +475,11 @@
       "statement": "A submission with measurement_scope.covers_full_panel=false must carry a subset_of_panel disclosure, and may never score more positions than the panel it names."
     },
     {
+      "id": "SCOPE-011",
+      "severity": "error",
+      "statement": "An artifact.scope.assignments entry with treatment=quantized must not carry a note whose format census ('N x <token>' groups, as written by engines/tools/fp8_scope.py and exl3_scope.py) consists only of native:* groups; an all-native census is treatment=native (fp8_scope.assignments_from_census since 56ff020)."
+    },
+    {
       "id": "STAT-001",
       "severity": "error",
       "statement": "uncertainty.ci95_low <= metric.value <= uncertainty.ci95_high whenever all three are non-null."
@@ -596,6 +601,7 @@
     }
   ],
   "known_disclosure_codes": [
+    "activation_quantization_not_captured",
     "architecture_subset_loaded",
     "artifact_identity_incomplete",
     "attribution_downgraded",
@@ -614,11 +620,13 @@
     "estimator_unknown",
     "fp32_vocab_reduction",
     "harness_unrecorded",
+    "head_only_difference",
     "head_substituted",
     "interval_recomputed",
     "local_device_reduction_order",
     "lossy_capture_codec",
     "memory_budget_schedule",
+    "native_head_replay",
     "native_head_retained",
     "no_known_deviations",
     "non_sealed_lane",
@@ -654,7 +662,8 @@
     "unreadable_by_stock_loader",
     "unsealed_source",
     "value_identical_to_sibling",
-    "weak_contamination_guard"
+    "weak_contamination_guard",
+    "weights_reconstructed"
   ],
   "schema_version": "quant-fidelity-registry/v1",
   "scope_digest_recipe": {

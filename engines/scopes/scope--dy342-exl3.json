@@ -79,7 +79,7 @@
       "layer_range": "3-77",
       "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 75 x native:bf16@16 (model.layers.N.mlp.gate.weight); 75 x native:fp32@32 (model.layers.N.mlp.gate.e_score_correction_bias). read from davidsyoung/GLM-5.3-EXL3-TR3-3.42bpw@99c6f951333d2b38f1efefa533c7afadf0d376e3 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:58368; declared bits 3.421875 by hybrid_tr3_tail; tp=4 rank shards per module, k_values [3, 4], per layer: 148 experts K3 + 108 experts K4 (worst-108 donor-K3 rel RT-MSE; 64 from the 3.25 pass + next-44 delta342 pass, identical seeds/machinery)), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
       "tensor_class": "moe.router",
-      "treatment": "quantized"
+      "treatment": "native"
     },
     {
       "bits_per_weight": 16,

@@ -1,0 +1,518 @@
+{
+ "schema": "fidelity.nonrouted-provenance.v1",
+ "question": "Do the candidate's 16-bit non-routed tensors carry the BF16 release's values or the FP8 release's dequantized values?",
+ "verdict": "stored_16bit_of_fp8_release_dequantized",
+ "verdict_text": "bitwise equal to fp16(dequantize_block_fp8(FP8 release, fp32 output)) and NOT equal to fp16(BF16 release) on every sampled tensor: the class carries the FP8 release's 8-bit block quantization stored at 16 bits (treatment quantized, format fp8_e4m3, 8 bits).",
+ "covers_classes": [
+  "attn.o",
+  "attn.qkv",
+  "mlp.down",
+  "mlp.gate",
+  "mlp.up",
+  "moe.shared_expert"
+ ],
+ "candidate": {
+  "repo": "drowzeys/keys-GLM-5.3-EXL3",
+  "revision": "ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5"
+ },
+ "bf16_root": {
+  "repo": "zai-org/GLM-5.3-BF16",
+  "revision": "304b8051cfb2b260b61ce0cbe330e02a98e73639"
+ },
+ "fp8_release": {
+  "repo": "zai-org/GLM-5.3",
+  "revision": "187fb9fff6319062325ff825627ef6db084d9bc6"
+ },
+ "rows_requested": 576,
+ "tensors": {
+  "model.layers.0.self_attn.q_a_proj.weight": {
+   "candidate": {
+    "dtype": "F16",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00001-of-00041.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00001-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 3538944,
+    "scale_inv": "model.layers.0.self_attn.q_a_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 3538944,
+   "stored_dtype": "F16",
+   "eq_stored(bf16_root)": false,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": true,
+   "n_diff_vs_bf16_root": 3485417,
+   "n_diff_vs_fp8_dequant": 0,
+   "max_abs_diff_vs_bf16_root": 0.00384521484375,
+   "max_abs_diff_vs_fp8_dequant_fp32": 2.6166439056396484e-05
+  },
+  "model.layers.0.self_attn.kv_a_proj_with_mqa.weight": {
+   "candidate": {
+    "dtype": "F16",
+    "shape": [
+     640,
+     6144
+    ],
+    "shard": "model-00001-of-00041.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     576,
+     6144
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     576,
+     6144
+    ],
+    "shard": "model-00001-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 3538944,
+    "scale_inv": "model.layers.0.self_attn.kv_a_proj_with_mqa.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 3538944,
+   "stored_dtype": "F16",
+   "eq_stored(bf16_root)": false,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": true,
+   "n_diff_vs_bf16_root": 3484923,
+   "n_diff_vs_fp8_dequant": 0,
+   "max_abs_diff_vs_bf16_root": 0.04541015625,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.0002790689468383789
+  },
+  "model.layers.0.self_attn.q_b_proj.weight": {
+   "candidate": {
+    "dtype": "F16",
+    "shape": [
+     16384,
+     2048
+    ],
+    "shard": "model-00001-of-00041.safetensors",
+    "rows_read": 576,
+    "bytes_read": 2359296
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     16384,
+     2048
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 2359296
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     16384,
+     2048
+    ],
+    "shard": "model-00001-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 1179648,
+    "scale_inv": "model.layers.0.self_attn.q_b_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 1179648,
+   "stored_dtype": "F16",
+   "eq_stored(bf16_root)": false,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": true,
+   "n_diff_vs_bf16_root": 1158514,
+   "n_diff_vs_fp8_dequant": 0,
+   "max_abs_diff_vs_bf16_root": 0.0146484375,
+   "max_abs_diff_vs_fp8_dequant_fp32": 0.00010463595390319824
+  },
+  "model.layers.40.self_attn.kv_b_proj.weight": {
+   "candidate": {
+    "dtype": "F16",
+    "shape": [
+     28672,
+     512
+    ],
+    "shard": "model-00020-of-00041.safetensors",
+    "rows_read": 576,
+    "bytes_read": 589824
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     28672,
+     512
+    ],
+    "shard": "model-00123-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 589824
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     28672,
+     512
+    ],
+    "shard": "model-00062-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 294912,
+    "scale_inv": "model.layers.40.self_attn.kv_b_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 294912,
+   "stored_dtype": "F16",
+   "eq_stored(bf16_root)": false,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": true,
+   "n_diff_vs_bf16_root": 292021,
+   "n_diff_vs_fp8_dequant": 0,
+   "max_abs_diff_vs_bf16_root": 0.00579833984375,
+   "max_abs_diff_vs_fp8_dequant_fp32": 5.231797695159912e-05
+  },
+  "model.layers.40.self_attn.o_proj.weight": {
+   "candidate": {
+    "dtype": "F16",
+    "shape": [
+     6144,
+     16384
+    ],
+    "shard": "model-00020-of-00041.safetensors",
+    "rows_read": 576,
+    "bytes_read": 18874368
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     6144,
+     16384
+    ],
+    "shard": "model-00123-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 18874368
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     6144,
+     16384
+    ],
+    "shard": "model-00062-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 9437184,
+    "scale_inv": "model.layers.40.self_attn.o_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 9437184,
+   "stored_dtype": "F16",
+   "eq_stored(bf16_root)": false,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": true,
+   "n_diff_vs_bf16_root": 9287749,
+   "n_diff_vs_fp8_dequant": 0,
+   "max_abs_diff_vs_bf16_root": 0.00433349609375,
+   "max_abs_diff_vs_fp8_dequant_fp32": 2.6166439056396484e-05
+  },
+  "model.layers.0.mlp.gate_proj.weight": {
+   "candidate": {
+    "dtype": "F16",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-00001-of-00041.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-00001-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 3538944,
+    "scale_inv": "model.layers.0.mlp.gate_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 3538944,
+   "stored_dtype": "F16",
+   "eq_stored(bf16_root)": false,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": true,
+   "n_diff_vs_bf16_root": 3478187,
+   "n_diff_vs_fp8_dequant": 0,
+   "max_abs_diff_vs_bf16_root": 0.00372314453125,
+   "max_abs_diff_vs_fp8_dequant_fp32": 2.6166439056396484e-05
+  },
+  "model.layers.2.mlp.up_proj.weight": {
+   "candidate": {
+    "dtype": "F16",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-00001-of-00041.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-00038-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     12288,
+     6144
+    ],
+    "shard": "model-00020-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 3538944,
+    "scale_inv": "model.layers.2.mlp.up_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 3538944,
+   "stored_dtype": "F16",
+   "eq_stored(bf16_root)": false,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": true,
+   "n_diff_vs_bf16_root": 3487177,
+   "n_diff_vs_fp8_dequant": 0,
+   "max_abs_diff_vs_bf16_root": 0.0042724609375,
+   "max_abs_diff_vs_fp8_dequant_fp32": 2.6166439056396484e-05
+  },
+  "model.layers.1.mlp.down_proj.weight": {
+   "candidate": {
+    "dtype": "F16",
+    "shape": [
+     6144,
+     12288
+    ],
+    "shard": "model-00001-of-00041.safetensors",
+    "rows_read": 576,
+    "bytes_read": 14155776
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     6144,
+     12288
+    ],
+    "shard": "model-00001-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 14155776
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     6144,
+     12288
+    ],
+    "shard": "model-00001-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888,
+    "scale_inv": "model.layers.1.mlp.down_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 7077888,
+   "stored_dtype": "F16",
+   "eq_stored(bf16_root)": false,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": true,
+   "n_diff_vs_bf16_root": 6966539,
+   "n_diff_vs_fp8_dequant": 0,
+   "max_abs_diff_vs_bf16_root": 0.00408935546875,
+   "max_abs_diff_vs_fp8_dequant_fp32": 3.4868717193603516e-05
+  },
+  "model.layers.3.mlp.shared_experts.gate_proj.weight": {
+   "candidate": {
+    "dtype": "F16",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00001-of-00041.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00079-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 7077888
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     2048,
+     6144
+    ],
+    "shard": "model-00040-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 3538944,
+    "scale_inv": "model.layers.3.mlp.shared_experts.gate_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 3538944,
+   "stored_dtype": "F16",
+   "eq_stored(bf16_root)": false,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": true,
+   "n_diff_vs_bf16_root": 3491433,
+   "n_diff_vs_fp8_dequant": 0,
+   "max_abs_diff_vs_bf16_root": 0.00714111328125,
+   "max_abs_diff_vs_fp8_dequant_fp32": 5.233287811279297e-05
+  },
+  "model.layers.77.mlp.shared_experts.down_proj.weight": {
+   "candidate": {
+    "dtype": "F16",
+    "shape": [
+     6144,
+     2048
+    ],
+    "shard": "model-00038-of-00041.safetensors",
+    "rows_read": 576,
+    "bytes_read": 2359296
+   },
+   "bf16_root": {
+    "dtype": "BF16",
+    "shape": [
+     6144,
+     2048
+    ],
+    "shard": "model-00270-of-00282.safetensors",
+    "rows_read": 576,
+    "bytes_read": 2359296
+   },
+   "fp8_release": {
+    "dtype": "F8_E4M3",
+    "shape": [
+     6144,
+     2048
+    ],
+    "shard": "model-00136-of-00141.safetensors",
+    "rows_read": 576,
+    "bytes_read": 1179648,
+    "scale_inv": "model.layers.77.mlp.shared_experts.down_proj.weight_scale_inv",
+    "scale_rows_read": 5
+   },
+   "rows_compared": 576,
+   "elements_compared": 1179648,
+   "stored_dtype": "F16",
+   "eq_stored(bf16_root)": false,
+   "eq_stored(dequantize_block_fp8(fp8_release, fp32))": true,
+   "n_diff_vs_bf16_root": 1159911,
+   "n_diff_vs_fp8_dequant": 0,
+   "max_abs_diff_vs_bf16_root": 0.00604248046875,
+   "max_abs_diff_vs_fp8_dequant_fp32": 5.231797695159912e-05
+  }
+ },
+ "method": {
+  "reads": "safetensors header (8-byte length + JSON) and the leading rows of each tensor by HTTP Range against huggingface.co/<repo>/resolve/<revision>/<shard>; no shard downloaded; rows are contiguous in row-major storage.",
+  "dequantize": "engines/tools/layer_outer.py:dequantize_block_fp8(q, scale_inv, torch.float32) -- fp8 -> fp32, one multiply by the fp32 128x128 block scale, one RNE cast; the first ceil(rows/128) scale rows govern exactly the rows read.",
+  "equality": "torch.equal on the candidate's stored dtype after casting each reference to it (RNE); counts and max |diff| computed in fp32.",
+  "layer_outer_commit": "f2b151e5ce6911b8b54394d3f7387016759329a8",
+  "layer_outer_sha256": "ca1bafb6479e22d1be4765ac9a24b8e18a49b70cb1624c4b11190877fb27ca08",
+  "torch_version": "2.11.0+cpu",
+  "python_version": "3.14.4"
+ },
+ "produced_by": {
+  "script": "engines/tools/nonrouted_provenance.py",
+  "script_sha256": "3703ea0c9f105b52a955e1566914ad25bfd432baadd57f2910939b448a26f73e",
+  "repo_commit": "c7965bbbddfec71ed85d7bd3065bf94871267211",
+  "argv": [
+   "--candidate",
+   "drowzeys/keys-GLM-5.3-EXL3@ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5",
+   "--bf16-root",
+   "zai-org/GLM-5.3-BF16@304b8051cfb2b260b61ce0cbe330e02a98e73639",
+   "--fp8-release",
+   "zai-org/GLM-5.3@187fb9fff6319062325ff825627ef6db084d9bc6",
+   "--tensor",
+   "model.layers.0.self_attn.q_a_proj.weight",
+   "--tensor",
+   "model.layers.0.self_attn.kv_a_proj_with_mqa.weight",
+   "--tensor",
+   "model.layers.0.self_attn.q_b_proj.weight",
+   "--tensor",
+   "model.layers.40.self_attn.kv_b_proj.weight",
+   "--tensor",
+   "model.layers.40.self_attn.o_proj.weight",
+   "--tensor",
+   "model.layers.0.mlp.gate_proj.weight",
+   "--tensor",
+   "model.layers.2.mlp.up_proj.weight",
+   "--tensor",
+   "model.layers.1.mlp.down_proj.weight",
+   "--tensor",
+   "model.layers.3.mlp.shared_experts.gate_proj.weight",
+   "--tensor",
+   "model.layers.77.mlp.shared_experts.down_proj.weight",
+   "--covers-class",
+   "attn.qkv",
+   "--covers-class",
+   "attn.o",
+   "--covers-class",
+   "mlp.gate",
+   "--covers-class",
+   "mlp.up",
+   "--covers-class",
+   "mlp.down",
+   "--covers-class",
+   "moe.shared_expert",
+   "--rows",
+   "576",
+   "--out",
+   "engines/tools/layer-outer-evidence/drowzeys-nonrouted-provenance.json"
+  ],
+  "date_utc": "2026-09-05T11:09:06Z"
+ }
+}

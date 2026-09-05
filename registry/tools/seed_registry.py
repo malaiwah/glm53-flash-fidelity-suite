@@ -2335,13 +2335,18 @@ def measurement(mid, model_ref, artifact_ref, panel_ref, reference_ref, pipeline
                 evidence_kind="none", evidence_hashes=None, det_note=None,
                 measured_by="self-measured", measurer=None, verified=False, verification=None,
                 sources=None, receipt_schema=None, cls="strict", bias=None,
-                gate=None, disclosures=None, status="published", notes=None, artifacts_map=None):
+                gate=None, disclosures=None, status="published", notes=None, artifacts_map=None,
+                logits_dtype=None):
     art = artifacts_map[artifact_ref]
     # AUDIT 2026-08-28: logits_dtype used to be hardcoded "fp32" for every row, including
     # rows whose estimator is otherwise entirely undisclosed (orcarouter's, brandonmusic's
     # runtime series). We know it for our own scorers; for somebody else's we do not, and
     # no third-party receipt in this registry states it. Assert it only where we ran the code.
-    logits_dtype = "fp32" if measured_by == "self-measured" else "unknown"
+    # 2026-09-05 (review S2-1): a caller that READ the dtype off its receipt passes it in
+    # (the GLM-5.3 rows derive it from comparator.replay_backend); the constant below is
+    # the fallback for the older self-measured series only.
+    if logits_dtype is None:
+        logits_dtype = "fp32" if measured_by == "self-measured" else "unknown"
     est = {"accumulation_dtype": accumulation, "logits_dtype": logits_dtype, "two_pass": two_pass,
            "vocab_chunk": vocab_chunk, "stack_relation": stack_relation, "head_policy": head_policy}
     ki = {"panel_id": panel_ref, "reference_id": reference_ref, "metric_name": metric_name,
@@ -4764,6 +4769,106 @@ G53_DY342_SCOPE = scope_from_evidence("engines/scopes/scope--dy342-exl3.json")
 G53_FP8_SCOPE = scope_from_evidence("engines/scopes/scope--glm53-fp8.json")
 G53_K4_SCOPE = scope_from_evidence("engines/scopes/scope--wrld-exl3.json")
 
+# SCOPE CORRECTION 2026-09-05 (peer review S1-1 / S1-3). The five trellis
+# scopes above were first authored by exl3_scope.py BEFORE 56ff020, which wrote
+# treatment=quantized for any class mixing storage formats on shared layers --
+# so an all-native census (bf16 router weight beside fp32 router bias) was
+# published as `moe.router=quantized:mixed`, and on drowzeys `attn.other` and
+# `mtp` likewise. The scopes were re-authored from bytes by the fixed tool, and
+# drowzeys' six non-routed classes were then rewritten by
+# engines/tools/scope_apply_provenance.py from committed byte evidence
+# (engines/tools/layer-outer-evidence/drowzeys-nonrouted-provenance.json): its
+# fp16 attention, dense-MLP and shared-expert tensors are bitwise
+# fp16(dequantize_block_fp8(zai-org/GLM-5.3@187fb9ff)), i.e. the FP8 release's
+# quantization stored at 16 bits, not the BF16 release's values. The OLD
+# digests are pinned here as literals so the disclosure names both sides and a
+# reseed cannot lose the history; the new ones are recomputed from the files.
+G53_OLD_SCOPE_DIGESTS = {
+    G53_WRLD_K4: "attn.o=quantized:fp8_e4m3@8|attn.other=quantized:mixed|attn.qkv=quantized:fp8_e4m3@8|"
+                 "embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=quantized:fp8_e4m3@8|"
+                 "mlp.gate=quantized:fp8_e4m3@8|mlp.up=quantized:fp8_e4m3@8|moe.experts=quantized:exl3-mcg@4|"
+                 "moe.router=quantized:mixed|moe.shared_expert=quantized:fp8_e4m3@8|mtp=quantized:mixed|"
+                 "norm=native:bf16@16|head=native|kv=bf16",
+    G53_DY30: "attn.o=native:bf16@16|attn.other=native:bf16@16|attn.qkv=native:bf16@16|"
+              "embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|"
+              "mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3|"
+              "moe.router=quantized:mixed|moe.shared_expert=native:bf16@16|mtp=quantized:mixed|"
+              "norm=native:bf16@16|head=native|kv=bf16",
+    G53_DY325: "attn.o=native:bf16@16|attn.other=native:bf16@16|attn.qkv=native:bf16@16|"
+               "embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|"
+               "mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3.25|"
+               "moe.router=quantized:mixed|moe.shared_expert=native:bf16@16|mtp=quantized:mixed|"
+               "norm=native:bf16@16|head=native|kv=bf16",
+    G53_DY342: "attn.o=native:bf16@16|attn.other=native:bf16@16|attn.qkv=native:bf16@16|"
+               "embed_tokens=native:bf16@16|lm_head=native:bf16@16|mlp.down=native:bf16@16|"
+               "mlp.gate=native:bf16@16|mlp.up=native:bf16@16|moe.experts=quantized:exl3-mcg@3.421875|"
+               "moe.router=quantized:mixed|moe.shared_expert=native:bf16@16|mtp=quantized:mixed|"
+               "norm=native:bf16@16|head=native|kv=bf16",
+    G53_DROWZEYS: "attn.o=native:fp16@16|attn.other=quantized:mixed|attn.qkv=native:fp16@16|"
+                  "embed_tokens=native:bf16@16|lm_head=native:fp16@16|mlp.down=native:fp16@16|"
+                  "mlp.gate=native:fp16@16|mlp.up=native:fp16@16|moe.experts=quantized:exl3-mcg@3|"
+                  "moe.experts=quantized:exl3-mul1@3|moe.router=quantized:mixed|moe.shared_expert=native:fp16@16|"
+                  "mtp=quantized:mixed|norm=native:bf16@16|head=native|kv=bf16",
+}
+G53_PROVENANCE_EVIDENCE = "engines/tools/layer-outer-evidence/drowzeys-nonrouted-provenance.json"
+
+
+G53_SCOPE_TOOL_FIX = "56ff0200f13c4ad8398e6db3588d6f8baf7bc175"
+G53_GH_BLOB = "https://github.com/malaiwah/quant-fidelity-suite/blob/"
+
+
+def _g53_scope_corrected(aid, sc, scope_rel, what_was_wrong):
+    """The scope_record_corrected disclosure, naming both digests (docs/PUBLISHED-CORRECTIONS.md §7).
+
+    It reasons from source code, so it asserts provenance (PROV-016) and cites the
+    re-authored scope file by sha256, the tool at the commit that fixed it, and --
+    for drowzeys -- the byte evidence, also by sha256 (PROV-014/015)."""
+    old = G53_OLD_SCOPE_DIGESTS[aid]
+    new = L.scope_digest(sc)
+    if old == new:
+        raise SystemExit("seed_registry: %s scope digest did not move; the correction is not applied" % aid)
+    sources = [
+        src("github_file", G53_GH_BLOB + "main/" + scope_rel, _receipt_sha("../" + scope_rel),
+            "the re-authored scope file, whose digest is the new scope_digest"),
+        src("github_file", G53_GH_BLOB + G53_SCOPE_TOOL_FIX + "/engines/tools/fp8_scope.py", None,
+            "assignments_from_census: an all-native census is treatment native (the rule "
+            "exl3_scope.py shares), at the commit that fixed it"),
+    ]
+    if aid == G53_DROWZEYS:
+        sources.append(src("github_file", G53_GH_BLOB + "main/" + G53_PROVENANCE_EVIDENCE,
+                           _receipt_sha("../" + G53_PROVENANCE_EVIDENCE),
+                           "fidelity.nonrouted-provenance.v1: ten tensors, 576 rows each, bitwise "
+                           "fp16(dequantize_block_fp8(FP8 release)) and not fp16(BF16 release)"))
+    return disc(
+        "scope_record_corrected", "info",
+        "Superseded record (2026-09-05, peer review S1-1%s): %s The scope was re-authored from the "
+        "checkpoint's own index and shard headers by engines/tools/exl3_scope.py at or after 56ff020, "
+        "which writes an all-native census as treatment=native (the treatment says what was done to "
+        "a class; the format says how it is stored). scope_digest moved from `%s` to `%s`. The "
+        "measured VALUE is unaffected: the measurement always ran the artifact as published, and the "
+        "capture receipt's own scope block is the record of what ran. registry_validate.py SCOPE-011 "
+        "now refuses a quantized assignment whose census is all native."
+        % ("/S1-3" if aid == G53_DROWZEYS else "", what_was_wrong, old, new),
+        provenance=True, sources=sources)
+
+
+G53_ROUTER_WRONG = ("this artifact's scope previously read `moe.router=quantized:mixed` although its "
+                    "own census lists only native groups (75 x native:bf16 mlp.gate.weight beside 75 x "
+                    "native:fp32 e_score_correction_bias): the router was never quantized, and the "
+                    "same census under the corrected rule reads `moe.router=native:mixed`.")
+G53_DROWZEYS_WRONG = (
+    "this artifact's scope previously read `moe.router`, `attn.other` and `mtp` as quantized:mixed "
+    "although each census lists only native groups (they read native:mixed now), AND it read attn.qkv, "
+    "attn.o, mlp.{gate,up,down} and moe.shared_expert as `native:fp16@16` -- storage, not treatment. "
+    "Byte evidence (%s: ten tensors across those six classes, 576 leading rows each, range-read from "
+    "the three repositories) shows every sampled fp16 tensor bitwise EQUAL to "
+    "fp16(dequantize_block_fp8(zai-org/GLM-5.3@%s)) and NOT equal to fp16(zai-org/GLM-5.3-BF16@%s): "
+    "the non-routed path carries the FP8 release's 8-bit block quantization stored at 16 bits, so those "
+    "six classes now read `quantized:fp8_e4m3@8` with the storage and the evidence path in their notes. "
+    "The committed zero-pad evidence and layer_outer.py's ZERO_PAD_METHOD comment, which already named "
+    "the FP8 release as the source of those rows, were right; the artifact prose was wrong."
+    % (G53_PROVENANCE_EVIDENCE, G53_FP8_REV[:8], G53_ROOT_REV[:8]))
+
 MODELS += [
     {"schema_version": V, "id": G53, "name": "GLM-5.3", "family": "glm-5.3",
      "publisher": ZAI("model-publisher"),
@@ -4933,8 +5038,8 @@ ARTIFACTS += [
               disc("estimator_scope_narrower_than_artifact", "caveat",
                    "activation_scheme: dynamic -- the served model also quantizes activations "
                    "per token at runtime. Every measurement of this artifact here is "
-                   "weights-only (dequantize-and-run), so it is a LOWER BOUND on the served "
-                   "model's divergence.", True)],
+                   "weights-only (dequantize-and-run), so it is expected to understate a served "
+                   "W8A8 deployment; the activation term is not measured.", True)],
              weights_extra={"size_basis": "repo_weight_files", "shard_count": 141,
                             "config_sha256": G53_FP8_DESC["weights"]["config_sha256"],
                             "index_sha256": "e0fe7f28c1f853d4824e4d796374e3dacf1fe470988773952c79b063768134bf"},
@@ -4973,6 +5078,7 @@ ARTIFACTS += [
                    "official head; stock exllamav3 would have quantized it."),
               disc("third_party_artifact_self_measured", "info",
                    "wrldsuksgo2mars's weights, our measurement."),
+              _g53_scope_corrected(G53_WRLD_K4, G53_K4_SCOPE, "engines/scopes/scope--wrld-exl3.json", G53_ROUTER_WRONG),
               disc("revision_unpinned", "caveat",
                    "The release names no source revision for the FP8 tensors it keeps, so "
                    "derived_from_artifact_ref is left empty rather than guessed; the fp8 shards "
@@ -5031,6 +5137,7 @@ def _g53_davidsyoung_artifact(aid, rev, label, size_bytes, index_sha, config_sha
               "official head (%s...)." % G53_HEAD_SHA[:12]),
          disc("third_party_artifact_self_measured", "info",
               "davidsyoung's weights, our measurement."),
+         _g53_scope_corrected(aid, sc, "engines/scopes/scope--dy%s-exl3.json" % label.replace(".", "").replace("bpw", ""), G53_ROUTER_WRONG),
          disc("revision_unpinned", "caveat",
               "hybrid_tr3_tail names the source as zai-org/GLM-5.3-BF16 but publishes no "
               "source revision; derived_from_artifact_ref names the registry's pinned BF16 "
@@ -5069,8 +5176,17 @@ ARTIFACTS += [
                    "carries two -- layer 3's 768 routed-expert modules are mcg-coded and layers "
                    "4-77's 56,832 are mul1-coded, all at K=3 -- so scope.assignments carries one "
                    "moe.experts row per layer range and codec.family is the generic exl3-trellis. "
-                   "Attention, the dense MLPs and the shared experts are stored fp16 (native, "
-                   "unquantized); embed_tokens and norms bf16."),
+                   "Attention, the dense MLPs and the shared experts are STORED fp16 but are not the "
+                   "BF16 release's values: byte evidence (%s) shows them bitwise equal to the FP8 "
+                   "release's block-dequantized weights cast to fp16, so the whole non-routed path "
+                   "carries zai-org/GLM-5.3@%s's 8-bit quantization at 16-bit storage "
+                   "(scope: quantized:fp8_e4m3@8, like the K4 release, which keeps the same tensors "
+                   "in their original fp8 form). embed_tokens, norms and the router are native; the "
+                   "MTP block's experts are stored fp16 as well and are not trellis-quantized. So the "
+                   "0.0185-nat gap between this row and davidsyoung's 3.0bpw (25/25 windows) is not "
+                   "codec quality alone: it includes the FP8 release's non-expert error, which the "
+                   "davidsyoung releases (built from the BF16 release) do not carry."
+                   % (G53_PROVENANCE_EVIDENCE, G53_FP8_REV[:8])),
               disc("record_note", "info",
                    "HEAD. lm_head is stored as a plain 16-bit tensor but is NOT content-identical "
                    "to the official head: measured element by element it is exactly the BF16 "
@@ -5088,10 +5204,13 @@ ARTIFACTS += [
                    "recorded it (zero_padded_rows_truncated in the sealed dataset)."),
               disc("third_party_artifact_self_measured", "info",
                    "drowzeys's weights, our measurement."),
+              _g53_scope_corrected(G53_DROWZEYS, G53_DROWZEYS_SCOPE, "engines/scopes/scope--drowzeys-exl3.json", G53_DROWZEYS_WRONG),
               disc("revision_unpinned", "caveat",
                    "The release names no source revision; derived_from_artifact_ref is left "
-                   "empty rather than guessed. Its attention/MLP fp16 tensors are the BF16 "
-                   "release's values after an fp16 round trip, not a digest match.")],
+                   "empty rather than guessed. Its attention/MLP fp16 tensors are the FP8 "
+                   "release's (zai-org/GLM-5.3@%s) dequantized values cast to fp16 on every "
+                   "sampled tensor (%s), not a digest match of the whole tree."
+                   % (G53_FP8_REV[:8], G53_PROVENANCE_EVIDENCE))],
              weights_extra={"size_basis": "repo_weight_files", "shard_count": 41,
                             "config_sha256": G53_DROWZEYS_DESC["weights"]["config_sha256"],
                             "index_sha256": "af2c20bd55835c09e869b6020a6d5ba452e4f06cedde98470981e64444a84ea2"},
@@ -5279,6 +5398,26 @@ def build_measurements_glm53(artifacts_map):
     M = lambda *a, **k: measurement(*a, artifacts_map=artifacts_map, **k)
     est = dict(accumulation="float64", head_policy="native_head",
                vocab_chunk=8192, two_pass=True, stack_relation="same_stack")
+
+    def logits_dtype_of(receipt):
+        """estimator.logits_dtype READ off the receipt, not asserted.
+
+        Review S2-1 (2026-09-05): every GLM-5.3 comparison receipt says
+        estimator.logits_dtype "bf16" -- the CAPTURE dtype of the sealed hidden
+        states -- while the logits the estimator actually scored were recomputed
+        by the replay in the dtype comparator.replay_backend names
+        (numpy:cpu:float32 -> fp32). The row states the replay dtype; the
+        receipts' own logits_dtype field is being corrected forward by the
+        comparator fix (bin/fidelity/dscompare.py build_receipt), and sealed
+        receipts are never edited. Refuses a backend it cannot read.
+        """
+        backend = (receipt.get("comparator") or {}).get("replay_backend") or ""
+        parts = backend.split(":")
+        names = {"float32": "fp32", "float64": "fp64", "bfloat16": "bf16", "float16": "fp16"}
+        if len(parts) != 3 or parts[2] not in names:
+            raise SystemExit("seed_registry: cannot derive logits_dtype from comparator.replay_backend %r"
+                             % backend)
+        return names[parts[2]]
     ds_root = src("dataset_card", G53_ROOT_DS, None,
                   "reference capture at revision %s: dataset_sha256 %s..., "
                   "capture_content_digest %s..."
@@ -5311,7 +5450,8 @@ def build_measurements_glm53(artifacts_map):
         hi = max(pc, key=lambda w: w["mean"])
         return ("Per-window mean %.17g, population sd %.17g, min %.17g (%s, %s), max %.17g "
                 "(%s, %s) over %d windows. The macro mean over strata equals the token mean "
-                "because every window contributes the same 2,047 positions."
+                "to 1e-16 (every window contributes the same 2,047 positions; the two differ "
+                "only in fp64 summation order); the token mean is the published value."
                 % (sum(means) / len(means), L.population_stddev(means), lo["mean"],
                    lo["window_id"], lo["domain"], hi["mean"], hi["window_id"], hi["domain"],
                    len(pc)))
@@ -5377,7 +5517,7 @@ def build_measurements_glm53(artifacts_map):
             disc("architecture_subset_loaded", "info",
                  "The MTP block's 791 tensors are present and unused; the set matched the "
                  "pinned allowlist exactly on both captures.")],
-        **est))
+        logits_dtype=logits_dtype_of(floor), **est))
     rows[-1]["harness"] = _g53_harness(
         pin_compare=G53_PIN_COMPARE,
         capture_pins={"reference": (G53_PIN_ROOT_CAPTURE, root_runtime),
@@ -5407,9 +5547,12 @@ def build_measurements_glm53(artifacts_map):
                       "them). This is the dequantize-and-run methodology: it measures the error "
                       "of the STORED weights, not of a vendor kernel.", True),
                  disc("estimator_scope_narrower_than_artifact", "caveat",
-                      "WEIGHT-ONLY, THEREFORE A LOWER BOUND. The checkpoint declares "
-                      "activation_scheme: dynamic; the served model also quantizes activations "
-                      "per token at runtime, and that term is absent here.", True),
+                      "WEIGHT-ONLY: expected to understate a served W8A8 deployment; the "
+                      "activation term is not measured. The checkpoint declares "
+                      "activation_scheme: dynamic, so the served model also quantizes activations "
+                      "per token at runtime; that term is absent here. (Wording corrected "
+                      "2026-09-05: omitting it is expected to understate the served divergence, "
+                      "not a mathematical bound on a mean KL.)", True),
                  disc("record_note", "info",
                       "Head identity: the FP8 release's lm_head is content-identical to the "
                       "BF16 root's (%s...), so own-head replay and shared-head replay are the "
@@ -5434,15 +5577,15 @@ def build_measurements_glm53(artifacts_map):
                       "module's own payload, TF32 pinned off and recorded) and the fp8 tensors "
                       "the release kept are decoded on the host as for the FP8 row -- all "
                       "before the loader. Decode evidence: the decoder reproduces "
-                      "exllamav3's decode_payload_hf bitwise on real payloads and the same "
+                      "engines/tools/exl3hf_surface.py:decode_payload_hf bitwise on real payloads (the suite's own reference decoder, not exllamav3's kernel) and the same "
                       "path reconstructs a real trellis quant against its bf16 source at the "
                       "expected K4 error (cosine 0.99773, rel_l2 6.74%). The decode has NOT "
                       "been proven bitwise against a running exllamav3 kernel, which is why "
                       "this row is advisory.", True),
                  disc("estimator_scope_narrower_than_artifact", "caveat",
                       "The fp8 tensors this release kept carry the source's activation_scheme: "
-                      "dynamic; that runtime term is absent, so this is a lower bound on a "
-                      "served fp8-activation deployment of it.", True),
+                      "dynamic; that runtime term is not measured, so this value is expected to "
+                      "understate a served fp8-activation (W8A8) deployment of it.", True),
                  disc("third_party_artifact_self_measured", "info",
                       "wrldsuksgo2mars's weights, our measurement."),
                  disc("record_note", "info",
@@ -5464,7 +5607,7 @@ def build_measurements_glm53(artifacts_map):
                       "RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is "
                       "decoded to bf16 per module on the capture device "
                       "(exl3-trellis-decode-to-bf16, mcg on layer 3 and mul1 on layers 4-77, each read from the module's own payload) before the loader; the decoder reproduces "
-                      "exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a "
+                      "engines/tools/exl3hf_surface.py:decode_payload_hf bitwise on real payloads (the suite's own reference decoder, not exllamav3's kernel) and reconstructs a "
                       "real trellis quant against its bf16 source at the expected error. It has "
                       "NOT been proven bitwise against a running exllamav3 kernel, which is why "
                       "this row is advisory.", True),
@@ -5475,6 +5618,18 @@ def build_measurements_glm53(artifacts_map):
                       "its own. The pod's shared-head comparison correctly REFUSED (HEAD-1b) "
                       "after both cold captures had sealed; this receipt was computed from the "
                       "retrieved sealed datasets. Nothing was substituted."),
+                 disc("record_note", "caveat",
+                      "NON-ROUTED PATH IS FP8-DERIVED. This artifact's attention, dense-MLP and "
+                      "shared-expert tensors are the FP8 release's block-dequantized weights stored "
+                      "at fp16 (byte evidence %s; scope attn.*/mlp.*/moe.shared_expert = "
+                      "quantized:fp8_e4m3@8), while davidsyoung's three releases carry the BF16 "
+                      "release's values. The 0.0185-nat gap between this row and "
+                      "measurement--glm-5.3.exl3-tr3-3.0bpw-davidsyoung.corpus5x5-v1 (this row "
+                      "higher on 25 of 25 windows) therefore mixes two effects -- the codec on the "
+                      "routed experts and the FP8 release's non-expert error, itself 0.0223 nats "
+                      "on the FP8 row -- and is NOT a clean codec-vs-codec comparison at 3.0 bpw. "
+                      "Corrected 2026-09-05; until then the row's artifact record called the "
+                      "non-routed path native." % G53_PROVENANCE_EVIDENCE, True),
                  disc("third_party_artifact_self_measured", "info",
                       "drowzeys's weights, our measurement.")]),
         dict(mid="measurement--glm-5.3.exl3-tr3-3.0bpw-davidsyoung.corpus5x5-v1", art=G53_DY30,
@@ -5492,7 +5647,7 @@ def build_measurements_glm53(artifacts_map):
                       "RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is "
                       "decoded to bf16 per module on the capture device "
                       "(exl3-trellis-decode-to-bf16, TP4 rank shards composed per module) before the loader; the decoder reproduces "
-                      "exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a "
+                      "engines/tools/exl3hf_surface.py:decode_payload_hf bitwise on real payloads (the suite's own reference decoder, not exllamav3's kernel) and reconstructs a "
                       "real trellis quant against its bf16 source at the expected error. It has "
                       "NOT been proven bitwise against a running exllamav3 kernel, which is why "
                       "this row is advisory.", True),
@@ -5523,7 +5678,7 @@ def build_measurements_glm53(artifacts_map):
                       "RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is "
                       "decoded to bf16 per module on the capture device "
                       "(exl3-trellis-decode-to-bf16, TP4 rank shards composed per module) before the loader; the decoder reproduces "
-                      "exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a "
+                      "engines/tools/exl3hf_surface.py:decode_payload_hf bitwise on real payloads (the suite's own reference decoder, not exllamav3's kernel) and reconstructs a "
                       "real trellis quant against its bf16 source at the expected error. It has "
                       "NOT been proven bitwise against a running exllamav3 kernel, which is why "
                       "this row is advisory.", True),
@@ -5554,7 +5709,7 @@ def build_measurements_glm53(artifacts_map):
                       "RECONSTRUCTED, NOT EXECUTED. Every routed-expert trellis payload group is "
                       "decoded to bf16 per module on the capture device "
                       "(exl3-trellis-decode-to-bf16, TP4 rank shards composed per module) before the loader; the decoder reproduces "
-                      "exllamav3's decode_payload_hf bitwise on real payloads and reconstructs a "
+                      "engines/tools/exl3hf_surface.py:decode_payload_hf bitwise on real payloads (the suite's own reference decoder, not exllamav3's kernel) and reconstructs a "
                       "real trellis quant against its bf16 source at the expected error. It has "
                       "NOT been proven bitwise against a running exllamav3 kernel, which is why "
                       "this row is advisory.", True),
@@ -5632,7 +5787,8 @@ def build_measurements_glm53(artifacts_map):
                          "the candidate's sealed dataset descriptor, byte-verbatim")]
                     + ([src("github_file", G53_GH + cand["pod"], _g53_sha(cand["pod"]),
                             "the pod-side comparison (HEAD-1a shared head, receipt_sha256 %s...), "
-                            "same value" % pod["receipt_sha256"][:8])] if pod is not None else [])
+                            "same value to 8 significant digits; see local_device_reduction_order"
+                            % pod["receipt_sha256"][:8])] if pod is not None else [])
                     + ([src("discussion", cand["discussion"], None,
                             "the measurement as posted on the artifact's Hub page")]
                        if cand["discussion"] else []),
@@ -5669,7 +5825,7 @@ def build_measurements_glm53(artifacts_map):
                      "artifact's scope in the earlier two-rows-per-class form; the registry "
                      "scope_digest (%s...) therefore differs from the receipt's string while "
                      "describing the same bytes." % art["scope_digest"][:24])],
-            **est))
+            logits_dtype=logits_dtype_of(c), **est))
         rows[-1]["harness"] = _g53_harness(
             pin_compare=G53_PIN_COMPARE,
             capture_pins={"reference": (G53_PIN_ROOT_CAPTURE, root_runtime),
