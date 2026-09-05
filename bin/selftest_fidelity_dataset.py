@@ -2140,6 +2140,190 @@ def section_root_qualification(tmp):
           qualify(repeat=swapped, repeat_verify=swapped_verify) == CLI.REFUSED)
 
 
+def _localize_fixture(root, checkpoint_files):
+    """Give a fixture dataset the evidence hf_capture writes and a pod fixture
+    omits: the per-shard checkpoint census, the stack versions, the allowlist
+    artifact name.  Every dependent digest is re-derived, so the tree still
+    verifies; nothing else about the fixture changes."""
+    manifest = F.load_manifest(root)
+    runtime_rel = manifest["runtime"]["file"]
+    runtime_doc = F.read_json(os.path.join(root, runtime_rel))
+    runtime_doc["weights"]["checkpoint_files"] = checkpoint_files
+    runtime_doc["stack_fingerprint"].update({
+        "device_name": "NVIDIA RTX PRO 6000", "torch_version": "2.11.0+cu130",
+        "transformers_version": "5.16.1", "cuda_runtime_version": "13.0"})
+    runtime_doc["runtime_environment"]["python"] = "3.12.3"
+    runtime_doc["capture_tool"]["unexpected_tensor_allowlist"]["artifact_file"] = \
+        "selftest-allowlist.json"
+    runtime_doc["receipt_sha256"] = ""
+    runtime_doc = F.seal_receipt(runtime_doc)
+    _, runtime_sha = dsmanifest.write_sub(root, runtime_rel, runtime_doc)
+    manifest["runtime"]["file_sha256"] = runtime_sha
+    capture_rel = manifest["capture"]["manifest_file"]
+    capture_doc = F.read_json(os.path.join(root, capture_rel))
+    capture_doc["runtime_manifest_sha256"] = runtime_sha
+    capture_doc["receipt_sha256"] = ""
+    capture_doc = F.seal_receipt(capture_doc)
+    _, capture_sha = dsmanifest.write_sub(root, capture_rel, capture_doc)
+    manifest["capture"]["manifest_file_sha256"] = capture_sha
+    return dsmanifest.finalize(root, manifest)
+
+
+def section_local_root_qualification(tmp):
+    """A root captured on the human's own card qualifies and publish-plans
+    without a controller job.json or a result archive (review S1-1)."""
+    print("\n== LQ: local root qualification (qualify-root --local, publish without an archive) ==")
+    case = os.path.join(tmp, "lq")
+    os.makedirs(case)
+    destination = "selftest/local-root-dataset"
+    weights = "selftest/local-weights"
+    # The checkpoint tree the two captures ran from.
+    model_dir = os.path.join(case, "model")
+    os.makedirs(model_dir)
+    config_bytes = b'{"model_type": "selftest", "hidden_size": 4}\n'
+    shard_bytes = b"\x00" * 17
+    with open(os.path.join(model_dir, "config.json"), "wb") as handle:
+        handle.write(config_bytes)
+    with open(os.path.join(model_dir, "model.safetensors"), "wb") as handle:
+        handle.write(shard_bytes)
+    with open(os.path.join(model_dir, "model.safetensors.index.json"), "wb") as handle:
+        handle.write(b'{"metadata": {"total_size": 17}, "weight_map": {}}\n')
+    checkpoint_files = [
+        {"name": "config.json", "size": len(config_bytes),
+         "sha256": hashlib.sha256(config_bytes).hexdigest()},
+        {"name": "model.safetensors", "size": len(shard_bytes),
+         "sha256": hashlib.sha256(shard_bytes).hexdigest()},
+    ]
+    first = os.path.join(case, "root-1")
+    repeat = os.path.join(case, "root-2")
+    for root, label in ((first, "root-cold-1"), (repeat, "root-cold-2")):
+        build_dataset(root, seed=93, run_name=label, cold_run=label,
+                      dataset_repository=destination, weights_repository=weights,
+                      qualification_contract=True)
+        _localize_fixture(root, checkpoint_files)
+    check("LQ0 localized fixtures still verify",
+          not dsvalidate.validate_dataset(first, verify_tensors=True).errors
+          and not dsvalidate.validate_dataset(repeat, verify_tensors=True).errors)
+    first_verify = os.path.join(case, "root-1.verify.json")
+    repeat_verify = os.path.join(case, "root-2.verify.json")
+    common.write_json(first_verify, dsvalidate.validate_dataset(
+        first, verify_tensors=True).to_dict())
+    common.write_json(repeat_verify, dsvalidate.validate_dataset(
+        repeat, verify_tensors=True).to_dict())
+    comparison_dir = os.path.join(case, "repro")
+    dscompare.compare(first, repeat, comparison_dir, {
+        "self_compare": True, "force_compute": True,
+        "device": "cpu", "replay_device": "numpy", "replay_dtype": "float32",
+        "vocab_chunk": 8192, "reference_label": "root-cold-1",
+        "candidate_label": "root-cold-2", "verify_tensors": True,
+    })
+    comparison_path = os.path.join(comparison_dir, "comparison-receipt.json")
+    receipts = os.path.join(case, "receipts")
+    os.makedirs(receipts)
+    out = os.path.join(receipts, "root-qualification.json")
+    job_out = os.path.join(receipts, "job.json")
+
+    def qualify(**over):
+        ns = dict(local=True, job=None, model_dir=model_dir, job_out=None, measurer=None,
+                  first=first, repeat=repeat, comparison=comparison_path,
+                  first_verify=first_verify, repeat_verify=repeat_verify,
+                  first_label="root-cold-1", repeat_label="root-cold-2",
+                  imported_canonical=None, out=out)
+        ns.update(over)
+        try:
+            return CLI.cmd_qualify_root(argparse.Namespace(**ns))
+        except Exception as exc:                                  # noqa: BLE001
+            return "raised %s: %s" % (type(exc).__name__, exc)
+
+    check("LQ1a --job and --local together refuse",
+          qualify(job=os.path.join(case, "absent-job.json")) == CLI.REFUSED)
+    check("LQ1b --local without --model-dir refuses",
+          qualify(model_dir=None) == CLI.REFUSED)
+    wrong_dir = os.path.join(case, "other-model")
+    shutil.copytree(model_dir, wrong_dir)
+    with open(os.path.join(wrong_dir, "config.json"), "ab") as handle:
+        handle.write(b"\n")
+    check("LQ1c a --model-dir whose config.json differs from the captures' census refuses",
+          qualify(model_dir=wrong_dir, out=os.path.join(case, "lq1c.json")) == CLI.REFUSED
+          and not os.path.exists(os.path.join(case, "job.json")))
+    rc = qualify()
+    check("LQ2 two local captures qualify with a derived execution_kind=local job",
+          rc == CLI.OK and os.path.isfile(job_out), "rc=%s" % (rc,))
+    job = F.read_json(job_out) if os.path.isfile(job_out) else {}
+    receipt = F.read_json(out) if os.path.isfile(out) else {}
+    check("LQ2a the job is a verified job.v2 with recipe/kind local and no image",
+          job.get("recipe") == "local"
+          and (job.get("execution_attempt") or {}).get("kind") == "local"
+          and (job.get("environment") or {}).get("container_image") is None
+          and bool(job) and jobcontract.verify_job(job) == receipt.get("canonical_job_sha256"))
+    check("LQ2b the job's target census is the captures' shard census, bound to --model-dir",
+          (job.get("target") or {}).get("shards") == [{"path": "model.safetensors", "bytes": 17}]
+          and (job.get("target") or {}).get("config_sha256") == checkpoint_files[0]["sha256"]
+          and (job.get("target") or {}).get("index_sha256") == common.sha256_file(
+              os.path.join(model_dir, "model.safetensors.index.json")))
+    local_execution = receipt.get("local_execution") or {}
+    check("LQ2c the receipt records device_name, torch/transformers and no pod attestation",
+          (receipt.get("job_contract") or {}).get("execution_kind") == "local"
+          and local_execution.get("device_name") == "NVIDIA RTX PRO 6000"
+          and local_execution.get("torch_version") == "2.11.0+cu130"
+          and local_execution.get("transformers_version") == "5.16.1"
+          and "pod_attestation" in local_execution
+          and local_execution["pod_attestation"] is None
+          and local_execution == job.get("local_execution"))
+    try:
+        check("LQ2d the receipt reloads under the strict loader with the derived job",
+              CLI._load_qualification(out, job_path=job_out) is not None)
+    except CLI.RootQualificationError as exc:
+        check("LQ2d the receipt reloads under the strict loader with the derived job",
+              False, str(exc))
+    check("LQ2e a second --local run refuses to overwrite the job contract",
+          qualify(out=os.path.join(case, "lq2e.json"), job_out=job_out) == CLI.REFUSED
+          and jobcontract.verify_job(F.read_json(job_out)) == receipt.get("canonical_job_sha256"))
+
+    tampered = os.path.join(case, "tampered-qualification.json")
+    doc = dict(receipt)
+    doc.pop("local_execution")
+    doc["receipt_sha256"] = ""
+    common.write_json(tampered, common.seal(doc))
+    try:
+        CLI._load_qualification(tampered, job_path=job_out)
+        check("LQ3 a local receipt stripped of its local_execution block refuses", False)
+    except CLI.RootQualificationError as exc:
+        check("LQ3 a local receipt stripped of its local_execution block refuses",
+              "local_execution" in str(exc), str(exc))
+
+    def publish(**over):
+        ns = dict(dataset=first, repo=destination, private=False, qualification=out,
+                  job=job_out, result_archive=None, expected_archive_sha256=None,
+                  expected_archive_bytes=None, dry_run=True, expected_head=None,
+                  token_file=None, receipt=None, revision_message="m")
+        ns.update(over)
+        try:
+            return CLI.cmd_publish(argparse.Namespace(**ns))
+        except Exception as exc:                                  # noqa: BLE001
+            return "raised %s: %s" % (type(exc).__name__, exc)
+
+    rc = publish()
+    check("LQ4 publish --dry-run accepts the local qualification without the archive "
+          "triple or a mode-0700 extraction root", rc == CLI.OK, "rc=%s" % (rc,))
+    check("LQ4a the archive triple on a local qualification refuses",
+          publish(result_archive=os.path.join(case, "absent.tar.gz"),
+                  expected_archive_sha256="f" * 64, expected_archive_bytes=1) == CLI.REFUSED)
+    check("LQ4b the wrong --repo still refuses (destination binding kept)",
+          publish(repo="selftest/somewhere-else") == CLI.REFUSED)
+    check("LQ4c the repeat dataset cannot be published as the canonical one",
+          publish(dataset=repeat) == CLI.REFUSED)
+    pod_qualification = os.path.join(tmp, "q-qualification.json")
+    pod_job = os.path.join(tmp, "q-job.json")
+    if os.path.isfile(pod_qualification) and os.path.isfile(pod_job):
+        check("LQ4d a pod-qualified root still needs the result archive triple",
+              publish(dataset=os.path.join(tmp, "q-first"), repo="selftest/root-dataset",
+                      qualification=pod_qualification, job=pod_job) == CLI.REFUSED)
+    else:
+        check("LQ4d a pod-qualified root still needs the result archive triple", False,
+              "section Q left no q-qualification.json/q-job.json to reuse")
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="fidelity-dataset-selftest-")
     try:
@@ -2151,6 +2335,7 @@ def main():
         section_real(tmp)
         section_hostile_fetch(tmp)
         section_root_qualification(tmp)
+        section_local_root_qualification(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("\nselftest_fidelity_dataset: %d passed, %d failed" % (len(PASS), len(FAIL)))

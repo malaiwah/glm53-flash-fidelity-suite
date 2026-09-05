@@ -479,9 +479,9 @@ def validate_job(document: dict) -> None:
                 or dependencies.get("lane") != document.get("lane")):
             raise JobContractError(
                 "root RunPod producing-code provider/lane dependencies differ")
-        if (attempt_kind == "local-container"
+        if (attempt_kind in ("local-container", "local")
                 and "provider" in dependencies
-                and dependencies.get("provider") != "local-container"):
+                and dependencies.get("provider") != attempt_kind):
             raise JobContractError(
                 "root producing-code provider dependency differs from execution")
         if ("lane" in dependencies
@@ -579,15 +579,16 @@ def validate_job(document: dict) -> None:
     attempt = document.get("execution_attempt")
     if not isinstance(attempt, dict):
         raise JobContractError("execution_attempt must be an object")
-    if attempt.get("kind") == "local-container":
+    if attempt.get("kind") in ("local-container", "local"):
+        kind = attempt["kind"]
         if set(attempt) != {"number", "kind", "attempt_id"}:
             raise JobContractError(
-                "local-container execution_attempt is noncanonical")
+                "%s execution_attempt is noncanonical" % kind)
         if (attempt["number"] != 1
                 or re.fullmatch(r"[0-9a-f]{24}",
                                 str(attempt["attempt_id"])) is None):
             raise JobContractError(
-                "local-container attempt requires number 1 and 24 lowercase hex")
+                "%s attempt requires number 1 and 24 lowercase hex" % kind)
         return
     if attempt.get("kind") != "runpod-ssh":
         raise JobContractError("execution_attempt.kind is unsupported")
@@ -1188,6 +1189,12 @@ def _root_execution_identity(document: dict):
             image_reference.rsplit("@", 1)[1]
             if isinstance(image_reference, str) and "@" in image_reference
             else None)
+    elif provider == "local" or document.get("recipe") == "local":
+        # A job written by `fidelity-dataset qualify-root --local` from two
+        # captures' own binding evidence: no pod, no image, no attestation.
+        execution_kind = "local"
+        image_reference = None
+        image_digest = None
     elif provider == "local-container" \
             or document.get("recipe") == "local-container":
         execution_kind = "local-container"

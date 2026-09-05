@@ -25,6 +25,7 @@ import json
 import math
 import os
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -539,7 +540,10 @@ def cmd_capture(args):
         emit("  command         %s" % " ".join(command))
         if args.dry_run:
             emit("--dry-run is not supported by this engine: it has no plan phase "
-                 "separate from the forward pass. Run it on a small --windows instead.")
+                 "separate from the forward pass. Size it with `bin/measure-local "
+                 "--artifact <repo> --panel <dataset> --estimate-only` (prints the "
+                 "layer-outer capture plan and the exact argv) and rehearse on a "
+                 "small --windows.")
             return USAGE
         result = subprocess.call(command)
         if result != 0:
@@ -1072,7 +1076,12 @@ def _load_qualification(
     doc = _read_json_file(path, "root qualification receipt")
     if not isinstance(doc, dict):
         raise RootQualificationError("root qualification receipt must be an object")
-    if set(doc) != _QUALIFICATION_KEYS:
+    # `local_execution` is present exactly when the bound job says
+    # execution_kind local (checked below, once the contract is loaded); a
+    # pod-qualified receipt keeps the closed v1 key set byte for byte.
+    expected_keys = _QUALIFICATION_KEYS | (
+        {"local_execution"} if "local_execution" in doc else set())
+    if set(doc) != expected_keys:
         raise RootQualificationError(
             "root qualification receipt keys differ from the v1 contract (missing=%s, "
             "unexpected=%s)"
@@ -1135,6 +1144,22 @@ def _load_qualification(
     execution_kind = contract.get("execution_kind")
     image_reference = contract.get("container_image_reference")
     image_digest = contract.get("container_image_digest")
+    local_execution = doc.get("local_execution")
+    if (execution_kind == "local") != ("local_execution" in doc):
+        raise RootQualificationError(
+            "root qualification local_execution block must be present exactly for "
+            "an execution_kind=local job contract")
+    if execution_kind == "local":
+        if (image_reference is not None or image_digest is not None
+                or local_execution != job.get("local_execution")
+                or not isinstance(local_execution, dict)
+                or local_execution.get("pod_attestation") is not None
+                or not local_execution.get("device_name")
+                or not local_execution.get("torch_version")
+                or not local_execution.get("transformers_version")):
+            raise RootQualificationError(
+                "root qualification local execution evidence is incomplete or "
+                "differs from the job")
     if execution_kind == "runpod-ssh":
         if (not isinstance(image_reference, str)
                 or re.fullmatch(
@@ -1184,12 +1209,402 @@ def _load_qualification(
     return doc
 
 
+def cmd_panel_binding(args):
+    if os.path.exists(args.out):
+        return refuse("destination_exists", "%s exists" % args.out,
+                      "a binding is written once; delete it deliberately")
+    try:
+        binding = panel.resolve_panel(
+            args.panel, role=args.role, tokenizer_root=args.tokenizer_root).to_dict()
+    except (panel.PanelError, OSError) as exc:
+        return refuse("panel_unresolvable", str(exc),
+                      "--tokenizer-root must hold every tokenizer file the panel "
+                      "receipt lists (the root release's checkpoint directory)")
+    tokenizer = binding.get("tokenizer") or {}
+    if tokenizer.get("files_verified") is not True:
+        return refuse(
+            "tokenizer_files_unverified",
+            "the tokenizer files the panel receipt lists did not all verify under "
+            "--tokenizer-root %s" % args.tokenizer_root,
+            "point --tokenizer-root at the root release's checkpoint directory "
+            "(%s @ %s)" % (tokenizer.get("repository"), tokenizer.get("revision")))
+    raw = (common.canonical_json(binding) + "\n").encode("utf-8")
+    parent = os.path.dirname(os.path.abspath(args.out))
+    os.makedirs(parent, exist_ok=True)
+    with open(args.out, "xb") as handle:
+        handle.write(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    emit("panel binding written")
+    emit("  panel               %s (%s)" % ((binding.get("panel") or {}).get("id"),
+                                            (binding.get("panel") or {}).get(
+                                                "suite_token_hash_sha256")))
+    emit("  tokenizer           %s @ %s, %d files verified"
+         % (tokenizer.get("repository"), tokenizer.get("revision"),
+            len(tokenizer.get("files") or [])))
+    emit("  file                %s" % args.out)
+    emit("  sha256              %s" % digest)
+    emit("  capture with        --panel-binding %s --panel-binding-sha256 %s"
+         % (args.out, digest))
+    return OK
+
+
+# ---------------------------------------------------------------------------
+# qualify-root --local: the job contract written FROM the captures
+# ---------------------------------------------------------------------------
+# A pod job is written by the controller before any byte moves and the pod is
+# held to it.  A local human has no controller and no pod: the two captures
+# already ran.  The contract is therefore derived from what the captures
+# sealed about themselves -- the panel binding evidence, the checkpoint census
+# hf_capture hashed shard by shard, the stack fingerprint -- plus the
+# checkpoint directory they ran from, and it says `execution_kind: local` so a
+# reader knows there is no pod attestation behind it.  Every field the pod
+# path checks back against the captures is checked here by the same code.
+
+#: The code that qualifies and publishes a local root, bound as the job bundle.
+_LOCAL_JOB_BUNDLE_FILES = (
+    "bin/fidelity_dataset.py", "bin/fidelity/dscompare.py",
+    "bin/fidelity/dsvalidate.py", "bin/fidelity/dsmanifest.py",
+    "bin/fidelity/dsformat.py", "engines/tools/hf_capture.py",
+    "engines/tools/layer_outer.py",
+)
+_LOCAL_JOB_CONTROL_FILES = ("bin/fidelity/jobcontract.py", "bin/fidelity/panel.py")
+_LOCAL_ROOT_REPLAY = {"device": "numpy", "dtype": "float32", "vocab_chunk": 8192}
+
+
+def _checkout_file_manifest(paths):
+    rows = []
+    for rel in paths:
+        full = os.path.join(REPO, rel)
+        if os.path.islink(full) or not os.path.isfile(full):
+            raise RootQualificationError(
+                "local job cannot bind %s: not a regular file in this checkout" % rel)
+        rows.append({"path": rel, "bytes": os.path.getsize(full),
+                     "sha256": common.sha256_file(full)})
+    return rows
+
+
+def _local_runtime_receipt(root, label):
+    manifest = F.load_manifest(root)
+    runtime_rel = (manifest.get("runtime") or {}).get("file")
+    if not runtime_rel:
+        raise RootQualificationError("%s dataset omits its runtime manifest" % label)
+    path = F.resolve_inside(root, runtime_rel, owner="local job/runtime")
+    return manifest, _read_json_file(path, "%s runtime manifest" % label)
+
+
+def _local_checkpoint_census(runtime_doc, label):
+    files = (runtime_doc.get("weights") or {}).get("checkpoint_files")
+    if not isinstance(files, list) or not files:
+        raise RootQualificationError(
+            "%s capture records no weights.checkpoint_files census; only "
+            "hf_capture.py captures (which hash every shard) can be qualified "
+            "locally" % label)
+    census = {}
+    for row in files:
+        name = row.get("name") if isinstance(row, dict) else None
+        size = row.get("size") if isinstance(row, dict) else None
+        sha = row.get("sha256") if isinstance(row, dict) else None
+        if (not isinstance(name, str) or not name or "/" in name
+                or isinstance(size, bool) or not isinstance(size, int) or size <= 0
+                or not _HEX64.fullmatch(str(sha))):
+            raise RootQualificationError(
+                "%s checkpoint census row is noncanonical: %r" % (label, row))
+        census[name] = {"bytes": size, "sha256": sha}
+    return census
+
+
+def _local_model_dir_identity(model_dir, census, weights_license):
+    """Bind the checkpoint directory the captures ran from to their census."""
+    if not os.path.isdir(model_dir) or os.path.islink(model_dir):
+        raise RootQualificationError(
+            "--model-dir %s is not a directory" % model_dir)
+    config_path = os.path.join(model_dir, "config.json")
+    index_path = os.path.join(model_dir, "model.safetensors.index.json")
+    for path, what in ((config_path, "config.json"),
+                       (index_path, "model.safetensors.index.json")):
+        if os.path.islink(path) or not os.path.isfile(path):
+            raise RootQualificationError(
+                "--model-dir lacks %s (a regular file)" % what)
+    config_sha256 = common.sha256_file(config_path)
+    recorded = census.get("config.json")
+    if recorded is None or recorded["sha256"] != config_sha256:
+        raise RootQualificationError(
+            "--model-dir config.json (%s) differs from the config the captures "
+            "hashed (%s); this is not the checkpoint they ran from"
+            % (config_sha256[:16], (recorded or {}).get("sha256", "absent")[:16]))
+    download_manifest = []
+    for name in sorted(os.listdir(model_dir)):
+        full = os.path.join(model_dir, name)
+        if os.path.islink(full) or not os.path.isfile(full):
+            continue
+        download_manifest.append({"path": name, "bytes": os.path.getsize(full)})
+    by_path = {row["path"]: row["bytes"] for row in download_manifest}
+    shards = []
+    for name, row in sorted(census.items()):
+        if not name.endswith(".safetensors"):
+            continue
+        if by_path.get(name) != row["bytes"]:
+            raise RootQualificationError(
+                "--model-dir shard %s is %s bytes; the captures hashed %d"
+                % (name, by_path.get(name, "absent"), row["bytes"]))
+        shards.append({"path": name, "bytes": row["bytes"]})
+    if not shards:
+        raise RootQualificationError("the captures' checkpoint census names no shards")
+    if weights_license is not None:
+        if by_path.get("LICENSE") != weights_license["bytes"]:
+            raise RootQualificationError(
+                "--model-dir LICENSE is %s bytes; the captures sealed %d"
+                % (by_path.get("LICENSE", "absent"), weights_license["bytes"]))
+        if common.sha256_file(os.path.join(model_dir, "LICENSE")) \
+                != weights_license["sha256"]:
+            raise RootQualificationError(
+                "--model-dir LICENSE bytes differ from the license the captures sealed")
+    return {
+        "config_sha256": config_sha256,
+        "config_bytes": os.path.getsize(config_path),
+        "index_sha256": common.sha256_file(index_path),
+        "index_bytes": os.path.getsize(index_path),
+        "shards": shards,
+        "shard_manifest_sha256": common.sha256_hex(common.canonical_json(shards)),
+        "model_bytes": sum(row["bytes"] for row in shards),
+        "download_manifest": download_manifest,
+        "download_bytes_total": sum(row["bytes"] for row in download_manifest),
+        "download_manifest_sha256": common.sha256_hex(
+            common.canonical_json(download_manifest)),
+    }
+
+
+def _local_root_job(first_root, repeat_root, comparison, *, model_dir, measurer):
+    """Derive an execution_kind=local job.v2 from two sealed root captures."""
+    first_manifest, first_runtime = _local_runtime_receipt(first_root, "canonical")
+    _, repeat_runtime = _local_runtime_receipt(repeat_root, "repeat")
+    dataset = first_manifest.get("dataset") or {}
+    capture_manifest = first_manifest.get("capture") or {}
+    weights_manifest = first_manifest.get("weights") or {}
+    runtime_manifest = first_manifest.get("runtime") or {}
+    tool = first_runtime.get("capture_tool") or {}
+    fingerprint = first_runtime.get("stack_fingerprint") or {}
+    if dataset.get("role") != "root":
+        raise RootQualificationError(
+            "qualify-root --local covers role=root captures; a quant candidate is "
+            "scored against the published root by `compare --reference hf://... "
+            "--own-heads` and needs no qualification")
+    census = _local_checkpoint_census(first_runtime, "canonical")
+    if census != _local_checkpoint_census(repeat_runtime, "repeat"):
+        raise RootQualificationError(
+            "the two captures hashed different checkpoint censuses; they did not "
+            "run from one checkpoint")
+    dataset_repository = dataset.get("repository")
+    if not isinstance(dataset_repository, str) or "/" not in dataset_repository:
+        raise RootQualificationError(
+            "the captures carry no dataset repository identity; capture with "
+            "`--repository <org>/<dataset-repo>` (the immutable identity a "
+            "publication is bound to)")
+    evidence = tool.get("resolved_panel_binding")
+    if (not isinstance(evidence, dict)
+            or not isinstance(evidence.get("binding"), dict)
+            or not _HEX64.fullmatch(str(evidence.get("binding_file_sha256", "")))
+            or not isinstance(evidence.get("binding_file"), str)):
+        raise RootQualificationError(
+            "the captures carry no --panel-binding evidence; capture with "
+            "`--panel-binding <ResolvedPanel JSON> --panel-binding-sha256 <sha>` "
+            "(bin/fidelity/panel.py resolve_panel writes it)")
+    device = fingerprint.get("device")
+    if device != "cuda":
+        raise RootQualificationError(
+            "the root contract binds capture device 'cuda' exactly; these captures "
+            "record %r -- capture with `--device cuda`, not an indexed device" % device)
+    comparator = comparison.get("comparator") or {}
+    replay_backend = comparator.get("replay_backend")
+    if (replay_backend != "numpy:cpu:float32"
+            or comparator.get("vocab_chunk") != _LOCAL_ROOT_REPLAY["vocab_chunk"]):
+        raise RootQualificationError(
+            "the root contract's replay profile is numpy fp32 at --vocab-chunk 8192 "
+            "(the published path); this comparison ran %r at vocab_chunk %r -- "
+            "re-run `compare --self-compare --force-compute --replay-device numpy "
+            "--vocab-chunk 8192` for the qualification"
+            % (replay_backend, comparator.get("vocab_chunk")))
+    observed_license = tool.get("weights_license")
+    weights_license = None
+    if isinstance(observed_license, dict):
+        weights_license = {
+            "source_path": "LICENSE", "dataset_path": observed_license.get("dataset_path"),
+            "bytes": observed_license.get("bytes"), "sha256": observed_license.get("sha256"),
+        }
+    allowlist_evidence = tool.get("unexpected_tensor_allowlist")
+    allowlist = None
+    if isinstance(allowlist_evidence, dict):
+        allowlist = {
+            "path": allowlist_evidence.get("artifact_file"),
+            "artifact_sha256": allowlist_evidence.get("artifact_sha256"),
+            "canonical_sorted_names_sha256":
+                allowlist_evidence.get("canonical_sorted_names_sha256"),
+        }
+    identity = _local_model_dir_identity(model_dir, census, weights_license)
+    author = (dataset.get("author") or {}).get("name")
+    measurer = measurer or author
+    dtype = {"BF16": "bfloat16"}.get(str(capture_manifest.get("dtype")))
+    lane = runtime_manifest.get("lane")
+    form = capture_manifest.get("form")
+    dataset_bytes = 0
+    for root in (first_root, repeat_root):
+        for rel in F.iter_dataset_files(root, exclude=()):
+            dataset_bytes += os.path.getsize(os.path.join(root, rel))
+    bundle = jobcontract.finalize_bundle_manifest(
+        _checkout_file_manifest(_LOCAL_JOB_BUNDLE_FILES), "local-checkout")
+    control = jobcontract.finalize_bundle_manifest(
+        _checkout_file_manifest(_LOCAL_JOB_CONTROL_FILES), "local-checkout")
+    control["schema"] = "fidelity-suite/control-plane-manifest.v1"
+    registry_rel = "bin/BUNDLE.txt"
+    registry_path = os.path.join(REPO, registry_rel)
+    registry = {"path": registry_rel, "bytes": os.path.getsize(registry_path),
+                "sha256": common.sha256_file(registry_path)}
+    bundle_contract_sha256 = common.sha256_hex(common.canonical_json(
+        {"bundle": bundle, "registry": registry}))
+    profile = {
+        "profile_id": "root-hf-transformers-bf16", "lane": "root", "source": "native",
+        "surface": "native-bf16", "form": form, "engine": "hf-transformers",
+        "compute_dtype": "bfloat16", "device": "cuda",
+        "schedule": "two-fresh-process-qualification",
+    }
+    local_execution = {
+        "device_name": fingerprint.get("device_name"),
+        "torch_version": fingerprint.get("torch_version"),
+        "transformers_version": fingerprint.get("transformers_version"),
+        "cuda_runtime_version": fingerprint.get("cuda_runtime_version"),
+        "python": (first_runtime.get("runtime_environment") or {}).get("python"),
+        "pod_attestation": None,
+        "note": "captured on hardware the author controls; there is no provider, "
+                "no pod attestation, no container pin and no paid meter. "
+                "resource_requirements holds the pod-admission fields the "
+                "job.v2 schema requires, filled post hoc: the two datasets' "
+                "bytes, and 1 where a local run has nothing to admit against.",
+    }
+    doc = {
+        "schema": "fidelity-suite/job.v2",
+        "role": "root",
+        "recipe": "local",
+        "execution_attempt": {"number": 1, "kind": "local",
+                              "attempt_id": secrets.token_hex(12)},
+        "local_execution": local_execution,
+        "bundle": bundle,
+        "bundle_registry": registry,
+        "bundle_contract_sha256": bundle_contract_sha256,
+        "control_plane": control,
+        "lane": lane,
+        "measurer": {"name": measurer, "handle": measurer,
+                     "url": "https://huggingface.co/%s" % measurer,
+                     "is_artifact_author": False},
+        "reduce_order": "fp32",
+        "cold_runs": 2,
+        "profile": profile,
+        "timing": {"kind": "local", "conservative_upper_hours": None,
+                   "note": "no paid meter; the captures already ran"},
+        "target": dict(identity, **{
+            "repo_id": weights_manifest.get("repository"),
+            "revision": weights_manifest.get("revision"),
+            "requested_revision": weights_manifest.get("revision"),
+            "path": None, "surface": "native-bf16", "codec": "bf16", "bits": 16,
+            "weights_license": weights_license,
+        }),
+        "panel": {
+            "resolved_binding": evidence["binding"],
+            "binding_path": evidence["binding_file"],
+            "binding_file_sha256": evidence["binding_file_sha256"],
+        },
+        "reference": {"reference_ref": None, "teacher_receipt_sha256": None,
+                      "teacher_backend_identity_sha256": None},
+        "environment": {
+            "gpu": fingerprint.get("device_name"), "gpu_count": 1,
+            "tensor_parallel": 1, "host": None, "execution_mode": "local",
+            "container_image": None, "container_digest": None,
+        },
+        "runtime": {"device": "cuda", "reduce_order": "fp32"},
+        "keep_student_logits": False,
+        "resource_requirements": {
+            "workspace_available_bytes_minimum": max(1, dataset_bytes),
+            "container_available_bytes_minimum": max(1, dataset_bytes),
+            "min_vcpu_count": 1, "min_memory_gb": 1, "expected_vram_bytes": 1,
+        },
+        "disclosures": [],
+        "scope": {"kind": "root-capture", "engine": "hf-transformers",
+                  "dtype": "bfloat16", "form": form},
+        "produced_by": {
+            "dependencies": {"profile": profile["profile_id"], "lane": lane,
+                             "provider": "local"},
+            "source_files": {row["path"]: row["sha256"] for row in bundle["files"]},
+            "capture_source_files": first_runtime.get("source_files") or {},
+        },
+        "capture": {
+            "role": "root",
+            "form": form,
+            "replay": dict(_LOCAL_ROOT_REPLAY),
+            "root_protocol": {
+                "schedule": "two-fresh-process-qualification",
+                "fresh_processes": 2, "run_count_per_process": 1,
+                "exact_self_comparison": True, "qualification_required": True,
+                "canonical_publication_required": True,
+                "publication_mode": "canonical-public",
+            },
+            "schedule": tool.get("schedule"),
+            "panel_id": evidence["binding"].get("panel", {}).get("id"),
+            "designated_reference": None,
+            "dataset_id": dataset.get("id"),
+            "dataset_repository": dataset_repository,
+            "dataset_name": dataset.get("name"),
+            "author": author,
+            "race": False,
+            "preview_of": None,
+            "publish_root_to": dataset_repository,
+            "dataset_license": dataset.get("license"),
+            "weights_license": weights_license,
+            "engine": "hf-transformers",
+            "dtype": dtype,
+            "device": device,
+            "replay_device": _LOCAL_ROOT_REPLAY["device"],
+            "replay_dtype": _LOCAL_ROOT_REPLAY["dtype"],
+            "vocab_chunk": _LOCAL_ROOT_REPLAY["vocab_chunk"],
+            "own_heads": True,
+            "unexpected_tensor_allowlist": allowlist,
+            "resume_capture": None,
+            "candidate": None,
+        },
+    }
+    try:
+        return jobcontract.finalize_job(doc)
+    except jobcontract.JobContractError as exc:
+        raise RootQualificationError(
+            "the captures do not yield a valid local root job contract: %s" % exc)
+
+
 def cmd_qualify_root(args):
     if os.path.realpath(args.first) == os.path.realpath(args.repeat):
         return refuse("same_root", "root qualification needs two distinct dataset paths")
     if args.first_label == args.repeat_label:
         return refuse("same_process_label", "the two cold capture process labels must differ")
+    local = bool(getattr(args, "local", False))
+    if local == bool(args.job):
+        return refuse("job_or_local",
+                      "pass exactly one of --job (a controller-written job.json) or "
+                      "--local --model-dir DIR (derive the contract from the captures)")
+    if local and not getattr(args, "model_dir", None):
+        return refuse("model_dir_required",
+                      "--local needs --model-dir: the checkpoint directory both "
+                      "captures ran from (config.json and the shards are bound to "
+                      "the census the captures hashed)")
     try:
+        if local:
+            job = _local_root_job(
+                args.first, args.repeat,
+                _read_json_file(args.comparison, "comparison receipt"),
+                model_dir=args.model_dir, measurer=getattr(args, "measurer", None))
+            job_out = args.job_out or os.path.join(
+                os.path.dirname(os.path.abspath(args.out)), "job.json")
+            if os.path.exists(job_out):
+                raise RootQualificationError(
+                    "--job-out %s exists; a local job contract is written once" % job_out)
+            common.write_json(job_out, job)
+            args.job = job_out
         job = _read_json_file(args.job, "job.json")
         try:
             canonical_job_sha256 = jobcontract.verify_job(job)
@@ -1359,14 +1774,15 @@ def cmd_qualify_root(args):
             raise RootQualificationError(
                 "comparison lacks forced exact reproduction-confirmation semantics")
 
-        receipt = common.seal({
+        contract = jobcontract.root_qualification_contract(job)
+        receipt = {
             "schema": _QUALIFICATION_SCHEMA,
             "qualified_at": common.utcnow(),
             "canonical_job_sha256": canonical_job_sha256,
             "job_file_sha256": common.sha256_file(args.job),
             "dataset_repository": dataset_repository,
             "destination_repository": destination,
-            "job_contract": jobcontract.root_qualification_contract(job),
+            "job_contract": contract,
             "captures": {"canonical": first, "repeat": repeat},
             "comparison": {
                 "path": os.path.basename(args.comparison),
@@ -1399,7 +1815,12 @@ def cmd_qualify_root(args):
                 "exact_zero_comparison": True,
                 "canonical_dataset_only": True,
             },
-        })
+        }
+        if contract.get("execution_kind") == "local":
+            # The receipt says, in itself, what stands behind a local root: the
+            # card and stack that captured it, and that no pod attested to it.
+            receipt["local_execution"] = job["local_execution"]
+        receipt = common.seal(receipt)
         common.write_json(args.out, receipt)
         _load_qualification(args.out, job_path=args.job)
     except (RootQualificationError, F.FormatError) as exc:
@@ -1407,6 +1828,12 @@ def cmd_qualify_root(args):
     emit("ROOT QUALIFIED %s" % args.first)
     emit("  repeat              %s" % args.repeat)
     emit("  comparison          exact +0.0 mean/max, top-1 1.0")
+    if local:
+        emit("  execution           local (%s, torch %s, transformers %s; no pod attestation)"
+             % (job["local_execution"].get("device_name"),
+                job["local_execution"].get("torch_version"),
+                job["local_execution"].get("transformers_version")))
+        emit("  job contract        %s" % args.job)
     emit("  receipt             %s" % args.out)
     return OK
 
@@ -1544,6 +1971,44 @@ def _private_publish_inputs(dataset_path, qualification_path, job_path):
     return dataset_real, expected_qualification, expected_job
 
 
+def _local_publish_source(dataset_path, qualification_path):
+    """The publication source for a LOCAL root: the sealed dataset tree itself.
+
+    The pod path verifies the retrieved result.tar.gz against the on-box
+    digest before anything is uploaded, because the pod that produced it is
+    gone.  A local root's producer is the machine publish runs on: the seal
+    (`_load_qualification(dataset=...)` re-verifies every tensor) is the
+    retrieval-integrity proof, and the same per-file records drive the
+    post-publish stream verification the pod path performs.
+    """
+    records = {}
+    for rel in F.iter_dataset_files(dataset_path, exclude=()):
+        full = os.path.join(dataset_path, rel)
+        records[rel] = {"bytes": os.path.getsize(full),
+                        "sha256": common.sha256_file(full)}
+    return {
+        "source": "local-dataset-tree",
+        "archive_sha256": None,
+        "archive_bytes": None,
+        "canonical_dataset_records": records,
+        "canonical_dataset_bytes": sum(r["bytes"] for r in records.values()),
+        "qualification_record": {
+            "bytes": os.path.getsize(qualification_path),
+            "sha256": common.sha256_file(qualification_path),
+        },
+    }
+
+
+def _publication_kind(qualification_path):
+    """execution_kind of the job a qualification binds, before any other check."""
+    try:
+        doc = _read_json_file(qualification_path, "root qualification receipt")
+    except RootQualificationError:
+        return None          # _load_qualification names the defect precisely
+    contract = doc.get("job_contract") if isinstance(doc, dict) else None
+    return (contract or {}).get("execution_kind") if isinstance(contract, dict) else None
+
+
 def cmd_publish(args):
     qualification_path = getattr(args, "qualification", None)
     if not qualification_path:
@@ -1556,6 +2021,30 @@ def cmd_publish(args):
             "public_publication_required",
             "canonical root publication must be anonymously readable; "
             "--private is refused")
+    kind = _publication_kind(qualification_path)
+    archive_triple = (getattr(args, "result_archive", None),
+                      getattr(args, "expected_archive_sha256", None),
+                      getattr(args, "expected_archive_bytes", None))
+    if kind == "local":
+        if any(value is not None for value in archive_triple):
+            return refuse(
+                "local_publication_has_no_archive",
+                "a locally qualified root has no result.tar.gz: drop --result-archive, "
+                "--expected-archive-sha256 and --expected-archive-bytes")
+        for path, label in ((args.dataset, "dataset"), (qualification_path, "qualification"),
+                            (args.job, "job.json")):
+            if os.path.islink(path) or not os.path.exists(path):
+                return refuse("publication_source_invalid",
+                              "%s %s must be a non-symlink path that exists" % (label, path))
+        return _cmd_publish_private_extraction(
+            args, os.path.realpath(args.dataset), os.path.realpath(qualification_path),
+            os.path.realpath(args.job), local=True)
+    if any(value is None for value in archive_triple):
+        return refuse(
+            "result_archive_required",
+            "a pod-qualified root publishes from its retrieved result.tar.gz: pass "
+            "--result-archive, --expected-archive-sha256 and --expected-archive-bytes "
+            "(only an execution_kind=local qualification publishes without them)")
     try:
         dataset_path, qualification_path, job_path = _private_publish_inputs(
             args.dataset, qualification_path, args.job)
@@ -1566,7 +2055,7 @@ def cmd_publish(args):
 
 
 def _cmd_publish_private_extraction(
-        args, dataset_path, qualification_path, job_path):
+        args, dataset_path, qualification_path, job_path, local=False):
     from fidelity import dshub
 
     try:
@@ -1575,21 +2064,42 @@ def _cmd_publish_private_extraction(
             dataset=dataset_path, repository=args.repo)
     except (RootQualificationError, F.FormatError) as exc:
         return refuse("qualification_invalid", str(exc))
+    execution_kind = (qualification.get("job_contract") or {}).get("execution_kind")
+    if local != (execution_kind == "local"):
+        return refuse("qualification_invalid",
+                      "publication path does not match the qualification's execution_kind")
 
     local_manifest = F.load_manifest(dataset_path)
     local_dataset_sha256 = local_manifest.get(F.SEAL_FIELD)
+    try:
+        if local:
+            source_archive = _local_publish_source(dataset_path, qualification_path)
+        else:
+            source_archive = _verify_publish_source_archive(
+                args.result_archive, args.expected_archive_sha256,
+                args.expected_archive_bytes, dataset_path,
+                qualification_path, job_path)
+    except RootQualificationError as exc:
+        return refuse("source_archive_invalid", str(exc))
+    if getattr(args, "dry_run", False):
+        emit("DRY RUN -- nothing uploaded, no token read")
+        emit("  would publish       %s -> %s (dataset_sha256 %s)"
+             % (dataset_path, args.repo, local_dataset_sha256))
+        emit("  files               %d (%d bytes) + receipts/root-qualification.json"
+             % (len(source_archive["canonical_dataset_records"]),
+                source_archive["canonical_dataset_bytes"]))
+        emit("  execution           %s%s"
+             % (execution_kind,
+                (" (%s; no pod attestation)"
+                 % (qualification.get("local_execution") or {}).get("device_name"))
+                if local else ""))
+        emit("  expected HEAD       %s" % (getattr(args, "expected_head", None) or "absent"))
+        return OK
     try:
         token = dshub.read_token(args.token_file)
     except (dshub.HubError, OSError) as exc:
         return refuse("publish_refused", str(exc))
     expected_head = getattr(args, "expected_head", None)
-    try:
-        source_archive = _verify_publish_source_archive(
-            args.result_archive, args.expected_archive_sha256,
-            args.expected_archive_bytes, dataset_path,
-            qualification_path, job_path)
-    except RootQualificationError as exc:
-        return refuse("source_archive_invalid", str(exc))
     try:
         result = dshub.publish_dataset(
             dataset_path, args.repo, qualification_path,
@@ -1661,6 +2171,9 @@ def _cmd_publish_private_extraction(
             "verified_revision": revision,
             "result_archive_sha256": source_archive["archive_sha256"],
             "result_archive_bytes": source_archive["archive_bytes"],
+            "publication_source": source_archive.get("source", "result-archive"),
+            "execution_kind": execution_kind,
+            "local_execution": qualification.get("local_execution"),
         })
         common.write_json(args.receipt, doc)
         emit("publish receipt written to %s (immutable revision %s)"
@@ -1701,18 +2214,46 @@ def build_parser():
         p.add_argument("--token-file", help="path to a file holding an HF token "
                                             "(never echoed, never committed)")
 
-    p = sub.add_parser("capture", help="step 1/2: produce a fidelity dataset from weights")
+    p = sub.add_parser(
+        "capture", help="step 1/2: produce a fidelity dataset from weights",
+        description="Everything after `--` goes to the engine verbatim; "
+                    "`engines/tools/hf_capture.py --help` lists its flags.",
+        epilog="the argv the GLM-5.3 K4 candidate job actually ran (fidelity-runs/"
+               "exl3-wrld11/job.json capture block: engine hf-transformers, schedule "
+               "layer-outer, form hidden, dtype bfloat16, replay numpy/float32 at "
+               "vocab_chunk 8192), reduced to a local machine:\n"
+               "  bin/fidelity-dataset capture --engine hf-transformers --out /nvme/ds/cand-1 "
+               "--form hidden --role quant --lane streaming -- \\\n"
+               "      --model /nvme/models/k4 --weights-repository wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1 \\\n"
+               "      --model-revision 47af23347db743b4666d952e2eb48f2b01c3fede "
+               "--repository <handle>/<dataset-repo> \\\n"
+               "      --panel engines/panels/panel--glm53.malaiwah.corpus5x5-v1 "
+               "--panel-id panel--glm53.malaiwah.corpus5x5-v1 \\\n"
+               "      --schedule layer-outer --device cuda --dtype bfloat16 \\\n"
+               "      --dataset-id fidelity--glm53.<handle>.quant.exl3-k4 --dataset-name "
+               "\"GLM-5.3 EXL3 K4\" \\\n"
+               "      --run-name cand-cold-1 --cold-run cand-cold-1 --author <handle> "
+               "--role quant --sanity-expect Paris \\\n"
+               "      --scope-file /nvme/ds/scope.json --codec exl3-trellis --declared-bits 4\n"
+               "A root swaps --role root, drops --scope-file/--codec/--declared-bits and "
+               "adds --panel-binding/--panel-binding-sha256 (needed by qualify-root). "
+               "The comparison that qualifies a root must use --replay-device numpy "
+               "--vocab-chunk 8192. GLM-5.3-class captures need a >= 64 GB card today "
+               "(bin/measure-local --estimate-only prints the plan).",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--out", required=True)
     p.add_argument("--form", choices=F.FORMS, default="hidden")
     p.add_argument("--role", choices=F.ROLES, required=True)
     p.add_argument("--lane", choices=F.LANES, required=True)
     p.add_argument("--engine", choices=["sealed-lane", "hf-transformers"],
-                   default="sealed-lane",
-                   help="sealed-lane wraps engines/tools/hidden_replay.py + stream_score.py "
-                        "(campaign-internal, GLM-5.3-Flash geometry only, and it writes a "
-                        "capture work tree that something else must assemble); "
-                        "hf-transformers wraps engines/tools/hf_capture.py, which runs any HF "
-                        "causal LM and writes the SEALED DATASET at --out itself")
+                   default="hf-transformers",
+                   help="hf-transformers (default) wraps engines/tools/hf_capture.py, which "
+                        "runs any HF causal LM -- `--schedule layer-outer` holds one decoder "
+                        "layer resident and reads the checkpoint once -- and writes the "
+                        "SEALED DATASET at --out itself; it is the engine behind every "
+                        "GLM-5.3 row. sealed-lane wraps engines/tools/hidden_replay.py + "
+                        "stream_score.py (campaign-internal, GLM-5.3-Flash geometry only, "
+                        "writes a capture work tree that something else must assemble)")
     p.add_argument("--work", help="capture working directory (default: <out>.capture)")
     p.add_argument("--dry-run", action="store_true",
                    help="validate every input and the plan, exit 0 without a GPU")
@@ -1720,6 +2261,24 @@ def build_parser():
     p.add_argument("passthrough", nargs=argparse.REMAINDER,
                    help="everything after `--` is passed to the scorer verbatim")
     p.set_defaults(func=cmd_capture)
+
+    p = sub.add_parser(
+        "panel-binding",
+        help="write the ResolvedPanel contract a root capture binds (--panel-binding) "
+             "and print its sha256",
+        description="qualify-root needs each root capture to carry the exact panel "
+                    "binding it ran under (hf_capture --panel-binding FILE "
+                    "--panel-binding-sha256 SHA). This resolves a committed panel tree "
+                    "against the tokenizer files of the checkpoint directory, refuses "
+                    "unless every listed tokenizer file verifies, writes the contract "
+                    "and prints the sha256 to pass alongside it.")
+    p.add_argument("--panel", required=True, help="panel tree, e.g. engines/panels/<id>")
+    p.add_argument("--tokenizer-root", required=True,
+                   help="directory holding the tokenizer files the panel receipt lists "
+                        "(the checkpoint directory of the root release)")
+    p.add_argument("--role", default="final")
+    p.add_argument("--out", required=True, help="binding JSON to write (must not exist)")
+    p.set_defaults(func=cmd_panel_binding)
 
     p = sub.add_parser(
         "reseal",
@@ -1864,8 +2423,39 @@ def build_parser():
 
     p = sub.add_parser(
         "qualify-root",
-        help="bind two independently verified root captures and their exact-zero comparison")
-    p.add_argument("--job", required=True)
+        help="bind two independently verified root captures and their exact-zero comparison",
+        description="Two cold captures of one root, two full verifies and one forced "
+                    "exact-zero self-comparison become one sealed qualification receipt. "
+                    "A pod run passes the controller's job.json (--job). A run on your "
+                    "own GPU passes --local --model-dir DIR instead: the job contract is "
+                    "derived from the captures' own sealed evidence (panel binding, "
+                    "checkpoint census, stack fingerprint) and written next to --out "
+                    "with execution_kind local, which the receipt and any later "
+                    "publication carry as 'no pod attestation'.",
+        epilog="local example (both captures ran with --engine hf-transformers, "
+               "--panel-binding, --device cuda; the comparison with --replay-device "
+               "numpy --vocab-chunk 8192):\n"
+               "  bin/fidelity-dataset qualify-root --local --model-dir /nvme/models/m \\\n"
+               "      --first /nvme/ds/root-1 --repeat /nvme/ds/root-2 \\\n"
+               "      --first-label root-cold-1 --repeat-label root-cold-2 \\\n"
+               "      --first-verify /nvme/ds/root-1.verify.json --repeat-verify "
+               "/nvme/ds/root-2.verify.json \\\n"
+               "      --comparison /nvme/ds/root-repro/comparison-receipt.json "
+               "--out /nvme/ds/receipts/root-qualification.json",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--job", help="controller-written job.json (pod path); exclusive with --local")
+    p.add_argument("--local", action="store_true",
+                   help="derive an execution_kind=local job contract from the two "
+                        "captures; needs --model-dir")
+    p.add_argument("--model-dir",
+                   help="the checkpoint directory both captures ran from; its config.json "
+                        "and shard sizes are bound to the census the captures hashed")
+    p.add_argument("--job-out",
+                   help="where --local writes the derived job.json (default: job.json "
+                        "beside --out); refuses to overwrite")
+    p.add_argument("--measurer",
+                   help="--local: HF handle of the person qualifying (default: the "
+                        "captures' author)")
     p.add_argument("--first", required=True)
     p.add_argument("--repeat", required=True)
     p.add_argument("--comparison", required=True)
@@ -1898,15 +2488,20 @@ def build_parser():
         help="exact job.json whose canonical identity, file digest, target, "
              "profile and panel contract the qualification must match")
     p.add_argument(
-        "--result-archive", required=True,
+        "--result-archive",
         help="original retrieved result.tar.gz containing the exact job, both "
-             "verified captures, comparison, and qualification")
+             "verified captures, comparison, and qualification (required for a "
+             "pod-qualified root; refused for an execution_kind=local one)")
     p.add_argument(
-        "--expected-archive-sha256", required=True,
+        "--expected-archive-sha256",
         help="exact on-box archive SHA-256 reported before transfer")
     p.add_argument(
-        "--expected-archive-bytes", required=True, type=_positive_int,
+        "--expected-archive-bytes", type=_positive_int,
         help="exact on-box archive byte count reported before transfer")
+    p.add_argument(
+        "--dry-run", action="store_true",
+        help="run every qualification/seal/identity gate and print what would be "
+             "uploaded; read no token, upload nothing")
     p.add_argument(
         "--receipt",
         help="write a sealed publish receipt here only after every immutable "
