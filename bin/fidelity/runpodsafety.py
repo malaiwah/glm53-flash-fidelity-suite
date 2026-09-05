@@ -118,6 +118,36 @@ _ALLOWLISTS = {
         "canonical_sorted_names_sha256": "37b68b125e58910a7e1e32b8cd7323e3c5affa208238d31a773f447bf608217c",
         "count": 3481,
     },
+    ("RadixArk/GLM-5.3-NVFP4",
+     "11af4cba759e6559eda70358a5778bd1bddddd78"): {
+        # index census of model.layers.78 (see the .provenance.json beside it):
+        # the MTP block ships whole in bf16, so the set is exactly the 791
+        # names of glm53-layer78-unexpected-keys.json and no scale siblings.
+        "path": "engines/tools/layer-outer-evidence/radixark-nvfp4-layer78-unexpected-keys.json",
+        "artifact_sha256": "969cee605deba10dd82afbaa9b1b7a35d2339fdb122efece14530c9030aa1436",
+        "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
+        "count": 791,
+    },
+    ("incoai/GLM-5.3-NVFP4",
+     "54e52520606f96b3d9fc84088ad22882a61648ac"): {
+        # index census of model.layers.78 (see the .provenance.json beside it):
+        # the MTP block ships whole in bf16, so the set is exactly the 791
+        # names of glm53-layer78-unexpected-keys.json and no scale siblings.
+        "path": "engines/tools/layer-outer-evidence/incoai-nvfp4-layer78-unexpected-keys.json",
+        "artifact_sha256": "969cee605deba10dd82afbaa9b1b7a35d2339fdb122efece14530c9030aa1436",
+        "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
+        "count": 791,
+    },
+    ("Inferact/GLM-5.3-NVFP4",
+     "ce67b36f3669192b5bb233819f0fda6c8a9837f8"): {
+        # index census of model.layers.78 (see the .provenance.json beside it):
+        # the MTP block ships whole in bf16, so the set is exactly the 791
+        # names of glm53-layer78-unexpected-keys.json and no scale siblings.
+        "path": "engines/tools/layer-outer-evidence/inferact-nvfp4-layer78-unexpected-keys.json",
+        "artifact_sha256": "969cee605deba10dd82afbaa9b1b7a35d2339fdb122efece14530c9030aa1436",
+        "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
+        "count": 791,
+    },
     ("zai-org/GLM-5.3-BF16",
      "304b8051cfb2b260b61ce0cbe330e02a98e73639"): {
         "path": "engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json",
