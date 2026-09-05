@@ -246,10 +246,33 @@ def safe_urlopen(request, *, timeout=60.0):
 # --------------------------------------------------------------------------
 
 
+def _refuse_non_string_keys(obj: Any, path: str = "$") -> None:
+    """A dict with a non-string key seals into bytes that can never recompute:
+    json.dumps(sort_keys=True) orders int keys numerically in memory, the
+    file on disk carries them as strings ordered lexically ("10" < "2"), and
+    SEAL-1(g) refuses the dataset after the whole capture (2026-09-05: a
+    GGUF runtime receipt's {2: .., 6: .., 10: ..} histogram, 78 layers and
+    about four dollars spent before the refusal). Refuse at seal time instead."""
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if not isinstance(key, str):
+                raise ValueError(
+                    "canonical JSON refuses a non-string dict key %r at %s: it would "
+                    "sort differently in memory and on disk, so the seal could never "
+                    "recompute" % (key, path))
+            _refuse_non_string_keys(value, "%s.%s" % (path, key))
+    elif isinstance(obj, (list, tuple)):
+        for index, value in enumerate(obj):
+            _refuse_non_string_keys(value, "%s[%d]" % (path, index))
+
+
 def canonical_json(obj: Any) -> str:
     # P1-08: allow_nan=False, exactly as registry_lib.canonical_json. NaN/Infinity
     # are not JSON; sealing them would publish "canonical" bytes a conforming
     # parser rejects. Non-finite input is a ValueError, never a wire token.
+    # Byte-identical to registry_lib for every valid (all-string-key) input;
+    # the key check only turns a silently unrecomputable seal into a refusal.
+    _refuse_non_string_keys(obj)
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                       allow_nan=False)
 

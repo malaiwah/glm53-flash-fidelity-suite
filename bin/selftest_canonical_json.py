@@ -97,6 +97,34 @@ for label, value in NONFINITE:
             verdicts.append("refused")
     check("%-30s -> refused by both" % label, verdicts == ["refused", "refused"])
 
+print("\n== non-string dict keys: the controller refuses at seal time ==")
+# json.dumps(sort_keys=True) orders int keys numerically in memory while the
+# file on disk carries them as strings ordered lexically ("10" < "2"): the
+# seal can never recompute (SEAL-1(g)), and on 2026-09-05 that refused a GGUF
+# capture after 78 layers. The controller refuses when sealing; the registry's
+# serializer (not this tree's to edit) still accepts -- recorded here as the
+# divergence the registry session should close the same way.
+NONSTRING = [
+    ("int keys",            {"h": {2: 15, 6: 15, 10: 15}}),
+    ("int key nested",      {"a": [{"b": {3: "x"}}]}),
+    ("bool key",            {True: 1}),
+]
+for label, value in NONSTRING:
+    try:
+        C.canonical_json(value)
+        c_verdict = "accepted"
+    except ValueError as exc:
+        c_verdict = "refused" if "non-string dict key" in str(exc) else "refused-other"
+    check("%-30s -> controller refuses, naming the key" % label, c_verdict == "refused")
+    try:
+        L.canonical_json(value)
+        l_verdict = "accepted"
+    except (ValueError, TypeError):
+        l_verdict = "refused"
+    print("   (registry_lib verdict for %s: %s -- handoff if 'accepted')" % (label, l_verdict))
+check("an all-string-key document still serializes byte-identically on both sides",
+      C.canonical_json({"h": {"2": 15, "10": 15}}) == L.canonical_json({"h": {"2": 15, "10": 15}}))
+
 for label, text in [("NaN token", '{"v": NaN}'),
                     ("Infinity token", '{"v": Infinity}'),
                     ("-Infinity token", '{"v": -Infinity}'),
