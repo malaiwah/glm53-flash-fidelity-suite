@@ -27,6 +27,12 @@ Rungs (offline, $0.00, no provider or Hub access):
       deadlines, last event, and for an AMBIGUOUS lease without ids the
       blockers and the operator sentence; terminal leases are a count; --all
       lists them; --sweep --dry-run prints every action row
+  R6  _derive_index_census_allowlist (S1-3): with the Hub stubbed to the
+      committed dy325 config/index bytes, the plan-time derivation binds
+      inputs/allowlist.json with exactly the digests the authored table
+      records for that pin (2d3aed81.../d567faf9..., 12311 names); a
+      checkpoint with nothing past its boundary yields None; drifted bytes
+      refuse
 """
 import contextlib
 import io
@@ -231,6 +237,53 @@ def main():
                   and "would-reconcile-billing-and-campaign" in sweep and "rix7" in sweep, sweep)
     finally:
         CL.LeaseStore, CL.reap_once, CL.systemd_reaper_health = originals
+
+    # R6: plan-time derivation against the committed dy325 allowlist.
+    from fidelity.runpodsafety import _ALLOWLISTS
+    pin = ("davidsyoung/GLM-5.3-EXL3-TR3-3.25bpw", "6d6bd738c0c1635513e0bd0fdf0302049bd820a9")
+    authored = _ALLOWLISTS[pin]
+    evidence = ROOT / "engines" / "tools" / "layer-outer-evidence"
+    sidecar = json.loads((evidence / "dy325-exl3-layer78-unexpected-keys.json.provenance.json")
+                         .read_text("utf-8"))
+    index_doc = {"metadata": {}, "weight_map": {}}
+    for name in json.loads((evidence / "dy325-exl3-layer78-unexpected-keys.json").read_text("utf-8")):
+        index_doc["weight_map"][name] = "model-00001.safetensors"
+    index_doc["weight_map"]["model.layers.0.mlp.down_proj.weight"] = "model-00001.safetensors"
+    index_raw = json.dumps(index_doc).encode()
+    config_raw = json.dumps({"architectures": ["GlmMoeDsaForCausalLM"],
+                             "num_hidden_layers": 78}).encode()
+    import hashlib
+    files = {"config.json": config_raw, "model.safetensors.index.json": index_raw}
+    original_fetch = MC.fetch_file
+    MC.fetch_file = lambda repo, name, revision=None, **kw: files[name]
+    target = types.SimpleNamespace(repo_id=pin[0], revision=pin[1])
+    identity = {"config_sha256": hashlib.sha256(config_raw).hexdigest(),
+                "index_sha256": hashlib.sha256(index_raw).hexdigest()}
+    try:
+        plan = {"warnings": []}
+        with contextlib.redirect_stdout(io.StringIO()):
+            derived = MC._derive_index_census_allowlist(target, identity, plan, Console())
+        check("R6: the derivation reproduces the authored dy325 digests from the index",
+              derived is not None
+              and derived["artifact_sha256"] == authored["artifact_sha256"]
+              and derived["canonical_sorted_names_sha256"] == authored["canonical_sorted_names_sha256"]
+              and derived["count"] == authored["count"] == sidecar["count"]
+              and derived["path"] == "inputs/allowlist.json"
+              and Path(plan["_derived_allowlist_local"]).is_file(),
+              repr(derived))
+        files["model.safetensors.index.json"] = json.dumps(
+            {"weight_map": {"model.layers.0.a": "x"}}).encode()
+        identity["index_sha256"] = hashlib.sha256(files["model.safetensors.index.json"]).hexdigest()
+        with contextlib.redirect_stdout(io.StringIO()):
+            none = MC._derive_index_census_allowlist(target, identity, {"warnings": []}, Console())
+        check("R6: nothing past the boundary derives None (no allowlist bound)", none is None)
+        identity["index_sha256"] = "0" * 64
+        drift = refusal_of(lambda: MC._derive_index_census_allowlist(
+            target, identity, {"warnings": []}, Console()))
+        check("R6: bytes that differ from the identity refuse",
+              drift is not None and "differ from the identity" in drift.reason)
+    finally:
+        MC.fetch_file = original_fetch
 
     print()
     if failures:

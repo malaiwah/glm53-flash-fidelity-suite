@@ -132,7 +132,12 @@ def render() -> str:
     for n in lane_names:
         spec = lanes[n]
         runners = sorted(r for r, ls in reach.items() if n in ls)
-        via = ", ".join("`%s --lane %s`" % (r, n) for r in runners) if runners \
+        # measure-cloud's --lane is suppressed from --help (streaming is its
+        # only admitted lane); naming the hidden flag sent readers to a flag
+        # they could not find. Say the runner, not the flag.
+        via = ", ".join(
+            "`%s`" % r if r == "bin/measure-cloud" else "`%s --lane %s`" % (r, n)
+            for r in runners) if runners \
             else "no runner — campaign lane, driven directly (`engines/tools/`)"
         # Only render what the data declares; inventing a label here would be
         # exactly the hand-written claim this generator exists to end.

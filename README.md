@@ -86,8 +86,8 @@ instead of restating it.
 
 | lane | reachable via | receipt class | rates with a profile |
 |---|---|---|---|
-| `sealed-ep8` | `bin/measure-cloud --lane sealed-ep8` | (not declared) | no bpw→profile map (profile named by the campaign driver) |
-| `streaming` | `bin/measure --lane streaming` (redirects), `bin/measure-cloud` (its only lane) | submittable | dione: 3.0, 4.0 bpw; exl3hf: 2.0, 2.05, 3.05, 4.05 bpw; gguf: any rate; native-bf16: unquantized; tr3-published: 4.0, 6.0 bpw |
+| `sealed-ep8` | `bin/measure-cloud` | (not declared) | no bpw→profile map (profile named by the campaign driver) |
+| `streaming` | `bin/measure --lane streaming`, `bin/measure-cloud` | submittable | dione: 3.0, 4.0 bpw; exl3hf: 2.0, 2.05, 3.05, 4.05 bpw; gguf: any rate; native-bf16: unquantized; tr3-published: 4.0, 6.0 bpw |
 | `local-mps` | `bin/measure --lane local-mps`, `bin/measure-local --lane local-mps` | preview | 6.0→k6, 8.0→k8, native→native-bf16 |
 | `local-cuda-budget` | `bin/measure --lane local-cuda-budget`, `bin/measure-local --lane local-cuda-budget` | preview | 6.0→k6, 8.0→k8, native→native-bf16 |
 | `bf16-floor` | no runner — campaign lane, driven directly (`engines/tools/`) | (not declared) | fixed: native-bf16 |
