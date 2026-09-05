@@ -17,6 +17,8 @@ re-run, with no RNG anywhere in it.
 | panel_id | model family | shape | corpus |
 |---|---|---|---|
 | `panel--minimaxm3.malaiwah.corpus5x5` | `minimax_m3_vl` (vocab 200,064) | 5 strata x 5 windows, 2048 ctx, 2047 scored -> **51,175 positions** | `malaiwah/qwen38-27b-fidelity-suite-v5` @ `7797fcce`, `corpus/text/` |
+| `panel--glm53.malaiwah.corpus5x5-v1` | `glm_moe_dsa` (full GLM-5.3, vocab 154,820) | 5 strata x 5 windows, 2048 ctx, 2047 scored -> **51,175 positions** | `malaiwah/qwen38-27b-fidelity-suite-v5` @ `7797fcce`, `corpus/text/` |
+| `panel--glm53.brandonmusic.final25` (directory `panel--glm53.brandonmusic.final25/`) | `glm5_next` (GLM-5.3-Flash, vocab 154,856) | 25 `final` windows of 665, 2048 ctx, 2047 scored -> **51,175 positions** | **transported, not built**: `brandonmusic/GLM-5.3-Flash-BF16-Teacher-Logits` @ `95f4fdd9`, `calibration/panel-v1/` (669 files, byte-verified against the Hub listing by `engines/tools/transport_token_panel.py`; provenance in the sibling `.provenance.json`). Its `panel.json` carries no `panel_id`, so a dataset captured on it names the panel `panel-artifact-sha256:6bafe3283c54…`, which is the registry row's `identity.panel_token_sha256` -- the same panel. Same-lane roots on it form a NEW comparability group beside the older rows measured against brandonmusic's teacher logits; they do not upgrade those rows. |
 
 The MiniMax panel is deliberately the **same shape** as
 `panel--glm53.brandonmusic.final25` (25 x 2047 = 51,175 scored positions), so
