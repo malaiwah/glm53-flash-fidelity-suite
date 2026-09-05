@@ -184,7 +184,7 @@ SCOPE = {
 
 
 def capture(model, panel, out, *, role, dataset_id, name, scope_file=None, extra=(),
-            via_wrapper=False):
+            via_wrapper=False, env=None):
     """Drive the engine directly, or through `fidelity-dataset capture --engine`."""
     tail = ["--model", model, "--panel", panel, "--dataset-id", dataset_id,
             "--dataset-name", name, "--device", "cpu",
@@ -196,9 +196,9 @@ def capture(model, panel, out, *, role, dataset_id, name, scope_file=None, extra
         return run([os.path.join(REPO, "bin", "fidelity_dataset.py"), "capture",
                     "--out", out, "--form", "hidden", "--role", role,
                     "--lane", "local-cuda-budget", "--engine", "hf-transformers",
-                    "--"] + tail)
+                    "--"] + tail, env=env)
     return run([os.path.join(REPO, "engines", "tools", "hf_capture.py"),
-                "--out", out, "--role", role, "--lane", "local-cuda-budget"] + tail)
+                "--out", out, "--role", role, "--lane", "local-cuda-budget"] + tail, env=env)
 
 
 def main():
@@ -377,6 +377,34 @@ def _body(work):
     check("A2b two cold runs agree on capture_content_digest",
           manifest_a["capture"]["capture_content_digest"]
           == manifest_b["capture"]["capture_content_digest"])
+
+    # -- A2e-A2g -------------------------------------------------------------
+    # The numeric policy is OBSERVED on every capture and lives outside the
+    # fingerprint digest: a default-policy capture keeps the published policy
+    # string byte-for-byte (so its stack_fingerprint_sha256 still matches the
+    # published root), and the runtime receipt records what the fp32 GEMMs
+    # actually ran under. NVIDIA_TF32_OVERRIDE=1 is refused by name: on a CPU
+    # box the flag is inert, which is exactly why it cannot be detected by effect.
+    runtime_a = F.read_json(os.path.join(a, manifest_a["runtime"]["file"]))
+    observed = (runtime_a.get("runtime_environment") or {}).get("numeric_policy_observed") or {}
+    check("A2e the runtime receipt observes the numeric policy on a plain capture",
+          set(observed) >= {"NVIDIA_TF32_OVERRIDE", "allow_tf32_matmul", "allow_tf32_cudnn",
+                            "float32_matmul_precision", "deviates_from_default"}
+          and observed.get("deviates_from_default") is False
+          and runtime_a["stack_fingerprint"]["numeric_policy"]
+          == getattr(HFC, "DEFAULT_NUMERIC_POLICY", None),
+          json.dumps(observed))
+    canonical = json.dumps(runtime_a["stack_fingerprint"], sort_keys=True, separators=(",", ":"))
+    check("A2f the observed block is outside the fingerprint digest",
+          "numeric_policy_observed" not in canonical
+          and hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+          == manifest_a["runtime"]["stack_fingerprint_sha256"])
+    tf32 = capture(model, panel, os.path.join(work, "ds-tf32"), role="root",
+                   dataset_id="fidelity--selftest.hf.root", name="selftest root",
+                   env=dict(os.environ, NVIDIA_TF32_OVERRIDE="1"))
+    check("A2g NVIDIA_TF32_OVERRIDE=1 refuses the capture before any forward",
+          tf32.returncode != 0 and "NVIDIA_TF32_OVERRIDE" in (tf32.stderr + tf32.stdout),
+          (tf32.stderr + tf32.stdout)[-300:])
 
     # -- A2c -----------------------------------------------------------------
     # Every sealed text member must pass the publisher's private-path scan,

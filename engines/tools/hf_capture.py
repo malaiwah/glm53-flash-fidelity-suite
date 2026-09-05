@@ -1196,6 +1196,13 @@ def run_capture(args: argparse.Namespace) -> int:
     import torch
 
     started = time.monotonic()
+    # The one knob that flips every fp32 cuBLAS GEMM to TF32 from the environment
+    # with no torch-side trace.  layer_outer refuses it for the trellis decode
+    # only; the router GEMMs of EVERY capture are fp32 and deserve the same
+    # refusal.  Observed again at seal time and recorded in runtime_environment.
+    if str(os.environ.get("NVIDIA_TF32_OVERRIDE", "")).strip() == "1":
+        raise fail("NVIDIA_TF32_OVERRIDE=1 forces TF32 in cuBLAS regardless of the torch "
+                   "flags; the capture's fp32 GEMMs would not be fp32. Unset it.")
     model_dir = args.model
     if not os.path.isdir(model_dir):
         from huggingface_hub import snapshot_download
@@ -1676,9 +1683,53 @@ def _container_identity() -> Optional[Dict[str, Any]]:
             "source": source}
 
 
+#: The in-digest policy string every published GLM-5.3 capture carries.  Kept
+#: byte-identical whenever the OBSERVED policy is torch's default, because the
+#: string is inside `stack_fingerprint_sha256` and a changed digest would file
+#: every future candidate as cross_stack against the published root.
+DEFAULT_NUMERIC_POLICY = "default torch matmul precision; no TF32 override applied"
+
+
+def observe_numeric_policy() -> Dict[str, Any]:
+    """What the fp32 GEMMs actually ran under, read from torch and the environment.
+
+    Recorded on EVERY capture (until now only the trellis pin recorded it, in
+    weights_decode.numeric_policy).  `deviates_from_default` is true when
+    anything would make an fp32 matmul not fp32: NVIDIA_TF32_OVERRIDE=1,
+    allow_tf32 on the cuda matmul backend, or a float32_matmul_precision below
+    'highest'.  cudnn's allow_tf32 is recorded but is not a deviation: it
+    governs convolutions, which this forward has none of, and torch's own
+    default for it is True.
+    """
+    import torch
+
+    override = os.environ.get("NVIDIA_TF32_OVERRIDE")
+    matmul_tf32 = bool(getattr(torch.backends.cuda.matmul, "allow_tf32", False))
+    cudnn_tf32 = bool(getattr(torch.backends.cudnn, "allow_tf32", False))
+    precision = getattr(torch, "get_float32_matmul_precision", lambda: None)()
+    deviates = (str(override or "").strip() == "1" or matmul_tf32
+                or (precision is not None and precision != "highest"))
+    return {
+        "NVIDIA_TF32_OVERRIDE": override,
+        "allow_tf32_matmul": matmul_tf32,
+        "allow_tf32_cudnn": cudnn_tf32,
+        "float32_matmul_precision": precision,
+        "deviates_from_default": deviates,
+        "observed_at": "seal time, after the forward",
+    }
+
+
 def _stack_fingerprint(device: str) -> Dict[str, Any]:
     import torch
 
+    observed = observe_numeric_policy()
+    policy = DEFAULT_NUMERIC_POLICY
+    if observed["deviates_from_default"]:
+        # A different stack: the digest MUST move.
+        policy = ("TF32 DEVIATION: NVIDIA_TF32_OVERRIDE=%r allow_tf32_matmul=%r "
+                  "float32_matmul_precision=%r"
+                  % (observed["NVIDIA_TF32_OVERRIDE"], observed["allow_tf32_matmul"],
+                     observed["float32_matmul_precision"]))
     fingerprint = {
         "schema": "malaiwah.stack-fingerprint.v1",
         "engine": "transformers-eager",
@@ -1686,7 +1737,7 @@ def _stack_fingerprint(device: str) -> Dict[str, Any]:
         "device": device,
         "device_name": None,
         "cuda_runtime_version": None,
-        "numeric_policy": "default torch matmul precision; no TF32 override applied",
+        "numeric_policy": policy,
         "attention_backend": os.environ.get("ATTN_IMPLEMENTATION", "model default"),
     }
     try:
@@ -1967,7 +2018,11 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                  "checkpoint_identity_algorithm": CHECKPOINT_IDENTITY_ALGORITHM,
                  "checkpoint_files": identity_files},
         runtime_environment={"python": sys.version.split()[0],
-                             "cold_run": args.cold_run},
+                             "cold_run": args.cold_run,
+                             # Observed, not asserted; outside the fingerprint
+                             # digest so a default-policy capture keeps matching
+                             # the published root's stack_fingerprint_sha256.
+                             "numeric_policy_observed": observe_numeric_policy()},
         source_files=_source_files(args),
         capture_tool={"file": "engines/tools/hf_capture.py",
                       "sha256": F.sha256_file(os.path.abspath(__file__)),
