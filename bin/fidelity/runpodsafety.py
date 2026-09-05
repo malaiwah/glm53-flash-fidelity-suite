@@ -106,6 +106,18 @@ _ALLOWLISTS = {
         "canonical_sorted_names_sha256": "acc1e9f10c0f903c735a7fcf5fd267fc879bce65623f0b850f80016da5e903b7",
         "count": 889,
     },
+    ("wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1",
+     "1e4abd26e4e1e8d58d81fbd557d6c4099352fe63"): {
+        # index census of model.language_model.layers.45, the MTP block
+        # Glm5NextForConditionalGeneration never builds (text_config says 45
+        # layers). This artifact quantizes the MTP block's 288 routed experts
+        # as exl3 trellis payloads: the 25 non-expert names of
+        # m2-layer45-unexpected-keys.json plus 3,456 payload objects.
+        "path": "engines/tools/layer-outer-evidence/wrld-flash-exl3-k3-layer45-unexpected-keys.json",
+        "artifact_sha256": "1fbe3c6978153b8e1d7e0c0630fe163c53e56efed4f2dfdafc88fe69f670c981",
+        "canonical_sorted_names_sha256": "37b68b125e58910a7e1e32b8cd7323e3c5affa208238d31a773f447bf608217c",
+        "count": 3481,
+    },
     ("zai-org/GLM-5.3-BF16",
      "304b8051cfb2b260b61ce0cbe330e02a98e73639"): {
         "path": "engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json",

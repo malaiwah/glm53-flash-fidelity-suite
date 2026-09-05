@@ -21,20 +21,28 @@ import json
 import re
 from collections import defaultdict
 
+# A text-only release keys its stack `model.layers.N.`; a vision-language
+# release (`Glm5NextForConditionalGeneration`: GLM-5.3-Flash and every
+# quantization of it) nests the same stack at `model.language_model.layers.N.`
+# beside `model.visual.*`, and its geometry under `config.text_config`. The
+# vision tower is not a decoder class and lands in `other` by construction.
+STACK = r"^model\.(?:language_model\.)?"
+LAYER_RE = re.compile(STACK + r"layers\.(\d+)\.")
+
 CLASS_RULES = (
-    ("embed_tokens", re.compile(r"^model\.embed_tokens\.weight$")),
+    ("embed_tokens", re.compile(STACK + r"embed_tokens\.weight$")),
     ("lm_head", re.compile(r"^lm_head\.weight$")),
-    ("mtp", re.compile(r"^model\.layers\.(\d+)\.(eh_proj|enorm|hnorm|shared_head)\.")),
-    ("moe.router", re.compile(r"^model\.layers\.\d+\.mlp\.gate\.(weight|e_score_correction_bias)$")),
-    ("moe.experts", re.compile(r"^model\.layers\.\d+\.mlp\.experts\.\d+\.")),
-    ("moe.shared_expert", re.compile(r"^model\.layers\.\d+\.mlp\.shared_experts\.")),
-    ("mlp.gate", re.compile(r"^model\.layers\.\d+\.mlp\.gate_proj\.weight$")),
-    ("mlp.up", re.compile(r"^model\.layers\.\d+\.mlp\.up_proj\.weight$")),
-    ("mlp.down", re.compile(r"^model\.layers\.\d+\.mlp\.down_proj\.weight$")),
-    ("attn.qkv", re.compile(r"^model\.layers\.\d+\.self_attn\.(q_a_proj|q_b_proj|kv_a_proj_with_mqa|kv_b_proj|q_proj|k_proj|v_proj)\.weight$")),
-    ("attn.o", re.compile(r"^model\.layers\.\d+\.self_attn\.o_proj\.weight$")),
-    ("attn.other", re.compile(r"^model\.layers\.\d+\.self_attn\.")),
-    ("norm", re.compile(r"(^model\.norm\.weight$|layernorm|\.norm\.)")),
+    ("mtp", re.compile(STACK + r"layers\.(\d+)\.(eh_proj|enorm|hnorm|shared_head)\.")),
+    ("moe.router", re.compile(STACK + r"layers\.\d+\.mlp\.gate\.(weight|e_score_correction_bias)$")),
+    ("moe.experts", re.compile(STACK + r"layers\.\d+\.mlp\.experts\.\d+\.")),
+    ("moe.shared_expert", re.compile(STACK + r"layers\.\d+\.mlp\.shared_experts\.")),
+    ("mlp.gate", re.compile(STACK + r"layers\.\d+\.mlp\.gate_proj\.weight$")),
+    ("mlp.up", re.compile(STACK + r"layers\.\d+\.mlp\.up_proj\.weight$")),
+    ("mlp.down", re.compile(STACK + r"layers\.\d+\.mlp\.down_proj\.weight$")),
+    ("attn.qkv", re.compile(STACK + r"layers\.\d+\.self_attn\.(q_a_proj|q_b_proj|kv_a_proj_with_mqa|kv_b_proj|q_proj|k_proj|v_proj)\.weight$")),
+    ("attn.o", re.compile(STACK + r"layers\.\d+\.self_attn\.o_proj\.weight$")),
+    ("attn.other", re.compile(STACK + r"layers\.\d+\.self_attn\.")),
+    ("norm", re.compile("(" + STACK + r"norm\.weight$|layernorm|\.norm\.)")),
 )
 
 
@@ -43,8 +51,18 @@ SCHEMA_ASSIGNMENT_KEYS = ("tensor_class", "treatment", "format", "bits_per_weigh
 
 
 def layer_of(key: str):
-    match = re.match(r"^model\.layers\.(\d+)\.", key)
+    match = LAYER_RE.match(key)
     return int(match.group(1)) if match else None
+
+
+def decoder_layers(config) -> int:
+    """`num_hidden_layers` of the text stack: top level, or `text_config` for a VL release."""
+    for block in (config, config.get("text_config") or {}):
+        value = block.get("num_hidden_layers")
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+    raise SystemExit("REFUSED: config declares no num_hidden_layers at top level or "
+                     "under text_config; the MTP boundary cannot be placed")
 
 
 def range_string(layers) -> str:
@@ -98,13 +116,18 @@ def assignments_from_census(census, source: str):
                     "layer_range": "all" if len(keys) == 1 else range_string(layer_sets[key]),
                     "note": "%d tensors: %s. %s" % (len(names), ", ".join(_shapes(names)[:6]), source)})
             continue
-        # overlapping groups on shared layers: one honest row
+        # overlapping groups on shared layers: one honest row. A class whose
+        # groups are ALL native (bf16 weights beside fp32 router bias / SSM
+        # scalars) is native at more than one width, not quantized: the
+        # treatment says what was done to it, the format says how it is stored.
         census_note = "; ".join(
             "%d x %s:%s%s (%s)" % (len(groups[k]), k[0], k[1], ("@%s" % k[2]) if k[2] is not None else "",
                                    ", ".join(_shapes(groups[k])[:3]))
             for k in keys)
         rows.append({
-            "tensor_class": cls, "treatment": "quantized", "format": "mixed",
+            "tensor_class": cls,
+            "treatment": "native" if all(k[0] == "native" for k in keys) else "quantized",
+            "format": "mixed",
             "bits_per_weight": None,
             "layer_range": "all" if not all_layers else range_string(all_layers),
             "note": "class mixes formats on the same layers (SCOPE-004 admits one row per "
@@ -119,7 +142,7 @@ def _shapes(names):
 
 
 def classify(key: str, num_hidden_layers: int):
-    layer = re.match(r"^model\.layers\.(\d+)\.", key)
+    layer = LAYER_RE.match(key)
     if layer and int(layer.group(1)) >= num_hidden_layers:
         return "mtp"
     for name, pattern in CLASS_RULES:
@@ -140,7 +163,7 @@ def main(argv=None) -> int:
     config = json.load(open(args.config, encoding="utf-8"))
     qc = config["quantization_config"]
     block = qc["weight_block_size"]
-    layers = int(config.get("num_hidden_layers") or (config.get("text_config") or {})["num_hidden_layers"])
+    layers = decoder_layers(config)
     keys = list(json.load(open(args.index, encoding="utf-8"))["weight_map"])
     scaled = {k[:-len("_scale_inv")] for k in keys if k.endswith("_scale_inv")}
     census = defaultdict(list)

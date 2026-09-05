@@ -1,0 +1,16 @@
+{
+ "architecture": "Glm5NextForConditionalGeneration",
+ "artifact_sha256": "1fbe3c6978153b8e1d7e0c0630fe163c53e56efed4f2dfdafc88fe69f670c981",
+ "canonical_sorted_names_sha256": "37b68b125e58910a7e1e32b8cd7323e3c5affa208238d31a773f447bf608217c",
+ "config_sha256": "e445e0443e7fce59943297323ff388e72c973f0e0a0f43b881be5ba55765e572",
+ "count": 3481,
+ "decoder_layers": 45,
+ "derived_at_utc": "2026-09-05T10:38:19Z",
+ "derived_by": "index census: every key of model.language_model.layers.45 (the MTP block Glm5NextForConditionalGeneration never builds; text_config.num_hidden_layers is 45). The artifact quantizes the MTP block's 288 routed experts as exl3 trellis payload groups, so the census is the 25 non-expert names of m2-layer45-unexpected-keys.json plus 3,456 payload objects (864 modules x {trellis,suh,svh,mcg}); no weight_scale_inv siblings exist anywhere in this release",
+ "derived_from": "wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json",
+ "index_sha256": "d751549235ef63d1954be328754e001c8e488795ed4c2ef6d5b0e4a2dc08f0dc",
+ "per_layer_unexpected_counts": {
+  "45": 3481
+ },
+ "relation_to_bf16_allowlist": "the 25 non-payload names are exactly the non-expert names of engines/tools/dione-evidence/m2-layer45-unexpected-keys.json (889 = 25 + 864 expert weights); the 864 expert weight names of that list correspond one-to-one to the 864 payload modules here; the streamed loader reports over-index keys from the index (layer_outer.build_streamed_model), payload objects included, so the set is the index census, not a loader run"
+}

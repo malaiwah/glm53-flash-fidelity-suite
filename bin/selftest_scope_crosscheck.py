@@ -178,6 +178,8 @@ check("a mixed routed census accepts any rate it contains",
       sealed(scope(expert_bits=3), 5, {"K2": 900, "K3": 100}) == [])
 
 print("\n== the scope file is schema-checked before the rental, not after it ==")
+import contextlib                                          # noqa: E402
+import io                                                  # noqa: E402
 import tempfile                                            # noqa: E402
 from pathlib import Path as _P                             # noqa: E402
 
@@ -217,6 +219,123 @@ check("...and saying what it would otherwise have cost",
 check("a scope missing head_policy is REFUSED",
       schema_check({k: v for k, v in base.items() if k != "head_policy"})
       is not None)
+
+print("\n== the authoring tools read the nested VL stack (GLM-5.3-Flash) ==")
+# GLM-5.3-Flash is `Glm5NextForConditionalGeneration`: its decoder stack is
+# `model.language_model.layers.N.` beside `model.visual.*`, and its geometry is
+# `config.text_config`. Before this rung the class rules matched
+# `^model\.layers\.` only, so every one of the K3's 1207 named tensors was
+# `other` and the scope file described nothing.
+sys.path.insert(0, str(SUITE / "engines" / "tools"))
+import fp8_scope                                            # noqa: E402
+import exl3_scope                                           # noqa: E402
+
+LM = "model.language_model."
+for name, want in [
+    (LM + "layers.3.mlp.experts.7.gate_proj.weight", "moe.experts"),
+    (LM + "layers.3.mlp.gate.e_score_correction_bias", "moe.router"),
+    (LM + "layers.0.mlp.down_proj.weight", "mlp.down"),
+    (LM + "layers.4.self_attn.o_proj.weight", "attn.o"),
+    (LM + "layers.4.self_attn.f_a_proj.weight", "attn.other"),
+    (LM + "layers.4.input_layernorm.weight", "norm"),
+    (LM + "embed_tokens.weight", "embed_tokens"),
+    (LM + "norm.weight", "norm"),
+    (LM + "layers.45.mlp.experts.7.gate_proj.weight", "mtp"),
+    (LM + "layers.45.eh_proj.weight", "mtp"),
+    ("model.visual.blocks.0.attn.qkv.weight", "other"),
+    ("lm_head.weight", "lm_head"),
+    ("model.layers.3.mlp.experts.7.gate_proj.weight", "moe.experts"),
+    ("model.layers.78.eh_proj.weight", "mtp"),
+]:
+    check("%-52s -> %s" % (name, want), fp8_scope.classify(name, 45) == want)
+check("layer_of reads the nested stack's index",
+      fp8_scope.layer_of(LM + "layers.45.enorm.weight") == 45
+      and fp8_scope.layer_of("model.layers.78.enorm.weight") == 78
+      and fp8_scope.layer_of("model.visual.blocks.0.norm1.weight") is None)
+check("decoder_layers reads text_config when the top level has none",
+      fp8_scope.decoder_layers({"text_config": {"num_hidden_layers": 45}}) == 45
+      and fp8_scope.decoder_layers({"num_hidden_layers": 78}) == 78)
+try:
+    fp8_scope.decoder_layers({"text_config": {}})
+    check("decoder_layers refuses a config with no layer count", False)
+except SystemExit as exc:
+    check("decoder_layers refuses a config with no layer count", "num_hidden_layers" in str(exc))
+
+
+def flash_mini_index():
+    """The K3 layout in miniature: dense 0..2, routed 3..4, MTP block 5, vision tower."""
+    keys = ["lm_head.weight", LM + "embed_tokens.weight", LM + "norm.weight",
+            "model.visual.blocks.0.attn.qkv.weight", "model.visual.patch_embed.proj.weight"]
+    for layer in range(6):
+        keys += [LM + "layers.%d.input_layernorm.weight" % layer,
+                 LM + "layers.%d.self_attn.o_proj.weight" % layer,
+                 LM + "layers.%d.hc_attn_base" % layer]
+        if layer < 3:
+            keys += [LM + "layers.%d.mlp.%s.weight" % (layer, p)
+                     for p in ("gate_proj", "up_proj", "down_proj")]
+            continue
+        keys += [LM + "layers.%d.mlp.gate.weight" % layer]
+        for expert in range(2):
+            for proj in ("gate_proj", "up_proj", "down_proj"):
+                stem = LM + "layers.%d.mlp.experts.%d.%s" % (layer, expert, proj)
+                keys += [stem + "." + obj for obj in ("trellis", "suh", "svh", "mcg")]
+    keys += [LM + "layers.5.eh_proj.weight", LM + "layers.5.enorm.weight"]
+    return {"metadata": {"total_size": 1}, "weight_map": {k: "model-00001-of-00001.safetensors" for k in keys}}
+
+
+def author_flash_scope():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _P(tmp)
+        (root / "index.json").write_text(json.dumps(flash_mini_index()))
+        (root / "config.json").write_text(json.dumps({
+            "architectures": ["Glm5NextForConditionalGeneration"], "model_type": "glm5_next",
+            "quantization_config": {"quant_method": "exl3", "bits": 3, "codebook": "mcg"},
+            "text_config": {"num_hidden_layers": 5, "n_routed_experts": 2}}))
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = exl3_scope.main(["--index", str(root / "index.json"), "--config", str(root / "config.json"),
+                                  "--repo", "example/flash-k3", "--revision", "0" * 40,
+                                  "--out", str(root / "scope.json")])
+        return rc, json.loads((root / "scope.json").read_text())
+
+
+rc, flash = author_flash_scope()
+rows = {(r["tensor_class"], r["layer_range"]): r for r in flash["assignments"]}
+check("exl3_scope authors the nested stack without refusing", rc == 0)
+check("routed experts are one quantized exl3-mcg row on layers 3-4",
+      rows.get(("moe.experts", "all"), {}).get("format") == "exl3-mcg"
+      and rows[("moe.experts", "all")]["treatment"] == "quantized"
+      and rows[("moe.experts", "all")]["bits_per_weight"] == 3.0
+      and rows[("moe.experts", "all")]["note"].startswith("12 tensors:"))
+check("the MTP block (layer 5 of a 5-layer stack) is class mtp, mixed by the bytes",
+      ("mtp", "5") in rows and rows[("mtp", "5")]["format"] == "mixed"
+      and flash["mtp_included"] is True)
+check("dense mlp / attention / norm / embed / head classes are reached",
+      {c for c, _ in rows} >= {"mlp.gate", "mlp.up", "mlp.down", "attn.o", "norm",
+                               "embed_tokens", "lm_head", "moe.router"})
+other = rows.get(("other", "all"), {})
+check("`other` holds only the vision tower and the hyper-connection scalars, not the stack",
+      other.get("note", "").startswith("7 tensors:")
+      and "model.visual" in other.get("note", "")
+      and "experts" not in other.get("note", ""))
+check("the head is native and the scope is schema-valid at the pre-spend gate",
+      flash["head_policy"] == "native" and schema_check(flash) is None)
+# A class stored at two NATIVE widths (bf16 gate weight beside an fp32 router
+# bias) was written `treatment: quantized, format: mixed` -- a quantizer that
+# touched nothing there, labelled as if it had. The treatment is what was done
+# to the class; only the format is mixed.
+native_two_widths = fp8_scope.assignments_from_census(
+    {"moe.router": [(LM + "layers.3.mlp.gate.weight", "native", "bf16", 16),
+                    (LM + "layers.3.mlp.gate.e_score_correction_bias", "native", "fp32", 32)],
+     "moe.experts": [(LM + "layers.3.mlp.experts.0.up_proj.weight", "quantized", "exl3-mcg", 3.0),
+                     (LM + "layers.3.mlp.experts.0.up_proj.weight_scale_inv", "native", "fp32", 32)]},
+    "test")
+by_class = {r["tensor_class"]: r for r in native_two_widths}
+check("an all-native class at two widths is treatment native, format mixed",
+      by_class["moe.router"]["treatment"] == "native"
+      and by_class["moe.router"]["format"] == "mixed")
+check("a class mixing quantized and native stays treatment quantized, format mixed",
+      by_class["moe.experts"]["treatment"] == "quantized"
+      and by_class["moe.experts"]["format"] == "mixed")
 
 print()
 if FAILED:

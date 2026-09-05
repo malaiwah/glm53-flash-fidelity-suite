@@ -1,0 +1,15 @@
+{
+ "architecture": "Glm5NextForConditionalGeneration",
+ "artifact_sha256": "35b7f1bd8d693d92bed089c0784a30c0b2d7b859a65a80c37a3fc03ab565f61b",
+ "canonical_sorted_names_sha256": "acc1e9f10c0f903c735a7fcf5fd267fc879bce65623f0b850f80016da5e903b7",
+ "config_sha256": "33e63ec7fe607658be712bd6dd3c16c6549960d8e7f0483d34b939881b55f943",
+ "count": 889,
+ "decoder_layers": 45,
+ "derived_at_utc": "2026-09-05T10:38:36Z",
+ "derived_by": "index census: every key of model.language_model.layers.45 (the MTP block Glm5NextForConditionalGeneration never builds; text_config.num_hidden_layers is 45): 25 non-expert names plus 288 experts x {gate,up,down}_proj = 864 bf16 weights; no scale siblings in a BF16 release. Re-derived on 2026-09-05 from engines/tools/dione-evidence/bf16-index.json (sha256 e6007bd5...) and bf16-config.json and found equal to the list registered in bin/fidelity/runpodsafety.py since the Dione work",
+ "derived_from": "zai-org/GLM-5.3-Flash-BF16@a6c167b62691b2bac901344b65cb651a70f53e43 model.safetensors.index.json (engines/tools/dione-evidence/bf16-index.json)",
+ "index_sha256": "e6007bd58fb7e07f9fe69544257ee2713f252ef5855bbf685b48c991d524ef0f",
+ "per_layer_unexpected_counts": {
+  "45": 889
+ }
+}

@@ -38,6 +38,7 @@ engines/tools/layer-outer-evidence/*
 !engines/tools/layer-outer-evidence/dy325-exl3-layer78-unexpected-keys.json
 !engines/tools/layer-outer-evidence/dy30-exl3-layer78-unexpected-keys.json
 !engines/tools/layer-outer-evidence/dy342-exl3-layer78-unexpected-keys.json
+!engines/tools/layer-outer-evidence/wrld-flash-exl3-k3-layer45-unexpected-keys.json
 engines/tools/hidden-replay-evidence
 **/__pycache__
 **/*.pyc

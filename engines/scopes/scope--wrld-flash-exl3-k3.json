@@ -1,0 +1,121 @@
+{
+  "activation_quantization": null,
+  "assignments": [
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "45 tensors: model.language_model.layers.N.self_attn.o_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "attn.o",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "0-44",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 405 x native:bf16@16 (model.language_model.layers.N.self_attn.b_proj.weight, model.language_model.layers.N.self_attn.f_a_proj.weight, model.language_model.layers.N.self_attn.f_b_proj.weight); 68 x native:fp32@32 (model.language_model.layers.N.self_attn.A_log, model.language_model.layers.N.self_attn.dt_bias). read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "attn.other",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "146 tensors: model.language_model.layers.N.self_attn.k_proj.weight, model.language_model.layers.N.self_attn.kv_a_proj_with_mqa.weight, model.language_model.layers.N.self_attn.kv_b_proj.weight, model.language_model.layers.N.self_attn.q_a_proj.weight, model.language_model.layers.N.self_attn.q_b_proj.weight, model.language_model.layers.N.self_attn.q_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "attn.qkv",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "1 tensors: model.language_model.embed_tokens.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "embed_tokens",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "1 tensors: lm_head.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "lm_head",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "3 tensors: model.language_model.layers.N.mlp.down_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mlp.down",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "3 tensors: model.language_model.layers.N.mlp.gate_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mlp.gate",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "3 tensors: model.language_model.layers.N.mlp.up_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mlp.up",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 3.0,
+      "format": "exl3-mcg",
+      "layer_range": "all",
+      "note": "36288 tensors: model.language_model.layers.N.mlp.experts.E.down_proj.weight, model.language_model.layers.N.mlp.experts.E.gate_proj.weight, model.language_model.layers.N.mlp.experts.E.up_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "moe.experts",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "3-44",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 42 x native:bf16@16 (model.language_model.layers.N.mlp.gate.weight); 42 x native:fp32@32 (model.language_model.layers.N.mlp.gate.e_score_correction_bias). read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "moe.router",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "126 tensors: model.language_model.layers.N.mlp.shared_experts.down_proj.weight, model.language_model.layers.N.mlp.shared_experts.gate_proj.weight, model.language_model.layers.N.mlp.shared_experts.up_proj.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "moe.shared_expert",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "45",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 24 x native:bf16@16 (model.language_model.layers.N.eh_proj.weight, model.language_model.layers.N.enorm.weight, model.language_model.layers.N.hnorm.weight); 1 x native:fp32@32 (model.language_model.layers.N.mlp.gate.e_score_correction_bias); 864 x quantized:exl3-mcg@3.0 (model.language_model.layers.N.mlp.experts.E.down_proj.weight, model.language_model.layers.N.mlp.experts.E.gate_proj.weight, model.language_model.layers.N.mlp.experts.E.up_proj.weight). read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "mtp",
+      "treatment": "quantized"
+    },
+    {
+      "bits_per_weight": 16,
+      "format": "bf16",
+      "layer_range": "all",
+      "note": "92 tensors: model.language_model.layers.N.input_layernorm.weight, model.language_model.layers.N.post_attention_layernorm.weight, model.language_model.norm.weight, model.visual.post_layernorm.weight. read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "norm",
+      "treatment": "native"
+    },
+    {
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "0-44",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 436 x native:bf16@16 (model.language_model.layers.N.hc_attn_fn, model.language_model.layers.N.hc_ffn_fn, model.visual.blocks.0.attn.k_norm.weight); 180 x native:fp32@32 (model.language_model.layers.N.hc_attn_base, model.language_model.layers.N.hc_attn_scale, model.language_model.layers.N.hc_ffn_base). read from wrldsuksgo2mars/GLM-5.3-Flash-EXL3-K3-v1@1e4abd26e4e1e8d58d81fbd557d6c4099352fe63 model.safetensors.index.json + shard headers: a class is exl3 trellis when its weights are stored as trellis/suh/svh payload groups (codebook from the object each module carries: mcg:37152; declared bits 3 by quantization_config), fp8_e4m3 when a _scale_inv sibling exists, native otherwise (stored dtype from the shard headers).",
+      "tensor_class": "other",
+      "treatment": "native"
+    }
+  ],
+  "head_policy": "native",
+  "kv_cache_dtype": "bf16",
+  "mtp_included": true,
+  "policy": "mixed"
+}

@@ -32,7 +32,7 @@ import json
 import re
 from collections import defaultdict
 
-from fp8_scope import CLASS_RULES, assignments_from_census, classify  # noqa: F401
+from fp8_scope import CLASS_RULES, assignments_from_census, classify, decoder_layers  # noqa: F401
 
 PAYLOAD_OBJECTS = ("trellis", "suh", "svh")
 CODEBOOKS = ("mul1", "mcg")
@@ -131,8 +131,7 @@ def main(argv=None) -> int:
         raise SystemExit("REFUSED: %s declares quant_method=%r and no hybrid_tr3_tail "
                          "(format exl3-trellis): not an exl3 artifact"
                          % (args.config, qc.get("quant_method")))
-    layers = int(config.get("num_hidden_layers")
-                 or (config.get("text_config") or {})["num_hidden_layers"])
+    layers = decoder_layers(config)
     weight_map = json.load(open(args.index, encoding="utf-8"))["weight_map"]
     keys = list(weight_map)
     tp = tail.get("tp") if isinstance(tail.get("tp"), int) and tail.get("tp") >= 2 else None
