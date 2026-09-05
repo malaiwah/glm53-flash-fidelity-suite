@@ -1,0 +1,16 @@
+{
+ "architecture": "GlmMoeDsaForCausalLM",
+ "artifact_sha256": "969cee605deba10dd82afbaa9b1b7a35d2339fdb122efece14530c9030aa1436",
+ "canonical_sorted_names_sha256": "61e5f26aed8bca408c5de5347d8e1668b0c5716237dad1fc98c47bc108f4ae57",
+ "config_sha256": "185f93ee6d12548e16a847e279dc0c3c90b1524c970b0866b42fb545747d859a",
+ "count": 791,
+ "decoder_layers": 78,
+ "derived_at_utc": "2026-09-05T13:31:50Z",
+ "derived_by": "index census: every key of model.layers.78 (the block GlmMoeDsaForCausalLM never builds; num_hidden_layers is 78); engines/tools/index_census_allowlist.py",
+ "derived_from": "zai-org/GLM-5.2@cf457fa734ab149ffef225f80893eb38c6ff5cdc model.safetensors.index.json",
+ "index_sha256": "5fd47a926aefce0f2c917f42523e5e0f3c87e23e389e767c3681536a62f5cf5e",
+ "per_layer_unexpected_counts": {
+  "78": 791
+ },
+ "relation_to_bf16_allowlist": "GLM-5.2 @ cf457fa7 ships the same model.safetensors.index.json bytes (sha256 5fd47a926aefce0f2c917f42523e5e0f3c87e23e389e767c3681536a62f5cf5e) as zai-org/GLM-5.3-BF16 @ 304b8051; the layer-78 MTP census is therefore the same 791 names as glm53-layer78-unexpected-keys.json, re-derived from the 5.2 pin's bytes."
+}
