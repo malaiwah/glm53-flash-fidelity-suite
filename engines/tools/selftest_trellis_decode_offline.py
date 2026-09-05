@@ -39,6 +39,8 @@ unrecognised payload rather than loading trellis bytes as weights.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -542,6 +544,8 @@ def main() -> int:
         check("[18] a native tree plans nothing and never opens the index",
               native[:3] == (None, None, None) and len(events) == 1, repr(native))
 
+    # The [18] rungs' TemporaryDirectory is closed by here: this block gets its own.
+    td = tempfile.mkdtemp(prefix="trellis-sidecar-")
     # [18c] SIDECAR-declared bits: jpsequeira's GLM-5.2 TR3 declares
     # `bits: "mixed"` with no numeric beside `bits_per_expert:
     # "expert_precision_map.json:bitrates"` -- a per-layer per-expert map
@@ -588,8 +592,10 @@ def main() -> int:
     side_tail = {"format": "exl3-trellis", "codebook": "mcg", "tp": 2, "bits": "mixed",
                  "bits_per_expert": "expert_precision_map.json:bitrates",
                  "k_values": [3, 4], "experts_per_layer": 256, "moe_layers": [3, 4],
-                 "rotation_layout": "shared_h_v1",
-                 "shared_h_tensor_schema": lo.EXL3_SHARED_H_TENSOR_SCHEMA}
+                 # rank_keys is the stock rank-sharded layout the [18] rungs plan;
+                 # the sidecar rule is independent of the rotation layout, so the
+                 # tail declares exactly what those rungs declare (layout inferred).
+                 "slicing": {"down_proj": "K-sliced: rank r = input cols"}}
 
     class _SideConfig(_TailConfig):
         def __init__(self, qc, tail):
@@ -644,6 +650,7 @@ def main() -> int:
         lambda: lo.trellis_checkpoint_plan(side_cfg, side_keys, model_dir=td),
         "moe_layers")
     check("[18d] a sidecar whose layer set disagrees with moe_layers is refused", ok, detail)
+    shutil.rmtree(td, ignore_errors=True)
 
     # ---- rotation layouts (GLM-5.2 candidates) ----------------------------
     # [19] The layout census is ONE rule in two files: the pod's copy in
