@@ -99,7 +99,7 @@ EXIT_LEAK = 90          # teardown could not be confirmed -- the loudest failure
 # watchdog uses, so the controller decides first.
 STAGE_PROBE_OUTAGE_SECONDS = 300
 # One progress line per stage this often while it runs.
-STAGE_PROGRESS_SECONDS = 300
+STAGE_PROGRESS_SECONDS = 60
 
 
 class RunFailed(RuntimeError):
@@ -6873,7 +6873,7 @@ def _runpod_stage_command(fs_root, engine_root, stage, image_digest,
 
 def _runpod_stage(
         provider, pod_id, fs_root, engine_root, stage, deadline,
-        image_reference, progress=None):
+        image_reference, progress=None, expected_bytes=None):
     image_match = re.fullmatch(
         r".+@(sha256:[0-9a-f]{64})", str(image_reference))
     if image_match is None:
@@ -6932,33 +6932,64 @@ def _runpod_stage(
                 STAGE_PROGRESS_SECONDS):
             now = time.time()
             line, landed = _runpod_stage_progress(
-                provider, pod_id, fs_root, stage)
+                provider, pod_id, fs_root, stage,
+                measure_disk=(stage == "fetch_target"))
             detail = []
             if landed is not None:
                 rate = ((landed - last_bytes) / (now - last_progress)
                         if last_bytes is not None else None)
-                detail.append("%.1f GB on disk%s" % (
-                    landed / 1e9,
-                    " (%.0f MB/s)" % (rate / 1e6) if rate else ""))
+                detail.append(_fetch_progress_text(
+                    landed, expected_bytes, rate, now - started))
                 last_bytes = landed
             if line:
                 detail.append(line)
-            progress("stage %s +%dm, %dm before the workload deadline: %s" % (
-                stage, (now - started) // 60, max(0, deadline - now) // 60,
+            progress("stage %s %s, %s left before the workload deadline: %s" % (
+                stage, _hms(now - started), _hms(max(0, deadline - now)),
                 " | ".join(detail) or "no output yet"))
             last_progress = now
         time.sleep(15)
     raise RuntimeError("workload deadline reached during stage %s" % stage)
 
 
-def _runpod_stage_progress(provider, pod_id, fs_root, stage):
-    """Best-effort (last engine log line, bytes landed) for a running stage."""
+def _hms(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds >= 3600:
+        return "%dh%02dm" % (seconds // 3600, (seconds % 3600) // 60)
+    return "%dm%02ds" % (seconds // 60, seconds % 60)
+
+
+def _fetch_progress_text(landed, expected_bytes, rate, elapsed) -> str:
+    """'338.2/1506.7 GB 22% (1046 MB/s, ~18m40s left)' when the job binds the
+    exact byte total (target.model_bytes), else the bare bytes-and-rate line."""
+    text = "%.1f GB on disk" % (landed / 1e9)
+    if expected_bytes:
+        pct = min(100.0, 100.0 * landed / expected_bytes)
+        text = "%.1f/%.1f GB %.0f%%" % (landed / 1e9, expected_bytes / 1e9, pct)
+    tail = []
+    if rate and rate > 0:
+        tail.append("%.0f MB/s" % (rate / 1e6))
+        if expected_bytes and landed < expected_bytes:
+            tail.append("~%s left" % _hms((expected_bytes - landed) / rate))
+    return text + (" (%s)" % ", ".join(tail) if tail else "")
+
+
+def _runpod_stage_progress(provider, pod_id, fs_root, stage, measure_disk=True):
+    """Best-effort (engine progress line, bytes landed) for a running stage.
+
+    The capture engines print a `progress: <label> N/M P% [elapsed<eta, rate]`
+    meter line (engines/tools/progress_meter) and, right after it, a terse
+    per-layer JSON line; a bare `tail -1` returned the JSON, so the console
+    showed `{"index": 36, "stage": "layer"}` for a 12-minute stage. The newest
+    meter line is preferred when one exists in the tail; the last line is the
+    fallback. `du` over a 1.5 TB tree is only meaningful (and only cheap enough
+    per tick) while fetch_target is writing it."""
     fs = shlex.quote(fs_root)
     command = (
-        "tail -c 4000 %s/logs/%s.log 2>/dev/null | tr '\\r' '\\n' | grep . "
-        "| tail -1 | cut -c1-220; echo; "
-        "du -sb %s/models/target 2>/dev/null | cut -f1"
-        % (fs, shlex.quote(stage), fs))
+        "tail -c 8000 %s/logs/%s.log 2>/dev/null | tr '\\r' '\\n' | grep . "
+        "| { grep '^progress: ' || cat; } | tail -1 | cut -c1-220; echo; %s"
+        % (fs, shlex.quote(stage),
+           "du -sb %s/models/target 2>/dev/null | cut -f1" % fs
+           if measure_disk else "true"))
     try:
         result = provider.exec(pod_id, command, timeout=60, check=False)
     except Exception:  # noqa: BLE001 -- a progress line is never a verdict
@@ -8300,7 +8331,8 @@ def execute_runpod(
                 secret_cleanup = _runpod_fetch_target_and_remove_token(
                     provider, pod_id, fs_root, engine_root,
                     workload_epoch, job["environment"]["image"],
-                    progress=con.say)
+                    progress=con.say,
+                    expected_bytes=(job.get("target") or {}).get("model_bytes"))
                 token_cleanup_required = False
                 con.ok(
                     "HF download token removed",
@@ -9216,13 +9248,14 @@ def _transport_hf_token(
 
 def _runpod_fetch_target_and_remove_token(
         provider, pod_id, fs_root: str, engine_root: str, deadline: float,
-        image_reference: str, progress=None) -> Dict[str, Any]:
+        image_reference: str, progress=None, expected_bytes=None) -> Dict[str, Any]:
     """Run the authenticated target fetch and always remove its remote token."""
     stage_error = None
     try:
         _runpod_stage(
             provider, pod_id, fs_root, engine_root, "fetch_target",
-            deadline, image_reference, progress=progress)
+            deadline, image_reference, progress=progress,
+            expected_bytes=expected_bytes)
     except BaseException as exc:
         stage_error = exc
     cleanup = _cleanup_remote_secret(

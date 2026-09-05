@@ -2815,12 +2815,53 @@ def stage_pgid_race_case():
               % (proc.returncode, record.exists(), proc.stderr[:300]))
 
 
+def stage_progress_case():
+    """The console progress line: the engine's meter (percent, ETA, rate) is
+    preferred over the terse per-layer JSON that follows it in the log, the
+    1.5 TB du runs only while fetch_target writes the tree, and a fetch line
+    carries percent and a byte-rate ETA when the job binds model_bytes."""
+    import measure_cloud as MC
+
+    class _Prov:
+        def __init__(self):
+            self.commands = []
+
+        def exec(self, pod_id, command, timeout=60, check=False):
+            self.commands.append(command)
+            # Simulate the shell: the log tail holds a meter line followed by
+            # the per-layer JSON; `grep '^progress: ' || cat` picks the meter.
+            if "grep '^progress: '" in command and "capture.log" in command:
+                return {"stdout": "progress: layer-outer forwards 1951/2028 96% "
+                                  "[07:16<00:17, 4.47 it/s]\n\n"}
+            if "fetch_target.log" in command:
+                return {"stdout": "Fetching 295 files:  24%\n\n338200000000\n"}
+            return {"stdout": "\n\n"}
+
+    prov = _Prov()
+    line, landed = MC._runpod_stage_progress(prov, "pod", "/fs", "capture", measure_disk=False)
+    check("stage progress prefers the engine's meter line over the trailing per-layer JSON",
+          line is not None and line.startswith("progress: layer-outer forwards 1951/2028 96%")
+          and landed is None, repr((line, landed)))
+    check("du over models/target is not run for a non-fetch stage",
+          "du -sb" not in prov.commands[-1], prov.commands[-1][-80:])
+    line2, landed2 = MC._runpod_stage_progress(prov, "pod", "/fs", "fetch_target", measure_disk=True)
+    check("fetch_target progress reads bytes landed and runs du",
+          landed2 == 338200000000 and "du -sb" in prov.commands[-1], repr((line2, landed2)))
+    text = MC._fetch_progress_text(338.2e9, 1506667387408, 1046e6, 300)
+    check("a fetch line carries percent of the bound byte total and a byte-rate ETA",
+          text == "338.2/1506.7 GB 22% (1046 MB/s, ~18m37s left)", text)
+    check("without a bound total the line degrades to bytes and rate only",
+          MC._fetch_progress_text(338.2e9, None, 1046e6, 300) == "338.2 GB on disk (1046 MB/s)",
+          MC._fetch_progress_text(338.2e9, None, 1046e6, 300))
+
+
 def main():
     lease_core_cases()
     reaper_cases()
     runpod_cases()
     watchdog_case()
     stage_pgid_race_case()
+    stage_progress_case()
     print()
     if FAILED:
         print("selftest_reaper: %d FAILED" % len(FAILED))
