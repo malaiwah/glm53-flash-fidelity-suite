@@ -235,6 +235,15 @@ def main():
                   P.GLM53_TARGET_REVISION) == verified_glm53
               and target_refused(
                   verified_glm53, fruit_repo, fruit_revision))
+        check("the same exact corpus5x5 panel authorizes the GLM-5.2 root pin "
+              "(byte-identical tokenizer files) and nothing else about it",
+              P.validate_root_panel_binding(
+                  verified_glm53, P.GLM52_TARGET_REPO,
+                  P.GLM52_TARGET_REVISION) == verified_glm53
+              and target_refused(verified_glm53, P.GLM52_TARGET_REPO,
+                                 "0" * 40)
+              and target_refused(glm53_binding, P.GLM52_TARGET_REPO,
+                                 P.GLM52_TARGET_REVISION))
         mutated_glm53 = json.loads(json.dumps(verified_glm53))
         mutated_glm53["content"]["manifest"][0]["bytes"] += 1
         check("mutated full GLM53 panel content refuses before spend",

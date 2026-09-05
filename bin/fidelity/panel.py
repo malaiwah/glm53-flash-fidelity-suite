@@ -77,6 +77,14 @@ M2_TOKENIZER_IDENTITY_SHA256 = (
     "4de3937ae77b0908990b28ef7b64a6517b5a005bc51205cd071746fd3f60b09d")
 GLM53_TARGET_REPO = "zai-org/GLM-5.3-BF16"
 GLM53_TARGET_REVISION = "304b8051cfb2b260b61ce0cbe330e02a98e73639"
+#: GLM-5.2's official BF16 release. Same 78L/6144/256e geometry, and its
+#: tokenizer.json / tokenizer_config.json are byte-identical to the 5.3-BF16
+#: files the corpus5x5 panel pins (sha256 19e77364... / 98b12715..., read
+#: from both repos on 2026-09-05), so the SAME sealed panel binding is exact
+#: for it: the panel's tokenizer pin names 5.3-BF16, and the capture verifies
+#: the target's own tokenizer files against those bytes before any forward.
+GLM52_TARGET_REPO = "zai-org/GLM-5.2"
+GLM52_TARGET_REVISION = "cf457fa734ab149ffef225f80893eb38c6ff5cdc"
 GLM53_PANEL_MANIFEST_SHA256 = (
     "4ffa985400a98db57ffcf81b20fee395fe40276e495a1b9ae65e11754897b843")
 GLM53_TOKENIZER_IDENTITY_SHA256 = (
@@ -960,8 +968,9 @@ def validate_root_panel_binding(
     if not isinstance(resolved, dict):
         raise PanelError("root panel binding must be an object")
 
-    if (target_repo, revision) == (
-            GLM53_TARGET_REPO, GLM53_TARGET_REVISION):
+    if (target_repo, revision) in (
+            (GLM53_TARGET_REPO, GLM53_TARGET_REVISION),
+            (GLM52_TARGET_REPO, GLM52_TARGET_REVISION)):
         _validate_glm53_root_panel(resolved)
         return resolved
     if (target_repo, revision) == (
