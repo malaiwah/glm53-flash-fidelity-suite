@@ -996,6 +996,36 @@ def section_lane(tmp):
           "errors=%d warnings=%s" % (len(report.errors),
                                      [w["code"] for w in report.warnings]))
 
+    # SV3/SV4 -- SCOPE-004 is additive on a SEALED dataset. The published
+    # GLM-5.3 FP8 and K4 datasets (2026-09-04) carry two rows per class for
+    # attn.other/mtp, sealed before the rule existed; a validator that refused
+    # them would be a wire-format break (their scope_digest is sealed, the only
+    # fix is a re-capture). The controller's pre-spend gate on a scope FILE is
+    # where the same finding is a refusal.
+    dup = os.path.join(tmp, "scope-dup")
+    build_dataset(dup, seed=2, role="quant", quantized=True)
+    manifest = F.read_json(os.path.join(dup, F.MANIFEST_NAME))
+    first = dict(manifest["scope"]["assignments"][0])
+    first["treatment"], first["format"] = "quantized", "fp8_e4m3"
+    manifest["scope"]["assignments"].append(first)
+    F.write_json(os.path.join(dup, F.MANIFEST_NAME), manifest)
+    reseal(dup)
+    report = dsvalidate.validate_dataset(dup, verify_tensors=False)
+    check("SV3 a sealed dataset with a duplicate (class, layer_range) row still VERIFIES, warning SCOPE-004",
+          not report.errors
+          and any(w["code"] == "scope_duplicate_assignment" and w["rule"] == "SCOPE-004"
+                  for w in report.warnings),
+          "errors=%s warnings=%s" % ([e["code"] for e in report.errors],
+                                     [w["code"] for w in report.warnings]))
+    strict = dsvalidate.Report("scope-file")
+    dsvalidate._validate_scope_vocabulary(manifest["scope"], strict, strict=True)
+    check("SV4 the same scope as a pre-spend FILE is refused (strict=True)",
+          any(e["code"] == "scope_duplicate_assignment" for e in strict.errors),
+          "errors=%s" % [e["code"] for e in strict.errors])
+    gates, _findings = dscompare.run_gates(dscompare.load_dataset(a), dscompare.load_dataset(dup), {})
+    check("SV5 the comparator's seal gate admits that sealed dataset",
+          gates["form"]["passed"], repr(gates.get("form")))
+
 
 # ---------------------------------------------------------------------------
 # R -- real published artifacts, metadata only

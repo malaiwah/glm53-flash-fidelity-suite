@@ -1592,7 +1592,7 @@ def _candidate_block(args, plan_data: Dict[str, Any], con: Console,
     # refused before any spend.
     from fidelity import dsvalidate
     scope_report = dsvalidate.Report(str(scope_path))
-    dsvalidate._validate_scope_vocabulary(scope_block, scope_report)
+    dsvalidate._validate_scope_vocabulary(scope_block, scope_report, strict=True)
     if scope_report.errors:
         raise Refusal(
             "--candidate-scope would be refused by the registry (%d finding(s))"
