@@ -96,6 +96,7 @@ engines/tools/layer-outer-evidence/wrld-flash-exl3-k3-layer45-unexpected-keys.js
 engines/tools/layer-outer-evidence/radixark-nvfp4-layer78-unexpected-keys.json
 engines/tools/layer-outer-evidence/incoai-nvfp4-layer78-unexpected-keys.json
 engines/tools/layer-outer-evidence/inferact-nvfp4-layer78-unexpected-keys.json
+engines/tools/layer-outer-evidence/gguf-unsloth-glm53-layer78-unexpected-keys.json
 engines/tools/dione-evidence/m2-layer45-unexpected-keys.json
 # The UNSEALED Dione (0xSero) selective-EXL3 surface. It serves BOTH lanes:
 # student_capture --surface dione (sealed EP8) and stream_score --source
@@ -143,6 +144,7 @@ engines/tools/mlx-evidence/bf16-shape-census.json.gz
 # paid capture (they are the checks that would otherwise decode cleanly while
 # measuring the wrong model).
 engines/tools/gguf_surface.py
+engines/tools/gguf_scope.py
 engines/tools/selftest_gguf_offline.py
 # The fill-rate harness. It ships because the number in engines.json came from
 # it and the next person to doubt that number should be able to re-derive it on
@@ -256,6 +258,14 @@ engines/tools/generation_probe.py
 # 2.5 MB total; the alternative (skip the check when its data is absent)
 # would silently disarm a gate somebody added on purpose.
 engines/tools/gguf-evidence/ddh0-tensors.json
+engines/tools/gguf-evidence/dequant_iq3_s_blocks.npy
+engines/tools/gguf-evidence/dequant_iq3_s_ggufpy_ref.npy
+engines/tools/gguf-evidence/dequant_iq3_xxs_blocks.npy
+engines/tools/gguf-evidence/dequant_iq3_xxs_ggufpy_ref.npy
+engines/tools/gguf-evidence/dequant_iq4_xs_blocks.npy
+engines/tools/gguf-evidence/dequant_iq4_xs_ggufpy_ref.npy
+engines/tools/gguf-evidence/dequant_q3_k_blocks.npy
+engines/tools/gguf-evidence/dequant_q3_k_ggufpy_ref.npy
 engines/tools/gguf-evidence/dequant_q4_k_blocks.npy
 engines/tools/gguf-evidence/dequant_q4_k_ggufpy_ref.npy
 engines/tools/gguf-evidence/dequant_q5_k_blocks.npy
@@ -264,6 +274,13 @@ engines/tools/gguf-evidence/dequant_q6_k_blocks.npy
 engines/tools/gguf-evidence/dequant_q6_k_ggufpy_ref.npy
 engines/tools/gguf-evidence/dequant_q8_0_blocks.npy
 engines/tools/gguf-evidence/dequant_q8_0_ggufpy_ref.npy
+engines/tools/gguf-evidence/glm53-official-bf16-weight-map.json.gz
+engines/tools/gguf-evidence/glm53-official-config.json
+engines/tools/gguf-evidence/glmdsa-layout-audit.json
+engines/tools/gguf-evidence/glmdsa-tokenizer-order-audit.json
+engines/tools/gguf-evidence/glmdsa_mla_k_b_head_window.npy
+engines/tools/gguf-evidence/glmdsa_mla_official_row_window_bf16.npy
+engines/tools/gguf-evidence/glmdsa_mla_v_b_head_window.npy
 engines/tools/gguf-evidence/manifest.json
 engines/tools/gguf-evidence/mla-full-audit.json
 engines/tools/gguf-evidence/mla_k_b_head_window.npy
@@ -274,6 +291,9 @@ engines/tools/gguf-evidence/udq4kxl-decode-device-a100.jsonl
 engines/tools/gguf-evidence/udq4kxl-decode-timings-a100.jsonl
 engines/tools/gguf-evidence/udq4kxl-scope.json
 engines/tools/gguf-evidence/unsloth-build-census.json
+engines/tools/gguf-evidence/unsloth-glm53-build-types.json
+engines/tools/gguf-evidence/unsloth-glm53-udq4kxl-kv.json
+engines/tools/gguf-evidence/unsloth-glm53-udq4kxl-tensors.json
 engines/tools/gguf-evidence/unsloth-udq4kxl-kv.json
 engines/tools/gguf-evidence/unsloth-udq4kxl-tensors.json
 
