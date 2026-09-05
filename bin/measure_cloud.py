@@ -1704,11 +1704,46 @@ def _candidate_block(args, plan_data: Dict[str, Any], con: Console,
         con.warn("scope %s: %s" % (w.get("rule"), w.get("message")))
     if not (isinstance(args.candidate_bits, float) and 0 < args.candidate_bits <= 16):
         raise Refusal("--candidate-bits must be in (0, 16]", [])
-    if not re.fullmatch(r"[a-z0-9_.-]+", args.candidate_codec or ""):
-        raise Refusal("--candidate-codec must be a lowercase registry codec token", [])
+    # The registry's closed codec vocabulary, READ from its schema (S2-5: the
+    # free-text flag had drifted three ways across real jobs -- exl3,
+    # exl3-mcg, exl3-trellis -- and one of them is not a registry value).
+    formats = dsvalidate.registry_numeric_formats()
+    if not formats:
+        raise Refusal("registry/schema/common.schema.json numeric_format enum is unreadable", [])
+    if args.candidate_codec not in formats:
+        raise Refusal(
+            "--candidate-codec %r is not in the registry's numeric_format vocabulary"
+            % args.candidate_codec,
+            ["choose one of: " + ", ".join(sorted(formats)),
+             "the codec is a row identity; a value outside the enum cannot be filed"])
     decode = plan_data.get("_candidate_decode")
     if decode is None:
         raise Refusal("candidate decode plan is absent; the target gate did not run", [])
+    # --candidate-bits re-declares what the target gate already read from the
+    # release: quantization_config.bits / hybrid_tr3_tail.bits_avg (exl3),
+    # num_bits (nvfp4), or the format's own width (fp8 e4m3 = 8). Refuse on
+    # disagreement with both numbers; the pod re-checks the payload's K.
+    qcfg = decode.get("quantization_config") or {}
+    declared = qcfg.get("bits")
+    if declared is None:
+        if qcfg.get("quant_method") == "fp8" and qcfg.get("fmt") == "e4m3":
+            declared = 8
+        elif qcfg.get("quant_method") == "modelopt":
+            declared = 4
+    if isinstance(declared, (int, float)) and not isinstance(declared, bool):
+        if abs(float(declared) - args.candidate_bits) > 1e-9:
+            raise Refusal(
+                "--candidate-bits %g disagrees with the checkpoint's own declaration %g"
+                % (args.candidate_bits, float(declared)),
+                ["the release declares %g (%s); pass --candidate-bits %g, or fix the "
+                 "release" % (float(declared),
+                              "hybrid_tr3_tail.bits_avg"
+                              if decode.get("method") == CANDIDATE_DECODE_METHOD_TRELLIS_TP
+                              else "quantization_config", float(declared))])
+    else:
+        con.warn("candidate bits: the release declares no bit width the controller "
+                 "reads; --candidate-bits %g is checked against the payload on the pod"
+                 % args.candidate_bits)
 
     manifest = _candidate_reference_manifest(args, plan_data)
     ref_repo, ref_rev = plan_data["_candidate_reference_ref"]
@@ -1892,6 +1927,28 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
             "note": "quantized_proxy reference; no unquantized release "
                     "exists for this family"}
         return
+    # A quantized checkpoint is what the CANDIDATE route measures. Say so with
+    # the command filled in from what this call already knows; the human who
+    # passed --reference-dataset without the other three was one flag away.
+    reference = getattr(args, "reference_dataset", None) if args is not None else None
+    codec_hint = {"fp8": "fp8_e4m3", "exl3": "exl3-mcg", "modelopt": "nvfp4"}.get(
+        str(method), "<registry numeric_format>")
+    bits_hint = qc.get("bits") if isinstance(qc.get("bits"), (int, float)) else (
+        8 if method == "fp8" else "<declared bpw>")
+    tool = "fp8_scope.py" if method == "fp8" else "exl3_scope.py"
+    command = [
+        "  measure-cloud --provider runpod --role candidate \\",
+        "    --model %s --revision %s \\" % (target.repo_id, target.revision),
+        "    --panel-dir %s --dataset-id %s \\"
+        % (getattr(args, "panel_dir", None) or "engines/panels/<panel-of-the-root>",
+           getattr(args, "dataset_id", None) or "fidelity--<family>.<hub-handle>.quant.<slug>"),
+        "    --reference-dataset %s \\"
+        % (reference or "<OWNER/REPO@40HEX of the family's published root dataset>"),
+        "    --candidate-scope <engines/tools/%s output> --candidate-codec %s "
+        "--candidate-bits %s \\" % (tool, codec_hint, bits_hint),
+        "    --gpu H200 --measurer %s --max-cost <usd> --max-runtime <duration> "
+        "--out <dir> --dry-run" % (getattr(args, "measurer", None) or "<hub-handle>"),
+    ]
     raise Refusal(
         "--role root, but this checkpoint publishes a quantization_config "
         "(quant_method %s)" % method,
@@ -1902,9 +1959,12 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
          "HfQuantizer, so an FP8 weight has the same SHAPE as the bf16 "
          "parameter -- the payload is read as bf16 and the block scale is "
          "never applied.",
-         "Point --model at the unquantized release. If the family publishes "
-         "none -- as no deepseek_v4 repo on the Hub does -- then it has no "
-         "root and no floor can be measured for it.",
+         "To measure THIS quantized checkpoint against its family's published "
+         "root, use the candidate route (docs/THIRD-PARTY-QUICKSTART.md 3b):"]
+        + command +
+        ["To capture a root, point --model at the unquantized release. If the "
+         "family publishes none -- as no deepseek_v4 repo on the Hub does -- "
+         "then it has no root and no floor can be measured for it.",
          "Nothing was created. $0.00 spent."])
 
 
@@ -4355,6 +4415,9 @@ def _plan_runpod_anonymous(
             path_hint=getattr(args, "path", None), source=args.registry,
             force=False, accept_measured_revision=False, con=con,
             already_measured_advice=(
+                "Safe RunPod refuses --force; a separately identified candidate "
+                "measurement (new --dataset-id) continues only through its own gates."
+                if getattr(args, "candidate_scope", None) else
                 "Safe RunPod refuses --force; a separately identified root "
                 "qualification continues only through its own gates."))
         if registry_gate.get("status") not in ("proceed", "already-measured"):
@@ -9152,17 +9215,37 @@ def build_parser() -> argparse.ArgumentParser:
             "one-time setup (per machine and RunPod account):\n"
             "  measure-cloud reaper --provider runpod --install\n"
             "\n"
-            "capture a root fidelity dataset (the common case):\n"
+            "capture a root fidelity dataset (the common case; --max-runtime is\n"
+            "the bound authored in bin/engines.json for this target and\n"
+            "--max-cost the all-in maximum it yields -- the dry-run names the\n"
+            "new numbers when they move):\n"
             "  measure-cloud --provider runpod --role root \\\n"
             "    --model zai-org/GLM-5.3-BF16 --revision <40-hex> \\\n"
             "    --panel-dir engines/panels/<panel> \\\n"
             "    --dataset-id fidelity--<id> "
             "--publish-root-to <owner>/<repo> \\\n"
             "    --hf-token-file ~/.hf_token --measurer <hub-handle> \\\n"
-            "    --max-cost 40 --max-runtime 3h30m "
+            "    --max-cost 65 --max-runtime 7h30m "
             "--retrieval-delete-reserve 14400 \\\n"
             "    --out ~/fidelity-runs/<name> --dry-run\n"
             "  # re-run without --dry-run to spend\n"
+            "\n"
+            "measure a quant against a published root (the candidate route;\n"
+            "how every GLM-5.3 quant row was made -- docs/THIRD-PARTY-QUICKSTART.md 3b):\n"
+            "  measure-cloud --provider runpod --role candidate \\\n"
+            "    --model <owner>/<quant> --revision <40-hex> \\\n"
+            "    --panel-dir engines/panels/panel--glm53.malaiwah.corpus5x5-v1 \\\n"
+            "    --dataset-id fidelity--glm53.<hub-handle>.quant.<slug> \\\n"
+            "    --candidate-scope <scope.json> --candidate-codec exl3-mcg "
+            "--candidate-bits 3.25 \\\n"
+            "    --reference-dataset malaiwah/glm53-fidelity-root-v1@"
+            "9c4a29ee10f393ed2fdbdb9262c1192ddb1507b4 \\\n"
+            "    --gpu H200 --runpod-datacenter US-NC-1 --measurer <hub-handle> \\\n"
+            "    --max-cost 45 --max-runtime 3h30m "
+            "--retrieval-delete-reserve 14400 \\\n"
+            "    --out ~/fidelity-runs/<name> --dry-run\n"
+            "  # the scope: engines/tools/exl3_scope.py or fp8_scope.py on the\n"
+            "  # quant's config.json + model.safetensors.index.json ($0)\n"
             "\n"
             "strict campaign mode (opt-in; cross-run accounting and a\n"
             "sealed controller-loss drill proof bound to this checkout):\n"
@@ -9193,12 +9276,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     t = p.add_argument_group("what to measure")
     t.add_argument(
-        "--role", default="quant", choices=("quant", "root"),
+        "--role", default="quant", choices=("quant", "root", "candidate"),
         help="quant (default): measure a quantized artifact's divergence "
-             "from its reference and seal a submittable receipt. root: "
-             "capture an unquantized reference model's own activations on a "
-             "panel and seal a publishable fidelity dataset; paid for once, "
-             "read by every later quant measurement.")
+             "from its reference on the legacy teacher-logits lane and seal "
+             "a submittable receipt. root: capture an unquantized reference "
+             "model's own activations on a panel and seal a publishable "
+             "fidelity dataset; paid for once, read by every later "
+             "measurement. candidate: the root protocol on a QUANTIZED "
+             "target, scored on the pod against --reference-dataset (the "
+             "route behind every GLM-5.3 quant row); requires the four "
+             "candidate flags below. `--role root` with those flags is the "
+             "same path.")
     t.add_argument("--model", help="Hugging Face repo id to measure, e.g. "
                                    "zai-org/GLM-5.3-BF16")
     t.add_argument(
@@ -9277,25 +9365,6 @@ def build_parser() -> argparse.ArgumentParser:
              "image's ssh target, ghcr.io/malaiwah/quant-fidelity-measure:ssh, "
              "boots with the stack baked and the bootstrap seeds from it.")
     rt.add_argument(
-        "--candidate-scope", default=None, metavar="SCOPE.json",
-        help="root only, with --candidate-codec, --candidate-bits and "
-             "--reference-dataset: run the two-fresh-process protocol on a "
-             "QUANTIZED target. The dataset is captured with --role quant "
-             "under this authored scope (tensor classes, formats, bits), the "
-             "loader decodes the checkpoint's block-scaled FP8 to bf16 per "
-             "tensor (dequantize-and-run, weights-only), the qualified "
-             "capture is scored against --reference-dataset on the pod, and "
-             "the comparison receipt travels in the result archive.")
-    rt.add_argument("--candidate-codec", default=None, metavar="CODEC",
-                    help="registry codec of the candidate, e.g. fp8_e4m3")
-    rt.add_argument("--candidate-bits", type=float, default=None, metavar="BITS",
-                    help="declared bits per weight of the candidate, e.g. 8")
-    rt.add_argument(
-        "--reference-dataset", default=None, metavar="OWNER/REPO@40HEX",
-        help="the published root dataset the candidate is scored against; its "
-             "seal, content digest and panel are bound into the job and the "
-             "pod refuses any other dataset under that name")
-    rt.add_argument(
         "--storage-layout", choices=sorted(RUNPOD_STORAGE_LAYOUTS),
         default="container-disk",
         help="where the run root lives on the pod: container-disk (the "
@@ -9322,6 +9391,35 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument("--replay-dtype", default="float32", help=argparse.SUPPRESS)
     rt.add_argument("--replay-vocab-chunk", type=int, default=8192,
                     help=argparse.SUPPRESS)
+
+    cand = p.add_argument_group(
+        "candidate measurement (--role candidate; all four flags go together)")
+    cand.add_argument(
+        "--candidate-scope", default=None, metavar="SCOPE.json",
+        help="the authored quantization scope of the target (tensor classes, "
+             "formats, bits), read off its index by engines/tools/exl3_scope.py "
+             "or fp8_scope.py and validated here against the registry's scope "
+             "rules at $0. The dataset is captured under this scope; the "
+             "loader decodes the checkpoint's exl3 trellis payloads or "
+             "block-scaled FP8 to bf16 per module (weights-only, "
+             "dequantize-and-run); the qualified capture is scored against "
+             "--reference-dataset on the pod, and the comparison receipt "
+             "travels in the result archive.")
+    cand.add_argument(
+        "--candidate-codec", default=None, metavar="CODEC",
+        help="the candidate's codec in the registry's closed numeric_format "
+             "vocabulary (registry/schema/common.schema.json), e.g. exl3-mcg, "
+             "exl3-trellis, fp8_e4m3; anything else is refused with the list")
+    cand.add_argument("--candidate-bits", type=float, default=None, metavar="BITS",
+                      help="declared bits per weight of the candidate, e.g. 3.25 or 8; "
+                           "checked against the checkpoint's own declaration "
+                           "(quantization_config.bits / hybrid_tr3_tail.bits_avg) "
+                           "before spend and against the payload on the pod")
+    cand.add_argument(
+        "--reference-dataset", default=None, metavar="OWNER/REPO@40HEX",
+        help="the published root dataset the candidate is scored against; its "
+             "seal, content digest and panel are bound into the job and the "
+             "pod refuses any other dataset under that name")
 
     pl = p.add_argument_group("quant measurement (--role quant)")
     pl.add_argument("--panel", help="Hub dataset id of the panel/teacher")
@@ -9570,6 +9668,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             con.err("RunPod drill refused: %s" % redact(str(exc)))
             return EXIT_REFUSED
 
+    if getattr(args, "role", "quant") == "candidate":
+        # The spelled-out name of "the root protocol on a quantized target".
+        # One code path: everything downstream reads role == "root" and
+        # branches on candidate_scope, exactly as the m-* jobs were run.
+        missing = [flag for flag, value in (
+            ("--candidate-scope", args.candidate_scope),
+            ("--candidate-codec", args.candidate_codec),
+            ("--candidate-bits", args.candidate_bits),
+            ("--reference-dataset", args.reference_dataset)) if value is None]
+        if missing:
+            con.err("--role candidate requires %s (docs/THIRD-PARTY-QUICKSTART.md 3b)"
+                    % ", ".join(missing))
+            return EXIT_REFUSED
+        args.role = "root"
     if getattr(args, "role", "quant") == "root":
         if not args.model or not (args.panel or args.panel_dir):
             con.err("--role root requires --model and one of --panel / --panel-dir")
