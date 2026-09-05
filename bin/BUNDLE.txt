@@ -144,7 +144,13 @@ engines/tools/mlx-evidence/bf16-shape-census.json.gz
 # paid capture (they are the checks that would otherwise decode cleanly while
 # measuring the wrong model).
 engines/tools/gguf_surface.py
+# gguf_scope imports fp8_scope (the class rules + range_string); the on-box gguf
+# selftest imports gguf_scope, so the scope-authoring base module ships too.
+engines/tools/fp8_scope.py
 engines/tools/gguf_scope.py
+# selftest_gguf_offline rung 8 re-authors this committed scope from the bundled
+# evidence and compares; it must travel with the selftest.
+engines/scopes/scope--glm53-gguf-unsloth-udq4kxl.json
 engines/tools/selftest_gguf_offline.py
 # The fill-rate harness. It ships because the number in engines.json came from
 # it and the next person to doubt that number should be able to re-derive it on
