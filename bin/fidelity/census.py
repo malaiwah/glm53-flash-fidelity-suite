@@ -668,7 +668,7 @@ def check_device(
                 "window_batch."
                 % (gb(float(census.vocab) * census.hidden * 2.0),
                    gb(census.logits_bytes(ctx, 4))),
-                "run the cloud recipe instead: bin/measure-cloud --lane streaming",
+                "run the cloud recipe instead: docs/THIRD-PARTY-QUICKSTART.md section 3b",
             ],
             detail={"minimum_viable_budget_bytes": mv},
         )
@@ -752,13 +752,15 @@ def round_up_storage_gb(n_bytes: float, granularity_gb: int = 100) -> int:
 
 
 # --------------------------------------------------------------------------
-# Window-major cost model (the REAL engine's schedule)
+# Window-major cost model (the streaming lane's schedule)
 # --------------------------------------------------------------------------
-# stream_score.py has exactly one --stream-mode: window-major.  The layer-outer
-# schedule the solver above prices is a HYPOTHESIS no engine implements today,
-# so the planner must also price the engine that exists.  Everything here is
-# arithmetic over measured constants; anything unmeasured is emitted as null
-# with the instruction for measuring it, never as a guess.
+# stream_score.py has exactly one --stream-mode: window-major, so the local
+# streaming lanes must be priced by it.  The panel-batched layer-outer solver
+# above prices a schedule stream_score does NOT run; the layer-outer engine
+# that does exist (engines/tools/layer_outer.py under hf_capture.py) never
+# batches windows and is priced by `layer_outer_plan` below.  Everything here
+# is arithmetic over measured constants; anything unmeasured is emitted as
+# null with the instruction for measuring it, never as a guess.
 
 SCORING_MS_PER_POSITION_CPU = 0.15   # MEASURED on the M4 Max (0.144-0.164 ms)
 LM_HEAD_TFLOP_PER_WINDOW = 2.60      # 2 * 2047 * hidden(4096) * vocab(154880) / 1e12
@@ -838,3 +840,373 @@ def window_major_cost(
         "total_known_seconds": total_known_s,
         "total_is_lower_bound": trunk_seconds_per_window is None,
     }
+
+
+# --------------------------------------------------------------------------
+# Layer-outer capture plan (hf_capture.py --schedule layer-outer, the engine
+# that exists for native-bf16 / fp8-block / exl3hf surfaces)
+# --------------------------------------------------------------------------
+# docs/LAYER-OUTER.md section 8.1 arithmetic:
+#
+#     peak ~= resident(embed + lm_head + final norm) + largest layer
+#             + carried state + epilogue logits + workspace + load transient
+#
+# The per-layer terms are derived from config.json for the model_types whose
+# arithmetic has been checked against a real checkpoint to the byte
+# (`LayerGeometry.provenance` says which check).  Anything else refuses: a
+# geometry that is guessed is a plan that says "fits" for a card that OOMs.
+
+LAYER_OUTER_SURFACES = ("native-bf16", "fp8-block", "exl3hf")
+
+# Within-layer activations/workspace at hidden 6144, 64 heads, ctx 2048:
+# LAYER-OUTER.md 8.1 budgets 2.0-3.0 GB; the top of the band is used.
+LAYER_OUTER_WORKSPACE_BYTES = 3.0 * GB
+
+# Measured on one H200 SXM (RunPod US-NC-1) by hf_capture.py --schedule
+# layer-outer over the 25 x 2048 corpus5x5 panel, `{"stage": "peak_memory"}`
+# lines of the sealed pod logs (quoted in review-efficiency.md section 2 and
+# review-local-usability.md, 2026-09-05).  Decimal GB.  The reserved figure
+# is what the card must actually have: torch's allocator held it.
+GLM53_LAYER_OUTER_MEASURED = {
+    "geometry": "glm_moe_dsa 78L / hidden 6144 / 256 experts (GLM-5.3)",
+    "device": "NVIDIA H200 SXM 141 GB",
+    "peak_resident_weight_bytes": 23_561_229_056,     # 3.81 GB + one 19.76 GB layer
+    "native-bf16": {"allocated_bytes": 37.530 * GB, "reserved_bytes": 57.078 * GB,
+                    "run": "glm53-resume4 cold run 2, zai-org/GLM-5.3-BF16"},
+    "fp8-block": {"allocated_bytes": 37.530 * GB, "reserved_bytes": 57.087 * GB,
+                  "run": "glm53-fp8 cold run 1, zai-org/GLM-5.3"},
+    "exl3hf": {"allocated_bytes": 56.859 * GB, "reserved_bytes": 58.139 * GB,
+               "run": "exl3-wrld11 cold run 1, wrldsuksgo2mars/GLM-5.3-EXL3-K4-v1"},
+}
+
+# The smallest card the GLM-5.3 geometry runs on TODAY: the transformers
+# converter materialises one whole layer's routed experts (19.33 GB) before
+# fusing them, and the trellis path additionally holds the decoded per-expert
+# dict on device until the layer is fused -- so the measured peaks above are
+# 57-58 GB reserved whatever the surface.  The chunked loader that would take
+# the peak to ~28 GB (LAYER-OUTER.md 8.1) is not built.  64 GB is the measured
+# reserved peak plus the headroom a non-H200 allocator needs; below it the
+# planner refuses rather than promising a run that dies at layer 3.
+GLM53_CLASS_MIN_DEVICE_BYTES = 64.0 * GB
+
+
+class GeometryUnknown(ValueError):
+    """config.json names an architecture whose per-layer arithmetic is unverified."""
+
+
+@dataclass
+class LayerGeometry:
+    """Decoded-bf16 byte census of a model split the way layer-outer streams it.
+
+    `largest_layer_bytes` is the whole decoder layer -- attention, norms,
+    indexer, shared expert, router AND routed experts -- because that is the
+    unit the engine holds resident (LAYER-OUTER.md section 1).  Dense models
+    have `routed_layer_bytes` 0.
+    """
+
+    model_type: str
+    num_layers: int
+    hidden: int
+    vocab: int
+    n_routed_experts: int
+    resident_bytes: float          # embed_tokens + lm_head + final norm
+    largest_layer_bytes: float
+    routed_layer_bytes: float      # one sparse layer's routed experts, bf16
+    total_bf16_bytes: float        # whole checkpoint incl. MTP, for the KAT
+    carries_topk_indices: bool     # DSA indexer carries int64 top-k between layers
+    index_topk: int
+    provenance: str                # "exact: ..." | "averaged: ..."
+    notes: List[str] = field(default_factory=list)
+
+    @property
+    def geometry_label(self) -> str:
+        return "%s %dL / hidden %d / %d experts" % (
+            self.model_type, self.num_layers, self.hidden, self.n_routed_experts)
+
+    @property
+    def is_glm53_class(self) -> bool:
+        return (self.model_type == "glm_moe_dsa" and self.num_layers == 78
+                and self.hidden == 6144 and self.n_routed_experts == 256)
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["geometry_label"] = self.geometry_label
+        d["gb"] = {
+            "resident": round(gb(self.resident_bytes), 3),
+            "largest_layer": round(gb(self.largest_layer_bytes), 3),
+            "routed_layer": round(gb(self.routed_layer_bytes), 3),
+            "total_bf16": round(gb(self.total_bf16_bytes), 3),
+        }
+        return d
+
+
+def _glm_moe_dsa_geometry(text: Dict[str, Any]) -> LayerGeometry:
+    """GLM-5.3's architecture.  Every term below reconciles to the published
+    safetensors index: total 1,506,659,919,872 B (delta 0), per-layer 0.747 /
+    18.381 / 18.398 / 18.539 GiB (docs/GLM53-ROOT-FEASIBILITY.md section 2)."""
+    h = int(text["hidden_size"])
+    v = int(text["vocab_size"])
+    layers = int(text["num_hidden_layers"])
+    heads = int(text["num_attention_heads"])
+    q_lora = int(text["q_lora_rank"])
+    kv_lora = int(text["kv_lora_rank"])
+    qk_nope = int(text["qk_nope_head_dim"])
+    qk_rope = int(text["qk_rope_head_dim"])
+    qk_head = int(text.get("qk_head_dim", qk_nope + qk_rope))
+    v_head = int(text["v_head_dim"])
+    inter = int(text["intermediate_size"])
+    moe_inter = int(text["moe_intermediate_size"])
+    experts = int(text["n_routed_experts"])
+    shared = int(text.get("n_shared_experts", 0))
+    idx_heads = int(text["index_n_heads"])
+    idx_dim = int(text["index_head_dim"])
+    mlp_types = list(text.get("mlp_layer_types") or [])
+    indexer_types = list(text.get("indexer_types") or [])
+    n_mtp = int(text.get("num_nextn_predict_layers", 0))
+    if len(mlp_types) != layers or len(indexer_types) != layers:
+        raise GeometryUnknown(
+            "glm_moe_dsa config lists %d mlp_layer_types and %d indexer_types for "
+            "%d layers; the census needs one of each per layer"
+            % (len(mlp_types), len(indexer_types), layers))
+
+    attn = (h * q_lora + q_lora                       # q_a_proj + q_a_layernorm
+            + q_lora * heads * qk_head                # q_b_proj
+            + h * (kv_lora + qk_rope) + kv_lora       # kv_a_proj_with_mqa + kv_a_layernorm
+            + kv_lora * heads * (qk_nope + v_head)    # kv_b_proj
+            + heads * v_head * h)                     # o_proj
+    indexer_full = (q_lora * idx_heads * idx_dim      # wq_b
+                    + h * idx_dim + 2 * idx_dim       # wk + k_norm (weight, bias)
+                    + h * idx_heads)                  # weights_proj
+    norms = 2 * h
+    dense_mlp = 3 * h * inter
+    routed = experts * 3 * h * moe_inter
+    # e_score_correction_bias (one per expert) is stored fp32 in the release:
+    # 2 extra bytes per expert per sparse layer over the bf16 count.
+    shared_gate = shared * 3 * h * moe_inter + experts * h + experts
+    bias_fp32_extra = experts * 2.0
+
+    def layer_params(kind: str, indexer: str) -> int:
+        p = attn + norms + (indexer_full if indexer == "full" else 0)
+        return p + (dense_mlp if kind == "dense" else routed + shared_gate)
+
+    per_layer = [layer_params(k, i) for k, i in zip(mlp_types, indexer_types)]
+    resident = 2 * v * h + h
+    # MTP layer: a sparse layer with a full indexer plus eh_proj and 3 norms.
+    mtp = n_mtp * (layer_params("sparse", "full") + 2 * h * h + 3 * h)
+    n_sparse = sum(1 for kind in mlp_types if kind == "sparse") + n_mtp
+    total = (sum(per_layer) + resident + mtp) * 2.0 + n_sparse * bias_fp32_extra
+    return LayerGeometry(
+        model_type="glm_moe_dsa", num_layers=layers, hidden=h, vocab=v,
+        n_routed_experts=experts,
+        resident_bytes=resident * 2.0,
+        largest_layer_bytes=max(per_layer) * 2.0 + bias_fp32_extra,
+        routed_layer_bytes=routed * 2.0,
+        total_bf16_bytes=total,
+        carries_topk_indices=True,
+        index_topk=int(text.get("index_topk", 0)),
+        provenance="exact: per-layer shapes from config.json; reconcile to the "
+                   "published safetensors index with delta 0 "
+                   "(docs/GLM53-ROOT-FEASIBILITY.md section 2)",
+    )
+
+
+def _dense_qwen3_geometry(text: Dict[str, Any]) -> LayerGeometry:
+    """Qwen3 dense: GQA attention with q_norm/k_norm, no biases, SwiGLU MLP.
+    Reconciles to Qwen/Qwen3-8B's index total 16,381,470,720 B (delta 0)."""
+    h = int(text["hidden_size"])
+    v = int(text["vocab_size"])
+    layers = int(text["num_hidden_layers"])
+    heads = int(text["num_attention_heads"])
+    kv_heads = int(text["num_key_value_heads"])
+    head_dim = int(text.get("head_dim") or h // heads)
+    inter = int(text["intermediate_size"])
+    tied = bool(text.get("tie_word_embeddings", False))
+    attn = h * heads * head_dim + 2 * h * kv_heads * head_dim + heads * head_dim * h + 2 * head_dim
+    layer = attn + 3 * h * inter + 2 * h
+    resident = (1 if tied else 2) * v * h + h
+    return LayerGeometry(
+        model_type="qwen3", num_layers=layers, hidden=h, vocab=v,
+        n_routed_experts=0,
+        resident_bytes=resident * 2.0,
+        largest_layer_bytes=layer * 2.0,
+        routed_layer_bytes=0.0,
+        total_bf16_bytes=(layers * layer + resident) * 2.0,
+        carries_topk_indices=False, index_topk=0,
+        provenance="exact: per-layer shapes from config.json; reconcile to "
+                   "Qwen/Qwen3-8B's safetensors index total with delta 0",
+    )
+
+
+def _glm5_next_geometry(text: Dict[str, Any]) -> LayerGeometry:
+    """GLM-5.3-Flash.  The routed set is exact; the non-routed set mixes
+    Kimi-Delta linear attention, MLA, hyper-connections and an MTP block whose
+    shapes a generic census gets ~1 GB wrong (module docstring), so it is taken
+    from the pinned blob-subtraction census and AVERAGED over the layers.  The
+    plan says so; it is only ever a few hundred MB per layer."""
+    census = glm53_flash_census()
+    if (int(text.get("num_hidden_layers", 0)) != census.num_layers
+            or int(text.get("hidden_size", 0)) != census.hidden
+            or int(text.get("n_routed_experts", 0)) != census.n_routed_experts
+            or int(text.get("moe_intermediate_size", 0)) != census.moe_inter
+            or int(text.get("vocab_size", 0)) != census.vocab):
+        raise GeometryUnknown(
+            "glm5_next geometry differs from the pinned GLM-5.3-Flash census "
+            "(%dL / hidden %d / %d experts); no verified per-layer arithmetic "
+            "exists for it" % (int(text.get("num_hidden_layers", 0)),
+                               int(text.get("hidden_size", 0)),
+                               int(text.get("n_routed_experts", 0))))
+    resident = (2.0 * census.vocab * census.hidden + census.hidden) * 2.0
+    nonrouted_layers = census.num_layers + census.n_mtp
+    per_layer_nonrouted = (census.nonrouted_bytes - resident) / nonrouted_layers
+    return LayerGeometry(
+        model_type="glm5_next", num_layers=census.num_layers, hidden=census.hidden,
+        vocab=census.vocab, n_routed_experts=census.n_routed_experts,
+        resident_bytes=resident,
+        largest_layer_bytes=census.per_routed_layer_bytes + per_layer_nonrouted,
+        routed_layer_bytes=census.per_routed_layer_bytes,
+        total_bf16_bytes=census.total_bf16_bytes,
+        carries_topk_indices=True,
+        index_topk=int(text.get("index_topk", 0)),
+        provenance="averaged: routed experts exact from config.json; non-routed "
+                   "per-layer share is the pinned blob-subtraction census "
+                   "(19.34 GB) spread evenly over %d layers" % nonrouted_layers,
+        notes=["the non-routed per-layer term is an average, not this layer's "
+               "shapes; it is under 0.4 GB against a 14.5 GB routed set"],
+    )
+
+
+_GEOMETRIES = {
+    "glm_moe_dsa": _glm_moe_dsa_geometry,
+    "qwen3": _dense_qwen3_geometry,
+    "glm5_next": _glm5_next_geometry,
+    "glm5_next_text": _glm5_next_geometry,
+}
+
+
+def layer_geometry(config: Dict[str, Any]) -> LayerGeometry:
+    """Per-layer bf16 census from a config.json, or GeometryUnknown.
+
+    Only model_types whose arithmetic reconciled to a real checkpoint to the
+    byte are accepted; the refusal names the type so the next one can be
+    added WITH its check, never guessed.
+    """
+    text = config.get("text_config", config)
+    model_type = str(text.get("model_type") or config.get("model_type") or "")
+    builder = _GEOMETRIES.get(model_type)
+    if builder is None:
+        raise GeometryUnknown(
+            "no verified per-layer census for model_type %r (verified: %s); add "
+            "its arithmetic to fidelity/census.py and reconcile it to the "
+            "checkpoint's safetensors index before planning with it"
+            % (model_type, ", ".join(sorted(_GEOMETRIES))))
+    try:
+        return builder(text)
+    except (KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, GeometryUnknown):
+            raise
+        raise GeometryUnknown(
+            "config.json for model_type %r lacks a field the census needs: %s"
+            % (model_type, exc))
+
+
+@dataclass
+class LayerOuterPlan:
+    """The layer-outer capture's device footprint, with its refusal decision."""
+
+    surface: str
+    geometry: LayerGeometry
+    ctx: int
+    windows: int
+    breakdown: Dict[str, float]
+    modelled_peak_bytes: float
+    measured: Optional[Dict[str, Any]]     # H200 anchor when the geometry has one
+    required_device_bytes: float
+    device_bytes: float
+    fits: bool
+    reason: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["geometry"] = self.geometry.to_dict()
+        d["breakdown_gb"] = {k: round(gb(v), 3) for k, v in self.breakdown.items()}
+        d["modelled_peak_gb"] = round(gb(self.modelled_peak_bytes), 2)
+        d["required_device_gb"] = round(gb(self.required_device_bytes), 2)
+        d["engine"] = "engines/tools/hf_capture.py --schedule layer-outer"
+        return d
+
+
+def layer_outer_plan(
+    geometry: LayerGeometry,
+    *,
+    surface: str,
+    device: Device,
+    ctx: int = 2048,
+    windows: int = 25,
+) -> LayerOuterPlan:
+    """Price hf_capture --schedule layer-outer for `surface` on `device`.
+
+    Windows are never batched (LAYER-OUTER.md section 1), so the carried
+    state is one hidden row block per window plus the DSA top-k indices, and
+    the epilogue logits are ONE window's.  The load transient is the term the
+    H200 runs measured: the transformers converter stacks a layer's gate and
+    up experts (2/3 of the routed set) before fusing them, and the trellis
+    path keeps the whole decoded routed set on device until the fuse.
+    """
+    if surface not in LAYER_OUTER_SURFACES:
+        raise ValueError("layer-outer reads %s, not %r"
+                         % ("/".join(LAYER_OUTER_SURFACES), surface))
+    g = geometry
+    carried = (windows + 1) * ctx * g.hidden * 2.0
+    if g.carries_topk_indices and g.index_topk:
+        carried += (windows + 1) * ctx * min(g.index_topk, ctx) * 8.0   # int64
+    logits = float(ctx) * g.vocab * 2.0                                # bf16 epilogue
+    converter = (2.0 / 3.0) * g.routed_layer_bytes
+    decoded = 0.0
+    if surface == "exl3hf":
+        decoded = g.routed_layer_bytes if g.routed_layer_bytes else g.largest_layer_bytes
+    breakdown = {
+        "resident_weights": g.resident_bytes,
+        "largest_layer": g.largest_layer_bytes,
+        "carried_state": carried,
+        "epilogue_logits_bf16": logits,
+        "workspace": LAYER_OUTER_WORKSPACE_BYTES,
+        "framework_overhead": FRAMEWORK_OVERHEAD_BYTES,
+        "converter_transient": converter,
+        "trellis_decoded_layer": decoded,
+    }
+    modelled = sum(breakdown.values())
+    measured = None
+    if g.is_glm53_class:
+        measured = dict(GLM53_LAYER_OUTER_MEASURED[surface],
+                        device=GLM53_LAYER_OUTER_MEASURED["device"],
+                        peak_resident_weight_bytes=(
+                            GLM53_LAYER_OUTER_MEASURED["peak_resident_weight_bytes"]))
+        required = GLM53_CLASS_MIN_DEVICE_BYTES
+        fits = device.memory_bytes >= required
+        reason = (
+            "GLM-5.3-class layer-outer capture needs a >= %d GB device today: "
+            "measured on %s, %s allocated / %s reserved (%s); the transformers "
+            "converter materialises one layer's %s of routed experts before "
+            "fusing them%s, and the chunked loader that would take the peak to "
+            "~28 GB (docs/LAYER-OUTER.md 8.1) is not built"
+            % (int(gb(required)), measured["device"],
+               "%.2f GB" % gb(measured["allocated_bytes"]),
+               "%.2f GB" % gb(measured["reserved_bytes"]), measured["run"],
+               "%.2f GB" % gb(g.routed_layer_bytes),
+               (" and the trellis path holds the decoded routed set on device "
+                "until the fuse" if surface == "exl3hf" else "")))
+    else:
+        budget = default_budget(device)
+        required = modelled / (budget / device.memory_bytes)
+        fits = modelled <= budget
+        reason = ("modelled peak %.2f GB against a %.2f GB budget (%s of %s); "
+                  "geometry %s -- %s"
+                  % (gb(modelled), gb(budget),
+                     "70%" if device.unified else "90%",
+                     "%.0f GB" % gb(device.memory_bytes), g.geometry_label,
+                     g.provenance))
+    return LayerOuterPlan(
+        surface=surface, geometry=g, ctx=ctx, windows=windows,
+        breakdown=breakdown, modelled_peak_bytes=modelled, measured=measured,
+        required_device_bytes=required, device_bytes=device.memory_bytes,
+        fits=fits, reason=reason)

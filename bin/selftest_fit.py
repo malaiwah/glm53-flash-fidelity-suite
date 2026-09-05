@@ -184,8 +184,9 @@ def main() -> int:
     check("4 GB card is refused", not v.ok)
     check("refusal quotes the minimum viable budget",
           any("minimum viable" in a for a in v.advice))
-    check("refusal points at the cloud recipe",
-          any("measure-cloud" in a for a in v.advice))
+    check("refusal points at the documented cloud recipe (not measure-cloud's "
+          "hidden --lane flag)",
+          any("THIRD-PARTY-QUICKSTART" in a for a in v.advice))
 
     print("\n[5] MINIMUM VIABLE BUDGET (the floor a refusal must quote)")
     for bits in (4.0, 6.0):
@@ -284,6 +285,92 @@ def main() -> int:
     check("fp64 scoring 25x2047 positions at 0.15 ms == 7.68 s (never a "
           "reason to sample)", near(wm["scoring_seconds_total"], 7.676, 0.01),
           "%.2f s" % wm["scoring_seconds_total"])
+
+    print("\n[9] LAYER-OUTER CAPTURE PLAN (the engine that exists for exl3hf/fp8/bf16;")
+    print("    census from config.json, never the Flash constant)")
+    try:
+        from fidelity.census import (GeometryUnknown, layer_geometry,
+                                     layer_outer_plan, GLM53_CLASS_MIN_DEVICE_BYTES)
+    except ImportError as exc:
+        check("census exposes layer_geometry / layer_outer_plan", False, str(exc))
+    else:
+        # zai-org/GLM-5.3 config.json geometry (the fields the census reads).
+        glm53 = {
+            "model_type": "glm_moe_dsa", "hidden_size": 6144, "vocab_size": 154880,
+            "num_hidden_layers": 78, "num_attention_heads": 64, "q_lora_rank": 2048,
+            "kv_lora_rank": 512, "qk_nope_head_dim": 192, "qk_rope_head_dim": 64,
+            "qk_head_dim": 256, "v_head_dim": 256, "intermediate_size": 12288,
+            "moe_intermediate_size": 2048, "n_routed_experts": 256,
+            "n_shared_experts": 1, "index_n_heads": 32, "index_head_dim": 128,
+            "index_topk": 2048, "num_nextn_predict_layers": 1,
+            "mlp_layer_types": ["dense"] * 3 + ["sparse"] * 75,
+            "indexer_types": ["full"] * 3 + (["shared"] * 3 + ["full"]) * 18
+                             + ["shared"] * 3,
+        }
+        g = layer_geometry(glm53)
+        check("GLM-5.3 census is 78L / 6144 / 256 experts -- NOT Flash's 288",
+              g.num_layers == 78 and g.hidden == 6144 and g.n_routed_experts == 256,
+              g.geometry_label)
+        check("GLM-5.3 total reconciles to the published index total_size "
+              "1,506,659,919,872 B (delta 0; GLM53-ROOT-FEASIBILITY section 2)",
+              g.total_bf16_bytes == 1_506_659_919_872.0,
+              "%.0f" % g.total_bf16_bytes)
+        check("resident embed+lm_head+norm == 3,806,343,168 B (3.81 GB)",
+              g.resident_bytes == 3_806_343_168.0, "%.0f" % g.resident_bytes)
+        check("largest layer (sparse + full indexer) == 18.398 GiB",
+              near(g.largest_layer_bytes / float(1 << 30), 18.398, 0.0005),
+              "%.4f GiB" % (g.largest_layer_bytes / float(1 << 30)))
+        check("one layer's routed experts == 19,327,352,832 B (19.33 GB)",
+              g.routed_layer_bytes == 19_327_352_832.0)
+        resident_peak = g.resident_bytes + g.largest_layer_bytes
+        check("resident + largest layer reproduces the measured peak_resident_weight "
+              "23,561,229,056 B within 100 KB (the rest is non-parameter buffers)",
+              near(resident_peak, 23_561_229_056.0, 100_000.0),
+              "%.0f B, delta %.0f" % (resident_peak, 23_561_229_056.0 - resident_peak))
+        p32 = layer_outer_plan(g, surface="exl3hf", device=RTX_5090)
+        check("a 32 GB card is REFUSED for the GLM-5.3 geometry (measured 56.86 GB)",
+              p32.fits is False and p32.required_device_bytes == GLM53_CLASS_MIN_DEVICE_BYTES,
+              "required %.0f GB" % gb(p32.required_device_bytes))
+        check("the refusal cites the measured H200 peaks and the unbuilt chunked loader",
+              "56.86 GB allocated" in p32.reason and "58.14 GB reserved" in p32.reason
+              and "not built" in p32.reason)
+        p96 = layer_outer_plan(g, surface="exl3hf", device=RTX_PRO6000)
+        check("a 96 GB card fits the same plan", p96.fits is True)
+        pbf = layer_outer_plan(g, surface="native-bf16", device=RTX_PRO6000)
+        check("trellis adds exactly one decoded routed layer over bf16",
+              near(p32.modelled_peak_bytes - pbf.modelled_peak_bytes,
+                   g.routed_layer_bytes, 1.0),
+              "%.2f GB" % gb(p32.modelled_peak_bytes - pbf.modelled_peak_bytes))
+        check("the model brackets the measured allocated peaks from above (bf16 37.53, "
+              "trellis 56.86 GB) -- conservative, never optimistic",
+              pbf.modelled_peak_bytes >= pbf.measured["allocated_bytes"]
+              and p32.modelled_peak_bytes >= p32.measured["allocated_bytes"],
+              "bf16 %.2f, trellis %.2f GB" % (gb(pbf.modelled_peak_bytes),
+                                              gb(p32.modelled_peak_bytes)))
+        qwen3 = {
+            "model_type": "qwen3", "hidden_size": 4096, "vocab_size": 151936,
+            "num_hidden_layers": 36, "num_attention_heads": 32,
+            "num_key_value_heads": 8, "head_dim": 128, "intermediate_size": 12288,
+            "tie_word_embeddings": False,
+        }
+        q = layer_geometry(qwen3)
+        check("Qwen3-8B total reconciles to its index total_size 16,381,470,720 B",
+              q.total_bf16_bytes == 16_381_470_720.0, "%.0f" % q.total_bf16_bytes)
+        pq = layer_outer_plan(q, surface="native-bf16", device=RTX_5090)
+        check("a dense 8B fits a 32 GB card under layer-outer (modelled < 10 GB)",
+              pq.fits is True and pq.modelled_peak_bytes < 10 * GB,
+              "%.2f GB" % gb(pq.modelled_peak_bytes))
+        from fidelity.census import GLM53_FLASH_CONFIG
+        f = layer_geometry(GLM53_FLASH_CONFIG)
+        check("Flash geometry is 45L / 4096 / 288 with an AVERAGED non-routed share",
+              f.num_layers == 45 and f.n_routed_experts == 288
+              and f.provenance.startswith("averaged"), f.provenance[:40])
+        try:
+            layer_geometry({"model_type": "llama", "hidden_size": 4096})
+            check("an unverified model_type is refused, not guessed", False)
+        except GeometryUnknown as exc:
+            check("an unverified model_type is refused, not guessed",
+                  "llama" in str(exc) and "verified" in str(exc))
 
     print("\n" + "-" * 72)
     print("selftest_fit: %d passed, %d failed" % (len(PASS), len(FAIL)))

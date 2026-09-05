@@ -1,36 +1,38 @@
 #!/usr/bin/env python3
-"""measure-local -- measure a quant's fidelity on hardware you already own.
+"""measure-local -- plan (and, for Flash-class trees, run) a fidelity measurement
+on hardware you already own.
 
-    bin/measure-local --artifact <hf-repo> --panel <hf-dataset> --vram-budget 30
+    bin/measure-local --artifact <hf-repo> --panel <hf-dataset> --estimate-only
 
-Targets, both first-class:
-  * a 128 GB Apple-Silicon Mac via MPS;
-  * a 32 GB consumer CUDA card (RTX 5090 and friends) under a HARD VRAM budget.
+WHAT IT PLANS.  Two engines exist and this tool prices whichever one can read
+your target -- it says which on the MEMORY PLAN line:
 
-It produces the SAME sealed receipt schema as the cloud recipe, so a number
-measured on a desk and a number measured on a rented H200 are the same kind of
-object and the registry can rank them against each other.
+  * engines/tools/stream_score.py, WINDOW-MAJOR: the lanes measure-local can
+    execute (local-mps, local-cuda-budget).  They read the campaign's `packed`
+    payload stores and the GLM-5.3-Flash `native-bf16` tree, and emit
+    receipt_class `preview` (bin/README.md).  For each of the 25 panel windows
+    the engine streams every routed layer, so the checkpoint is re-read once per
+    window; the "expert_chunk / window_batch" block is the planner's cost model
+    over the pinned GLM-5.3-Flash census, and the HOW LONG section comes from a
+    ~5 second micro-benchmark on YOUR device, not a per-GPU table.
 
-THE SCHEDULE.  The obvious way to stream a 600 GB model through a small card is
-per-window: for each of the 25 panel windows, stream all 42 routed layers.  That
-re-reads the entire checkpoint 25 times and is why the cloud streaming lane
-costs ~9 minutes per window.  The windows are independent teacher-forced
-prefills with no state carried between them, so the loop inverts: for each
-layer, decode once, then push all 25 windows through it.  Decode and weight I/O
-then happen EXACTLY ONCE for the whole panel.  The price is holding the panel's
-inter-layer state resident, which is 2.94 GB.
+  * engines/tools/hf_capture.py --schedule layer-outer (docs/LAYER-OUTER.md):
+    one decoder layer resident at a time, checkpoint read ONCE per cold run,
+    windows never batched.  It reads `native-bf16`, `fp8-block` and `exl3hf`
+    releases of any geometry whose per-layer census is verified (GLM-5.3,
+    GLM-5.3-Flash, Qwen3 dense) and is reached through
+    `bin/fidelity-dataset capture --engine hf-transformers`, not through this
+    tool's --execute.  For those surfaces the MEMORY PLAN is a LAYER-OUTER
+    CAPTURE PLAN: resident set + largest layer + the load transient that the
+    H200 pods measured (GLM-5.3: 37.53 GB allocated / 57.08 GB reserved for
+    bf16 and FP8, 56.86 GB for a trellis K4), and a device below it is refused
+    before any byte is fetched.
 
-Two knobs shrink the peak further and NEITHER moves the number: experts are
-visited in strictly ascending order and accumulated sequentially into an fp32
-accumulator, so the result is bit-identical for any `--expert-chunk` and
-`--window-batch`.  That invariance is a promise the engine must keep -- an
-atomicAdd-based scatter would break it -- and it is what lets you tune memory
-without tuning your result.
-
-WHAT IT TELLS YOU BEFORE IT STARTS.  Disk, RAM, VRAM plan and hours, with each
-number's provenance, and a refusal-with-advice if your device cannot do it.
-The hours estimate comes from a ~5 second micro-benchmark run on YOUR machine,
-not from a hardcoded per-GPU table.
+WHAT IT TELLS YOU BEFORE IT STARTS.  Census source, disk, RAM, VRAM plan and
+(where measurable) hours, each with its provenance; above 100 GB a BEFORE YOU
+FETCH block repeats the fetch size, free disk and the VRAM verdict; and a
+refusal-with-advice if your device cannot do it.  Nothing is downloaded by
+--estimate-only.
 """
 
 from __future__ import annotations
@@ -56,7 +58,7 @@ from fidelity.common import (                          # noqa: E402
 )
 from fidelity.engines import EngineUnpinned, build_invocation, load_engines  # noqa: E402
 from fidelity.hfmeta import (                          # noqa: E402
-    HFError, hf_token, load_panel_descriptor, repo_meta, sniff_surface,
+    HFError, fetch_json, hf_token, load_panel_descriptor, repo_meta, sniff_surface,
 )
 
 VERSION = "0.1.0"
@@ -65,6 +67,86 @@ EXIT_OK, EXIT_REFUSED = 0, 3
 
 # Matrices decoded in one full routed pass: 42 layers x 288 experts x 3.
 MATRICES_PER_PASS = 36288
+
+# Above this fetch size the plan prints a BEFORE YOU FETCH block: a 32 GB
+# owner once had a 394 GB download and a green plan for a 57 GB capture.
+PREFETCH_WARN_BYTES = 100.0 * GB
+
+
+def census_for_target(repo_id: str, config_json: Optional[Dict[str, Any]],
+                      surface: Optional[str], artifact_bytes: float,
+                      revision: Optional[str]
+                      ) -> "tuple[C.Census, Optional[C.LayerGeometry]]":
+    """The census of THIS target, plus its per-layer geometry when verified.
+
+    The pinned GLM-5.3-Flash census (blob-subtraction, the exact non-routed
+    figure) is used only when config.json IS that geometry, or when nothing
+    could be fetched -- and in the latter case the census says so.
+    """
+    if config_json is None:
+        cen = C.glm53_flash_census(revision)
+        cen.census_source = "pinned"
+        cen.notes.append("config.json was not fetched (offline); this is the pinned "
+                         "GLM-5.3-Flash census, which prices the wrong geometry for "
+                         "any other target")
+        return cen, None
+    geometry: Optional[C.LayerGeometry] = None
+    try:
+        geometry = C.layer_geometry(config_json)
+    except C.GeometryUnknown as exc:
+        geometry = None
+        unknown_note = str(exc)
+    if geometry is not None and geometry.model_type == "glm5_next":
+        return C.glm53_flash_census(revision), geometry
+    # Only a bf16 release's byte total is the bf16 total the subtraction needs.
+    total = artifact_bytes if surface == "native-bf16" else None
+    cen = C.Census.from_config(repo_id, config_json, total_safetensors_bytes=total,
+                               revision=revision)
+    if geometry is not None:
+        # Exact per-layer arithmetic beats the shape-summed fallback.
+        cen.nonrouted_bytes = geometry.total_bf16_bytes - cen.routed_main_bytes - cen.routed_mtp_bytes
+        cen.total_bf16_bytes = geometry.total_bf16_bytes
+        cen.census_source = "config.json (" + geometry.provenance.split(":")[0] + ")"
+        cen.notes = []
+    else:
+        cen.notes.append(unknown_note)
+    return cen, geometry
+
+
+def dataset_route_commands(artifact: Dict[str, Any], surface: Optional[str],
+                           glm53_class: bool) -> List[str]:
+    """The copy/paste sequence for the engine that reads this surface.
+
+    This is the K4 job's own argv (fidelity-runs/exl3-wrld11/job.json capture
+    block): engine hf-transformers, schedule layer-outer, form hidden, dtype
+    bfloat16, replay numpy/float32 at vocab_chunk 8192.
+    """
+    repo = artifact.get("repo_id", "<org>/<repo>")
+    rev = artifact.get("revision", "<40-hex>")
+    role = "root" if surface == "native-bf16" else "quant"
+    panel = ("engines/panels/panel--glm53.malaiwah.corpus5x5-v1" if glm53_class else
+             "engines/panels/<a panel built for THIS tokenizer: engines/tools/build_token_panel.py>")
+    lines = [
+        "hf download %s --revision %s --local-dir /nvme/models/m" % (repo, rev),
+    ]
+    if role == "quant":
+        tool = "fp8_scope.py" if surface == "fp8-block" else "exl3_scope.py"
+        lines.append("$FIDELITY_PYTHON engines/tools/%s --index /nvme/models/m/model.safetensors.index.json "
+                     "--config /nvme/models/m/config.json --repo %s --revision %s --out /nvme/ds/scope.json"
+                     % (tool, repo, rev))
+    lines += [
+        "for run in 1 2; do bin/fidelity-dataset capture --engine hf-transformers --out /nvme/ds/%s-$run "
+        "--role %s --lane streaming -- \\" % (role, role),
+        "    --model /nvme/models/m --model-revision %s --weights-repository %s \\" % (rev, repo),
+        "    --panel %s --dataset-id fidelity--<family>.<handle>.%s.<codec> \\" % (panel, role),
+        "    --cold-run %s-cold-$run --author <handle> --schedule layer-outer --device cuda "
+        "--sanity-expect Paris%s; done"
+        % (role, "" if role == "root" else " \\\n    --scope-file /nvme/ds/scope.json --codec <codec> --declared-bits <bits>"),
+        "bin/fidelity-dataset compare --reference /nvme/ds/%s-1 --candidate /nvme/ds/%s-2 --self-compare "
+        "--force-compute --vocab-chunk 8192 --out /nvme/ds/repro   # exact 0.0 or refuse" % (role, role),
+    ]
+    lines.append("README.md Recipe 2 has the full quickstart (qualify-root --local, compare --own-heads)")
+    return lines
 
 
 # ==========================================================================
@@ -318,6 +400,8 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
     con.say("")
     con.say("TARGET")
     artifact_bytes, bits, offline = 176.0 * GB, 4.0, False
+    surface_name: Optional[str] = None
+    config_json: Optional[Dict[str, Any]] = None
     try:
         meta = repo_meta(args.artifact, "model", args.revision or "main")
         # --path is not only a registry-gate hint: a repo that publishes
@@ -331,6 +415,7 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
         surface = sniff_surface(meta, getattr(args, "path", None))
         artifact_bytes = float(surface.artifact_bytes or meta.total_bytes)
         bits = float(surface.bits or 4.0)
+        surface_name = surface.surface
         con.kv("artifact", meta.repo_id)
         con.kv("revision", "%s  (from %s)" % (meta.revision, meta.requested_revision))
         con.kv("size", "%s over %d files" % (human_bytes(artifact_bytes), len(meta.files)))
@@ -342,17 +427,39 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
         if surface.problems:
             problem("this artifact cannot be read by any available surface adapter",
                     surface.problems)
+        if meta.has("config.json"):
+            # One small GET: the census must come from THIS target's geometry,
+            # not from a pinned constant -- the planner once priced every
+            # artifact as GLM-5.3-Flash and said "fits in 24 GB" for a GLM-5.3
+            # capture that measured 57 GB.
+            config_json = fetch_json(meta.repo_id, "config.json",
+                                     revision=meta.revision)
     except HFError as exc:
         offline = True
         con.warn("cannot reach Hugging Face (%s); estimating with pinned sizes" % exc)
         out["artifact"] = {"repo_id": args.artifact, "offline": True}
+
+    # -- census: from the target's config.json, never a constant ------------
+    cen, geometry = census_for_target(args.artifact, config_json, surface_name,
+                                      artifact_bytes, out.get("artifact", {}).get("revision"))
+    flash_class = (cen.model_id == "zai-org/GLM-5.3-Flash-BF16")
+    out["geometry"] = geometry.to_dict() if geometry else None
+    layer_outer_route = (surface_name in C.LAYER_OUTER_SURFACES
+                         and not (flash_class and surface_name == "native-bf16"))
 
     # -- panel -------------------------------------------------------------
     con.say("")
     con.say("PANEL")
     descriptor = load_panel_descriptor(args.panel_descriptor or args.panel)
     panel_bytes = 31.71 * GB
-    if not offline:
+    if layer_outer_route:
+        # The dataset route reads a committed token-panel tree (engines/panels/
+        # <id>, a few hundred KB), not the teacher-logit dataset the streaming
+        # lanes fetch; pricing 31.73 GB of teacher logits here was wrong.
+        panel_bytes = 0.0
+        con.kv("panel", "engines/panels/<panel-id> (committed token panel; the "
+                        "--panel dataset is not fetched by the dataset route)")
+    elif not offline:
         try:
             pmeta = repo_meta(descriptor.repo_id, "dataset",
                               args.panel_revision or descriptor.revision)
@@ -370,61 +477,142 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
     # -- memory plan -------------------------------------------------------
     con.say("")
     con.say("MEMORY PLAN")
-    cen = C.glm53_flash_census()
+    con.kv("census source", "%s  (%s: %dL / hidden %d / %d experts / vocab %d)"
+           % (cen.census_source, cen.model_id, cen.num_layers, cen.hidden,
+              cen.n_routed_experts, cen.vocab))
+    for note in cen.notes:
+        con.warn(note)
+    lo_plan: Optional[C.LayerOuterPlan] = None
+    memplan: Optional[C.MemoryPlan] = None
     budget = (args.vram_budget * GB) if args.vram_budget else C.default_budget(device)
-    con.kv("budget", "%s%s" % (human_bytes(budget),
-                               "  (--vram-budget)" if args.vram_budget
-                               else "  (default: %d%% of device memory)"
-                                    % (70 if device.unified else 90)))
-    memplan = C.solve_local(
-        cen, device, budget_bytes=budget, bits=bits,
-        ctx=descriptor.positions_per_context + 1, windows=descriptor.contexts,
-        decode_batch_matrices=args.decode_batch_matrices,
-        buffers=args.prefetch_depth,
-        nonrouted_resident=(None if args.nonrouted_residency == "auto"
-                            else args.nonrouted_residency == "gpu"))
-    if memplan is None:
-        mv = C.minimum_viable_budget(cen, bits=bits)
-        problem("no schedule fits a %s budget" % human_bytes(budget), [
-            "minimum viable budget for this model at %g bpw is %s"
-            % (bits, human_bytes(mv)),
-            "that floor is set by the lm_head step -- the lm_head weight (%s) "
-            "and one window of fp32 logits (%s) must be resident together, and "
-            "neither shrinks with --expert-chunk or --window-batch"
-            % (human_bytes(float(cen.vocab) * cen.hidden * 2.0),
-               human_bytes(cen.logits_bytes(descriptor.positions_per_context + 1, 4))),
-            "run the cloud recipe instead:  bin/measure-cloud --lane streaming",
-        ])
+    if layer_outer_route:
+        # The engine that exists for this surface is hf_capture.py
+        # --schedule layer-outer (docs/LAYER-OUTER.md), reached through
+        # `bin/fidelity-dataset capture --engine hf-transformers`; it never
+        # batches windows, so the panel-batched solver below does not apply.
+        con.kv("engine", "engines/tools/hf_capture.py --schedule layer-outer "
+                         "(via bin/fidelity-dataset capture --engine hf-transformers)")
+        if geometry is None:
+            problem("no verified per-layer census for this target, so its "
+                    "layer-outer peak cannot be planned", [
+                        "config.json is unreadable offline or names an unverified "
+                        "model_type; see fidelity/census.py layer_geometry",
+                        "add the architecture's arithmetic and reconcile it to the "
+                        "checkpoint's safetensors index before planning"])
+        else:
+            lo_plan = C.layer_outer_plan(
+                geometry, surface=surface_name, device=device,
+                ctx=descriptor.positions_per_context + 1, windows=descriptor.contexts)
+            con.say("  LAYER-OUTER CAPTURE PLAN  (%s; %s)"
+                    % (geometry.geometry_label, geometry.provenance.split(":")[0]))
+            for key, v in lo_plan.breakdown.items():
+                if v:
+                    con.say("      %-24s %s" % (key, human_bytes(v)))
+            con.kv("modelled peak", "%s  (arithmetic, docs/LAYER-OUTER.md 8.1)"
+                   % human_bytes(lo_plan.modelled_peak_bytes))
+            if lo_plan.measured:
+                con.kv("measured peak", "%s allocated / %s reserved on %s (%s)"
+                       % (human_bytes(lo_plan.measured["allocated_bytes"]),
+                          human_bytes(lo_plan.measured["reserved_bytes"]),
+                          lo_plan.measured["device"], lo_plan.measured["run"]))
+            con.kv("device needs", "%s  (%s has %s)"
+                   % (human_bytes(lo_plan.required_device_bytes), device.name,
+                      human_bytes(device.memory_bytes)))
+            out["layer_outer_plan"] = lo_plan.to_dict()
+            if not lo_plan.fits:
+                problem("%s (%s) is below the layer-outer plan" % (
+                    device.name, human_bytes(device.memory_bytes)), [
+                        lo_plan.reason,
+                        "a card with >= %s runs this capture today; the cloud "
+                        "recipe is docs/THIRD-PARTY-QUICKSTART.md section 3b"
+                        % human_bytes(lo_plan.required_device_bytes)])
+            else:
+                con.ok("layer-outer plan", "fits: %s has %s, %s required"
+                       % (device.name, human_bytes(device.memory_bytes),
+                          human_bytes(lo_plan.required_device_bytes)))
     else:
-        con.kv("expert_chunk", "%d of %d experts%s"
-               % (memplan.expert_chunk, cen.n_routed_experts,
-                  "  (numerics-invariant)" if memplan.expert_chunk else ""))
-        con.kv("window_batch", "%d of %d windows -> %d pass(es) over the checkpoint"
-               % (memplan.window_batch, descriptor.contexts, memplan.passes))
-        con.kv("peak VRAM", "%s of %s budget (%.0f%%)"
-               % (human_bytes(memplan.peak_bytes), human_bytes(budget),
-                  100.0 * memplan.peak_bytes / budget))
-        for key in ("panel_state", "decoded_expert_chunk", "packed_expert_chunk",
-                    "decode_workspace", "nonrouted", "lm_head_weight",
-                    "lm_head_logits_fp32"):
-            v = memplan.breakdown.get(key, 0.0)
-            if v:
-                con.say("      %-24s %s" % (key, human_bytes(v)))
-        out["memory_plan"] = dict(
-            memplan.to_dict(),
-            note="hypothetical schedule; no engine implements layer-outer "
-                 "today -- the real engine is window-major (see "
-                 "window_major_cost)")
+        con.kv("engine", "engines/tools/stream_score.py (window-major; the panel-"
+                         "batched schedule below is the planner's cost model)")
+        con.kv("budget", "%s%s" % (human_bytes(budget),
+                                   "  (--vram-budget)" if args.vram_budget
+                                   else "  (default: %d%% of device memory)"
+                                        % (70 if device.unified else 90)))
+        memplan = C.solve_local(
+            cen, device, budget_bytes=budget, bits=bits,
+            ctx=descriptor.positions_per_context + 1, windows=descriptor.contexts,
+            decode_batch_matrices=args.decode_batch_matrices,
+            buffers=args.prefetch_depth,
+            nonrouted_resident=(None if args.nonrouted_residency == "auto"
+                                else args.nonrouted_residency == "gpu"))
+        if memplan is None:
+            mv = C.minimum_viable_budget(cen, bits=bits)
+            problem("no schedule fits a %s budget" % human_bytes(budget), [
+                "minimum viable budget for this model at %g bpw is %s"
+                % (bits, human_bytes(mv)),
+                "that floor is set by the lm_head step -- the lm_head weight (%s) "
+                "and one window of fp32 logits (%s) must be resident together, and "
+                "neither shrinks with --expert-chunk or --window-batch"
+                % (human_bytes(float(cen.vocab) * cen.hidden * 2.0),
+                   human_bytes(cen.logits_bytes(descriptor.positions_per_context + 1, 4))),
+                "run the cloud recipe instead: docs/THIRD-PARTY-QUICKSTART.md section 3b",
+            ])
+        else:
+            con.kv("expert_chunk", "%d of %d experts%s"
+                   % (memplan.expert_chunk, cen.n_routed_experts,
+                      "  (numerics-invariant)" if memplan.expert_chunk else ""))
+            con.kv("window_batch", "%d of %d windows -> %d pass(es) over the checkpoint"
+                   % (memplan.window_batch, descriptor.contexts, memplan.passes))
+            con.kv("peak VRAM", "%s of %s budget (%.0f%%)"
+                   % (human_bytes(memplan.peak_bytes), human_bytes(budget),
+                      100.0 * memplan.peak_bytes / budget))
+            for key in ("panel_state", "decoded_expert_chunk", "packed_expert_chunk",
+                        "decode_workspace", "nonrouted", "lm_head_weight",
+                        "lm_head_logits_fp32"):
+                v = memplan.breakdown.get(key, 0.0)
+                if v:
+                    con.say("      %-24s %s" % (key, human_bytes(v)))
+            out["memory_plan"] = dict(
+                memplan.to_dict(),
+                note="planner cost model for the streaming lane's engine "
+                     "(stream_score, window-major); its time is priced by "
+                     "window_major_cost. The layer-outer engine "
+                     "(hf_capture.py) is priced by layer_outer_plan instead.")
 
-    # -- disk and RAM ------------------------------------------------------
-    con.say("")
-    con.say("WHAT THIS NEEDS FROM YOUR MACHINE")
+    # -- disk, and the pre-fetch gate ---------------------------------------
     need = C.storage_need(artifact_bytes=artifact_bytes, panel_bytes=panel_bytes,
                           keep_student_logits=args.keep_student_logits,
                           toolchain_bytes=5 * GB)
     workdir = Path(args.work or "./fidelity-local").resolve()
     workdir.parent.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(workdir.parent if not workdir.exists() else workdir).free
+
+    # A 5090 owner once downloaded 394 GB on the strength of a green plan.
+    # Above 100 GB, say what the fetch is, what disk is free and whether the
+    # device is below the plan, BEFORE any byte moves; the refusals above
+    # already stop a real run before its fetch.
+    if artifact_bytes > PREFETCH_WARN_BYTES:
+        con.say("")
+        con.say("BEFORE YOU FETCH  (%s is more than %s: read this first)"
+                % (human_bytes(artifact_bytes), human_bytes(PREFETCH_WARN_BYTES)))
+        con.kv("fetch size", human_bytes(artifact_bytes))
+        con.kv("disk free", "%s at %s (%s needed)"
+               % (human_bytes(free), workdir, human_bytes(need.total_bytes)))
+        if lo_plan is not None:
+            vram_line = "%s needed on the device, %s has %s -- %s" % (
+                human_bytes(lo_plan.required_device_bytes), device.name,
+                human_bytes(device.memory_bytes),
+                "fits" if lo_plan.fits else "DOES NOT FIT; refused above")
+        elif memplan is not None:
+            vram_line = "%s peak against a %s budget on %s -- fits" % (
+                human_bytes(memplan.peak_bytes), human_bytes(budget), device.name)
+        else:
+            vram_line = "no plan fits %s -- refused above" % device.name
+        con.kv("estimated VRAM", vram_line)
+        out["prefetch_check"] = {"fetch_bytes": artifact_bytes, "disk_free_bytes": free,
+                                 "vram": vram_line}
+
+    con.say("")
+    con.say("WHAT THIS NEEDS FROM YOUR MACHINE")
     con.kv("disk needed", "%s  (artifact %s + panel %s%s + slack)"
            % (human_bytes(need.total_bytes), human_bytes(artifact_bytes),
               human_bytes(panel_bytes),
@@ -457,12 +645,20 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
         con.kv("BF16 base", "NOT required -- non-routed tensors ship in the artifact "
                             "(pass --bf16 only for full inventory verification)")
 
-    ram_need = cen.nonrouted_bytes + 4 * GB + 6 * GB
+    if layer_outer_route and lo_plan is not None:
+        # hf_capture keeps the FP8 decoded layer in host RAM until the converter
+        # moves it, and reads the checkpoint through the page cache.
+        ram_need = lo_plan.geometry.largest_layer_bytes + 16 * GB
+        ram_note = ("one decoded layer %s host-side (decode buffers, page cache) + runtime"
+                    % human_bytes(lo_plan.geometry.largest_layer_bytes))
+    else:
+        ram_need = cen.nonrouted_bytes + 4 * GB + 6 * GB
+        ram_note = ("non-routed %s CPU-resident + staging + runtime"
+                    % human_bytes(cen.nonrouted_bytes))
     if device.unified:
         con.kv("RAM", "unified with VRAM; the budget above covers it")
     else:
-        con.kv("RAM needed", "%s  (non-routed %s CPU-resident + staging + runtime)"
-               % (human_bytes(ram_need), human_bytes(cen.nonrouted_bytes)))
+        con.kv("RAM needed", "%s  (%s)" % (human_bytes(ram_need), ram_note))
         host = device.host_ram_bytes or 0
         con.kv("RAM present",
                human_bytes(host) if host else
@@ -470,8 +666,12 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
         if host and host < ram_need:
             problem("not enough host RAM: short %s" % human_bytes(ram_need - host), [
                 "the non-routed weights (%s) are held CPU-resident and streamed "
-                "per layer" % human_bytes(cen.nonrouted_bytes),
-                "use --nonrouted-residency mmap to trade RAM for disk reads",
+                "per layer" % human_bytes(cen.nonrouted_bytes)
+                if not layer_outer_route else
+                "hf_capture holds one decoded layer host-side before the "
+                "converter moves it to the device",
+                "use --nonrouted-residency mmap to trade RAM for disk reads"
+                if not layer_outer_route else "",
             ])
     out["storage_need"] = need.to_dict()
     out["disk_free_bytes"] = free
@@ -479,9 +679,26 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
     # -- time --------------------------------------------------------------
     con.say("")
     con.say("HOW LONG")
-    bench = (None if (args.no_bench or simulated)
-             else microbench(device, bits, con))
-    if simulated and not args.no_bench:
+    if layer_outer_route:
+        # The layer-outer engine reads the checkpoint once per cold run; the
+        # micro-benchmark below times stream_score's per-matrix decode, which
+        # is not this engine's cost.  The measured pod figures are cited, not
+        # scaled: a consumer NVMe and a 5090 are unmeasured.
+        con.kv("measured on H200", "GLM-5.3 bf16 root: cold capture 1,947 s per run "
+                                   "(reads 1.51 TB once); K4 trellis candidate: 442 s "
+                                   "per run (review-efficiency.md section 2, pod logs)")
+        con.kv("on your card", "unmeasured -- the run is read-once and H2D-bound, so "
+                               "expect the checkpoint size over your NVMe rate plus "
+                               "the decode; no micro-benchmark models this engine")
+        bench = None
+        out["timing"] = {"engine": "hf_capture layer-outer",
+                         "measured_h200_seconds": {"glm53_bf16_root_cold_run": 1947.0,
+                                                   "glm53_k4_candidate_cold_run": 441.9},
+                         "local_estimate": None}
+    else:
+        bench = (None if (args.no_bench or simulated)
+                 else microbench(device, bits, con))
+    if simulated and not args.no_bench and not layer_outer_route:
         con.warn("device is simulated, so no micro-benchmark was run and there is "
                  "no timing estimate. The memory plan above IS valid: it is "
                  "arithmetic over the model census and your stated budget.")
@@ -506,11 +723,10 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
                human_duration(total))
         out["timing"] = {"bench": bench, "per_run_seconds": per_run,
                          "total_seconds": total, "runs": args.runs}
-    else:
+    elif not layer_outer_route:
         con.kv("estimate", "unavailable (no micro-benchmark could be run)")
 
-    # -- the REAL engine's cost (window-major; the schedule above is a
-    #    layer-outer hypothesis no engine implements) -----------------------
+    # -- the streaming engine's cost (window-major) --------------------------
     if bench:
         wm = C.window_major_cost(
             cen, ms_per_matrix=bench["seconds_per_matrix"] * 1000.0,
@@ -554,17 +770,38 @@ def plan(args: argparse.Namespace, con: Console) -> Dict[str, Any]:
                  "show determinism. Use --runs 2 to submit." % args.runs)
         out["submittable"] = False
 
-    con.warn("The forward-pass term is an ESTIMATE, not a measurement. 34 of this "
-             "model's 45 layers are Kimi-Delta linear attention, whose only known "
-             "fast paths are Triton/CUDA or a fused MLX kernel; whether a "
-             "torch/MPS path exists at usable speed is UNVERIFIED. If it falls "
-             "back to the reference implementation the run is much slower.")
+    if flash_class and not layer_outer_route:
+        con.warn("The forward-pass term is an ESTIMATE, not a measurement. 34 of "
+                 "this model's 45 layers are Kimi-Delta linear attention, whose "
+                 "only known fast paths are Triton/CUDA or a fused MLX kernel; "
+                 "whether a torch/MPS path exists at usable speed is UNVERIFIED. "
+                 "If it falls back to the reference implementation the run is "
+                 "much slower.")
 
     # -- engine ------------------------------------------------------------
     con.say("")
     engines = load_engines()
     engine = engines.get(lane)
-    if engine is None:
+    if layer_outer_route:
+        # measure-local's lanes drive stream_score, which does not read this
+        # surface (README support matrix); the run that exists is the dataset
+        # route.  Print the command rather than a green "engine pinned" line.
+        con.say("HOW TO RUN IT  (measure-local's lanes read packed/native-bf16 Flash "
+                "trees only; this target is captured by the dataset route)")
+        for line in dataset_route_commands(out.get("artifact", {}), surface_name,
+                                           bool(geometry and geometry.is_glm53_class)):
+            con.say("  " + line)
+        out["engine"] = {"lane": "dataset-route",
+                         "entrypoint": "engines/tools/hf_capture.py",
+                         "schedule": "layer-outer",
+                         "wrapper": "bin/fidelity-dataset capture --engine hf-transformers"}
+        if not (args.dry_run or args.estimate_only):
+            raise Refusal(
+                "measure-local cannot execute this surface (%s); use the dataset "
+                "route printed above" % surface_name,
+                ["bin/fidelity-dataset capture --engine hf-transformers ... -- "
+                 "--schedule layer-outer (README.md, Recipe 2)"])
+    elif engine is None:
         problem("no engine configured for lane %r" % lane,
                 ["known lanes: " + ", ".join(sorted(engines))])
     else:
