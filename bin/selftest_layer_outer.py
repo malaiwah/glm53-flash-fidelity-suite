@@ -400,31 +400,47 @@ def _body(work):
         from transformers import AutoConfig
         import transformers as _tf
 
-        def stream_vs_full(checkpoint, label):
-            config = AutoConfig.from_pretrained(checkpoint)
-            cls = getattr(_tf, list(config.architectures)[0])
-            reference = cls.from_pretrained(checkpoint, dtype=torch.bfloat16)
-            reference_sd = dict(reference.state_dict())
+        def stream_params(checkpoint, cls, config, expert_fill):
             streamer = layer_outer.build_streamed_model(
-                checkpoint, cls, config, "bfloat16", "cpu", lambda **kw: None)
-            equal, freed, checked = True, True, 0
+                checkpoint, cls, config, "bfloat16", "cpu", lambda **kw: None,
+                expert_fill=expert_fill)
+            params, freed = {}, True
             for index in range(len(streamer.layers)):
                 streamer.load_layer(index)
                 names = streamer._load_layer_keys(index)
                 for name in names:
-                    checked += 1
-                    if not torch.equal(streamer.model.get_parameter(name), reference_sd[name]):
-                        equal = False
+                    params[name] = streamer.model.get_parameter(name).detach().clone()
                 streamer.free_layer(index)
                 if any(streamer.model.get_parameter(n).device.type != "meta" for n in names):
                     freed = False
-            del reference, reference_sd
-            return equal, freed, checked
+            return params, freed, streamer
 
-        equal, freed, checked = stream_vs_full(model, "dense")
+        def stream_vs_full(checkpoint, label):
+            """(equal to from_pretrained, freed, checked, direct == converter, fill stats)."""
+            config = AutoConfig.from_pretrained(checkpoint)
+            cls = getattr(_tf, list(config.architectures)[0])
+            reference = cls.from_pretrained(checkpoint, dtype=torch.bfloat16)
+            reference_sd = dict(reference.state_dict())
+            direct, freed, streamer = stream_params(checkpoint, cls, config,
+                                                    layer_outer.EXPERT_FILL_DIRECT)
+            converter, _, _ = stream_params(checkpoint, cls, config,
+                                            layer_outer.EXPERT_FILL_CONVERTER)
+            equal = all(torch.equal(direct[name], reference_sd[name]) for name in direct)
+            same = (set(direct) == set(converter)
+                    and all(torch.equal(direct[name], converter[name]) for name in direct))
+            del reference, reference_sd
+            return equal, freed, len(direct), same, layer_outer.expert_fill_evidence(streamer)
+
+        equal, freed, checked, same, fill = stream_vs_full(model, "dense")
         check("L4 every streamed layer parameter is byte-identical to from_pretrained's",
               equal and checked > 0, "%d parameters checked" % checked)
         check("L5 freeing a layer actually returns its parameters to the meta device", freed)
+        # ---- EfficiencyFixes (review-efficiency S1-1 / S2-3) -------------------
+        check("L4b a dense checkpoint has nothing for the direct expert fill and the two "
+              "loader modes agree byte for byte",
+              same and fill["targets_filled"] == 0 and fill["mode"] == "direct",
+              json.dumps(fill)[:200])
+        # ---- end EfficiencyFixes -----------------------------------------------
 
         # -- L6 ------------------------------------------------------------------
         moe = tiny_moe_model(os.path.join(work, "moe"))
@@ -432,10 +448,56 @@ def _body(work):
             check("L6 a fused-expert MoE checkpoint streams byte-exactly", True,
                   "SKIPPED: this transformers cannot build a tiny Qwen3-MoE")
         else:
-            moe_equal, moe_freed, moe_checked = stream_vs_full(moe, "moe")
+            moe_equal, moe_freed, moe_checked, moe_same, moe_fill = stream_vs_full(moe, "moe")
             check("L6 a fused-expert MoE checkpoint streams byte-exactly "
                   "(the WeightConverter path)", moe_equal and moe_checked > 0,
                   "%d parameters checked" % moe_checked)
+            # ---- EfficiencyFixes (review-efficiency S1-1 / S2-3) ---------------
+            # The direct fill writes each per-expert slice straight into the
+            # fused parameter (gate rows first, then up; down by expert) from a
+            # staging buffer read off the shard bytes; the converter's
+            # stack-then-cat result must be the SAME BYTES, parameter by
+            # parameter, and every routed-expert parameter of every layer must
+            # actually have gone the direct way.
+            check("L6b the direct expert fill is byte-identical to the converter path on "
+                  "every fused expert parameter, and filled every one of them",
+                  moe_same and moe_fill["mode"] == "direct"
+                  and moe_fill["targets_filled"] == 2 * 3 and moe_fill["layers_filled"] == 3
+                  and moe_fill["staged_slices"] == 3 * 4 * 3 and moe_fill["decoded_slices"] == 0
+                  and not moe_fill["declined"],
+                  json.dumps(moe_fill)[:300])
+            # A bf16 checkpoint missing one expert is NOT eligible (the fill
+            # would have to guess), so it goes to the converter and is refused
+            # there exactly as before -- the parameter stays on meta.
+            partial = os.path.join(work, "moe-missing-expert")
+            shutil.copytree(moe, partial)
+            from safetensors.torch import load_file as _lf, save_file as _sf
+            shard = os.path.join(partial, "model.safetensors")
+            tensors = _lf(shard)
+            victim = next(k for k in sorted(tensors) if k.endswith("experts.2.up_proj.weight"))
+            del tensors[victim]
+            _sf(tensors, shard, metadata={"format": "pt"})
+            index_path = os.path.join(partial, "model.safetensors.index.json")
+            if os.path.isfile(index_path):
+                idx = json.load(open(index_path))
+                idx["weight_map"].pop(victim, None)
+                json.dump(idx, open(index_path, "w"))
+            config = AutoConfig.from_pretrained(partial)
+            cls = getattr(_tf, list(config.architectures)[0])
+            streamer = layer_outer.build_streamed_model(
+                partial, cls, config, "bfloat16", "cpu", lambda **kw: None)
+            refused = None
+            try:
+                streamer.load_layer(int(victim.split(".")[2]))
+            except layer_outer.LayerOuterError as exc:
+                refused = str(exc)
+            declined = layer_outer.expert_fill_evidence(streamer)["declined"]
+            check("L6c a checkpoint missing one expert slice is declined by the direct fill "
+                  "(named, with the count) and the converter path refuses it as before",
+                  refused is not None and "meta device" in refused
+                  and any("gate_up_proj" in k and "7 of 8" in v for k, v in declined.items()),
+                  "refused=%r declined=%r" % ((refused or "")[:160], declined))
+            # ---- end EfficiencyFixes -------------------------------------------
 
         # -- L7 ------------------------------------------------------------------
         # Stage A: transformers enumerates each shard's OWN header, not the pruned
@@ -770,6 +832,135 @@ def _body(work):
               and victim[:-len("_scale_inv")] in text,
               "rc=%s tail=%s" % (proc.returncode, text[-300:]))
 
+    # ---- EfficiencyFixes (review-efficiency S1-2 / S1-1) ----------------------
+    # -- L18: the FP8 decode runs on the capture DEVICE under a fail-closed gate.
+    # No CUDA on the selftest host, so the device seam is driven with a stub:
+    # a stub that returns the reference bytes passes and is counted, a stub
+    # that perturbs one element is REFUSED by tensor, block, device and
+    # max_abs_diff. The fixture's 12-wide block leaves every tensor with a
+    # partial last block, i.e. every tensor is on the always-check list.
+    moe_fp8 = os.path.join(work, "fp8-moe")
+    if os.path.isdir(moe_fp8):
+        from transformers import AutoConfig as _AC
+        fp8_cfg = _AC.from_pretrained(moe_fp8)
+        fp8_plan = LO.fp8_checkpoint_plan(fp8_cfg)
+        shard_tensors = load_file(os.path.join(moe_fp8, "model.safetensors"))
+        fp8_key = next(k for k in sorted(shard_tensors)
+                       if k.endswith("experts.0.gate_proj.weight"))
+        pair = {fp8_key: shard_tensors[fp8_key],
+                fp8_key + "_scale_inv": shard_tensors[fp8_key + "_scale_inv"]}
+
+        def faithful_stub(quantized, scales, dtype, block, device):
+            return LO.dequantize_block_fp8(quantized, scales, dtype, block)
+
+        def perturbing_stub(quantized, scales, dtype, block, device):
+            out = LO.dequantize_block_fp8(quantized, scales, dtype, block).clone()
+            out.view(-1)[3] = out.view(-1)[3] + 1
+            return out
+
+        def fp8_stats():
+            return {"dequantized": 0, "scales_consumed": 0, "fp8_bytes": 0}
+
+        refusal = None
+        try:
+            LO.materialize_fp8_subset(pair, fp8_plan, torch.bfloat16, fp8_stats(),
+                                      device="stub:0", parity_all=True,
+                                      device_decode=perturbing_stub)
+        except LO.LayerOuterError as exc:
+            refusal = str(exc)
+        check("L18a a device decode that differs from the host decode by one element is "
+              "REFUSED naming tensor, block, device and max_abs_diff",
+              refusal is not None and fp8_key in refusal and "stub:0" in refusal
+              and "max_abs_diff=" in refusal and "block (12, 12)" in refusal
+              and "not bitwise the host decode" in refusal,
+              (refusal or "no refusal")[:240])
+        refusal = None
+        try:
+            LO.materialize_fp8_subset(pair, fp8_plan, torch.bfloat16, fp8_stats(),
+                                      device="stub:0", parity_all=False,
+                                      device_decode=perturbing_stub)
+        except LO.LayerOuterError as exc:
+            refusal = str(exc)
+        check("L18b ... and a partial-block tensor is checked on EVERY layer, not only the "
+              "first (parity_all=False still refuses)", refusal is not None,
+              (refusal or "no refusal")[:120])
+        stats = fp8_stats()
+        offered = []
+        out = LO.materialize_fp8_subset(pair, fp8_plan, torch.bfloat16, stats, device="stub:0",
+                                        parity_all=True, device_decode=faithful_stub,
+                                        sink=lambda key, tensor: offered.append(key) or True)
+        parity = LO.fp8_device_parity_evidence(stats)
+        check("L18c a faithful device decode passes, is counted in the receipt block by "
+              "device and tensor count, and the decoded tensor goes to the sink, not the dict",
+              parity["fp8_decode_device"] == "stub:0" and parity["fp8_device_parity"] == "passed"
+              and parity["fp8_device_parity_checked_tensors"] == 1
+              and parity["fp8_device_parity_checked_partial_block"] == 1
+              and offered == [fp8_key] and out == {},
+              json.dumps(parity) + repr(offered))
+        host_stats = fp8_stats()
+        LO.materialize_fp8_subset(pair, fp8_plan, torch.bfloat16, host_stats, device="cpu",
+                                  parity_all=True)
+        check("L18d a host decode records itself as such (no parity to claim)",
+              LO.fp8_device_parity_evidence(host_stats)["fp8_device_parity"] == "not-applicable"
+              and LO.fp8_device_parity_evidence(host_stats)["fp8_decode_device"] == "cpu",
+              json.dumps(LO.fp8_device_parity_evidence(host_stats)))
+        # The receipt of the L16c FP8 capture (a CPU run) carries the decode
+        # device and the expert-fill block: the fused experts of a decoded
+        # checkpoint came from the decoder's tensors, none from the converter.
+        from fidelity import dsformat as _F
+        fp8_out = os.path.join(work, "fp8-moe-capture")
+        manifest_path = os.path.join(fp8_out, _F.MANIFEST_NAME)
+        decode, fill_block = {}, {}
+        if os.path.isfile(manifest_path):
+            manifest = json.load(open(manifest_path))
+            runtime = json.load(open(os.path.join(fp8_out, manifest["runtime"]["file"])))
+            decode = runtime["capture_tool"]["weights_decode"] or {}
+            fill_block = runtime["capture_tool"].get("expert_fill") or {}
+        check("L18e the sealed FP8 receipt names the decode device and the direct fill: "
+              "every routed-expert slice came from the decoder, none was staged",
+              decode.get("fp8_decode_device") == "cpu"
+              and decode.get("fp8_device_parity") == "not-applicable"
+              and fill_block.get("mode") == "direct"
+              and fill_block.get("targets_filled") == 2 * 2
+              and fill_block.get("decoded_slices") == 2 * 4 * 3
+              and fill_block.get("staged_slices") == 0,
+              json.dumps(fill_block)[:300] + json.dumps(
+                  {k: v for k, v in decode.items() if k.startswith("fp8_")}))
+        # A decoded checkpoint missing one expert's (weight, scale) pair: the
+        # fill is eligible (a decoder is active), the decoder never produces
+        # that slice, and the layer is REFUSED by the slice's name before a
+        # window runs -- never a fused parameter with undefined rows.
+        short = os.path.join(work, "fp8-moe-missing-expert")
+        shutil.copytree(moe_fp8, short)
+        from safetensors.torch import save_file as _save
+        gone = next(k for k in sorted(shard_tensors) if k.endswith("experts.1.down_proj.weight"))
+        trimmed = {k: v for k, v in shard_tensors.items()
+                   if k not in (gone, gone + "_scale_inv")}
+        _save(trimmed, os.path.join(short, "model.safetensors"), metadata={"format": "pt"})
+        idx_path = os.path.join(short, "model.safetensors.index.json")
+        if os.path.isfile(idx_path):
+            idx = json.load(open(idx_path))
+            for k in (gone, gone + "_scale_inv"):
+                idx["weight_map"].pop(k, None)
+            json.dump(idx, open(idx_path, "w"))
+        import transformers as _tf2
+        short_cfg = _AC.from_pretrained(short)
+        short_cls = getattr(_tf2, list(short_cfg.architectures)[0])
+        streamer = LO.build_streamed_model(short, short_cls, short_cfg, "bfloat16", "cpu",
+                                           lambda **kw: None)
+        refusal = None
+        try:
+            streamer.load_layer(int(gone.split(".")[2]))
+        except LO.LayerOuterError as exc:
+            refusal = str(exc)
+        check("L18f a decoded checkpoint missing one expert slice is REFUSED by the fill, "
+              "naming the slice that was never delivered",
+              refusal is not None and "never delivered" in refusal and gone in refusal,
+              (refusal or "no refusal")[:240])
+    else:
+        check("L18 FP8 device gate rungs", True, "SKIPPED: no fp8-moe fixture (see L16)")
+    # ---- end EfficiencyFixes -------------------------------------------------
+
     # -- L17: the modelopt NVFP4 form this schedule DECODES (flagship) ---------
     # No tiny glm_moe_dsa can be built (the geometry table refuses anything
     # but the real 78x256 stack by name, which is the point), so the plan is
@@ -820,8 +1011,9 @@ def _body(work):
     plans = LO.checkpoint_decode_plans(_Config(real_config), nv_dir, lambda **kw: events.append(kw))
     nv_plan = plans[4]
     check("L17a a modelopt NVFP4 config over a full-census index plans the nvfp4 decode "
-          "and nothing else (5-tuple: fp8/trellis None)",
-          len(plans) == 5 and plans[0] is None and plans[1] is None and plans[2] is None
+          "and nothing else (6-tuple: fp8/trellis/gguf None)",
+          len(plans) == 6 and plans[0] is None and plans[1] is None and plans[2] is None
+          and plans[5] is None
           and nv_plan is not None and nv_plan["quant_method"] == "modelopt"
           and nv_plan["quant_algo"] == "NVFP4" and nv_plan["group_size"] == 16
           and nv_plan["activation_scheme"] == "static-nvfp4-not-applied"

@@ -143,7 +143,8 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                   resolved_panel_binding=None,
                   panel_binding_file_sha256="2" * 64,
                   panel_binding_file="selftest.binding.json",
-                  codec=None, declared_bits=None, weights_decode=None):
+                  codec=None, declared_bits=None, weights_decode=None,
+                  resources=None):
     """Build a complete, sealed, conformant dataset.  Every knob is a test axis.
 
     `codec`, `declared_bits` and `weights_decode` are the candidate identity a
@@ -354,7 +355,7 @@ def build_dataset(root, *, role="root", form="hidden", lane="sealed-ep8", seed=1
                  "checkpoint_identity_sha256": checkpoint_identity},
         runtime_environment={"cold_run": cold_run or process_label},
         source_files={"engines/tools/stream_score.py": F.sha256_hex("selftest")},
-        capture_tool=capture_tool)
+        capture_tool=capture_tool, resources=resources)
 
     scope = (dsmanifest.native_scope() if not quantized else dsmanifest.scope_block(
         [{"tensor_class": name, "treatment": "quantized", "format": "exl3-mcg",
@@ -2324,6 +2325,84 @@ def section_local_root_qualification(tmp):
               "section Q left no q-qualification.json/q-job.json to reuse")
 
 
+# ---------------------------------------------------------------------------
+# E -- EfficiencyFixes (review-efficiency S2-2 / S3-2): the additive
+# `resources` block and the single-read digests
+# ---------------------------------------------------------------------------
+
+
+RESOURCES_FIXTURE = {
+    "device_name": "selftest-card", "peak_cuda_allocated_bytes": 37530421760,
+    "peak_cuda_reserved_bytes": 57078112256, "peak_resident_weight_bytes": 23561229056,
+    "peak_rss_bytes": 4096, "rss_units_source": "Linux ru_maxrss",
+    "checkpoint_bytes": 1506667387408, "checkpoint_files": 282,
+    "seconds": {"identity": 1.0, "resident_load": 2.0, "layer_load_sum": 481.0,
+                "layer_load_max": 9.88, "layer_loads": 78, "decode_sum": None,
+                "fill_sum": None, "forward_sum": 45.0, "seal": 0.5, "elapsed": 1947.0},
+    "bytes": {"checkpoint_read": 1506667387408, "weights_h2d": 1506667387408,
+              "hidden_d2h": 655360},
+    "forward_timing": "cuda-events", "note": "fixture",
+}
+
+
+def section_resources(tmp):
+    print("\n== E: capture_runtime.resources (additive) and one-read digests ==")
+    without = os.path.join(tmp, "e-without")
+    withres = os.path.join(tmp, "e-with")
+    m_without = build_dataset(without, seed=11)
+    m_with = build_dataset(withres, seed=11, resources=RESOURCES_FIXTURE)
+    for label, root in (("without", without), ("with", withres)):
+        report = dsvalidate.validate_dataset(root, verify_tensors=True, strict=True)
+        check("E1 a sealed dataset %s a resources block validates (strict, tensors verified)"
+              % label, report.passed,
+              "; ".join("%s:%s" % (e["code"], e["message"]) for e in report.errors)[:300])
+    runtime_with = F.read_json(os.path.join(withres, m_with["runtime"]["file"]))
+    runtime_without = F.read_json(os.path.join(without, m_without["runtime"]["file"]))
+    check("E2 the runtime receipt carries the block verbatim and seals over it",
+          runtime_with.get("resources") == RESOURCES_FIXTURE
+          and "resources" not in runtime_without
+          and F.recompute_seal(runtime_with, "receipt_sha256") == runtime_with["receipt_sha256"]
+          and runtime_with["receipt_sha256"] != runtime_without["receipt_sha256"],
+          json.dumps(runtime_with.get("resources"))[:200])
+    check("E3 resources is provenance, not identity: capture_content_digest and "
+          "lane_identity_inputs are unchanged by it",
+          m_with["capture"]["capture_content_digest"] == m_without["capture"]["capture_content_digest"]
+          and runtime_with["lane_identity_inputs"] == runtime_without["lane_identity_inputs"]
+          and "resources" not in runtime_with["lane_identity_inputs"]
+          and runtime_with["stack_fingerprint_sha256"] == runtime_without["stack_fingerprint_sha256"],
+          "%s vs %s" % (m_with["capture"]["capture_content_digest"][:16],
+                        m_without["capture"]["capture_content_digest"][:16]))
+    # S3-2: one streaming read feeding three hashers gives the three frozen
+    # preimages' values exactly, on every tensor file of the fixture (window
+    # payloads with __metadata__, and the head).
+    capture_doc = F.read_json(os.path.join(withres, m_with["capture"]["manifest_file"]))
+    files = [(os.path.join(withres, os.path.dirname(m_with["capture"]["manifest_file"]),
+                           record["file"]), record["key"])
+             for record in capture_doc["records"]]
+    files.append((os.path.join(withres, m_with["head"]["file"]), m_with["head"]["tensor_key"]))
+    agree = 0
+    for path, key in files:
+        got = F.tensor_digests(path, key)
+        if got == {"sha256": F.file_sha256(path), "payload_sha256": F.payload_sha256(path),
+                   "tensor_content_sha256": F.tensor_content_sha256(path, key)}:
+            agree += 1
+    check("E4 tensor_digests (one read) equals file_sha256 + payload_sha256 + "
+          "tensor_content_sha256 on every fixture tensor file",
+          agree == len(files) and len(files) > 1, "%d of %d" % (agree, len(files)))
+    record = capture_doc["records"][0]
+    path = os.path.join(withres, os.path.dirname(m_with["capture"]["manifest_file"]), record["file"])
+    got = F.tensor_digests(path, record["key"])
+    check("E5 ... and those are the values the sealed record carries",
+          got["sha256"] == record["sha256"] and got["payload_sha256"] == record["payload_sha256"]
+          and got["tensor_content_sha256"] == record["tensor_content_sha256"])
+    try:
+        F.tensor_digests(path, "no.such.tensor")
+        missing_ok = False
+    except F.FormatError as exc:
+        missing_ok = exc.code == "bad_tensor_file"
+    check("E6 an absent key is a bad_tensor_file refusal, as before", missing_ok)
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="fidelity-dataset-selftest-")
     try:
@@ -2336,6 +2415,7 @@ def main():
         section_hostile_fetch(tmp)
         section_root_qualification(tmp)
         section_local_root_qualification(tmp)
+        section_resources(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("\nselftest_fidelity_dataset: %d passed, %d failed" % (len(PASS), len(FAIL)))

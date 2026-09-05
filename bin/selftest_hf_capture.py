@@ -794,6 +794,49 @@ def _body(work):
           and evidence.get("exact_match") is True,
           "evidence=%r" % evidence)
 
+    # ---- EfficiencyFixes (review-efficiency S3-3 / S2-2) ------------------
+    # -- A30 -----------------------------------------------------------------
+    # The head is written in two write() calls and hashed while streaming.
+    # The bytes on disk must be `st_bytes(...)`'s exactly and the digests
+    # returned must be the three frozen preimages recomputed from the file.
+    import torch as _torch
+    _torch.manual_seed(30)
+    synthetic_head = (_torch.randn(37, 11) * 3).to(_torch.bfloat16)
+    streamed_path = os.path.join(work, "head-streamed.safetensors")
+    digests = HC.write_st_tensor(streamed_path, "lm_head.weight", "BF16",
+                                 list(synthetic_head.shape), HC._bf16_view(synthetic_head))
+    legacy = HC.st_bytes("lm_head.weight", "BF16", list(synthetic_head.shape),
+                         HC._bf16_raw(synthetic_head))
+    check("A30 the streamed head file is byte-identical to st_bytes() and its digests "
+          "are the recomputed file/payload/content sha256",
+          open(streamed_path, "rb").read() == legacy
+          and digests["file_sha256"] == F.file_sha256(streamed_path)
+          and digests["payload_sha256"] == F.payload_sha256(streamed_path)
+          and digests["tensor_content_sha256"] == F.tensor_content_sha256(
+              streamed_path, "lm_head.weight"),
+          json.dumps(digests))
+    # -- A31 -----------------------------------------------------------------
+    # The sealed runtime receipt of dataset A carries the resources block
+    # beside (not inside) lane_identity_inputs, with the stage clocks filled
+    # from the run, and names the forward clock it used.
+    runtime_a = json.load(open(os.path.join(a, manifest_a["runtime"]["file"])))
+    res = runtime_a.get("resources") or {}
+    check("A31 capture_runtime.resources is on the sealed receipt with the measured "
+          "peaks, stage seconds and bytes, outside lane_identity_inputs",
+          res.get("peak_rss_bytes", 0) > 0
+          and res.get("checkpoint_bytes", 0) > 0 and res.get("checkpoint_files", 0) > 0
+          and (res.get("seconds") or {}).get("identity") is not None
+          and res["seconds"].get("resident_load") is not None
+          and res["seconds"].get("forward_sum") is not None
+          and res["seconds"].get("elapsed", 0) > 0
+          and (res.get("bytes") or {}).get("hidden_d2h", 0) > 0
+          and res.get("forward_timing") == "wall-clock"
+          and "resources" not in runtime_a["lane_identity_inputs"]
+          and manifest_a["capture"]["capture_content_digest"]
+          == json.load(open(os.path.join(b, F.MANIFEST_NAME)))["capture"]["capture_content_digest"],
+          json.dumps(res)[:400])
+    # ---- end EfficiencyFixes -----------------------------------------------
+
     # -- A22 -----------------------------------------------------------------
     # R2 in docs/GLM53-ROOT-FEASIBILITY.md: `load_model` materialised the whole
     # model on CPU and then called `.to(device)`. For zai-org/GLM-5.3-BF16 that

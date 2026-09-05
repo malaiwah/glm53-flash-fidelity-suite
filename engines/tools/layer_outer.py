@@ -445,7 +445,8 @@ def _model_device(device: str):
 
 
 # ---------------------------------------------------------------------------
-# FP8 block-scaled checkpoints: decode to bf16 on the host, per tensor
+# FP8 block-scaled checkpoints: decode to bf16 on the capture device, per
+# tensor, under a host-parity gate
 # ---------------------------------------------------------------------------
 
 FP8_DECODE_METHOD = "fp8-block-dequant-to-bf16"
@@ -548,8 +549,25 @@ def dequantize_block_fp8(quantized, scales, output_dtype, block_size=(128, 128))
     return out
 
 
+def _fp8_device_decode(quantized, scales, torch_dtype, block_size, device):
+    """The production FP8 decode: fp8 bytes + fp32 scales to `device`, then the
+    unchanged reference arithmetic there. Separated so a selftest can stand a
+    perturbing stub in its place and watch the parity gate refuse."""
+    return dequantize_block_fp8(quantized.to(device, non_blocking=True),
+                                scales.to(device), torch_dtype, block_size)
+
+
+def _fp8_has_partial_block(quantized, block_size) -> bool:
+    rows, cols = quantized.shape
+    return bool(rows % int(block_size[0]) or cols % int(block_size[1]))
+
+
 def materialize_fp8_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_dtype,
-                           stats: Dict[str, int]) -> Dict[str, Any]:
+                           stats: Dict[str, int], device: str = "cpu",
+                           parity_all: bool = False,
+                           sink: Optional[Callable[[str, Any], bool]] = None,
+                           device_decode: Optional[Callable[..., Any]] = None
+                           ) -> Dict[str, Any]:
     """Replace every (weight, weight_scale_inv) pair in a lazy subset by one decoded tensor.
 
     Keys keep their order and the weight keeps its name, so the model's own
@@ -557,9 +575,29 @@ def materialize_fp8_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_d
     A scale without its weight, or an fp8 tensor without a scale, is refused:
     the second case is the silent one (the payload would load as bf16 with
     the block scale never applied).
+
+    DECODES ON `device`. The arithmetic is one fp8->fp32 promotion (exact),
+    one fp32 multiply and one round-to-nearest-even cast per element, none
+    of which is a reduction, so CPU and CUDA are expected to agree bitwise --
+    and "expected" is not the standard here. Every run RE-DECODES ON THE HOST
+    and asserts `torch.equal` for (a) every tensor of the first decoded layer
+    (`parity_all`) and (b) every tensor whose shape leaves a partial block
+    under the plan's block size (GLM-5.3's 576-row kv_a_proj_with_mqa), on
+    every layer. A mismatch REFUSES the run by tensor, dtype, device and
+    max_abs_diff; it never falls back to the host result. On the pod this is
+    one layer's worth of the old host arithmetic per run instead of 75. The
+    counts land in `stats` and the receipt's weights_decode block says so.
+
+    `sink(key, tensor) -> bool` receives each decoded tensor as soon as it
+    exists; when it returns True the tensor is NOT held in the returned dict
+    (the direct expert fill copies it into its fused slice and drops it, so a
+    layer's 19 GB of decoded experts never accumulates anywhere).
     """
     import torch
 
+    decode = device_decode if device_decode is not None else _fp8_device_decode
+    on_host = str(device) == "cpu"
+    block = plan["weight_block_size"]
     out: Dict[str, Any] = {}
     scale_keys = {key for key in subset if key.endswith(FP8_SCALE_SUFFIX)}
     for key, value in subset.items():
@@ -569,11 +607,40 @@ def materialize_fp8_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_d
         if scale_key in scale_keys:
             quantized = _eager(value)
             scales = _eager(subset[scale_key])
-            out[key] = dequantize_block_fp8(quantized, scales, torch_dtype,
-                                            plan["weight_block_size"])
+            if on_host:
+                decoded = dequantize_block_fp8(quantized, scales, torch_dtype, block)
+            else:
+                decoded = decode(quantized, scales, torch_dtype, block, device)
+                partial = _fp8_has_partial_block(quantized, block)
+                if parity_all or partial:
+                    host = dequantize_block_fp8(quantized, scales, torch_dtype, block)
+                    mirrored = decoded.to("cpu")
+                    if mirrored.shape != host.shape or mirrored.dtype != host.dtype \
+                            or not torch.equal(host, mirrored):
+                        diff = ((mirrored.to(torch.float32) - host.to(torch.float32))
+                                .abs().max().item()
+                                if mirrored.shape == host.shape else float("inf"))
+                        raise LayerOuterError(
+                            "REFUSED: block-scaled FP8 decode of %s (%s, block %s) on %s "
+                            "is not bitwise the host decode: max_abs_diff=%r, output "
+                            "dtype %s. The receipt would claim %s and the bytes would "
+                            "be something else; decode on the host with --device cpu "
+                            "or fix the device arithmetic."
+                            % (key, tuple(quantized.shape), tuple(block), device, diff,
+                               torch_dtype, FP8_DECODE_REFERENCE))
+                    stats["device_parity_checked"] = stats.get("device_parity_checked", 0) + 1
+                    if partial:
+                        stats["device_parity_partial_block_checked"] = (
+                            stats.get("device_parity_partial_block_checked", 0) + 1)
+                    del host, mirrored
             stats["dequantized"] += 1
             stats["scales_consumed"] += 1
             stats["fp8_bytes"] += int(quantized.numel())
+            stats["decode_device"] = "cpu" if on_host else str(device)
+            if sink is not None and sink(key, decoded):
+                del decoded
+                continue
+            out[key] = decoded
             continue
         dtype = getattr(value, "dtype", None)
         if dtype is None and hasattr(value, "get_dtype"):
@@ -818,7 +885,9 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
                                fp8_stats: Optional[Dict[str, int]] = None,
                                device: str = "cpu",
                                composition: Optional[Dict[str, Any]] = None,
-                               expected_shape: Optional[Callable[[str], Optional[Tuple[int, ...]]]] = None
+                               expected_shape: Optional[Callable[[str], Optional[Tuple[int, ...]]]] = None,
+                               fp8_parity_all: bool = False,
+                               sink: Optional[Callable[[str, Any], bool]] = None
                                ) -> Dict[str, Any]:
     """Replace every trellis payload group in a lazy subset by one decoded `.weight`.
 
@@ -834,7 +903,16 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
     block-scaled FP8 beside the trellis payloads -- wrldsuksgo2mars'
     `GLM-5.3-EXL3-K4-v1` keeps `shared_experts`/`self_attn` as
     `weight_scale_inv` FP8 and quantizes only the routed experts, so one
-    subset carries both surfaces and both hooks must run over it.
+    subset carries both surfaces and both hooks must run over it. The FP8
+    half decodes on `device` too, under `materialize_fp8_subset`'s parity gate.
+
+    RANK-SHARDED modules are held per rank in `torch_dtype`, not fp32, and
+    composed the moment their last rank decodes: a concatenation places
+    elements and a cast rounds each element on its own, so cast-then-cat is
+    the same bytes as cat-then-cast (`selftest_trellis_decode_offline.py`
+    [6c] asserts it), and a 768-module layer no longer parks 38.7 GB of fp32
+    shards on the device until the loop ends. `sink` is the direct expert
+    fill's hook, as in `materialize_fp8_subset`.
     """
     surface = _exl3hf()
     groups = trellis_payload_groups(subset)
@@ -850,7 +928,8 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
         for key in ("dequantized", "scales_consumed", "fp8_bytes"):
             counters.setdefault(key, 0)
         out: Dict[str, Any] = materialize_fp8_subset(
-            passthrough, fp8_plan, torch_dtype, counters)
+            passthrough, fp8_plan, torch_dtype, counters, device=device,
+            parity_all=fp8_parity_all, sink=sink)
     else:
         # No FP8 plan means the index carries no scale tensor at all -- so an
         # fp8 tensor here has NO scale anywhere and would load as bf16 with
@@ -868,6 +947,13 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
                     % (key, FP8_SCALE_SUFFIX))
         out = dict(passthrough)
     parts: Dict[str, Dict[int, Any]] = {}
+    tp = int(composition["tp"]) if composition is not None else None
+
+    def emit(weight_key: str, tensor) -> None:
+        if sink is not None and sink(weight_key, tensor):
+            return
+        out[weight_key] = tensor
+
     for module, objects in groups.items():
         payload = {}
         for name in TRELLIS_PAYLOAD_OBJECTS:
@@ -882,7 +968,7 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
                 % (module, objects["codebook"], observed, expected))
         decoded = surface.decode_payload_hf(
             payload["trellis"].to(device), payload["suh"].to(device),
-            payload["svh"].to(device), codebook=objects["codebook"])
+            payload["svh"].to(device), codebook=objects["codebook"]).to(torch_dtype)
         stats["decoded_modules"] += 1
         bits = int(payload["trellis"].shape[-1]) // 16
         stats["trellis_bits"] += bits
@@ -897,16 +983,24 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
                 "checkpoint carries two versions of one tensor and this schedule will "
                 "not pick one" % weight_key)
         if ranked is None:
-            out[weight_key] = decoded.to(torch_dtype)
+            emit(weight_key, decoded)
             continue
         if composition is None:
             raise LayerOuterError(
                 "REFUSED: %s is a rank-sharded payload but the plan carries no "
                 "composition (the config declared no hybrid_tr3_tail.tp)" % module)
-        parts.setdefault(ranked.group("module"), {})[int(ranked.group("rank"))] = decoded
+        by_rank = parts.setdefault(ranked.group("module"), {})
+        by_rank[int(ranked.group("rank"))] = decoded
+        stats["tp_rank_storage_dtype"] = str(decoded.dtype).replace("torch.", "")
+        if len(by_rank) >= tp:
+            del parts[ranked.group("module")]
+            emit(weight_key, _compose_tp_ranks(ranked.group("module"), by_rank, composition,
+                                               expected_shape, torch_dtype, stats))
+    # A module still here never reached `tp` ranks; `_compose_tp_ranks` refuses
+    # it by name rather than letting a partial projection go missing quietly.
     for module, by_rank in sorted(parts.items()):
-        out["%s.weight" % module] = _compose_tp_ranks(
-            module, by_rank, composition, expected_shape, torch_dtype, stats)
+        emit("%s.weight" % module, _compose_tp_ranks(
+            module, by_rank, composition, expected_shape, torch_dtype, stats))
     return out
 
 
@@ -990,6 +1084,9 @@ def _compose_tp_ranks(module: str, by_rank: Dict[int, Any], composition: Dict[st
             raise LayerOuterError(
                 "REFUSED: %s: the shapes admit concatenation along axis %d but the "
                 "artifact declares %r" % (module, axis, declared))
+    # The shards arrive already in `torch_dtype` (see materialize_trellis_subset):
+    # the cat places bytes and the `.to` is then the identity. Kept so a caller
+    # handing fp32 shards still gets the declared dtype.
     composed = torch.cat([by_rank[r] for r in range(tp)], dim=axis).to(torch_dtype)
     stats["tp_composed_modules"] = stats.get("tp_composed_modules", 0) + 1
     seen = stats.setdefault("tp_axes", {})
@@ -1242,6 +1339,210 @@ def materialize_nvfp4_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch
     return out
 
 
+#: The llama.cpp GGUF lane. Every byte of decode math is
+#: `engines/tools/gguf_surface.py`: block dequantizers transliterated from
+#: gguf-py 0.19.0 and proven BITWISE against `gguf.quants.dequantize` on real
+#: ranged-fetched blocks of the measured builds (F32/F16/BF16/Q8_0/Q4_K/Q5_K/
+#: Q6_K/Q3_K/IQ4_XS/IQ3_XXS/IQ3_S; gguf-evidence/dequant_*_ggufpy_ref.npy,
+#: `selftest_gguf_offline.py` rung 1), plus the glm-dsa name map, the per-head
+#: `kv_b_proj` composition and the fused-expert slot slicing, each proven EXACT
+#: against zai-org/GLM-5.3-BF16 (gguf-evidence/glmdsa-layout-audit.json). This
+#: module adds NO arithmetic: per layer it asks the surface for that layer's
+#: tensors under their OFFICIAL names -- dequantized on the capture device,
+#: composed, cast once to bf16 (official-float32 tensors kept fp32) -- and
+#: hands them to the same converter a bf16 checkpoint reaches. There is no
+#: safetensors tree at all: the "subset" of a layer is a set of official names
+#: the container proves it carries, and the bytes are read at decode time.
+GGUF_DECODE_METHOD = "gguf-dequant-to-bf16"
+GGUF_DECODE_REFERENCE = "engines/tools/gguf_surface.py::materialize_layer"
+GGUF_PARITY_EVIDENCE = ("engines/tools/gguf-evidence/manifest.json#dequant_fixtures + "
+                        "engines/tools/gguf-evidence/glmdsa-layout-audit.json")
+
+
+def _gguf():
+    """Import the surface lazily, like `_exl3hf`."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import gguf_surface
+
+    return gguf_surface
+
+
+def gguf_files_in(model_dir: str) -> List[str]:
+    """Every *.gguf under `model_dir` or exactly one build directory below it.
+
+    A GGUF repo is a shelf of builds in subdirectories; the plan downloads one
+    build's files under its repo-relative path, so the tree on the pod is
+    `<model_dir>/<build>/*.gguf` (plus the sidecars at the top). Two build
+    directories is a refusal: a measurement describes ONE artifact.
+    """
+    top = sorted(os.path.join(model_dir, n) for n in os.listdir(model_dir)
+                 if n.endswith(".gguf") and os.path.isfile(os.path.join(model_dir, n)))
+    builds = {}
+    for name in sorted(os.listdir(model_dir)):
+        sub = os.path.join(model_dir, name)
+        if os.path.isdir(sub):
+            files = sorted(os.path.join(sub, n) for n in os.listdir(sub) if n.endswith(".gguf"))
+            if files:
+                builds[name] = files
+    if top and builds:
+        raise LayerOuterError(
+            "REFUSED: %s holds .gguf files both at its top level and under %s; which "
+            "build is the artifact?" % (model_dir, ", ".join(sorted(builds))))
+    if len(builds) > 1:
+        raise LayerOuterError(
+            "REFUSED: %s holds %d GGUF build directories (%s); a measurement describes "
+            "ONE build" % (model_dir, len(builds), ", ".join(sorted(builds))))
+    return top or (next(iter(builds.values())) if builds else [])
+
+
+class _GgufSlot(object):
+    """The lazy 'slice' of one official tensor the GGUF lane will decode.
+
+    Stands where a `PySafeSlice` stands in the layer subsets: it names the
+    layer whose decode produces the tensor (`RESIDENT_LAYER` for embed/norm/
+    head). Nothing is read until `materialize_gguf_subset` decodes the layer.
+    """
+    __slots__ = ("layer", "name")
+
+    def __init__(self, layer: int, name: str):
+        self.layer = layer
+        self.name = name
+
+
+def gguf_checkpoint_plan(config, model_dir: str) -> Optional[Dict[str, Any]]:
+    """The exact GGUF form this schedule decodes, or None when there is no GGUF.
+
+    Pure detection from the container headers: `general.architecture` must be
+    one the surface's arch table knows (refused by name otherwise), the
+    geometry gate must hold, every tensor must be nameable and decodable, the
+    whole-file sha256 marker `gguf-files-verified.json` must sit beside the
+    build (the fetch stage writes it; without it the identity the receipt
+    claims is unverified), and the OFFICIAL config (the tree's config.json,
+    copied from the reference release) must say which layers own a DSA
+    indexer so the artifact's shared-layer copies can be recognised -- and
+    then PROVEN value-identical to their parents (`verify_shared_indexer_copies`)
+    before a single layer is decoded.
+
+    Returns the CONTRACT block (`weights_decode` = {method, quantization_config},
+    compared field for field against the controller's header-only mirror in
+    `measure_cloud._candidate_decode_plan`) with the loaded surface and its
+    partition under private `_` keys the caller pops.
+    """
+    files = gguf_files_in(model_dir)
+    if not files:
+        return None
+    surface_mod = _gguf()
+    cfg = _config_dict(config)
+    try:
+        container = surface_mod.GgufContainer([surface_mod.GgufFile(f) for f in files])
+        arch = surface_mod.arch_for(container.architecture)
+        full = surface_mod.indexer_full_layers_from_config(cfg, arch)
+        if arch.indexer_shared_copies and full is None:
+            raise LayerOuterError(
+                "REFUSED: %s carries indexer tensors on every layer and the tree's "
+                "config.json declares no indexer_types; copy the official release's "
+                "config.json beside the build (the candidate stage does)" % arch.key)
+        surface = surface_mod.load_gguf_surface(
+            files, repo=None, revision=None, require_file_hashes=True,
+            indexer_full_layers=full)
+        audit = surface_mod.audit_container(surface.container)
+        copies = surface_mod.verify_shared_indexer_copies(surface.container, surface.census)
+    except ValueError as exc:
+        raise LayerOuterError(
+            "REFUSED: %s. This schedule decodes the llama.cpp GGUF builds whose "
+            "architecture and ggml types gguf_surface has proven; another form needs "
+            "its kernel or name map authored and proven bitwise first." % exc) from None
+    # the official geometry the model will be built with must be the GGUF's
+    layers_declared = cfg.get("num_hidden_layers")
+    if layers_declared != arch.mtp_layer:
+        raise LayerOuterError(
+            "REFUSED: config.json declares %r decoder layers but the %s GGUF carries "
+            "%d decoder blocks before its MTP block" % (layers_declared, arch.key, arch.mtp_layer))
+    build = os.path.basename(os.path.dirname(files[0])) if os.path.dirname(files[0]) != model_dir.rstrip("/") else ""
+    contract = surface_mod.decode_contract(surface.container, build)
+    plan = dict(contract["quantization_config"])
+    plan["_surface"] = surface
+    plan["_partition"] = surface_mod.layer_partition(surface.census)
+    plan["_observed"] = {
+        "architecture": arch.key,
+        "family": arch.family,
+        "files_verified": surface.file_hash_verification,
+        "file_records": list(surface.file_records),
+        "container_audit": audit,
+        "shared_indexer_copies": copies,
+        "materialize_plan": surface_mod.materialize_plan(surface),
+        "checkpoint_identity_sha256": surface.checkpoint_identity_sha256(),
+    }
+    return plan
+
+
+def gguf_subsets(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """{official name: _GgufSlot} for every tensor the container carries.
+
+    This is what stands in for opening the safetensors shards: the streamer
+    routes these names by layer exactly as it routes checkpoint keys, so the
+    MTP block's 791 official names land above the model's layer count and are
+    reported as unexpected (the authored allowlist), the resident set is the
+    three top-level tensors, and every decoder layer gets its own bucket.
+    """
+    surface_mod = _gguf()
+    surface = plan["_surface"]
+    arch, census = surface.arch, surface.census
+    slots: Dict[str, Any] = {}
+    for layer, names in plan["_partition"].items():
+        for gguf_name in names:
+            role = surface_mod.classify_tensor(gguf_name, arch)
+            if role[0] == "top":
+                slots[role[1]] = _GgufSlot(layer, role[1])
+            elif role[0] == "direct":
+                slots[role[2]] = _GgufSlot(layer, role[2])
+            elif role[0] == "mla":
+                slots[arch.kv_b_name(layer)] = _GgufSlot(layer, arch.kv_b_name(layer))
+            elif role[0] == "routed":
+                for expert in range(arch.num_experts):
+                    name = arch.expert_name(layer, expert, role[2])
+                    slots[name] = _GgufSlot(layer, name)
+    return slots
+
+
+def materialize_gguf_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_dtype,
+                            stats: Dict[str, Any], device: str = "cpu") -> Dict[str, Any]:
+    """Decode one layer's GGUF tensors into official-named dense tensors.
+
+    `subset` is a bucket of `_GgufSlot`s that all name ONE layer (the streamer
+    buckets by layer); the surface decodes that layer on `device` -- the
+    quantized bytes cross the bus, not fp32 -- and the result is offered to the
+    converter (or the direct expert fill) under the official names. The set of
+    names produced must equal the set the bucket named: a tensor the container
+    promised and did not deliver is a refusal, not a random initialisation.
+    """
+    if not subset:
+        return {}
+    layers = {value.layer for value in subset.values() if isinstance(value, _GgufSlot)}
+    foreign = [key for key, value in subset.items() if not isinstance(value, _GgufSlot)]
+    if foreign or len(layers) != 1:
+        raise LayerOuterError(
+            "REFUSED: a GGUF layer bucket must hold the slots of exactly one layer "
+            "(layers %s, %d foreign keys)" % (sorted(layers), len(foreign)))
+    surface_mod = _gguf()
+    layer = layers.pop()
+    try:
+        out = surface_mod.materialize_layer(plan["_surface"], layer, torch_dtype=torch_dtype,
+                                            device=device, stats=stats)
+    except ValueError as exc:
+        raise LayerOuterError("REFUSED: %s" % exc) from None
+    if set(out) != set(subset):
+        missing = sorted(set(subset) - set(out))[:5]
+        stray = sorted(set(out) - set(subset))[:5]
+        raise LayerOuterError(
+            "REFUSED: the GGUF decode of layer %d produced %d tensors but the bucket "
+            "named %d (missing %s, stray %s)" % (layer, len(out), len(subset), missing, stray))
+    stats["layers_decoded"] = stats.get("layers_decoded", 0) + 1
+    return out
+
+
 def _quant_method(config) -> Optional[str]:
     qc = getattr(config, "quantization_config", None)
     if not qc:
@@ -1280,8 +1581,15 @@ def fp8_checkpoint_plan_for_mixed(config) -> Dict[str, Any]:
 def _materialized(subset: Dict[str, Any], fp8_plan, trellis_plan, trellis_fp8_plan,
                   torch_dtype, fp8_stats, trellis_stats,
                   device: str = "cpu", expected_shape=None,
-                  nvfp4_plan=None, nvfp4_stats=None) -> Dict[str, Any]:
-    """Whichever decoders this artifact needs, in the one order that is safe."""
+                  nvfp4_plan=None, nvfp4_stats=None,
+                  fp8_parity_all: bool = False, sink=None,
+                  gguf_plan=None, gguf_stats=None) -> Dict[str, Any]:
+    """Whichever decoders this artifact needs, in the one order that is safe.
+
+    `fp8_parity_all` and `sink` reach the FP8 and trellis decoders (see
+    `materialize_fp8_subset`); the NVFP4 decoder keeps its own contract and
+    hands back the decoded dict, which `do_load` then offers to the sink.
+    """
     if trellis_plan is not None:
         composition = (trellis_plan.get("_observed") or {}).get("composition")
         if composition is None:
@@ -1290,13 +1598,19 @@ def _materialized(subset: Dict[str, Any], fp8_plan, trellis_plan, trellis_fp8_pl
         return materialize_trellis_subset(
             subset, trellis_plan, torch_dtype, trellis_stats,
             fp8_plan=trellis_fp8_plan, fp8_stats=fp8_stats, device=device,
-            composition=composition, expected_shape=expected_shape)
+            composition=composition, expected_shape=expected_shape,
+            fp8_parity_all=fp8_parity_all, sink=sink)
     if nvfp4_plan is not None:
         return materialize_nvfp4_subset(
             subset, nvfp4_plan, torch_dtype,
             nvfp4_stats if nvfp4_stats is not None else {}, device=device)
+    if gguf_plan is not None:
+        return materialize_gguf_subset(
+            subset, gguf_plan, torch_dtype,
+            gguf_stats if gguf_stats is not None else {}, device=device)
     if fp8_plan is not None:
-        return materialize_fp8_subset(subset, fp8_plan, torch_dtype, fp8_stats)
+        return materialize_fp8_subset(subset, fp8_plan, torch_dtype, fp8_stats,
+                                      device=device, parity_all=fp8_parity_all, sink=sink)
     return subset
 
 
@@ -1324,6 +1638,362 @@ def _pin_fp32_matmul_policy() -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# the direct expert fill: routed experts written straight into the fused
+# parameter, around the converter's stack-and-cat transient
+# ---------------------------------------------------------------------------
+
+EXPERT_FILL_DIRECT = "direct"
+EXPERT_FILL_CONVERTER = "converter"
+EXPERT_FILL_MODES = (EXPERT_FILL_DIRECT, EXPERT_FILL_CONVERTER)
+#: What `transformers` does to a MoE layer's routed experts and what this
+#: reproduces byte for byte: `MergeModulelist(dim=0)` stacks the E per-expert
+#: sources of one pattern in natural-key order (expert 0..E-1), then
+#: `Concatenate(dim=1)` cats the stacks in SOURCE-PATTERN ORDER (gate rows
+#: first, then up). Measured on the H200 pod (review-efficiency section 3),
+#: the cat is a second 12.9 GB copy of gate_up_proj on the device while the
+#: 6.4 GB of down_proj sources are already resident: bf16 and FP8 GLM-5.3
+#: captures peak at 37.53 GB and the trellis one at 56.86 GB, so no <=48 GB
+#: card can run them. Here the fused parameter is allocated ONCE and every
+#: source is copied into its slice -- `gate_up[e, :I]`, `gate_up[e, I:]`,
+#: `down[e]` -- through a small pinned staging ring (or straight from the
+#: decoder's output tensor). A copy is a copy: `bin/selftest_layer_outer.py`
+#: L4/L6 assert the result equals `from_pretrained`'s and the converter's own,
+#: parameter by parameter. Every non-expert tensor still goes through the
+#: converter, untouched.
+EXPERT_FILL_REFERENCE = ("transformers.core_model_loading.MergeModulelist(dim=0) + "
+                         "Concatenate(dim=1)")
+_SAFETENSORS_DTYPE_NAMES = {"BF16": "bfloat16", "F16": "float16", "F32": "float32"}
+_PATTERN_LITERAL_FORBIDDEN = set("[](){}+?^$|")
+
+
+def _pattern_literal(pattern: str) -> Optional[str]:
+    """A conversion pattern as the literal key fragment it matches, or None
+    when the pattern carries regex syntax this fill does not model."""
+    if any(ch in _PATTERN_LITERAL_FORBIDDEN for ch in pattern):
+        return None
+    return pattern.replace("\\.", ".")
+
+
+class _StagingRing(object):
+    """A few reusable host buffers a checkpoint slice is read into, then DMA'd out.
+
+    On CUDA the buffers are page-locked and the copy is asynchronous, so the
+    NVMe read of slice n+1 overlaps the bus transfer of slice n (the converter
+    moves each of the 768 per-expert slices as a synchronous pageable copy,
+    measured at 3.0 GB/s against the disk's 5.9 GB/s). A buffer is reused only
+    after the event recorded behind its copy has completed. On any other
+    device the same code runs with pageable buffers and synchronous copies:
+    the bytes are the same bytes, only their timing differs.
+    """
+
+    def __init__(self, device, slots: int = 4):
+        import torch
+
+        self.device = torch.device(device)
+        self.pinned = self.device.type == "cuda" and torch.cuda.is_available()
+        self.buffers: List[Any] = [None] * int(slots)
+        self.events: List[Any] = [None] * int(slots)
+        self.next = 0
+        self.bytes = 0
+        self.reads = 0
+
+    def copy_into(self, dst, path: str, offset: int, nbytes: int) -> None:
+        import torch
+
+        if int(dst.numel()) * dst.element_size() != nbytes:
+            raise LayerOuterError(
+                "REFUSED: %s bytes at %s+%d do not fill a %s %s slice"
+                % (nbytes, os.path.basename(path), offset, tuple(dst.shape), dst.dtype))
+        slot = self.next
+        self.next = (slot + 1) % len(self.buffers)
+        buffer = self.buffers[slot]
+        if buffer is None or buffer.numel() < nbytes:
+            buffer = torch.empty(nbytes, dtype=torch.uint8, pin_memory=self.pinned)
+            self.buffers[slot] = buffer
+        if self.events[slot] is not None:
+            self.events[slot].synchronize()
+            self.events[slot] = None
+        view = buffer[:nbytes]
+        _read_exact(path, offset, view.numpy())
+        dst.copy_(view.view(dst.dtype).view(dst.shape), non_blocking=self.pinned)
+        if self.pinned:
+            event = torch.cuda.Event()
+            event.record()
+            self.events[slot] = event
+        self.bytes += nbytes
+        self.reads += 1
+
+    def drain(self) -> None:
+        for index, event in enumerate(self.events):
+            if event is not None:
+                event.synchronize()
+                self.events[index] = None
+
+
+def _read_exact(path: str, offset: int, into) -> None:
+    """Fill a writable buffer with exactly its length from `path` at `offset`."""
+    view = memoryview(into).cast("B")
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        done = 0
+        total = len(view)
+        while done < total:
+            if hasattr(os, "preadv"):
+                got = os.preadv(fd, [view[done:]], offset + done)
+            else:  # pragma: no cover - non-Linux hosts
+                chunk = os.pread(fd, total - done, offset + done)
+                got = len(chunk)
+                view[done:done + got] = chunk
+            if got <= 0:
+                raise LayerOuterError(
+                    "REFUSED: %s ended %d bytes short of a tensor the header declares "
+                    "at offset %d" % (path, total - done, offset))
+            done += got
+    finally:
+        os.close(fd)
+
+
+class _ExpertFill(object):
+    """One layer's fused expert parameters, allocated once and filled slice by slice.
+
+    `plan` (from `plan_expert_fill`) maps every source key the converter
+    would have stacked to its (parameter, expert, part) slot. `offer(key,
+    value)` copies a decoded tensor or a lazy checkpoint slice into that slot
+    and reports whether it took it; anything it declines goes to the
+    converter exactly as before. `finish()` refuses a slot nobody filled --
+    the converter would have reported a shape mismatch for the same
+    checkpoint, and this schedule does not run a layer on undefined bytes.
+    """
+
+    def __init__(self, model, plan: Dict[str, Any], device: str, load_param,
+                 locator: Dict[str, Tuple[str, int, int, str, Tuple[int, ...]]],
+                 ring: Optional[_StagingRing], stats: Dict[str, Any]):
+        import torch
+
+        self.model = model
+        self.plan = plan
+        self.locator = locator
+        self.ring = ring
+        self.stats = stats
+        self.slots: Dict[str, Tuple[str, int, int]] = {}
+        self.filled: Set[str] = set()
+        self.params: Dict[str, Any] = {}
+        for name, target in plan["targets"].items():
+            tensor = torch.empty(tuple(target["shape"]), dtype=getattr(torch, target["dtype"]),
+                                 device=device)
+            load_param(model, name, tensor)
+            param = model.get_parameter(name)
+            param._is_hf_initialized = True
+            self.params[name] = param
+            for key, (expert, part) in target["slots"].items():
+                self.slots[key] = (name, expert, part)
+
+    def _slice(self, name: str, expert: int, part: int):
+        target = self.plan["targets"][name]
+        param = self.params[name]
+        if target["parts"] == 1:
+            return param.data[expert]
+        width = int(target["shape"][1]) // int(target["parts"])
+        return param.data[expert, part * width:(part + 1) * width]
+
+    def offer(self, key: str, value) -> bool:
+        slot = self.slots.get(key)
+        if slot is None:
+            return False
+        if key in self.filled:
+            raise LayerOuterError(
+                "REFUSED: %s was handed to the expert fill twice; the checkpoint or a "
+                "decoder carries two versions of one expert slice" % key)
+        name, expert, part = slot
+        dst = self._slice(name, expert, part)
+        located = self.locator.get(key) if not hasattr(value, "dtype") else None
+        if located is not None:
+            path, offset, nbytes, dtype_name, shape = located
+            if tuple(shape) != tuple(dst.shape) \
+                    or _SAFETENSORS_DTYPE_NAMES.get(dtype_name) != str(dst.dtype).replace("torch.", ""):
+                raise LayerOuterError(
+                    "REFUSED: %s is %s %s in the checkpoint but its fused slice is %s %s"
+                    % (key, dtype_name, tuple(shape), dst.dtype, tuple(dst.shape)))
+            self.ring.copy_into(dst, path, offset, nbytes)
+            self.stats["staged_slices"] += 1
+        else:
+            tensor = _eager(value)
+            if tuple(tensor.shape) != tuple(dst.shape) or tensor.dtype != dst.dtype:
+                raise LayerOuterError(
+                    "REFUSED: %s decoded as %s %s but its fused slice is %s %s"
+                    % (key, tensor.dtype, tuple(tensor.shape), dst.dtype, tuple(dst.shape)))
+            dst.copy_(tensor)
+            self.stats["decoded_slices"] += 1
+        self.filled.add(key)
+        self.stats["slices_filled"] += 1
+        self.stats["bytes_filled"] += int(dst.numel()) * dst.element_size()
+        return True
+
+    def finish(self) -> None:
+        if self.ring is not None:
+            self.ring.drain()
+        unfilled = sorted(key for key in self.slots if key not in self.filled)
+        if unfilled:
+            raise LayerOuterError(
+                "REFUSED: %d expert slice(s) of %s were never delivered: %s%s. The "
+                "checkpoint (or its decoder) did not produce them and the fused "
+                "parameter would run on undefined bytes."
+                % (len(unfilled), ", ".join(sorted(self.plan["targets"])), ", ".join(unfilled[:6]),
+                   " (+%d more)" % (len(unfilled) - 6) if len(unfilled) > 6 else ""))
+        self.stats["targets_filled"] += len(self.plan["targets"])
+        self.stats["layers_filled"] += 1
+
+
+def plan_expert_fill(model, converters: Sequence[Any], layer_names: Sequence[str],
+                     routing_key: Callable[[str], str], subset_keys: Iterable[str],
+                     source_dtype: Callable[[str], Optional[str]],
+                     source_shape: Callable[[str], Optional[Tuple[int, ...]]],
+                     dtype_plan: Dict[str, Any], torch_dtype,
+                     decoders_active: bool) -> Dict[str, Any]:
+    """Which of a layer's parameters the direct fill may build, and from which keys.
+
+    Eligibility is derived from the model's OWN conversion mapping, never from
+    a name convention: a `WeightConverter` whose operations are exactly
+    `[MergeModulelist(dim=0)]` or `[MergeModulelist(dim=0), Concatenate(dim=1)]`
+    with one `*` per source pattern. For each such converter and each layer
+    parameter ending in its target, the E x parts candidate source keys are
+    constructed and each one is ROUND-TRIPPED through the same rename the
+    converter applies (`routing_key(candidate) == parameter`); a candidate
+    that does not route back, a subset key that routes to the parameter but
+    is not a candidate, a source whose stored dtype or shape is not the
+    slice's, a dtype-plan override this fill cannot evaluate, or (with no
+    decoder active) a candidate absent from the checkpoint, all make the
+    parameter INELIGIBLE -- it then goes through the converter exactly as
+    before, and the converter reports whatever it reports. Everything about
+    `declined` is in the returned plan so the receipt can say what was filled
+    directly and what was not.
+    """
+    import torch
+
+    try:
+        from transformers.core_model_loading import (Concatenate, MergeModulelist,
+                                                     build_glob_alternation)
+    except Exception as exc:  # pragma: no cover - depends on the build
+        return {"targets": {}, "declined": {"*": "transformers internals: %s" % exc}}
+
+    plan_alternation = None
+    if dtype_plan:
+        alternation, by_group, _ = build_glob_alternation(list(dtype_plan.keys()))
+        plan_alternation = (alternation, by_group)
+    subset_keys = list(subset_keys)
+    key_set = set(subset_keys)
+    routed = {}
+    for key in subset_keys:
+        routed.setdefault(routing_key(key), []).append(key)
+    targets: Dict[str, Any] = {}
+    declined: Dict[str, str] = {}
+    for converter in converters:
+        operations = list(getattr(converter, "operations", None) or [])
+        if not operations or not isinstance(operations[0], MergeModulelist) \
+                or getattr(operations[0], "dim", None) != 0:
+            continue
+        if len(operations) == 2:
+            if not isinstance(operations[1], Concatenate) or operations[1].dim != 1:
+                continue
+        elif len(operations) != 1:
+            continue
+        if len(converter.target_patterns) != 1:
+            continue
+        target_literal = _pattern_literal(converter.target_patterns[0])
+        source_literals = [_pattern_literal(p) for p in converter.source_patterns]
+        if target_literal is None or any(s is None or s.count("*") != 1 for s in source_literals):
+            continue
+        for name in layer_names:
+            if not name.endswith(target_literal):
+                continue
+            prefix = name[:-len(target_literal)]
+            try:
+                param = model.get_parameter(name)
+            except AttributeError:
+                continue
+            shape = tuple(int(d) for d in param.shape)
+            parts = len(source_literals)
+            if len(shape) < 2 or (parts > 1 and (len(shape) < 3 or shape[1] % parts)):
+                declined[name] = "shape %s does not split into %d parts" % (shape, parts)
+                continue
+            experts = shape[0]
+            if parts == 1:
+                slice_shape = shape[1:]
+            else:
+                slice_shape = (shape[1] // parts,) + shape[2:]
+            target_dtype = str(param.dtype).replace("torch.", "")
+            if plan_alternation is not None:
+                matched = plan_alternation[0].search(name)
+                if matched is not None:
+                    planned = dtype_plan[plan_alternation[1][matched.lastgroup]]
+                    target_dtype = str(planned).replace("torch.", "")
+            slots: Dict[str, Tuple[int, int]] = {}
+            reason = None
+            for part, literal in enumerate(source_literals):
+                for expert in range(experts):
+                    candidate = prefix + literal.replace("*", str(expert))
+                    if routing_key(candidate) != name:
+                        reason = "%s does not route back to %s" % (candidate, name)
+                        break
+                    slots[candidate] = (expert, part)
+                if reason:
+                    break
+            if reason is None:
+                present = routed.get(name, [])
+                strangers = [key for key in present if key not in slots]
+                if strangers:
+                    reason = "%s routes here but is not an expert slice" % strangers[0]
+                elif not decoders_active and len(present) != len(slots):
+                    reason = "%d of %d expert slices present in the checkpoint" % (
+                        len(present), len(slots))
+            if reason is None:
+                for key in routed.get(name, []):
+                    if decoders_active and (key + FP8_SCALE_SUFFIX) in key_set:
+                        # A block-scaled FP8 pair: the decoder replaces it by a
+                        # `torch_dtype` tensor of the same name, checked for
+                        # dtype and shape when it is offered to the slot.
+                        continue
+                    dtype_name = source_dtype(key)
+                    stored = source_shape(key)
+                    if _SAFETENSORS_DTYPE_NAMES.get(dtype_name or "") != target_dtype:
+                        reason = "%s is stored as %s, the parameter is %s" % (
+                            key, dtype_name, target_dtype)
+                        break
+                    if stored is not None and tuple(stored) != tuple(slice_shape):
+                        reason = "%s is stored as %s, the slice is %s" % (
+                            key, tuple(stored), tuple(slice_shape))
+                        break
+            if reason is not None:
+                declined[name] = reason
+                continue
+            targets[name] = {"shape": shape, "dtype": target_dtype, "parts": parts,
+                             "experts": experts, "slots": slots,
+                             "sources": [prefix + s for s in source_literals]}
+    return {"targets": targets, "declined": declined}
+
+
+def expert_fill_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]:
+    """How the routed experts reached the device, for the runtime receipt."""
+    stats = getattr(streamer, "expert_fill_stats", None)
+    if stats is None:
+        return None
+    return {
+        "mode": stats.get("mode"),
+        "reference": EXPERT_FILL_REFERENCE,
+        "layers_filled": int(stats.get("layers_filled", 0)),
+        "targets_filled": int(stats.get("targets_filled", 0)),
+        "slices_filled": int(stats.get("slices_filled", 0)),
+        "staged_slices": int(stats.get("staged_slices", 0)),
+        "decoded_slices": int(stats.get("decoded_slices", 0)),
+        "bytes_filled": int(stats.get("bytes_filled", 0)),
+        "staging": stats.get("staging"),
+        "declined": dict(stats.get("declined") or {}),
+        "identity": "a byte copy into the fused parameter's slice; bin/selftest_layer_outer.py "
+                    "L4/L6 assert equality with from_pretrained and with the converter path",
+    }
+
+
 def is_trellis_checkpoint(config) -> bool:
     """One answer to "is this an EXL3 trellis artifact?" for EVERY gate.
 
@@ -1341,12 +2011,15 @@ def is_trellis_checkpoint(config) -> bool:
 def checkpoint_decode_plans(config, model_dir: str, log: Callable[..., None]):
     """Resolve which host-side decoders this checkpoint needs, before anything is built.
 
-    Returns `(fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats, nvfp4_plan)`.
-    Exactly one of four shapes is admitted: a native tree (all None), the
+    Returns `(fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats, nvfp4_plan,
+    gguf_plan)`. Exactly one of five shapes is admitted: a native tree (all None), the
     block-scaled FP8 e4m3 weights-only form (`fp8_plan`), an EXL3 trellis
     artifact (`trellis_plan`, with `trellis_fp8_plan` when the checkpoint ALSO
     keeps tensors in block-scaled FP8 -- wrldsuksgo2mars keeps shared_experts
-    and self_attn that way), or a modelopt NVFP4 artifact (`nvfp4_plan`). Any
+    and self_attn that way), a modelopt NVFP4 artifact (`nvfp4_plan`), or a
+    llama.cpp GGUF build (`gguf_plan`: decided by the presence of .gguf files,
+    since a GGUF tree carries no config of its own -- the config.json beside it
+    is the official release's, copied there by the candidate stage). Any
     other `quantization_config` is refused here by `fp8_checkpoint_plan`,
     which is only consulted when the artifact is NEITHER a trellis nor a
     modelopt one: a trellis artifact's `quantization_config` may be a
@@ -1360,6 +2033,16 @@ def checkpoint_decode_plans(config, model_dir: str, log: Callable[..., None]):
     (a single-shard tree has none, and under a race-mode gate it has not
     landed yet).
     """
+    gguf_plan = gguf_checkpoint_plan(config, model_dir)
+    if gguf_plan is not None:
+        observed = gguf_plan.pop("_observed", {})
+        log(stage="gguf_decode_plan", method=GGUF_DECODE_METHOD,
+            reference=GGUF_DECODE_REFERENCE, parity=GGUF_PARITY_EVIDENCE,
+            observed={k: v for k, v in observed.items() if k != "file_records"},
+            **{k: v for k, v in gguf_plan.items() if not k.startswith("_")})
+        gguf_plan["_observed"] = observed
+        trellis_stats = {"decoded_modules": 0, "trellis_bits": 0}
+        return None, None, None, trellis_stats, None, gguf_plan
     trellis = is_trellis_checkpoint(config)
     nvfp4_plan = None if trellis else nvfp4_checkpoint_plan(config, model_dir)
     if nvfp4_plan is not None:
@@ -1405,7 +2088,7 @@ def checkpoint_decode_plans(config, model_dir: str, log: Callable[..., None]):
         trellis_stats["quantized_module_count"] = observed.get(
             "quantized_module_count", 0)
         trellis_stats["codebook_histogram"] = observed.get("codebook_histogram", {})
-    return fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats, nvfp4_plan
+    return fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats, nvfp4_plan, None
 
 
 def _exl3hf():
@@ -1421,7 +2104,8 @@ def _exl3hf():
 def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: str,
                          log: Callable[..., None],
                          layer_guard: Optional[Callable[[int, Dict[str, Any]], None]] = None,
-                         gate: Optional[Any] = None) -> StreamedModel:
+                         gate: Optional[Any] = None,
+                         expert_fill: str = EXPERT_FILL_DIRECT) -> StreamedModel:
     """Instantiate on meta, load everything but the decoder layers, and return the streamer.
 
     `gate` turns the loader from "the tree is complete" into "the tree arrives
@@ -1457,9 +2141,12 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     torch_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16,
                    "float32": torch.float32}[dtype_name]
 
-    if gate is None:
+    gguf_tree = gate is None and bool(gguf_files_in(model_dir))
+    if gate is None and not gguf_tree:
         audit = audit_checkpoint_tree(model_dir)
         log(stage="checkpoint_audit", **audit)
+    # A GGUF tree has no safetensors to audit; `gguf_checkpoint_plan` audits
+    # the container's own extents (and the whole-file digests) below.
     # With a gate the audit is DEFERRED: which shards the resident load actually
     # reads is not knowable until the module tree exists (it depends on the
     # model's own buffer names and stack prefix), and auditing the whole tree
@@ -1492,9 +2179,15 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     # reaches the loader. "Dequantize-and-run, weights-only", the M1 method,
     # under the streaming schedule. Any other quantization_config is refused
     # by `fp8_checkpoint_plan` before anything is instantiated.
-    fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats, nvfp4_plan = (
+    fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats, nvfp4_plan, gguf_plan = (
         checkpoint_decode_plans(config, model_dir, log))
+    if gguf_plan is not None and gate is not None:
+        raise LayerOuterError("REFUSED: the GGUF lane has no gated (race-mode) loader")
+    if gguf_plan is not None:
+        log(stage="checkpoint_audit", **(gguf_plan.get("_observed") or {}).get("container_audit", {}))
     fp8_stats = {"dequantized": 0, "scales_consumed": 0, "fp8_bytes": 0}
+    gguf_stats: Dict[str, Any] = {"tensors_decoded": 0, "official_tensors_produced": 0,
+                                  "gguf_bytes_read": 0, "ggml_types": {}, "layers_decoded": 0}
     nvfp4_stats: Dict[str, Any] = {"decoded_modules": 0, "packed_bytes": 0,
                                    "scales_consumed": 0, "input_scales_skipped": 0,
                                    "plain_modules_passed": 0}
@@ -1546,6 +2239,11 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     # same order on both paths.
     pointers: List[Any] = []
     opened_shards: Dict[str, Any] = {}
+    # Where each key's bytes live: (shard path, absolute offset, byte length,
+    # stored dtype, shape) from the shard's own header. The direct expert fill
+    # reads a slice from here straight into its staging buffer -- the same
+    # bytes `PySafeSlice[...]` would hand back, without the intermediate copy.
+    locator: Dict[str, Tuple[str, int, int, str, Tuple[int, ...]]] = {}
 
     def _open_shards(names: Sequence[str]) -> Dict[str, Any]:
         """Open shards not yet open; return {key: lazy slice} for the NEW ones only."""
@@ -1553,16 +2251,47 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
         for name in sorted(names):
             if name in opened_shards:
                 continue
-            pointer = safe_open(os.path.join(model_dir, name), framework="pt", device="cpu")
+            path = os.path.join(model_dir, name)
+            pointer = safe_open(path, framework="pt", device="cpu")
             opened_shards[name] = pointer
             pointers.append(pointer)
+            header, _ = _safetensors_header(path)
+            with open(path, "rb") as handle:
+                (header_len,) = struct.unpack("<Q", handle.read(8))
             for key in pointer.keys():
                 fresh[key] = pointer.get_slice(key)
+                entry = header[key]
+                start, stop = (int(v) for v in entry["data_offsets"])
+                locator[key] = (path, 8 + header_len + start, stop - start,
+                                str(entry["dtype"]), tuple(int(d) for d in entry["shape"]))
         return fresh
+
+    if expert_fill not in EXPERT_FILL_MODES:
+        raise LayerOuterError("REFUSED: unknown expert_fill mode %r (one of %s)"
+                              % (expert_fill, ", ".join(EXPERT_FILL_MODES)))
+    ring = _StagingRing(device)
+    expert_fill_stats: Dict[str, Any] = {
+        "mode": expert_fill, "layers_filled": 0, "targets_filled": 0,
+        "slices_filled": 0, "staged_slices": 0, "decoded_slices": 0, "bytes_filled": 0,
+        "staging": "pinned" if ring.pinned else "pageable", "declined": {}}
+    timing: Dict[str, Any] = {"layers_loaded": 0, "load_seconds": 0.0,
+                              "decode_seconds": 0.0, "fill_seconds": 0.0,
+                              "checkpoint_bytes_read": 0, "converter_bytes": 0}
+
+    def _stored_dtype(key: str) -> Optional[str]:
+        located = locator.get(key)
+        return located[3] if located is not None else None
+
+    def _stored_shape(key: str) -> Optional[Tuple[int, ...]]:
+        located = locator.get(key)
+        return located[4] if located is not None else None
+
+    def _subset_bytes(keys: Iterable[str]) -> int:
+        return sum(locator[key][2] for key in keys if key in locator)
 
     ungated_shard_names = (sorted(name for name in os.listdir(model_dir)
                                   if name.endswith(".safetensors"))
-                           if gate is None else [])
+                           if gate is None and gguf_plan is None else [])
 
     # ROUTING IS DONE ON THE RENAMED KEY, not the raw one.
     #
@@ -1675,6 +2404,9 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
 
     if gate is None:
         bucket(_open_shards(ungated_shard_names))
+        if gguf_plan is not None:
+            # the container's official names stand where the shard keys stand
+            bucket(gguf_subsets(gguf_plan))
         resident_shards: List[str] = []
     else:
         # THE RESIDENT SET, computed rather than guessed. `gate.plan` decides the
@@ -1757,14 +2489,20 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
         aggregate["error_msgs"].extend(list(info.error_msgs or []))
         aggregate["conversion_errors"].update(dict(info.conversion_errors or {}))
 
+    resident_started = time.monotonic()
     base_info, _ = convert_and_load(
         model,
         _materialized(base_subset, fp8_plan, trellis_plan, trellis_fp8_plan,
                       torch_dtype, fp8_stats, trellis_stats, device=device,
                       expected_shape=expected_shape,
-                      nvfp4_plan=nvfp4_plan, nvfp4_stats=nvfp4_stats),
+                      nvfp4_plan=nvfp4_plan, nvfp4_stats=nvfp4_stats,
+                      fp8_parity_all=str(device) != "cpu",
+                      gguf_plan=gguf_plan, gguf_stats=gguf_stats),
         load_config)
     _absorb(base_info)
+    timing["resident_load_seconds"] = time.monotonic() - resident_started
+    timing["resident_bytes"] = _subset_bytes(base_subset)
+    timing["checkpoint_bytes_read"] += timing["resident_bytes"]
 
     # Finalisation would otherwise materialise AND randomly initialise every
     # decoder-layer parameter -- exactly the allocation this schedule exists to
@@ -1829,33 +2567,95 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
                 "weights does not fail to run -- it runs on whatever the meta-device "
                 "placeholder is replaced by, which is nothing anybody measured."
                 % (layers_prefix, index))
-        if fp8_plan is not None or trellis_plan is not None or nvfp4_plan is not None:
+        load_started = time.monotonic()
+        decoders_active = (fp8_plan is not None or trellis_plan is not None
+                           or nvfp4_plan is not None or gguf_plan is not None)
+        # THE DIRECT EXPERT FILL (see EXPERT_FILL_REFERENCE). Planned per layer
+        # from the model's own conversion mapping; the fused parameters are
+        # allocated here, once, and every routed-expert source -- a checkpoint
+        # slice or a decoder's output -- is copied into its slice as it
+        # appears. What the plan declines, and everything that is not a routed
+        # expert, reaches the converter exactly as before.
+        fill = None
+        if expert_fill == EXPERT_FILL_DIRECT:
+            fill_plan = plan_expert_fill(
+                model, renames, layer_param_names(index), routing_key, subset,
+                _stored_dtype, _stored_shape, dtype_plan, torch_dtype, decoders_active)
+            expert_fill_stats["declined"].update(fill_plan["declined"])
+            if fill_plan["targets"]:
+                fill = _ExpertFill(model, fill_plan, device, load_param_into_model,
+                                   locator, ring, expert_fill_stats)
+        sink = fill.offer if fill is not None else None
+        timing["checkpoint_bytes_read"] += _subset_bytes(subset)
+        decode_log = None
+        if decoders_active:
             # Decoded per layer into a transient dict: the streamer keeps the
-            # lazy slices, never the 19 GB of decoded bf16, across layers.
+            # lazy slices, never the 19 GB of decoded bf16, across layers --
+            # and with a fill in place the decoded experts are not even held
+            # for the layer: the sink copies each one into its slice and drops it.
             before = dict(fp8_stats)
             before_trellis = dict(trellis_stats)
             before_nvfp4 = dict(nvfp4_stats)
+            before_gguf = dict(gguf_stats)
+            # S1-2's gate: the FIRST layers decoded on a device re-decode every
+            # FP8 tensor on the host and must agree bitwise, until one layer
+            # that carries routed experts has passed; partial-block tensors
+            # are checked on every layer (materialize_fp8_subset).
+            parity_all = (str(device) != "cpu"
+                          and not fp8_stats.get("device_parity_sparse_layer_done"))
             started = time.monotonic()
             decoded = _materialized(subset, fp8_plan, trellis_plan, trellis_fp8_plan,
                                     torch_dtype, fp8_stats, trellis_stats,
                                     device=device, expected_shape=expected_shape,
-                                    nvfp4_plan=nvfp4_plan, nvfp4_stats=nvfp4_stats)
+                                    nvfp4_plan=nvfp4_plan, nvfp4_stats=nvfp4_stats,
+                                    fp8_parity_all=parity_all, sink=sink,
+                                    gguf_plan=gguf_plan, gguf_stats=gguf_stats)
             decode_seconds = time.monotonic() - started
-            info, _ = convert_and_load(model, decoded, load_config)
-            del decoded
-            log(stage=("trellis_decode_layer" if trellis_plan is not None
+            timing["decode_seconds"] += decode_seconds
+            if parity_all and fp8_stats["dequantized"] > before["dequantized"]:
+                fp8_stats.setdefault("device_parity_full_layers", []).append(index)
+                if fill is not None or expert_fill != EXPERT_FILL_DIRECT:
+                    fp8_stats["device_parity_sparse_layer_done"] = True
+            decode_log = dict(
+                stage=("trellis_decode_layer" if trellis_plan is not None
                        else "nvfp4_decode_layer" if nvfp4_plan is not None
+                       else "gguf_decode_layer" if gguf_plan is not None
                        else "fp8_decode_layer"), index=index,
                 dequantized=fp8_stats["dequantized"] - before["dequantized"],
                 fp8_elements=fp8_stats["fp8_bytes"] - before["fp8_bytes"],
                 decoded_modules=((trellis_stats["decoded_modules"]
                                   - before_trellis["decoded_modules"])
                                  + (nvfp4_stats["decoded_modules"]
-                                    - before_nvfp4["decoded_modules"])) or None,
+                                    - before_nvfp4["decoded_modules"])
+                                 + (gguf_stats["tensors_decoded"]
+                                    - before_gguf["tensors_decoded"])) or None,
                 decode_seconds=round(decode_seconds, 3))
+            if gguf_plan is not None:
+                timing["checkpoint_bytes_read"] += (gguf_stats["gguf_bytes_read"]
+                                                    - before_gguf["gguf_bytes_read"])
+            loader_subset = decoded
+            # The dict is the last holder of any decoded tensor the fill did
+            # not consume; the fill's `remaining` takes those over below.
+            del decoded
         else:
-            info, _ = convert_and_load(model, subset, load_config)
+            loader_subset = subset
+        if fill is not None:
+            fill_started = time.monotonic()
+            remaining: Dict[str, Any] = {}
+            for key, value in loader_subset.items():
+                if not fill.offer(key, value):
+                    remaining[key] = value
+            fill.finish()
+            loader_subset = remaining
+            timing["fill_seconds"] += time.monotonic() - fill_started
+        timing["converter_bytes"] += _subset_bytes(loader_subset)
+        info, _ = convert_and_load(model, loader_subset, load_config)
+        del loader_subset
+        if decode_log is not None:
+            log(**decode_log)
         _absorb(info)
+        timing["layers_loaded"] += 1
+        timing["load_seconds"] += time.monotonic() - load_started
         names = layer_param_names(index)
         head = "%s.%d." % (layers_prefix, index)
         # CAPTURE-03 is a per-LOAD guard, and this schedule performs one load
@@ -1929,6 +2729,8 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     # handles and under-report every layer that had not landed yet.
     streamer.pointers = pointers
     streamer.layer_counts = _LayerCounts(layer_subset)
+    streamer.expert_fill_stats = expert_fill_stats
+    streamer.timing = timing
     streamer.fp8_plan = fp8_plan
     streamer.fp8_stats = fp8_stats
     streamer.trellis_plan = trellis_plan
@@ -1936,6 +2738,8 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     streamer.trellis_fp8_plan = trellis_fp8_plan
     streamer.nvfp4_plan = nvfp4_plan
     streamer.nvfp4_stats = nvfp4_stats
+    streamer.gguf_plan = gguf_plan
+    streamer.gguf_stats = gguf_stats
     return streamer
 
 
@@ -1990,6 +2794,7 @@ def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]
                 "scale_tensors_consumed": int(fp8_stats.get("scales_consumed", 0)),
                 "fp8_elements": int(fp8_stats.get("fp8_bytes", 0)),
             }
+            evidence["mixed_fp8"].update(fp8_device_parity_evidence(fp8_stats))
         return evidence
     nvfp4_plan = getattr(streamer, "nvfp4_plan", None)
     if nvfp4_plan is not None:
@@ -2021,11 +2826,42 @@ def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]
         evidence["nonrouted_non_bf16_examples"] = list(
             stats.get("nonrouted_non_bf16_examples") or [])
         return evidence
+    gguf_plan = getattr(streamer, "gguf_plan", None)
+    if gguf_plan is not None:
+        stats = dict(getattr(streamer, "gguf_stats", {}))
+        observed = dict(gguf_plan.get("_observed") or {})
+        return {
+            "method": GGUF_DECODE_METHOD,
+            "reference": GGUF_DECODE_REFERENCE,
+            "parity_evidence": GGUF_PARITY_EVIDENCE,
+            "output_dtype": "bfloat16",
+            # The CONTRACT block only (header-derived, mirrored by the controller);
+            # the surface object and partition ride under private keys.
+            "quantization_config": {k: v for k, v in gguf_plan.items()
+                                    if not k.startswith("_")},
+            "tensors_decoded": int(stats.get("tensors_decoded", 0)),
+            "official_tensors_produced": int(stats.get("official_tensors_produced", 0)),
+            "layers_decoded": int(stats.get("layers_decoded", 0)),
+            "gguf_bytes_read": int(stats.get("gguf_bytes_read", 0)),
+            "ggml_types_decoded": dict(sorted((stats.get("ggml_types") or {}).items())),
+            "decode_device": "capture-device",
+            "files_verified": observed.get("files_verified"),
+            "file_records": observed.get("file_records"),
+            "container_audit": observed.get("container_audit"),
+            "shared_indexer_copies": observed.get("shared_indexer_copies"),
+            "materialize_plan": observed.get("materialize_plan"),
+            "checkpoint_identity_sha256": observed.get("checkpoint_identity_sha256"),
+            "tokenizer_source": ("the reference root's tokenizer files; the GGUF's own "
+                                 "tokenizer.ggml.tokens/merges were proven equal to that "
+                                 "vocabulary by id (gguf_surface.tokenizer_matches, at plan "
+                                 "time and in gguf-evidence/glmdsa-tokenizer-order-audit.json)"),
+            "head_source": "the artifact's own output.weight, decoded (HEAD-1d own heads)",
+        }
     plan = getattr(streamer, "fp8_plan", None)
     if plan is None:
         return None
     stats = dict(getattr(streamer, "fp8_stats", {}))
-    return {
+    evidence = {
         "method": FP8_DECODE_METHOD,
         "reference": FP8_DECODE_REFERENCE,
         "output_dtype": "bfloat16",
@@ -2033,6 +2869,33 @@ def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]
         "tensors_dequantized": int(stats.get("dequantized", 0)),
         "scale_tensors_consumed": int(stats.get("scales_consumed", 0)),
         "fp8_elements": int(stats.get("fp8_bytes", 0)),
+    }
+    evidence.update(fp8_device_parity_evidence(stats))
+    return evidence
+
+
+def fp8_device_parity_evidence(stats: Dict[str, Any]) -> Dict[str, Any]:
+    """Where the FP8 decode ran and how much of it was re-derived on the host.
+
+    `fp8_decode_device` is the device the bytes were dequantised on;
+    `fp8_device_parity_checked_tensors` counts the tensors ALSO decoded on the
+    CPU and asserted `torch.equal` (every tensor of the first layers, every
+    partial-block tensor of every layer), `..._partial_block` the subset of
+    those with a partial last block, `..._full_layers` the layer indices
+    checked in full. `fp8_device_parity` is "not-applicable" on a CPU run,
+    "passed" once anything was checked -- a failure never reaches a receipt,
+    it refuses the run.
+    """
+    device = stats.get("decode_device")
+    checked = int(stats.get("device_parity_checked", 0))
+    return {
+        "fp8_decode_device": device,
+        "fp8_device_parity_checked_tensors": checked,
+        "fp8_device_parity_checked_partial_block": int(
+            stats.get("device_parity_partial_block_checked", 0)),
+        "fp8_device_parity_full_layers": list(stats.get("device_parity_full_layers") or []),
+        "fp8_device_parity": ("not-applicable" if device in (None, "cpu")
+                              else "passed" if checked else "unchecked"),
     }
 
 

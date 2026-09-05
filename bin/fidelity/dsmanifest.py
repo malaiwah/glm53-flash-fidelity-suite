@@ -127,9 +127,8 @@ def tensor_record(
         "dtype": dtype,
         "shape": [int(v) for v in shape],
         "size_bytes": os.path.getsize(abs_path),
-        "sha256": F.file_sha256(abs_path),
-        "payload_sha256": F.payload_sha256(abs_path),
-        "tensor_content_sha256": F.tensor_content_sha256(abs_path, key),
+        # file, payload and tensor-content digests from one streaming read
+        **F.tensor_digests(abs_path, key),
         "token_ids_json_sha256": token_ids_json_sha256,
         "token_ids_sha256_legacy": token_ids_sha256_legacy,
         "attention_mask_sha256": attention_mask_sha256,
@@ -360,7 +359,17 @@ def capture_runtime(
     capture_tool: Optional[Dict[str, Any]] = None,
     upstream_receipts: Optional[Sequence[Dict[str, Any]]] = None,
     lane_inferred: bool = False,
+    resources: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """The runtime receipt.
+
+    `resources` (additive, 2026-09-05) is what the capture COST -- peak
+    device/host memory, per-stage seconds, bytes moved -- as `hf_capture`
+    measured it. It is provenance beside `lane_identity_inputs`, never a
+    member of it, and nothing in `capture_content_digest` reads it; a reader
+    that does not know the key ignores it and a dataset written before it
+    validates the same.
+    """
     doc = {
         "schema": F.RUNTIME_SCHEMA,
         "format_version": F.FORMAT_VERSION,
@@ -385,6 +394,8 @@ def capture_runtime(
         "weights": weights,
         "upstream_receipts": list(upstream_receipts or []),
     }
+    if resources is not None:
+        doc["resources"] = resources
     return F.seal_receipt(doc)
 
 
@@ -576,9 +587,20 @@ class DatasetWriter(object):
             return self.add_capture_tensor(index, handle.read(), form)
 
     def add_head_payload(self, payload: bytes) -> str:
-        relpath = "head/weight.safetensors"
+        relpath, _ = self.reserve_head_payload()
         self._write_bytes(relpath, payload)
         return relpath
+
+    def reserve_head_payload(self) -> Tuple[str, str]:
+        """(relpath, absolute path) of the head payload, directory created.
+
+        For a writer that streams a large head to disk itself
+        (`hf_capture.write_st_tensor`) instead of handing over 1.9 GB of bytes.
+        """
+        relpath = "head/weight.safetensors"
+        full = os.path.join(self.root, relpath)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        return relpath, full
 
     def add_file(self, relpath: str, payload: bytes) -> str:
         F.check_relpath(relpath, owner="DatasetWriter.add_file",

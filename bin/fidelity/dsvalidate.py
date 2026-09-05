@@ -777,12 +777,13 @@ def _verify_tensors(root, capture, capture_manifest, head, report):
         if not os.path.isfile(full):
             continue
         try:
-            content = F.tensor_content_sha256(full, record["key"])
-            payload = F.payload_sha256(full)
+            digests = F.tensor_digests(full, record["key"])
             _, header = F.read_safetensors_header(full)
         except F.FormatError as exc:
             report.error(exc.code, "SEAL-1(d)", exc.message, rel)
             continue
+        content = digests["tensor_content_sha256"]
+        payload = digests["payload_sha256"]
         # The declared dtype/shape are what a consumer reads instead of opening
         # the tensor; hashing the bytes does not check that the DECLARATION
         # matches them.  A manifest that says F32 over BF16 bytes hashes clean.
@@ -803,7 +804,7 @@ def _verify_tensors(root, capture, capture_manifest, head, report):
                          % (rel, content[:12], (record.get("tensor_content_sha256") or "")[:12]))
         if record.get("payload_sha256") and payload != record["payload_sha256"]:
             report.error("tensor_mismatch", "SEAL-1(d)", "%s payload digest differs" % rel)
-        if record.get("sha256") and F.sha256_file(full) != record["sha256"]:
+        if record.get("sha256") and digests["sha256"] != record["sha256"]:
             report.error("tensor_mismatch", "SEAL-1(d)", "%s file digest differs" % rel)
         checked += 1
     if head.get("file"):

@@ -194,6 +194,49 @@ def tensor_content_sha256(path: str, key: str) -> str:
     return digest.hexdigest()
 
 
+def tensor_digests(path: str, key: str) -> Dict[str, str]:
+    """Preimages 1, 2 and 3 of one file from ONE streaming read.
+
+    `{"sha256", "payload_sha256", "tensor_content_sha256"}` -- the same three
+    values `file_sha256`, `payload_sha256` and `tensor_content_sha256` return,
+    byte for byte (`bin/selftest_fidelity_dataset.py` asserts it on the
+    fixtures), computed by feeding each 4 MiB block to the hashers whose
+    preimage it falls in: the whole-file hasher always, the payload hasher
+    from `8 + header_len`, the tensor hasher over `[base + start, base + stop)`.
+    A 1.9 GB head or a 25 MB window is then read once per record instead of
+    three times.
+    """
+    header_len, header = read_safetensors_header(path)
+    if key not in header:
+        keys = sorted(k for k in header if k != "__metadata__")
+        raise FormatError(
+            "bad_tensor_file",
+            "tensor key %r absent; file carries %s" % (key, keys),
+            path,
+        )
+    start, stop = (int(v) for v in header[key]["data_offsets"])
+    base = 8 + header_len
+    tensor_lo, tensor_hi = base + start, base + stop
+    whole = hashlib.sha256()
+    payload = hashlib.sha256()
+    tensor = hashlib.sha256()
+    position = 0
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 22), b""):
+            whole.update(block)
+            end = position + len(block)
+            if end > base:
+                payload.update(block[max(base - position, 0):])
+            lo, hi = max(tensor_lo, position), min(tensor_hi, end)
+            if hi > lo:
+                tensor.update(block[lo - position:hi - position])
+            position = end
+    if position < tensor_hi:
+        raise FormatError("bad_tensor_file", "truncated tensor payload", path)
+    return {"sha256": whole.hexdigest(), "payload_sha256": payload.hexdigest(),
+            "tensor_content_sha256": tensor.hexdigest()}
+
+
 def token_ids_json_sha256(ids: Sequence[int]) -> str:
     """Preimage 4 (NORMATIVE): compact separators -- kimi-k3's preimage, adopted.
 

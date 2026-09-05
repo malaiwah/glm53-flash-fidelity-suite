@@ -57,7 +57,7 @@ import stat
 import struct
 import sys
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "bin"))
@@ -122,7 +122,9 @@ CUT_STATEMENT = (
 CHECKPOINT_IDENTITY_ALGORITHM = (
     "sha256 over the canonical JSON {\"algorithm\": <this string>, \"files\": "
     "[{\"name\", \"size\", \"sha256\"}, ...]} of every *.safetensors shard plus "
-    "config.json in the checkpoint directory, sorted by name"
+    "config.json in the checkpoint directory, sorted by name; for a llama.cpp GGUF "
+    "tree the shards are every *.gguf of the one build directory (name = "
+    "<build>/<file>) and config.json is the official release's copy beside it"
 )
 
 
@@ -153,6 +155,14 @@ def checkpoint_identity(model_dir: str,
 
     names = sorted(name for name in os.listdir(model_dir)
                    if name.endswith(".safetensors") or name == "config.json")
+    # a GGUF tree keeps its one build under <build>/*.gguf (see
+    # layer_outer.gguf_files_in); those are the shards of this checkpoint
+    for sub in sorted(os.listdir(model_dir)):
+        path = os.path.join(model_dir, sub)
+        if os.path.isdir(path):
+            names.extend(sorted(os.path.join(sub, n) for n in os.listdir(path)
+                                if n.endswith(".gguf")))
+    names = sorted(set(names) | {n for n in os.listdir(model_dir) if n.endswith(".gguf")})
     if workers is None:
         workers = max(1, min(16, (os.cpu_count() or 2) - 1))
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -901,24 +911,119 @@ def head_module(model):
 # ---------------------------------------------------------------------------
 
 
-def st_bytes(name: str, dtype: str, shape: Sequence[int], raw: bytes,
-             metadata: Optional[Dict[str, str]] = None) -> bytes:
+def st_header(name: str, dtype: str, shape: Sequence[int], nbytes: int,
+              metadata: Optional[Dict[str, str]] = None) -> bytes:
+    """The safetensors prefix (`<Q` length + JSON header) for one tensor of `nbytes`."""
     header: Dict[str, Any] = {name: {"dtype": dtype, "shape": [int(v) for v in shape],
-                                     "data_offsets": [0, len(raw)]}}
+                                     "data_offsets": [0, int(nbytes)]}}
     if metadata:
         header["__metadata__"] = dict(metadata)
     encoded = json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    return struct.pack("<Q", len(encoded)) + encoded + raw
+    return struct.pack("<Q", len(encoded)) + encoded
 
 
-def _bf16_raw(tensor) -> bytes:
+def st_bytes(name: str, dtype: str, shape: Sequence[int], raw: bytes,
+             metadata: Optional[Dict[str, str]] = None) -> bytes:
+    return st_header(name, dtype, shape, len(raw), metadata) + raw
+
+
+def _bf16_view(tensor):
+    """The tensor's bytes as a host uint16 view, without a `.tobytes()` copy."""
     import torch
 
     flat = tensor.detach().contiguous().cpu()
     if flat.dtype != torch.bfloat16:
         raise fail("refusing to store a %s tensor as BF16: that would be a lossy cast the "
                    "manifest claims is lossless" % flat.dtype)
-    return flat.view(torch.uint16).numpy().tobytes()
+    return flat.view(torch.uint16).numpy()
+
+
+def _bf16_raw(tensor) -> bytes:
+    return _bf16_view(tensor).tobytes()
+
+
+def write_st_tensor(path: str, name: str, dtype: str, shape: Sequence[int], raw,
+                    metadata: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Write one single-tensor safetensors file in two `write()` calls and hash as it goes.
+
+    `raw` is any buffer exposing the tensor's little-endian bytes (a numpy
+    view of the bf16 tensor's storage). The bytes on disk are exactly
+    `st_bytes(...)`; what changes is that a 1.9 GB head no longer makes the
+    `tobytes()` copy, the `header + raw` concatenation copy, and a re-read to
+    hash. Returns the three frozen digests (`dsformat` section 5.1) of the
+    file just written: `file_sha256` over everything, `payload_sha256` over
+    the data region, `tensor_content_sha256` over the named tensor -- the
+    last two coincide for a single-tensor file whose data_offsets start at 0.
+    """
+    view = memoryview(raw).cast("B")
+    header = st_header(name, dtype, shape, len(view), metadata)
+    whole = hashlib.sha256()
+    payload = hashlib.sha256()
+    whole.update(header)
+    with open(path, "wb") as handle:
+        handle.write(header)
+        step = 1 << 26
+        for start in range(0, len(view), step):
+            chunk = view[start:start + step]
+            handle.write(chunk)
+            whole.update(chunk)
+            payload.update(chunk)
+    content = payload.hexdigest()
+    return {"file_sha256": whole.hexdigest(), "payload_sha256": content,
+            "tensor_content_sha256": content}
+
+
+class _ForwardTimer(object):
+    """Forward time as the DEVICE saw it.
+
+    `time.monotonic()` around `model(...)` on CUDA measures kernel launch, not
+    execution: the queued forwards drain inside the next layer's copy and get
+    billed to `layer_load` (review-efficiency section 2, caveat 1). On CUDA a
+    pair of events brackets each forward and `flush` -- called once per layer
+    boundary, where the load synchronises anyway -- adds the elapsed device
+    time to the window's slot. Anywhere else the wall clock is used and the
+    receipt says which (`resources.forward_timing`).
+    """
+
+    def __init__(self, device: str):
+        import torch
+
+        self.cuda = str(device).startswith("cuda") and torch.cuda.is_available()
+        self.mode = "cuda-events" if self.cuda else "wall-clock"
+        self.pending: List[Tuple[int, Any, Any]] = []
+
+    def time(self, fn: Callable[[], None], index: int, seconds: List[float]) -> None:
+        # `try/finally`: under the layer-outer schedule every forward but the
+        # last layer's ends by unwinding (`layer_outer._Suspend`), and a clock
+        # that stopped only on a normal return would bill those forwards to
+        # nothing -- which is what the pre-2026-09-05 `time.monotonic()` did.
+        if not self.cuda:
+            started = time.monotonic()
+            try:
+                fn()
+            finally:
+                seconds[index] += time.monotonic() - started
+            return
+        import torch
+
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        try:
+            fn()
+        finally:
+            end.record()
+            self.pending.append((index, start, end))
+
+    def flush(self, seconds: List[float]) -> None:
+        if not self.pending:
+            return
+        import torch
+
+        torch.cuda.synchronize()
+        for index, start, end in self.pending:
+            seconds[index] += start.elapsed_time(end) / 1000.0
+        del self.pending[:]
 
 
 def _source_files(args: argparse.Namespace) -> Dict[str, str]:
@@ -973,6 +1078,8 @@ def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_se
                    % sorted(lengths))
 
     watcher = args.resident_watcher
+    timer: _ForwardTimer = args._forward_timer
+    resources = args._resources
 
     def on_layer_start(index: int) -> None:
         if streamer is not None:
@@ -984,11 +1091,16 @@ def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_se
             # Sampled with the layer loaded -- i.e. at the moment the schedule
             # holds the most it ever holds.
             resident = watcher.sample()
-            log(stage="layer_load", index=index, seconds=round(time.monotonic() - started, 3),
+            seconds = time.monotonic() - started
+            resources["layer_load_seconds"].append(seconds)
+            log(stage="layer_load", index=index, seconds=round(seconds, 3),
                 checkpoint_tensors=streamer.layer_counts.get(index),
                 resident_weight_bytes=resident)
 
     def on_layer_end(index: int) -> None:
+        # The forwards of this layer are queued on the device; settle them
+        # into the per-window clock here, once per layer, before the free.
+        timer.flush(layer_seconds)
         if streamer is not None:
             streamer.free_layer(index)
             watcher.sample()
@@ -1004,10 +1116,10 @@ def _run_layer_outer(args, model, streamer, panel, tap, forward_window, layer_se
     )
 
     def timed_forward(window_index: int) -> None:
-        started = time.monotonic()
-        forward_window(window_index)
-        layer_seconds[window_index] += time.monotonic() - started
-        inner_meter.update(1)
+        try:
+            timer.time(lambda: forward_window(window_index), window_index, layer_seconds)
+        finally:
+            inner_meter.update(1)
 
     def collect(window_index: int):
         window_id = (panel.windows[window_index]["window_id"]
@@ -1255,13 +1367,23 @@ def run_capture(args: argparse.Namespace) -> int:
     # once the fetch has joined, over the complete tree. Same preimage, same
     # value; only the moment moves.
     identity = identity_files = None
+    # S2-2: what the run cost, for the receipt (`capture_runtime.resources`).
+    # Filled in as the stages happen; assembled by `_resources_block`.
+    args._resources = {"identity_seconds": None, "resident_load_seconds": None,
+                       "layer_load_seconds": [], "hidden_d2h_bytes": 0,
+                       "seal_started": None}
+    args._forward_timer = _ForwardTimer(args.device)
     if fetcher is None:
+        identity_started = time.monotonic()
         identity, identity_files = checkpoint_identity(model_dir)
-        log(stage="checkpoint_identity", sha256=identity, files=len(identity_files))
+        args._resources["identity_seconds"] = time.monotonic() - identity_started
+        log(stage="checkpoint_identity", sha256=identity, files=len(identity_files),
+            seconds=round(args._resources["identity_seconds"], 3))
 
     layer_outer.reset_peak_memory(args.device)
     max_memory = json.loads(args.max_memory) if args.max_memory else None
     streamer = None
+    resident_started = time.monotonic()
     if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER \
             and args.layer_residency == layer_outer.RESIDENCY_STREAM:
         # The whole point: never materialise the model, materialise one layer at
@@ -1320,6 +1442,7 @@ def run_capture(args: argparse.Namespace) -> int:
             model_dir, args.device, args.dtype, device_map=args.device_map,
             max_memory=max_memory, offload_folder=args.offload_folder,
             drop_parallel_plan=args.drop_parallel_plan)
+    args._resources["resident_load_seconds"] = time.monotonic() - resident_started
 
     # CAPTURE-03.  A checkpoint whose tensors this `transformers` build cannot
     # name does not fail to load: `from_pretrained` RANDOMLY INITIALISES the
@@ -1393,6 +1516,7 @@ def run_capture(args: argparse.Namespace) -> int:
             raise fail("head input shape %s is not [1, seq, %d]"
                        % (tuple(hidden.shape), hidden_size))
         tap.append(hidden.detach().squeeze(0).to("cpu", copy=True))
+        args._resources["hidden_d2h_bytes"] += int(hidden.numel()) * hidden.element_size()
 
     handle = head.register_forward_pre_hook(pre_hook)
 
@@ -1440,17 +1564,22 @@ def run_capture(args: argparse.Namespace) -> int:
             if logits is not None:
                 del probe_logits[:]
                 probe_logits.append(logits[0, -1].detach().to("cpu", copy=True))
+                args._resources["hidden_d2h_bytes"] += (
+                    int(probe_logits[-1].numel()) * probe_logits[-1].element_size())
 
     precomputed: Optional[List[Any]] = None
     forward_count = len(panel.windows) + (1 if probe_index is not None else 0)
     layer_seconds: List[float] = [0.0] * forward_count
+    args._layer_seconds = layer_seconds
     if args.schedule == layer_outer.SCHEDULE_LAYER_OUTER:
         precomputed = _run_layer_outer(args, model, streamer, panel, tap, forward_window,
                                        layer_seconds, window_count=forward_count)
     elif probe_index is not None:
         # Window-outer: the model is fully resident, so the probe is one extra
         # forward and costs nothing but its own compute.
-        forward_window(probe_index)
+        args._forward_timer.time(lambda: forward_window(probe_index), probe_index,
+                                 layer_seconds)
+        args._forward_timer.flush(layer_seconds)
     probe = _resolve_probe(args, probe_plan, probe_logits)
 
     # CAPTURE-03, the exact check the docstring of refuse_on_load_report
@@ -1502,9 +1631,9 @@ def run_capture(args: argparse.Namespace) -> int:
                 hidden_full = precomputed[index]
                 elapsed = layer_seconds[index]
             else:
-                elapsed = time.monotonic()
-                forward_window(index)
-                elapsed = time.monotonic() - elapsed
+                args._forward_timer.time(lambda: forward_window(index), index, layer_seconds)
+                args._forward_timer.flush(layer_seconds)
+                elapsed = layer_seconds[index]
                 if len(tap) != 1:
                     raise fail("window %s: the head hook fired %d times, expected exactly 1 "
                                "-- an extra forward would misalign the capture"
@@ -1558,11 +1687,15 @@ def run_capture(args: argparse.Namespace) -> int:
         handle.remove()
 
     # -- head ---------------------------------------------------------------
+    # S3-3: header and raw bytes in two write() calls, hashed as they stream --
+    # no `tobytes()` copy, no `header + raw` copy, no re-read to hash. The
+    # bytes on disk are `st_bytes(...)`'s (selftest_hf_capture asserts it).
+    args._resources["seal_started"] = time.monotonic()
     head_weight = head.weight
-    head_rel = writer.add_head_payload(
-        st_bytes("lm_head.weight", "BF16", list(head_weight.shape), _bf16_raw(head_weight)))
-    head_full = os.path.join(args.out, head_rel)
-    head_content = F.tensor_content_sha256(head_full, "lm_head.weight")
+    head_rel, head_full = writer.reserve_head_payload()
+    head_digests = write_st_tensor(head_full, "lm_head.weight", "BF16",
+                                   list(head_weight.shape), _bf16_view(head_weight))
+    head_content = head_digests["tensor_content_sha256"]
     log(stage="head", file=head_rel, tensor_content_sha256=head_content,
         bytes=os.path.getsize(head_full))
 
@@ -1630,6 +1763,7 @@ def run_capture(args: argparse.Namespace) -> int:
                      context_length=context_length, vocab_size=vocab_size,
                      hidden_size=hidden_size, head_rel=head_rel, head_full=head_full,
                      head_content=head_content, head_shape=list(head_weight.shape),
+                     head_digests=head_digests, memory=memory,
                      model_dir=model_dir, identity=identity, identity_files=identity_files,
                      config=config, started=started, missing_weights=missing,
                      load_report=report, probe=probe, race_report=race_report)
@@ -1962,9 +2096,83 @@ def _apply_preview_identity(args, manifest) -> None:
         not_submittable=True)
 
 
+def _resources_block(args, fingerprint: Dict[str, Any], memory: Dict[str, Any],
+                     identity_files: Optional[List[Dict[str, Any]]],
+                     started: float) -> Dict[str, Any]:
+    """S2-2: what the capture cost, on the receipt -- provenance, never identity.
+
+    Every value is one `run_capture` already measured or logged: the peaks
+    from `layer_outer.peak_memory`/`ResidentWeightPeak`, the stage seconds
+    from the clocks around identity, the resident load, each layer load, the
+    decoders and the forwards, the bytes from the shard headers and the head
+    tap. `seconds.forward_sum` is DEVICE time when `forward_timing` is
+    `cuda-events` (events bracket each forward and are read at the layer
+    boundary) and wall time otherwise. `seconds.seal` runs from the head
+    serialisation to the moment this block was assembled -- the manifest
+    seal that follows cannot be inside the document it seals -- and
+    `seconds.elapsed` ends at the same moment. The block sits beside
+    `lane_identity_inputs`, not in it, and `capture_content_digest` does not
+    read it (`bin/selftest_fidelity_dataset.py` asserts both).
+    """
+    tracked = args._resources
+    streamer = getattr(args, "_weights_decode_streamer", None)
+    timing = dict(getattr(streamer, "timing", None) or {})
+    layer_loads = list(tracked["layer_load_seconds"])
+    forward_sum = float(sum(getattr(args, "_layer_seconds", None) or []))
+    on_cuda = str(args.device).startswith("cuda") and memory.get("peak_cuda_allocated_bytes") is not None
+    checkpoint_bytes = (sum(int(f["size"]) for f in identity_files)
+                        if identity_files else None)
+    if streamer is not None:
+        checkpoint_read = int(timing.get("checkpoint_bytes_read", 0)) or None
+    else:
+        # `from_pretrained` reads every tensor of every shard.
+        checkpoint_read = checkpoint_bytes
+    now = time.monotonic()
+    return {
+        "device_name": fingerprint.get("device_name"),
+        "peak_cuda_allocated_bytes": memory.get("peak_cuda_allocated_bytes"),
+        "peak_cuda_reserved_bytes": memory.get("peak_cuda_reserved_bytes"),
+        "peak_resident_weight_bytes": memory.get("peak_resident_weight_bytes"),
+        "peak_rss_bytes": memory.get("peak_rss_bytes"),
+        "rss_units_source": memory.get("rss_units_source"),
+        "checkpoint_bytes": checkpoint_bytes,
+        "checkpoint_files": len(identity_files) if identity_files else None,
+        "seconds": {
+            "identity": _round3(tracked.get("identity_seconds")),
+            "resident_load": _round3(tracked.get("resident_load_seconds")),
+            "layer_load_sum": _round3(sum(layer_loads)) if layer_loads else None,
+            "layer_load_max": _round3(max(layer_loads)) if layer_loads else None,
+            "layer_loads": len(layer_loads) or None,
+            "decode_sum": (_round3(timing.get("decode_seconds"))
+                           if timing.get("decode_seconds") else None),
+            "fill_sum": (_round3(timing.get("fill_seconds"))
+                         if timing.get("fill_seconds") else None),
+            "forward_sum": _round3(forward_sum),
+            "seal": (_round3(now - tracked["seal_started"])
+                     if tracked.get("seal_started") is not None else None),
+            "elapsed": _round3(now - started),
+        },
+        "bytes": {
+            "checkpoint_read": checkpoint_read,
+            # Stored-form bytes moved over the bus: fp8/trellis payloads move
+            # as stored and are decoded on the device, bf16 slices as bf16.
+            "weights_h2d": checkpoint_read if on_cuda else None,
+            "hidden_d2h": int(tracked.get("hidden_d2h_bytes", 0)),
+        },
+        "forward_timing": args._forward_timer.mode,
+        "note": ("provenance, not identity: peaks and stage seconds this run measured; "
+                 "forward_sum is device time under cuda-events, wall time otherwise; "
+                 "seal covers head serialisation up to this block's assembly"),
+    }
+
+
+def _round3(value: Optional[float]) -> Optional[float]:
+    return None if value is None else round(float(value), 3)
+
+
 def _assemble(args, writer, panel, panel_records, capture_records, *, context_length,
               vocab_size, hidden_size, head_rel, head_full, head_content, head_shape,
-              model_dir, identity, identity_files, config, started,
+              head_digests, memory, model_dir, identity, identity_files, config, started,
               missing_weights=(), load_report=None, probe=None,
               race_report=None) -> int:
     scope = _scope(args)
@@ -1998,7 +2206,7 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
 
     head_doc = dsmanifest.head_identity(
         present=True, tensor_key="lm_head.weight", shape=head_shape, dtype="BF16",
-        file_sha256=F.sha256_file(head_full), tensor_content_sha256=head_content,
+        file_sha256=head_digests["file_sha256"], tensor_content_sha256=head_content,
         quantized=False, source="native", applied_in_capture=False, file=head_rel, bits=16,
         final_norm={"file": None, "tensor_key": None, "shape": None, "dtype": None,
                     "file_sha256": None, "tensor_content_sha256": None,
@@ -2054,7 +2262,16 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                           layer_outer.weights_decode_evidence(args._weights_decode_streamer)
                           if getattr(args, "_weights_decode_streamer", None) is not None
                           else None),
-                      "mechanism": SCHEDULE_MECHANISM[args.schedule]})
+                      # How the routed experts reached the device: the direct
+                      # fill (a byte copy per slice) or the converter's
+                      # stack-and-cat; None under window-outer. Loading
+                      # mechanism, not identity -- the bytes are proven equal.
+                      "expert_fill": (
+                          layer_outer.expert_fill_evidence(args._weights_decode_streamer)
+                          if getattr(args, "_weights_decode_streamer", None) is not None
+                          else None),
+                      "mechanism": SCHEDULE_MECHANISM[args.schedule]},
+        resources=_resources_block(args, fingerprint, memory, identity_files, started))
 
     evidence = capture_doc["capture_content_digest"]
     determinism = {

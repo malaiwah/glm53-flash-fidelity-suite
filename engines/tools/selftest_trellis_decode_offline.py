@@ -221,6 +221,39 @@ def main() -> int:
                          "do not carry exactly ranks")
     check("[6] a module missing a rank is refused at plan time", ok, detail)
 
+    # ---- EfficiencyFixes (review-efficiency S2-6 / S1-1) ------------------
+    # [6c] the ranks are HELD in bf16 and composed the moment the last one
+    # decodes, and the result is still bitwise cat-fp32-then-cast (`want6`):
+    # a cast rounds each element alone and a cat only places them. The sink
+    # sees the composed module before the loop ends, and a plain module after
+    # it in the subset, in that order -- nothing waits for the loop to finish.
+    offered = []
+
+    def sink6c(key, tensor):
+        offered.append((key, str(tensor.dtype)))
+        return True
+    eager_keys = dict(rank_keys)
+    eager_keys.update(_subset(module_b, pay_b, "mul1"))
+    tail_shapes_6c = dict(tail_shapes)
+    st6c = {"decoded_modules": 0, "trellis_bits": 0}
+    out6c = lo.materialize_trellis_subset(eager_keys, tplan, torch.bfloat16, st6c,
+                                          composition=comp, expected_shape=tail_shapes_6c.get,
+                                          sink=sink6c)
+    check("[6c] rank shards are stored in the output dtype, not fp32",
+          st6c.get("tp_rank_storage_dtype") == "bfloat16", repr(st6c))
+    check("[6c] a module composes as soon as its last rank decodes and goes to the sink "
+          "before later modules are decoded",
+          [k for k, _ in offered] == ["model.layers.3.mlp.experts.0.down_proj.weight",
+                                      "%s.weight" % module_b]
+          and all(d == "torch.bfloat16" for _, d in offered) and out6c == {},
+          repr(offered) + repr(sorted(out6c)))
+    st6d = {"decoded_modules": 0, "trellis_bits": 0}
+    out6d = lo.materialize_trellis_subset(rank_keys, tplan, torch.bfloat16, st6d,
+                                          composition=comp, expected_shape=tail_shapes.get)
+    check("[6c] cast-per-rank-then-cat is bitwise cat-then-cast",
+          torch.equal(out6d["model.layers.3.mlp.experts.0.down_proj.weight"], want6))
+    # ---- end EfficiencyFixes ---------------------------------------------
+
     # [6b] verified zero-pad truncation
     plain = {"model.layers.3.self_attn.kv_a_proj_with_mqa.weight":
              torch.cat([torch.randn(576, 64), torch.zeros(64, 64)]).to(torch.bfloat16)}
@@ -457,10 +490,11 @@ def main() -> int:
         check("[18] the predicate reads the tail over the ModelOpt leftover",
               lo.is_trellis_checkpoint(dy_cfg) and not lo.is_trellis_checkpoint(_Config(
                   {"quant_method": "modelopt", "config_groups": {}})))
-        fp8_18, tr_18, trfp8_18, st_18, nv_18 = lo.checkpoint_decode_plans(
+        fp8_18, tr_18, trfp8_18, st_18, nv_18, gg_18 = lo.checkpoint_decode_plans(
             dy_cfg, td, lambda **kw: events.append(kw))
         check("[18] a hybrid_tr3_tail checkpoint passes the FP8 gate and plans a TP compose",
-              fp8_18 is None and trfp8_18 is None and nv_18 is None and tr_18 is not None
+              fp8_18 is None and trfp8_18 is None and nv_18 is None and gg_18 is None
+              and tr_18 is not None
               and tr_18["quant_method"] == "exl3" and st_18["declared_by"] == "hybrid_tr3_tail"
               and st_18["composition"]["tp"] == 2
               and [e["stage"] for e in events] == ["trellis_decode_plan"]
