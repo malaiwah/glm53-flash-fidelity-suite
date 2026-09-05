@@ -10,20 +10,12 @@
       "treatment": "quantized"
     },
     {
-      "bits_per_weight": 8,
-      "format": "fp8_e4m3",
-      "layer_range": "all",
-      "note": "26 tensors: model.layers.N.self_attn.indexer.wk.weight, model.layers.N.self_attn.indexer.wq_b.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "0-12",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 65 x native:bf16@16 (model.layers.N.self_attn.indexer.k_norm.bias, model.layers.N.self_attn.indexer.k_norm.weight, model.layers.N.self_attn.indexer.weights_proj.weight); 26 x quantized:fp8_e4m3@8 (model.layers.N.self_attn.indexer.wk.weight, model.layers.N.self_attn.indexer.wq_b.weight). read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
       "tensor_class": "attn.other",
       "treatment": "quantized"
-    },
-    {
-      "bits_per_weight": 16,
-      "format": "bf16",
-      "layer_range": "all",
-      "note": "65 tensors: model.layers.N.self_attn.indexer.k_norm.bias, model.layers.N.self_attn.indexer.k_norm.weight, model.layers.N.self_attn.indexer.weights_proj.weight, model.layers.N.self_attn.kv_a_layernorm.weight, model.layers.N.self_attn.q_a_layernorm.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
-      "tensor_class": "attn.other",
-      "treatment": "native"
     },
     {
       "bits_per_weight": 8,
@@ -98,20 +90,12 @@
       "treatment": "quantized"
     },
     {
-      "bits_per_weight": 8,
-      "format": "fp8_e4m3",
-      "layer_range": "all",
-      "note": "778 tensors: model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight, model.layers.N.mlp.shared_experts.down_proj.weight, model.layers.N.mlp.shared_experts.gate_proj.weight, model.layers.N.mlp.shared_experts.up_proj.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
+      "bits_per_weight": null,
+      "format": "mixed",
+      "layer_range": "13",
+      "note": "class mixes formats on the same layers (SCOPE-004 admits one row per class and layer_range): 13 x native:bf16@16 (model.layers.N.eh_proj.weight, model.layers.N.enorm.weight, model.layers.N.hnorm.weight); 778 x quantized:fp8_e4m3@8 (model.layers.N.mlp.experts.E.down_proj.weight, model.layers.N.mlp.experts.E.gate_proj.weight, model.layers.N.mlp.experts.E.up_proj.weight). read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
       "tensor_class": "mtp",
       "treatment": "quantized"
-    },
-    {
-      "bits_per_weight": 16,
-      "format": "bf16",
-      "layer_range": "all",
-      "note": "13 tensors: model.layers.N.eh_proj.weight, model.layers.N.enorm.weight, model.layers.N.hnorm.weight, model.layers.N.input_layernorm.weight, model.layers.N.mlp.gate.e_score_correction_bias, model.layers.N.mlp.gate.weight. read from malaiwah/GLM-5.2-SIQ-Fruit-fp8@bbe0c5ac74d1f20110974774c17f1b2449bd9ef3 model.safetensors.index.json: a tensor is FP8 e4m3 with a 128x128 block scale when a weight_scale_inv sibling exists, native bf16 otherwise",
-      "tensor_class": "mtp",
-      "treatment": "native"
     },
     {
       "bits_per_weight": 16,
@@ -125,9 +109,5 @@
   "head_policy": "native",
   "kv_cache_dtype": "bf16",
   "mtp_included": true,
-  "policy": "mixed",
-  "weight_block_size": [
-    128,
-    128
-  ]
+  "policy": "mixed"
 }

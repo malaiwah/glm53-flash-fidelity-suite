@@ -720,6 +720,8 @@ def trellis_checkpoint_plan(config, declared_keys: Sequence[str]) -> Optional[Di
             "declared_slicing": {str(k): str(v) for k, v in
                                  ((tail or {}).get("slicing") or {}).items()},
             "tensor_schema": (tail or {}).get("tensor_schema"),
+            "k_values": [int(k) for k in ((tail or {}).get("k_values") or [])
+                         if isinstance(k, int) and not isinstance(k, bool)],
         }
     # MIRRORS `measure_cloud._candidate_decode_plan`'s exl3 branch FIELD FOR
     # FIELD, as the FP8 plan mirrors its own: `qualify_root` compares the
@@ -850,6 +852,20 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
         out: Dict[str, Any] = materialize_fp8_subset(
             passthrough, fp8_plan, torch_dtype, counters)
     else:
+        # No FP8 plan means the index carries no scale tensor at all -- so an
+        # fp8 tensor here has NO scale anywhere and would load as bf16 with
+        # its block scale never applied: the M1 defect, refused by name in
+        # the FP8 path and, until 2026-09-04, silently accepted here.
+        for key, value in passthrough.items():
+            dtype = getattr(value, "dtype", None)
+            if dtype is None and hasattr(value, "get_dtype"):
+                dtype = value.get_dtype()
+            if str(dtype) in ("torch.float8_e4m3fn", "F8_E4M3", "float8_e4m3fn",
+                              "torch.float8_e5m2", "F8_E5M2", "float8_e5m2"):
+                raise LayerOuterError(
+                    "REFUSED: %s is an fp8 tensor in a checkpoint that carries no "
+                    "%s tensor anywhere; loading it as bf16 would apply no block scale"
+                    % (key, FP8_SCALE_SUFFIX))
         out = dict(passthrough)
     parts: Dict[str, Dict[int, Any]] = {}
     for module, objects in groups.items():
@@ -868,10 +884,20 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
             payload["trellis"].to(device), payload["suh"].to(device),
             payload["svh"].to(device), codebook=objects["codebook"])
         stats["decoded_modules"] += 1
-        stats["trellis_bits"] += int(payload["trellis"].shape[-1]) // 16
+        bits = int(payload["trellis"].shape[-1]) // 16
+        stats["trellis_bits"] += bits
+        histogram = stats.setdefault("k_histogram", {})
+        histogram[str(bits)] = histogram.get(str(bits), 0) + 1
+        _check_declared_bits(module, bits, plan, composition)
         ranked = TRELLIS_RANK_RE.match(module)
+        weight_key = "%s.weight" % (ranked.group("module") if ranked else module)
+        if weight_key in subset:
+            raise LayerOuterError(
+                "REFUSED: %s exists as a plain weight beside its trellis payload; the "
+                "checkpoint carries two versions of one tensor and this schedule will "
+                "not pick one" % weight_key)
         if ranked is None:
-            out["%s.weight" % module] = decoded.to(torch_dtype)
+            out[weight_key] = decoded.to(torch_dtype)
             continue
         if composition is None:
             raise LayerOuterError(
@@ -882,6 +908,42 @@ def materialize_trellis_subset(subset: Dict[str, Any], plan: Dict[str, Any], tor
         out["%s.weight" % module] = _compose_tp_ranks(
             module, by_rank, composition, expected_shape, torch_dtype, stats)
     return out
+
+
+def _check_declared_bits(module: str, bits: int, plan: Dict[str, Any],
+                         composition: Optional[Dict[str, Any]]) -> None:
+    """The payload's own K against what the artifact declares.
+
+    A uniform declaration (`bits: 4`) must equal every module's K. A TR3 tail
+    declares an AVERAGE (`bits_avg: 3.25`) over per-expert tiers with
+    `k_values: [3, 4]`, so the check is membership in k_values. A declaration
+    that is neither is not checkable and is recorded, not trusted: the row's
+    bit-width label then rests on the K histogram in the decode evidence.
+    """
+    declared = plan.get("bits")
+    k_values = (composition or {}).get("k_values") if composition else None
+    if k_values:
+        if bits not in {int(k) for k in k_values}:
+            raise LayerOuterError(
+                "REFUSED: %s is a K%d payload but the artifact declares k_values %s"
+                % (module, bits, sorted(k_values)))
+        return
+    if composition is not None:
+        # A TR3 tail declares bits_avg, an AVERAGE over per-expert tiers; with
+        # no k_values it is not checkable per module and stays a recorded
+        # label backed by the K histogram in the decode evidence.
+        return
+    if isinstance(declared, bool) or declared is None:
+        return
+    try:
+        declared_value = float(declared)
+    except (TypeError, ValueError):
+        return
+    if declared_value.is_integer() and int(declared_value) != bits:
+        raise LayerOuterError(
+            "REFUSED: %s is a K%d payload but the artifact declares bits=%r; the row "
+            "would be labelled with a bit-width its bytes do not carry"
+            % (module, bits, declared))
 
 
 def _compose_tp_ranks(module: str, by_rank: Dict[int, Any], composition: Dict[str, Any],
@@ -1035,6 +1097,30 @@ def _materialized(subset: Dict[str, Any], fp8_plan, trellis_plan, trellis_fp8_pl
     return subset
 
 
+def _pin_fp32_matmul_policy() -> Dict[str, Any]:
+    """TF32 off, highest fp32 matmul precision; returns what was set and seen."""
+    import torch
+
+    before = {
+        "allow_tf32_matmul": bool(torch.backends.cuda.matmul.allow_tf32),
+        "allow_tf32_cudnn": bool(torch.backends.cudnn.allow_tf32),
+        "float32_matmul_precision": torch.get_float32_matmul_precision(),
+        "NVIDIA_TF32_OVERRIDE": os.environ.get("NVIDIA_TF32_OVERRIDE"),
+    }
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.set_float32_matmul_precision("highest")
+    return {
+        "pinned": {"allow_tf32_matmul": False, "allow_tf32_cudnn": False,
+                   "float32_matmul_precision": "highest"},
+        "before_pin": before,
+        "note": "the trellis decode's fp32 Hadamard GEMMs run on the capture device; "
+                "cuBLAS fp32 without TF32 is deterministic per device but not bitwise "
+                "against the CPU fixture proof, which is why per-host bitwise "
+                "reproduction is asserted by the two-cold-run qualification, not assumed",
+    }
+
+
 def _exl3hf():
     """Import the decode ABI lazily: torch-heavy, and only a quant run needs it."""
     here = os.path.dirname(os.path.abspath(__file__))
@@ -1134,7 +1220,17 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     trellis_plan = None
     trellis_stats = {"decoded_modules": 0, "trellis_bits": 0}
     trellis_fp8_plan = None
-    if _quant_method(config) == "exl3":
+    if _quant_method(config) == "exl3" or trellis_tail_declaration(config) is not None:
+        # The trellis decode is two fp32 128x128 GEMMs per module and now runs
+        # on the capture device: pin the matmul policy exactly as stream_score
+        # does and RECORD it, so the sealed receipt can show that TF32 was off
+        # rather than assume torch's default (which NVIDIA_TF32_OVERRIDE can
+        # flip from the environment without a trace).
+        trellis_stats["numeric_policy"] = _pin_fp32_matmul_policy()
+        if str(os.environ.get("NVIDIA_TF32_OVERRIDE", "")).strip() == "1":
+            raise LayerOuterError(
+                "REFUSED: NVIDIA_TF32_OVERRIDE=1 forces TF32 in cuBLAS regardless of the "
+                "torch flags; the trellis decode's fp32 GEMMs would not be fp32. Unset it.")
         keys = list(_index_weight_map(model_dir))
         trellis_plan = trellis_checkpoint_plan(config, keys)
         if any(key.endswith(FP8_SCALE_SUFFIX) for key in keys):
@@ -1607,6 +1703,8 @@ def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]
             "quantization_config": trellis_plan,
             "modules_decoded": int(stats.get("decoded_modules", 0)),
             "trellis_bits_seen": int(stats.get("trellis_bits", 0)),
+            "k_histogram": dict(sorted((stats.get("k_histogram") or {}).items())),
+            "numeric_policy": dict(stats.get("numeric_policy") or {}),
             "observed": {
                 "quantized_module_count": int(stats.get("quantized_module_count", 0)),
                 "codebook_histogram": dict(stats.get("codebook_histogram", {})),

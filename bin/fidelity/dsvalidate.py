@@ -640,10 +640,41 @@ def _validate_scope_vocabulary(scope, report):
     error, because the dataset itself is still internally consistent and
     already-published datasets must keep verifying.
     """
+    # SCOPE-004 and the closed assignment schema, as ERRORS: the registry
+    # refuses a duplicate (tensor_class, layer_range) and any key outside
+    # {tensor_class, treatment, format, bits_per_weight, layer_range, note},
+    # and both published rows of 2026-09-04 carried duplicates because nothing
+    # here looked. scope_digest is sealed into the dataset, so the only fix
+    # after a capture is a re-capture; refuse before it.
+    assignments = scope.get("assignments") or []
+    schema_keys = {"tensor_class", "treatment", "format", "bits_per_weight",
+                   "layer_range", "note"}
+    pairs = [(a.get("tensor_class"), a.get("layer_range")) for a in assignments]
+    for pair in sorted({p for p in pairs if pairs.count(p) > 1}, key=str):
+        report.error("scope_duplicate_assignment", "SCOPE-004",
+                     "scope.assignments has %d rows for (tensor_class=%r, layer_range=%r); the "
+                     "registry admits one row per class and layer_range. Split by disjoint "
+                     "layer ranges, or write ONE row with format 'mixed' and the census in "
+                     "its note." % (pairs.count(pair), pair[0], pair[1]))
+    for assignment in assignments:
+        extra = sorted(set(assignment) - schema_keys)
+        if extra:
+            report.error("scope_assignment_keys", "SCOPE-004",
+                         "scope assignment %r carries keys the registry schema does not admit: %s"
+                         % (assignment.get("tensor_class"), ", ".join(extra)))
+    classes = {a.get("tensor_class") for a in assignments}
+    for needed in ("embed_tokens", "lm_head"):
+        if needed not in classes:
+            report.error("scope_coverage", "SCOPE-004",
+                         "scope.assignments does not cover %s" % needed)
+    if not any(str(c).startswith("attn.") for c in classes):
+        report.error("scope_coverage", "SCOPE-004", "scope.assignments covers no attention class")
+    if not any(str(c).startswith(("mlp.", "moe.")) for c in classes):
+        report.error("scope_coverage", "SCOPE-004", "scope.assignments covers no mlp/moe class")
     allowed = registry_numeric_formats()
     if not allowed:
         return
-    for assignment in scope.get("assignments") or []:
+    for assignment in assignments:
         value = assignment.get("format")
         if value is None or value in allowed:
             continue

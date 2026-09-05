@@ -35,6 +35,39 @@ _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _ALLOWLISTS = {
+    ("davidsyoung/GLM-5.3-EXL3-TR3-3.25bpw",
+     "6d6bd738c0c1635513e0bd0fdf0302049bd820a9"): {
+        # index census of model.layers.78, the MTP block transformers never builds.
+        # This artifact quantizes the MTP block's routed experts as TP-rank
+        # payloads: the census is the 23 non-expert names of
+        # glm53-layer78-unexpected-keys.json plus 12,288 payload objects.
+        "path": "engines/tools/layer-outer-evidence/dy325-exl3-layer78-unexpected-keys.json",
+        "artifact_sha256": "2d3aed8145884861c805143bf2306abf7d2e469d94a158bf6587d65faebeed2b",
+        "canonical_sorted_names_sha256": "d567faf9576946cced4795af68991a5432ddba38383a6baef59e33253e617193",
+        "count": 12311,
+    },
+    ("davidsyoung/GLM-5.3-EXL3-TR3-3.0bpw",
+     "eeab94eb6e95b4e4d13d94af55ab3c420d6f52d3"): {
+        # index census of model.layers.78, the MTP block transformers never builds.
+        # This artifact quantizes the MTP block's routed experts as TP-rank
+        # payloads: the census is the 23 non-expert names of
+        # glm53-layer78-unexpected-keys.json plus 12,288 payload objects.
+        "path": "engines/tools/layer-outer-evidence/dy30-exl3-layer78-unexpected-keys.json",
+        "artifact_sha256": "2d3aed8145884861c805143bf2306abf7d2e469d94a158bf6587d65faebeed2b",
+        "canonical_sorted_names_sha256": "d567faf9576946cced4795af68991a5432ddba38383a6baef59e33253e617193",
+        "count": 12311,
+    },
+    ("davidsyoung/GLM-5.3-EXL3-TR3-3.42bpw",
+     "99c6f951333d2b38f1efefa533c7afadf0d376e3"): {
+        # index census of model.layers.78, the MTP block transformers never builds.
+        # This artifact quantizes the MTP block's routed experts as TP-rank
+        # payloads: the census is the 23 non-expert names of
+        # glm53-layer78-unexpected-keys.json plus 12,288 payload objects.
+        "path": "engines/tools/layer-outer-evidence/dy342-exl3-layer78-unexpected-keys.json",
+        "artifact_sha256": "2d3aed8145884861c805143bf2306abf7d2e469d94a158bf6587d65faebeed2b",
+        "canonical_sorted_names_sha256": "d567faf9576946cced4795af68991a5432ddba38383a6baef59e33253e617193",
+        "count": 12311,
+    },
     ("drowzeys/keys-GLM-5.3-EXL3",
      "ebf3c8bb0ed869b8f96a6ade9c8d365a49bdbad5"): {
         # index census of model.layers.78, the MTP block transformers never builds.

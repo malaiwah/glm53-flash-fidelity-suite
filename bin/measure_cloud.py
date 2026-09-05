@@ -1580,6 +1580,22 @@ def _candidate_block(args, plan_data: Dict[str, Any], con: Console,
             doc.get("kv_cache_dtype", "bf16"), doc["policy"])
     except Exception as exc:
         raise Refusal("--candidate-scope does not form a scope block: %s" % exc, [])
+    # The registry's scope rules, applied at $0: SCOPE-004 (one row per
+    # class and layer_range), the closed assignment schema, class coverage,
+    # and the numeric_format enum. scope_digest is sealed into the dataset, so
+    # a scope the registry refuses can only be fixed by a re-capture -- both
+    # rows published on 2026-09-04 carried duplicate rows this would have
+    # refused before any spend.
+    from fidelity import dsvalidate
+    scope_report = dsvalidate.Report(str(scope_path))
+    dsvalidate._validate_scope_vocabulary(scope_block, scope_report)
+    if scope_report.errors:
+        raise Refusal(
+            "--candidate-scope would be refused by the registry (%d finding(s))"
+            % len(scope_report.errors),
+            ["%s: %s" % (e.get("rule"), e.get("message")) for e in scope_report.errors])
+    for w in scope_report.warnings:
+        con.warn("scope %s: %s" % (w.get("rule"), w.get("message")))
     if not (isinstance(args.candidate_bits, float) and 0 < args.candidate_bits <= 16):
         raise Refusal("--candidate-bits must be in (0, 16]", [])
     if not re.fullmatch(r"[a-z0-9_.-]+", args.candidate_codec or ""):
@@ -1703,10 +1719,11 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
         if qcfg["quant_method"] == "exl3":
             con.ok("candidate is exl3 trellis",
                    "quant_method %s codebook %s declared bits %s; decoded to bf16 per "
-                   "module (%s), %d modules kept native. Per-module codebook and the "
-                   "payload's own bit width are read from the checkpoint on the pod%s"
+                   "module (%s). Per-module codebook and the payload's own bit width are "
+                   "read from the checkpoint on the pod and checked against the "
+                   "declaration%s"
                    % (qcfg["quant_method"], qcfg["codebook"], qcfg["bits"],
-                      decode["method"], len(qcfg["modules_to_not_convert"]),
+                      decode["method"],
                       ("; declared by hybrid_tr3_tail (quantization_config says %r), "
                        "tp=%s rank shards composed per module"
                        % (decode.get("quant_method_declared"), decode.get("tp")))
@@ -4996,6 +5013,22 @@ def _plan_runpod_anonymous(
         },
     })
     verify_job(job)
+    # The root-qualification contract the pod will enforce at qualify_root,
+    # evaluated here at $0. Two candidate runs on 2026-09-04 reached
+    # qualify_root after both cold runs and the self-compare before this
+    # contract refused them (target surface hardcoded fp8-block; an
+    # unrecorded decode) -- everything the contract reads from the JOB is
+    # knowable now, so refuse now.
+    if args.role == "root":
+        from fidelity.jobcontract import root_qualification_contract
+        try:
+            root_qualification_contract(job)
+        except JobContractError as exc:
+            raise Refusal(
+                "the job cannot form its root-qualification contract: %s" % exc,
+                ["qualify_root would refuse this job on the pod after both cold runs; "
+                 "the target surface/codec/bits must agree with the candidate block's "
+                 "declared decode"])
     if (job["produced_by"]["revision"]
             != plan_data["source_checkout"]["initial"]["head"]):
         raise Refusal(

@@ -91,12 +91,14 @@ def _method_line(decode: dict) -> str:
                 "the reference capture" % (method, qc.get("fmt"), qc.get("weight_block_size")))
     if method == "exl3-trellis-decode-to-bf16":
         codebook = qc.get("codebook") or "per-module (read from each payload's own marker)"
+        mixed = decode.get("mixed_fp8")
+        rest = ("non-routed tensors kept in the source's block-scaled FP8 and dequantized "
+                "the same way" if mixed else "non-routed tensors carried as shipped")
         return ("decode-and-run, weights only: `%s` -- each exl3 payload group "
                 "(`trellis`/`suh`/`svh`/codebook marker) decoded to bf16 per module on "
                 "the capture device via exllamav3's transcribed codebooks (codebook %s, "
-                "declared %s bits), non-routed tensors carried as shipped; same engine, "
-                "schedule and device as the reference capture"
-                % (method, codebook, qc.get("bits")))
+                "declared %s bits), %s; same engine, schedule and device as the reference "
+                "capture" % (method, codebook, qc.get("bits"), rest))
     return "`%s` (decode recorded in the sealed runtime receipt)" % method
 
 
@@ -141,8 +143,10 @@ def render(loaded: dict) -> str:
             (comparison.get("estimator") or {}).get("accumulation_dtype")),
         "| method | %s |" % _method_line(decode),
         "| determinism | two fresh processes captured the candidate; both sealed captures "
-        "carry content digest `%s…` (exact self-comparison 0.0) |" % (
-            canonical.get("capture_content_digest", "")[:16]),
+        "carry content digest `%s…` (self-comparison %r) |" % (
+            canonical.get("capture_content_digest", "")[:16],
+            ((qualification.get("comparison") or {}).get("mean_kld")
+             if isinstance(qualification.get("comparison"), dict) else "recorded in the qualification receipt")),
         "| comparability class | %s |" % (comparison.get("comparability") or {}).get("class"),
         "",
         "**Scope** (`scope_digest`): `%s`" % scope["scope_digest"],

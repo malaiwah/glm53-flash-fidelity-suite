@@ -106,7 +106,10 @@ def main() -> int:
     check("[1] each group names its own codebook",
           groups[module_a]["codebook"] == "mcg" and groups[module_b]["codebook"] == "mul1")
 
-    config = _Config({"quant_method": "exl3", "codebook": "mcg", "bits": 3.0})
+    # bits is declared None here: the fixture mixes a K3 and a K4 module on
+    # purpose, and a uniform declaration over that is exactly what rung [14]
+    # refuses.
+    config = _Config({"quant_method": "exl3", "codebook": "mcg", "bits": None})
     plan = lo.trellis_checkpoint_plan(config, list(subset))
     check("[2] plan counts both modules and both codebooks",
           plan["_observed"]["quantized_module_count"] == 2
@@ -179,12 +182,12 @@ def main() -> int:
 
     # parts decode to [128, 128] (8x8 tiles); two ranks tile a down_proj
     # [hidden=128, inter=256] along axis 1 only.
-    tail = {"format": "exl3-trellis", "codebook": "mcg", "tp": 2, "bits_avg": 3.0,
-            "slicing": {"down_proj": "K-sliced: rank r = input cols"}}
+    tail = {"format": "exl3-trellis", "codebook": "mcg", "tp": 2, "bits_avg": 3.5,
+            "k_values": [3, 4], "slicing": {"down_proj": "K-sliced: rank r = input cols"}}
     tcfg = _TailConfig({"quant_method": "modelopt"}, tail)
     tplan = lo.trellis_checkpoint_plan(tcfg, list(rank_keys))
     check("[6] a hybrid_tr3_tail declaration is accepted over a leftover quant_method",
-          tplan["quant_method"] == "exl3" and tplan["codebook"] == "mcg"
+          tplan["quant_method"] == "exl3" and tplan["codebook"] == "mcg" and tplan["bits"] == 3.5
           and tplan["_observed"]["quant_method_declared"] == "modelopt"
           and tplan["_observed"]["composition"]["tp"] == 2, repr(tplan))
     tail_shapes = {"model.layers.3.mlp.experts.0.down_proj.weight": (128, 256)}
@@ -376,6 +379,62 @@ def main() -> int:
               ctrl["quantization_config"] == pod, "ctrl %r pod %r" % (ctrl["quantization_config"], pod))
         check("[13] %s: controller and pod agree on the method (%s)" % (label, method),
               ctrl["method"] == pod_method == method, "ctrl %r pod %r" % (ctrl["method"], pod_method))
+
+    # [14] declared bits are bound to the payload bytes (review S2).
+    uniform = lo.trellis_checkpoint_plan(_Config({"quant_method": "exl3", "codebook": "mcg",
+                                                  "bits": 3.0}), list(subset))
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        subset, uniform, torch.bfloat16, {"decoded_modules": 0, "trellis_bits": 0}),
+        "a K4 payload but the artifact declares bits=3.0")
+    check("[14] a uniform bits declaration over a different K is refused", ok, detail)
+    only_k3 = {k: v for k, v in subset.items() if module_b not in k}
+    st14 = {"decoded_modules": 0, "trellis_bits": 0}
+    lo.materialize_trellis_subset(only_k3, uniform, torch.bfloat16, st14)
+    check("[14] a matching uniform declaration decodes and records the K histogram",
+          st14["k_histogram"] == {"3": 1}, repr(st14))
+    tail_k = {"format": "exl3-trellis", "codebook": "mcg", "tp": 2, "bits_avg": 3.5,
+              "k_values": [3, 4], "slicing": {"down_proj": "K-sliced"}}
+    tcfg_k = _TailConfig({"quant_method": "modelopt"}, tail_k)
+    tplan_k = lo.trellis_checkpoint_plan(tcfg_k, list(rank_keys))
+    comp_k = tplan_k["_observed"]["composition"]
+    check("[14] a TR3 tail's k_values reach the composition", comp_k["k_values"] == [3, 4])
+    st14b = {"decoded_modules": 0, "trellis_bits": 0}
+    lo.materialize_trellis_subset(rank_keys, tplan_k, torch.bfloat16, st14b,
+                                  composition=comp_k, expected_shape=tail_shapes.get)
+    check("[14] mixed K3/K4 ranks are admitted under k_values [3, 4]",
+          st14b["k_histogram"] == {"3": 1, "4": 1}, repr(st14b))
+    tail_k3 = dict(tail_k, k_values=[3])
+    tplan_k3 = lo.trellis_checkpoint_plan(_TailConfig({"quant_method": "modelopt"}, tail_k3),
+                                          list(rank_keys))
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        rank_keys, tplan_k3, torch.bfloat16, {"decoded_modules": 0, "trellis_bits": 0},
+        composition=tplan_k3["_observed"]["composition"], expected_shape=tail_shapes.get),
+        "declares k_values [3]")
+    check("[14] a K outside the declared k_values is refused", ok, detail)
+
+    # [15] a bare fp8 tensor in a trellis-only tree is refused (review S4).
+    bare = dict(subset)
+    bare["model.layers.3.self_attn.o_proj.weight"] = torch.zeros(4, 4).to(torch.float8_e4m3fn)
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        bare, plan, torch.bfloat16, {"decoded_modules": 0, "trellis_bits": 0}),
+        "tensor anywhere; loading it as bf16 would apply no block scale")
+    check("[15] a bare fp8 tensor with no scale anywhere is refused", ok, detail)
+
+    # [16] a plain weight beside a payload group is refused, not overwritten (review S5).
+    both = dict(subset)
+    both["%s.weight" % module_a] = torch.zeros(128, 128, dtype=torch.bfloat16)
+    ok, detail = refuses(lambda: lo.materialize_trellis_subset(
+        both, plan, torch.bfloat16, {"decoded_modules": 0, "trellis_bits": 0}),
+        "two versions of one tensor")
+    check("[16] a plain weight beside its payload group is refused", ok, detail)
+
+    # [17] the fp32 matmul policy is pinned and recorded (review S3).
+    policy = lo._pin_fp32_matmul_policy()
+    check("[17] TF32 is pinned off and the precision is highest",
+          torch.backends.cuda.matmul.allow_tf32 is False
+          and torch.get_float32_matmul_precision() == "highest"
+          and policy["pinned"]["float32_matmul_precision"] == "highest"
+          and "NVIDIA_TF32_OVERRIDE" in policy["before_pin"], repr(policy))
 
     passed = sum(1 for _, ok, _ in RESULTS if ok)
     print("\nselftest_trellis_decode_offline: %d passed, %d failed"

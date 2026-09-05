@@ -1,0 +1,16 @@
+{
+ "architecture": "GlmMoeDsaForCausalLM",
+ "artifact_sha256": "2d3aed8145884861c805143bf2306abf7d2e469d94a158bf6587d65faebeed2b",
+ "canonical_sorted_names_sha256": "d567faf9576946cced4795af68991a5432ddba38383a6baef59e33253e617193",
+ "config_sha256": "c1deb536b1f9ec866a99b33fdf85726fdf093c10b4f455016b2e3865b7a3a9c4",
+ "count": 12311,
+ "decoder_layers": 78,
+ "derived_at_utc": "2026-09-05T01:56:32Z",
+ "derived_by": "index census: every key of model.layers.78 (the MTP block transformers never builds); this artifact quantizes the MTP block's routed experts too, so the census is the 23 non-expert names of the bf16 allowlist plus 12288 rank-sharded payload objects (768 expert modules x 4 ranks x 4 objects)",
+ "derived_from": "davidsyoung/GLM-5.3-EXL3-TR3-3.0bpw@eeab94eb6e95b4e4d13d94af55ab3c420d6f52d3 model.safetensors.index.json",
+ "index_sha256": "80b1bd429403516791107763a7043d896e1dc03e7e848fed3331bdf734741f91",
+ "per_layer_unexpected_counts": {
+  "78": 12311
+ },
+ "relation_to_bf16_allowlist": "the 23 plain names are exactly the non-expert names of engines/tools/layer-outer-evidence/glm53-layer78-unexpected-keys.json, and the 768 composed payload modules are exactly its 768 expert weights; the streamed loader reports over-index keys from the index, so the set is the raw index census"
+}
