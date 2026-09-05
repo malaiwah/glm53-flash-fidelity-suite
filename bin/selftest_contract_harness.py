@@ -230,9 +230,16 @@ def candidate_job(surface, root_manifest, candidate_manifest, binding, *, own_he
     q_contract_sha = common.sha256_hex(json.dumps(
         {"bundle": q_bundle, "registry": q_registry},
         sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False))
-    shards = [{"path": "model.safetensors", "bytes": 17}]
-    download_manifest = [{"path": "config.json", "bytes": 1}, shards[0],
-                         {"path": "model.safetensors.index.json", "bytes": 1}]
+    if spec["target_surface"] == "gguf":
+        # a GGUF build: its .gguf parts are the shards, no config/index ships
+        shards = [{"path": "%s/%s" % (spec["target_path"], name), "bytes": 17}
+                  for name in spec["weights_decode"]["quantization_config"]["files"]]
+        download_manifest = sorted(shards + [{"path": "LICENSE", "bytes": 1}],
+                                   key=lambda row: row["path"])
+    else:
+        shards = [{"path": "model.safetensors", "bytes": 17}]
+        download_manifest = [{"path": "config.json", "bytes": 1}, shards[0],
+                             {"path": "model.safetensors.index.json", "bytes": 1}]
     names_sha = common.sha256_hex(json.dumps(["model.unused"], separators=(",", ":")))
     root_panel = root_manifest["panel"]
     # The controller's storage contract for the two hidden-form dataset trees;
@@ -293,12 +300,15 @@ def candidate_job(surface, root_manifest, candidate_manifest, binding, *, own_he
                    "config_sha256": "a" * 64, "index_sha256": "b" * 64,
                    "shard_manifest_sha256": common.sha256_hex(json.dumps(
                        shards, sort_keys=True, separators=(",", ":"))),
-                   "model_bytes": 17, "shards": shards,
-                   "download_manifest": download_manifest, "download_bytes_total": 19,
+                   "model_bytes": sum(row["bytes"] for row in shards), "shards": shards,
+                   "download_manifest": download_manifest,
+                   "download_bytes_total": sum(row["bytes"] for row in download_manifest),
                    "download_manifest_sha256": common.sha256_hex(json.dumps(
                        download_manifest, sort_keys=True, separators=(",", ":"))),
                    "weights_license": None,
-                   "root_capture_storage": root_capture_storage},
+                   "root_capture_storage": root_capture_storage,
+                   **({"index_source": "sha256 of the canonical JSON GGUF tensor table"}
+                      if spec["target_surface"] == "gguf" else {})},
         "panel": {"binding_file_sha256": "2" * 64, "binding_path": "panel-binding.json",
                   "resolved_binding": binding},
         "capture": {
