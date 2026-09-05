@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -277,8 +278,9 @@ def main() -> int:
                       % mps_note)
 
         # -------------------------------------------------------------- 4
-        fixtures = sorted(EVIDENCE.glob("*-l3e0-*.pt"))
-        assert len(fixtures) == 4, "expected 4 real-tensor fixtures, found %d" % len(fixtures)
+        fixtures = sorted(p for p in EVIDENCE.glob("*-l3e0-*.pt")
+                          if not p.name.startswith("glm53-"))
+        assert len(fixtures) == 4, "expected 4 Flash real-tensor fixtures, found %d" % len(fixtures)
         live_checked = 0
         for path in fixtures:
             fixture = torch.load(path, map_location="cpu")
@@ -471,7 +473,7 @@ def main() -> int:
                 mock_root(scratch, "gs32", evidence="redhat", layout_config=broken), require_shard_hashes=False)
         broken = json.loads((EVIDENCE / "redhat-config.json").read_text(encoding="utf-8"))
         broken["text_config"]["n_routed_experts"] = 128
-        refuses("official GLM5Next main/MTP geometry", ns.load_nvfp4_surface,
+        refuses("official glm5_next geometry: n_routed_experts=128", ns.load_nvfp4_surface,
                 mock_root(scratch, "geom", evidence="redhat", layout_config=broken), require_shard_hashes=False)
         passed.append(
             "6 surface load: both dialects, W4A16-fully-captured branch, identity stable and "
@@ -765,6 +767,129 @@ def main() -> int:
         passed.append(
             "10 registry_add adapts the nvfp4 summary family (repo/revision pinned, scope + "
             "seal + activation caveats verbatim, W4A16 earns none) and refuses 8 stripped ones"
+        )
+
+        # -------------------------------------------------------------- 11
+        # The GLM-5.3 FLAGSHIP (glm_moe_dsa: 78 layers, 256 experts, model.
+        # stack) through the same decode and the same fail-closed census, on
+        # the three real modelopt exports the layer-outer lane measures.
+        parity = json.loads((EVIDENCE / "glm53-nvfp4-parity.json").read_text(encoding="utf-8"))
+        assert parity["all_bitwise"] is True
+        flagship = sorted(EVIDENCE.glob("glm53-*-l3e0-*.pt"))
+        assert len(flagship) == 6, "expected 6 flagship fixtures, found %d" % len(flagship)
+        geo = ns.GLM_MOE_DSA_GEOMETRY
+        live_flagship = 0
+        for path in flagship:
+            record = parity["fixtures"][path.name]
+            assert record["max_abs_diff_fp32"] == 0.0 and record["bitwise_fp32"] is True
+            assert record["bitwise_after_bf16_cast"] is True and record["nonfinite_values"] == 0
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == record["fixture_sha256"], path.name
+            fixture = torch.load(path, map_location="cpu")
+            assert fixture["layout"] == ns.LAYOUT_MODELOPT and fixture["geometry"] == geo.model_type
+            decoded = ns.dequant_nvfp4(fixture["packed"], fixture["weight_scale"],
+                                       weight_scale_2=fixture["weight_scale_2"])
+            want = fixture["expected_fp32"]
+            assert torch.equal(decoded, want), "flagship decode differs: %s" % path.name
+            assert torch.equal(decoded.signbit(), want.signbit()), "signbits: %s" % path.name
+            rows, cols = want.shape
+            assert (rows, cols) == (fixture["rows"], geo.projection_shape[fixture["projection"]][1])
+            assert torch.isfinite(decoded).all()
+            audit = parity["orientation_audit"]["tensors"][path.name]
+            assert audit["passed"] is True and audit["cosine_vs_official_bf16"] > 0.98
+            try:
+                from compressed_tensors.compressors.nvfp4.helpers import unpack_fp4_from_uint8
+            except ImportError:
+                continue
+            values = unpack_fp4_from_uint8(fixture["packed"], rows, cols, dtype=torch.float32)
+            effective = fixture["weight_scale"].to(torch.float32) * fixture["weight_scale_2"].to(
+                torch.float32).reshape(())
+            groups = cols // ns.GROUP_SIZE
+            reference = (values.reshape(rows, groups, ns.GROUP_SIZE)
+                         * effective.reshape(rows, groups, 1)).reshape(rows, cols)
+            assert torch.equal(decoded, reference), "LIVE ct reference differs: %s" % path.name
+            live_flagship += 1
+        # the plan on the three REAL configs + indexes, each 232,385 tensors
+        contracts = {}
+        for tag in ("radixark", "incoai", "inferact"):
+            config = json.loads((EVIDENCE / ("%s-config.json" % tag)).read_text(encoding="utf-8"))
+            weight_map = real_index(tag)["weight_map"]
+            assert len(weight_map) == 232385, "%s index size drifted" % tag
+            plan = ns.modelopt_nvfp4_plan(config, weight_map)
+            contract, observed = plan["contract"], plan["observed"]
+            assert contract["quant_method"] == "modelopt" and contract["quant_algo"] == "NVFP4"
+            assert contract["num_bits"] == 4 and contract["group_size"] == 16
+            assert contract["activation_scheme"] == ns.MODELOPT_ACTIVATION_SCHEME
+            assert contract["ignore_count"] == len(config["quantization_config"]["ignore"])
+            assert observed["quantized_modules"] == 75 * 256 * 3 == 57600
+            assert observed["mtp_expert_format"] == "plain-weight"
+            assert observed["nonrouted_tensors"] == 1217
+            assert observed["nonrouted_verification"] == "official-name-bijection"
+            assert observed["activation_scale_components"] == ["input_scale"]
+            assert observed["online_transforms_declared"] == []
+            assert plan["geometry"] is geo
+            contracts[tag] = contract
+        assert contracts["inferact"]["weights_declared_by"] == "quantization_config.group_size"
+        assert contracts["radixark"]["weights_declared_by"] == "config_groups.group_0.weights"
+        assert contracts["inferact"]["producer"] is None
+        assert contracts["incoai"]["producer"] == {"name": "modelopt", "version": "0.45.0"}
+        # ... and the plan's refusals, each BY NAME
+        base_config = json.loads((EVIDENCE / "inferact-config.json").read_text(encoding="utf-8"))
+        base_map = real_index("inferact")["weight_map"]
+        for mutate, fragment in (
+            (lambda c: c["quantization_config"].__setitem__("rotate", True),
+             "online weight transforms ['rotate']"),
+            (lambda c: c["quantization_config"].__setitem__("quant_algo", "FP8"),
+             "quant_algo 'FP8' is not NVFP4"),
+            (lambda c: c["quantization_config"].__setitem__("quant_method", "compressed-tensors"),
+             "is not modelopt"),
+            (lambda c: c["quantization_config"].__setitem__("group_size", 32),
+             "group_size 32 is not the NVFP4 group size 16"),
+            (lambda c: c["quantization_config"].pop("group_size"),
+             "neither config_groups nor an integer top-level group_size"),
+            (lambda c: c.__setitem__("model_type", "deepseek_v4"),
+             "model_type 'deepseek_v4' is not a family this surface knows"),
+            (lambda c: c.__setitem__("n_routed_experts", 288),
+             "n_routed_experts=288, expected 256"),
+        ):
+            doctored = json.loads(json.dumps(base_config))
+            mutate(doctored)
+            refuses(fragment, ns.modelopt_nvfp4_plan, doctored, base_map)
+        # the modelopt block through the STREAMING surface loader too: the
+        # flat Inferact spelling and the config_groups spelling both load
+        for tag in ("radixark", "inferact"):
+            weight_map = real_index(tag)["weight_map"]
+            declaration = ns.modelopt_weight_declaration(
+                json.loads((EVIDENCE / ("%s-config.json" % tag)).read_text(encoding="utf-8"))
+                ["quantization_config"])
+            assert declaration["num_bits"] == 4 and declaration["group_size"] == 16
+            assert declaration["input_activations"]["dynamic"] is False
+        for mutate, fragment in (
+            (lambda m: m.pop("model.layers.40.mlp.experts.7.up_proj.weight_scale_2"),
+             "model.layers.40.mlp.experts.7.up_proj.* carries an unrecognised component set"),
+            (lambda m: m.__setitem__("model.layers.79.mlp.experts.0.gate_proj.weight", "x"),
+             "unexpected expert layer 79"),
+            (lambda m: m.__setitem__("model.layers.3.mlp.experts.256.gate_proj.weight", "x"),
+             "expert index 256 >= 256"),
+            (lambda m: m.__setitem__("model.layers.3.mlp.experts.0.gate_proj.qweight", "x"),
+             "unknown component 'qweight'"),
+            (lambda m: m.pop("model.layers.5.self_attn.o_proj.weight"),
+             "non-routed tensor names differ from the official BF16 set"),
+            (lambda m: m.__setitem__("model.layers.5.self_attn.o_proj.weight_scale_inv", "x"),
+             "non-routed tensor names differ from the official BF16 set"),
+            (lambda m: [m.pop("model.layers.77.mlp.experts.%d.down_proj.%s" % (e, c))
+                        for e in range(256) for c in ("weight_scale", "weight_scale_2", "input_scale")],
+             "layer 77 mixes expert formats"),
+        ):
+            doctored = dict(base_map)
+            mutate(doctored)
+            refuses(fragment, ns.modelopt_nvfp4_plan, base_config, doctored)
+        passed.append(
+            "11 FLAGSHIP: 6 real fetched RadixArk/incoai/Inferact tensors (gate+down of L3/E0) "
+            "decode BITWISE to the compressed-tensors reference%s, fixture hashes match the "
+            "parity record, orientation audit vs the BF16 root recorded; modelopt_nvfp4_plan "
+            "closes on all three REAL indexes (57,600 modules, MTP plain bf16, 1,217 official "
+            "non-routed names) and 14 doctored configs/indexes are refused BY NAME"
+            % ("" if live_flagship == 6 else " (committed fixtures; live package absent)")
         )
     finally:
         if not args.keep:

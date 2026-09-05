@@ -91,6 +91,17 @@ SURFACES = {
                 "quant_method": "exl3", "bits": 3.25, "codebook": "mcg",
                 "head_bits": None, "modules_to_not_convert": []}},
     },
+    "nvfp4": {
+        "codec": "nvfp4", "declared_bits": 4.0, "target_surface": "nvfp4",
+        "weights_decode": {
+            "method": "nvfp4-modelopt-dequant-to-bf16",
+            "quantization_config": {
+                "quant_method": "modelopt", "quant_algo": "NVFP4", "num_bits": 4,
+                "group_size": 16, "weights_declared_by": "config_groups.group_0.weights",
+                "activation_scheme": "static-nvfp4-not-applied",
+                "producer": {"name": "modelopt", "version": "0.47.0"},
+                "ignore_count": 231, "ignore_sha256": "5" * 64}},
+    },
 }
 
 
@@ -547,6 +558,85 @@ def main() -> int:
         check("C10 a trellis candidate whose target says fp8-block is refused at qualify_root "
               "(the 2026-09-04 hardcoded-surface defect, from the other side)",
               p.returncode != 0 and "target contract differs" in out, out[-800:])
+
+        # -- the modelopt NVFP4 surface through the same path -----------------
+        print("\n== C11-C12: the modelopt NVFP4 surface (job -> qualify -> compare -> "
+              "archive -> post) ==")
+        sb7, job7, root7, rm7, cm7 = drive(tmp, bash, "nvfp4")
+        outs = []
+        ok = True
+        for name in ("verify", "verify_repeat", "compare_root", "qualify_root",
+                     "compare_reference"):
+            p, calls, out = stage(sb7, name, bash)
+            outs.append("[%s rc=%d]\n%s" % (name, p.returncode, out[-600:]))
+            ok = ok and p.returncode == 0
+        q7 = receipts_of(sb7)["root-qualification.json"]
+        ref7 = receipts_of(sb7)["reference-comparison/comparison-receipt.json"]
+        archive7 = Path(tmp) / "nvfp4-result.tar.gz"
+        built7 = subprocess.run(
+            [sys.executable, str(sb7.fs / "bin" / "result_archive.py"), "--fs-root", str(sb7.fs),
+             "--verb", "capture", "--status", "qualified-unpublished",
+             "--stages", ",".join(done), "--out", str(archive7)],
+            capture_output=True, text=True)
+        verified7 = None
+        if built7.returncode == 0:
+            try:
+                verified7 = RS.verify_archive(str(archive7))
+            except Exception as exc:  # noqa: BLE001
+                verified7 = {"error": repr(exc)}
+        outs.append("[result_archive rc=%d]\n%s\n%r" % (
+            built7.returncode, (built7.stdout + built7.stderr)[-600:], verified7))
+        check("C11 nvfp4: qualify_root binds the modelopt decode to the nvfp4 target "
+              "(codec nvfp4 @ 4 bits, activation_scheme static-nvfp4-not-applied), "
+              "compare_reference seals a strict own-head measurement and the archive builds",
+              ok and q7 is not None and ref7 is not None
+              and q7["job_contract"]["target"]["surface"] == "nvfp4"
+              and q7["job_contract"]["candidate"]["codec"] == "nvfp4"
+              and q7["job_contract"]["candidate"]["declared_bits"] == 4.0
+              and q7["captures"]["canonical"]["candidate"]["weights_decode"]["method"]
+              == "nvfp4-modelopt-dequant-to-bf16"
+              and q7["captures"]["canonical"]["candidate"]["weights_decode"]
+              ["quantization_config"]["activation_scheme"] == "static-nvfp4-not-applied"
+              and ref7["estimator"]["head_policy"] == "native_head"
+              and ref7["comparability"]["class"] == "strict"
+              and built7.returncode == 0 and isinstance(verified7, dict)
+              and (verified7.get("manifest") or {}).get("status") == "qualified-unpublished",
+              "\n".join(outs))
+        post7 = Path(tmp) / "nvfp4-post.md"
+        rendered = subprocess.run(
+            [sys.executable, str(ROOT / "bin" / "fidelity_post.py"), "render",
+             "--result", str(sb7.fs), "--out", str(post7)], capture_output=True, text=True)
+        body7 = post7.read_text(encoding="utf-8") if post7.is_file() else ""
+        check("C12 nvfp4: the post names the modelopt dialect, group 16, e2m1, the scale "
+              "product, routed-experts-only and the unapplied input_scale -- never the "
+              "generic fallback sentence",
+              rendered.returncode == 0 and "ModelOpt NVFP4" in body7 and "group 16" in body7
+              and "e2m1" in body7 and "weight_scale.f32 x weight_scale_2" in body7
+              and "routed experts only" in body7 and "input_scale" in body7
+              and "NOT applied" in body7
+              and "decode recorded in the sealed runtime receipt" not in body7,
+              (rendered.stdout + rendered.stderr + body7)[-900:])
+        # ... and the mirror-side refusal: an nvfp4 job whose decode block was
+        # written by a controller that disagrees with the pod (a different
+        # ignore hash) is refused at qualify_root by name.
+        sb8, job8, root8, rm8, cm8 = drive(tmp, bash, "nvfp4", label="nvfp4-wrong-decode")
+        wrong = json.loads((sb8.fs / "job.json").read_text(encoding="utf-8"))
+        wrong["capture"]["candidate"]["weights_decode"] = dict(
+            wrong["capture"]["candidate"]["weights_decode"],
+            quantization_config=dict(
+                wrong["capture"]["candidate"]["weights_decode"]["quantization_config"],
+                ignore_sha256="6" * 64))
+        (sb8.fs / "job.json").write_text(json.dumps(jobcontract.finalize_job(
+            {k: v for k, v in wrong.items() if k not in ("job_id", "job_id_full")})),
+            encoding="utf-8")
+        for done in ("setup", "fetch_target", "fetch_reference", "capture", "capture_repeat"):
+            sb8.write_bound_marker(done)
+        for name in ("verify", "verify_repeat", "compare_root"):
+            stage(sb8, name, bash)
+        p, calls, out = stage(sb8, "qualify_root", bash)
+        check("C12b nvfp4: a job whose contract block differs from the sealed decode by one "
+              "field (ignore_sha256) is refused at qualify_root by name",
+              p.returncode != 0 and "candidate identity differs" in out, out[-800:])
 
     print("\nselftest_contract_harness: %d passed, %d failed" % (len(PASS), len(FAIL)))
     return 1 if FAIL else 0

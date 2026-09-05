@@ -91,16 +91,93 @@ SEAL_DISCLOSURE = (
     "whole-shard sha256 optionally verified against a fetched HF LFS manifest)"
 )
 
-MAIN_ROUTED_LAYERS = tuple(range(3, 45))
-MTP_LAYER = 45
-NUM_EXPERTS = 288
+#: Group size and projection names are the NVFP4 format's; everything else
+#: about WHERE the routed experts live is the model family's, held as data so
+#: the same fail-closed census serves GLM-5.3-Flash (`glm5_next`, 45 layers,
+#: 288 experts, the VL stack at `model.language_model.`) and the GLM-5.3
+#: flagship (`glm_moe_dsa`, 78 layers, 256 experts, `model.`). Both are read
+#: off the config and cross-checked against the index; a model_type outside
+#: this table is refused by name.
 PROJECTIONS = ("gate_proj", "up_proj", "down_proj")
 GROUP_SIZE = 16
-PROJECTION_SHAPE = {
-    "gate_proj": (2048, 4096),
-    "up_proj": (2048, 4096),
-    "down_proj": (4096, 2048),
-}
+
+
+@dataclass(frozen=True)
+class Nvfp4Geometry:
+    model_type: str
+    architectures: Tuple[str, ...]
+    stack: str  # "model.language_model." (VL) or "model." (text-only)
+    num_hidden_layers: int
+    first_dense_layers: int
+    num_experts: int
+    hidden_size: int
+    moe_intermediate_size: int
+    official_nonrouted_evidence: str  # file under nvfp4-evidence/
+    official_nonrouted_count: int
+    config_geometry: Tuple[Tuple[str, Any], ...]  # config keys checked verbatim
+
+    @property
+    def main_routed_layers(self) -> Tuple[int, ...]:
+        return tuple(range(self.first_dense_layers, self.num_hidden_layers))
+
+    @property
+    def mtp_layer(self) -> int:
+        return self.num_hidden_layers
+
+    @property
+    def projection_shape(self) -> Dict[str, Tuple[int, int]]:
+        inter, hidden = self.moe_intermediate_size, self.hidden_size
+        return {"gate_proj": (inter, hidden), "up_proj": (inter, hidden),
+                "down_proj": (hidden, inter)}
+
+    def expert_re(self) -> "re.Pattern[str]":
+        return re.compile(
+            r"^" + re.escape(self.stack) + r"layers\.(\d+)\.mlp\.experts\.(\d+)\."
+            r"(gate_proj|up_proj|down_proj)\.([a-z0-9_]+)$")
+
+    def official_name(self, layer: int, expert: int, projection: str) -> str:
+        return f"{self.stack}layers.{layer}.mlp.experts.{expert}.{projection}.weight"
+
+    def component_name(self, layer: int, expert: int, projection: str, component: str) -> str:
+        return f"{self.stack}layers.{layer}.mlp.experts.{expert}.{projection}.{component}"
+
+    def text_config(self, config: Mapping[str, Any]) -> Mapping[str, Any]:
+        return config.get("text_config", {}) if self.stack != "model." else config
+
+
+GLM5NEXT_GEOMETRY = Nvfp4Geometry(
+    model_type="glm5_next",
+    architectures=("Glm5NextForConditionalGeneration",),
+    stack="model.language_model.",
+    num_hidden_layers=45, first_dense_layers=3, num_experts=288,
+    hidden_size=4096, moe_intermediate_size=2048,
+    official_nonrouted_evidence="official-nonrouted-names.json",
+    official_nonrouted_count=1618,
+    config_geometry=(("model_type", "glm5_next_text"), ("num_hidden_layers", 45),
+                     ("num_nextn_predict_layers", 1), ("n_routed_experts", 288),
+                     ("hidden_size", 4096), ("moe_intermediate_size", 2048)),
+)
+GLM_MOE_DSA_GEOMETRY = Nvfp4Geometry(
+    model_type="glm_moe_dsa",
+    architectures=("GlmMoeDsaForCausalLM",),
+    stack="model.",
+    num_hidden_layers=78, first_dense_layers=3, num_experts=256,
+    hidden_size=6144, moe_intermediate_size=2048,
+    official_nonrouted_evidence="official-glm53-nonrouted-names.json",
+    official_nonrouted_count=1217,
+    config_geometry=(("model_type", "glm_moe_dsa"), ("num_hidden_layers", 78),
+                     ("num_nextn_predict_layers", 1), ("n_routed_experts", 256),
+                     ("first_k_dense_replace", 3),
+                     ("hidden_size", 6144), ("moe_intermediate_size", 2048)),
+)
+GEOMETRIES = {g.model_type: g for g in (GLM5NEXT_GEOMETRY, GLM_MOE_DSA_GEOMETRY)}
+
+# The Flash geometry's constants, kept under their historical names: the
+# streaming lane's callers and its selftest address them directly.
+MAIN_ROUTED_LAYERS = GLM5NEXT_GEOMETRY.main_routed_layers
+MTP_LAYER = GLM5NEXT_GEOMETRY.mtp_layer
+NUM_EXPERTS = GLM5NEXT_GEOMETRY.num_experts
+PROJECTION_SHAPE = GLM5NEXT_GEOMETRY.projection_shape
 
 # Component sets per dialect, measured from the real indexes (148,498 /
 # 150,226 tensors).  DECODE names feed the dequant; the activation-scale
@@ -115,15 +192,18 @@ KNOWN_COMPONENTS = {
     | set(CT_FP8_COMPONENTS),
     LAYOUT_MODELOPT: set(MO_NVFP4_DECODE) | set(MO_NVFP4_ACTIVATION),
 }
+#: modelopt config keys that, when true, declare an ONLINE weight transform
+#: (a rotation folded into the activations at serving time) that a
+#: decode-and-run measurement would not apply. Inferact's flagship export
+#: declares all four false; any true value is refused by name.
+MO_ONLINE_TRANSFORM_KEYS = ("rotate", "learned_rotation", "quarot_r1_fold",
+                            "expert_block_reorder")
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
-_EXPERT = re.compile(
-    r"^model\.language_model\.layers\.(\d+)\.mlp\.experts\.(\d+)\."
-    r"(gate_proj|up_proj|down_proj)\.([a-z0-9_]+)$"
-)
+_EXPERT = GLM5NEXT_GEOMETRY.expert_re()
 
 _EVIDENCE = Path(__file__).resolve().parent / "nvfp4-evidence"
-OFFICIAL_NONROUTED_NAMES = _EVIDENCE / "official-nonrouted-names.json"
+OFFICIAL_NONROUTED_NAMES = _EVIDENCE / GLM5NEXT_GEOMETRY.official_nonrouted_evidence
 
 
 def _fail(message: str) -> ValueError:
@@ -159,12 +239,14 @@ def _read_json(path: Path, label: str) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def official_name(layer: int, expert: int, projection: str) -> str:
-    return f"model.language_model.layers.{layer}.mlp.experts.{expert}.{projection}.weight"
+def official_name(layer: int, expert: int, projection: str,
+                  geometry: Nvfp4Geometry = GLM5NEXT_GEOMETRY) -> str:
+    return geometry.official_name(layer, expert, projection)
 
 
-def component_name(layer: int, expert: int, projection: str, component: str) -> str:
-    return f"model.language_model.layers.{layer}.mlp.experts.{expert}.{projection}.{component}"
+def component_name(layer: int, expert: int, projection: str, component: str,
+                   geometry: Nvfp4Geometry = GLM5NEXT_GEOMETRY) -> str:
+    return geometry.component_name(layer, expert, projection, component)
 
 
 # ---------------------------------------------------------------------------
@@ -330,12 +412,16 @@ class Nvfp4Surface:
     shard_hash_verification: str  # "full" | "skipped"
     nonrouted_verification: str  # "official-name-bijection" | "structural-census"
     text_vocab_size: int
+    geometry: Nvfp4Geometry = GLM5NEXT_GEOMETRY
 
     def decode_components(self, layer: int) -> Tuple[str, ...]:
-        if layer not in MAIN_ROUTED_LAYERS:
+        geometry = self.geometry
+        if layer not in geometry.main_routed_layers:
             raise _fail(
-                f"layer {layer} is not a streamed main routed layer (3..44); the MTP "
-                f"layer-45 experts are receipt-covered but never decoded or executed"
+                f"layer {layer} is not a streamed main routed layer "
+                f"({geometry.first_dense_layers}..{geometry.num_hidden_layers - 1}); the MTP "
+                f"layer-{geometry.mtp_layer} experts are receipt-covered but never decoded "
+                f"or executed"
             )
         return CT_NVFP4_DECODE if self.layout == LAYOUT_COMPRESSED_TENSORS else MO_NVFP4_DECODE
 
@@ -367,7 +453,8 @@ class Nvfp4Surface:
         )
 
 
-def census_weight_map(weight_map: Mapping[str, Any], *, layout: str) -> Tuple[List[str], Dict[str, Any]]:
+def census_weight_map(weight_map: Mapping[str, Any], *, layout: str,
+                      geometry: Nvfp4Geometry = GLM5NEXT_GEOMETRY) -> Tuple[List[str], Dict[str, Any]]:
     """Fail-closed name census over the quant repo's index.
 
     Every expert tensor must be a KNOWN component of a KNOWN module; every
@@ -377,21 +464,24 @@ def census_weight_map(weight_map: Mapping[str, Any], *, layout: str) -> Tuple[Li
     if layout not in KNOWN_COMPONENTS:
         raise _fail(f"unknown layout {layout!r}")
     known = KNOWN_COMPONENTS[layout]
+    expert_re = geometry.expert_re()
+    main_layers, mtp_layer, num_experts = (
+        geometry.main_routed_layers, geometry.mtp_layer, geometry.num_experts)
     modules: Dict[Tuple[int, int, str], set] = {}
     retained: List[str] = []
     stray: List[str] = []
     for name in weight_map:
-        match = _EXPERT.match(name)
+        match = expert_re.match(name)
         if match is None:
             retained.append(name)
             continue
         layer, expert = int(match.group(1)), int(match.group(2))
         projection, component = match.group(3), match.group(4)
-        if layer not in MAIN_ROUTED_LAYERS and layer != MTP_LAYER:
+        if layer not in main_layers and layer != mtp_layer:
             stray.append(f"{name} (unexpected expert layer {layer})")
             continue
-        if expert >= NUM_EXPERTS:
-            stray.append(f"{name} (expert index {expert} >= {NUM_EXPERTS})")
+        if expert >= num_experts:
+            stray.append(f"{name} (expert index {expert} >= {num_experts})")
             continue
         if component not in known:
             stray.append(f"{name} (unknown component {component!r} for layout {layout})")
@@ -414,18 +504,18 @@ def census_weight_map(weight_map: Mapping[str, Any], *, layout: str) -> Tuple[Li
     per_layer_format: Dict[int, str] = {}
     activation_components: set = set()
     missing: List[str] = []
-    for layer in MAIN_ROUTED_LAYERS + (MTP_LAYER,):
+    for layer in main_layers + (mtp_layer,):
         formats = set()
-        for expert in range(NUM_EXPERTS):
+        for expert in range(num_experts):
             for projection in PROJECTIONS:
                 comps = modules.get((layer, expert, projection))
                 if comps is None:
-                    missing.append(component_name(layer, expert, projection, "<module>"))
+                    missing.append(geometry.component_name(layer, expert, projection, "<module>"))
                     continue
                 fmt = signatures.get(frozenset(comps))
                 if fmt is None:
                     raise _fail(
-                        f"module {component_name(layer, expert, projection, '*')} carries an "
+                        f"module {geometry.component_name(layer, expert, projection, '*')} carries an "
                         f"unrecognised component set {sorted(comps)}"
                     )
                 formats.add(fmt)
@@ -438,7 +528,7 @@ def census_weight_map(weight_map: Mapping[str, Any], *, layout: str) -> Tuple[Li
             raise _fail(f"layer {layer} mixes expert formats {sorted(formats)} - refusing")
         per_layer_format[layer] = formats.pop()
     wrong_main = sorted(
-        {layer for layer in MAIN_ROUTED_LAYERS if per_layer_format[layer] != "nvfp4"}
+        {layer for layer in main_layers if per_layer_format[layer] != "nvfp4"}
     )
     if wrong_main:
         raise _fail(
@@ -453,13 +543,13 @@ def census_weight_map(weight_map: Mapping[str, Any], *, layout: str) -> Tuple[Li
     # here - `weight` is a legitimate component name in BOTH dialects (modelopt
     # packs INTO `weight`; compressed-tensors uses it for the MTP fp8 pair), so
     # a name-presence test could only ever be dead code pretending to be a gate.
-    main_modules = len(MAIN_ROUTED_LAYERS) * NUM_EXPERTS * len(PROJECTIONS)
-    mtp_modules = NUM_EXPERTS * len(PROJECTIONS)
+    main_modules = len(main_layers) * num_experts * len(PROJECTIONS)
+    mtp_modules = num_experts * len(PROJECTIONS)
     counts = {
         "expert_tensors": len(weight_map) - len(retained),
         "nvfp4_main_modules": main_modules,
         "mtp_modules": mtp_modules,
-        "mtp_expert_format": per_layer_format[MTP_LAYER],
+        "mtp_expert_format": per_layer_format[mtp_layer],
         "retained_tensors": len(retained),
         "activation_scale_components": sorted(activation_components),
         "per_layer_format": {str(k): v for k, v in sorted(per_layer_format.items())},
@@ -467,17 +557,20 @@ def census_weight_map(weight_map: Mapping[str, Any], *, layout: str) -> Tuple[Li
     return retained, counts
 
 
-def _verify_nonrouted_names(retained: List[str]) -> str:
+def _verify_nonrouted_names(retained: List[str],
+                            geometry: Nvfp4Geometry = GLM5NEXT_GEOMETRY) -> str:
     """Retained names vs the official BF16 non-routed name set (evidence file).
 
-    The evidence file is DERIVED from the official BF16 index (revision
-    a6c167b6, the same index the sealed inventory binds); when it is present a
-    strict set equality is enforced.  Without it (a stripped copy of this
-    file), a structural census still gates count and anchors, and the receipt
-    records which gate ran.
+    The evidence file is DERIVED from the official BF16 index (Flash: revision
+    a6c167b6, the same index the sealed inventory binds; flagship: 304b8051,
+    the root dataset's weights pin); when it is present a strict set equality
+    is enforced.  Without it (a stripped copy of this file), a structural
+    census still gates count and anchors, and the receipt records which gate
+    ran.
     """
-    if OFFICIAL_NONROUTED_NAMES.is_file():
-        evidence = _read_json(OFFICIAL_NONROUTED_NAMES, "official non-routed name evidence")
+    evidence_path = _EVIDENCE / geometry.official_nonrouted_evidence
+    if evidence_path.is_file():
+        evidence = _read_json(evidence_path, "official non-routed name evidence")
         expected = set(evidence["names"])
         got = set(retained)
         if got != expected:
@@ -489,18 +582,19 @@ def _verify_nonrouted_names(retained: List[str]) -> str:
                 f"is not the official one"
             )
         return "official-name-bijection"
+    stack = geometry.stack
     anchors = (
-        "model.language_model.embed_tokens.weight",
+        f"{stack}embed_tokens.weight",
         "lm_head.weight",
-        "model.language_model.norm.weight",
-        f"model.language_model.layers.{MTP_LAYER}.eh_proj.weight",
+        f"{stack}norm.weight",
+        f"{stack}layers.{geometry.mtp_layer}.eh_proj.weight",
     )
     absent = [name for name in anchors if name not in retained]
-    if len(retained) != 1618 or absent:
+    if len(retained) != geometry.official_nonrouted_count or absent:
         raise _fail(
-            f"structural non-routed census failed (count {len(retained)} != 1618, "
-            f"absent anchors {absent}) and the official-name evidence file is missing: "
-            f"{OFFICIAL_NONROUTED_NAMES}"
+            f"structural non-routed census failed (count {len(retained)} != "
+            f"{geometry.official_nonrouted_count}, absent anchors {absent}) and the "
+            f"official-name evidence file is missing: {evidence_path}"
         )
     return "structural-census"
 
@@ -539,6 +633,194 @@ def _activation_disclosure(layout: str, declared: Optional[Dict[str, Any]],
     }
 
 
+def geometry_for_config(config: Mapping[str, Any]) -> Nvfp4Geometry:
+    """The family geometry this config declares, cross-checked key by key.
+
+    `model_type` picks the table row; every geometry key the row names must
+    then agree verbatim (top level for a text-only release, `text_config` for
+    a VL one), so a config that borrows a known model_type over a different
+    stack is refused by the first key that differs, by name.
+    """
+    model_type = config.get("model_type")
+    geometry = GEOMETRIES.get(str(model_type))
+    if geometry is None:
+        raise _fail(
+            f"model_type {model_type!r} is not a family this surface knows "
+            f"({', '.join(sorted(GEOMETRIES))}); its expert geometry would be a guess"
+        )
+    if list(config.get("architectures") or []) != list(geometry.architectures):
+        raise _fail(
+            f"architectures {config.get('architectures')!r} differ from "
+            f"{list(geometry.architectures)} for model_type {model_type!r}"
+        )
+    text = geometry.text_config(config)
+    for key, want in geometry.config_geometry:
+        got = text.get(key)
+        if got != want:
+            raise _fail(
+                f"nvfp4 checkpoint does not carry official {geometry.model_type} geometry: "
+                f"{key}={got!r}, expected {want!r}"
+            )
+    return geometry
+
+
+def modelopt_weight_declaration(quant: Mapping[str, Any]) -> Dict[str, Any]:
+    """{num_bits, group_size, declared_by, input_activations} from a modelopt block.
+
+    Two spellings ship: the compressed-tensors-shaped `config_groups.group_0`
+    (RadixArk, incoai, LibertAIDAI) and a flat block with a top-level
+    `group_size` beside `quant_algo` (Inferact, whose export writes its
+    calibration recipe where the groups would be). Both are read; anything
+    else is refused by name. NVFP4 is 4-bit by definition, so a flat block
+    that states no `num_bits` declares 4.
+    """
+    groups = quant.get("config_groups")
+    if isinstance(groups, Mapping):
+        if sorted(groups) != ["group_0"]:
+            raise _fail(f"unexpected modelopt config groups {sorted(groups)}")
+        group = groups["group_0"] or {}
+        weights = group.get("weights") or {}
+        if (
+            int(weights.get("num_bits", -1)) != 4
+            or int(weights.get("group_size", -1)) != GROUP_SIZE
+            or weights.get("dynamic") not in (False, None)
+            or weights.get("type") != "float"
+        ):
+            raise _fail(
+                f"group_0 weights are not static float 4-bit group-{GROUP_SIZE} NVFP4: "
+                f"{dict(weights)}"
+            )
+        declared_activations = group.get("input_activations")
+        return {
+            "num_bits": 4, "group_size": GROUP_SIZE,
+            "declared_by": "config_groups.group_0.weights",
+            "weights": dict(weights),
+            "input_activations": (dict(declared_activations)
+                                  if isinstance(declared_activations, Mapping)
+                                  else declared_activations),
+        }
+    if groups is not None:
+        raise _fail(f"quantization_config.config_groups is {type(groups).__name__}, not a mapping")
+    group_size = quant.get("group_size")
+    if isinstance(group_size, bool) or not isinstance(group_size, int):
+        raise _fail(
+            "modelopt quantization_config declares neither config_groups nor an integer "
+            "top-level group_size; the weight format is undeclared"
+        )
+    if group_size != GROUP_SIZE:
+        raise _fail(f"modelopt group_size {group_size} is not the NVFP4 group size {GROUP_SIZE}")
+    num_bits = quant.get("num_bits", 4)
+    if isinstance(num_bits, bool) or num_bits != 4:
+        raise _fail(f"modelopt num_bits {num_bits!r} is not 4 (NVFP4)")
+    # A flat block declares activations by `with_input_scale`; when true the
+    # per-tensor input_scale ships and the artifact is W4A4 by declaration.
+    with_input_scale = quant.get("with_input_scale")
+    declared_activations = (
+        {"dynamic": False, "num_bits": 4, "type": "float",
+         "granularity": quant.get("input_scale_granularity")}
+        if with_input_scale is True else None)
+    return {
+        "num_bits": 4, "group_size": GROUP_SIZE,
+        "declared_by": "quantization_config.group_size",
+        "weights": {"num_bits": 4, "group_size": GROUP_SIZE, "type": "float",
+                    "dynamic": False},
+        "input_activations": declared_activations,
+    }
+
+
+def modelopt_online_transforms(quant: Mapping[str, Any]) -> List[str]:
+    """The MO_ONLINE_TRANSFORM_KEYS this block declares TRUE (empty = plain weights)."""
+    return [key for key in MO_ONLINE_TRANSFORM_KEYS if quant.get(key) is True]
+
+
+MODELOPT_DEQUANT_METHOD = "nvfp4-modelopt-dequant-to-bf16"
+MODELOPT_ACTIVATION_SCHEME = "static-nvfp4-not-applied"
+
+
+def modelopt_ignore_sha256(ignore: Any) -> str:
+    """sha256 of the canonical JSON of the sorted, stringified `ignore` list.
+
+    The list is the artifact's own statement of what it left native (231 to
+    1,880 entries across the flagship exports); the CONTRACT carries its hash
+    and count so the pod's plan and the controller's stdlib mirror can be
+    compared for exact equality without shipping the list twice.
+    """
+    names = sorted(str(item) for item in (ignore or []))
+    return _sha256_bytes(_canonical_json(names))
+
+
+def modelopt_nvfp4_plan(config: Mapping[str, Any], weight_map: Mapping[str, Any]) -> Dict[str, Any]:
+    """The decode-and-run plan for a modelopt NVFP4 checkpoint, from config + index alone.
+
+    Returns ``{"contract": ..., "observed": ...}``.  ``contract`` is the
+    `quantization_config` block the sealed runtime receipt records and
+    `qualify_root` compares, key for key, against the job's candidate block
+    (mirrored by `bin/measure_cloud._candidate_decode_plan`'s modelopt branch
+    with stdlib only, so every value here derives from the config text).
+    ``observed`` is what the index census found and rides on the decode
+    evidence and the log line.
+
+    Refuses by name: a quant_method other than modelopt, a quant_algo other
+    than NVFP4, an undeclared or non-16 group size, any declared online weight
+    transform, an unknown family geometry, a routed module whose component
+    set is not the modelopt {weight, weight_scale, weight_scale_2}
+    (+input_scale) layout, an expert layer outside the geometry, and a
+    non-routed name set that is not the official BF16 release's.
+    """
+    quant = config.get("quantization_config")
+    if not isinstance(quant, Mapping) or not quant:
+        raise _fail("config.json has no quantization_config block")
+    method = quant.get("quant_method")
+    if method != "modelopt":
+        raise _fail(f"quant_method {method!r} is not modelopt; this plan decodes the modelopt "
+                    "NVFP4 dialect only")
+    algo = quant.get("quant_algo")
+    if algo != "NVFP4":
+        raise _fail(f"modelopt quant_algo {algo!r} is not NVFP4")
+    declaration = modelopt_weight_declaration(quant)
+    transforms = modelopt_online_transforms(quant)
+    if transforms:
+        raise _fail(
+            f"modelopt quantization_config declares online weight transforms {transforms}; "
+            "a decode-and-run measurement would not apply them"
+        )
+    geometry = geometry_for_config(config)
+    retained, counts = census_weight_map(weight_map, layout=LAYOUT_MODELOPT, geometry=geometry)
+    nonrouted_verification = _verify_nonrouted_names(retained, geometry)
+    producer = quant.get("producer")
+    producer = ({"name": str(producer.get("name")), "version": str(producer.get("version"))}
+                if isinstance(producer, Mapping) else None)
+    ignore = quant.get("ignore") or []
+    contract = {
+        "quant_method": "modelopt",
+        "quant_algo": "NVFP4",
+        "num_bits": 4,
+        "group_size": GROUP_SIZE,
+        "weights_declared_by": declaration["declared_by"],
+        # `input_scale` is an ACTIVATION quantity (the static per-tensor input
+        # scale the serving kernel would apply to x, not to W); a weights-only
+        # decode never touches it, and the receipt says so.
+        "activation_scheme": MODELOPT_ACTIVATION_SCHEME,
+        "producer": producer,
+        "ignore_count": len(ignore),
+        "ignore_sha256": modelopt_ignore_sha256(ignore),
+    }
+    observed = {
+        "geometry": geometry.model_type,
+        "layout": LAYOUT_MODELOPT,
+        "quantized_modules": counts["nvfp4_main_modules"],
+        "routed_layers": f"{geometry.main_routed_layers[0]}-{geometry.main_routed_layers[-1]}",
+        "mtp_layer": geometry.mtp_layer,
+        "mtp_expert_format": counts["mtp_expert_format"],
+        "nonrouted_tensors": counts["retained_tensors"],
+        "nonrouted_verification": nonrouted_verification,
+        "activation_scale_components": counts["activation_scale_components"],
+        "declared_input_activations": declaration["input_activations"],
+        "online_transforms_declared": transforms,
+    }
+    return {"contract": contract, "observed": observed, "geometry": geometry}
+
+
 def load_nvfp4_surface(
     root,
     *,
@@ -557,12 +839,12 @@ def load_nvfp4_surface(
 
     method = quant.get("quant_method")
     groups = quant.get("config_groups")
-    if not isinstance(groups, Mapping) or "group_0" not in groups:
-        raise _fail("quantization_config carries no config_groups/group_0")
-    weights = (groups["group_0"] or {}).get("weights") or {}
-    declared_activations = (groups["group_0"] or {}).get("input_activations")
 
     if method == "compressed-tensors":
+        if not isinstance(groups, Mapping) or "group_0" not in groups:
+            raise _fail("quantization_config carries no config_groups/group_0")
+        weights = (groups["group_0"] or {}).get("weights") or {}
+        declared_activations = (groups["group_0"] or {}).get("input_activations")
         layout = LAYOUT_COMPRESSED_TENSORS
         config_format = str(quant.get("format"))
         producer = {"quant_method": method, "version": quant.get("version")}
@@ -580,6 +862,16 @@ def load_nvfp4_surface(
                 raise _fail(
                     f"config group_1 is not the known MTP fp8 block scheme: {dict(g1)}"
                 )
+        if (
+            int(weights.get("num_bits", -1)) != 4
+            or int(weights.get("group_size", -1)) != GROUP_SIZE
+            or weights.get("dynamic") not in (False, None)
+            or weights.get("symmetric") is not True
+        ):
+            raise _fail(
+                f"group_0 weights are not static symmetric 4-bit group-{GROUP_SIZE} NVFP4: "
+                f"{dict(weights)}"
+            )
     elif method == "modelopt":
         layout = LAYOUT_MODELOPT
         config_format = str(quant.get("quant_algo"))
@@ -587,43 +879,29 @@ def load_nvfp4_surface(
         producer["quant_method"] = method
         if config_format != "NVFP4":
             raise _fail(f"modelopt quant_algo {config_format!r} is not NVFP4")
-        if sorted(groups) != ["group_0"]:
-            raise _fail(f"unexpected modelopt config groups {sorted(groups)}")
+        declaration = modelopt_weight_declaration(quant)
+        weights = declaration["weights"]
+        declared_activations = declaration["input_activations"]
+        transforms = modelopt_online_transforms(quant)
+        if transforms:
+            raise _fail(
+                f"modelopt quantization_config declares online weight transforms "
+                f"{transforms}; a decode-and-run measurement would not apply them"
+            )
     else:
         raise _fail(
             f"quant_method {method!r} is neither compressed-tensors nor modelopt - "
             "not a supported NVFP4 dialect"
         )
 
-    if (
-        int(weights.get("num_bits", -1)) != 4
-        or int(weights.get("group_size", -1)) != GROUP_SIZE
-        or weights.get("dynamic") not in (False, None)
-        or weights.get("symmetric") is not True
-    ):
-        raise _fail(
-            f"group_0 weights are not static symmetric 4-bit group-{GROUP_SIZE} NVFP4: "
-            f"{dict(weights)}"
-        )
-
-    text = config.get("text_config", {})
-    if (
-        config.get("architectures") != ["Glm5NextForConditionalGeneration"]
-        or config.get("model_type") != "glm5_next"
-        or text.get("model_type") != "glm5_next_text"
-        or text.get("num_hidden_layers") != 45
-        or text.get("num_nextn_predict_layers") != 1
-        or text.get("n_routed_experts") != NUM_EXPERTS
-        or text.get("hidden_size") != 4096
-        or text.get("moe_intermediate_size") != 2048
-    ):
-        raise _fail("nvfp4 checkpoint does not carry official GLM5Next main/MTP geometry")
+    geometry = geometry_for_config(config)
+    text = geometry.text_config(config)
 
     weight_map = index.get("weight_map")
     if not isinstance(weight_map, Mapping) or not weight_map:
         raise _fail("index has no weight_map")
-    retained, counts = census_weight_map(weight_map, layout=layout)
-    nonrouted_verification = _verify_nonrouted_names(retained)
+    retained, counts = census_weight_map(weight_map, layout=layout, geometry=geometry)
+    nonrouted_verification = _verify_nonrouted_names(retained, geometry)
 
     if revision is not None and _REVISION.fullmatch(revision) is None:
         raise _fail("--nvfp4-revision must be the immutable 40-hex repo commit")
@@ -650,18 +928,20 @@ def load_nvfp4_surface(
     else:
         shard_hash_verification = "skipped"
 
+    main = geometry.main_routed_layers
     scope = {
         "quantized_scope": "routed experts only (measured from the index, not the README)",
         "quantized_pattern": (
-            "model.language_model.layers.{3..44}.mlp.experts.{0..287}."
-            "{gate,up,down}_proj -> nvfp4 e2m1 group-16"
+            f"{geometry.stack}layers.{{{main[0]}..{main[-1]}}}.mlp.experts."
+            f"{{0..{geometry.num_experts - 1}}}.{{gate,up,down}}_proj -> nvfp4 e2m1 group-16"
         ),
         "mtp_expert_format": counts["mtp_expert_format"],
-        "mtp_policy": "layer-45 experts present and identity-covered, never executed",
+        "mtp_policy": (f"layer-{geometry.mtp_layer} experts present and identity-covered, "
+                       "never executed"),
         "nonrouted_policy": (
-            "1,618 non-routed tensors ship as plain BF16 under the official names in the "
-            "artifact itself (embeddings, attention/KDA/DSA, shared experts, dense MLPs, "
-            "vision, norms, lm_head are NOT quantized in this artifact)"
+            f"{geometry.official_nonrouted_count:,} non-routed tensors ship as plain BF16 "
+            "under the official names in the artifact itself (embeddings, attention, "
+            "shared experts, dense MLPs, norms, lm_head are NOT quantized in this artifact)"
         ),
         "nonrouted_verification": nonrouted_verification,
         "counts": {k: v for k, v in counts.items() if k != "per_layer_format"},
@@ -690,6 +970,7 @@ def load_nvfp4_surface(
         shard_hash_verification=shard_hash_verification,
         nonrouted_verification=nonrouted_verification,
         text_vocab_size=int(text["vocab_size"]),
+        geometry=geometry,
     )
 
 
@@ -735,7 +1016,7 @@ class Nvfp4ExpertSource:
         return handle
 
     def _component(self, layer: int, expert: int, projection: str, component: str):
-        name = component_name(layer, expert, projection, component)
+        name = self.surface.geometry.component_name(layer, expert, projection, component)
         shard = self.surface.weight_map.get(name)
         if shard is None:
             raise _fail(f"tensor not in weight_map: {name}")
@@ -746,7 +1027,7 @@ class Nvfp4ExpertSource:
 
         surface = self.surface
         comps = surface.decode_components(layer)
-        out_features, in_features = PROJECTION_SHAPE[projection]
+        out_features, in_features = surface.geometry.projection_shape[projection]
         want = {
             comps[0]: (torch.uint8, (out_features, in_features // 2)),
             comps[1]: (None, (out_features, in_features // GROUP_SIZE)),  # f8, dtype-checked below
@@ -791,7 +1072,7 @@ class Nvfp4ExpertSource:
             )
         if tuple(decoded.shape) != (out_features, in_features):
             raise _fail(
-                f"decoded {official_name(layer, expert, projection)} has shape "
+                f"decoded {surface.geometry.official_name(layer, expert, projection)} has shape "
                 f"{tuple(decoded.shape)}, expected {(out_features, in_features)}"
             )
         with self._lock:
@@ -799,7 +1080,7 @@ class Nvfp4ExpertSource:
             self.bytes_read += nbytes
             self.decoded_modules += 1
         row = {
-            "tensor": official_name(layer, expert, projection),
+            "tensor": surface.geometry.official_name(layer, expert, projection),
             "shard": primary_shard,
             "bytes": nbytes,
             "dtype": "float32",
@@ -883,7 +1164,7 @@ def audit_expert_placement(
     reader = Nvfp4ExpertSource(surface)
     audit: Dict[str, Any] = {"layer": layer, "expert": expert, "projections": {}}
     for projection in PROJECTIONS:
-        name = official_name(layer, expert, projection)
+        name = surface.geometry.official_name(layer, expert, projection)
         shard = bf16_index["weight_map"].get(name)
         if shard is None:
             raise _fail(f"official BF16 checkpoint lacks {name}")
@@ -959,9 +1240,9 @@ def verify_nonrouted_tensors(
         anchors = [
             name
             for name in (
-                "model.language_model.embed_tokens.weight",
+                f"{surface.geometry.stack}embed_tokens.weight",
                 "lm_head.weight",
-                "model.language_model.norm.weight",
+                f"{surface.geometry.stack}norm.weight",
             )
             if name in surface.retained_names
         ]

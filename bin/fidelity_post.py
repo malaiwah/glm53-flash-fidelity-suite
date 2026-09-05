@@ -109,6 +109,22 @@ def _method_line(decode: dict) -> str:
                 "composed into the whole weight in ascending rank order; non-routed tensors "
                 "carried as shipped; same engine, schedule and device as the reference capture"
                 % (method, codebook, qc.get("bits")))
+    if method == "nvfp4-modelopt-dequant-to-bf16":
+        producer = qc.get("producer") or {}
+        return ("dequantize-and-run, weights only: `%s` -- the ModelOpt NVFP4 dialect "
+                "(quant_algo %s, producer %s): each routed-expert projection's packed e2m1 "
+                "nibbles (group %s along the input axis) are decoded to exact fp32 as "
+                "e2m1 x weight_scale.f32 x weight_scale_2 on the capture device and cast once "
+                "to bf16 under the official tensor name, bitwise the compressed-tensors "
+                "reference on real fetched rows; routed experts only -- every non-routed "
+                "tensor is carried as shipped (plain bf16 under the official names); the "
+                "per-tensor `input_scale` is an activation quantity and is NOT applied "
+                "(%s), so the measurement is weights-only; same engine, schedule and device "
+                "as the reference capture"
+                % (method, qc.get("quant_algo"),
+                   ("%s %s" % (producer.get("name"), producer.get("version"))
+                    if producer else "undeclared"),
+                   qc.get("group_size"), qc.get("activation_scheme")))
     return "`%s` (decode recorded in the sealed runtime receipt)" % method
 
 

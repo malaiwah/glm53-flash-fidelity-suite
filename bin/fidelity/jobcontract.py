@@ -1069,14 +1069,16 @@ def validate_root_qualification_contract(contract: dict) -> None:
     else:
         # The surface follows the decode the candidate block declares, rather
         # than being assumed FP8: the streaming loader decodes block-scaled
-        # FP8 and stock-exllamav3 trellis, and a trellis artifact's sniffed
-        # surface is `exl3hf`. Anything else is a decode this contract has
-        # never seen and refuses by name rather than defaulting.
+        # FP8, stock-exllamav3 trellis and modelopt NVFP4; a trellis
+        # artifact's sniffed surface is `exl3hf`, a modelopt NVFP4 one's is
+        # `nvfp4`. Anything else is a decode this contract has never seen and
+        # refuses by name rather than defaulting.
         decode = candidate.get("weights_decode") or {}
         surfaces = {
             "fp8-block-dequant-to-bf16": "fp8-block",
             "exl3-trellis-decode-to-bf16": "exl3hf",
             "exl3-trellis-tp-compose-to-bf16": "exl3hf",
+            "nvfp4-modelopt-dequant-to-bf16": "nvfp4",
         }
         surface = surfaces.get(str(decode.get("method")))
         if surface is None:

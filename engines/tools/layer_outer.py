@@ -1044,6 +1044,204 @@ def truncate_zero_padded_rows(subset: Dict[str, Any], expected_shape, stats: Dic
     return out
 
 
+# ---------------------------------------------------------------------------
+# NVFP4 (modelopt) checkpoints: decode to bf16 on the capture device, per module
+# ---------------------------------------------------------------------------
+
+NVFP4_DECODE_METHOD = "nvfp4-modelopt-dequant-to-bf16"
+#: Every byte of decode math is `engines/tools/nvfp4_surface.py`'s
+#: `dequant_nvfp4(weight_scale_2=...)`: LOW nibble first, the e2m1 LUT
+#: [0, .5, 1, 1.5, 2, 3, 4, 6] (nibble 0b1000 is -0.0), the f8e4m3 scale
+#: promoted exactly to fp32 and multiplied ONCE by the fp32 `weight_scale_2`,
+#: one multiply per element, one cast to bf16 -- proven bitwise against
+#: compressed-tensors 0.18.0 `unpack_fp4_from_uint8` + the modelopt scale
+#: convention on real ranged-fetched rows of all three flagship exports
+#: (`engines/tools/nvfp4-evidence/glm53-nvfp4-parity.json`, max_abs_diff
+#: exactly 0.0 in fp32 and after the bf16 cast; `selftest_nvfp4_offline.py`
+#: rung 11 re-derives it live). This module adds NO arithmetic: it groups a
+#: routed module's {weight, weight_scale, weight_scale_2} from the layer's
+#: lazy subset, decodes on the capture device, and hands the dense tensor
+#: under the OFFICIAL name to the same converter a bf16 checkpoint reaches.
+#: `input_scale` is an ACTIVATION quantity (the static per-tensor scale a
+#: W4A4 kernel applies to x) and is never applied to weights; the plan says
+#: `activation_scheme: static-nvfp4-not-applied` so the receipt does too.
+NVFP4_DECODE_REFERENCE = "engines/tools/nvfp4_surface.py::dequant_nvfp4"
+NVFP4_PARITY_EVIDENCE = "engines/tools/nvfp4-evidence/glm53-nvfp4-parity.json"
+
+
+def _nvfp4():
+    """Import the decode ABI lazily, like `_exl3hf`."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import nvfp4_surface
+
+    return nvfp4_surface
+
+
+def nvfp4_checkpoint_plan(config, model_dir: str) -> Optional[Dict[str, Any]]:
+    """The exact modelopt NVFP4 form this schedule decodes, or None.
+
+    Pure detection from config.json + the index: `quant_method: modelopt`,
+    `quant_algo: NVFP4`, a group-16 4-bit weight declaration in either of the
+    two spellings modelopt exports use, no declared online transform, a
+    known family geometry, every routed module in the modelopt
+    {weight U8, weight_scale F8_E4M3, weight_scale_2 F32} (+input_scale)
+    layout, and a non-routed name set equal to the official BF16 release's.
+    Any other modelopt block is refused BY NAME by `nvfp4_surface`; a config
+    that is not modelopt at all returns None so the FP8 gate decides.
+
+    The returned dict is the CONTRACT block (`quantization_config` in the
+    sealed receipt, compared field for field against the controller's
+    stdlib mirror in `measure_cloud._candidate_decode_plan`), with the index
+    census under the private `_observed` key the caller pops.
+    """
+    if _quant_method(config) != "modelopt":
+        return None
+    surface = _nvfp4()
+    cfg = _config_dict(config)
+    cfg = dict(cfg)
+    cfg["quantization_config"] = _config_dict(cfg.get("quantization_config"))
+    algo = cfg["quantization_config"].get("quant_algo")
+    if algo != "NVFP4":
+        raise LayerOuterError(
+            "REFUSED: quantization_config quant_method='modelopt' quant_algo=%r is not the "
+            "NVFP4 form this schedule decodes (modelopt NVFP4: e2m1 group-16 routed experts); "
+            "another modelopt form needs its decoder authored and proven bitwise first."
+            % (algo,))
+    weight_map = _index_weight_map(model_dir)
+    try:
+        plan = surface.modelopt_nvfp4_plan(cfg, weight_map)
+    except ValueError as exc:
+        raise LayerOuterError(
+            "REFUSED: %s. This schedule decodes the modelopt NVFP4 dialect only; "
+            "another modelopt form needs its decoder authored and proven bitwise first."
+            % exc) from None
+    contract = dict(plan["contract"])
+    contract["_observed"] = dict(plan["observed"])
+    contract["_geometry"] = plan["geometry"]
+    return contract
+
+
+def materialize_nvfp4_subset(subset: Dict[str, Any], plan: Dict[str, Any], torch_dtype,
+                             stats: Dict[str, Any], device: str = "cpu",
+                             geometry=None) -> Dict[str, Any]:
+    """Replace every modelopt NVFP4 module in a lazy subset by one decoded `.weight`.
+
+    Decodes on `device` -- the capture device, not the host: 768 modules per
+    MoE layer x 75 layers, and the host-side FP8 decode was measured at 80 %
+    of a cold run. Each module's three components are read from the lazy
+    slices, moved to the device as packed bytes (a quarter of the bf16 size),
+    decoded to exact fp32 there and cast once to `torch_dtype`. The decoded
+    tensor lands under the OFFICIAL per-expert name; the packed components
+    and the activation `input_scale` never reach the converter.
+
+    Non-routed tensors pass through untouched when they are the official-
+    named bf16/fp32 tensors the plan verified by name; a packed dtype
+    (uint8, float8) outside a routed module is refused, because loading it
+    as-is would read encoded bytes as weights. A routed module missing a
+    component, or a routed name with a component this dialect does not
+    ship, is refused by name rather than skipped.
+    """
+    import torch
+
+    surface = _nvfp4()
+    geometry = geometry or plan.get("_geometry") or surface.GLM_MOE_DSA_GEOMETRY
+    expert_re = geometry.expert_re()
+    decode = tuple(surface.MO_NVFP4_DECODE)
+    activation = set(surface.MO_NVFP4_ACTIVATION)
+    modules: Dict[Tuple[int, int, str], Dict[str, str]] = {}
+    out: Dict[str, Any] = {}
+    for key, value in subset.items():
+        match = expert_re.match(key)
+        if match is None:
+            dtype = getattr(value, "dtype", None)
+            if dtype is None and hasattr(value, "get_dtype"):
+                dtype = value.get_dtype()
+            name = str(dtype)
+            if name in ("torch.uint8", "U8", "uint8", "torch.float8_e4m3fn", "F8_E4M3",
+                        "float8_e4m3fn", "torch.float8_e5m2", "F8_E5M2", "float8_e5m2"):
+                raise LayerOuterError(
+                    "REFUSED: %s is a %s tensor outside a routed-expert module; the modelopt "
+                    "NVFP4 dialect packs routed experts only, so this is a payload this "
+                    "schedule has no decoder for" % (key, name))
+            census = stats.setdefault("nonrouted_by_dtype", {})
+            census[name] = census.get(name, 0) + 1
+            if name not in ("torch.bfloat16", "BF16", "bfloat16"):
+                examples = stats.setdefault("nonrouted_non_bf16_examples", [])
+                if len(examples) < 8:
+                    examples.append({"name": key, "dtype": name})
+            out[key] = value
+            continue
+        layer, expert = int(match.group(1)), int(match.group(2))
+        projection, component = match.group(3), match.group(4)
+        if component in activation:
+            stats["input_scales_skipped"] = stats.get("input_scales_skipped", 0) + 1
+            continue
+        if component not in decode:
+            raise LayerOuterError(
+                "REFUSED: %s carries component %r, which the modelopt NVFP4 dialect does "
+                "not ship (%s)" % (key, component, "/".join(decode + tuple(activation))))
+        modules.setdefault((layer, expert, projection), {})[component] = key
+    for (layer, expert, projection), keys in sorted(modules.items()):
+        weight_key = geometry.official_name(layer, expert, projection)
+        if set(keys) == {"weight"}:
+            # A routed module shipped WHOLE (the MTP layer's experts, or a
+            # producer that left a layer native): only bf16 passes, and only
+            # when the plan's census called that layer plain-weight.
+            value = subset[keys["weight"]]
+            dtype = getattr(value, "dtype", None)
+            if dtype is None and hasattr(value, "get_dtype"):
+                dtype = value.get_dtype()
+            if str(dtype) not in ("torch.bfloat16", "BF16", "bfloat16"):
+                raise LayerOuterError(
+                    "REFUSED: %s ships as a lone %s `weight` with no weight_scale / "
+                    "weight_scale_2 beside it; a packed tensor without its scales cannot "
+                    "be decoded and a non-bf16 one is not the official form"
+                    % (weight_key, dtype))
+            out[weight_key] = value
+            stats["plain_modules_passed"] = stats.get("plain_modules_passed", 0) + 1
+            continue
+        missing = [name for name in decode if name not in keys]
+        if missing:
+            raise LayerOuterError(
+                "REFUSED: %s is missing %s beside %s; a routed module with part of its "
+                "NVFP4 payload cannot be decoded and will not be loaded as-is"
+                % (weight_key, "/".join(missing), sorted(keys.values())))
+        packed = _eager(subset[keys["weight"]])
+        scale = _eager(subset[keys["weight_scale"]])
+        scale_2 = _eager(subset[keys["weight_scale_2"]])
+        if packed.dtype != torch.uint8:
+            raise LayerOuterError(
+                "REFUSED: %s packed weight is %s, not uint8" % (weight_key, packed.dtype))
+        if scale.dtype != torch.float8_e4m3fn:
+            raise LayerOuterError(
+                "REFUSED: %s weight_scale is %s, not float8_e4m3fn" % (weight_key, scale.dtype))
+        if scale_2.dtype != torch.float32 or tuple(scale_2.shape) not in ((), (1,)):
+            raise LayerOuterError(
+                "REFUSED: %s weight_scale_2 is %s %s, not an fp32 scalar"
+                % (weight_key, scale_2.dtype, tuple(scale_2.shape)))
+        try:
+            decoded = surface.dequant_nvfp4(
+                packed.to(device), scale.to(device), weight_scale_2=scale_2.to(device))
+        except ValueError as exc:
+            raise LayerOuterError("REFUSED: %s: %s" % (weight_key, exc)) from None
+        want = geometry.projection_shape[projection]
+        if tuple(decoded.shape) != want:
+            raise LayerOuterError(
+                "REFUSED: %s decodes to %s, not the %s the geometry declares for %s"
+                % (weight_key, tuple(decoded.shape), want, projection))
+        if not torch.isfinite(decoded).all():
+            raise LayerOuterError(
+                "REFUSED: %s decodes to a non-finite value; a corrupt scale is never "
+                "clamped into plausibility" % weight_key)
+        out[weight_key] = decoded.to(torch_dtype)
+        stats["decoded_modules"] = stats.get("decoded_modules", 0) + 1
+        stats["packed_bytes"] = stats.get("packed_bytes", 0) + int(packed.numel())
+        stats["scales_consumed"] = stats.get("scales_consumed", 0) + 2
+    return out
+
+
 def _quant_method(config) -> Optional[str]:
     qc = getattr(config, "quantization_config", None)
     if not qc:
@@ -1081,7 +1279,8 @@ def fp8_checkpoint_plan_for_mixed(config) -> Dict[str, Any]:
 
 def _materialized(subset: Dict[str, Any], fp8_plan, trellis_plan, trellis_fp8_plan,
                   torch_dtype, fp8_stats, trellis_stats,
-                  device: str = "cpu", expected_shape=None) -> Dict[str, Any]:
+                  device: str = "cpu", expected_shape=None,
+                  nvfp4_plan=None, nvfp4_stats=None) -> Dict[str, Any]:
     """Whichever decoders this artifact needs, in the one order that is safe."""
     if trellis_plan is not None:
         composition = (trellis_plan.get("_observed") or {}).get("composition")
@@ -1092,6 +1291,10 @@ def _materialized(subset: Dict[str, Any], fp8_plan, trellis_plan, trellis_fp8_pl
             subset, trellis_plan, torch_dtype, trellis_stats,
             fp8_plan=trellis_fp8_plan, fp8_stats=fp8_stats, device=device,
             composition=composition, expected_shape=expected_shape)
+    if nvfp4_plan is not None:
+        return materialize_nvfp4_subset(
+            subset, nvfp4_plan, torch_dtype,
+            nvfp4_stats if nvfp4_stats is not None else {}, device=device)
     if fp8_plan is not None:
         return materialize_fp8_subset(subset, fp8_plan, torch_dtype, fp8_stats)
     return subset
@@ -1138,22 +1341,35 @@ def is_trellis_checkpoint(config) -> bool:
 def checkpoint_decode_plans(config, model_dir: str, log: Callable[..., None]):
     """Resolve which host-side decoders this checkpoint needs, before anything is built.
 
-    Returns `(fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats)`. Exactly
-    one of three shapes is admitted: a native tree (all None), the block-scaled
-    FP8 e4m3 weights-only form (`fp8_plan`), or an EXL3 trellis artifact
-    (`trellis_plan`, with `trellis_fp8_plan` when the checkpoint ALSO keeps
-    tensors in block-scaled FP8 -- wrldsuksgo2mars keeps shared_experts and
-    self_attn that way). Any other `quantization_config` is refused here by
-    `fp8_checkpoint_plan`, which is only consulted when the artifact is NOT a
-    trellis one: a trellis artifact's `quantization_config` may be a leftover
-    that describes nothing in the checkpoint (see `trellis_tail_declaration`).
+    Returns `(fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats, nvfp4_plan)`.
+    Exactly one of four shapes is admitted: a native tree (all None), the
+    block-scaled FP8 e4m3 weights-only form (`fp8_plan`), an EXL3 trellis
+    artifact (`trellis_plan`, with `trellis_fp8_plan` when the checkpoint ALSO
+    keeps tensors in block-scaled FP8 -- wrldsuksgo2mars keeps shared_experts
+    and self_attn that way), or a modelopt NVFP4 artifact (`nvfp4_plan`). Any
+    other `quantization_config` is refused here by `fp8_checkpoint_plan`,
+    which is only consulted when the artifact is NEITHER a trellis nor a
+    modelopt one: a trellis artifact's `quantization_config` may be a
+    leftover that describes nothing in the checkpoint (see
+    `trellis_tail_declaration`), and a modelopt block is judged by
+    `nvfp4_checkpoint_plan`, which refuses every modelopt form but NVFP4 by
+    name.
 
-    The index is read ONLY for a trellis artifact: a bf16 or FP8 checkpoint must
-    not acquire a dependency on an index file it may not have (a single-shard
-    tree has none, and under a race-mode gate it has not landed yet).
+    The index is read ONLY for a trellis or modelopt artifact: a bf16 or FP8
+    checkpoint must not acquire a dependency on an index file it may not have
+    (a single-shard tree has none, and under a race-mode gate it has not
+    landed yet).
     """
     trellis = is_trellis_checkpoint(config)
-    fp8_plan = None if trellis else fp8_checkpoint_plan(config)
+    nvfp4_plan = None if trellis else nvfp4_checkpoint_plan(config, model_dir)
+    if nvfp4_plan is not None:
+        observed = nvfp4_plan.pop("_observed", {})
+        log(stage="nvfp4_decode_plan", method=NVFP4_DECODE_METHOD,
+            reference=NVFP4_DECODE_REFERENCE, parity=NVFP4_PARITY_EVIDENCE,
+            observed=observed,
+            **{k: v for k, v in nvfp4_plan.items() if not k.startswith("_")})
+        nvfp4_plan["_observed"] = observed
+    fp8_plan = None if (trellis or nvfp4_plan is not None) else fp8_checkpoint_plan(config)
     if fp8_plan is not None:
         log(stage="fp8_decode_plan", method=FP8_DECODE_METHOD,
             reference=FP8_DECODE_REFERENCE, **fp8_plan)
@@ -1189,7 +1405,7 @@ def checkpoint_decode_plans(config, model_dir: str, log: Callable[..., None]):
         trellis_stats["quantized_module_count"] = observed.get(
             "quantized_module_count", 0)
         trellis_stats["codebook_histogram"] = observed.get("codebook_histogram", {})
-    return fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats
+    return fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats, nvfp4_plan
 
 
 def _exl3hf():
@@ -1276,9 +1492,12 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     # reaches the loader. "Dequantize-and-run, weights-only", the M1 method,
     # under the streaming schedule. Any other quantization_config is refused
     # by `fp8_checkpoint_plan` before anything is instantiated.
-    fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats = checkpoint_decode_plans(
-        config, model_dir, log)
+    fp8_plan, trellis_plan, trellis_fp8_plan, trellis_stats, nvfp4_plan = (
+        checkpoint_decode_plans(config, model_dir, log))
     fp8_stats = {"dequantized": 0, "scales_consumed": 0, "fp8_bytes": 0}
+    nvfp4_stats: Dict[str, Any] = {"decoded_modules": 0, "packed_bytes": 0,
+                                   "scales_consumed": 0, "input_scales_skipped": 0,
+                                   "plain_modules_passed": 0}
 
     # Build with the SAME context managers `from_pretrained` uses, so the module
     # tree (kernel patches, dtype, tie-weight suppression) is the one the
@@ -1542,7 +1761,8 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
         model,
         _materialized(base_subset, fp8_plan, trellis_plan, trellis_fp8_plan,
                       torch_dtype, fp8_stats, trellis_stats, device=device,
-                      expected_shape=expected_shape),
+                      expected_shape=expected_shape,
+                      nvfp4_plan=nvfp4_plan, nvfp4_stats=nvfp4_stats),
         load_config)
     _absorb(base_info)
 
@@ -1609,24 +1829,29 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
                 "weights does not fail to run -- it runs on whatever the meta-device "
                 "placeholder is replaced by, which is nothing anybody measured."
                 % (layers_prefix, index))
-        if fp8_plan is not None or trellis_plan is not None:
+        if fp8_plan is not None or trellis_plan is not None or nvfp4_plan is not None:
             # Decoded per layer into a transient dict: the streamer keeps the
             # lazy slices, never the 19 GB of decoded bf16, across layers.
             before = dict(fp8_stats)
             before_trellis = dict(trellis_stats)
+            before_nvfp4 = dict(nvfp4_stats)
             started = time.monotonic()
             decoded = _materialized(subset, fp8_plan, trellis_plan, trellis_fp8_plan,
                                     torch_dtype, fp8_stats, trellis_stats,
-                                    device=device, expected_shape=expected_shape)
+                                    device=device, expected_shape=expected_shape,
+                                    nvfp4_plan=nvfp4_plan, nvfp4_stats=nvfp4_stats)
             decode_seconds = time.monotonic() - started
             info, _ = convert_and_load(model, decoded, load_config)
             del decoded
             log(stage=("trellis_decode_layer" if trellis_plan is not None
+                       else "nvfp4_decode_layer" if nvfp4_plan is not None
                        else "fp8_decode_layer"), index=index,
                 dequantized=fp8_stats["dequantized"] - before["dequantized"],
                 fp8_elements=fp8_stats["fp8_bytes"] - before["fp8_bytes"],
-                decoded_modules=(trellis_stats["decoded_modules"]
-                                 - before_trellis["decoded_modules"]) or None,
+                decoded_modules=((trellis_stats["decoded_modules"]
+                                  - before_trellis["decoded_modules"])
+                                 + (nvfp4_stats["decoded_modules"]
+                                    - before_nvfp4["decoded_modules"])) or None,
                 decode_seconds=round(decode_seconds, 3))
         else:
             info, _ = convert_and_load(model, subset, load_config)
@@ -1709,6 +1934,8 @@ def build_streamed_model(model_dir: str, cls, config, dtype_name: str, device: s
     streamer.trellis_plan = trellis_plan
     streamer.trellis_stats = trellis_stats
     streamer.trellis_fp8_plan = trellis_fp8_plan
+    streamer.nvfp4_plan = nvfp4_plan
+    streamer.nvfp4_stats = nvfp4_stats
     return streamer
 
 
@@ -1763,6 +1990,36 @@ def weights_decode_evidence(streamer: StreamedModel) -> Optional[Dict[str, Any]]
                 "scale_tensors_consumed": int(fp8_stats.get("scales_consumed", 0)),
                 "fp8_elements": int(fp8_stats.get("fp8_bytes", 0)),
             }
+        return evidence
+    nvfp4_plan = getattr(streamer, "nvfp4_plan", None)
+    if nvfp4_plan is not None:
+        stats = dict(getattr(streamer, "nvfp4_stats", {}))
+        observed = dict(nvfp4_plan.get("_observed") or {})
+        evidence = {
+            "method": NVFP4_DECODE_METHOD,
+            "reference": NVFP4_DECODE_REFERENCE,
+            "parity_evidence": NVFP4_PARITY_EVIDENCE,
+            "output_dtype": "bfloat16",
+            # The CONTRACT block only: the census and geometry ride under
+            # private keys and are reported beside it, never inside it.
+            "quantization_config": {k: v for k, v in nvfp4_plan.items()
+                                    if not k.startswith("_")},
+            "modules_decoded": int(stats.get("decoded_modules", 0)),
+            "packed_elements": int(stats.get("packed_bytes", 0)),
+            "scale_tensors_consumed": int(stats.get("scales_consumed", 0)),
+            "input_scale_tensors_not_applied": int(stats.get("input_scales_skipped", 0)),
+            "plain_bf16_modules_passed_through": int(stats.get("plain_modules_passed", 0)),
+            "decode_device": "capture-device",
+            "observed": observed,
+        }
+        # Every non-routed tensor by stored dtype. The official BF16 release
+        # keeps the 75 router correction biases in fp32; a producer that
+        # rounded them to bf16 shows up here as the ABSENCE of float32, and
+        # the scope file authored from the shard headers says the same.
+        evidence["nonrouted_by_dtype"] = dict(sorted(
+            (stats.get("nonrouted_by_dtype") or {}).items()))
+        evidence["nonrouted_non_bf16_examples"] = list(
+            stats.get("nonrouted_non_bf16_examples") or [])
         return evidence
     plan = getattr(streamer, "fp8_plan", None)
     if plan is None:

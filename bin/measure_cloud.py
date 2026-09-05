@@ -1420,6 +1420,98 @@ CANDIDATE_DECODE_METHOD_TRELLIS = "exl3-trellis-decode-to-bf16"
 #: `engines/tools/layer_outer.TRELLIS_TP_COMPOSE_METHOD`: the same decode with
 #: the artifact's tensor-parallel rank shards composed into whole weights.
 CANDIDATE_DECODE_METHOD_TRELLIS_TP = "exl3-trellis-tp-compose-to-bf16"
+#: `engines/tools/layer_outer.NVFP4_DECODE_METHOD`, kept in step with it.
+CANDIDATE_DECODE_METHOD_NVFP4 = "nvfp4-modelopt-dequant-to-bf16"
+#: `engines/tools/nvfp4_surface.MODELOPT_ACTIVATION_SCHEME`: the static
+#: per-tensor `input_scale` a W4A4 kernel applies to activations is never
+#: applied to weights by a weights-only decode, and the contract says so.
+CANDIDATE_NVFP4_ACTIVATION_SCHEME = "static-nvfp4-not-applied"
+CANDIDATE_NVFP4_GROUP_SIZE = 16
+#: `nvfp4_surface.MO_ONLINE_TRANSFORM_KEYS`: a true value declares an online
+#: rotation the decode-and-run measurement would not apply; refused by name.
+CANDIDATE_NVFP4_ONLINE_TRANSFORMS = ("rotate", "learned_rotation", "quarot_r1_fold",
+                                     "expert_block_reorder")
+
+
+def _nvfp4_ignore_sha256(ignore) -> str:
+    """Byte-identical to `nvfp4_surface.modelopt_ignore_sha256` (stdlib only)."""
+    names = sorted(str(item) for item in (ignore or []))
+    canonical = (json.dumps(names, sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False, allow_nan=False) + "\n").encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _nvfp4_candidate_decode_plan(qc: Dict[str, Any]) -> Dict[str, Any]:
+    """Mirror of `nvfp4_surface.modelopt_nvfp4_plan`'s CONTRACT block, field for field.
+
+    The pod additionally censuses the index (57,600 routed modules in the
+    modelopt {weight, weight_scale, weight_scale_2} layout, the official
+    non-routed name set) and refuses there; the controller cannot see the
+    index from the config alone, so that refusal stays where the index is
+    readable. Everything in the contract derives from config.json text.
+    """
+    algo = qc.get("quant_algo")
+    if algo != "NVFP4":
+        raise Refusal(
+            "candidate quantization_config quant_method='modelopt' quant_algo=%r is not "
+            "the NVFP4 form the layer-outer loader decodes" % (algo,),
+            ["Decodable today: modelopt NVFP4 (e2m1 group-16 routed experts, "
+             "engines/tools/nvfp4_surface.py). Another modelopt form needs its decoder "
+             "authored and proven bitwise first."])
+    transforms = [key for key in CANDIDATE_NVFP4_ONLINE_TRANSFORMS if qc.get(key) is True]
+    if transforms:
+        raise Refusal(
+            "candidate quantization_config declares online weight transforms %s"
+            % (transforms,),
+            ["A rotation folded into the activations at serving time is not applied by "
+             "a decode-and-run measurement; the number would describe a model nobody "
+             "serves."])
+    groups = qc.get("config_groups")
+    if isinstance(groups, dict):
+        if sorted(groups) != ["group_0"]:
+            raise Refusal("unexpected modelopt config groups %s" % sorted(groups), [])
+        weights = (groups.get("group_0") or {}).get("weights") or {}
+        if (weights.get("num_bits") != 4 or weights.get("group_size") != CANDIDATE_NVFP4_GROUP_SIZE
+                or weights.get("dynamic") not in (False, None) or weights.get("type") != "float"):
+            raise Refusal(
+                "candidate config_groups.group_0.weights is not static float 4-bit group-16 "
+                "NVFP4: %r" % (dict(weights),), [])
+        declared_by = "config_groups.group_0.weights"
+    elif groups is None:
+        group_size = qc.get("group_size")
+        if isinstance(group_size, bool) or not isinstance(group_size, int):
+            raise Refusal(
+                "candidate modelopt quantization_config declares neither config_groups nor "
+                "an integer top-level group_size; the weight format is undeclared", [])
+        if group_size != CANDIDATE_NVFP4_GROUP_SIZE:
+            raise Refusal("candidate modelopt group_size %d is not the NVFP4 group size 16"
+                          % group_size, [])
+        num_bits = qc.get("num_bits", 4)
+        if isinstance(num_bits, bool) or num_bits != 4:
+            raise Refusal("candidate modelopt num_bits %r is not 4 (NVFP4)" % (num_bits,), [])
+        declared_by = "quantization_config.group_size"
+    else:
+        raise Refusal("candidate quantization_config.config_groups is not a mapping", [])
+    producer = qc.get("producer")
+    producer = ({"name": str(producer.get("name")), "version": str(producer.get("version"))}
+                if isinstance(producer, dict) else None)
+    ignore = qc.get("ignore") or []
+    return {
+        "method": CANDIDATE_DECODE_METHOD_NVFP4,
+        "quantization_config": {
+            "quant_method": "modelopt",
+            "quant_algo": "NVFP4",
+            "num_bits": 4,
+            "group_size": CANDIDATE_NVFP4_GROUP_SIZE,
+            "weights_declared_by": declared_by,
+            "activation_scheme": CANDIDATE_NVFP4_ACTIVATION_SCHEME,
+            "producer": producer,
+            "ignore_count": len(ignore),
+            "ignore_sha256": _nvfp4_ignore_sha256(ignore),
+        },
+        "_declaration": {"declared_by": declared_by, "transforms_declared": transforms,
+                         "ignore_count": len(ignore)},
+    }
 
 
 def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
@@ -1494,6 +1586,14 @@ def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
                     str(m) for m in (qc.get("modules_to_not_convert") or [])),
             },
         }
+    if method == "modelopt":
+        # The modelopt NVFP4 surface `engines/tools/layer_outer.materialize_nvfp4_subset`
+        # decodes: routed experts packed e2m1 group-16 with an f8 per-group
+        # scale and an fp32 per-tensor scale_2, decoded on the capture device
+        # (engines/tools/nvfp4-evidence/glm53-nvfp4-parity.json). Note a
+        # davidsyoung-style leftover modelopt block under a hybrid_tr3_tail
+        # was taken by the tail branch above and never reaches here.
+        return _nvfp4_candidate_decode_plan(qc)
     if not (method == "fp8" and fmt == "e4m3"
             and isinstance(block, list) and len(block) == 2
             and all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in block)
@@ -1501,11 +1601,13 @@ def _candidate_decode_plan(qc, cfg=None) -> Dict[str, Any]:
         raise Refusal(
             "candidate quantization_config quant_method=%r fmt=%r weight_block_size=%r "
             "activation_scheme=%r is not a surface the layer-outer loader decodes "
-            "(block-scaled FP8 e4m3 weights-only, or stock-exllamav3 exl3 trellis)"
+            "(block-scaled FP8 e4m3 weights-only, stock-exllamav3 exl3 trellis, or "
+            "modelopt NVFP4)"
             % (method, fmt, block, activation),
-            ["Decodable today: zai-org/GLM-5.3-style FineGrainedFP8, and exl3 "
-             "trellis with mul1/mcg payload groups. Another surface needs its "
-             "decoder authored and proven bitwise first."])
+            ["Decodable today: zai-org/GLM-5.3-style FineGrainedFP8, exl3 "
+             "trellis with mul1/mcg payload groups, and modelopt NVFP4 (e2m1 group-16 "
+             "routed experts). Another surface needs its decoder authored and proven "
+             "bitwise first."])
     return {
         "method": CANDIDATE_DECODE_METHOD,
         "quantization_config": {
@@ -1733,6 +1835,18 @@ def _refuse_quantized_root(con: Console, target, surface, plan: Dict[str, Any],
                        "tp=%s rank shards composed per module"
                        % (declaration.get("quant_method_declared"), declaration.get("tp")))
                       if declaration else ""))
+        elif qcfg["quant_method"] == "modelopt":
+            con.ok("candidate is modelopt NVFP4",
+                   "quant_algo %s, %d-bit group-%d weights declared by %s, producer %s; "
+                   "routed experts decoded to bf16 per module on the capture device (%s); "
+                   "the static input_scale is an activation quantity and is NOT applied "
+                   "(%s); %d ignore entries hashed into the contract. The index census "
+                   "(57,600 routed modules, official non-routed names) runs on the pod."
+                   % (qcfg["quant_algo"], qcfg["num_bits"], qcfg["group_size"],
+                      qcfg["weights_declared_by"],
+                      ("%s %s" % (qcfg["producer"]["name"], qcfg["producer"]["version"])
+                       if qcfg["producer"] else "undeclared"),
+                      decode["method"], qcfg["activation_scheme"], qcfg["ignore_count"]))
         else:
             con.ok("candidate is block-scaled FP8",
                    "quant_method %s fmt %s block %s; decoded to bf16 per tensor "

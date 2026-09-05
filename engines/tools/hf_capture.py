@@ -2092,6 +2092,21 @@ def _assemble(args, writer, panel, panel_records, capture_records, *, context_le
                           "declared by its hybrid_tr3_tail block (exl3-trellis) and the "
                           "payload bytes agree. The surface was read from the bytes."
                           % mislabel})
+        if decode_evidence.get("method") == layer_outer.NVFP4_DECODE_METHOD:
+            qc = decode_evidence.get("quantization_config") or {}
+            disclosures.append({
+                "code": "activation_scales_not_applied", "severity": "caveat",
+                "affects_comparability": False,
+                "detail": "the artifact ships a static per-tensor `input_scale` beside each "
+                          "of its %d routed-expert modules (a W4A4 serving kernel would "
+                          "quantize activations with it); this is a weights-only "
+                          "decode-and-run measurement, %d such tensors were read and NOT "
+                          "applied (activation_scheme %s), so activation quantization is not "
+                          "captured by the measured KLD -- the same caveat family as the "
+                          "official FP8 release's dynamic activation scheme."
+                          % (int(decode_evidence.get("modules_decoded", 0)),
+                             int(decode_evidence.get("input_scale_tensors_not_applied", 0)),
+                             qc.get("activation_scheme"))})
 
     # DET-D4: `verify` warns when run_count < 5 and asks for this disclosure, but
     # nothing in the tooling emitted it, so every capture this engine writes

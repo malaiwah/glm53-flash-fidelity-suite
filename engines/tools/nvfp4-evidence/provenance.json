@@ -1,6 +1,62 @@
 {
   "fetch": "HTTP range requests against huggingface.co/resolve/<40-hex revision>, no token",
   "files": {
+    "glm53-incoai-l3e0-down_proj-rows0-63.pt": {
+      "expected_fp32": "exact-fp32 decode via ct unpack_fp4_from_uint8(dtype=float32) * (weight_scale.f32 * weight_scale_2) (modelopt convention; see reference_implementation and glm53-nvfp4-parity.json)",
+      "sha256": "76b23c43116e054b42dbf2948bcaf3b7bae6cbc210911861df7d08feb624d97b",
+      "source": "incoai/GLM-5.3-NVFP4 model.layers.3.mlp.experts.0.down_proj.{weight,weight_scale,weight_scale_2} @ 54e52520606f96b3d9fc84088ad22882a61648ac, rows 0..63 of weight (U8 [rows, in/2]) and weight_scale (F8_E4M3 [rows, in/16]) plus the F32 scalar weight_scale_2, HTTP Range on the exact shard at the safetensors header's data_offsets (rows are independent: scale groups run along the input axis)"
+    },
+    "glm53-incoai-l3e0-gate_proj-rows0-63.pt": {
+      "expected_fp32": "exact-fp32 decode via ct unpack_fp4_from_uint8(dtype=float32) * (weight_scale.f32 * weight_scale_2) (modelopt convention; see reference_implementation and glm53-nvfp4-parity.json)",
+      "sha256": "5b9e31eb06adbfd7632cda52e9e5228388e7179710a6ed7d62cdc19a2b6a3041",
+      "source": "incoai/GLM-5.3-NVFP4 model.layers.3.mlp.experts.0.gate_proj.{weight,weight_scale,weight_scale_2} @ 54e52520606f96b3d9fc84088ad22882a61648ac, rows 0..63 of weight (U8 [rows, in/2]) and weight_scale (F8_E4M3 [rows, in/16]) plus the F32 scalar weight_scale_2, HTTP Range on the exact shard at the safetensors header's data_offsets (rows are independent: scale groups run along the input axis)"
+    },
+    "glm53-inferact-l3e0-down_proj-rows0-63.pt": {
+      "expected_fp32": "exact-fp32 decode via ct unpack_fp4_from_uint8(dtype=float32) * (weight_scale.f32 * weight_scale_2) (modelopt convention; see reference_implementation and glm53-nvfp4-parity.json)",
+      "sha256": "7c95d28601f7108c0044fec6a6652a857b80ca946b611e234dfc8b2525a217f9",
+      "source": "Inferact/GLM-5.3-NVFP4 model.layers.3.mlp.experts.0.down_proj.{weight,weight_scale,weight_scale_2} @ ce67b36f3669192b5bb233819f0fda6c8a9837f8, rows 0..63 of weight (U8 [rows, in/2]) and weight_scale (F8_E4M3 [rows, in/16]) plus the F32 scalar weight_scale_2, HTTP Range on the exact shard at the safetensors header's data_offsets (rows are independent: scale groups run along the input axis)"
+    },
+    "glm53-inferact-l3e0-gate_proj-rows0-63.pt": {
+      "expected_fp32": "exact-fp32 decode via ct unpack_fp4_from_uint8(dtype=float32) * (weight_scale.f32 * weight_scale_2) (modelopt convention; see reference_implementation and glm53-nvfp4-parity.json)",
+      "sha256": "e9433523f0397ed8a367e65460be54117e567621ce46d7059a5274049b67f573",
+      "source": "Inferact/GLM-5.3-NVFP4 model.layers.3.mlp.experts.0.gate_proj.{weight,weight_scale,weight_scale_2} @ ce67b36f3669192b5bb233819f0fda6c8a9837f8, rows 0..63 of weight (U8 [rows, in/2]) and weight_scale (F8_E4M3 [rows, in/16]) plus the F32 scalar weight_scale_2, HTTP Range on the exact shard at the safetensors header's data_offsets (rows are independent: scale groups run along the input axis)"
+    },
+    "glm53-nvfp4-parity.json": {
+      "sha256": "e11d620570abf790d04274e429e31b18c3156a9db7aca0751a5687a3b23f92b8",
+      "source": "engines/tools/nvfp4_surface.dequant_nvfp4 vs compressed-tensors 0.18.0 on the six glm53-*-l3e0-*.pt fixtures (bitwise fp32 and after the bf16 cast), plus the orientation audit of the same decoded rows against zai-org/GLM-5.3-BF16 rows 0..63 (ranged fetch, not committed: sha256 of the fetched bytes is recorded)"
+    },
+    "glm53-radixark-l3e0-down_proj-rows0-63.pt": {
+      "expected_fp32": "exact-fp32 decode via ct unpack_fp4_from_uint8(dtype=float32) * (weight_scale.f32 * weight_scale_2) (modelopt convention; see reference_implementation and glm53-nvfp4-parity.json)",
+      "sha256": "23b763cd939e5d957de0972f8d20b47cf6891022df0c8c9c3d83d318ba3d7e56",
+      "source": "RadixArk/GLM-5.3-NVFP4 model.layers.3.mlp.experts.0.down_proj.{weight,weight_scale,weight_scale_2} @ 11af4cba759e6559eda70358a5778bd1bddddd78, rows 0..63 of weight (U8 [rows, in/2]) and weight_scale (F8_E4M3 [rows, in/16]) plus the F32 scalar weight_scale_2, HTTP Range on the exact shard at the safetensors header's data_offsets (rows are independent: scale groups run along the input axis)"
+    },
+    "glm53-radixark-l3e0-gate_proj-rows0-63.pt": {
+      "expected_fp32": "exact-fp32 decode via ct unpack_fp4_from_uint8(dtype=float32) * (weight_scale.f32 * weight_scale_2) (modelopt convention; see reference_implementation and glm53-nvfp4-parity.json)",
+      "sha256": "21bbf1ef5699b1096da448508c75e4ae37aab3804f5e80dd8bc356d44f563660",
+      "source": "RadixArk/GLM-5.3-NVFP4 model.layers.3.mlp.experts.0.gate_proj.{weight,weight_scale,weight_scale_2} @ 11af4cba759e6559eda70358a5778bd1bddddd78, rows 0..63 of weight (U8 [rows, in/2]) and weight_scale (F8_E4M3 [rows, in/16]) plus the F32 scalar weight_scale_2, HTTP Range on the exact shard at the safetensors header's data_offsets (rows are independent: scale groups run along the input axis)"
+    },
+    "incoai-config.json": {
+      "sha256": "48025a5f559f7a747734be8499810a22d34330577e1566a28810466319f57ef4",
+      "source": "incoai/GLM-5.3-NVFP4/config.json @ 54e52520606f96b3d9fc84088ad22882a61648ac",
+      "verbatim": true
+    },
+    "incoai-index.json.gz": {
+      "sha256": "b4d1978093623e0844caa7e919dc2098c171c99e7b9fbba8e3f6e74610a9a716",
+      "source": "incoai/GLM-5.3-NVFP4/model.safetensors.index.json @ 54e52520606f96b3d9fc84088ad22882a61648ac",
+      "uncompressed_sha256": "54c4fc5dc9e59691e1797e59f8d57ef33281457cbd47fc0f3877ac95e5ce736d",
+      "verbatim": "gzip of the verbatim index bytes"
+    },
+    "inferact-config.json": {
+      "sha256": "44ffebdc4bf4f99b74932908896da5ba1e09b88a15edebf8d065232669193d9c",
+      "source": "Inferact/GLM-5.3-NVFP4/config.json @ ce67b36f3669192b5bb233819f0fda6c8a9837f8",
+      "verbatim": true
+    },
+    "inferact-index.json.gz": {
+      "sha256": "6317c0919d7912407eee980ee4f422d881b06ebde7b139f431aca4b70a76f097",
+      "source": "Inferact/GLM-5.3-NVFP4/model.safetensors.index.json @ ce67b36f3669192b5bb233819f0fda6c8a9837f8",
+      "uncompressed_sha256": "e5de21cffb3ec5f958646ac6923cdd6a76b39ea0cb4b31e7627fb14c561cd42f",
+      "verbatim": "gzip of the verbatim index bytes"
+    },
     "libertai-config.json": {
       "sha256": "5db46f44956e4a8a0cc8ed54b6d77bf99dd7c1ec90c58975d1952560768513d5",
       "source": "LibertAIDAI/GLM-5.3-Flash-NVFP4/config.json @ 357b45cc73a07a541cede88861f7736c9487ebf7",
@@ -22,10 +78,26 @@
       "sha256": "28948bcc94af0c90f69a154f32acb9ef85e632cc998eb94eb8a1737f8a24a2cd",
       "source": "LibertAIDAI/GLM-5.3-Flash-NVFP4 model.language_model.layers.3.mlp.experts.0.gate_proj.* @ 357b45cc73a07a541cede88861f7736c9487ebf7, rows 0..63 (rows are independent: scale groups run along the input axis)"
     },
+    "official-glm53-nonrouted-names.json": {
+      "count": 1217,
+      "sha256": "91d117127ad83613b54b416b067dab50086da9d3884bc10324ce63180f0a34d9",
+      "source": "derived from zai-org/GLM-5.3-BF16/model.safetensors.index.json @ 304b8051cfb2b260b61ce0cbe330e02a98e73639 (the root dataset's weights pin)"
+    },
     "official-nonrouted-names.json": {
       "count": 1618,
       "sha256": "12ba1d84dd99dc38ec4f14283afaf9309168a8eb627a9a9160875f39ca706815",
       "source": "derived from dione-evidence/bf16-index.json"
+    },
+    "radixark-config.json": {
+      "sha256": "1dd7f73e24d6a980c005b7faaa6fcfbc62c74647c792b4d236cd0fa55d772a77",
+      "source": "RadixArk/GLM-5.3-NVFP4/config.json @ 11af4cba759e6559eda70358a5778bd1bddddd78",
+      "verbatim": true
+    },
+    "radixark-index.json.gz": {
+      "sha256": "76ea53415baea116dbfe19608d39d45fb6efa9e8eee4f300f1d9199d6f03e3f7",
+      "source": "RadixArk/GLM-5.3-NVFP4/model.safetensors.index.json @ 11af4cba759e6559eda70358a5778bd1bddddd78",
+      "uncompressed_sha256": "2aa8397b501d9f6a232d153f328feb912f813c389061aac4cf72b04914fa5b74",
+      "verbatim": "gzip of the verbatim index bytes"
     },
     "redhat-config.json": {
       "sha256": "29c9f4171196910e99b9c069d6b76c56e3cdcd0f436dc1bacbc9513c9a7529ac",
@@ -49,6 +121,7 @@
       "source": "RedHatAI/GLM-5.3-Flash-NVFP4 model.language_model.layers.3.mlp.experts.0.gate_proj.* @ 36c184c6cda000a481711306df5adde42f63321a, rows 0..63 (rows are independent: scale groups run along the input axis)"
     }
   },
+  "flagship_generated_unix": 1788606420,
   "generated_unix": 1788013738,
   "reference_implementation": {
     "dequant": "exact fp32: unpacked * (weight_scale.to(f32) / weight_global_scale)  [compressed-tensors] | unpacked * (weight_scale.to(f32) * weight_scale_2)  [modelopt]",
@@ -58,7 +131,11 @@
     "version": "0.18.0"
   },
   "repos": {
+    "Inferact/GLM-5.3-NVFP4": "ce67b36f3669192b5bb233819f0fda6c8a9837f8",
     "LibertAIDAI/GLM-5.3-Flash-NVFP4": "357b45cc73a07a541cede88861f7736c9487ebf7",
-    "RedHatAI/GLM-5.3-Flash-NVFP4": "36c184c6cda000a481711306df5adde42f63321a"
+    "RadixArk/GLM-5.3-NVFP4": "11af4cba759e6559eda70358a5778bd1bddddd78",
+    "RedHatAI/GLM-5.3-Flash-NVFP4": "36c184c6cda000a481711306df5adde42f63321a",
+    "incoai/GLM-5.3-NVFP4": "54e52520606f96b3d9fc84088ad22882a61648ac",
+    "zai-org/GLM-5.3-BF16": "304b8051cfb2b260b61ce0cbe330e02a98e73639"
   }
 }

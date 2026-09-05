@@ -457,18 +457,21 @@ def main() -> int:
         check("[18] the predicate reads the tail over the ModelOpt leftover",
               lo.is_trellis_checkpoint(dy_cfg) and not lo.is_trellis_checkpoint(_Config(
                   {"quant_method": "modelopt", "config_groups": {}})))
-        fp8_18, tr_18, trfp8_18, st_18 = lo.checkpoint_decode_plans(
+        fp8_18, tr_18, trfp8_18, st_18, nv_18 = lo.checkpoint_decode_plans(
             dy_cfg, td, lambda **kw: events.append(kw))
         check("[18] a hybrid_tr3_tail checkpoint passes the FP8 gate and plans a TP compose",
-              fp8_18 is None and trfp8_18 is None and tr_18 is not None
+              fp8_18 is None and trfp8_18 is None and nv_18 is None and tr_18 is not None
               and tr_18["quant_method"] == "exl3" and st_18["declared_by"] == "hybrid_tr3_tail"
               and st_18["composition"]["tp"] == 2
               and [e["stage"] for e in events] == ["trellis_decode_plan"]
               and events[0]["method"] == lo.TRELLIS_TP_COMPOSE_METHOD,
               repr((fp8_18, tr_18, st_18, events)))
+        # A ModelOpt block with no tail is judged by the modelopt (NVFP4) gate
+        # now, which refuses every modelopt form but NVFP4 by name -- before
+        # the FP8 gate would have, and before the index is opened.
         ok, detail = refuses(lambda: lo.checkpoint_decode_plans(
             _Config({"quant_method": "modelopt", "config_groups": {}}), td, lambda **kw: None),
-            "is not the block-scaled FP8 e4m3 weights-only form")
+            "quant_algo=None is not the NVFP4 form this schedule decodes")
         check("[18] a ModelOpt block with NO tail declaration is still refused", ok, detail)
         native = lo.checkpoint_decode_plans(_Config(None), td, lambda **kw: events.append(kw))
         check("[18] a native tree plans nothing and never opens the index",

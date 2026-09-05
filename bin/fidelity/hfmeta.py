@@ -59,6 +59,13 @@ SURFACE_MARKERS = {
     # canonical index. Read by the layer-outer loader's block decoder.
     "fp8-block": ("config.json (inline quantization_config, quant_method fp8, "
                   "fmt e4m3, weight_block_size)",),
+    # ModelOpt NVFP4 release (RadixArk/incoai/Inferact GLM-5.3-NVFP4, the
+    # LibertAIDAI Flash export): no marker file -- identified by config.json's
+    # inline quantization_config with quant_method modelopt and quant_algo
+    # NVFP4, plus a canonical index. Routed experts packed e2m1 group-16;
+    # read by the layer-outer loader's nvfp4 decoder (nvfp4_surface).
+    "nvfp4": ("config.json (inline quantization_config, quant_method modelopt, "
+              "quant_algo NVFP4)",),
     # llama.cpp container: no config.json, no index, no marker file at all --
     # identified by the .gguf extension itself.  A GGUF *repo* is a shelf of
     # independent builds, not one artifact (see `gguf_builds`).
@@ -678,6 +685,31 @@ def sniff_surface(meta: RepoMeta, path: Optional[str] = None) -> SurfaceInfo:
             info.bits = 8.0
             info.evidence["weight_block_size"] = [int(block[0]), int(block[1])]
             info.evidence["activation_scheme"] = quant_config.get("activation_scheme")
+        # A davidsyoung TR3 release carries this same modelopt/NVFP4 block as a
+        # LEFTOVER under a hybrid_tr3_tail declaration; the tail wins (below),
+        # so the nvfp4 sniff yields to it here.
+        tail_declared = (isinstance(cfg, dict) and isinstance(cfg.get("hybrid_tr3_tail"), dict)
+                         and cfg["hybrid_tr3_tail"].get("format") == "exl3-trellis")
+        if info.surface == "unknown" and not tail_declared and \
+                str(quant_config.get("quant_method", "")).lower() == "modelopt" and \
+                str(quant_config.get("quant_algo", "")).upper() == "NVFP4" and \
+                "model.safetensors.index.json" in names and not info.tp_sliced:
+            info.surface = "nvfp4"
+            info.codec_family = "nvfp4"
+            # NVFP4 is e2m1: 4 bits by definition. The weight declaration is
+            # read for the record in either spelling modelopt exports use
+            # (config_groups.group_0.weights, or a flat top-level group_size).
+            groups = quant_config.get("config_groups")
+            weights = ((groups.get("group_0") or {}).get("weights") or {}
+                       if isinstance(groups, dict) else {})
+            info.bits = 4.0
+            info.evidence["group_size"] = (weights.get("group_size")
+                                           if weights else quant_config.get("group_size"))
+            producer = quant_config.get("producer")
+            if isinstance(producer, dict) and producer.get("version"):
+                info.evidence["quantizer_version"] = "%s %s" % (
+                    producer.get("name"), producer.get("version"))
+            info.evidence["activation_scheme"] = "static-nvfp4-declared"
         if quant_config.get("original_quantization_config") is not None:
             # quantized FROM another quant (e.g. the FP8 release): lineage
             # that the artifact record must disclose

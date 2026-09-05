@@ -770,6 +770,204 @@ def _body(work):
               and victim[:-len("_scale_inv")] in text,
               "rc=%s tail=%s" % (proc.returncode, text[-300:]))
 
+    # -- L17: the modelopt NVFP4 form this schedule DECODES (flagship) ---------
+    # No tiny glm_moe_dsa can be built (the geometry table refuses anything
+    # but the real 78x256 stack by name, which is the point), so the plan is
+    # exercised on the REAL RadixArk config over a synthetic full-census index,
+    # and the per-layer decode on synthetic packed shards whose expected value
+    # is nvfp4_surface.dequant_nvfp4 (itself proven bitwise against
+    # compressed-tensors on real rows: selftest_nvfp4_offline rung 11).
+    import nvfp4_surface as NS
+    from safetensors.torch import save_file
+    from safetensors import safe_open
+    evidence = os.path.join(REPO, "engines", "tools", "nvfp4-evidence")
+    real_config = json.load(open(os.path.join(evidence, "radixark-config.json")))
+    geometry = NS.GLM_MOE_DSA_GEOMETRY
+    official = json.load(open(os.path.join(evidence, "official-glm53-nonrouted-names.json")))["names"]
+
+    def synthetic_index(mtp_plain=True, drop=None, extra=None):
+        weight_map = {name: "model-00001-of-00002.safetensors" for name in official}
+        for layer in geometry.main_routed_layers:
+            for expert in range(geometry.num_experts):
+                for projection in NS.PROJECTIONS:
+                    for component in NS.MO_NVFP4_DECODE + NS.MO_NVFP4_ACTIVATION:
+                        weight_map[geometry.component_name(layer, expert, projection, component)] = \
+                            "model-00002-of-00002.safetensors"
+        for expert in range(geometry.num_experts):
+            for projection in NS.PROJECTIONS:
+                comps = ("weight",) if mtp_plain else NS.MO_NVFP4_DECODE
+                for component in comps:
+                    weight_map[geometry.component_name(geometry.mtp_layer, expert, projection, component)] = \
+                        "model-00002-of-00002.safetensors"
+        for name in (drop or ()):
+            weight_map.pop(name)
+        for name in (extra or ()):
+            weight_map[name] = "model-00002-of-00002.safetensors"
+        return {"metadata": {}, "weight_map": weight_map}
+
+    class _Config:
+        def __init__(self, doc):
+            self._doc = doc
+            self.quantization_config = doc.get("quantization_config")
+
+        def to_dict(self):
+            return dict(self._doc)
+
+    nv_dir = os.path.join(work, "nvfp4-plan")
+    os.makedirs(nv_dir)
+    json.dump(synthetic_index(), open(os.path.join(nv_dir, "model.safetensors.index.json"), "w"))
+    events = []
+    plans = LO.checkpoint_decode_plans(_Config(real_config), nv_dir, lambda **kw: events.append(kw))
+    nv_plan = plans[4]
+    check("L17a a modelopt NVFP4 config over a full-census index plans the nvfp4 decode "
+          "and nothing else (5-tuple: fp8/trellis None)",
+          len(plans) == 5 and plans[0] is None and plans[1] is None and plans[2] is None
+          and nv_plan is not None and nv_plan["quant_method"] == "modelopt"
+          and nv_plan["quant_algo"] == "NVFP4" and nv_plan["group_size"] == 16
+          and nv_plan["activation_scheme"] == "static-nvfp4-not-applied"
+          and nv_plan["_observed"]["quantized_modules"] == 57600
+          and nv_plan["_observed"]["mtp_expert_format"] == "plain-weight"
+          and events and events[0].get("stage") == "nvfp4_decode_plan"
+          and events[0].get("method") == LO.NVFP4_DECODE_METHOD
+          and events[0].get("parity") == LO.NVFP4_PARITY_EVIDENCE,
+          repr((len(plans), nv_plan and {k: v for k, v in nv_plan.items() if k != "_geometry"}, events[:1]))[:400])
+    check("L17b the sealed contract block carries no private census key and the "
+          "controller-mirrored key set exactly",
+          set(k for k in nv_plan if not k.startswith("_")) == {
+              "quant_method", "quant_algo", "num_bits", "group_size", "weights_declared_by",
+              "activation_scheme", "producer", "ignore_count", "ignore_sha256"},
+          repr(sorted(nv_plan)))
+
+    def refuses_plan(doc, index, fragment):
+        d = os.path.join(work, "nvfp4-plan-%d" % len(os.listdir(work)))
+        os.makedirs(d)
+        json.dump(index, open(os.path.join(d, "model.safetensors.index.json"), "w"))
+        try:
+            LO.checkpoint_decode_plans(_Config(doc), d, lambda **kw: None)
+        except LO.LayerOuterError as exc:
+            return fragment in str(exc), str(exc)
+        return False, "accepted"
+
+    bad = json.loads(json.dumps(real_config)); bad["quantization_config"]["quant_algo"] = "FP8"
+    ok1, d1 = refuses_plan(bad, synthetic_index(), "quant_algo='FP8' is not the NVFP4 form")
+    bad = json.loads(json.dumps(real_config)); bad["quantization_config"]["rotate"] = True
+    ok2, d2 = refuses_plan(bad, synthetic_index(), "online weight transforms ['rotate']")
+    ok3, d3 = refuses_plan(real_config, synthetic_index(
+        drop=["model.layers.10.mlp.experts.3.down_proj.weight_scale_2"]),
+        "model.layers.10.mlp.experts.3.down_proj.* carries an unrecognised component set")
+    ok4, d4 = refuses_plan(real_config, synthetic_index(
+        extra=["model.layers.10.self_attn.o_proj.weight_scale"]),
+        "non-routed tensor names differ from the official BF16 set")
+    bad = json.loads(json.dumps(real_config)); bad["model_type"] = "glm5_next"
+    ok5, d5 = refuses_plan(bad, synthetic_index(), "architectures")
+    check("L17c a non-NVFP4 modelopt algo, a declared online transform, a module missing "
+          "weight_scale_2, a non-official non-routed name and a foreign model_type are each "
+          "REFUSED BY NAME before anything is instantiated",
+          ok1 and ok2 and ok3 and ok4 and ok5,
+          " | ".join(x[-120:] for x in (d1, d2, d3, d4, d5)))
+
+    # The decode itself, on a synthetic layer subset: packed bytes + f8 scales +
+    # fp32 scale_2 per module, an input_scale that must be dropped, a bf16
+    # non-routed tensor and an fp32 router bias that pass through.
+    import numpy as np
+    rng = np.random.default_rng(0x4F4)
+    inter, hidden = geometry.moe_intermediate_size, geometry.hidden_size
+    tensors = {}
+    expected = {}
+    for expert in range(2):
+        for projection in NS.PROJECTIONS:
+            out_f, in_f = geometry.projection_shape[projection]
+            packed = torch.from_numpy(rng.integers(0, 256, size=(out_f, in_f // 2), dtype=np.uint8))
+            scale_codes = rng.integers(0, 256, size=(out_f, in_f // 16), dtype=np.uint8)
+            scale_codes[scale_codes == 0x7F] = 0x38
+            scale_codes[scale_codes == 0xFF] = 0xB8
+            scale = torch.from_numpy(scale_codes).view(torch.float8_e4m3fn)
+            scale_2 = torch.tensor(float(rng.uniform(1e-5, 1e-3)), dtype=torch.float32)
+            tensors[geometry.component_name(3, expert, projection, "weight")] = packed
+            tensors[geometry.component_name(3, expert, projection, "weight_scale")] = scale
+            tensors[geometry.component_name(3, expert, projection, "weight_scale_2")] = scale_2.reshape(())
+            tensors[geometry.component_name(3, expert, projection, "input_scale")] = torch.tensor(0.5)
+            expected[geometry.official_name(3, expert, projection)] = NS.dequant_nvfp4(
+                packed, scale, weight_scale_2=scale_2).to(torch.bfloat16)
+    tensors["model.layers.3.self_attn.o_proj.weight"] = torch.randn(8, 8).to(torch.bfloat16)
+    tensors["model.layers.3.mlp.gate.e_score_correction_bias"] = torch.randn(4)
+    tensors["model.layers.78.mlp.experts.0.gate_proj.weight"] = torch.randn(4, 8).to(torch.bfloat16)
+    shard = os.path.join(work, "nvfp4-layer.safetensors")
+    save_file(tensors, shard, metadata={"format": "pt"})
+    handle = safe_open(shard, framework="pt", device="cpu")
+    subset = {key: handle.get_slice(key) for key in handle.keys()}
+    stats = {}
+    out = LO.materialize_nvfp4_subset(subset, nv_plan, torch.bfloat16, stats, device="cpu")
+    decoded_ok = all(
+        key in out and out[key].dtype == torch.bfloat16 and torch.equal(out[key], want)
+        for key, want in expected.items())
+    check("L17d materialize_nvfp4_subset decodes every routed module BITWISE to "
+          "dequant_nvfp4 under its OFFICIAL name, at the capture dtype",
+          decoded_ok and stats.get("decoded_modules") == 6 and stats.get("scales_consumed") == 12,
+          repr(stats))
+    check("L17e input_scale never reaches the converter; packed components and scales are "
+          "consumed; bf16 and fp32 non-routed tensors and the plain-bf16 MTP expert pass "
+          "through untouched and the dtype census records them",
+          not any(k.endswith(("input_scale", "weight_scale", "weight_scale_2")) for k in out)
+          and stats.get("input_scales_skipped") == 6
+          and out["model.layers.3.self_attn.o_proj.weight"] is subset["model.layers.3.self_attn.o_proj.weight"]
+          and out["model.layers.78.mlp.experts.0.gate_proj.weight"] is subset["model.layers.78.mlp.experts.0.gate_proj.weight"]
+          and stats.get("plain_modules_passed") == 1
+          and stats.get("nonrouted_by_dtype") == {"BF16": 1, "F32": 1}
+          and len(out) == 6 + 3,
+          repr((sorted(out), stats)))
+
+    class _Streamer:
+        pass
+    streamer = _Streamer()
+    streamer.nvfp4_plan = nv_plan
+    streamer.nvfp4_stats = stats
+    streamer.trellis_plan = None
+    streamer.fp8_plan = None
+    evidence_doc = LO.weights_decode_evidence(streamer)
+    check("L17f weights_decode_evidence names the method, the decode reference, the "
+          "parity file and the contract block only (no private keys), with the counts",
+          evidence_doc["method"] == LO.NVFP4_DECODE_METHOD
+          and evidence_doc["reference"] == LO.NVFP4_DECODE_REFERENCE
+          and evidence_doc["parity_evidence"] == LO.NVFP4_PARITY_EVIDENCE
+          and os.path.isfile(os.path.join(REPO, LO.NVFP4_PARITY_EVIDENCE))
+          and not any(k.startswith("_") for k in evidence_doc["quantization_config"])
+          and evidence_doc["quantization_config"]["activation_scheme"] == "static-nvfp4-not-applied"
+          and evidence_doc["modules_decoded"] == 6
+          and evidence_doc["input_scale_tensors_not_applied"] == 6
+          and evidence_doc["observed"]["quantized_modules"] == 57600
+          and evidence_doc["nonrouted_by_dtype"] == {"BF16": 1, "F32": 1}
+          and json.dumps(evidence_doc),
+          json.dumps(evidence_doc)[:400])
+
+    def refuses_materialize(mutate, fragment):
+        doc = dict(subset)
+        mutate(doc)
+        try:
+            LO.materialize_nvfp4_subset(doc, nv_plan, torch.bfloat16, {}, device="cpu")
+        except LO.LayerOuterError as exc:
+            return fragment in str(exc), str(exc)
+        return False, "accepted"
+    r1 = refuses_materialize(
+        lambda d: d.pop(geometry.component_name(3, 1, "up_proj", "weight_scale_2")),
+        "model.layers.3.mlp.experts.1.up_proj.weight is missing weight_scale_2")
+    r2 = refuses_materialize(
+        lambda d: d.__setitem__("model.layers.3.self_attn.q_a_proj.weight",
+                                 subset[geometry.component_name(3, 0, "gate_proj", "weight")]),
+        "model.layers.3.self_attn.q_a_proj.weight is a U8 tensor outside a routed-expert module")
+    r3 = refuses_materialize(
+        lambda d: [d.pop(geometry.component_name(3, 0, "down_proj", c))
+                   for c in ("weight_scale", "weight_scale_2", "input_scale")],
+        "model.layers.3.mlp.experts.0.down_proj.weight ships as a lone U8 `weight`")
+    r4 = refuses_materialize(
+        lambda d: d.__setitem__(geometry.component_name(3, 0, "gate_proj", "qweight"),
+                                 subset[geometry.component_name(3, 0, "gate_proj", "weight")]),
+        "carries component 'qweight'")
+    check("L17g a module missing a scale, a packed tensor outside a routed module, a lone "
+          "packed weight without scales and an unknown component are each REFUSED BY NAME",
+          all(r[0] for r in (r1, r2, r3, r4)),
+          " | ".join(r[1][-140:] for r in (r1, r2, r3, r4)))
+
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, detail in FAIL:
         print("  FAILED %s: %s" % (name, detail))
